@@ -297,6 +297,43 @@ pub enum StackFrame {
     Prefix(NodeId, usize),
 }
 
+/// Where TLC needed a boolean, which words its failure where the value isn't one: each is an
+/// `Assert.fail` of `Tool` at d8fb231. The walk of the initial predicate, an action or ENABLED
+/// (`getInitStates`, `getNextStates`, `enabled`) words its own apart from `Tool#eval`'s.
+#[derive(Clone, Copy, Debug)]
+pub enum Demand {
+    /// A boolean TLC's wording isn't followed for: the failure declines.
+    Unworded,
+    /// An operand of a junction `eval` takes: of a bulleted list (`OPCODE_cl`, `OPCODE_dl`), or
+    /// of SANY's nesting of an infix chain (`OPCODE_land`, `OPCODE_lor`).
+    Junction {
+        junction: NodeId,
+        index: usize,
+        is_conjunction: bool,
+    },
+    /// The condition of this IF, which `eval` takes (`OPCODE_ite`).
+    If(NodeId),
+    /// The condition of a CASE arm, which `eval` takes (`OPCODE_case`).
+    CaseCondition,
+    /// What the walk evaluates as a guard: an expression it doesn't walk into, or a literal,
+    /// which it can't.
+    Guard { is_init: bool },
+    /// A conjunct the walk evaluates once every variable has a value (`allAssigned`).
+    Remaining { is_init: bool },
+    /// The condition of this IF, which the walk takes.
+    WalkedIf { node: NodeId, is_init: bool },
+    /// The condition of a CASE arm, which the walk takes: TLC names the arm's body.
+    WalkedCase { body: NodeId, is_init: bool },
+    /// A function's value at an argument, where the walk applies a function TLC holds built
+    /// (`OPCODE_fa`, `EC.TLC_EXPECTED_EXPRESSION_IN_COMPUTING2`).
+    Applied { is_init: bool },
+    /// An invariant, of this expression (`EC.TLC_EXPECTED_VALUE`).
+    Invariant,
+}
+
+/// The reason for a function's value the walk tests that isn't a boolean.
+const APPLIED_NON_BOOLEAN: &str = "a function's value the walk tests that isn't a boolean";
+
 /// The reason for a primed variable a state doesn't assign, before the variable's name.
 pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
 
@@ -421,6 +458,10 @@ const ARGUMENT_ERROR_AN: u32 = 2266;
 /// `EC.TLC_MODULE_DIVISION_BY_ZERO`.
 const DIVISION_BY_ZERO: u32 = 2179;
 const ONE_ARGUMENT_ERROR: u32 = 2283;
+/// `EC.TLC_EXPECTED_EXPRESSION_IN_COMPUTING`, its `2` and `EC.TLC_EXPECTED_VALUE`.
+const EXPECTED_EXPRESSION_IN_COMPUTING: u32 = 2247;
+const EXPECTED_EXPRESSION_IN_COMPUTING2: u32 = 2248;
+const EXPECTED_VALUE: u32 = 2215;
 
 // TLCGet of a register TLCSet hasn't set, named by its number or its name.
 fn undefined_register<T>(key: &Value) -> Evaluated<T> {
@@ -787,10 +828,237 @@ impl<'ir> Evaluator<'ir> {
     // --- evaluation ---
 
     pub fn boolean(&mut self, node: NodeId, context: &Context) -> Evaluated<bool> {
+        self.boolean_as(node, context, Demand::Unworded)
+    }
+
+    /// A boolean, failing as TLC does where it demands one and the value isn't.
+    pub fn boolean_as(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        demand: Demand,
+    ) -> Evaluated<bool> {
+        if let Demand::Guard { is_init } = demand
+            && self.is_literal(node)
+        {
+            return self.non_relation(node, is_init);
+        }
         match self.evaluate(node, context)? {
             Value::Bool(boolean) => Ok(boolean),
-            other => fail(format!("expected a boolean, not a {}", other.kind_name())),
+            other => self.non_boolean(node, &other, demand),
         }
+    }
+
+    fn is_literal(&self, node: NodeId) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::Number(_)
+                | NodeKind::WideNumber(_)
+                | NodeKind::Decimal(_)
+                | NodeKind::String(_)
+        )
+    }
+
+    // What TLC computes in a walk: "initial states", "next states" or "ENABLED".
+    fn computing(&self, is_init: bool) -> &'static str {
+        if self.is_enabling {
+            "ENABLED"
+        } else if is_init {
+            "initial states"
+        } else {
+            "next states"
+        }
+    }
+
+    // The walk reaching a node that is no operator's application, such as a number, which it
+    // can't walk (the `default` of `getInitStates`, `getNextStates` and `enabled`).
+    fn non_relation<T>(&self, node: NodeId, is_init: bool) -> Evaluated<T> {
+        let Some(written) = self.describe_node(node) else {
+            return fail("a literal walked as an action, as TLC prints it");
+        };
+        let text = if self.is_enabling {
+            format!("Attempted to compute ENABLED on a non-boolean expression.\n{written}")
+        } else {
+            let relation = if is_init { "init" } else { "next" };
+            format!("The {relation} state relation is not a boolean expression.\n{written}")
+        };
+        fail_runtime("a literal walked as an action", text)
+    }
+
+    // TLC's failure where a value it demands to be a boolean isn't one.
+    pub(crate) fn non_boolean<T>(
+        &self,
+        node: NodeId,
+        value: &Value,
+        demand: Demand,
+    ) -> Evaluated<T> {
+        let reason = format!("expected a boolean, not a {}", value.kind_name());
+        let kind = kind_string(value);
+        let text = match (demand, kind) {
+            (
+                Demand::Junction {
+                    junction,
+                    index,
+                    is_conjunction,
+                },
+                Some(kind),
+            ) => {
+                let is_bulleted = self
+                    .ir
+                    .nodes
+                    .junctions
+                    .get(&self.resolved(junction))
+                    .is_none_or(|shape| shape.is_bulleted);
+                if is_bulleted {
+                    let Some(operand) = self.describe_node(node) else {
+                        return fail(reason);
+                    };
+                    let junction = if is_conjunction {
+                        "conjunction"
+                    } else {
+                        "disjunction"
+                    };
+                    format!(
+                        "A non-boolean expression ({kind}) was used as a formula in a {junction}.\n{operand}"
+                    )
+                } else {
+                    let Some(range) = self.describe_prefix(junction, index.max(1) + 1) else {
+                        return fail(reason);
+                    };
+                    let operator = if is_conjunction { "/\\" } else { "\\/" };
+                    let side = if index == 0 { "P" } else { "Q" };
+                    format!(
+                        "Attempted to evaluate an expression of form P {operator} Q when {side} was\n{kind}.\n{range}"
+                    )
+                }
+            }
+            (Demand::If(conditional), Some(kind)) => format!(
+                "A non-boolean expression ({kind}) was used as the condition of an IF.\n{}",
+                self.describe_range(conditional)
+            ),
+            (Demand::CaseCondition, Some(kind)) => {
+                let Some(condition) = self.describe_node(node) else {
+                    return fail(reason);
+                };
+                format!(
+                    "A non-boolean expression ({kind}) was used as a condition of a CASE. {condition}"
+                )
+            }
+            (
+                Demand::WalkedIf {
+                    node: conditional,
+                    is_init,
+                },
+                Some(kind),
+            ) => {
+                let range = self.describe_range(conditional);
+                match (self.is_enabling, is_init) {
+                    (true, _) => format!(
+                        "In computing ENABLED, a non-boolean expression({kind}) was used as the guard condition of an IF.\n{range}"
+                    ),
+                    // `getInitStates` ends the sentence with a new line, `getNextStates` without.
+                    (false, true) => format!(
+                        "In computing initial states, a non-boolean expression ({kind}) was used as the condition of an IF.\n{range}"
+                    ),
+                    (false, false) => format!(
+                        "In computing next states, a non-boolean expression ({kind}) was used as the condition of an IF.{range}"
+                    ),
+                }
+            }
+            (Demand::WalkedCase { body, is_init }, Some(kind)) => {
+                let Some(body) = self.describe_node(body) else {
+                    return fail(reason);
+                };
+                let computing = self.computing(is_init);
+                let space = if self.is_enabling { "" } else { " " };
+                format!(
+                    "In computing {computing}, a non-boolean expression{space}({kind}) was used as a guard condition of a CASE.\n{body}"
+                )
+            }
+            (Demand::Guard { is_init } | Demand::Remaining { is_init }, _) => {
+                let Some(written) = self.describe_node(node) else {
+                    return fail(reason);
+                };
+                return fail_with(
+                    reason,
+                    TlcMessage {
+                        text: format!(
+                            "In computing {}, TLC expected a boolean expression,\nbut instead found {}.\n{written}",
+                            self.computing(is_init),
+                            format_value(value)
+                        ),
+                        code: Some(EXPECTED_EXPRESSION_IN_COMPUTING),
+                        is_eval_exception: false,
+                    },
+                );
+            }
+            (Demand::Applied { is_init }, _) => {
+                return fail_with(
+                    APPLIED_NON_BOOLEAN,
+                    TlcMessage {
+                        text: format!(
+                            "In computing {}, TLC expected a boolean expression,\nbut didn't find one.\n{}",
+                            self.computing(is_init),
+                            self.describe_range(node)
+                        ),
+                        code: Some(EXPECTED_EXPRESSION_IN_COMPUTING2),
+                        is_eval_exception: false,
+                    },
+                );
+            }
+            (Demand::Invariant, _) => {
+                let Some(written) = self.describe_node(node) else {
+                    return fail(reason);
+                };
+                return fail_with(
+                    reason,
+                    TlcMessage {
+                        text: format!(
+                            "TLC expected a boolean value, but did not find one. {written}"
+                        ),
+                        code: Some(EXPECTED_VALUE),
+                        is_eval_exception: false,
+                    },
+                );
+            }
+            _ => return fail(reason),
+        };
+        fail_runtime(reason, text)
+    }
+
+    /// A node as SANY's `toString` gives it in TLC's messages: a numeral as written, any other
+    /// node by its place. `None` for a numeral written otherwise than in decimal, or a decimal.
+    pub fn describe_node(&self, node: NodeId) -> Option<String> {
+        let resolved = &self.ir.nodes.arena[self.resolved(node) as usize];
+        let written = match &resolved.kind {
+            NodeKind::Number(int) => int.to_string(),
+            NodeKind::WideNumber(text) => self.ir.texts[*text as usize].to_string(),
+            NodeKind::Decimal(_) => return None,
+            _ => return Some(self.describe_range(node)),
+        };
+        let range = resolved.range?;
+        let width = range.end_column - range.start_column + 1;
+        (range.start_line == range.end_line && usize::try_from(width).ok()? == written.len())
+            .then_some(written)
+    }
+
+    // The place of the first `count` operands of an infix junction, SANY's node of that prefix.
+    fn describe_prefix(&self, junction: NodeId, count: usize) -> Option<String> {
+        let resolved = self.resolved(junction);
+        let range = self.ir.nodes.arena[resolved as usize].range?;
+        let shape = self.ir.nodes.junctions.get(&resolved)?;
+        let &(end_line, end_column) = match count.checked_sub(2) {
+            Some(position) if position < shape.prefix_ends.len() => &shape.prefix_ends[position],
+            _ => &(range.end_line, range.end_column),
+        };
+        Some(format!(
+            "line {}, col {} to line {}, col {} of module {}",
+            range.start_line,
+            range.start_column,
+            end_line,
+            end_column,
+            self.ir.texts[range.module as usize]
+        ))
     }
 
     pub fn evaluate(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
@@ -868,6 +1136,10 @@ impl<'ir> Evaluator<'ir> {
         let StackFrame::Node(node) = frame else {
             return;
         };
+        // The walk tests the value a function's method gave, outside the method.
+        if reason == APPLIED_NON_BOOLEAN {
+            return;
+        }
         // CHOOSE enumerates its set by the set's own method, which fails where TLC can't
         // enumerate the set.
         let chosen = match self.kind(node) {
@@ -996,7 +1268,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // `f[x]` with TLC's message where `x` isn't in the domain of `f`.
-    fn apply_checked(&self, function: &Value, key: &Value) -> Evaluated<Value> {
+    pub(crate) fn apply_checked(&self, function: &Value, key: &Value) -> Evaluated<Value> {
         let result = apply_value(function, key);
         match (&result, function) {
             (Err(error), Value::Function(inner))
@@ -1109,9 +1381,14 @@ impl<'ir> Evaluator<'ir> {
         is_conjunction: bool,
         context: &Context,
     ) -> Evaluated<bool> {
+        let demand = |index| Demand::Junction {
+            junction: node,
+            index,
+            is_conjunction,
+        };
         if self.call_stack.is_none() || self.is_walked_whole(node, count) {
-            for &operand in &operands[..count] {
-                if self.boolean(operand, context)? != is_conjunction {
+            for (index, &operand) in operands[..count].iter().enumerate() {
+                if self.boolean_as(operand, context, demand(index))? != is_conjunction {
                     return Ok(!is_conjunction);
                 }
             }
@@ -1124,7 +1401,7 @@ impl<'ir> Evaluator<'ir> {
         if prefix != is_conjunction {
             return Ok(prefix);
         }
-        self.boolean(operands[count - 1], context)
+        self.boolean_as(operands[count - 1], context, demand(count - 1))
     }
 
     fn evaluate_node(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
@@ -1187,7 +1464,7 @@ impl<'ir> Evaluator<'ir> {
                 consequent,
                 alternative,
             } => {
-                if self.boolean(*condition, context)? {
+                if self.boolean_as(*condition, context, Demand::If(node))? {
                     self.evaluate(*consequent, context)
                 } else {
                     self.evaluate(*alternative, context)
@@ -1195,7 +1472,7 @@ impl<'ir> Evaluator<'ir> {
             }
             NodeKind::Case { arms, other } => {
                 for &(condition, body) in arms {
-                    if self.boolean(condition, context)? {
+                    if self.boolean_as(condition, context, Demand::CaseCondition)? {
                         return self.evaluate(body, context);
                     }
                 }
@@ -1770,7 +2047,10 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(None);
                 };
                 let definition = self.definition(self.ir.definitions[index as usize]);
-                let is_startup = self.ir.model.startup.definitions.contains(&index);
+                // TLC computes a definition of no parameters at startup where it is a constant
+                // (`processConstantDefns`), a literal too, which the walk then takes as a value.
+                let is_startup = self.ir.model.startup.definitions.contains(&index)
+                    || self.is_literal(definition.body);
                 Ok(match &definition.form {
                     DefinitionForm::Operator(params) if params.is_empty() && !is_startup => {
                         Some((definition.body, context.global()))
@@ -4294,6 +4574,20 @@ fn non_function_kind(value: &Value) -> Option<&'static str> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+// TLC's `getKindString` of a value whose class the evaluator knows: one `non_function_kind`
+// knows, or a function TLC holds as a `TupleValue`, a `RecordValue` or a `FcnRcdValue`.
+fn kind_string(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Function(function) => match function.class.get() {
+            Class::Tuple => Some("a tuple"),
+            Class::Record => Some("a record"),
+            Class::Plain => Some("a function  of the form (d1 :> e1 @@ ... @@ dN :> eN)"),
+            Class::Lambda => None,
+        },
+        _ => non_function_kind(value),
     }
 }
 
