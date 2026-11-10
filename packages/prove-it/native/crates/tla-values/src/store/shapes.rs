@@ -28,7 +28,7 @@
 //! with a tuple of its size compares a string with an integer), so their joins are [`NONE`]. So
 //! are a function TLC keeps lazy and Nat, Int and STRING, which the store doesn't classify, a tuple
 //! longer than the small integers, whose keys the store interns as it compares, and a function
-//! with an untyped model value among other keys, which TLC compares with a function over an
+//! whose keys mix untyped model values with others, which TLC compares with a function over an
 //! interval only where the keys are integers (`FcnRcdValue.compareOtherInterval`).
 
 use std::collections::HashMap;
@@ -110,6 +110,22 @@ impl Shapes {
             return NONE;
         }
         self.name(term(inner))
+    }
+
+    // TLC compares a function over an interval with another by its keys only where they are
+    // integers, failing at a model value, which the store's order passes: so no class mixes
+    // untyped model values with other keys than model values.
+    fn name_function(&mut self, keys: Shape, values: Shape) -> Shape {
+        if keys == NONE || values == NONE {
+            return NONE;
+        }
+        if let Some(&Term::WithUntyped(inner)) = self.term(keys)
+            && inner != BOTTOM
+            && !matches!(self.term(inner), Some(Term::Model(_)))
+        {
+            return NONE;
+        }
+        self.name(Term::Function(keys, values))
     }
 
     fn is_function_family(&self, shape: Shape) -> bool {
@@ -212,10 +228,7 @@ impl Shapes {
             (Term::Function(left_keys, left_values), Term::Function(right_keys, right_values)) => {
                 let keys = self.join(left_keys, right_keys);
                 let values = self.join(left_values, right_values);
-                if keys == NONE || values == NONE {
-                    return NONE;
-                }
-                self.name(Term::Function(keys, values))
+                self.name_function(keys, values)
             }
             _ => NONE,
         }
@@ -366,12 +379,7 @@ impl Store {
                     fields.sort_unstable_by_key(|&(key, _)| key);
                     return self.shapes.name(Term::Record(fields.into()));
                 }
-                // TLC compares a function over an interval with another by its keys only where
-                // they are integers, failing at a model value, which the store's order passes.
-                if let Some(Term::WithUntyped(_)) = self.shapes.term(keys) {
-                    return NONE;
-                }
-                self.shapes.name(Term::Function(keys, values))
+                self.shapes.name_function(keys, values)
             }
             _ => NONE,
         }

@@ -562,6 +562,22 @@ fn fails_a_membership_wherever_tlcs_search_fails() {
         .map(|_| generate(&mut store, &mut random, 3))
         .collect();
     values.extend([EMPTY_TUPLE, EMPTY_SET]);
+    // Functions over model values, untyped and typed, and over a mix of keys, with values of any
+    // kind: 1 at one key and FALSE at another, say.
+    let keys = ["m1", "m2", "A_x"].map(|name| store.model(&utf16(name)));
+    let one = store.int(1).unwrap();
+    for _ in 0..if cfg!(miri) { 10 } else { 200 } {
+        let pick = |random: &mut Random| values[random.next(values.len() as u64) as usize];
+        let domain = match random.next(3) {
+            0 => vec![keys[0], keys[1]],
+            1 => vec![keys[0], keys[2]],
+            _ => vec![keys[0], one],
+        };
+        let range = [pick(&mut random), pick(&mut random)];
+        if let Ok(function) = store.function_of(&domain, &range) {
+            values.push(function);
+        }
+    }
     let mut sets: Vec<Id> = values
         .iter()
         .filter_map(|&value| store.set_of(&[value]).ok())
