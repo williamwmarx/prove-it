@@ -7,6 +7,7 @@
 
 pub mod error;
 pub mod isar;
+pub mod provers;
 pub mod pure;
 pub mod tla;
 
