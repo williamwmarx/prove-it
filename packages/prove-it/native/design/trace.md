@@ -510,7 +510,6 @@ Done:
   binary prints Prove It's error, the one tlc/ts and tlc/rust print, and
   `known-differences.json` lists it for tlc/native as for the others. function_syntax (TLC
   overflows Java's default stack) is listed for tlc/native too.
-
 - EWD998Chan: TLCGet's key is read through the parameter an INSTANCE of TLC binds it to.
   TLCSet("exit", TRUE) in an invariant stops the search once the state being expanded is done,
   with the states left on the queue (`ModelChecker.stop` finishes the queue). TLC's main thread,
@@ -518,6 +517,27 @@ Done:
   worker printed it in 6 of 8 runs of EWD998Chan, with three different counts, and in none of 6
   runs of a smaller spec. The binary prints none; the differential drops progress lines. Exit set
   elsewhere (Next, a constraint, the initial states) or with temporal properties is not native.
+
+- Pre-PR review (each checked against TLC d8fb231 and tested in `prove-it-cli/tests/cli.rs`):
+  - a POSTCONDITION or ALIAS TLC computes as it starts is declined (`is_precomputed`: constant
+    level, reaching none of TLCGet, TLCSet, CounterExample or _Counts); a postcondition after an
+    initial state's violation is declined; -lncheck off is declined;
+  - a postcondition's failure nests its coded message under -tool; an EvalException in the
+    next states exits by its code (255; 151 for an undefined identifier);
+  - CounterExample's records order their fields as TLC interns RecordValue's names, after the
+    spec's strings; a safety violation's CounterExample holds the ALIAS records
+    (`Worker.doPostCondition`), a lasso the states;
+  - an ALIAS that prints, or sets registers, is declined;
+  - the rebuild keeps TLC's registers: its own constraint and invariant checks, and the walk of
+    the initial predicate of a trace of two states TLC holds, set none;
+  - random draws: TLC rebuilds an initial state from a generator reset to the seed (a violation of
+    three states or more, a deadlock or failure trace, a lasso) and finds a two-state violation's
+    successor drawing on from the search's generator (`Violation::random`); the rebuild follows
+    both and declines where TLC finds no state; a second rebuild of a spec that draws, and prints
+    or sets registers, is declined;
+  - a constraint that fails on an initial state keeps its frames; TLC rebuilds a failure's trace
+    again, printing, only where its worker checks the postconditions (after a next-state failure
+    with deadlock checked and no successor generated).
 
 Open:
 - Sets TLC holds unnormalized: `\cup` and DOMAIN, above.
