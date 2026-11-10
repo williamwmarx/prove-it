@@ -476,8 +476,8 @@ Declined, each with its reason:
   whose relation the engine doesn't split into TLC's actions;
 - a violation before the last trace, or without `num=`: TLC's worker goes on generating traces
   as the main thread prints the trace, and is stopped at no particular one, so the counts race.
-  On the jar, repeated runs of one MCConsensus model print different counts, and within one run
-  the summary said 23 states generated where the progress line said 24. The sweep declines 60
+  In one run of an MCConsensus model on the jar, the summary said 23 states generated where the
+  progress line, printed after it, said 24. The sweep declines 60
   runs for this; the tests pin `num=1`, where the violation is in the last trace;
 - a failure evaluating the model, an incomplete state, an action property violated, an initial
   state outside a constraint or none;
