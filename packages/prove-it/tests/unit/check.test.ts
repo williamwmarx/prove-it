@@ -1740,6 +1740,29 @@ describe("evaluation errors match TLC", () => {
     expect(ranges?.at(-1)).toBe("34-41");
   });
 
+  // SpecProcessor.processConfigSpec keeps a definition that is a state predicate whole, so TLC's
+  // call stack starts at the list the definition wrote (TLC's own run of this model).
+  it("records the specification's initial predicate as the definition wrote it", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit ==\n  /\\ x \\in {0, 1, 2}\n  /\\ 3 \\div (x - 1) >= 0\n  /\\ Assert(x # 2, "two")\nNext == x\' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\n====',
+      config: "SPECIFICATION Spec",
+    });
+    const ranges = result.failure?.callStack?.map((expression) => {
+      const range = expression.location.range;
+      return range
+        ? `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`
+        : "";
+    });
+    // TLC prints a node its stack holds twice in a row once.
+    expect(ranges?.filter((range, index) => range !== ranges[index - 1])).toEqual([
+      "5:3-7:25",
+      "5:6-5:20",
+      "6:6-6:24",
+      "6:6-6:19",
+    ]);
+  });
+
   // Tool.processUnchangedImplTuple puts the elements after the first in front of the conjuncts left,
   // in order.
   it("records the variables of an UNCHANGED tuple in order", async () => {
