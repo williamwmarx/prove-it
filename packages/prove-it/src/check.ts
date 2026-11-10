@@ -148,6 +148,9 @@ export interface CheckOptions {
   readFile?: (path: string) => string | undefined;
   writeFile?: (path: string, content: string) => void;
   seed?: bigint;
+  // The Java system properties TLCGet("-Dname") reads: those the command line sets, and the
+  // platform's that the caller knows as a JVM would.
+  systemProperties?: ReadonlyMap<string, string>;
   workers?: number;
   // TLC's -lncheck: "final" checks liveness only on the complete state graph.
   livenessCheck?: "default" | "final";
@@ -575,6 +578,7 @@ const searchStates = (
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
     seed: options.seed,
+    systemProperties: options.systemProperties,
     isTool: options.isTool,
     isTraceRecorded: options.isTraceRecorded,
     isSanyReported: options.isSanyReported,

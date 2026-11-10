@@ -337,6 +337,8 @@ and `util.ExecutionStatisticsCollector.id` (`ExecutionStatisticsCollector.java:7
 `file.separator` and `path.separator`, and declines any other name in the JVM's own namespaces
 (`java.`, `os.`, `user.`, ...) and a key the spec computes. The binary declines a command line
 that sets a property whose `-Dname` the model's strings hold, since the spec may read it.
+The TypeScript CLI carries the launch's properties into the run (`systemProperties`), with the
+platform's separators and `user.dir`, and fails as unsupported on another of the JVM's own.
 
 `prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
 form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.

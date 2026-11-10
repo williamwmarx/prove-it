@@ -642,6 +642,18 @@ describe("the CLI reports results like TLC", () => {
     expect(result.stdout).toContain("\nFatal errors while parsing TLA+ spec in file Missing\n");
   });
 
+  it("reads the system properties the Java launch sets with TLCGet, like TLC", () => {
+    // TLC at d8fb231: `java -Dfoo=bar tlc2.TLC Property` violates Inv, and without foo it holds.
+    const run = (properties: string[]) =>
+      runCliWith("system-property", [...properties, "tlc2.TLC", "-noGenerateSpecTE", "Property"]);
+    const set = run(["-Dother=1", "-Dfoo=bar"]);
+    expect(set.status).toBe(12);
+    expect(set.stdout).toContain("Error: Invariant Inv is violated by the initial state:\nx = 1\n");
+    const unset = run(["-Dother=bar"]);
+    expect(unset.status).toBe(0);
+    expect(unset.stdout).toContain("Model checking completed. No error has been found.");
+  });
+
   it("reports its version and runtime, then the files SANY parses, the modules it analyzes and the modules it lints", () => {
     const directory = join(FIXTURES, "cli-output");
     const args = [

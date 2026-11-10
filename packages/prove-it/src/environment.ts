@@ -95,6 +95,7 @@ interface EnvironmentOptions {
   print: (text: string) => void;
   files: FileSystem;
   seed?: bigint;
+  systemProperties?: ReadonlyMap<string, string>;
   // Links the modules without a model, as SANY does, so a declared constant needs no value.
   isUnconfigured?: boolean;
   isTool?: boolean;
@@ -323,6 +324,7 @@ export const createEnvironment = (
   );
   const standardExports = new Map<string, Symbols>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
+  runtime.properties = new Map(options.systemProperties);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
   runtime.version = options.version ?? "master";
