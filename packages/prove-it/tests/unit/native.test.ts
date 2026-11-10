@@ -123,7 +123,10 @@ describe("the native engine", () => {
       const lines = getEngineLines(runtime, cli, {
         PROVE_IT_ENGINE_ADDON: ADDON,
       });
+      // The binary's check, which the CLI runs first, doesn't yet write SANY's report of the trace
+      // exploration spec TLC generates without -noGenerateSpecTE, so the CLI checks it as before.
       expect(lines).toEqual([
+        "[engine] native: checkSources declined: SANY's report of the trace exploration spec TLC parses with the spec",
         expect.stringMatching(/^\[engine\] native: ir: \d+ bytes in \d+\.\d\d ms$/),
         expect.stringMatching(/^\[engine\] native: complete: {2}\(\d+\.\d\d ms\)$/),
         expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
@@ -168,7 +171,7 @@ describe("the native engine", () => {
   // A recursion as deep as this exhausts the stack the engine has as WebAssembly, and the
   // interpreter searches again from the start, after the search had printed.
   it.if(WASM !== undefined)(
-    "prints once what it printed before WebAssembly ran out of stack",
+    "prints once what it printed before the engine as WebAssembly stopped recursing",
     () => {
       const directory = mkdtempSync(join(tmpdir(), "prove-it-wasm-stack-"));
       try {
@@ -195,7 +198,9 @@ describe("the native engine", () => {
         const printed = (stdout: string) =>
           stdout.split("\n").filter((line) => /^("init"|\d+)$/.test(line));
         const native = runDeep({ PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_WASM: WASM ?? "" });
-        expect(native.stderr).toContain("native: stopped: WebAssembly ran out of stack");
+        // WebAssembly's frames are on the host's stack, so its engine stops recursing at 1,000
+        // calls and hands the search over, where the addon would go on.
+        expect(native.stderr).toContain("native: stopped: recursion too deep");
         const interpreter = runDeep({ PROVE_IT_ENGINE: "0" });
         expect(printed(native.stdout)).toEqual(['"init"', "0", "1"]);
         expect(printed(native.stdout)).toEqual(printed(interpreter.stdout));

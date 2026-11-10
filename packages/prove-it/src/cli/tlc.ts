@@ -27,7 +27,7 @@ import type {
 } from "../check";
 import { parseConfig } from "../config";
 import { getNativeAddon, loadWasmEngine, type NativeCheckSources } from "../engine/native";
-import { getEngineSetting, reportEngine } from "../engine/settings";
+import { getEngineSetting, getStopAt, reportEngine } from "../engine/settings";
 import {
   getErrorExitCode,
   getUnexpectedException,
@@ -965,7 +965,9 @@ export const checkNatively = async (
   args: string[],
   java: JavaProperties,
 ) => {
-  if (getEngineSetting() === "0") return undefined;
+  // PROVE_IT_STOP_AT tests the TypeScript check's hand-over from the engine.
+  if (getEngineSetting() === "0" || getStopAt() !== -1) return undefined;
+  const startedAt = performance.now();
   await loadWasmEngine();
   const addon = getNativeAddon();
   if (typeof addon === "string") return undefined;
@@ -1024,6 +1026,9 @@ export const checkNatively = async (
     reportEngine(`native: checkSources declined: ${result.reason}`);
     return undefined;
   }
+  reportEngine(
+    `native: checkSources: exit ${result.exitCode} (${(performance.now() - startedAt).toFixed(2)} ms)`,
+  );
   process.stdout.write(result.out);
   process.stderr.write(result.err);
   return result.exitCode;
