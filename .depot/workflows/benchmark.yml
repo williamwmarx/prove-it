@@ -108,6 +108,8 @@ jobs:
           export TLA_RS_BIN="$RUNNER_TEMP/tla-rs/bin/tla"
           mkdir -p "$RUNNER_TEMP/benchmark"
           cd packages/prove-it
+          # The checkers that run dist/cli.js, under Node and Bun, check with the addon built above.
+          export PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node"
           status=0
           bun scripts/bench-suite.ts --runs "$RUNS" --checkers "$CHECKERS" --timeout "$TIMEOUT" \
             --suite "$SUITE" \

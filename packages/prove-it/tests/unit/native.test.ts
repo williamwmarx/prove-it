@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const COMMIT = join(import.meta.dirname, "../fixtures/commit");
 const SOURCE_CLI = join(import.meta.dirname, "../../src/cli.ts");
@@ -69,18 +70,30 @@ describe("the native engine", () => {
   it(
     "rejects check with EngineUnavailableError where it can't load the engine",
     () => {
-      const script = [
-        'import { check, EngineUnavailableError } from "./src";',
-        'const source = "---- MODULE M ----\\nVARIABLE x\\nInit == x = 0\\nNext == x\' = x\\n====";',
-        'const error = await check({ source, config: "INIT Init\\nNEXT Next" }).catch((thrown) => thrown);',
-        "console.log(error instanceof EngineUnavailableError);",
-      ].join("\n");
-      const run = spawnSync("bun", ["-e", script], {
-        cwd: join(import.meta.dirname, "../.."),
-        encoding: "utf8",
-        env: { ...process.env, PROVE_IT_ENGINE_ADDON: MISSING, PROVE_IT_ENGINE_WASM: undefined },
-      });
-      expect({ stdout: run.stdout, stderr: run.stderr }).toEqual({ stdout: "true\n", stderr: "" });
+      // A script of its own, since Windows passes no argument with a line break to bun.
+      const directory = mkdtempSync(join(tmpdir(), "prove-it-unavailable-"));
+      const script = join(directory, "check.ts");
+      try {
+        writeFileSync(
+          script,
+          [
+            `import { check, EngineUnavailableError } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, "../../src/index.ts")).href)};`,
+            'const source = "---- MODULE M ----\\nVARIABLE x\\nInit == x = 0\\nNext == x\' = x\\n====";',
+            'const error = await check({ source, config: "INIT Init\\nNEXT Next" }).catch((thrown) => thrown);',
+            "console.log(error instanceof EngineUnavailableError);",
+          ].join("\n"),
+        );
+        const run = spawnSync("bun", [script], {
+          encoding: "utf8",
+          env: { ...process.env, PROVE_IT_ENGINE_ADDON: MISSING, PROVE_IT_ENGINE_WASM: undefined },
+        });
+        expect({ stdout: run.stdout, stderr: run.stderr }).toEqual({
+          stdout: "true\n",
+          stderr: "",
+        });
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     },
     SPAWN_LIMIT_MS,
   );

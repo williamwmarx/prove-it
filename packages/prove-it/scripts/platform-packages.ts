@@ -112,6 +112,25 @@ export const PLATFORMS: Platform[] = [
   },
 ];
 
+// The addon `build` built for this system, if it did, which the tests and the conformance scripts
+// check with unless PROVE_IT_ENGINE_ADDON or PROVE_IT_ENGINE_WASM names an engine.
+export const getBuiltAddon = () =>
+  PLATFORMS.filter((platform) => platform.os === process.platform && platform.cpu === process.arch)
+    .map((platform) => join(NPM_DIRECTORY, platform.name, ADDON_FILE))
+    .find(existsSync);
+
+// Sets PROVE_IT_ENGINE_ADDON to the addon built for this system, where no engine is named.
+export const useBuiltAddon = () => {
+  const addon = getBuiltAddon();
+  if (
+    addon !== undefined &&
+    process.env.PROVE_IT_ENGINE_ADDON === undefined &&
+    process.env.PROVE_IT_ENGINE_WASM === undefined
+  ) {
+    process.env.PROVE_IT_ENGINE_ADDON = addon;
+  }
+};
+
 // npm is npm.cmd on Windows, which only a shell runs, and the shell splits an argument at its
 // spaces, as in a temporary directory under C:\Users\Jane Doe, unless it is quoted. No argument
 // here holds a quote.
