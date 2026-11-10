@@ -603,8 +603,7 @@ E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d
   `Local::unselectable` marks: "ASSUME/PROVE used where an expression is required." for an
   ASSUME/PROVE step, and "HAVE", "CASE", "TAKE", "PICK", "WITNESS", "QED step" or "SUFFICES"
   "proof step selected instead of expression." A theorem whose statement is an expression, which
-  SANY takes as one, is linked as a definition; named in its own proof, where the front end hasn't
-  bound it yet, it stays `NotYet` (ProofsTest's `DefineStepProof`).
+  SANY takes as one, is linked as a definition, which its own proof may name too (below).
 - RECURSIVE declarations: `recursive.rs` names the shapes the front end follows, and every other
   module with a RECURSIVE declaration is `NotYet`. `processRecursive` binds each declared operator
   at the current LET/IN level (`curLevel`), `processOperator` and `processFunction` define it,
@@ -656,12 +655,24 @@ E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d
   definition after it, or one that goes on after it, stays `NotYet`. The TypeScript report's "A
   MODULE may not appear within a recursive definition section." is not what TLC does.
 
+- `processTheorem` adds a theorem whose statement is an expression to the symbol table before its
+  proof, so `resolve_theorem` reads the proof after the theorem's definition, and the proof may
+  name the theorem as an expression (ProofsTest's `DefineStepProof`).
+- `Tool.isValid` fails on an assumption that is no boolean with "TLC expected a boolean value, but
+  did not find one." and the assumption's place (EC 2215), which `checkAssumptions` reports within
+  2105; `tla-trace` replays it so (AssumeTest, BasicTest, InnerModuleTest and Semantics, whose
+  `ASSUME RefersTo(...)` is a string).
+
 Declines left, each for a reason:
 
-- AssumeProveTest's labeled ASSUME/PROVE, which the front end's parser rejects.
-- ProofsTest: a theorem whose statement is an expression, named as an expression in its own proof.
-- Four corpus specs whose failing assumptions the engine declines to replay (AssumeTest,
-  BasicTest, InnerModuleTest, Semantics).
+- AssumeProveTest's labeled ASSUME/PROVE among an ASSUME's assumptions (`innerAP1 :: ASSUME ...`),
+  which the front end's parser rejects. Following it takes a label on a nested ASSUME/PROVE in the
+  AST, the parser and the selection of its parts (`ap4!innerAP1`), in both front ends, as the
+  TypeScript one rejects it too and `front-differential.ts` holds the two to each other.
+- The RECURSIVE declarations outside the shapes `recursive.rs` lists: the grid's 126 declining
+  cells. Most are SANY errors no spec is written for; the valid ones (a LET with RECURSIVE
+  declarations within another or beside an INSTANCE, a RECURSIVE declaration in a nested module)
+  turn on SANY's counts across levels and modules, which the front end doesn't follow.
 
 The binary names the check it declines (`SANY's report of <reason>`).
 
@@ -679,8 +690,7 @@ gate, with the directories in `corpora.json` and TLC's output recorded, is still
   `src/sany`; the generator's errors the corpus doesn't reach are the next to port.
 - A RECURSIVE operator that applies another of its section (mutual recursion): SANY's first pass
   reads the section's operators with action-level arguments, which `levels.rs` declines.
-- Labeled ASSUME/PROVE (AssumeProveTest) and a theorem named as an expression in its own proof
-  (ProofsTest), which the native front declines.
+- Labeled ASSUME/PROVE (AssumeProveTest), which the native front declines.
 - The TypeScript front end's differences from TLC, below.
 
 ### Where the TypeScript front end differs from TLC
@@ -696,8 +706,7 @@ declines:
   which it rejects as parse errors.
 - NumbersTest: a decimal or a number TLC can't hold, which it reports with code 1000 and exit 75
   for TLC's 2244 (exit 151) and 2265 (exit 255).
-- ProofsTest (a theorem named as an expression in its own proof), which the native front declines
-  too.
+- ProofsTest (a theorem named as an expression in its own proof), which the native front writes.
 - LetInTest, and an INSTANCE named as a fact, which it reports as unknown operators.
 
 ## The strings TLC interns as it starts
