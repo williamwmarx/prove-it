@@ -2743,8 +2743,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 periodic_size = expanded;
                 let tables =
                     graph_tables(machine, search, expanded, count, None, None).map_err(Bail)?;
-                let liveness =
-                    check_liveness(model, search, &tables, None, false, &context.diameter_atoms);
+                let liveness = check_liveness(
+                    model,
+                    search,
+                    &tables,
+                    None,
+                    false,
+                    &context.diameter_atoms,
+                    thread_count,
+                );
                 periodic_time += at.elapsed();
                 // Whatever the checker leaves undecided, the check of the complete graph decides,
                 // and the graph is bounded again for the interpreter, which checks as it grows.
@@ -3170,6 +3177,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             reals.as_ref(),
                             is_effectful,
                             &context.diameter_atoms,
+                            thread_count,
                         );
                         if liveness.verdict != Verdict::Unexpanded {
                             break (tables, liveness);
@@ -4704,6 +4712,7 @@ fn check_liveness(
     reals: Option<&Reals>,
     is_effectful: bool,
     diameter_atoms: &[bool],
+    threads: usize,
 ) -> Liveness {
     let graph = search.graph.as_ref().expect("a graph");
     // Under SYMMETRY or a VIEW, TLC names the violated properties from the trace it rebuilds, of
@@ -4736,6 +4745,7 @@ fn check_liveness(
         },
         &answers,
         is_effectful,
+        threads,
     )
 }
 
