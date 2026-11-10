@@ -9,6 +9,7 @@
 pub mod export;
 pub mod nodes;
 pub mod selectors;
+pub mod xml;
 
 pub type Result<T> = std::result::Result<T, crate::errors::FrontError>;
 
