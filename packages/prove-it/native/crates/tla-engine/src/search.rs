@@ -2314,6 +2314,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !compiler.is_cached
         && !is_distinct_read
         && !(model.is_recording_graph && settings.test_live_check_at.is_some())
+        // The online checker adds each state as it is expanded, between the expansions, and the
+        // held prints come out between them: neither may meet a level the threads share.
+        && !(model.is_recording_graph && (context.is_live_registered || compiler.is_printing))
         && !settings.is_live_checked
         && context.possible.is_empty();
     // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings,
@@ -2780,6 +2783,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     if is_shared { threads.max(1) as u32 } else { 1 },
                 );
                 if is_shared && threads > 1 {
+                    debug_assert!(online.is_none() && search.held.is_none());
                     threads_used = threads_used.max(threads);
                     if workers.is_empty() {
                         workers = (0..thread_count)
