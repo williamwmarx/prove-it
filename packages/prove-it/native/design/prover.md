@@ -298,6 +298,13 @@ TypeScript keeps the orchestration until P6:
   cannot reach a thread inside a native call by `worker.terminate()`, so the pool hands each worker
   a cell of a `SharedArrayBuffer` and sets it on abort; the Rust limit check reads it where it now
   reads `signal.aborted`.
+- `decide` needs no files: its input is the text. Where Rust reads modules (P5 and P6, for
+  `loadModule`, `-I` and tlapm's library), it uses the host's request-and-retry convention from
+  the SANY retirement's stage (a) (`prove_it_host::sources::Sources`): the export takes the
+  `known` pairs, returns `{kind: "needed", keys}` for what it lacked, and JavaScript answers and
+  calls again; no callback into JavaScript. The keys are its `module:<name>`, plus any new kind
+  tlapm's lookup needs, added to the list in `sources.rs`. Both exports go through the wasm
+  `call()` buffer ABI and bump `ABI_VERSION` as it requires.
 - At P5 the boundary moves up: `getObligations` and the encoders run in Rust, behind
   `prove_obligations(source, modules) → obligations + texts`, and `prove.ts` only decides. At P6
   the whole of `prove` and `prove-it tlapm` run in Rust; the TS `prove` becomes a thin call, as
