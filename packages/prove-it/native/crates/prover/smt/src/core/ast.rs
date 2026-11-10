@@ -857,6 +857,18 @@ impl AstManager {
         Ok(result)
     }
 
+    /// without_temporaries without a closure, for a body that needs more than the manager: the
+    /// caller passes what suspend_temporaries returns to restore_temporaries.
+    pub fn suspend_temporaries(&mut self) -> isize {
+        let outer = self.temporaries_mark;
+        self.temporaries_mark = -1;
+        outer
+    }
+
+    pub fn restore_temporaries(&mut self, outer: isize) {
+        self.temporaries_mark = outer;
+    }
+
     /// Hands a reference the caller owns to the innermost with_temporaries, or releases it now.
     pub fn release_later(&mut self, expr: Expr) -> Result<(), SmtError> {
         if self.temporaries_mark == -1 {
