@@ -1,0 +1,278 @@
+//! Ported from OCaml: LGPL-2.1 with OCaml's linking exception, not MIT (THIRD_PARTY_NOTICES.md).
+//! OCaml's Marshal format, ported from runtime/intern.c and runtime/extern.c, for the values in
+//! tlapm's fingerprints file. It writes no sharing, which OCaml reads the same. A port of
+//! `src/prover/tlapm/ocaml-marshal.ts`.
+//!
+//! A shared value read back is a copy of the value it refers to; the TypeScript hands out the same
+//! object, which nothing that reads it mutates, so the two are the same value.
+
+use crate::errors::{ObligationError, Result};
+
+/// An OCaml value: an immediate int, a string, a block with a tag and fields, or a float.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MarshalValue {
+    Int(i64),
+    Text(String),
+    Block(MarshalBlock),
+    Float(f64),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MarshalBlock {
+    pub tag: u8,
+    pub fields: Vec<MarshalValue>,
+}
+
+const MAGIC_NUMBER_SMALL: u32 = 0x8495a6be;
+
+const CODE_INT8: u8 = 0x0;
+const CODE_INT16: u8 = 0x1;
+const CODE_INT32: u8 = 0x2;
+const CODE_SHARED8: u8 = 0x4;
+const CODE_SHARED16: u8 = 0x5;
+const CODE_SHARED32: u8 = 0x6;
+const CODE_BLOCK32: u8 = 0x8;
+const CODE_STRING8: u8 = 0x9;
+const CODE_STRING32: u8 = 0xa;
+const CODE_DOUBLE_LITTLE: u8 = 0xc;
+
+const PREFIX_SMALL_INT: u8 = 0x40;
+const PREFIX_SMALL_STRING: u8 = 0x20;
+const PREFIX_SMALL_BLOCK: u8 = 0x80;
+
+const HEADER_SIZE: usize = 20;
+
+pub fn block(tag: u8, fields: Vec<MarshalValue>) -> MarshalValue {
+    MarshalValue::Block(MarshalBlock { tag, fields })
+}
+
+fn corrupted() -> ObligationError {
+    ObligationError::proof("corrupted fingerprint file")
+}
+
+/// The values read so far that a shared code can refer to: blocks with fields, strings and floats,
+/// in the order they started, as intern.c numbers them.
+struct Reader<'b> {
+    bytes: &'b [u8],
+    position: usize,
+    end: usize,
+    objects: Vec<Option<MarshalValue>>,
+}
+
+impl Reader<'_> {
+    fn take(&mut self, length: usize) -> Result<&[u8]> {
+        let start = self.position;
+        self.position += length;
+        if self.position > self.end {
+            return Err(corrupted());
+        }
+        // The header's length can claim more than the file holds.
+        self.bytes.get(start..self.position).ok_or_else(corrupted)
+    }
+
+    fn take_array<const N: usize>(&mut self) -> Result<[u8; N]> {
+        let bytes = self.take(N)?;
+        Ok(bytes.try_into().expect("take returns the length asked"))
+    }
+
+    fn read_string(&mut self, length: usize) -> Result<MarshalValue> {
+        let value = MarshalValue::Text(String::from_utf8_lossy(self.take(length)?).into_owned());
+        self.objects.push(Some(value.clone()));
+        Ok(value)
+    }
+
+    fn read_block(&mut self, tag: u8, size: usize) -> Result<MarshalValue> {
+        // A block is numbered when it starts and complete once its fields are read; a shared
+        // reference to it from inside itself cannot occur in what extern.c writes without cycles.
+        let index = self.objects.len();
+        if size > 0 {
+            self.objects.push(None);
+        }
+        let mut fields = Vec::with_capacity(size);
+        for _ in 0..size {
+            fields.push(self.read()?);
+        }
+        let value = block(tag, fields);
+        if size > 0 {
+            self.objects[index] = Some(value.clone());
+        }
+        Ok(value)
+    }
+
+    fn read_shared(&self, distance: usize) -> Result<MarshalValue> {
+        self.objects
+            .len()
+            .checked_sub(distance)
+            .and_then(|index| self.objects[index].clone())
+            .ok_or_else(corrupted)
+    }
+
+    fn read(&mut self) -> Result<MarshalValue> {
+        let code = self.take(1)?[0];
+        if code >= PREFIX_SMALL_BLOCK {
+            return self.read_block(code & 0xf, usize::from((code >> 4) & 0x7));
+        }
+        if code >= PREFIX_SMALL_INT {
+            return Ok(MarshalValue::Int(i64::from(code & 0x3f)));
+        }
+        if code >= PREFIX_SMALL_STRING {
+            return self.read_string(usize::from(code & 0x1f));
+        }
+        match code {
+            CODE_INT8 => Ok(MarshalValue::Int(i64::from(i8::from_be_bytes(
+                self.take_array()?,
+            )))),
+            CODE_INT16 => Ok(MarshalValue::Int(i64::from(i16::from_be_bytes(
+                self.take_array()?,
+            )))),
+            CODE_INT32 => Ok(MarshalValue::Int(i64::from(i32::from_be_bytes(
+                self.take_array()?,
+            )))),
+            CODE_SHARED8 => {
+                let distance = usize::from(u8::from_be_bytes(self.take_array()?));
+                self.read_shared(distance)
+            }
+            CODE_SHARED16 => {
+                let distance = usize::from(u16::from_be_bytes(self.take_array()?));
+                self.read_shared(distance)
+            }
+            CODE_SHARED32 => {
+                let distance = u32::from_be_bytes(self.take_array()?) as usize;
+                self.read_shared(distance)
+            }
+            CODE_BLOCK32 => {
+                let header = u32::from_be_bytes(self.take_array()?);
+                self.read_block((header & 0xff) as u8, (header >> 10) as usize)
+            }
+            CODE_STRING8 => {
+                let length = usize::from(u8::from_be_bytes(self.take_array()?));
+                self.read_string(length)
+            }
+            CODE_STRING32 => {
+                let length = u32::from_be_bytes(self.take_array()?) as usize;
+                self.read_string(length)
+            }
+            CODE_DOUBLE_LITTLE => {
+                let value = MarshalValue::Float(f64::from_le_bytes(self.take_array()?));
+                self.objects.push(Some(value.clone()));
+                Ok(value)
+            }
+            _ => Err(corrupted()),
+        }
+    }
+}
+
+/// readMarshaled: the value marshaled at `offset`, and where the next one starts.
+pub fn read_marshaled(bytes: &[u8], offset: usize) -> Result<(MarshalValue, usize)> {
+    let get_word = |at: usize| {
+        bytes
+            .get(at..at + 4)
+            .map(|word| u32::from_be_bytes(word.try_into().expect("four bytes")))
+    };
+    if bytes.len() < offset + HEADER_SIZE || get_word(offset) != Some(MAGIC_NUMBER_SMALL) {
+        return Err(corrupted());
+    }
+    let length = get_word(offset + 4).ok_or_else(corrupted)? as usize;
+    let end = offset + HEADER_SIZE + length;
+    let mut reader = Reader {
+        bytes,
+        position: offset + HEADER_SIZE,
+        end,
+        objects: Vec::new(),
+    };
+    Ok((reader.read()?, end))
+}
+
+#[derive(Default)]
+struct Sizes {
+    objects: u32,
+    words32: u32,
+    words64: u32,
+}
+
+// The bytes of `integer`'s low `length` bytes, most significant first, as `>>>` takes them from a
+// 32-bit integer.
+fn push_integer(bytes: &mut Vec<u8>, integer: i64, length: u32) {
+    let word = integer as u32;
+    for shift in (0..length).rev() {
+        bytes.push((word >> (shift * 8)) as u8);
+    }
+}
+
+fn write(bytes: &mut Vec<u8>, sizes: &mut Sizes, value: &MarshalValue) {
+    match value {
+        MarshalValue::Int(integer) => {
+            let integer = *integer;
+            if (0..0x40).contains(&integer) {
+                bytes.push(PREFIX_SMALL_INT + integer as u8);
+            } else if (-0x80..0x80).contains(&integer) {
+                bytes.extend([CODE_INT8, integer as u8]);
+            } else if (-0x8000..0x8000).contains(&integer) {
+                bytes.push(CODE_INT16);
+                push_integer(bytes, integer, 2);
+            } else {
+                bytes.push(CODE_INT32);
+                push_integer(bytes, integer, 4);
+            }
+        }
+        MarshalValue::Text(text) => {
+            sizes.objects += 1;
+            let encoded = text.as_bytes();
+            let length = encoded.len();
+            if length < 0x20 {
+                bytes.push(PREFIX_SMALL_STRING + length as u8);
+            } else if length < 0x100 {
+                bytes.extend([CODE_STRING8, length as u8]);
+            } else {
+                bytes.push(CODE_STRING32);
+                push_integer(bytes, length as i64, 4);
+            }
+            bytes.extend_from_slice(encoded);
+            sizes.words32 += 1 + (length as u32 + 4) / 4;
+            sizes.words64 += 1 + (length as u32 + 8) / 8;
+        }
+        MarshalValue::Float(float) => {
+            sizes.objects += 1;
+            bytes.push(CODE_DOUBLE_LITTLE);
+            bytes.extend(float.to_le_bytes());
+            sizes.words32 += 3;
+            sizes.words64 += 2;
+        }
+        MarshalValue::Block(inner) => {
+            let size = inner.fields.len();
+            if size > 0 {
+                sizes.objects += 1;
+                sizes.words32 += 1 + size as u32;
+                sizes.words64 += 1 + size as u32;
+            }
+            if inner.tag < 16 && size < 8 {
+                bytes.push(PREFIX_SMALL_BLOCK + inner.tag + ((size as u8) << 4));
+            } else {
+                bytes.push(CODE_BLOCK32);
+                push_integer(bytes, size as i64 * 1024 + i64::from(inner.tag), 4);
+            }
+            for field in &inner.fields {
+                write(bytes, sizes, field);
+            }
+        }
+    }
+}
+
+/// writeMarshaled: the value with its header, without sharing.
+pub fn write_marshaled(value: &MarshalValue) -> Vec<u8> {
+    let mut data = Vec::new();
+    let mut sizes = Sizes::default();
+    write(&mut data, &mut sizes, value);
+    let mut bytes = Vec::with_capacity(HEADER_SIZE + data.len());
+    for field in [
+        MAGIC_NUMBER_SMALL,
+        data.len() as u32,
+        sizes.objects,
+        sizes.words32,
+        sizes.words64,
+    ] {
+        bytes.extend(field.to_be_bytes());
+    }
+    bytes.extend(data);
+    bytes
+}
