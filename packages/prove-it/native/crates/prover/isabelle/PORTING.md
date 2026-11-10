@@ -79,7 +79,6 @@ modules ported separately fit together.
 
 Before handing back: `cargo fmt -p prove-isabelle`, then in `packages/prove-it/native`
 `cargo clippy -p prove-isabelle --all-targets -- -D warnings` and `cargo test -p prove-isabelle`
-must pass with your modules registered. Standard library only; no `unsafe` (the one block in
-`interrupt.rs` aside). Don't edit modules other agents own, except to register yours in a
+must pass with your modules registered. Standard library only; no `unsafe`. Don't edit modules other agents own, except to register yours in a
 `mod.rs`; if you need something from a module that is missing or has the wrong shape, say so in
 your report rather than working around it silently.

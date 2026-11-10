@@ -5,7 +5,7 @@
 //! decision running on this thread are installed for its duration by `with_limits`, so that lazy
 //! sequences and tactics, which outlive any borrow, can check them without carrying them.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use prove_decide::Limits;
 
@@ -13,27 +13,24 @@ use crate::error::{Error, Exception, Res, isabelle_error};
 
 thread_local! {
     /// The limits of the decision running on this thread, while `with_limits` runs it.
-    static LIMITS: Cell<Option<*mut Limits<'static>>> = const { Cell::new(None) };
+    static LIMITS: RefCell<Option<Limits>> = const { RefCell::new(None) };
     /// How deep the recursions that call `check_stack` are nested.
     static DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
-struct Installed {
-    limits: Option<*mut Limits<'static>>,
-}
+/// Puts back the limits that were installed before, when the decision ends however it ends, so
+/// that no decision keeps its limits after it returns.
+struct Installed(Option<Limits>);
 
 impl Drop for Installed {
     fn drop(&mut self) {
-        LIMITS.with(|cell| cell.set(self.limits));
+        LIMITS.with(|cell| *cell.borrow_mut() = self.0.take());
     }
 }
 
 /// Runs a decision with `limits` installed for `check_interrupt`.
-pub fn with_limits<T>(limits: &mut Limits<'_>, run: impl FnOnce() -> T) -> T {
-    let pointer = (limits as *mut Limits<'_>).cast::<Limits<'static>>();
-    let _restore = Installed {
-        limits: LIMITS.with(|cell| cell.replace(Some(pointer))),
-    };
+pub fn with_limits<T>(limits: &Limits, run: impl FnOnce() -> T) -> T {
+    let _restore = Installed(LIMITS.with(|cell| cell.borrow_mut().replace(limits.clone())));
     run()
 }
 
@@ -41,13 +38,12 @@ pub fn with_limits<T>(limits: &mut Limits<'_>, run: impl FnOnce() -> T) -> T {
 /// is canceled. Each check is a step. Without installed limits (a unit test of the kernel), it
 /// never interrupts.
 pub fn check_interrupt() -> Res<()> {
-    let Some(pointer) = LIMITS.with(Cell::get) else {
-        return Ok(());
-    };
-    // SAFETY: `with_limits` installs the pointer from a live `&mut Limits` and removes it before
-    // that borrow ends; nothing else touches the limits while the decision runs on this thread.
-    let limits = unsafe { &mut *pointer };
-    if limits.is_step_limit_reached() || limits.is_past_deadline() || limits.is_canceled() {
+    let is_interrupted = LIMITS.with(|cell| {
+        cell.borrow().as_ref().is_some_and(|limits| {
+            limits.is_step_limit_reached() || limits.is_past_deadline() || limits.is_canceled()
+        })
+    });
+    if is_interrupted {
         return Err(isabelle_error(Exception::Interrupt, "Interrupt"));
     }
     Ok(())
@@ -83,4 +79,33 @@ pub fn check_stack() -> Res<Depth> {
         depth.set(depth.get() + 1);
         Ok(Depth(()))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interrupts_past_the_step_limit_only_while_installed() {
+        let limits = Limits::new(f64::INFINITY, Some(2), None);
+        with_limits(&limits, || {
+            assert!(check_interrupt().is_ok());
+            assert!(check_interrupt().is_ok());
+            assert!(check_interrupt().is_err_and(|error| error.is(Exception::Interrupt)));
+        });
+        assert_eq!(limits.steps(), 3);
+        assert!(check_interrupt().is_ok());
+        assert_eq!(limits.steps(), 3);
+    }
+
+    #[test]
+    fn gives_up_past_the_maximum_depth() {
+        let guards = (0..MAXIMUM_DEPTH)
+            .map(|_| check_stack())
+            .collect::<Res<Vec<_>>>();
+        assert!(guards.is_ok());
+        assert!(matches!(check_stack(), Err(Error::Stack)));
+        drop(guards);
+        assert!(check_stack().is_ok());
+    }
 }
