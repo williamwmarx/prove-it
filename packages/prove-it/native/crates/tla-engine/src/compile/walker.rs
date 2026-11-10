@@ -15,7 +15,7 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use tla_ir::{Bound, Index, NodeId, NodeKind, Param, Pattern, Resolution, ScopeBinding};
-use tla_values::store::{FALSE, KIND_SET, KIND_TUPLE, Outcome, TRUE};
+use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::nodes::assign_bound;
@@ -467,7 +467,7 @@ struct Item {
 // A walk of a universal quantifier whose body assigns or branches, as TLC walks the conjunction of
 // its body over the bindings: the first binding, then the others in reverse.
 struct WalkedForall {
-    levels: Vec<(Eval, u32)>,
+    levels: Vec<(Ordered, u32)>,
     body: Step,
     // The body as a guard, for the shortcut of the initial predicate.
     guard: Option<Deferred>,
@@ -543,17 +543,12 @@ impl WalkedForall {
         // be walked anyway, and hands over.
         let mut bindings = 1u64;
         for (set, slot) in &self.levels {
-            let id = set(machine)?;
-            let kind = machine.store.kind_of(id);
-            if kind != KIND_SET && kind != KIND_TUPLE {
-                return Err(Bail("an action quantified over a non-set"));
-            }
+            let id = (set.eval)(machine)?;
+            let size = set.size(machine, id)?;
             sets.push((id, bindings, machine.locals[*slot as usize]));
-            bindings = bindings
-                .checked_mul(u64::from(machine.store.size_of(id)))
-                .ok_or(Bail(
-                    "an action quantified over more bindings than the engine counts",
-                ))?;
+            bindings = bindings.checked_mul(u64::from(size)).ok_or(Bail(
+                "an action quantified over more bindings than the engine counts",
+            ))?;
         }
         let run = ForallRun {
             sets,
@@ -1609,7 +1604,7 @@ impl<'a> Compiler<'a> {
                     let set = self.compile_ordered(bound.set, &inner, false)?;
                     let binder = self.bind_bound(&bound.pattern, &inner);
                     inner = binder.context;
-                    levels.push((set.eval, binder.slots[0]));
+                    levels.push((set, binder.slots[0]));
                 }
                 // Each binding's walk starts where the last left off, which the compiler doesn't
                 // follow, so it knows only what was assigned before.
