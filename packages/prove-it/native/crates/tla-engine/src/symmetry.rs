@@ -93,11 +93,12 @@ pub struct Canonicalizer {
     // TLC sorts each image, which fails where it mixes model values of different types; the images
     // of a group that can mix them are built, so that the engine fails there too.
     is_type_preserving: bool,
-    // Each permutation's image of each id permuted so far, or NONE.
-    images: Vec<Vec<Id>>,
+    // Each permutation's image of each id permuted so far, or NONE, and of each model value the
+    // group moves.
+    images: Table,
     // For each permutation and id, the image the id's image last compared larger than, or NONE: a
     // state is generated again and again, and an image that compared equal or smaller is known.
-    larger_than: Vec<Vec<Id>>,
+    larger_than: Table,
     order: Vec<usize>,
     // The parts of the value being compared, and stamps that mark ids by the comparison that saw
     // them, with the position each key was seen at.
@@ -123,8 +124,64 @@ fn step_key(id: Id, survivors: u32) -> u64 {
     u64::from(survivors) << 32 | u64::from(id)
 }
 
-fn get(table: &[Id], id: Id) -> Id {
-    table.get(id as usize).copied().unwrap_or(NONE)
+/// An id for each permutation and id, or NONE, as a row of every permutation's by id, so that the
+/// permutations tried one after another for a value find its parts' images on the same lines.
+struct Table {
+    width: usize,
+    // Each id's row, or NONE.
+    rows: Vec<u32>,
+    cells: Vec<Id>,
+}
+
+impl Table {
+    fn new(width: usize) -> Self {
+        Table {
+            width,
+            rows: Vec::new(),
+            cells: Vec::new(),
+        }
+    }
+
+    fn get(&self, id: Id, index: usize) -> Id {
+        match self.rows.get(id as usize) {
+            Some(&row) if row != NONE => self.cells[row as usize * self.width + index],
+            _ => NONE,
+        }
+    }
+
+    // The row of the id, made with every cell `fill` if it has none.
+    fn row(&mut self, id: Id, fill: Id, count: usize) -> usize {
+        if id as usize >= self.rows.len() {
+            self.rows
+                .resize((count * 2).max(1024).max(id as usize + 1), NONE);
+        }
+        if self.rows[id as usize] == NONE {
+            self.rows[id as usize] = (self.cells.len() / self.width) as u32;
+            self.cells.resize(self.cells.len() + self.width, fill);
+        }
+        self.rows[id as usize] as usize
+    }
+
+    fn put(&mut self, id: Id, index: usize, value: Id, count: usize) {
+        let row = self.row(id, NONE, count);
+        self.cells[row * self.width + index] = value;
+    }
+
+    // Keeps the rows of ids below `bound`, without the cells that are such ids.
+    fn forget_from(&mut self, bound: Id) {
+        self.rows.truncate(bound as usize);
+        let mut cells = Vec::new();
+        for row in self.rows.iter_mut().filter(|row| **row != NONE) {
+            let start = *row as usize * self.width;
+            *row = (cells.len() / self.width) as u32;
+            cells.extend(
+                self.cells[start..start + self.width]
+                    .iter()
+                    .map(|&cell| if cell >= bound { NONE } else { cell }),
+            );
+        }
+        self.cells = cells;
+    }
 }
 
 /// The group by the names of the model values each permutation moves, for a reader with another
@@ -223,13 +280,6 @@ fn compose(first: &HashMap<Id, Id>, second: &HashMap<Id, Id>) -> HashMap<Id, Id>
         .collect()
 }
 
-fn put(table: &mut Vec<Id>, id: Id, value: Id, count: usize) {
-    if id as usize >= table.len() {
-        table.resize((count * 2).max(1024).max(id as usize + 1), NONE);
-    }
-    table[id as usize] = value;
-}
-
 impl Canonicalizer {
     /// A canonicalizer for the group, each permutation as the model values it moves, each to its
     /// image.
@@ -244,9 +294,16 @@ impl Canonicalizer {
 
     fn with(permutations: Group, is_type_preserving: bool, order: Vec<usize>) -> Self {
         let group: Vec<u32> = (IDENTITY..=permutations.len() as u32).collect();
+        let mut images = Table::new(permutations.len());
+        for (index, permutation) in permutations.iter().enumerate() {
+            for (&id, &image) in permutation {
+                let row = images.row(id, id, id as usize + 1);
+                images.cells[row * images.width + index] = image;
+            }
+        }
         Canonicalizer {
-            images: vec![Vec::new(); permutations.len()],
-            larger_than: vec![Vec::new(); permutations.len()],
+            images,
+            larger_than: Table::new(permutations.len()),
             permutations,
             is_type_preserving,
             parts: Vec::new(),
@@ -282,12 +339,8 @@ impl Canonicalizer {
     /// Forgets the images of ids from `bound` on, and the images that are such ids, which the
     /// store has let go of.
     pub fn forget_from(&mut self, bound: Id) {
-        for table in self.images.iter_mut().chain(&mut self.larger_than) {
-            table.truncate(bound as usize);
-            for image in table.iter_mut().filter(|image| **image >= bound) {
-                *image = NONE;
-            }
-        }
+        self.images.forget_from(bound);
+        self.larger_than.forget_from(bound);
         self.steps
             .retain(|&key, &mut (image, _)| (key as Id) < bound && image < bound);
         // A record's shape holds its keys.
@@ -297,18 +350,19 @@ impl Canonicalizer {
     }
 
     fn remember(&mut self, store: &Store, id: Id, index: usize, image: Id) {
-        put(&mut self.images[index], id, image, store.value_count());
+        self.images.put(id, index, image, store.value_count());
     }
 
     fn permute(&mut self, store: &mut Store, id: Id, index: usize) -> Outcome<Id> {
         let kind = store.kind_of(id);
         if kind == KIND_MODEL {
-            return Ok(self.permutations[index].get(&id).copied().unwrap_or(id));
+            let image = self.images.get(id, index);
+            return Ok(if image == NONE { id } else { image });
         }
         if kind != KIND_SET && kind != KIND_FUNCTION && kind != KIND_TUPLE {
             return Ok(id);
         }
-        let known = get(&self.images[index], id);
+        let known = self.images.get(id, index);
         if known != NONE {
             return Ok(known);
         }
@@ -477,12 +531,12 @@ impl Canonicalizer {
         let kind = store.kind_of(id);
         if !self.is_type_preserving
             || (kind != KIND_SET && kind != KIND_FUNCTION && kind != KIND_TUPLE)
-            || get(&self.images[index], id) != NONE
+            || self.images.get(id, index) != NONE
         {
             let image = self.permute(store, id, index)?;
             return store.compare(image, smallest);
         }
-        let known = get(&self.larger_than[index], id);
+        let known = self.larger_than.get(id, index);
         if known == smallest {
             return Ok(1);
         }
@@ -493,12 +547,8 @@ impl Canonicalizer {
         }
         let comparison = self.compare_unbuilt(store, id, index, smallest)?;
         if comparison > 0 {
-            put(
-                &mut self.larger_than[index],
-                id,
-                smallest,
-                store.value_count(),
-            );
+            self.larger_than
+                .put(id, index, smallest, store.value_count());
         }
         if comparison == 0 {
             self.remember(store, id, index, smallest);
