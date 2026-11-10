@@ -2,7 +2,8 @@
 // result converts to, the same for each model, every variable as TLC prints it and as plain data.
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { check, type CheckResult } from "../../src";
@@ -206,6 +207,39 @@ describe("check's result", () => {
         },
       ],
     ]);
+  });
+
+  it("logs a check the native check declines once, with what both checks read", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "prove-it-check-log-"));
+    const logPath = join(directory, "checks.jsonl");
+    process.env.PROVE_IT_CHECK_LOG = logPath;
+    process.env.PROVE_IT_ENGINE = "debug";
+    const lines: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
+      if (typeof message === "string") lines.push(message);
+    });
+    try {
+      await check({
+        source:
+          '---- MODULE M ----\nEXTENDS Naturals, Json, Helper\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x\' = x + 1 /\\ ndJsonSerialize("out.json", <<Value>>)\n====',
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        loadModule: (name) =>
+          name === "Helper" ? "---- MODULE Helper ----\nValue == 1\n====" : undefined,
+        writeFile: () => {},
+      });
+    } finally {
+      spy.mockRestore();
+      delete process.env.PROVE_IT_CHECK_LOG;
+    }
+    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: check declined: /));
+    const entries = readFileSync(logPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    rmSync(directory, { recursive: true, force: true });
+    expect(entries.filter((entry) => "config" in entry)).toHaveLength(1);
+    expect(new Set(entries.map((entry) => entry.id)).size).toBe(1);
+    expect(entries.filter((entry) => entry.module === "Helper").length).toBeGreaterThan(0);
   });
 
   it("reports each violation -continue goes on past, through the TypeScript check", async () => {

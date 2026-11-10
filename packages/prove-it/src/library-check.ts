@@ -14,7 +14,7 @@ import {
 } from "./check-result";
 import { checkAllSources, getNativeAddon, loadWasmEngine } from "./engine/native";
 import { getEngineVariables, isTypeScriptCheckAsked, reportEngine } from "./engine/settings";
-import { checkParsed, logCheck } from "./parallel";
+import { checkUnlogged, logCheck } from "./parallel";
 
 export interface CheckOptions extends Omit<SearchOptions, "onProgress"> {
   // Reports the points of the search at which TLC prints a message. Only the TypeScript check
@@ -54,8 +54,6 @@ const checkWithEngine = (options: CheckOptions) => {
   }
   const addon = getNativeAddon();
   if (typeof addon === "string") return undefined;
-  // The TypeScript check logs a check it takes over itself.
-  const logged = logCheck({ ...options, onProgress: undefined });
   const args = [
     ...(options.isTraceRecorded ? [] : ["-noGenerateSpecTE"]),
     ...(options.seed === undefined ? [] : ["-seed", String(options.seed)]),
@@ -78,9 +76,9 @@ const checkWithEngine = (options: CheckOptions) => {
       : kind === "module"
         ? BUILT_IN_MODULES.has(path)
           ? undefined
-          : logged.loadModule?.(path)
+          : options.loadModule?.(path)
         : kind === "class"
-          ? logged.loadClass?.(path)
+          ? options.loadClass?.(path)
           : // SANY's report names the file of each module it parses, which the result doesn't hold.
             "";
   };
@@ -120,7 +118,7 @@ const checkWithInterpreter = async (options: CheckOptions) => {
   const version = options.version ?? "master";
   const continued: Violation[] = [];
   const onProgress = options.onProgress;
-  const result = await checkParsed({
+  const result = await checkUnlogged({
     ...options,
     onProgress:
       onProgress || options.isContinued
@@ -142,5 +140,13 @@ const checkWithInterpreter = async (options: CheckOptions) => {
 
 export const check = async (options: CheckOptions): Promise<CheckResult> => {
   await loadWasmEngine();
-  return checkWithEngine(options) ?? checkWithInterpreter(options);
+  // PROVE_IT_CHECK_LOG logs the call once, and what either check reads under it.
+  const readers = logCheck({ ...options, onProgress: undefined });
+  const logged = {
+    ...options,
+    loadModule: readers.loadModule,
+    loadClass: readers.loadClass,
+    readFile: readers.readFile,
+  };
+  return checkWithEngine(logged) ?? checkWithInterpreter(logged);
 };

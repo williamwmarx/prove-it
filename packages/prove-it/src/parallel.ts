@@ -132,11 +132,16 @@ export const logCheck = (options: CheckOptions): CheckOptions => {
 // The TypeScript check, which the library's check falls back to and the CLI runs where the native
 // check declines. The readings are those of a spec SANY accepted, which the check
 // reads its modules from.
-export const checkParsed = async (
-  unlogged: CheckOptions,
+export const checkParsed = (
+  options: CheckOptions,
+  readings?: ReadonlyMap<string, SanyReading>,
+): Promise<CheckResult> => checkUnlogged(logCheck(options), readings);
+
+// checkParsed, for a check its caller logged.
+export const checkUnlogged = async (
+  options: CheckOptions,
   readings?: ReadonlyMap<string, SanyReading>,
 ): Promise<CheckResult> => {
-  const options = logCheck(unlogged);
   await loadWasmEngine();
   const config =
     typeof options.config === "string"
