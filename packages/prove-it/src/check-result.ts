@@ -24,7 +24,8 @@ import { formatValue, toFiniteFunction, type Value } from "./values";
 // a sequence or a tuple, as an array; a record, or any function whose keys are all strings none of
 // which starts with "@", as an object; and, tagged by a key that starts with "@", any other
 // function as its pairs, a set as its elements, a model value as its name, and a set or function
-// TLC keeps lazy, such as Nat, as TLC's text of it. Keys and elements are in TLC's order.
+// TLC keeps lazy, such as Nat, as TLC's text of it, as TLC's toString writes it before its pretty
+// printer breaks the lines. Keys and elements are in TLC's order.
 export type PlainValue =
   | boolean
   | number
@@ -41,7 +42,8 @@ interface PlainRecord {
 }
 
 // A variable of a state: TLC's text of its value, as TLC prints it in a trace, and the value as
-// plain data, null where TLC prints null for a variable a successor leaves undefined.
+// plain data, null where TLC prints null for a variable a successor leaves undefined, and wherever
+// the data couldn't be exactly TLC's.
 export interface TraceVariable {
   text: string;
   value: PlainValue | null;
@@ -83,30 +85,41 @@ export type CheckProgress =
   | Exclude<SearchProgress, { kind: "violation" }>
   | { kind: "violation"; status: CheckStatus; violation: Violation };
 
-const toPlainRecord = (entries: [string, PlainValue][]): PlainRecord => Object.fromEntries(entries);
+const isPlain = (value: PlainValue | null): value is PlainValue => value !== null;
 
-const toPlainFunction = (domain: Value[], range: Value[]): PlainValue => {
+// The values as plain data, or null where one can't be.
+const toPlainValues = (values: Value[]) => {
+  const plain = values.map(toPlainValue);
+  return plain.every(isPlain) ? plain : null;
+};
+
+const toPlainFunction = (domain: Value[], range: Value[]): PlainValue | null => {
+  const keys = toPlainValues(domain);
+  const values = toPlainValues(range);
+  if (keys === null || values === null) return null;
   const isSequence = domain.every((key, index) => key === index + 1);
   const isRecord =
     domain.length > 0 && domain.every((key) => typeof key === "string" && !key.startsWith("@"));
-  if (isSequence) return range.map(toPlainValue);
-  if (isRecord) {
-    return toPlainRecord(domain.map((key, index) => [String(key), toPlainValue(range[index])]));
-  }
-  return {
-    "@function": domain.map((key, index) => [toPlainValue(key), toPlainValue(range[index])]),
-  };
+  if (isSequence) return values;
+  if (isRecord) return Object.fromEntries(domain.map((key, index) => [String(key), values[index]]));
+  return { "@function": keys.map((key, index) => [key, values[index]]) };
 };
 
-// A value as plain data, as prove-it-check's plain.rs writes the native one.
-const toPlainValue = (value: Value): PlainValue => {
+// A value as plain data, as prove-it-check's plain.rs writes the native one: null where TLC can't
+// print the value, as a set it can't normalize, or where its text wouldn't be TLC's.
+const toPlainValue = (value: Value): PlainValue | null => {
   if (typeof value !== "object") return value;
   if (value.kind === "ModelValue") return { "@model": value.name };
-  if (value.kind === "Set") return { "@set": value.elements.map(toPlainValue) };
+  if (value.kind === "MixedSet") return null;
+  if (value.kind === "Set") {
+    const elements = toPlainValues(value.elements);
+    return elements && { "@set": elements };
+  }
   if (value.kind === "Interval") {
     return {
-      "@set": Array.from({ length: Math.max(0, value.high - value.low + 1) }, (_, index) =>
-        toPlainValue(value.low + index),
+      "@set": Array.from(
+        { length: Math.max(0, value.high - value.low + 1) },
+        (_, index) => value.low + index,
       ),
     };
   }
@@ -119,6 +132,10 @@ const toPlainValue = (value: Value): PlainValue => {
   ) {
     const enumerated = toFiniteFunction(value);
     return toPlainFunction(enumerated.domain, enumerated.range);
+  }
+  // The interpreter writes a lazy function or set filter it has no source for as no TLC text.
+  if ((value.kind === "LazyFunction" || value.kind === "FilteredSet") && !value.source) {
+    return null;
   }
   return { "@lazy": formatValue(value) };
 };

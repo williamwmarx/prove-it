@@ -118,6 +118,36 @@ describe("check's result", () => {
     ]);
   });
 
+  // Lazy.out is the behavior TLC (tla2tools at d8fb231) prints for the model, whose ALIAS holds the
+  // sets and functions TLC keeps lazy.
+  it("writes a lazy set or function as the text TLC prints for it", async () => {
+    const directory = join(import.meta.dirname, "../fixtures/plain-lazy");
+    const run = await runBoth(
+      "",
+      readFileSync(join(directory, "Lazy.cfg"), "utf8"),
+      readFileSync(join(directory, "Lazy.tla"), "utf8"),
+    );
+    const states = run.result.violations[0].states;
+    expect(
+      states
+        .map(
+          (state, index) =>
+            `State ${index + 1}: <${state.label}>\n${Object.entries(state.variables)
+              .map((entry) => `/\\ ${entry[0]} = ${entry[1].text}\n`)
+              .join("")}\n`,
+        )
+        .join(""),
+    ).toBe(readFileSync(join(directory, "Lazy.out"), "utf8"));
+    const variables = states[0].variables;
+    const lazy = Object.entries(variables).filter(
+      (entry) => entry[0] !== "x" && entry[0] !== "nested",
+    );
+    expect(lazy.map((entry) => entry[1].value)).toEqual(
+      lazy.map((entry) => ({ "@lazy": entry[1].text })),
+    );
+    expect(variables.nested.value).toEqual([{ "@lazy": "Nat" }, 1]);
+  });
+
   it("reports where a lasso's cycle starts", async () => {
     const run = await runBoth(
       [

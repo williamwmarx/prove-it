@@ -3,14 +3,17 @@
 //! array; one whose keys are all strings, none starting with `@`, as an object; and, tagged, any
 //! other function as `{"@function": [[key, value], ...]}`, a set TLC holds enumerated or as an
 //! interval as `{"@set": [...]}`, a model value as `{"@model": name}`, and a set or function TLC
-//! keeps lazy as `{"@lazy": text}`, with TLC's text of it. Keys and elements are in TLC's order.
+//! keeps lazy as `{"@lazy": text}`, with TLC's text of it as its `toString` writes it, which the
+//! trace printer writes exactly as it writes the states. Keys and elements are in TLC's order. A
+//! value holding a set TLC can't normalize, which TLC can't print, is `null`.
 
 use std::fmt::Write;
 
 use tla_trace::{Value, format_value};
 
 /// A variable of a state TLC prints: its name, TLC's text of its value, and the value as plain
-/// data, `null` where TLC prints `null` for a variable a successor leaves undefined.
+/// data, `null` where TLC prints `null` for a variable a successor leaves undefined or where the
+/// data can't be TLC's.
 #[derive(Clone)]
 pub struct Variable {
     pub name: String,
@@ -20,11 +23,10 @@ pub struct Variable {
 
 pub fn to_plain(value: &Value) -> String {
     let mut out = String::new();
-    write_plain(value, &mut out);
-    out
+    write_plain(value, &mut out).map_or_else(|| "null".into(), |()| out)
 }
 
-fn write_plain(value: &Value, out: &mut String) {
+fn write_plain(value: &Value, out: &mut String) -> Option<()> {
     match value {
         Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
         Value::Int(value) => {
@@ -36,14 +38,12 @@ fn write_plain(value: &Value, out: &mut String) {
             write_string(&text.units, out);
             out.push('}');
         }
-        Value::Set(elements) => write_tagged("@set", elements.iter(), out),
-        Value::Interval(low, high) => {
-            write_tagged(
-                "@set",
-                (*low..=*high).map(Value::Int).collect::<Vec<_>>().iter(),
-                out,
-            );
-        }
+        Value::Set(elements) => write_tagged("@set", elements.iter(), out)?,
+        Value::Interval(low, high) => write_tagged(
+            "@set",
+            (*low..=*high).map(Value::Int).collect::<Vec<_>>().iter(),
+            out,
+        )?,
         Value::Function(function) => {
             let is_sequence = function
                 .domain
@@ -55,7 +55,7 @@ fn write_plain(value: &Value, out: &mut String) {
                     |key| matches!(key, Value::Str(text) if text.units.first() != Some(&u16::from(b'@'))),
                 );
             if is_sequence {
-                write_array(function.range.iter(), out);
+                write_array(function.range.iter(), out)?;
             } else if is_record {
                 out.push('{');
                 for (position, (key, value)) in
@@ -68,7 +68,7 @@ fn write_plain(value: &Value, out: &mut String) {
                         write_string(&text.units, out);
                     }
                     out.push(':');
-                    write_plain(value, out);
+                    write_plain(value, out)?;
                 }
                 out.push('}');
             } else {
@@ -80,37 +80,45 @@ fn write_plain(value: &Value, out: &mut String) {
                         out.push(',');
                     }
                     out.push('[');
-                    write_plain(key, out);
+                    write_plain(key, out)?;
                     out.push(',');
-                    write_plain(value, out);
+                    write_plain(value, out)?;
                     out.push(']');
                 }
                 out.push_str("]}");
             }
         }
-        Value::Unsorted(_) | Value::Lazy(_) | Value::Lambda(_) => {
+        Value::Unsorted(_) => return None,
+        Value::Lazy(_) | Value::Lambda(_) => {
             out.push_str("{\"@lazy\":");
             write_string(&format_value(value).encode_utf16().collect::<Vec<_>>(), out);
             out.push('}');
         }
     }
+    Some(())
 }
 
-fn write_array<'v>(values: impl Iterator<Item = &'v Value>, out: &mut String) {
+fn write_array<'v>(values: impl Iterator<Item = &'v Value>, out: &mut String) -> Option<()> {
     out.push('[');
     for (position, value) in values.enumerate() {
         if position > 0 {
             out.push(',');
         }
-        write_plain(value, out);
+        write_plain(value, out)?;
     }
     out.push(']');
+    Some(())
 }
 
-fn write_tagged<'v>(tag: &str, values: impl Iterator<Item = &'v Value>, out: &mut String) {
+fn write_tagged<'v>(
+    tag: &str,
+    values: impl Iterator<Item = &'v Value>,
+    out: &mut String,
+) -> Option<()> {
     let _ = write!(out, "{{\"{tag}\":");
-    write_array(values, out);
+    write_array(values, out)?;
     out.push('}');
+    Some(())
 }
 
 // A JSON string of UTF-16 units, each unit outside printable ASCII escaped, so that a lone
@@ -170,5 +178,10 @@ mod tests {
         assert_eq!(to_plain(&tagged), "{\"@function\":[[\"@set\",1]]}");
         let function = Value::function(vec![Value::Int(0)], vec![Value::Int(1)], Class::Plain);
         assert_eq!(to_plain(&function), "{\"@function\":[[0,1]]}");
+        let unsorted = Value::Unsorted(Rc::new(vec![Value::Int(1), Value::Str(text("a"))]));
+        assert_eq!(
+            to_plain(&Value::tuple(vec![Value::Int(1), unsorted])),
+            "null"
+        );
     }
 }
