@@ -3387,7 +3387,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             to_atom_failure(&context, &search, initial_states, unanswered)
                         }),
                         Some(None) => Some(found),
-                        Some(Some(Verdict::Accepted { path, violated, .. })) if is_deadlock => {
+                        // TLC stops at the first state whose tableau node accepts every
+                        // behavior, which is the deadlocked one only where that is the last it
+                        // added.
+                        Some(Some(Verdict::Accepted {
+                            state,
+                            path,
+                            violated,
+                        })) if is_deadlock && state as usize == search.expanding => {
                             found.kind = ViolationKind::Deadlock {
                                 accepted: Some(Box::new(AcceptedTrace {
                                     states: path
