@@ -605,21 +605,32 @@ E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d
   "proof step selected instead of expression." A theorem whose statement is an expression, which
   SANY takes as one, is linked as a definition; named in its own proof, where the front end hasn't
   bound it yet, it stays `NotYet` (ProofsTest's `DefineStepProof`).
-- `processLetIn` and `checkForUndefinedRecursiveOps`: a LET's RECURSIVE declarations are in the AST
-  (`ExpressionKind::Let::recursive`). Those it doesn't define are bound as pending operators of
-  their declaration's place, so a definition of one at a deeper LET is "defined at wrong LET/IN
-  level" (and the operator, not the function, is added again, with SANY's warning of a duplicate).
-  At the end of the LET's definitions, before its body, which is a level up, SANY reports
-  "Symbol S declared in RECURSIVE statement but not defined." for every declaration of the LET's
-  level it has read and left undefined (`recursiveDecls` is the module's), each once, as
-  `Errors.addMessage` drops a message it holds. Each declaration binds with its own arity,
-  where `processRecursive` binds it, and the LET's end reports those still pending. `NotYet`, as
-  SANY's symbol table or its order would part from the front end's: a definition before a
-  declaration that defines or names the operator (in its body or bounds); a parameter or bound
-  variable of a declared name; a definition whose parameters differ from its declaration (in
-  number, or taking operators, or a function of a declaration with parameters); an INSTANCE in
-  the LET; a nested LET that declares again an operator an enclosing one leaves undefined; and a
-  LET the front end analyzes again for a generated definition.
+- RECURSIVE declarations: `recursive.rs` names the shapes the front end follows, and every other
+  module with a RECURSIVE declaration is `NotYet`. `processRecursive` binds each declared operator
+  at the current LET/IN level (`curLevel`), `processOperator` and `processFunction` define it,
+  `checkForUndefinedRecursiveOps` reports it at the end of its LET or module if nothing has, and
+  `SymbolTable.addSymbol` decides what any other binding of its name means. The front end follows
+  a declaration of N with k arguments, at module level or in a LET, only where nothing before it
+  in its module or LET names or binds N, and nothing after it in its scope binds N but one
+  definition of N in the same module or LET (or, for a LET, one LET definition of N within a
+  later definition of that LET, "defined at wrong LET/IN level"). That definition is an operator
+  with k parameters that take no arguments, or a function when k is 0; at module level it may
+  instead have another number of such parameters ("Definition of N has different arity than its
+  RECURSIVE declaration.") or be a function when k isn't 0 ("Function N has operator arguments in
+  its RECURSIVE declaration."). Where N is left undefined, defined at a deeper LET, or defined in
+  one of those two other shapes, nothing may name N. A LET with RECURSIVE declarations has no
+  INSTANCE and no other such LET within it; a nested module declares nothing RECURSIVE at its own
+  level; no INSTANCE without a name follows a module-level declaration; and the resolver declines
+  a declaration of a name already bound where it appears. Within these, a LET's declarations are
+  in the AST (`ExpressionKind::Let::recursive`) and bind as pending operators with the
+  declaration's arity, and at the end of the LET's definitions, before its body, which is a level
+  up, SANY reports "Symbol S declared in RECURSIVE statement but not defined." for every
+  declaration of that level it has read and left undefined (`recursiveDecls` is the module's),
+  each once, as `Errors.addMessage` drops a message it holds. `tests/fixtures/recursive-shapes`
+  holds a grid of declarations at module level, in a LET and in a LET within a definition of
+  another, against everything else that can bind or name what they declare; the `report.rs` test
+  lists the cells the front end reports, and `scripts/sany-corpus.ts --specs` runs the grid
+  through TLC.
 - `generateUseOrHide` and `generateLeafProof`: the parser keeps every DEF entry in the SANY run,
   and `check_defs` reports, where SANY meets it, an unknown name ("Unknown operator: `X'." then
   "DEF clause entry should describe a defined operator.") and a built-in operator, a constant, a

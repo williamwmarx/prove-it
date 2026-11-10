@@ -16,6 +16,7 @@ use crate::hash::{FastMap, FastSet};
 use crate::linter::Linter;
 use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
+use crate::recursive::check_recursive;
 use crate::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 
 type Result<T> = std::result::Result<T, Stop>;
@@ -749,6 +750,7 @@ pub fn get_sany_text(
 /// an operator the section declared drives the total below zero (`endOpDefNode`). `NotYet` where
 /// the count is off in a way that throws nothing, or elsewhere.
 fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
+    check_recursive(module)?;
     let mut pending: Vec<Rc<Declaration>> = Vec::new();
     let mut declared: Vec<Rc<Declaration>> = Vec::new();
     let mut is_cleared = false;
@@ -776,36 +778,17 @@ fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
                 if pending[index].arity != 0
                     && matches!(definition.kind, DefinitionKind::Function { .. })
                 {
-                    return Err(not_yet(
-                        "a function declared RECURSIVE with operator arguments in a recursive section",
-                    ));
+                    if is_cleared {
+                        return Err(not_yet(
+                            "a function declared RECURSIVE with operator arguments in a recursive section",
+                        ));
+                    }
+                    continue;
                 }
-                // `SymbolTable.addSymbol` rejects a declaration of a name the module binds otherwise,
-                // which leaves the definition another symbol's.
-                let is_conflicting = !module.extends.is_empty()
-                    || !module.instances.is_empty()
-                    || declared.iter().any(|declaration| {
-                        let name = &declaration.name;
-                        module
-                            .constants
-                            .iter()
-                            .chain(&module.variables)
-                            .any(|other| other.name == *name)
-                            || module
-                                .definitions
-                                .iter()
-                                .filter(|other| other.name == *name)
-                                .count()
-                                > 1
-                            || module
-                                .theorems
-                                .iter()
-                                .any(|other| other.name.as_ref() == Some(name))
-                            || module
-                                .assumptions
-                                .iter()
-                                .any(|other| other.name.as_ref() == Some(name))
-                    });
+                // `check_recursive` leaves no other binding of a declared name in the module, but
+                // one from an EXTENDS or an INSTANCE that `SymbolTable.addSymbol` would reject the
+                // declaration over, which only the resolver finds.
+                let is_conflicting = !module.extends.is_empty() || !module.instances.is_empty();
                 if is_cleared && is_conflicting {
                     return Err(not_yet(
                         "a recursive section after a module, whose declarations SANY may reject",

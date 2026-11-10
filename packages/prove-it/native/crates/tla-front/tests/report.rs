@@ -1,6 +1,8 @@
 //! What SANY prints for a small spec. `scripts/front-differential.ts sany-text` holds the Rust text
 //! to the TypeScript one on every corpus spec.
 
+use std::path::Path;
+
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::report::{ReportOptions, SanyText, get_sany_text};
@@ -27,6 +29,98 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
     );
     std::fs::remove_dir_all(&directory).expect("a removed directory");
     text
+}
+
+// tests/fixtures/recursive-shapes: RECURSIVE declarations at module level, in a LET and in a LET
+// within a definition of another, against everything else that can bind or name what they declare
+// (src/recursive.rs). The front end writes SANY's report of these, and declines the rest.
+#[test]
+fn reports_only_the_recursive_shapes_it_follows() {
+    let reported = [
+        "RLetDefined",
+        "RLetDefinedZero",
+        "RLetExtendsOther",
+        "RLetExtendsUndefined",
+        "RLetFunction",
+        "RLetInfix",
+        "RLetMutual",
+        "RLetPrimed",
+        "RLetUndefined",
+        "RLetUndefinedTwo",
+        "RLetWrongLevel",
+        "RLetWrongLevelDeeper",
+        "RLetWrongLevelFunction",
+        "RModuleArityLess",
+        "RModuleArityMore",
+        "RModuleArityZero",
+        "RModuleAssumeInSection",
+        "RModuleBodyLevelRecursive",
+        "RModuleDefined",
+        "RModuleDefinedZero",
+        "RModuleExtendsOther",
+        "RModuleExtendsUndefined",
+        "RModuleFunction",
+        "RModuleFunctionArity",
+        "RModuleFunctionArityUndefined",
+        "RModuleInfix",
+        "RModuleInnerRecursive",
+        "RModuleInnerRecursiveUndefined",
+        "RModuleInnerUndefinedOuterUndefined",
+        "RModuleInstanceAfter",
+        "RModuleLocalDefinition",
+        "RModuleModuleAfter",
+        "RModuleModuleInSection",
+        "RModuleModuleInSectionUsed",
+        "RModuleMutual",
+        "RModuleOtherConstantInSection",
+        "RModulePrimed",
+        "RModuleSiblingLets",
+        "RModuleSiblingLetsSameName",
+        "RModuleTheoremInSection",
+        "RModuleTheoremUses",
+        "RModuleUndefined",
+        "RModuleUndefinedTwo",
+        "RModuleUseInSection",
+        "RModuleVariableInSection",
+        "RNestedDefined",
+        "RNestedDefinedZero",
+        "RNestedFunction",
+        "RNestedInfix",
+        "RNestedMutual",
+        "RNestedPrimed",
+        "RNestedUndefined",
+        "RNestedUndefinedTwo",
+        "RNestedWrongLevel",
+        "RNestedWrongLevelDeeper",
+        "RNestedWrongLevelFunction",
+        "RecursiveHelper",
+    ];
+    let directory =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/recursive-shapes");
+    let mut paths: Vec<_> = std::fs::read_dir(&directory)
+        .expect("the grid")
+        .map(|entry| entry.expect("an entry").path())
+        .collect();
+    paths.sort();
+    for path in paths {
+        let name = path.file_stem().and_then(|stem| stem.to_str()).expect("a name");
+        let report = get_sany_text(
+            &path,
+            &ReportOptions {
+                version: TlcVersion::Master,
+                file_name: None,
+                load_module: &|module| {
+                    std::fs::read_to_string(directory.join(format!("{module}.tla"))).ok()
+                },
+                describe_file: &|name, origin| format!("{name} {origin:?}"),
+            },
+        );
+        match report {
+            Ok(_) => assert!(reported.contains(&name), "{name} is reported"),
+            Err(FrontError::NotYet(_)) => assert!(!reported.contains(&name), "{name} declines"),
+            Err(error) => panic!("{name}: {error:?}"),
+        }
+    }
 }
 
 #[test]
@@ -166,9 +260,9 @@ fn reports_operators_a_let_declares_recursive_and_leaves_undefined() {
     assert_eq!(
         get_text(
             "recursive",
-            "---- MODULE Main ----\nA == LET RECURSIVE F(_)\n     IN 1\nB == LET RECURSIVE G\n         H == LET G == 2 IN G\n     IN LET RECURSIVE K IN 3\nC == LET RECURSIVE R\n         D == LET R[x \\in {}] == 0 IN 0\n     IN 0\n====\n"
+            "---- MODULE Main ----\nA == LET RECURSIVE F(_)\n     IN 1\nB == LET RECURSIVE G\n         H == LET G == 2 IN 0\n     IN 0\nE == LET RECURSIVE K IN 3\nC == LET RECURSIVE R\n         D == LET R[x \\in {}] == 0 IN 0\n     IN 0\n====\n"
         ),
-        "Parsing file Main File\nSemantic processing of module Main\n*** Warnings: 1\n\nline 5, col 19 to line 5, col 24 of module Main\n\nMultiple declarations or definitions for symbol G.  \nThis duplicates the one at line 4, col 20 to line 4, col 20 of module Main.\n\n\n\nSemantic errors:\n\n*** Errors: 6\n\nline 2, col 20 to line 2, col 23 of module Main\n\nSymbol F declared in RECURSIVE statement but not defined.\n\n\nline 5, col 19 to line 5, col 24 of module Main\n\nRecursive operator G defined at wrong LET/IN level.\n\n\nline 4, col 20 to line 4, col 20 of module Main\n\nSymbol G declared in RECURSIVE statement but not defined.\n\n\nline 6, col 23 to line 6, col 23 of module Main\n\nSymbol K declared in RECURSIVE statement but not defined.\n\n\nline 8, col 19 to line 8, col 34 of module Main\n\nRecursive function R defined at wrong LET/IN level.\n\n\nline 7, col 20 to line 7, col 20 of module Main\n\nSymbol R declared in RECURSIVE statement but not defined.\n\n\n"
+        "Parsing file Main File\nSemantic processing of module Main\n*** Warnings: 1\n\nline 5, col 19 to line 5, col 24 of module Main\n\nMultiple declarations or definitions for symbol G.  \nThis duplicates the one at line 4, col 20 to line 4, col 20 of module Main.\n\n\n\nSemantic errors:\n\n*** Errors: 6\n\nline 2, col 20 to line 2, col 23 of module Main\n\nSymbol F declared in RECURSIVE statement but not defined.\n\n\nline 5, col 19 to line 5, col 24 of module Main\n\nRecursive operator G defined at wrong LET/IN level.\n\n\nline 4, col 20 to line 4, col 20 of module Main\n\nSymbol G declared in RECURSIVE statement but not defined.\n\n\nline 7, col 20 to line 7, col 20 of module Main\n\nSymbol K declared in RECURSIVE statement but not defined.\n\n\nline 9, col 19 to line 9, col 34 of module Main\n\nRecursive function R defined at wrong LET/IN level.\n\n\nline 8, col 20 to line 8, col 20 of module Main\n\nSymbol R declared in RECURSIVE statement but not defined.\n\n\n"
     );
 }
 

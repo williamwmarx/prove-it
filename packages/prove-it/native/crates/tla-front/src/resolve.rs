@@ -9,6 +9,7 @@ use crate::ast::*;
 use crate::errors::{FrontError, SanyError, SyntaxError, format_range};
 use crate::hash::{FastMap, FastSet};
 use crate::ordered_map::OrderedMap;
+use crate::recursive::check_recursive;
 
 pub type Result<T> = std::result::Result<T, FrontError>;
 
@@ -84,8 +85,6 @@ struct Local {
     is_pending: Cell<bool>,
     is_non_fact: bool,
     unselectable: Option<&'static str>,
-    /// Declared RECURSIVE by a LET that doesn't define it.
-    is_undefined_recursive: bool,
     position: Position,
     /// The parameters of a function a LET defines, which SANY checks its applications against.
     function_params: Option<usize>,
@@ -106,7 +105,6 @@ impl Local {
             is_pending: Cell::new(false),
             is_non_fact: false,
             unselectable: None,
-            is_undefined_recursive: false,
             position: MODULE_START,
             function_params: None,
         }
@@ -1432,59 +1430,6 @@ fn is_referenced(expression: &Expression, name: &str) -> bool {
             .any(|child| is_referenced(child, name))
 }
 
-/// Whether the definition takes a parameter of the name.
-fn has_parameter(definition: &Definition, name: &str) -> bool {
-    match &definition.kind {
-        DefinitionKind::Operator { params, .. } => params.iter().any(|param| &*param.name == name),
-        DefinitionKind::Function { bounds } => bounds.iter().any(|bound| {
-            bound
-                .pattern
-                .names()
-                .iter()
-                .any(|bound_name| &**bound_name == name)
-        }),
-    }
-}
-
-/// Whether the expression, or one within it, binds the name: a bound variable, or a parameter of a
-/// LAMBDA or of a LET's definition.
-fn binds_name(expression: &Expression, name: &str) -> bool {
-    let is_named = |names: &[Name]| names.iter().any(|bound_name| &**bound_name == name);
-    let is_bound = match &expression.kind {
-        ExpressionKind::Quantified { bounds, .. }
-        | ExpressionKind::FunctionConstruction { bounds, .. }
-        | ExpressionKind::SetMap { bounds, .. } => {
-            bounds.iter().any(|bound| is_named(bound.pattern.names()))
-        }
-        ExpressionKind::SetFilter { bound, .. } => is_named(bound.pattern.names()),
-        ExpressionKind::UnboundedQuantifier { names, .. }
-        | ExpressionKind::Lambda { params: names, .. } => is_named(names),
-        ExpressionKind::Choose { pattern, .. } => is_named(&get_pattern_names(pattern)),
-        ExpressionKind::Let { definitions, .. } => definitions
-            .iter()
-            .any(|definition| has_parameter(definition, name)),
-        _ => false,
-    };
-    is_bound
-        || expression
-            .children()
-            .iter()
-            .any(|child| binds_name(child, name))
-}
-
-/// Whether the expression, or one within it, is written with the name, or a selection from it.
-fn is_named_in(expression: &Expression, name: &str) -> bool {
-    expression.reference().is_some_and(|written| {
-        &*written == name
-            || written
-                .strip_prefix(name)
-                .is_some_and(|rest| rest.starts_with('!'))
-    }) || expression
-        .children()
-        .iter()
-        .any(|child| is_named_in(child, name))
-}
-
 /// Gives each reference to name in the expression the arity given.
 fn set_reference_arities(expression: &Expr, name: &str, arity: usize, tables: &Tables) {
     if matches!(
@@ -1625,11 +1570,10 @@ fn resolve_definition(
 
 /// Binds the operators a LET declares RECURSIVE as `processRecursive` does, with the arity of the
 /// declaration, and records them with the LET's level. Returns the scope and what they bind.
+/// `check_recursive` has left only definitions with the declaration's shape.
 fn bind_let_recursive(
     recursive: &[Rc<Declaration>],
     definitions: &[Rc<Definition>],
-    has_instances: bool,
-    body: &Expression,
     scope: &Scope,
     unit: &Unit,
 ) -> Result<(Scope, Vec<Rc<Local>>)> {
@@ -1637,71 +1581,6 @@ fn bind_let_recursive(
     let mut locals = Vec::new();
     if recursive.is_empty() {
         return Ok((declared, locals));
-    }
-    // SANY gives a declared operator parameters of arity zero until `processOperator` sets its
-    // definition's, and an INSTANCE binds where it appears, which the front end doesn't follow.
-    let is_reshaped = recursive.iter().any(|declaration| {
-        definitions
-            .iter()
-            .filter(|definition| definition.name == declaration.name)
-            .any(|definition| match &definition.kind {
-                DefinitionKind::Operator { params, .. } => {
-                    params.len() != declaration.arity || params.iter().any(|param| param.arity != 0)
-                }
-                DefinitionKind::Function { .. } => declaration.arity != 0,
-            })
-    });
-    if has_instances || is_reshaped {
-        return Err(FrontError::NotYet(
-            "a LET with RECURSIVE declarations and an INSTANCE, or a definition shaped otherwise than its declaration"
-                .to_owned(),
-        ));
-    }
-    // `SymbolTable.addSymbol` rejects a parameter or a bound variable of a declared operator's
-    // name, which leaves the declaration's binding as SANY has it, and the front end doesn't follow.
-    let is_rebound = recursive.iter().any(|declaration| {
-        let name = &*declaration.name;
-        binds_name(body, name)
-            || definitions.iter().any(|definition| {
-                has_parameter(definition, name)
-                    || binds_name(&definition.body, name)
-                    || match &definition.kind {
-                        DefinitionKind::Function { bounds } => {
-                            bounds.iter().any(|bound| binds_name(&bound.set, name))
-                        }
-                        DefinitionKind::Operator { .. } => false,
-                    }
-            })
-    });
-    if is_rebound {
-        return Err(FrontError::NotYet(
-            "a parameter or a bound variable named like an operator a LET declares RECURSIVE"
-                .to_owned(),
-        ));
-    }
-    // SANY reads the declaration where it appears, which a definition before it neither sees nor
-    // satisfies.
-    let is_named_before = recursive.iter().any(|declaration| {
-        definitions.iter().any(|definition| {
-            let bounds = match &definition.kind {
-                DefinitionKind::Function { bounds } => bounds.as_slice(),
-                DefinitionKind::Operator { .. } => &[],
-            };
-            is_before(
-                definition.location.position(),
-                declaration.location.position(),
-            ) && (definition.name == declaration.name
-                || is_named_in(&definition.body, &declaration.name)
-                || bounds
-                    .iter()
-                    .any(|bound| is_named_in(&bound.set, &declaration.name)))
-        })
-    });
-    if is_named_before {
-        return Err(FrontError::NotYet(
-            "a LET definition that defines or names an operator the LET declares RECURSIVE after it"
-                .to_owned(),
-        ));
     }
     if unit.is_generated {
         return Err(FrontError::NotYet(
@@ -1715,24 +1594,19 @@ fn bind_let_recursive(
                 declaration.name
             )));
         }
-        let definition = definitions
+        let is_defined = definitions
             .iter()
-            .find(|definition| definition.name == declaration.name);
+            .any(|definition| definition.name == declaration.name);
         let local = Rc::new(Local {
             is_pending: Cell::new(true),
-            is_undefined_recursive: definition.is_none(),
             ..Local::new(
                 declaration.name.clone(),
                 Binding {
                     kind: SymbolKind::Definition,
                     arity: declaration.arity,
-                    params: Some(definition.map_or_else(
-                        || Rc::from(vec![0; declaration.arity]),
-                        |definition| get_param_arities(definition),
-                    )),
+                    params: Some(Rc::from(vec![0; declaration.arity])),
                     // Where SANY reports a second declaration of it.
-                    range: definition
-                        .is_none()
+                    range: (!is_defined)
                         .then(|| declaration.location.range.clone())
                         .flatten(),
                 },
@@ -1761,43 +1635,8 @@ fn resolve_definitions(
     instances: &[Rc<Instance>],
     declared_recursive: &[Rc<Local>],
 ) -> Result<Scope> {
-    let mut recursive: Vec<Rc<Local>> = declared_recursive.to_vec();
-    let mut declared = scope.clone();
-    for definition in definitions
-        .iter()
-        .filter(|definition| definition.is_recursive)
-    {
-        let pending =
-            lookup_local(&declared, &definition.name).filter(|local| local.is_pending.get());
-        // SANY adds a second declaration of an operator an enclosing LET declares RECURSIVE and
-        // leaves undefined, which the front end doesn't follow.
-        if pending.as_ref().is_some_and(|local| {
-            local.is_undefined_recursive && !recursive.iter().any(|item| Rc::ptr_eq(item, local))
-        }) {
-            return Err(FrontError::NotYet(format!(
-                "a LET that declares RECURSIVE {}, which an enclosing LET declares and leaves undefined",
-                definition.name
-            )));
-        }
-        if pending.is_some() {
-            continue;
-        }
-        let local = Rc::new(Local {
-            is_pending: Cell::new(true),
-            ..Local::new(
-                definition.name.clone(),
-                Binding {
-                    kind: SymbolKind::Definition,
-                    arity: get_arity(definition),
-                    params: Some(get_param_arities(definition)),
-                    range: None,
-                },
-                declared,
-            )
-        });
-        recursive.push(local.clone());
-        declared = Some(local);
-    }
+    let recursive = declared_recursive;
+    let declared = scope.clone();
     let mut pending: Vec<Rc<Instance>> = if unit.is_generated {
         Vec::new()
     } else {
@@ -1862,7 +1701,7 @@ fn resolve_definitions(
         } else {
             unit.clone()
         };
-        resolved = if resolve_definition(definition, &current, &inner, &recursive)? {
+        resolved = if resolve_definition(definition, &current, &inner, recursive)? {
             Some(Rc::new(Local {
                 params: Some(get_param_arities(definition)),
                 function_params: get_function_params(definition),
@@ -2301,16 +2140,7 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
                 let_level: unit.let_level + 1,
                 ..unit.clone()
             };
-            let (declared, locals) = bind_let_recursive(
-                recursive,
-                definitions,
-                instances
-                    .as_ref()
-                    .is_some_and(|instances| !instances.is_empty()),
-                body,
-                scope,
-                &level,
-            )?;
+            let (declared, locals) = bind_let_recursive(recursive, definitions, scope, &level)?;
             let inner = resolve_definitions(
                 definitions,
                 &declared,
@@ -3334,12 +3164,13 @@ pub fn collect_semantic_errors(
     Ok(errors)
 }
 
-/// A RECURSIVE declaration, and what it binds, if anything.
-type RecursiveDeclaration = (Rc<Declaration>, Option<Rc<Local>>);
+/// A RECURSIVE declaration, and what it binds.
+type RecursiveDeclaration = (Rc<Declaration>, Rc<Local>);
 
 /// SANY binds the names of a module in the order of its units, and reports a RECURSIVE declaration
 /// that no definition follows at the end. Returns the errors.
 pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyError>> {
+    check_recursive(module)?;
     let symbols = Rc::new(create_symbols(module, &unit.imported));
     let facts: Rc<RefCell<FastSet<Name>>> = Rc::new(RefCell::new(
         unit.facts
@@ -3533,7 +3364,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
             let bindings = bindings.clone();
             units.push(SemanticUnit {
                 location: declaration.location.position(),
-                check: Box::new(move |errors, warnings| {
+                check: Box::new(move |_, _| {
                     let binding = Rc::new(Local {
                         is_pending: Cell::new(true),
                         position: declaration.location.position(),
@@ -3548,31 +3379,20 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
                             None,
                         )
                     });
-                    let current = bindings
-                        .borrow()
-                        .get(&declaration.name)
-                        .map(|local| local.binding());
-                    let is_bound = is_bindable(
-                        &declaration.name,
-                        current.as_ref(),
-                        &binding.binding(),
-                        &create_unit(
-                            declaration.location.position(),
-                            None,
-                            errors,
-                            warnings,
-                            false,
-                        ),
-                    );
-                    if is_bound {
-                        bindings
-                            .borrow_mut()
-                            .insert(declaration.name.clone(), binding.clone());
-                        recursive.borrow_mut().push(binding.clone());
+                    // `check_recursive` leaves no other binding of the name after the declaration.
+                    if bindings.borrow().contains_key(&declaration.name) {
+                        return Err(FrontError::NotYet(format!(
+                            "a module-level RECURSIVE declaration of {}, a name already bound",
+                            declaration.name
+                        )));
                     }
+                    bindings
+                        .borrow_mut()
+                        .insert(declaration.name.clone(), binding.clone());
+                    recursive.borrow_mut().push(binding.clone());
                     declarations
                         .borrow_mut()
-                        .push((declaration.clone(), is_bound.then_some(binding)));
+                        .push((declaration.clone(), binding));
                     Ok(())
                 }),
             });
@@ -3713,9 +3533,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         check: Box::new(move |errors, _| {
             for (declaration, binding) in pending.borrow().iter() {
                 if let Some(range) = &declaration.location.range
-                    && binding
-                        .as_ref()
-                        .is_none_or(|binding| binding.is_pending.get())
+                    && binding.is_pending.get()
                 {
                     errors.borrow_mut().push(SanyError {
                         location: format_range(range),
