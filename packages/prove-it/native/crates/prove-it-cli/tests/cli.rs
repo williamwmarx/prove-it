@@ -145,6 +145,7 @@ fn reads_the_command_line_as_tlc() {
         (&["-simulate", "TCommit"], "the TLC option -simulate"),
         (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
         (&["-fp", "1", "TCommit"], "-fp 1"),
+        (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {
         let output = run(&directory, &[&["tlc2.TLC"], args].concat());

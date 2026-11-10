@@ -609,13 +609,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     if args.has("-continue") {
         return report_not_native(printer, "-continue");
     }
-    // TLC checks no temporal property at the end under -lncheck off, which the binary doesn't follow.
-    if args
-        .first("-lncheck")
-        .is_some_and(|check| check.eq_ignore_ascii_case("off"))
-    {
-        return report_not_native(printer, "-lncheck off");
-    }
     let front = match read_front(
         spec_path,
         config_text.as_deref().unwrap_or_default(),
