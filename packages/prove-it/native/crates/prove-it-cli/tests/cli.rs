@@ -3065,7 +3065,26 @@ fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_co
 // decline.
 #[test]
 fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
-    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/membership-grid");
+    check_grid("membership-grid", 418);
+}
+
+// tests/pieces-grid: the membership grid's specs with Next == /\ (A \/ B \/ E), which TLC doesn't
+// split into actions, A the disjunct that assigns from S, B x' = a and E x' = b, under WF_x(A) or
+// WF_x(B), which the engine answers from the steps the walks through those pieces took where the
+// guard lets it, and WF_x(Copy), Copy a definition of the same action that is no piece of Next,
+// which it evaluates. TLC's output on each formulation at d8fb231 is beside it: each run prints
+// it exactly, or both formulations decline.
+#[test]
+fn answers_fairness_of_pieces_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
+    check_grid("pieces-grid", 792);
+}
+
+// Runs each spec of a grid under Weak and AliasWeak, at 1 and 4 workers: each run prints TLC's
+// output beside it exactly, or both formulations decline.
+fn check_grid(grid: &str, count: usize) {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join(grid);
     let mut names: Vec<String> = std::fs::read_dir(&directory)
         .expect("the grid")
         .filter_map(|entry| {
@@ -3074,7 +3093,7 @@ fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
         })
         .collect();
     names.sort();
-    assert_eq!(names.len(), 418);
+    assert_eq!(names.len(), count);
     for name in names {
         let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
         let constant = if name.contains("Empty") {
