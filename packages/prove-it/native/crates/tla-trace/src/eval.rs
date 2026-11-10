@@ -994,6 +994,10 @@ impl<'ir> Evaluator<'ir> {
             return fail("a field that isn't a string");
         };
         let name = String::from_utf16_lossy(&name.units);
+        // `Tool`'s OPCODE_rs takes a function TLC keeps lazy as the value it builds (`toFcnRcd`).
+        if let Value::Lambda(lambda) = record {
+            return crate::value::lambda_as_function(lambda);
+        }
         let Value::Function(inner) = record else {
             return fail_runtime(
                 "selected a field of a non-record",
