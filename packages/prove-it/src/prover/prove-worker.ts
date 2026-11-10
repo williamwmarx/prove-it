@@ -7,7 +7,10 @@ import { decide } from "./deciders";
 
 const getResponse = (request: DecideRequest): DecideResponse => {
   try {
-    return decide(request.prover, request.text, { timeLimitMs: request.timeLimitMs });
+    return decide(request.prover, request.text, {
+      timeLimitMs: request.timeLimitMs,
+      cancel: request.cancel,
+    });
   } catch (error) {
     if (error instanceof TlaProverError) return { error: error.message };
     throw error;

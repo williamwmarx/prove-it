@@ -1,0 +1,22 @@
+# The prover crates must decide as the TypeScript prover does, whose maps iterate in the order
+# entries were set (design/prover.md 3.6). A std hash map or set iterates in an order that changes
+# from run to run, so iterating one is refused here; use an insertion-ordered map or a Vec. A map
+# only looked up may still be a HashMap. An exception says why the order cannot matter, with
+# #[expect(clippy::disallowed_methods, reason = "...")].
+disallowed-methods = [
+  { path = "std::collections::HashMap::iter", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashMap::iter_mut", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashMap::keys", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashMap::values", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashMap::values_mut", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashMap::into_keys", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashMap::into_values", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashMap::drain", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashMap::retain", reason = "visits in an order that changes between runs" },
+  { path = "std::collections::HashSet::iter", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashSet::drain", reason = "iterates in an order that changes between runs" },
+  { path = "std::collections::HashSet::retain", reason = "visits in an order that changes between runs" },
+  { path = "slice::sort_unstable", reason = "JavaScript's sort is stable; use sort or sort_by" },
+  { path = "slice::sort_unstable_by", reason = "JavaScript's sort is stable; use sort_by" },
+  { path = "slice::sort_unstable_by_key", reason = "JavaScript's sort is stable; use sort_by_key" },
+]

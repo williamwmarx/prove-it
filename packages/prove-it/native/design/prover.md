@@ -186,17 +186,18 @@ answer.
    `smt-pdd`, `smt-clause-store`, `zenon`'s checker tests) are ported to Rust unit tests in the
    crate that ports the code, case by case, and deleted from TypeScript only with the code they
    test.
-2. **The decider corpus** (new, `scripts/prover-inputs.ts`): for every obligation of every corpus
-   module in `proofs.json` and every method `findMethods` lists for it, the text the TypeScript
-   encoder writes, written once to `.prover-inputs/<prover>/<digest>`, with the TypeScript
-   decider's verdict and statistics under the deterministic budget. This is the per-back-end test
-   set and needs no tlapm. Its size is in 2.4.
-3. **The decider differential** (new, `scripts/prover-differential.ts`): runs the Rust decider on
-   every input of the decider corpus, through the addon, and compares verdict and statistics with
-   the recorded TypeScript ones; `--prover smt|zenon|isabelle|ls4`, `--jobs`, `--filter`, as the
-   other conformance scripts. It reports `same`, `differs` (verdict or statistics), `faster-only`
-   (the TypeScript hit a JS-only limit, 2.1), `crash`. The gate is zero `differs` and zero
-   `crash`.
+2. **The decider corpus** (`scripts/prover-inputs.ts`, P0): every text `prove` sends a backend on
+   the corpus modules of `proofs.json`, which methods it tries following what the earlier ones
+   answered, written once to `.prover-inputs/<prover>/<digest>.<ext>`, with the TypeScript
+   decider's verdict, statistics and step limit (2.3) in `tests/conformance/prover-inputs.json`.
+   Replaying the record writes the same inputs on any machine in minutes. This is the per-back-end
+   test set and needs no tlapm. Its size is in 2.4.
+3. **The decider differential** (`scripts/prover-differential.ts`, P0): decides every input of
+   the decider corpus with its step limit, by the Rust port through the addon (`--side rust`) or by
+   the TypeScript (`--side ts`), and compares verdict and statistics with the record;
+   `--prover smt|z3|zenon|isabelle|ls4`, `--jobs`, `--filter`, as the other conformance scripts. It
+   reports `same`, `differs` (verdict or statistics), `unstable` (a runtime limit, 2.3),
+   `declined` and `crash`. The gate is zero `differs`, `declined` and `crash`.
 4. **The encoder differential** (with stage P5): the Rust obligation pipeline writes, for every
    corpus obligation, the printed obligation, the fingerprint and every encoder's text; they must
    equal the TypeScript ones byte for byte. Together with layer 3 this covers `prove` end to end,
@@ -220,12 +221,25 @@ Every decider stops at a wall-clock deadline (`Date.now()` in `rlimit.ts`, `zeno
 `isabelle/pure/interrupt.ts`, `ptl/decide.ts`), which is part of tlapm's semantics and stays. A
 verdict near the deadline therefore depends on the machine, and a Rust port that is faster will
 prove more. That is allowed in production but makes a poor oracle. So the differential runs both
-sides **without a deadline and with a step budget**: Z3's `rlimit` count already exists
-(`ResourceLimit.count`, which also seeds MBQI); P0 adds an equivalent counter to Zenon (its
-`inferences`), the Isabelle interrupt points and the PTL loop, and a `stepLimit` to
-`DecideOptions` that only scripts set. The budget per input is what TypeScript used to reach its
-verdict, plus a margin for inputs that end `unknown` at the step limit. Then verdicts and
-statistics are exact, on any machine, at any load.
+sides **without a deadline and with a step limit**, as built in P0:
+
+- **Steps.** Every check of a decider's limits is a step (`Steps` and `isStepLimitReached` in
+  `verdict.ts`): each `inc` of Z3's resource limit, whose count was already Z3's `m_count` and
+  seeds MBQI; each `getLimitFailure` of Zenon's search, checker and printer; each
+  `checkInterrupt` of Isabelle; each `isExpired` of the PTL decider. Past the step limit a decider
+  gives up exactly as at its deadline. Without a limit nothing changes (the unit tests and the
+  re-recording of 2.4 show it).
+- **A step limit per input.** Steps per second differ about sixfold between inputs of one
+  backend, so no single limit stands for tlapm's time limit. `prover-inputs.ts --record` decides
+  each input twice: first with tlapm's time limit, which gives the steps the backend takes within
+  it on the recording machine, then with those steps as the step limit and no deadline. The
+  second answer, its statistics and the step limit are recorded in
+  `tests/conformance/prover-inputs.json`. From then on the record is a fact about the input, not
+  the machine: any port, on any machine, at any load, must give the same answer and statistics
+  from the same step limit.
+- **Unstable answers.** A full heap (V8's, in `rlimit.ts`) or stack ends a decision for a reason
+  of the runtime, not the search. The record keeps the reason as the statistic `stop`, and the
+  differential reports such inputs as `unstable` instead of comparing them.
 
 ### 2.4 The baseline
 
@@ -318,10 +332,14 @@ wall-clock run.
 
 ### 3.1 Crates
 
-All in the existing workspace, std only, `license` per crate where it ports non-MIT code (3.8).
+All in the existing workspace under `native/crates/prover/<name>`, std only, `license` per crate
+where it ports non-MIT code (3.8). P0 made each one; the backends' crates decline every input until
+their port lands. `crates/prover/clippy.toml` applies to all of them and refuses iterating a std
+hash map or set and unstable sorts (3.6).
 
 | Crate | Ports | Depends on | Lines (TS) |
 |---|---|---|---|
+| `prove-decide` (`decide/`) | `verdict.ts`: `Verdict`, `Decision` with its statistics, `DecideError` (`Prover` for malformed input, `Declined`), and `Limits` (deadline, step limit, cancel cell, and the host's clock in WebAssembly) | — | ≈100 new |
 | `prove-num` | `smt/solver/rational.ts`'s integers and rationals, as a std-only big integer (3.4) | — | ≈600 new |
 | `prove-smt` | `smt/solver/` with `lp/` and `nlsat/`, as modules `util`, `lp`, `nlsat`, `core` | `prove-num` | 45,631 |
 | `prove-zenon` | `zenon/` but `encode.ts`, with `check/` as its own module that shares nothing with the search | — | ≈11,300 |
@@ -348,19 +366,26 @@ TypeScript keeps the orchestration until P6:
                                                            └─ native decide  (addon / wasm)
 ```
 
-- One new binding call, `decide(prover: string, text: string, timeLimitMs: number, cancel:
-  Int32Array, stepLimit?: number) → {verdict, timeUsedMs, statistics} | {error}`. Strings cross
-  once per decision; a decision takes milliseconds to seconds, so the 15–160 ns crossing (DESIGN
-  10.1) is noise.
+- One binding call, as built in P0 (`prove-it-host/src/prover.rs`, ABI 12): `decide(prover,
+  text, timeLimitMs, stepLimit | undefined, cancel | undefined)` returns `{kind: "decided",
+  verdict, statistics}`, `{kind: "error", message}` (thrown as a `TlaProverError`) or `{kind:
+  "declined", reason}`. It runs on a thread with a 256 MB stack. Strings cross once per decision; a
+  decision takes milliseconds to seconds, so the 15–160 ns crossing (DESIGN 10.1) is noise.
+  WebAssembly exports it as `prove_it_decide` through the `call()` ABI and reads the clock from the
+  `prove_it_now` import the engine already uses.
 - `src/prover/deciders.ts` chooses per prover: `PROVE_IT_PROVER=ts|rust` forces all, and
-  `PROVE_IT_PROVER_<NAME>=ts|rust` one back end (for the differential and for bisecting). The
-  default for each back end flips to `rust` in the PR that makes its differential clean. If no
-  addon loads, the TypeScript decider runs, until P7 deletes it; then `prove` follows `check`'s
+  `PROVE_IT_PROVER_<NAME>=ts|rust` one back end, such as `PROVE_IT_PROVER_ZENON` (for the
+  differential and for bisecting). The default for each back end flips to `rust` in the PR that
+  makes its differential clean, by adding it to `RUST_BACKENDS` in `deciders.ts`. If no addon
+  loads, or the Rust port declines the input, the TypeScript decider runs (`PROVE_IT_ENGINE=debug`
+  reports it), until P7 deletes it; then `prove` follows `check`'s
   rule (fallback.md): the WebAssembly module, or `EngineUnavailableError`.
-- The worker pool keeps working unchanged: each worker calls the addon synchronously. Cancellation
-  cannot reach a thread inside a native call by `worker.terminate()`, so the pool hands each worker
-  a cell of a `SharedArrayBuffer` and sets it on abort; the Rust limit check reads it where it now
-  reads `signal.aborted`.
+- The worker pool keeps working: each worker calls the addon synchronously. Cancellation cannot
+  reach a thread inside a native call by `worker.terminate()`, so the pool hands each worker a
+  cell of a `SharedArrayBuffer` (`DecideOptions.cancel`) and sets it when it stops; the N-API
+  binding reads the cell in place, and `Limits::is_canceled` is where a Rust backend checks it, as
+  the TypeScript checks `signal.aborted`. A WebAssembly decision runs on the thread that would set
+  the cell, so it has none.
 - `decide` needs no files: its input is the text. Where Rust reads modules (P5 and P6, for
   `loadModule`, `-I` and tlapm's library), it uses the host's request-and-retry convention from
   the SANY retirement's stage (a) (`prove_it_host::sources::Sources`): the export takes the
@@ -382,8 +407,9 @@ port keeps each one's semantics, including where sharing is observable:
   Jenkins hash (`hash.ts`), stored in Z3's open-addressing tables (`hashtable.ts`), whose slot
   order the model finder iterates. In Rust: one arena per check (`Vec<Node>`, `u32` ids), the same
   hash on `u32` with wrapping arithmetic, the same table with the same probe and growth. Reference
-  counting (`ref-vector.ts`, `expr-ref.ts`) becomes nothing: the arena lives for one check, as the
-  TS objects do.
+  counting (`ref-vector.ts`, `expr-ref.ts`) and id recycling are ported literally, `inc_ref`,
+  `dec_ref` and temporaries included, not dropped: recycled ids order Z3's sorts and the matcher
+  hashes small ids, so they steer the search (`native/design/smt-core.md` §2).
 - **Zenon:** hash-consed expressions whose equality is alpha-equivalence and whose hash ignores
   bound names, one store per run so that fresh names restart. In Rust: an arena per run with the
   same hash (`zenon/ocaml.ts`'s `Hashtbl.hash` port).
@@ -616,14 +642,18 @@ crates are pure functions from text to verdict.
 
 For the session that takes a track. Read this document, DESIGN.md §12 and AGENTS.md first.
 
-**Naming and layout.** One crate per track (`native/crates/prove-<name>`), modules named after
+**Naming and layout.** One crate per track, already made in P0 (`native/crates/prover/<name>`,
+package `prove-<name>`), modules named after
 the TS files in snake case (`lp/lar-solver.ts` → `lp/lar_solver.rs`), one Rust module per TS
 file unless two are trivially small, so a reader can put the two side by side. Keep the port
 header comment of each TS file (what it ports, from where, under which licence) and the
 explanatory comments; keep TS names in snake case, so `getTermKey` is `get_term_key`. Errors
 are `enum`s named after `src/errors.ts`'s classes (`SmtCanceledError` → `SmtError::Canceled`).
-The entry point is `pub fn decide(text: &str, limits: &Limits) -> Result<Decision, ProverError>`
-with `Decision { verdict, statistics }`, called by `prove-it-host`.
+The entry point is the shell's `pub fn decide(text: &str, limits: &Limits) -> Result<Decision,
+DecideError>` (`prove-decide`), which `prove-it-prover` calls by prover name: `Ok` with the
+verdict and the statistics, `DecideError::Prover(message)` where the TypeScript throws a
+`TlaProverError` (Z3's parse errors), and `DecideError::Declined(reason)` for input the port does
+not cover yet, which TypeScript then decides. Declining is always allowed; a wrong answer never is.
 
 **Porting literally.** The goal is the same search, step for step, not the same answer by
 another route. So:
@@ -645,23 +675,146 @@ another route. So:
   becomes a `Result` propagated with `?`; never a panic;
 - recursion that the TS relies on catching as a stack overflow gets a depth counter (3.6).
 
-**Statistics.** Each decider reports the deterministic counters 2.1 names, under the same names
-in both languages: the TS side returns them from the decider (P0 adds the missing ones), the
-binding returns them from Rust, and `prover-differential.ts` compares them field by field. A
+**Steps.** `Limits` is a cheap-clone handle with no lifetime (an `Rc`, steps in a `Cell`), so a
+backend can keep clones in its closures and lazy sequences while a decision runs; every clone
+counts the same steps, and none may outlive `decide`. A step is a check of the limits, and the
+Rust port counts it at exactly the points the TypeScript does, with
+`Limits::is_step_limit_reached` where the TypeScript calls `isStepLimitReached`, and
+`is_step_limit_passed` where it compares without counting (Zenon's `getStopReason`): in `ResourceLimit.inc` for Z3, in `getLimitFailure` for Zenon (the search,
+the checker and the Isar printer), in `checkInterrupt` for Isabelle, in `isExpired` for PTL. The
+deadline and the cancel cell are checked where the TypeScript checks `Date.now()` and the signal.
+The step count is the first statistic compared, and the cheapest witness of the same search.
+
+**Statistics.** Each decider reports these, under the same names in both languages, in this
+order; `prover-differential.ts` compares them field by field:
+- SMT (`smt`, `z3`): `instances` (quantifier instances, absent when the search threw), `steps`
+  (Z3's resource-limit count), and `stop` when it gave up early: `steps`, `time`, `signal`, `heap`,
+  `stack` or `unsupported`;
+- Zenon: `steps`, `nodesSearched`, `maxBranchFormulas`, `proofNodes`, `formulasCreated` (its
+  `-stats`), `stop` (the search failure or the limit that stopped it), and `proof`, the length and
+  FNV-1a hash of the Isar proof's UTF-16 code units (`getTextDigest`), when it found one;
+- Isabelle: `stop` (the exception, such as `Interrupt`) when it gave up, and `steps`;
+- PTL: `steps`. A
 track that finds another cheap counter that pins the search (for example conflicts or decisions
 in the SMT kernel) adds it to both sides in its own commit, inert in TS as P0's are.
+
+**Running the oracle.** Once per machine, after `bun scripts/fetch-corpora.ts` and building the
+addon (`bun scripts/platform-packages.ts build`):
+
+```
+bun scripts/run.ts prover-inputs                     # writes .prover-inputs/ from the record, minutes
+bun scripts/run.ts prover-differential --side rust --prover zenon --jobs 4
+```
+
+`--side ts` checks the record against the TypeScript (it reproduces), `--filter` keeps inputs by
+digest, and `.prover-differential.json` holds every result. Outcomes: `same`, `differs`,
+`unstable` (2.3), `declined` (not covered by the port yet), `crash`. With
+`PROVE_IT_ENGINE_WASM=dist/prove-it-engine.wasm` the Rust side is the WebAssembly module. A track
+that changes a TypeScript decider (it should not need to) re-records with `prover-inputs --record`
+in the same PR, under Node with `NODE_OPTIONS=--max-old-space-size=4500`.
 
 **Tests.** Port the TS unit tests of the code you port to `#[test]`s in the crate, case for case,
 with the same inputs and expected results; the TS tests stay until P7 deletes the TS code. Add a
 test for every difference the differential found, with the smallest input that shows it.
 
 **The gate before a flip commit.** On the whole decider corpus for the back end, under the
-deterministic budget: zero `differs` and zero `crash`, every `faster-only` listed with why; the
+recorded step limits: zero `differs`, zero `declined` and zero `crash`, every `unstable` listed with
+why; the
 ported unit tests pass; the TS unit tests pass with `PROVE_IT_PROVER_<NAME>=rust`;
 `conformance:prove` gives the same counts as on `main`; the wasm build passes the differential on
 a sample (`--filter tlapm/library`); the size row is recorded (3.9); and the full local gate of
 AGENTS.md passes. The flip itself is a separate commit that changes only the default, so it can
 be reverted alone.
+
+### 4b. The tracks
+
+What each session starting a track needs, beyond 4a. Paths are under `packages/prove-it/src/prover`
+unless they say otherwise; the crate is under `native/crates/prover/`. "First" lists the modules in
+dependency order (computed from the imports), so each can be tested before the next. The first gate
+is the TS unit tests named, ported to `#[test]`s; the corpus differential (4a) is the gate before
+the flip. Every track must not touch:
+- another track's crate;
+- `tla-engine`, `tla-values`, `tla-live`, `tla-ir` or `tla-front`;
+- the TypeScript prover, except to add a statistic to both sides (4a, with a re-recording in the
+  same PR);
+- `prove-decide`, the binding and `deciders.ts`, except through the lead (this document's owner).
+
+**P2 Zenon** (`prove-zenon`, `zenon/`):
+- In scope: `zenon/` (11,594 lines) but `encode.ts`, and `ocaml.ts`'s `Hashtbl.hash` and
+  `List.sort`, which are LGPL (3.8).
+- First: `limits.ts`, `ocaml.ts`, `expr.ts`, then `parse.ts`, `phrase.ts`, `proof.ts`. Then the
+  search (`index-table`, `node`, `rules`, the rule files, `search.ts`), `mltoll`, `llproof`,
+  `isar*`, and last `check/` (`terms` first). `check/` imports only `expr`, `parse`, `proof` and
+  `limits`, so a second session could port it in parallel once those exist.
+- First gate: `tests/unit/zenon.test.ts` (18 tests), whose inputs are under `tests/fixtures/zenon`.
+- Statistics: 4a.
+
+**P3a SMT foundation** (`prove-num` and the `util` module of `prove-smt`), taken first by the P3c
+session:
+- In scope: the JS-`bigint` integer of 3.4; `smt/solver/rational.ts`, `hash.ts`,
+  `hashtable.ts`, `lbool.ts`, `random-gen.ts`, `rlimit.ts` (the step counting of 2.3, not V8's heap
+  check), `array.ts`, and `lp/dependency.ts`, which `nlsat` uses.
+- That is all `lp` and `nlsat` take from the core. Land it first so that P3b-lp and P3b-nlsat
+  start from it.
+- First gate: generated tables against JS `bigint` for `+ - * / % >> gcd` and printing, on
+  operands of 1 to 8 limbs and the edge cases; Z3's hash of a few hundred keys and the slot order
+  of `hashtable.ts`, recorded from TypeScript.
+
+**P3b-lp** (`prove-smt`, module `lp`):
+- In scope: `smt/solver/lp/` (14,502 lines) but `dependency.ts` (P3a).
+- First: `numeric-pair`, `union-find`, `containers`, `lp-settings`, `nex`, `pdd`, then
+  `lar-term`, `constraints`, `explanation`, `nex-creator`, `dep-intervals`, `pdd-solver`. Then the
+  simplex core, `lar-solver`, `int-solver` with `hnf*` and `dioph-eq`, and the `nla-*` files.
+- Last: `nra-solver.ts`, the one file that imports `nlsat` (its solver, algebraic numbers and
+  types), which needs P3b-nlsat.
+- First gate: `tests/unit/smt-intervals.test.ts` (16) and `smt-pdd.test.ts` (17).
+
+**P3b-nlsat** (`prove-smt`, module `nlsat`):
+- In scope: `smt/solver/nlsat/` (7,875 lines).
+- First: `mpbq`, `upolynomial`, `upolynomial-factorization`, then `polynomial`, `algebraic`,
+  `types`, then `atoms`, `interval-set`, `levelwise`, `evaluator`, `explain`, `solver`.
+- It needs only P3a: from `lp` it takes `dependency.ts` alone.
+- First gate: `tests/unit/smt-nlsat.test.ts`, all but the `nra …` groups (those wait for
+  `nra-solver`, P3b-lp's last file).
+
+**P3c SMT core** (`prove-smt`, modules `util` from P3a and `core`):
+- In scope: `smt/solver/*.ts` (23,254 lines) but P3a's files; the `theory-lra-*` files (2,141)
+  last, as they call `lp`.
+- First, after P3a: `literal`, `sort`, `enode`, `case-split-queue`, `flat-literals`, then
+  `ast.ts` (1,316: the hash-consed DAG), `clause`, `cg-table`, `sticky-generations`. Then the
+  rewriters (`rewriter-tpl` and the files under it), `smtlib-parser`, `asserted-formulas`, the
+  tactics, `relevancy`, `conflict-resolution`, the MAM and `e-matching`, the model files,
+  `internalizer`, `context` and `solver`.
+- First gate: `tests/unit/smt-clause-store.test.ts` (4) and `smt.test.ts` (24, inputs under
+  `tests/fixtures/smt`). The decider differential on inputs without arithmetic atoms can run
+  before P3b lands; the rest, once `theory-lra-*` can call `lp`.
+- `decide` declines what the port does not reach yet, never guesses.
+
+**P4 Isabelle** (`prove-isabelle`):
+- In scope: `isabelle/` (11,713 lines) but `encode.ts`, plus the logic data (3.9: a binary second
+  output of `scripts/isabelle-logic.ts`, `include_bytes!`, decoded once).
+- P4a is `pure/` (6,628). First: `term`, `name`, `seq`, `table`, `list`, `interrupt`, then
+  `type`, `logic`, `net`, `term-ord`, `consts`, then `envir`, `pattern`, `unify` and `thm` (the
+  kernel).
+- P4b is `provers/`, `tools/`, `isar/`, `tla/`, then `decide.ts`.
+- First gate: `tests/unit/isabelle.test.ts` (5, theories under `tests/fixtures/isabelle`). The
+  kernel has no TS unit tests of its own, so P4a adds Rust tests of `term`, `pattern`, `unify` and
+  `thm` from Isabelle's behaviour on the fixture theories.
+
+**P5b/c obligations** (`prove-obligations`), after P5a lands in `tla-front`:
+- In scope: `src/obligations/` (8,873 lines; `format.ts` and `action.ts`'s `getHash` are LGPL)
+  with `regroup.ts`, then `prep/` (2,202), the encoders (`smt/*.ts` 2,676, `zenon/encode.ts`,
+  `isabelle/encode.ts`, `ptl/encode.ts`), `first-order.ts`, `ocaml.ts` and `tlaps-module.ts`.
+- First: `format`, `pragma`, `expression`, then `equality`, `levels`, `operators`, `proof`,
+  `substitution`, `temporal`, `tuples`, then `module`, `printer`, `regroup`, `subexpression`, then
+  `source` (from `tla-front`'s AST), `anonymize`, `generate`, `normalize`, `simplify`, `action`,
+  `index`.
+- First gate: `tests/unit/obligations.test.ts`, `obligation-zenon.test.ts`,
+  `obligation-isabelle.test.ts`.
+- Then the encoder differential (2.2, layer 4), which the track builds: every corpus obligation's
+  printed text, location, kind, fingerprint and every encoder's text, byte for byte against
+  TypeScript.
+- It needs no decider; it must not change what `decide` receives.
 
 ---
 

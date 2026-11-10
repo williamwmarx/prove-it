@@ -1,17 +1,17 @@
-// Runs a script's work on each recorded module in worker processes, --jobs of them at once, each
-// taking one module at a time, largest first. The script forks itself with --worker, and a worker
-// does the work on each module the parent sends it, by index.
+// Runs a script's work on each item, such as a recorded module, in worker processes, --jobs of them
+// at once, each taking one item at a time, largest first. The script forks itself with --worker,
+// and a worker does the work on each item the parent sends it, by index.
 
 import { fork } from "node:child_process";
 
 import { getOption } from "./corpora";
-import type { ModuleProofRecord } from "./proof-records";
 
 // The results by module index. A module whose worker exits mid-module has none. In a worker, it
 // never resolves. A worker wraps each result, as a process can't send undefined.
-export const runModuleWorkers = async <Result>(
-  records: ModuleProofRecord[],
-  work: (record: ModuleProofRecord) => Promise<Result>,
+export const runModuleWorkers = async <Item extends { id: string }, Result>(
+  records: Item[],
+  getSize: (record: Item) => number,
+  work: (record: Item) => Promise<Result>,
   defaultJobs: number,
 ): Promise<Map<number, Result>> => {
   if (process.argv.includes("--worker")) {
@@ -26,7 +26,7 @@ export const runModuleWorkers = async <Result>(
   }
   const jobs = Number(getOption("--jobs") ?? defaultJobs);
   const queue = records
-    .map((record, index) => ({ index, size: record.obligations.length }))
+    .map((record, index) => ({ index, size: getSize(record) }))
     .toSorted((left, right) => right.size - left.size)
     .map((entry) => entry.index);
   const byModule = new Map<number, Result>();
