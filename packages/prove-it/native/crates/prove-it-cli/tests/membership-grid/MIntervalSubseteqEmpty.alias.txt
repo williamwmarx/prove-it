@@ -1,0 +1,24 @@
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 10, column 41 to line 10, column 45 in MIntervalSubseteqEmpty
+1. Line 8, column 10 to line 8, column 13 in MIntervalSubseteqEmpty
+2. Line 7, column 9 to line 7, column 47 in MIntervalSubseteqEmpty
+3. Line 7, column 9 to line 7, column 37 in MIntervalSubseteqEmpty
+4. Line 7, column 9 to line 7, column 27 in MIntervalSubseteqEmpty
+
+
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 0 with non-integer:
+{}
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+4 states generated, 3 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 2.
+The average outdegree of the complete state graph is 2 (minimum is 2, the maximum 2 and the 95th percentile is 2).

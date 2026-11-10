@@ -25,7 +25,9 @@ export const isIrDumped = () => Boolean(getEnvironment()?.PROVE_IT_IR_DUMP);
 // PROVE_IT_STATE_LOG names the file the engine's search writes its states to.
 export const isStateLogged = () => Boolean(getEnvironment()?.PROVE_IT_STATE_LOG);
 
-export const getEnvironmentFlag = (name: string) => getEnvironment()?.[name] === "1";
+export const getEnvironmentSetting = (name: string) => getEnvironment()?.[name];
+
+export const getEnvironmentFlag = (name: string) => getEnvironmentSetting(name) === "1";
 
 // The state PROVE_IT_STOP_AT names, before whose expansion the engine's search stops, or -1.
 export const getStopAt = () => {
@@ -78,4 +80,15 @@ const getMainThreadFileSystem = () => {
 export const writeDebugBytes = (name: string, bytes: Uint8Array) => {
   const path = getEnvironment()?.[name];
   if (path) getMainThreadFileSystem()?.writeFileSync(path, bytes);
+};
+
+// PROVE_IT_CHECK_LOG names a file each check appends lines of JSON to, which
+// scripts/check-log.ts reads: the check's source, configuration, options and caller, then each
+// module, class and file it reads.
+export const getCheckLog = () => {
+  const path = getEnvironment()?.PROVE_IT_CHECK_LOG;
+  const fileSystem = path ? getMainThreadFileSystem() : undefined;
+  return path && fileSystem
+    ? (entry: object) => fileSystem.appendFileSync(path, `${JSON.stringify(entry)}\n`)
+    : undefined;
 };

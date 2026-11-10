@@ -1,0 +1,11 @@
+[package]
+name = "prove-isabelle"
+description = "Prove It's port of the parts of Isabelle that TLAPS proofs use"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT AND BSD-3-Clause"
+publish.workspace = true
+
+[dependencies]
+prove-decide = { path = "../decide" }

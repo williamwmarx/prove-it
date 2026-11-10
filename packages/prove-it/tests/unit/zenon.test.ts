@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TlaZenonError } from "../../src/errors";
+import { createSteps } from "../../src/prover/verdict";
 import { checkProof } from "../../src/prover/zenon/check/check";
 import { decideZenon, runZenon } from "../../src/prover/zenon/decide";
 import { createExpressions, type Expr, UNIVERSE } from "../../src/prover/zenon/expr";
@@ -231,7 +232,7 @@ describe("Zenon's input", () => {
 });
 
 describe("the proof checker", () => {
-  const UNLIMITED = { deadline: Infinity, signal: undefined };
+  const UNLIMITED = { deadline: Infinity, signal: undefined, steps: createSteps() };
   const exprs = createExpressions();
   const getContext = (hypotheses: Expr[]) => ({ hypotheses, definitions: [] });
   const first = exprs.evar("p");
@@ -257,12 +258,14 @@ describe("the proof checker", () => {
 
   // tlapm kills Zenon at its deadline, so a proof that the checker hasn't accepted by then doesn't
   // count.
-  it("stops at the deadline or once the signal aborts", () => {
+  it("stops at the deadline, past the step limit or once the signal aborts", () => {
     const context = getContext([first, exprs.enot(first)]);
-    const passed = { deadline: Date.now() - 1, signal: undefined };
-    const aborted = { deadline: Infinity, signal: AbortSignal.abort() };
+    const passed = { deadline: Date.now() - 1, signal: undefined, steps: createSteps() };
+    const aborted = { deadline: Infinity, signal: AbortSignal.abort(), steps: createSteps() };
+    const spent = { deadline: Infinity, signal: undefined, steps: createSteps(0) };
     expect(checkProof(getClosure(first), context, passed)).toBe(false);
     expect(checkProof(getClosure(first), context, aborted)).toBe(false);
+    expect(checkProof(getClosure(first), context, spent)).toBe(false);
   });
 
   it("rejects a closure without the negation", () => {

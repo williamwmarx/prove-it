@@ -1,0 +1,102 @@
+State 1:
+rmState = (r1 :> "working" @@ r2 :> "working" @@ r3 :> "working")
+
+State 2:
+rmState = (r1 :> "prepared" @@ r2 :> "working" @@ r3 :> "working")
+
+State 3:
+rmState = (r1 :> "aborted" @@ r2 :> "working" @@ r3 :> "working")
+
+State 4:
+rmState = (r1 :> "working" @@ r2 :> "prepared" @@ r3 :> "working")
+
+State 5:
+rmState = (r1 :> "working" @@ r2 :> "aborted" @@ r3 :> "working")
+
+State 6:
+rmState = (r1 :> "working" @@ r2 :> "working" @@ r3 :> "prepared")
+
+State 7:
+rmState = (r1 :> "working" @@ r2 :> "working" @@ r3 :> "aborted")
+
+State 8:
+rmState = (r1 :> "prepared" @@ r2 :> "prepared" @@ r3 :> "working")
+
+State 9:
+rmState = (r1 :> "prepared" @@ r2 :> "aborted" @@ r3 :> "working")
+
+State 10:
+rmState = (r1 :> "prepared" @@ r2 :> "working" @@ r3 :> "prepared")
+
+State 11:
+rmState = (r1 :> "prepared" @@ r2 :> "working" @@ r3 :> "aborted")
+
+State 12:
+rmState = (r1 :> "aborted" @@ r2 :> "prepared" @@ r3 :> "working")
+
+State 13:
+rmState = (r1 :> "aborted" @@ r2 :> "aborted" @@ r3 :> "working")
+
+State 14:
+rmState = (r1 :> "aborted" @@ r2 :> "working" @@ r3 :> "prepared")
+
+State 15:
+rmState = (r1 :> "aborted" @@ r2 :> "working" @@ r3 :> "aborted")
+
+State 16:
+rmState = (r1 :> "working" @@ r2 :> "prepared" @@ r3 :> "prepared")
+
+State 17:
+rmState = (r1 :> "working" @@ r2 :> "prepared" @@ r3 :> "aborted")
+
+State 18:
+rmState = (r1 :> "working" @@ r2 :> "aborted" @@ r3 :> "prepared")
+
+State 19:
+rmState = (r1 :> "working" @@ r2 :> "aborted" @@ r3 :> "aborted")
+
+State 20:
+rmState = (r1 :> "prepared" @@ r2 :> "prepared" @@ r3 :> "prepared")
+
+State 21:
+rmState = (r1 :> "prepared" @@ r2 :> "prepared" @@ r3 :> "aborted")
+
+State 22:
+rmState = (r1 :> "prepared" @@ r2 :> "aborted" @@ r3 :> "prepared")
+
+State 23:
+rmState = (r1 :> "prepared" @@ r2 :> "aborted" @@ r3 :> "aborted")
+
+State 24:
+rmState = (r1 :> "aborted" @@ r2 :> "prepared" @@ r3 :> "prepared")
+
+State 25:
+rmState = (r1 :> "aborted" @@ r2 :> "prepared" @@ r3 :> "aborted")
+
+State 26:
+rmState = (r1 :> "aborted" @@ r2 :> "aborted" @@ r3 :> "prepared")
+
+State 27:
+rmState = (r1 :> "aborted" @@ r2 :> "aborted" @@ r3 :> "aborted")
+
+State 28:
+rmState = (r1 :> "committed" @@ r2 :> "prepared" @@ r3 :> "prepared")
+
+State 29:
+rmState = (r1 :> "prepared" @@ r2 :> "committed" @@ r3 :> "prepared")
+
+State 30:
+rmState = (r1 :> "prepared" @@ r2 :> "prepared" @@ r3 :> "committed")
+
+State 31:
+rmState = (r1 :> "committed" @@ r2 :> "committed" @@ r3 :> "prepared")
+
+State 32:
+rmState = (r1 :> "committed" @@ r2 :> "prepared" @@ r3 :> "committed")
+
+State 33:
+rmState = (r1 :> "prepared" @@ r2 :> "committed" @@ r3 :> "committed")
+
+State 34:
+rmState = (r1 :> "committed" @@ r2 :> "committed" @@ r3 :> "committed")
+
