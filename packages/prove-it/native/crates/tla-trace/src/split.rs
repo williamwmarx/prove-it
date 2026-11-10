@@ -419,6 +419,16 @@ impl Splitter<'_, '_> {
         let (name, args): (&Name, &[NodeId]) = match &ir.nodes.arena[expression as usize].kind {
             NodeKind::Identifier(name) => (name, &[]),
             NodeKind::Apply { name, args } => (name, args),
+            // `getActions` fails on a literal as TLC starts, before it computes a state.
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_) => {
+                return Err(Unsupported(
+                    "a next-state relation TLC fails on as it starts, an action of which is a literal"
+                        .into(),
+                ));
+            }
             _ => return Ok(vec![whole()]),
         };
         if name.is_local {

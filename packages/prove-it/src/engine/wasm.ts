@@ -47,6 +47,7 @@ interface Exports {
   prove_it_free: (pointer: number, length: number) => void;
   prove_it_abi_version: () => number;
   prove_it_check: Call;
+  prove_it_decide: Call;
   prove_it_sany_text: Call;
   prove_it_check_sources: Call;
   prove_it_store_perform: Call;
@@ -280,6 +281,11 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
     checkSources: (args, known, machine) =>
       callCurrent("prove_it_check_sources", [args, known, machine]) as ReturnType<
         NativeAddon["checkSources"]
+      >,
+    // A decision runs on this thread, so nothing can set a cancel cell while it runs.
+    decide: (prover, text, timeLimitMs, stepLimit) =>
+      callCurrent("prove_it_decide", [prover, text, timeLimitMs, stepLimit]) as ReturnType<
+        NativeAddon["decide"]
       >,
     sanyText: (root, source, fileName, known) =>
       callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<

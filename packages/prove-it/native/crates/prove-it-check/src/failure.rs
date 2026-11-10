@@ -78,7 +78,7 @@ pub fn print_failure(
     // TLC's worker adds the state to the behavior graph before it replays a failure in its next
     // states, which can fail or print in turn.
     let is_atom = matches!(stop.site, Site::Atom { .. });
-    let is_initial_atom = matches!(stop.site, Site::InitialAtom(_));
+    let is_initial_atom = matches!(stop.site, Site::InitialAtom { .. });
     // A failure among the initial states comes before TLC has taken a step, and the search
     // hands one over only where the atoms TLC evaluated of the initial states before it
     // evaluate.
@@ -88,7 +88,7 @@ pub fn print_failure(
             | Site::InitialConstraint(_)
             | Site::InitialInvariant(_)
             | Site::InitialPredicate(_)
-            | Site::InitialAtom(_)
+            | Site::InitialAtom { .. }
     );
     // An invariant that fails to evaluate stops TLC's worker before it adds the state it was
     // expanding to the behavior graphs, and TLC's replay of the expansion adds nothing to them
@@ -191,6 +191,7 @@ pub fn print_failure(
     let is_progress_replayed = matches!(
         stop.site,
         Site::Init
+            | Site::InitialAtom { .. }
             | Site::InitialConstraint(_)
             | Site::InitialInvariant(_)
             | Site::InitialPredicate(_)
@@ -264,10 +265,10 @@ pub fn print_failure(
         }
         // TLC reports an invariant that fails to evaluate without its call stack, but for the
         // call stack of its replay of the expansion where that fails in turn.
-        // Nor one adding an initial state to the behavior graphs, which its replay of the
-        // initial states doesn't meet again.
+        // Nor one adding an initial state to the behavior graphs, but where its replay of the
+        // initial states fails again adding a state it hadn't found.
         None if is_atom
-            || is_initial_atom
+            || is_initial_atom && failure.call_stack.is_empty()
             || matches!(stop.site, Site::Invariant(_)) && !failure.replay.is_failed => {}
         None => print_call_stack(printer, ir, &failure.call_stack),
     }
@@ -421,7 +422,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
             Site::InitialConstraint(_)
                 | Site::InitialInvariant(_)
                 | Site::InitialPredicate(_)
-                | Site::InitialAtom(_)
+                | Site::InitialAtom { .. }
         ) {
             Trace {
                 states: Vec::new(),

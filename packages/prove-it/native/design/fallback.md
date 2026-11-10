@@ -239,7 +239,9 @@ liveness part of this plan:
 - a property TLC finds a tautology (3), or a constant part of a temporal formula that isn't a
   boolean (2);
 - printing where the native checker doesn't check the temporal properties (5);
-- a lasso the engine doesn't hand over (5);
+- a lasso the engine doesn't hand over (5), now native: the 2 of specs whose actions print, which
+  the rebuild labels by running the actions again, and the 3 that end in the first state of their
+  cycle;
 - an atom the engine doesn't answer (2);
 - a late node at another diameter, a step back into the cycle of a spec that prints, several states
   under VIEW or SYMMETRY, and a lasso TLC fails to rebuild under a VIEW (1 each).
@@ -253,10 +255,10 @@ Of the other 63:
 The corpus has no temporal decline: `differential --native-only` matches 1,460 of 1,466 runs, and
 the 6 known differences aren't about liveness.
 
-A lasso that ends in the first state of its cycle (the `temporal` test's three runs) is more than a
-printing gap. Printing it as TLC does, stuttering at the cycle's first state, matches TLC built at
-d8fb231 on those three runs. But on the binary's own `lasso-end` case the lasso differs from TLC's,
-so the decline stays until the lasso's construction is traced against `LiveWorker.printTrace`.
+A lasso that ends in the first state of its cycle (the `temporal` test's three runs) is a printing
+gap. TLC prints every state, then stutters at the cycle's first state, and so does the binary now.
+A grid of 160 small specs (`prove-it-cli/tests/lasso-grid`) prints what TLC prints on all 640 runs:
+one thread and four, checking the properties periodically and at the end.
 
 Nothing reaches these liveness declines, so they stay declines until a test or a model does:
 - an accepting node under SYMMETRY or a VIEW;

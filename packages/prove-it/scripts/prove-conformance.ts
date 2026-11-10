@@ -28,6 +28,7 @@ import { runModuleWorkers } from "./module-workers";
 import {
   getModuleLoader,
   getModuleObligations,
+  getObligationCount,
   type ModuleProofRecord,
   type ObligationRecord,
   printResults,
@@ -229,7 +230,12 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
 };
 
 const records = readProofRecords();
-const byModule = await runModuleWorkers(records, proveModule, availableParallelism());
+const byModule = await runModuleWorkers(
+  records,
+  getObligationCount,
+  proveModule,
+  availableParallelism(),
+);
 // A worker that exits mid-module leaves that module's obligations absent.
 const results = records.flatMap(
   (record, index) =>
