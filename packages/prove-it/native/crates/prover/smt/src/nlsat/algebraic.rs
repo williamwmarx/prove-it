@@ -201,11 +201,11 @@ fn mul_intervals(first: &BqInterval, second: &BqInterval) -> BqInterval {
 struct IntervalOps;
 
 impl ValueOps<BqInterval> for IntervalOps {
-    fn from_integer(&mut self, value: &Int) -> Result<BqInterval, SmtError> {
-        Ok(BqInterval {
+    fn from_integer(&mut self, value: &Int) -> BqInterval {
+        BqInterval {
             lower: Mpbq::of(value.clone(), 0),
             upper: Mpbq::of(value.clone(), 0),
-        })
+        }
     }
 
     fn add(&mut self, first: &BqInterval, second: &BqInterval) -> Result<BqInterval, SmtError> {
@@ -321,9 +321,9 @@ fn select_integer(
 // select_small_core: the binary rational between two ends with the smallest power of two as its
 // denominator.
 fn select_small(lower: &SelectEnd, upper: &SelectEnd) -> Mpbq {
-    let mut k = 0;
+    let mut k: u32 = 0;
     loop {
-        let scale = Rational::from_int(&Int::one() << k);
+        let scale = Rational::from_int(&Int::one() << u64::from(k));
         let integer = select_integer(
             lower,
             upper,
@@ -424,8 +424,8 @@ struct AnumOps<'a> {
 }
 
 impl ValueOps<Anum> for AnumOps<'_> {
-    fn from_integer(&mut self, value: &Int) -> Result<Anum, SmtError> {
-        Ok(Anum::new(Rational::from_int(value.clone())))
+    fn from_integer(&mut self, value: &Int) -> Anum {
+        Anum::new(Rational::from_int(value.clone()))
     }
 
     fn add(&mut self, first: &Anum, second: &Anum) -> Result<Anum, SmtError> {
@@ -700,7 +700,7 @@ impl AlgebraicManager {
 
     // Root isolation.
 
-    fn factor(&mut self, p: &[Int]) -> (bool, UpolynomialFactors) {
+    fn factor(&mut self, p: &[Int]) -> Result<(bool, UpolynomialFactors), SmtError> {
         factor_upolynomial(&mut self.um, p, &FACTOR_PARAMS)
     }
 
@@ -719,7 +719,7 @@ impl AlgebraicManager {
         } else {
             up.to_vec()
         };
-        let (is_complete, factors) = self.factor(&nonzero);
+        let (is_complete, factors) = self.factor(&nonzero)?;
         for factor in &factors.factors {
             // The degree is factor.len() - 1.
             if factor.len() <= 1 {
@@ -848,7 +848,7 @@ impl AlgebraicManager {
         let is_non_positive = root_index <= non_positive_count;
         let mut low = if is_non_positive {
             Mpbq::of(
-                -(&Int::one() << self.um.knuth_negative_root_upper_bound(p)),
+                -(&Int::one() << u64::from(self.um.knuth_negative_root_upper_bound(p))),
                 0,
             )
         } else {
@@ -857,7 +857,7 @@ impl AlgebraicManager {
         let mut high = if is_non_positive {
             Mpbq::zero()
         } else {
-            Mpbq::of(&Int::one() << self.um.knuth_positive_root_upper_bound(p), 0)
+            Mpbq::of(&Int::one() << u64::from(self.um.knuth_positive_root_upper_bound(p)), 0)
         };
         let mut low_variations = if is_non_positive { minus_inf } else { at_zero };
         let mut high_variations = if is_non_positive {
@@ -1677,7 +1677,7 @@ impl AlgebraicManager {
                 self.get_product_polynomial(&cell_a, &cell_b)?
             }
         };
-        let (is_complete, factored) = self.factor(&polynomial);
+        let (is_complete, factored) = self.factor(&polynomial)?;
         let factors = factored.factors;
         let mut sequences: Vec<Option<Vec<Upolynomial>>> = factors
             .iter()
@@ -1737,7 +1737,7 @@ impl AlgebraicManager {
             let cell = get_cell(Some(anum))?;
             self.get_power_polynomial(&cell, exponent)?
         };
-        let (is_complete, factored) = self.factor(&polynomial);
+        let (is_complete, factored) = self.factor(&polynomial)?;
         let factors = factored.factors;
         let mut sequences: Vec<Option<Vec<Upolynomial>>> = factors
             .iter()
@@ -1813,7 +1813,7 @@ impl AlgebraicManager {
             let second_value = second.value();
             match (&*first_value, &*second_value) {
                 (AnumValue::Rational(first), AnumValue::Rational(second)) => {
-                    return Ok(first.compare(second));
+                    return Ok(first.compare(second) as i32);
                 }
                 (AnumValue::Rational(first), AnumValue::Cell(second)) => {
                     return Ok(-self.compare_rational(second, first));
