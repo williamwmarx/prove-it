@@ -1029,3 +1029,28 @@ Open, with what is known (and the three Open lists of the review above):
 - **A failure with a POSTCONDITION past the first state expanded.** The CLI declines it: TLC
   checks the postconditions only where the failed expansion had generated no successor, so the
   stop needs to say how many the expansion generated before it failed.
+
+## Functions over a run of integers against functions over model values
+
+TLC holds a function over a run of integers either over an interval (`FcnRcdValue.intv`:
+`[i \in 0..n |-> e]`, and a tuple it compares with a function) or over its keys
+(`[i \in {0, 1} |-> e]`, `0 :> a @@ 1 :> b`). Against a function of its size with an untyped
+model value among its keys, the first fails (`compareToInterval`, `compareOtherInterval`, `equals`)
+and the second compares the keys pairwise, which the model value passes. The store holds a
+function by its keys and values alone, so it can't tell the two apart.
+
+- **What the engine does:** the store stops with `INTERVAL_KEYS`, which the search takes as TLC's
+  failure, and `tla-trace`, which keeps the interval a function was built over, replays the step.
+  Where TLC fails, the binary prints TLC's error; where it doesn't, the replay finds no failure and
+  the engine declines. A record against a function of its size over a model value stops with
+  `RECORD_KEYS` the same way, since `RecordValue.compareTo` fails where the function asking
+  passes.
+- **What still declines:** a function TLC holds over its keys, compared with one over a model
+  value, where TLC answers without failing. A sweep of 900 small specs of such pairs against TLC
+  found 106 that print TLC's output on main and decline now. None of the corpus does.
+- **What keeping them native would take:** a bit in the store's meta, set where a function is built
+  over an interval (`[x \in a..b |-> e]`, a tuple, `[S -> T]` over an interval, and what EXCEPT
+  and the other operations keep of one) and kept apart in interning, so that two functions TLC
+  holds differently get different ids. The store could then compare as TLC does. Equal values would
+  no longer always have equal ids, which the fingerprints, the state table and membership by id
+  rely on, so it needs a design of its own.
