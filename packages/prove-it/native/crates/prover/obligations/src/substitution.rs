@@ -2,8 +2,8 @@
 //! A port of `src/obligations/substitution.ts`.
 //!
 //! A substitution is persistent and shares its tail, as the TypeScript objects do, so it is an
-//! `Rc` that clones cheaply. Shifts may be negative, so their amounts are `isize`; an index that
-//! a substitution leaves below zero, which the TypeScript would build silently, is a bug here.
+//! `Rc` that clones cheaply. Shifts may be negative, and an index may end at 0 or below, as in the
+//! TypeScript.
 
 use std::rc::Rc;
 
@@ -66,9 +66,8 @@ pub fn bump_by(amount: usize, substitution: &Substitution) -> Substitution {
     }
 }
 
-/// What `applyIndex` gives: an `Ix` carrying the properties of `from`, kept as a bare index until
-/// the end because the TypeScript passes indices below one through a bump or a composition, which
-/// may take them back up, or another expression.
+/// What `applyIndex` gives: an index, which becomes an `Ix` with the properties of `from`, or
+/// another expression.
 enum Applied {
     Index(isize),
     Expression(Expr),
@@ -77,11 +76,7 @@ enum Applied {
 impl Applied {
     fn into_expr(self, from: &ExprNode) -> Result<Expr> {
         match self {
-            Self::Index(index) => {
-                let index =
-                    usize::try_from(index).map_err(|_| ObligationError::assert_failure())?;
-                Ok(at(ExprCore::Ix { index }, from))
-            }
+            Self::Index(index) => Ok(at(ExprCore::Ix { index }, from)),
             Self::Expression(expression) => Ok(expression),
         }
     }
@@ -263,8 +258,7 @@ pub fn substitute_expr(substitution: &Substitution, expression: &Expr) -> Result
         | ExprCore::Num { .. }
         | ExprCore::At { .. } => return Ok(expression.clone()),
         ExprCore::Ix { index } => {
-            let index = isize::try_from(*index).map_err(|_| ObligationError::assert_failure())?;
-            return apply_index(substitution, index, expression)?.into_expr(expression);
+            return apply_index(substitution, *index, expression)?.into_expr(expression);
         }
         ExprCore::Apply { operator, args } => {
             let operator = recurse(operator)?;
@@ -740,11 +734,11 @@ mod tests {
         })
     }
 
-    fn ix(index: usize) -> Expr {
+    fn ix(index: isize) -> Expr {
         expr(ExprCore::Ix { index })
     }
 
-    fn located_ix(index: usize, line: u32) -> Expr {
+    fn located_ix(index: isize, line: u32) -> Expr {
         located(ExprCore::Ix { index }, locus(line))
     }
 
@@ -1300,11 +1294,7 @@ mod tests {
         assert_eq!(show(&shift_expr(0, &expression)?), "#1@4");
         assert_eq!(show(&shift_expr(3, &expression)?), "#4@4");
         assert_eq!(show(&shift_expr(-1, &ix(2))?), "#1");
-        // The TypeScript builds `#-1` here, which no de Bruijn index can be.
-        assert_eq!(
-            attempt(shift_expr(-2, &ix(1))),
-            "error TlaProofError: Oops, this seems to be a bug in TLAPM."
-        );
+        assert_eq!(attempt(shift_expr(-2, &ix(1))), "#-1");
         Ok(())
     }
 

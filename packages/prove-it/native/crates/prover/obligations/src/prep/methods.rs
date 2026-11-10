@@ -4,7 +4,7 @@
 //! obligation. A port of `src/prover/prep/methods.ts`.
 
 use crate::errors::{ObligationError, Result};
-use crate::expression::{DefnCore, Expr, ExprCore, HypCore, Locus, Sequent, Visibility};
+use crate::expression::{DefnCore, Expr, ExprCore, HypCore, Locus, Sequent, Visibility, to_index};
 use crate::pragma::{OldMethod, PragmaSetting, PragmaValue};
 
 /// A method, named after the Method.t constructor tlapm reports it by. A Z3 resource budget turns
@@ -350,8 +350,8 @@ fn get_cited_methods(sequent: &Sequent) -> Result<Vec<Method>> {
         let ExprCore::Ix { index: offset } = operator.core else {
             continue;
         };
-        let entry = index
-            .checked_sub(offset)
+        let entry = usize::try_from(to_index(index) - offset)
+            .ok()
             .and_then(|cited_index| cited.get(cited_index))
             .and_then(Option::as_ref);
         match entry {
@@ -412,7 +412,7 @@ mod tests {
     use crate::expression::{Builtin, Defn, Hyp, Time, WhereDefined, expr, hyp};
     use std::rc::Rc;
 
-    fn ix(index: usize) -> Expr {
+    fn ix(index: isize) -> Expr {
         expr(ExprCore::Ix { index })
     }
 

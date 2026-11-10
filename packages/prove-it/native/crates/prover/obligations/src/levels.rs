@@ -173,9 +173,8 @@ pub fn get_level_info(scope: &ScopeRef, expression: &Expr) -> Result<LevelInfo> 
     let recurse = |inner: &Expr| get_level_info(scope, inner);
     match &expression.core {
         ExprCore::Ix { index } => {
-            // An index of 0 reads the scope itself, as the TypeScript's depth of -1 does.
-            let hyp_scope = get_scope_at(scope, index.saturating_sub(1))
-                .ok_or_else(ObligationError::assert_failure)?;
+            let hyp_scope =
+                get_scope_at(scope, index - 1).ok_or_else(ObligationError::assert_failure)?;
             get_hyp_level(&hyp_scope)
         }
         ExprCore::Internal { builtin } => {
@@ -420,7 +419,7 @@ mod tests {
 
     // The expected values come from running `levels.ts` under Bun on the same inputs.
 
-    fn ix(index: usize) -> Expr {
+    fn ix(index: isize) -> Expr {
         expr(ExprCore::Ix { index })
     }
 

@@ -9,7 +9,7 @@ use crate::expression::{
     Bound, BoundDomain, Defn, DefnCore, Expr, ExprCore, ExprNode, Hyp, HypCore, Level, Param,
     ParenForm, Quantifier, Selector, Visibility, Warn, WhereDefined, XlabelIndex, at, expr,
     get_bound_fresh, get_children, get_error_note, get_fresh, get_param_fresh, hyp, map_children,
-    map_selector_args,
+    map_selector_args, to_index,
 };
 use crate::substitution::{cons_all, cons_substitution, shift, substitute_expr};
 
@@ -80,21 +80,15 @@ fn strip_parens(expression: &Expr) -> Result<Expr> {
 
 fn has_negative_index(expression: &Expr) -> bool {
     match &expression.core {
-        ExprCore::Ix { index } => *index == 0,
+        ExprCore::Ix { index } => *index <= 0,
         _ => get_children(expression).iter().any(has_negative_index),
     }
 }
 
-/// `substituteExpr(shift(-(position - 1)), expression)`, or `None` where an index falls below
-/// zero: the TypeScript builds that index, which `has_negative_index` then finds, but
-/// `substitution` rejects it as an assertion failure.
-fn shift_down(position: usize, expression: &Expr) -> Result<Option<Expr>> {
+/// `substituteExpr(shift(-(position - 1)), expression)`.
+fn shift_down(position: usize, expression: &Expr) -> Result<Expr> {
     let amount = 1 - isize::try_from(position).map_err(|_| ObligationError::assert_failure())?;
-    match substitute_expr(&shift(amount), expression) {
-        Ok(shifted) => Ok(Some(shifted)),
-        Err(error) if error == ObligationError::assert_failure() => Ok(None),
-        Err(error) => Err(error),
-    }
+    substitute_expr(&shift(amount), expression)
 }
 
 fn find_in_bounds(
@@ -220,7 +214,9 @@ fn find_choice_body(name: &str, body: &Expr, label: &str, context: &[Hyp]) -> Op
 }
 
 fn get_ix(index: usize) -> Expr {
-    expr(ExprCore::Ix { index })
+    expr(ExprCore::Ix {
+        index: to_index(index),
+    })
 }
 
 // The first count indices in reverse, and the rest past the parameters.
@@ -438,7 +434,7 @@ fn get_numbered(
                 }
                 None => shift_down(position, &sequent.active)?,
             };
-            let Some(shifted) = shifted.filter(|shifted| !has_negative_index(shifted)) else {
+            if has_negative_index(&shifted) {
                 on_warning(get_error_note(
                     expression.location.as_ref(),
                     "subexpression of ASSUME/PROVE uses identifiers declared therein\nTlapm does not handle yet such subexpression namings.",
@@ -447,7 +443,7 @@ fn get_numbered(
                     "Subexpression of ASSUME/PROVE uses identifiers declared therein\n\nTlapm does not handle yet such subexpression namings.",
                     "Expr.Deref.deref_num",
                 ));
-            };
+            }
             Some(shifted)
         }
         ExprCore::Apply { args, .. } => {

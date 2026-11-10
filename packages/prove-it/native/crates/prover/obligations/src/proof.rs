@@ -21,7 +21,7 @@ pub enum StepNumber {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UseDefCore {
     Dvar { name: String },
-    Dx { index: usize },
+    Dx { index: isize },
 }
 
 #[derive(Clone, Debug)]

@@ -11,7 +11,7 @@ use crate::expression::{
     Bound, BoundDomain, Builtin, Defn, DefnCore, ExceptPoint, Expr, ExprCore, ExprProps, Hyp,
     HypCore, HypNode, InstanceDefinition, Level, Locus, Param, Selector, Sequent, Shape, Time,
     Visibility, WhereDefined, at_expr, expr, exprify_sequent, get_fact, get_fresh, located,
-    map_accumulate,
+    map_accumulate, to_index,
 };
 use crate::proof::{Omission, Proof, ProofCore, ProofProps, Usable, UseDef, UseDefCore};
 use crate::substitution::{
@@ -118,7 +118,7 @@ fn define_builtin(arity: usize, name: &str, builtin: Builtin) -> ModuleUnit {
                 args: (0..arity)
                     .map(|index| {
                         expr(ExprCore::Ix {
-                            index: arity - index,
+                            index: to_index(arity - index),
                         })
                     })
                     .collect(),
@@ -1168,11 +1168,11 @@ mod tests {
         })
     }
 
-    fn ix(index: usize) -> Expr {
+    fn ix(index: isize) -> Expr {
         expr(ExprCore::Ix { index })
     }
 
-    fn ix_at(index: usize, line: u32) -> Expr {
+    fn ix_at(index: isize, line: u32) -> Expr {
         located(ExprCore::Ix { index }, locus(line))
     }
 

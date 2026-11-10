@@ -264,8 +264,7 @@ pub fn is_constant(scope: &ScopeRef, expression: &Expr) -> bool {
     let recurse = |inner: &Expr| is_constant(scope, inner);
     match &expression.core {
         ExprCore::Ix { index } => {
-            // An index of 0 reads the scope itself, as the TypeScript's depth of -1 does.
-            let Some(found) = get_scope_at(scope, index.saturating_sub(1)) else {
+            let Some(found) = get_scope_at(scope, index - 1) else {
                 return false;
             };
             let body = match &found.hyp.core {
@@ -516,7 +515,7 @@ mod tests {
         })
     }
 
-    fn ix(index: usize) -> Expr {
+    fn ix(index: isize) -> Expr {
         expr(ExprCore::Ix { index })
     }
 

@@ -554,7 +554,7 @@ mod tests {
         })
     }
 
-    fn index(index: usize) -> Expr {
+    fn index(index: isize) -> Expr {
         expr(ExprCore::Ix { index })
     }
 

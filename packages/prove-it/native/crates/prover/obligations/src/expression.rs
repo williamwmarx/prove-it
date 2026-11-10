@@ -182,6 +182,12 @@ builtins!(
     Irregular,
 );
 
+/// A count as a de Bruijn index or shift. A count is a length, which Rust bounds by `isize::MAX`,
+/// so the conversion is exact.
+pub fn to_index(count: usize) -> isize {
+    count as isize
+}
+
 /// `Shape`: an operator's arity, 0 for an expression.
 pub type Shape = usize;
 
@@ -314,8 +320,9 @@ pub struct ExprProps {
 
 #[derive(Clone, Debug)]
 pub enum ExprCore {
+    /// A de Bruijn index, from 1. A shift may leave it at 0 or below, as in the TypeScript.
     Ix {
-        index: usize,
+        index: isize,
     },
     Opaque {
         name: String,
@@ -742,9 +749,10 @@ pub fn find_named(scope: &ScopeRef, name: &str) -> Option<(usize, Hyp)> {
     None
 }
 
-pub fn get_scope_at(scope: &ScopeRef, depth: usize) -> ScopeRef {
+/// The scope `depth` binders out; the scope itself for a depth of 0 or less.
+pub fn get_scope_at(scope: &ScopeRef, depth: isize) -> ScopeRef {
     let mut current = scope.clone();
-    for _ in 0..depth {
+    for _ in 0..depth.max(0) {
         current = current?.rest.clone();
     }
     current
