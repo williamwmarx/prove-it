@@ -7,7 +7,7 @@
     },
     "packages/prove-it": {
       "name": "@atemp/prove-it",
-      "version": "0.2.4",
+      "version": "0.3.0",
       "bin": {
         "prove-it": "./dist/cli.js",
       },
