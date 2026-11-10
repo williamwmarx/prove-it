@@ -1,0 +1,9 @@
+fixes a_CONSTANTunde_Punde_a
+fixes a_CONSTANTunde_defaultInitValueunde_a
+fixes a_VARIABLEunde_numunde_a a_VARIABLEunde_numunde_a'
+fixes a_VARIABLEunde_flagunde_a a_VARIABLEunde_flagunde_a'
+fixes a_VARIABLEunde_pcunde_a a_VARIABLEunde_pcunde_a'
+fixes a_VARIABLEunde_unreadunde_a a_VARIABLEunde_unreadunde_a'
+fixes a_VARIABLEunde_maxunde_a a_VARIABLEunde_maxunde_a'
+fixes a_VARIABLEunde_nxtunde_a a_VARIABLEunde_nxtunde_a'
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_nunde_a:PredicateLogic.c. ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_munde_a:PredicateLogic.c. ((SetTheory.bAll::fun(PredicateLogic.c,fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c)) Integers.Nat::PredicateLogic.c) (%a_CONSTANTunde_qunde_a:PredicateLogic.c. ((PredicateLogic.imp::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B1) B2)) ((IntegerArithmetic.leq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B1))) ((IntegerArithmetic.less::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) B0) B2)))))))))

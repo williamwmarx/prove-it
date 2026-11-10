@@ -1,0 +1,21 @@
+theory tlapm_cc65bc
+const isReal :: c = PredicateLogic.c
+const isa_slas_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_bksl_diva :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_perc_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_peri_peri_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isInfinity :: c = PredicateLogic.c
+const isa_lbrk_rbrk_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+const isa_less_more_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+fixes a_CONSTANTunde_Punde_a
+fixes a_CONSTANTunde_defaultInitValueunde_a
+fixes a_VARIABLEunde_numunde_a a_VARIABLEunde_numunde_a'
+fixes a_VARIABLEunde_flagunde_a a_VARIABLEunde_flagunde_a'
+fixes a_VARIABLEunde_pcunde_a a_VARIABLEunde_pcunde_a'
+fixes a_VARIABLEunde_unreadunde_a a_VARIABLEunde_unreadunde_a'
+fixes a_VARIABLEunde_maxunde_a a_VARIABLEunde_maxunde_a'
+fixes a_VARIABLEunde_nxtunde_a a_VARIABLEunde_nxtunde_a'
+shows (\\<forall> a_CONSTANTunde_nunde_a \\<in> (Nat) : (\\<forall> a_CONSTANTunde_munde_a \\<in> (Nat) : (\\<forall> a_CONSTANTunde_qunde_a \\<in> (Nat) : ((((((greater ((a_CONSTANTunde_nunde_a), (a_CONSTANTunde_munde_a)))) \\<and> ((geq ((a_CONSTANTunde_munde_a), (a_CONSTANTunde_qunde_a)))))) \\<Rightarrow> ((greater ((a_CONSTANTunde_nunde_a), (a_CONSTANTunde_qunde_a)))))))))
+  = ('PredicateLogic.Trueprop (('SetTheory.bAll Nat) (%a_CONSTANTunde_nunde_a. (('SetTheory.bAll Nat) (%a_CONSTANTunde_munde_a. (('SetTheory.bAll Nat) (%a_CONSTANTunde_qunde_a. (('PredicateLogic.imp (('PredicateLogic.conj ((greater a_CONSTANTunde_nunde_a) a_CONSTANTunde_munde_a)) ((geq a_CONSTANTunde_munde_a) a_CONSTANTunde_qunde_a))) ((greater a_CONSTANTunde_nunde_a) a_CONSTANTunde_qunde_a)))))))))
+using assms false
+method symbol:( word:auto word:dest symbol:: word:int_leq_less_trans symbol:)
