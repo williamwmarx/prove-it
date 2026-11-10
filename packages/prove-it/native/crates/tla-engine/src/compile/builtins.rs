@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeKind};
-use tla_values::fingerprint::{Fingerprints, INITIAL};
+use tla_values::fingerprint::INITIAL;
 use tla_values::json;
 use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
@@ -865,7 +865,9 @@ impl Compiler<'_> {
         Ok(leaf(
             eval(move |machine| {
                 let value = evaluate(machine)?;
-                let fingerprint = Fingerprints::new().get_state(&machine.store, &[value], &[0])?;
+                let fingerprint = machine
+                    .fingerprints
+                    .get_state(&machine.store, &[value], &[0])?;
                 machine.store.int(i64::from(fingerprint as i32))
             }),
             value.footprint,
@@ -916,7 +918,9 @@ impl Compiler<'_> {
         Ok(leaf(
             eval(move |machine| {
                 let key = evaluate_key(machine)?;
-                let hash = Fingerprints::new().get_state(&machine.store, &[key], &[0])?;
+                let hash = machine
+                    .fingerprints
+                    .get_state(&machine.store, &[key], &[0])?;
                 if let Some(&value) = machine.tlc_caches.get(&(node, hash)) {
                     return Ok(value);
                 }
