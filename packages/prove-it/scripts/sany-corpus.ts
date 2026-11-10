@@ -52,7 +52,7 @@ if (
   (isCliChecked && recordedPath === undefined)
 ) {
   console.error(
-    "usage: bun scripts/sany-corpus.ts [--tlaplus <clone> | --specs <directory>] (--classpath <tla2tools> [--record <file>] | --recorded <file> [--cli]) [--native <binary>] [--main <class>] [--arguments \"<argument> ...\"] [--names <name>,...]",
+    'usage: bun scripts/sany-corpus.ts [--tlaplus <clone> | --specs <directory>] (--classpath <tla2tools> [--record <file>] | --recorded <file> [--cli]) [--native <binary>] [--main <class>] [--arguments "<argument> ..."] [--names <name>,...]',
   );
   process.exit(2);
 }
