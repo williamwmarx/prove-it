@@ -511,7 +511,9 @@ module, beside the spec (`EnvironmentOptions::load_class`, which `lower_model` g
 operators of the same name and arity with the constant they return (`BoolValue.ValTrue`,
 `IntValue.gen(n)`, `new StringValue(s)`). `LoweredModel::override_messages` is TLC's 2168 for each
 (2400, a warning, for a method that matches no operator), which the binary prints right after
-`Starting...`. Not native: a method that computes its value, overrides of two modules, a class
+`Starting...`. Not native: a method that computes its value, a method with parameters (TLC evaluates each
+argument, in order, before it calls the method, `OpValue.eval`, so an argument that fails or prints
+does so, which the literal would skip; both fronts decline it), overrides of two modules, a class
 path a URL would escape, and more than one report, which TLC lists in the JVM's order.
 
 The binary prints an assumption's Print of a value the store can't word as the trace evaluator

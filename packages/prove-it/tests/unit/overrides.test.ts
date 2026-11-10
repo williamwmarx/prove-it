@@ -42,7 +42,7 @@ describe("Java module overrides match TLC", () => {
         ["Mismatch", "(tlc2.value.impl.Value)", false],
         ["Name", "()", true],
         ["Small", "()", true],
-        ["Twice", "(tlc2.value.impl.Value)", true],
+        ["Twice", "(tlc2.value.impl.Value)", false],
       ].map(([operator, parameters, isMatched]) => ({
         kind: "java-override",
         module: "Overrides",
@@ -51,6 +51,18 @@ describe("Java module overrides match TLC", () => {
         isMatched,
       })),
     );
+  });
+
+  it("rejects an override with parameters, whose arguments TLC evaluates first", async () => {
+    // TLC evaluates 1 \div 0 before it calls Twice, and reports the division, not -2.
+    await expect(
+      check({
+        source:
+          "---- MODULE Overrides ----\nEXTENDS Integers\nVARIABLE x\nTwice(n) == 2 * n\nInit == x = Twice(1 \\div 0)\nNext == x' = x\nInv == x = -2\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        loadClass,
+      }),
+    ).rejects.toThrow(TlaUnsupportedError);
   });
 
   it("rejects an override whose method computes its value", async () => {
