@@ -1,7 +1,7 @@
 //! Runs the binary as a user would: on specs of the tests' own, which tla-front reads, and on
 //! golden engine IRs, such as TCommit's, which PROVE_IT_TEST_IR names in place of a spec's.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const COMMIT_IR: &[u8] = include_bytes!(
@@ -1033,12 +1033,19 @@ fn rebuilds_a_trace_through_an_operator_the_configuration_defines() {
 
 // Runs the binary on a spec of the test's own, where TLC stops before the search.
 fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
+    run_spec_with(test, spec, config, &[])
+}
+
+fn run_spec_with(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
     std::fs::write(directory.join("Stop.cfg"), config).expect("a configuration");
-    (run(&directory, &["-noTE", "Stop"]), directory)
+    (
+        run(&directory, &[args, &["-noTE", "Stop"]].concat()),
+        directory,
+    )
 }
 
 // A counter with a `_PERIODIC` expression, as TLC's ran at d8fb231 with `-workers 1`: TLC
@@ -4151,4 +4158,200 @@ fn unites_a_set_with_one_element_in_tlcs_order() {
         }
     }
     std::fs::remove_dir_all(directory).expect("removed");
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn read_dump(directory: &Path, name: &str) -> String {
+    std::fs::read_to_string(directory.join(name)).expect("a dump")
+}
+
+#[test]
+fn dumps_every_state_found_as_tlc_writes_them() {
+    let directory = commit_directory("dump");
+    // TLC's own `-dump` of TCommit, at d8fb231 with `-workers 1`.
+    let expected = include_str!("tcommit.dump");
+    let output = run_ir(
+        &directory,
+        "TCommit",
+        &["-workers", "1", "-noTE", "-dump", "states", "TCommit"],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert_eq!(read_dump(&directory, "states.dump"), expected);
+    // A name that ends in .dump keeps it, and with several workers the binary writes the states in
+    // the order one finds them.
+    let shared = run_ir_with(
+        &directory,
+        "TCommit",
+        &["-workers", "4", "-noTE", "-dump", "shared.dump", "TCommit"],
+        &[("PROVE_IT_SHARED_LEVEL", "1")],
+    );
+    assert_eq!(shared.status.code(), Some(0), "{}", stdout(&shared));
+    assert_eq!(read_dump(&directory, "shared.dump"), expected);
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// Specs and dumps as TLC ran and wrote them at d8fb231 with `-workers 1`.
+#[test]
+fn dumps_the_state_that_stops_the_search_as_tlc() {
+    let counted = "State 1:\nx = 0\n\nState 2:\nx = 1\n\nState 3:\nx = 2\n\nState 4:\nx = 3\n\n";
+    for (test, next, config, code) in [
+        (
+            "dump-invariant",
+            "x' = x + 1",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            12,
+        ),
+        (
+            "dump-deadlock",
+            "x < 3 /\\ x' = x + 1",
+            "INIT Init\nNEXT Next\n",
+            11,
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == {next}\nInv == x < 3\n====\n"
+        );
+        let (output, directory) = run_spec_with(test, &spec, config, &["-dump", "states"]);
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{test}: {}",
+            stdout(&output)
+        );
+        assert_eq!(read_dump(&directory, "states.dump"), counted, "{test}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn dumps_a_state_of_several_variables_as_tlc() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x, r\nInit == x \\in {0, 1} /\\ r = [b |-> x, a |-> \"s\"]\nNext == x < 2 /\\ x' = x + 1 /\\ r' = [r EXCEPT !.b = x']\n====\n";
+    let (output, directory) = run_spec_with(
+        "dump-record",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
+        &["-dump", "states"],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert_eq!(
+        read_dump(&directory, "states.dump"),
+        "State 1:\n/\\ r = [b |-> 0, a |-> \"s\"]\n/\\ x = 0\n\nState 2:\n/\\ r = [b |-> 1, a |-> \"s\"]\n/\\ x = 1\n\nState 3:\n/\\ r = [b |-> 2, a |-> \"s\"]\n/\\ x = 2\n\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// TLC opens the dump before it reads the configuration, so a configuration it rejects leaves the
+// dump empty.
+#[test]
+fn opens_the_dump_before_it_reads_the_configuration() {
+    let spec = "---- MODULE Stop ----\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n====\n";
+    let (output, directory) = run_spec_with(
+        "dump-configuration",
+        spec,
+        "INIT Init\n\"unterminated\n",
+        &["-dump", "states"],
+    );
+    assert_eq!(output.status.code(), Some(151), "{}", stdout(&output));
+    assert_eq!(read_dump(&directory, "states.dump"), "");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_dump_whose_contents_tlc_writes_otherwise() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nLive == <>(x = 2)\nInv == x > 0\n====\n";
+    for (test, config, args, reason) in [
+        (
+            "dump-dot",
+            "INIT Init\nNEXT Next\n",
+            &["-dump", "dot", "states"][..],
+            "-dump dot",
+        ),
+        (
+            "dump-metadir",
+            "INIT Init\nNEXT Next\n",
+            &["-dump", "${metadir}/states"],
+            "-dump into the meta directory",
+        ),
+        // TLC writes each state again as it adds its stuttering step to the behavior graph.
+        (
+            "dump-temporal",
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            &["-dump", "states"],
+            "-dump with temporal properties",
+        ),
+        // TLC returns without closing the dump, which holds what Java's buffers flushed.
+        (
+            "dump-initial",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &["-dump", "states"],
+            "-dump of a search stopped computing its initial states",
+        ),
+    ] {
+        let spec = spec.replace("====", "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)\n====");
+        let (output, directory) = run_spec_with(test, &spec, config, args);
+        assert_eq!(output.status.code(), Some(1), "{test}: {}", stdout(&output));
+        assert_eq!(
+            stderr(&output),
+            format!("prove-it: not native yet: {reason}\n"),
+            "{test}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+// TLC's FingerprintExceptionHang: TypeOK fails to evaluate on the second state, and TLC expands the
+// first state again to print the call stack, writing the third state it finds then.
+#[test]
+fn declines_a_dump_where_tlc_replays_the_step_that_failed() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nCONSTANTS Nodes\nVARIABLES node_state\nvars == <<node_state>>\nLegalSets == {{}}\nTypeOK == node_state \\in [Nodes -> [set: LegalSets]]\nInit == \\E initial_members \\in LegalSets: node_state = [n \\in Nodes |-> [set |-> initial_members]]\nNext == \\E n \\in Nodes, new_members \\in {1}: node_state' = [node_state EXCEPT ![n].set = new_members]\nSpec == Init /\\ [][Next]_vars\n====\n";
+    let (output, directory) = run_spec_with(
+        "dump-replay",
+        spec,
+        "SPECIFICATION Spec\nCONSTANT Nodes = {A, B}\nCHECK_DEADLOCK FALSE\nINVARIANT TypeOK\n",
+        &["-dump", "states"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        stderr(&output),
+        "prove-it: not native yet: -dump of states TLC finds as it replays a step\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_temporal_property_tlc_rejects_after_it_warns_about_the_symmetry() {
+    // tests/fixtures/cli-output/EventualAction: TLC starts the liveness checker, warns that a
+    // symmetry is dangerous for liveness, then rejects the property:
+    //   Warning: Declaring symmetry during liveness checking is dangerous. ...
+    //   Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.
+    // The front end's failure doesn't print the warning, so the model isn't native yet.
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/cli-output");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noGenerateSpecTE", "EventualAction.tla"])
+        .current_dir(&fixtures)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: a temporal property TLC rejects after it warns about the symmetry\n"
+    );
+    // With -nowarning TLC prints no warning, and the binary prints TLC's error natively.
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noGenerateSpecTE", "-nowarning", "EventualAction.tla"])
+        .current_dir(&fixtures)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(255), "{}", stdout(&output));
+    assert!(
+        stdout(&output).contains(
+            "Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.\n"
+        ),
+        "{}",
+        stdout(&output)
+    );
 }
