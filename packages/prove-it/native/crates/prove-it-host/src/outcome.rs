@@ -77,6 +77,8 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         test_live_check_at: usize::try_from(test_live_check_at).ok(),
         // The interpreter writes -dump itself.
         is_dumped: false,
+        // The interpreter goes on past violations itself.
+        is_continued: false,
     })
 }
 
