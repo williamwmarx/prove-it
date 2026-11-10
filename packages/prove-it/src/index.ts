@@ -10,6 +10,7 @@ export type {
 export { parseConfig } from "./config";
 export type { ConfigValue, ConstantAssignment, ModelConfig, Substitution } from "./config";
 export {
+  EngineUnavailableError,
   TlaConfigError,
   TlaError,
   TlaEvaluationError,

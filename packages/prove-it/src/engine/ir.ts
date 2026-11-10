@@ -61,7 +61,6 @@ import {
   getStringOrder,
   type Value,
 } from "../values";
-import type { EngineSpec } from "./context";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
 export const IR_VERSION = 13;
@@ -186,8 +185,14 @@ export interface TraceAction {
 }
 
 // The specification the IR holds, with no next-state relation where the configuration names none.
-export interface IrSpec extends Omit<EngineSpec, "next"> {
+export interface IrSpec {
+  init: Expression;
   next: Expression | undefined;
+  // The bindings of the instance the specification comes from, when it names one.
+  scope?: EvaluationScope;
+  // TLC's actions of the next-state relation, as it splits it, for a search that labels each step
+  // with the action that took it.
+  actions?: { expression: Expression; scope: EvaluationScope | undefined }[];
 }
 
 // The properties the IR holds, each read in the scope of the instance it comes from, if any.
