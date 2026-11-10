@@ -200,11 +200,11 @@ impl<'ir> Evaluator<'ir> {
     }
 
     /// Whether TLC computes a definition as it starts (`processConstantDefns`), which it does to
-    /// one of constant level whose evaluation then succeeds. One that reads TLC's registers or
-    /// its counterexample fails then, so TLC keeps it; any other one of constant level may be
-    /// computed, so this says yes for it.
+    /// one of constant level whose evaluation then succeeds. One that reads TLC's registers, its
+    /// counterexample or the _POSSIBLE counts fails then, so TLC keeps it; any other one of
+    /// constant level may be computed, so this says yes for it.
     pub(crate) fn is_precomputed(&mut self, definition: NodeId) -> bool {
-        self.state_builtins = &["TLCGet", "TLCSet", "CounterExample"];
+        self.state_builtins = &["TLCGet", "TLCSet", "CounterExample", "_Counts"];
         let reads = self.can_read(definition, &Context::default());
         self.state_builtins = &[];
         !reads
