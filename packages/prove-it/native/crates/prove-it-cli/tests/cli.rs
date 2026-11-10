@@ -711,6 +711,19 @@ fn follows_tlc_through_a_set_operation_on_a_value_that_isnt_a_set() {
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
+    // The replay checks the assumptions before one that fails again, testing an element of a lazy
+    // filter inside an intersection or a difference through the evaluator.
+    let spec = "---- MODULE Lazy ----\nEXTENDS Integers\nVARIABLE x\nASSUME 2 \\in ({2} \\cap {n \\in Int : n % 2 = 0})\nASSUME 3 \\notin ({3} \\ {n \\in Int : n % 2 = 1})\nASSUME 1 \\in 0\nInit == x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_front("lazy-filters", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(
+        text.contains(
+            "failed.\nAttempted to check if the value:\n1\nis an element of the integer 0\n"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
     // An intersection or a difference with a set enumeration tests each of its elements at once,
     // so it fails on one the membership never asks about.
     for (test, assumption, element) in [

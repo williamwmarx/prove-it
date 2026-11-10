@@ -778,29 +778,34 @@ fn lazy(lazy: Lazy) -> Value {
 }
 
 /// `\cap` (`Tool`'s OPCODE_cap): a reducible operand's elements in the other, the left's first,
-/// and a lazy intersection where neither is reducible.
-pub fn intersection(left: &Value, right: &Value) -> Evaluated<Value> {
+/// and a lazy intersection where neither is reducible. `test_filter` tests an element of a lazy
+/// filter nested in the other.
+pub fn intersection(left: &Value, right: &Value, test_filter: &mut Filter<'_>) -> Evaluated<Value> {
     let (enumerated, tested) = match (is_reducible(left), is_reducible(right)) {
         (true, _) => (left, right),
         (false, true) => (right, left),
         (false, false) => return Ok(lazy(Lazy::Cap(left.clone(), right.clone()))),
     };
-    filter(enumerated, |element| is_member(element, tested))
+    filter(enumerated, |element| {
+        is_member_filtered(element, tested, test_filter)
+    })
 }
 
 /// `\` (`Tool`'s OPCODE_setdiff): a reducible left operand's elements not in the right, and a
-/// lazy difference otherwise.
-pub fn difference(left: &Value, right: &Value) -> Evaluated<Value> {
+/// lazy difference otherwise. `test_filter` tests an element of a lazy filter nested in the right.
+pub fn difference(left: &Value, right: &Value, test_filter: &mut Filter<'_>) -> Evaluated<Value> {
     if !is_reducible(left) {
         return Ok(lazy(Lazy::Diff(left.clone(), right.clone())));
     }
-    filter(left, |element| Ok(!is_member(element, right)?))
+    filter(left, |element| {
+        Ok(!is_member_filtered(element, right, test_filter)?)
+    })
 }
 
 // The elements of a set that `keep` keeps. TLC's `cap` and `diff` of a set enumeration test its
 // elements as it holds them and keep its normalization, so a set TLC holds unnormalized gives one it
 // holds unnormalized.
-fn filter(left: &Value, keep: impl Fn(&Value) -> Evaluated<bool>) -> Evaluated<Value> {
+fn filter(left: &Value, mut keep: impl FnMut(&Value) -> Evaluated<bool>) -> Evaluated<Value> {
     let written = unnormalized(left);
     let held = match &written {
         Some(written) => written.clone(),
@@ -1010,7 +1015,9 @@ mod tests {
         let set =
             |ints: &[i32]| Value::Set(Rc::new(ints.iter().map(|&int| Value::Int(int)).collect()));
         // A reducible operand is filtered by the other, whichever side it is on.
-        let cap = intersection(&nat(), &set(&[-1, 1, 2])).expect("an intersection");
+        let unfiltered =
+            &mut |_: &Value, _: &Value, _: &crate::eval::Predicate| fail("a lazy filter");
+        let cap = intersection(&nat(), &set(&[-1, 1, 2]), unfiltered).expect("an intersection");
         assert!(equals(&cap, &set(&[1, 2])).expect("comparable"));
         // \cup with an enumerable operand and Nat stays lazy, which TLC tests for membership
         // but can't enumerate.
@@ -1021,7 +1028,7 @@ mod tests {
             message(elements(&cup).map(|_| true)),
             "Attempted to enumerate S \\cup T when S:\n{-1}\nand T:\nNat\nare not both enumerable"
         );
-        let difference = difference(&nat(), &set(&[0])).expect("a difference");
+        let difference = difference(&nat(), &set(&[0]), unfiltered).expect("a difference");
         assert!(is_member(&Value::Int(1), &difference).expect("a member"));
         assert!(!is_member(&Value::Int(0), &difference).expect("a member"));
         assert_eq!(

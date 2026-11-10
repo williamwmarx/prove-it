@@ -2837,9 +2837,7 @@ impl<'ir> Evaluator<'ir> {
                 Ok(false)
             }
             // A set whose parts are lazy filters tests them as the evaluator does.
-            _ => is_member_filtered(element, set, &mut |element, base, predicate| {
-                Ok(self.member(element, base)? && self.filters(element, base, predicate)?)
-            }),
+            _ => is_member_filtered(element, set, &mut filter_test(self)),
         }
     }
 
@@ -3202,8 +3200,8 @@ impl<'ir> Evaluator<'ir> {
                 let right = self.operand(&operands[1])?;
                 match name {
                     "\\cup" => union(&left, &right)?,
-                    "\\cap" => intersection(&left, &right)?,
-                    _ => difference(&left, &right)?,
+                    "\\cap" => intersection(&left, &right, &mut filter_test(self))?,
+                    _ => difference(&left, &right, &mut filter_test(self))?,
                 }
             }
             "SUBSET" => {
@@ -4042,6 +4040,16 @@ fn permute(
             image.pop();
             used[index] = false;
         }
+    }
+}
+
+// A lazy filter's test of an element, through its base, as the evaluator makes it
+// (`SetPredValue.member`).
+fn filter_test<'a, 'ir>(
+    evaluator: &'a mut Evaluator<'ir>,
+) -> impl FnMut(&Value, &Value, &Predicate) -> Evaluated<bool> + 'a {
+    move |element, base, predicate| {
+        Ok(evaluator.member(element, base)? && evaluator.filters(element, base, predicate)?)
     }
 }
 
