@@ -101,6 +101,14 @@ const getInputs = (): TraceInput[] => {
     }));
 };
 
+// Counted in the bytes: a trace can be longer than the longest string a runtime makes.
+const getLineCount = (path: string) => {
+  const bytes = readFileSync(path);
+  let count = 0;
+  for (let index = bytes.indexOf(10); index !== -1; index = bytes.indexOf(10, index + 1)) count++;
+  return count;
+};
+
 const trace = async (input: TraceInput): Promise<Result> => {
   const text = readFileSync(input.path, "utf8");
   const stepLimit =
@@ -118,7 +126,7 @@ const trace = async (input: TraceInput): Promise<Result> => {
     verdict: isSame ? "same" : "differs",
     id: input.id,
     digest,
-    lines: readFileSync(tracePath, "utf8").split("\n").length - 1,
+    lines: getLineCount(tracePath),
     bytes: statSync(tracePath).size,
     expected,
     ...(!isSame && { actual }),
