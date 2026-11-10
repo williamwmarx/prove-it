@@ -716,11 +716,12 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let settings = Settings {
         is_violation_reported: true,
         workers,
-        // PROVE_IT_WORKERS: the threads the search shares its levels and the liveness checker's
-        // atoms between, which find what one thread finds. PROVE_IT_SHARED_LEVEL: the fewest
+        // The search shares its levels and the liveness checker's atoms between as many threads
+        // as TLC has workers, and finds what one thread finds. PROVE_IT_WORKERS asks for another
+        // number, such as to check that under -workers 1; PROVE_IT_SHARED_LEVEL sets the fewest
         // states a level shares.
         threads: env_number("PROVE_IT_WORKERS")
-            .unwrap_or(1)
+            .unwrap_or(workers)
             .clamp(1, cores()),
         minimum_shared_level: env_number("PROVE_IT_SHARED_LEVEL").unwrap_or(MINIMUM_SHARED_LEVEL),
         is_liveness_periodic,
