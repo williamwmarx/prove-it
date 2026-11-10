@@ -1070,3 +1070,21 @@ and then evaluates again at each progress point: a `PrintT` in one prints again 
 - **What removes it:** evaluating the expression at each progress point, as TLC does: printing
   what it prints, and, where it is FALSE, stopping with TLC's statistics, work left on the queue,
   and exit 10. It comes after -dump and -continue.
+
+## TLC's default, which records the trace
+
+TLC records the trace for its trace exploration spec unless `-tool`, `-continue`,
+`-noGenerateSpecTE` or `-noTE` is given. At startup it adds the postcondition
+`_TLCTrace!_TLCTraceSilent`, so SANY parses `_TLCTrace` and the modules it uses (TLC, TLCExt,
+Sequences, FiniteSets, Integers) after the spec's own, and TLC loads Integers' methods over
+Naturals' wherever Integers is loaded: `\div` floors and reports an overflow, and `>=` names itself
+as Integers does.
+
+- **What the binary does:** it splices `_TLCTrace` into the root module's extendees for the report
+  (`ReportOptions.root_extendees`) and for TLC's order (`TlcOrder::with_root_extendees`), and lowers
+  without the Naturals flags (`ModelOptions.is_trace_recorded`). A run that ends without a
+  counterexample prints TLC's output in full.
+- **What still declines:** a counterexample, for which TLC writes `<Spec>_TTrace_<epoch>.bin`, and
+  for a trace of two states or more `<Spec>_TTrace_<epoch>.tla` and its path after `Finished in`.
+- **The TypeScript interpreter** writes neither file, and in this mode it keeps Naturals' `>=`
+  wording (`getTraceSpecArithmetic`). It is retired with the interpreter (fallback.md, S4).

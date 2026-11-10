@@ -76,6 +76,10 @@ pub struct ReportOptions<'a> {
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
     /// The file TLC prints that it parses a module from, as `createFileDescriber` names it.
     pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> String,
+    /// The modules TLC adds to the root module's EXTENDS for its post conditions, which SANY
+    /// loads after the ones the root module extends: `_TLCTrace` where TLC records the trace for
+    /// its trace exploration spec.
+    pub root_extendees: &'a [&'a str],
 }
 
 /// tla2sany.semantic.StandardModules: SANY lints the modules other than these.
@@ -366,7 +370,21 @@ impl Loader<'_> {
             });
         }
         let module = Rc::new(module);
-        let dependencies = Rc::new(get_dependencies(&module));
+        let mut dependencies = get_dependencies(&module);
+        // The root module extends the modules of TLC's post conditions after its own.
+        if self.loaded.is_empty() {
+            for (offset, &extendee) in self.options.root_extendees.iter().enumerate() {
+                let extendee: Rc<str> = Rc::from(extendee);
+                dependencies
+                    .importers
+                    .entry(extendee.clone())
+                    .or_insert_with(|| name.clone());
+                dependencies
+                    .extendees
+                    .insert(module.extends.len() + offset, extendee);
+            }
+        }
+        let dependencies = Rc::new(dependencies);
         // SANY validates the PlusCal of the root module once it parses, and of a module each
         // time it resolves another module's EXTENDS of it, as `loadValidatedModule` does.
         let extenders = self

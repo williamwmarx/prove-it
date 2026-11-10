@@ -1,0 +1,119 @@
+//! The binary as TLC runs by default, recording the trace for its trace exploration spec,
+//! against TLC built at d8fb231.
+
+use std::path::PathBuf;
+use std::process::{Command, Output};
+
+fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+// Writes the spec and its configuration to a directory of their own and checks them with TLC's
+// command line and the arguments, without -noTE.
+fn run_spec(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-trace-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let name = spec
+        .split_whitespace()
+        .nth(2)
+        .expect("the module's name")
+        .to_string();
+    std::fs::write(directory.join(format!("{name}.tla")), spec).expect("the spec");
+    std::fs::write(directory.join(format!("{name}.cfg")), config).expect("the configuration");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(args.iter().chain([&name.as_str()]))
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    (output, directory)
+}
+
+#[test]
+fn checks_as_tlc_does_by_default_where_it_records_the_trace() {
+    // TLC's default records the trace for its trace exploration spec: SANY parses _TLCTrace and
+    // the modules it uses with the spec, and TLC loads Integers' methods over Naturals', so
+    // -1 \\div 2 is -1 and >= names itself (TLC at d8fb231).
+    let spec = "---- MODULE Succ ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x <= 3\n====\n";
+    let (output, directory) = run_spec(
+        "trace-default",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n",
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    let parsed: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("Parsing file "))
+        .map(|path| {
+            let file = path.rsplit('/').next().unwrap_or(path);
+            file.strip_suffix(".tla").unwrap_or(file)
+        })
+        .collect();
+    assert_eq!(
+        parsed,
+        [
+            "Succ",
+            "Naturals",
+            "_TLCTrace",
+            "TLC",
+            "TLCExt",
+            "Sequences",
+            "FiniteSets",
+            "Integers"
+        ],
+        "{text}"
+    );
+    assert!(
+        text.contains("Semantic processing of module Naturals\nSemantic processing of module Sequences\nSemantic processing of module FiniteSets\nSemantic processing of module TLC\nSemantic processing of module Integers\nSemantic processing of module TLCExt\nSemantic processing of module _TLCTrace\nSemantic processing of module Succ\nLinting of module TLCExt\nLinting of module _TLCTrace\nLinting of module Succ\nStarting... ("),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    for (test, assumption, expected) in [
+        (
+            "trace-divide",
+            "ASSUME PrintT((0 - 1) \\div 2)\nASSUME PrintT((0 - 2147483647 - 1) \\div (0 - 1))",
+            "\n-1\nError: Evaluating assumption line 7, col 8 to line 7, col 48 of module Arith failed.\nOverflow when computing -2147483648 \\div -1\n",
+        ),
+        (
+            "trace-geq",
+            "ASSUME TRUE\nASSUME \"a\" >= 1",
+            "\nError: Evaluating assumption line 7, col 8 to line 7, col 15 of module Arith failed.\nThe first argument of >= should be an integer, but instead it is:\n\"a\"\n",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Arith ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n{assumption}\n====\n"
+        );
+        let (output, directory) = run_spec(test, &spec, "INIT Init\nNEXT Next\n", &[]);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(text.contains(expected), "{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn declines_a_counterexample_where_tlc_records_the_trace() {
+    // TLC writes the trace's file for any counterexample, and the trace exploration spec for one
+    // of two states or more, which the binary doesn't yet.
+    let spec = "---- MODULE Viol ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x > 0\n====\n";
+    let (output, directory) = run_spec(
+        "trace-counterexample",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        &[],
+    );
+    let text = format!(
+        "{}{}",
+        stdout(&output),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains(
+            "prove-it: not native yet: the trace exploration spec TLC writes for a counterexample"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

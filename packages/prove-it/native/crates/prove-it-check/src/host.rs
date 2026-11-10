@@ -31,6 +31,8 @@ pub struct Files<'a> {
     pub temporary: Option<&'a str>,
     pub metadir: Option<&'a str>,
     pub is_174: bool,
+    /// TLC records the trace for its trace exploration spec, so SANY parses `_TLCTrace` too.
+    pub is_trace_recorded: bool,
 }
 
 /// The path TLC prints for the file it parses a module from, by the module's name and origin.
