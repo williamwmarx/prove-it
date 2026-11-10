@@ -2812,6 +2812,13 @@ fn answers_fairness_of_the_next_state_relation_as_tlc() {
             "SPECIFICATION OtherSpec\nPROPERTY Live\n",
             include_str!("next-fair-other.txt"),
         ),
+        // Init assigns from sets the guard doesn't cover, which TLC's predicate evaluation of
+        // Next never tests: the steps still answer.
+        (
+            "---- MODULE InitUncovered ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in ([a : {}] \\cup {0}) \\cup {y \\in {1, 2} : y > 1}\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nReach == <>(x = 5)\n====\n".to_string(),
+            "SPECIFICATION Spec\nPROPERTY Reach\n",
+            include_str!("next-fair-init.txt"),
+        ),
     ];
     for (position, (spec, config, expected)) in cases.iter().enumerate() {
         for workers in ["1", "4"] {

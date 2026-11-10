@@ -843,7 +843,9 @@ walker-hook shape guard and the fallbacks below.
 
   Records, functions, products, SUBSET, unions, UNION, filters, maps, constants, Nat and the rest
   go back on only with a citation of their `member`, the argument for an empty part, and the grid
-  below. A walk that enumerates an empty set, or assigns by `x' \subseteq S`, also turns it off.
+  below. A walk of Next that enumerates an empty set, or assigns by `x' \subseteq S`, also turns
+  it off. Init's memberships don't: TLC's predicate evaluation of Next never tests them (cf1s's
+  `pc \in [Proc -> {"V0", "V1"}]`), though their values are joined, which UNCHANGED compares.
   The grid, `prove-it-cli/tests/membership-grid`, has 396 specs: x' \in S beside two other
   assignments, under WF_x(Next) (answered from the steps where the guard lets it) and
   WF_x(Alias) with Alias == Next (evaluated). S is each of eleven forms, with a part empty and not,

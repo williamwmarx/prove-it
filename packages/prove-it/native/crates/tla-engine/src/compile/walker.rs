@@ -2403,7 +2403,8 @@ impl<'a> Compiler<'a> {
             }
             let id = (set.eval)(machine)?;
             let size = set.size(machine, id)?;
-            if size == 0 || !is_covered {
+            // Only Next's walks reach TLC's predicate evaluation of Next.
+            if !is_init && (size == 0 || !is_covered) {
                 machine.note_unsafe_membership();
             }
             machine.assigned += 1;
