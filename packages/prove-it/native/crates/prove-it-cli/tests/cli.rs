@@ -103,6 +103,79 @@ fn reports_what_tlc_reports_before_the_search() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// Each output is what TLC at d8fb231 prints for the command line.
+#[test]
+fn reads_the_command_line_as_tlc() {
+    let directory = commit_directory("command-line");
+    let usage = "\nUsage: java tlc2.TLC [-help] [-option] inputfile\n";
+    for (args, message) in [
+        (&["-foo", "TCommit"][..], "unrecognized option: -foo"),
+        (
+            &["TCommit", "Other"],
+            "more than one input files: TCommit and Other",
+        ),
+        (&["-nowarning"], "Missing input TLA+ module."),
+        (
+            &["-workers", "0", "TCommit"],
+            "at least one worker required.",
+        ),
+        (
+            &["TCommit", "-config"],
+            "expect a file name for -config option.",
+        ),
+    ] {
+        let output = run(&directory, &[&["tlc2.TLC"], args].concat());
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let text = stdout(&output);
+        assert!(text.starts_with("TLC2 Version "), "{text}");
+        assert!(
+            text.ends_with(&format!("\nError: Error: {message}{usage}")),
+            "{text}"
+        );
+    }
+    let marked = run(&directory, &["tlc2.TLC", "-tool", "-fp", "131", "TCommit"]);
+    assert!(stdout(&marked).ends_with(&format!(
+        "@!@!@STARTMSG 1102:1 @!@!@\nError: The number for -fp must be between 0 and 130 (inclusive).{usage}@!@!@ENDMSG 1102 @!@!@\n"
+    )));
+    // TLC names the configuration file with or without its extension.
+    let configured = run(&directory, &["tlc2.TLC", "-config", "TCommit", "TCommit"]);
+    assert_eq!(configured.status.code(), Some(0), "{}", stdout(&configured));
+    for (args, what) in [
+        (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
+        (&["-simulate", "TCommit"], "the TLC option -simulate"),
+        (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
+        (&["-fp", "1", "TCommit"], "-fp 1"),
+        (&["-lncheck", "off", "TCommit"], "-lncheck off"),
+        (&["TCommit.cfg"], "a module named as a configuration file"),
+    ] {
+        let output = run(&directory, &[&["tlc2.TLC"], args].concat());
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert_eq!(stdout(&output), "", "{args:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("prove-it: not native yet: {what}\n")
+        );
+    }
+    let property = run(
+        &directory,
+        &[
+            "-Dtlc2.tool.ModelChecker.BAQueue=true",
+            "tlc2.TLC",
+            "TCommit",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&property.stderr),
+        "prove-it: not native yet: the system property tlc2.tool.ModelChecker.BAQueue\n"
+    );
+    let silent = run(
+        &directory,
+        &["-Dtlc2.TLC.ide=vscode", "tlc2.TLC", "TCommit"],
+    );
+    assert_eq!(silent.status.code(), Some(0), "{}", stdout(&silent));
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn prints_a_deadlock_unless_deadlock_turns_it_off() {
     // TCommit's configuration turns deadlock checking off; with it on, its final states deadlock.
@@ -605,6 +678,22 @@ fn words_failed_memberships_and_sequence_arguments_as_tlc() {
         (
             "Len(Nat) = 1",
             "The argument of Len should be a sequence, but instead it is:\nNat",
+        ),
+        (
+            "1 \\in <<1, 2>>",
+            "Attempted to check set membership in a tuple value.",
+        ),
+        (
+            "{1} \\subseteq 1",
+            "Attempted to check if the value:\n1\nis an element of the integer 1",
+        ),
+        (
+            "DOMAIN [a : Nat] = {}",
+            "Attempted to apply the operator DOMAIN to a non-function\n(a set of the form [d1 : S1, ... , dN : SN])\nline 5, col 8 to line 5, col 23 of module Member",
+        ),
+        (
+            "Seq(Nat)[1] = 1",
+            "A non-function (a special set constant) was applied as a function.\nline 5, col 8 to line 5, col 18 of module Member",
         ),
     ] {
         let spec = format!(
@@ -1308,6 +1397,27 @@ fn stops_where_an_invariant_sets_exit_as_tlc_does() {
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_postcondition_or_alias_tlc_computes_as_it_starts() {
+    // TLC computes a definition of constant level as it starts, then rejects it as a
+    // POSTCONDITION ("The post condition Post cannot be a constant.") or an ALIAS.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nPost == FALSE\nAl == [y |-> 1]\n====\n";
+    for config in ["POSTCONDITION Post\n", "ALIAS Al\n"] {
+        let (output, directory) = run_lowered(
+            "precomputed",
+            spec,
+            &format!("INIT Init\nNEXT Next\n{config}"),
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("prove-it: not native yet: a POSTCONDITION or an ALIAS"),
+            "{}",
+            stdout(&output)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
 }
 
 #[test]

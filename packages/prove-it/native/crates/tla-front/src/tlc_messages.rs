@@ -254,6 +254,29 @@ pub fn format_nested_message(text: &str, is_tool: bool) -> String {
     }
 }
 
+/// SpecProcessor.processConstants's Assert.fail for a literal TLC can't hold, from the front end's
+/// "TLC can't handle ...: <literal> at <location>": the literal on a line of its own, and the exit
+/// code EC.ExitStatus gives the message's code.
+fn get_rejected_literal(error: &FrontError) -> Option<CodedError> {
+    let FrontError::Evaluation(message) = error else {
+        return None;
+    };
+    [
+        (2244, "TLC can't handle real numbers", CONFIG_PARSE_ERROR),
+        (2265, "TLC can't handle a number this big", GENERAL_ERROR),
+    ]
+    .into_iter()
+    .find_map(|(code, headline, exit_code)| {
+        let literal = message.strip_prefix(headline)?.strip_prefix(": ")?;
+        let literal = &literal[..literal.find(" at ")?];
+        Some(CodedError {
+            code,
+            text: format!("{headline}.\n{literal}"),
+            exit_code,
+        })
+    })
+}
+
 /// An error TLC prints with its message code, at level error, and the exit code it ends with.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodedError {
@@ -281,6 +304,9 @@ impl FrontError {
             }
             _ => return None,
         };
+        if let Some(literal) = get_rejected_literal(self) {
+            return Some(literal);
+        }
         let code = get_coded_message(message)
             .filter(|coded| !coded.is_eval_exception)
             .map_or(GENERAL, |coded| coded.code);

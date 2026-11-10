@@ -585,6 +585,10 @@ impl Parser {
 
     fn parse_subscript(&mut self) -> Parsed<Expression> {
         let token = self.peek(0);
+        // SANY's FairnessExpr reads WF_B(A)(Act) with the subscript B(A).
+        if token.kind == TokenKind::Identifier && self.is_application_subscript_ahead() {
+            return self.parse_primary(None);
+        }
         if token.kind == TokenKind::Identifier {
             let start = self.index;
             let location = self.peek_location();
@@ -611,6 +615,30 @@ impl Parser {
             "Expected a subscript but found {}",
             self.describe(&token)
         )))
+    }
+
+    fn is_application_subscript_ahead(&self) -> bool {
+        let mut offset = 1;
+        while self.is_at("!", offset) && self.peek_kind(offset + 1) == TokenKind::Identifier {
+            offset += 2;
+        }
+        if !self.is_at("(", offset) {
+            return false;
+        }
+        let mut depth = 0;
+        loop {
+            if self.peek_kind(offset) == TokenKind::End {
+                return false;
+            }
+            depth += usize::from(self.is_at("(", offset));
+            if self.is_at(")", offset) {
+                depth -= 1;
+                if depth == 0 {
+                    return self.is_at("(", offset + 1);
+                }
+            }
+            offset += 1;
+        }
     }
 
     fn is_definition_ahead(&self, operator_line: u32) -> bool {
@@ -2449,14 +2477,20 @@ impl Parser {
             };
             return Err(self.error_at(message, step.line, step.column));
         }
-        if Self::get_step_level(&step.text) < 0 && self.get_step_name(&step.text).is_some() {
-            return Err(self.error_at(
-                "<*> and <+> cannot be used for a named step",
-                step.line,
-                step.column,
-            ));
-        }
+        let is_named_unnumbered =
+            Self::get_step_level(&step.text) < 0 && self.get_step_name(&step.text).is_some();
         self.index += 1;
+        // SANY's generator rejects it at the step, a semantic error.
+        if is_named_unnumbered && self.mode == Mode::Tlc {
+            let error = SanyError {
+                location: format_range(&self.get_range(start)),
+                message: "<*> and <+> cannot be used for a named step.".to_owned(),
+            };
+            match &mut self.sany_errors {
+                Some(errors) => errors.push(error),
+                None => return Err(SyntaxError::sany(vec![error])),
+            }
+        }
         let name = self.get_step_name(&step.text);
         let mut location = location_of(&self.tokens[start]);
         let statement_start = self.index;

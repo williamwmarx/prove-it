@@ -51,8 +51,11 @@ pub struct Checked {
 pub enum Verdict {
     Holds,
     False,
-    /// The message of the error TLC reports evaluating it.
-    Failed(String),
+    /// The message of the error TLC reports evaluating it, and as -tool nests it.
+    Failed {
+        text: String,
+        tool_text: String,
+    },
 }
 
 fn unsupported<T>(reason: &str) -> Result<T, Unsupported> {
@@ -288,7 +291,10 @@ impl Rebuilder<'_> {
             Ok(Value::Bool(false)) => Verdict::False,
             Ok(_) => return unsupported("that isn't a boolean"),
             Err(error) => match error.message {
-                Some(message) => Verdict::Failed(message.text),
+                Some(message) => Verdict::Failed {
+                    tool_text: crate::failure::nested(&message),
+                    text: message.text,
+                },
                 None => return Err(Unsupported(format!("a postcondition: {}", error.reason))),
             },
         };
