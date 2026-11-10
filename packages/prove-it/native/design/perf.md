@@ -320,9 +320,8 @@ read-only memo snapshots.
   walks the level's candidates in (parent, step) order, probing and inserting those whose home is in
   its range. The merge then only numbers and imports the new states; a fingerprint whose probe runs
   past its thread's range, and 0, it probes itself, in order as before. That takes a table without
-  indices, which is the binary's (no fingerprint
-  verification, no graph), and no invariant deferred to the merge
-  (a VIEW or SYMMETRY whose new state fails one), which still merges serially. On 4 cores, medians
+  indices, which is the binary's (no fingerprint verification), no graph recorded, and no invariant
+  deferred to the merge (a VIEW or SYMMETRY whose new state fails one); those still merge serially. On 4 cores, medians
   of 5 interleaved runs at 4 threads against `perf-state-table`, every count unchanged:
   MCExactInitialSync 7.63 → 7.08 s (−7%), MCbtree 0.398 → 0.371 (−7%), MCMultiNode 2.75 → 2.62
   (−5%), PaxosCommit 9.02 → 8.66 (−4%), Detlefs 1.13 → 1.09 (−4%). The rest is within noise
@@ -337,9 +336,23 @@ read-only memo snapshots.
   82 MB (meta 16 MB, heap 64 MB, its table 2 MB), against the base store's 16 MB table and the
   states' 40 MB. Reusing the level's candidate buffers from level to level changed neither peak RSS
   (2,135–2,158 MB against 2,074–2,187 MB) nor time. The rest is the memo tables each thread doubles
-  (track 4's per-thread budget, #187) and what glibc keeps in each thread's arena once they free. An
-  overlay that reads the base in place rather than copying its meta and heap would save the 82 MB a
-  thread; it is a large change, to judge after #187.
+  (track 4's per-thread budget, #187) and what glibc keeps in each thread's arena once they free.
+- **Measured, not done: an overlay that reads the base in place.** Rather than copy the store's
+  values, blocks and texts, an overlay read those below its base's counts from the store itself.
+  Peak RSS at 4 threads fell on PaxosCommit 1,427 → 1,202 MB, but one thread ran 11–15% slower
+  (PaxosCommit 20.0 → 23.0 s, MCExactInitialSync 15.3 → 17.0 s), with the store's path out of line
+  and cold: the test of which store holds a value, on every read in `compare_functions`,
+  `find_in_block` and `compare`. Only a store generic over the two kinds would avoid it.
+- **Measured, not done, each within noise at 4 threads:** prefetching a thread's own table of the
+  level's states with the state table's; importing the values a thread computed once, a constant's,
+  into the store after each level (they are nearly all computed at startup); inlining the lookup
+  of a length's shift table. Keeping the threads from level to level isn't worth building: the
+  suite's searches are at most 82 levels deep, a few milliseconds of starts.
+- **Where the threads' time goes.** At 4 threads the threads take 50–64% more CPU than one thread
+  does, spread evenly over evaluation, the memo tables, the store and the fingerprints: the cores
+  contend for memory and cache, rather than any part doing more. Of what is the threads' own, their
+  probes of the state table miss the TLB (track 8's huge pages), and each thread's memo tables and
+  overlay are working sets of their own (track 4).
 - **16 cores, `main` at d7c8b5d** (before #168, #183, #178 and #182), medians of 3, every run
   agreeing with TLC: one worker, then 16 threads.
 
@@ -362,9 +375,9 @@ read-only memo snapshots.
 
   The run took 1.66× the CPU of one worker overall. The weak scalers are the models with a large
   state table and cheap states (MCExactInitialSync, MCbtree, MCLamportMutex), whose serial merge
-  this track's fill shortens. Memory grows most on FastPaxos (7×, not its memo tables; the
-  symmetry's tables of images, one per thread, are the suspect), cf1s_folklore (4×) and PaxosCommit
-  (4.3×; 2,566 MB with #187's budget).
+  this track's fill shortens. Memory grows most on FastPaxos (7×: each thread's symmetry tables of
+  images, 73 MB with 3% of their slots used, which #172's rows by id cut to 79 → 127 MB at 4
+  threads), cf1s_folklore (4×) and PaxosCommit (4.3×; 2,566 MB with #187's budget).
 
 ### 7. Interning long blocks (`perf-intern`), independent
 
