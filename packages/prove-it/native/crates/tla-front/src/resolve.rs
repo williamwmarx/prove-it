@@ -1346,6 +1346,13 @@ fn get_symbol_arity(
                     "the instance {name} named as a fact"
                 )));
             }
+            // SANY analyzes the arguments against the INSTANCE's parameters first
+            // (`generateExprOrOpArg`), which the front end doesn't follow.
+            if instance.arity != 0 {
+                return Err(FrontError::NotYet(format!(
+                    "the instance {name} applied to its arguments as an expression"
+                )));
+            }
             (
                 Some(get_spelled_name_range(expression, name)),
                 format!("Operator name {name} is incomplete."),
