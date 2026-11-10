@@ -73,11 +73,9 @@ export type WorkerMessage =
 export type CoordinatorMessage =
   { type: "level" } | { type: "resize"; fingerprints: SharedFingerprints };
 
-export const check = (options: CheckOptions): Promise<CheckResult> => checkParsed(options);
-
 // The options with the check written to PROVE_IT_CHECK_LOG, and each module, class and file it
 // reads as it reads it, where the configuration is text.
-const logCheck = (options: CheckOptions): CheckOptions => {
+export const logCheck = (options: CheckOptions): CheckOptions => {
   const append = getCheckLog();
   if (!append || typeof options.config !== "string") return options;
   const id = crypto.randomUUID();
@@ -131,7 +129,8 @@ const logCheck = (options: CheckOptions): CheckOptions => {
   };
 };
 
-// Checks a spec as check does. The readings are those of a spec SANY accepted, which the check
+// The TypeScript check, which the library's check falls back to and the CLI runs where the native
+// check declines. The readings are those of a spec SANY accepted, which the check
 // reads its modules from.
 export const checkParsed = async (
   unlogged: CheckOptions,

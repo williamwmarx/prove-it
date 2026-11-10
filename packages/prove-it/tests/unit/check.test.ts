@@ -6,15 +6,13 @@ import { pathToFileURL } from "node:url";
 
 import {
   check,
-  type CheckProgress,
-  type CheckResult,
-  formatValue,
   parseConfig,
   parseModule,
   TlaConfigError,
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
+import type { CheckProgress, CheckResult } from "../../src/check";
 import {
   createSanyError,
   createSemanticError,
@@ -24,19 +22,21 @@ import {
   UNEXPECTED_EXCEPTION,
 } from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
+import { checkParsed } from "../../src/parallel";
 import type { TlcVersion } from "../../src/tlc/version";
+import { formatValue } from "../../src/values";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
 const checkModule = (body: string, config = "") =>
-  check({
+  checkParsed({
     source: `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
     config: `${config}\nINIT Init\nNEXT Next`,
   });
 
 const checkFixture = (directory: string, name: string) =>
-  check({
+  checkParsed({
     source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
     config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
   });
@@ -51,7 +51,7 @@ describe("check matches TLC", () => {
       else process.env.PROVE_IT_ENGINE = engine;
       const printed: string[] = [];
       try {
-        await check({
+        await checkParsed({
           source:
             '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nC == PrintT("C")\nInit == x = 0 /\\ C\nNext == x < 3 /\\ C /\\ x\' = x + 1\nInv == x >= 0 /\\ C\n====',
           config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
@@ -91,7 +91,7 @@ describe("check matches TLC", () => {
   ])(
     "binds a fact named as one of a module it %s to the first as SANY does",
     async (_, header, facts, status) => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\n${header}\nInit == x = 0\nNext == x' = x\n${facts}\nInv == T\n====`,
         config: "INIT Init\nNEXT Next\nINVARIANT Inv",
         loadModule: (name) =>
@@ -108,7 +108,7 @@ describe("check matches TLC", () => {
     "enumerates the bound of a quantifier over a lazy union as TLC %s does",
     async (version, printed, generatedStates) => {
       const prints: string[] = [];
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == (\\E <<a, b>> \\in {1, 3} \\X UNION {0..2, {1, 3}} : TRUE) /\\ x' = x\nASSUME \\A a \\in UNION {{3, 1}, 0..2} : PrintT(a)\nASSUME PrintT(CHOOSE a \\in UNION {{3}, 0..2} : TRUE)\n====`,
         config: "INIT Init\nNEXT Next",
         version,
@@ -126,7 +126,7 @@ describe("check matches TLC", () => {
     ["master", "[Nat -> {}]", "success"],
     ["master", "[{} -> Nat]", "success"],
   ] as const)("enumerates the sets of %s %s in turn as TLC does", async (version, set, status) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nASSUME \\A y \\in ${set} : TRUE\n====`,
       config: "",
       version,
@@ -135,7 +135,7 @@ describe("check matches TLC", () => {
   });
 
   it("streams the sets that a set of tuples, records, or functions combines as TLC does", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' \\in [b : UNION {{3, 1}, 0..1}, a : UNION {{2}, 1..2}]\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -151,7 +151,7 @@ describe("check matches TLC", () => {
   it("passes a string that spells an operator as a string argument", async () => {
     const texts = ["[]", "<>", "SUBSET", "UNION", "DOMAIN", "ENABLED", "UNCHANGED", "'", "^+"];
     const printed: string[] = [];
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS TLC\n${texts.map((text) => `ASSUME PrintT("${text}")`).join("\n")}\n====`,
       config: "",
       onPrint: (text) => printed.push(text),
@@ -163,7 +163,7 @@ describe("check matches TLC", () => {
   it("checks invariants before action properties and constrained states", async () => {
     const results = await Promise.all(
       ["InvariantFirst", "ConstrainedInvariant"].map((name) =>
-        check({
+        checkParsed({
           source: readFileSync(join(FIXTURES, "ordering", "Ordering.tla"), "utf8"),
           config: readFileSync(join(FIXTURES, "ordering", `${name}.cfg`), "utf8"),
         }),
@@ -235,7 +235,7 @@ describe("check matches TLC", () => {
 
   it("reports a module that cannot be found as a syntax error", async () => {
     await expect(
-      check({
+      checkParsed({
         source: "---- MODULE M ----\nEXTENDS Missing\n====",
         config: "",
         loadModule: () => undefined,
@@ -246,7 +246,7 @@ describe("check matches TLC", () => {
   it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", async () => {
     const results = await Promise.all(
       ["Runtime", "Distinct", "Generated"].map((name) =>
-        check({
+        checkParsed({
           source: readFileSync(join(FIXTURES, "runtime", "Runtime.tla"), "utf8"),
           config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
         }),
@@ -280,7 +280,7 @@ describe("check matches TLC", () => {
   it("checks _POSSIBLE predicates and postconditions after the search", async () => {
     const results = await Promise.all(
       ["Holds", "Unwitnessed", "False"].map((name) =>
-        check({
+        checkParsed({
           source: readFileSync(join(FIXTURES, "postconditions", "Postconditions.tla"), "utf8"),
           config: readFileSync(join(FIXTURES, "postconditions", `${name}.cfg`), "utf8"),
           onPrint: () => {},
@@ -297,7 +297,7 @@ describe("check matches TLC", () => {
   });
 
   it("generates no states for a specification without variables", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: "---- MODULE M ----\nSpec == [][TRUE]_<<>>\n====",
       config: "SPECIFICATION Spec",
     });
@@ -310,7 +310,7 @@ describe("check matches TLC", () => {
   });
 
   it("runs only the PlusCal actions whose label guard matches, with TLC's counts", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: [
         "---- MODULE M ----",
         "EXTENDS Integers",
@@ -335,7 +335,7 @@ describe("check matches TLC", () => {
   });
 
   it("runs only the actions whose label guard after other guards matches, with TLC's counts", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: [
         "---- MODULE M ----",
         "EXTENDS Integers",
@@ -360,7 +360,7 @@ describe("check matches TLC", () => {
   });
 
   it("reports an error in a guard before a label that doesn't match like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: [
         "---- MODULE M ----",
         "VARIABLES pc, x",
@@ -379,7 +379,7 @@ describe("check matches TLC", () => {
   });
 
   it("reports a name that is not a boolean before a label that doesn't match like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: [
         "---- MODULE M ----",
         "VARIABLES pc, x",
@@ -398,7 +398,7 @@ describe("check matches TLC", () => {
   });
 
   it("runs every disjunct of an action before a label that doesn't match like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: [
         "---- MODULE M ----",
         "VARIABLES pc, x",
@@ -418,7 +418,7 @@ describe("check matches TLC", () => {
   });
 
   it("reports a label that is not a string where the first action compares it like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: [
         "---- MODULE M ----",
         "VARIABLE pc",
@@ -437,7 +437,7 @@ describe("check matches TLC", () => {
   });
 
   it("generates a successor for each witness of an existential under a universal action", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nWitness(i) == \\E j \\in 1..3 : j >= i\nInit == x = 0\nNext == x < 2 /\\ (\\A i \\in {1, 2} : Witness(i)) /\\ x' = x + 1\n====",
       config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
@@ -448,7 +448,7 @@ describe("check matches TLC", () => {
   it("evaluates the conjuncts left once an action assigns every variable, unless warnings are off", async () => {
     const results = await Promise.all(
       [true, false].map((isWarningEnabled) =>
-        check({
+        checkParsed({
           source:
             "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nWitness(i) == \\E j \\in 1..3 : j >= i\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ \\A i \\in {1, 2} : Witness(i)\n====",
           config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
@@ -464,7 +464,7 @@ describe("check matches TLC", () => {
 
   it("computes the definitions an INSTANCE adds in the order of SANY's symbol table", async () => {
     const warnings: string[] = [];
-    await check({
+    await checkParsed({
       source: "---- MODULE R ----\nINSTANCE Cases WITH C <- 1\n====",
       config: "",
       loadModule: (name) =>
@@ -498,7 +498,7 @@ describe("check matches TLC", () => {
   ])(
     "names >= in an error as the Java method TLC loads with %s does",
     async (modules, assumption, name, value) => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS ${modules}\nASSUME ${assumption}\n====`,
         config: "",
       });
@@ -511,7 +511,7 @@ describe("check matches TLC", () => {
   it("reports a depth of 1 when the constraint excludes every initial state", async () => {
     const results = await Promise.all(
       [1, 2].map((workers) =>
-        check({
+        checkParsed({
           source:
             "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 1\nNext == x' = x\nConstraint == x = 0\n====",
           config: "INIT Init\nNEXT Next\nCONSTRAINT Constraint",
@@ -529,7 +529,7 @@ describe("check matches TLC", () => {
 
   it("prints empty intervals and keys that are not field names like TLC", async () => {
     const prints: string[] = [];
-    await check({
+    await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME PrintT(0..-2)\nASSUME PrintT(("<<>>" :> 0) @@ ("a b" :> 1))\nASSUME PrintT(("x1" :> 2) @@ ("y" :> 3))\nASSUME PrintT("x\u00b2" :> 4)\nASSUME PrintT("x\u0663" :> 5)\nInit == x = 0\nNext == UNCHANGED x\n====',
       config: "INIT Init\nNEXT Next",
@@ -546,7 +546,7 @@ describe("check matches TLC", () => {
 
   it("orders and compares intervals by size and then low bound like TLC", async () => {
     const prints: string[] = [];
-    await check({
+    await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nASSUME PrintT(<<{2..3, 1..3, 3..2, 1..0, 0..1, 5..4}, 1..3 = 1..3, 3..2 = 1..0, 1..2 = 2..3, Cardinality({1..0, 3..2}), [1..2 -> {0}] \\subseteq [1..2 -> {0, 1}]>>)\nInit == x = 0\nNext == UNCHANGED x\n====",
       config: "INIT Init\nNEXT Next",
@@ -556,7 +556,7 @@ describe("check matches TLC", () => {
   });
 
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Reals, Toolbox\nVARIABLE x\nASSUME 1 \\in Real\nInit == x = 0\nNext == x' = x\n====",
       config: "INIT Init\nNEXT Next",
@@ -576,7 +576,7 @@ describe("check matches TLC", () => {
 
   // A1 reaches a state with the same VIEW as the successor of A2 that violates the property.
   it("labels the successor that violates an action property by its values under a VIEW", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA1 == x' = x /\\ y' = y\nA2 == x' = x /\\ y' = 1\nSpec == Init /\\ [][A1 \\/ A2]_<<x, y>>\nP == [][y' = y]_<<x, y>>\nView == x\n====",
       config: "SPECIFICATION Spec\nPROPERTY P\nVIEW View",
@@ -602,7 +602,7 @@ describe("check matches TLC", () => {
       ["([a |-> 0, b |-> 0] :> 1)", "([a |-> 0, b |-> 0] :> 1)", "([a |-> 1, b |-> 1] :> 1)"],
     ],
   ])("prints the records of a trace under %s in the order TLC sorts them", async (reduction, s) => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT P\nVARIABLES x, r, s, t\nGet(v) == v.a + v.b\nInit == x = 0 /\\ r = [b |-> 0, a |-> 0] /\\ s = ([b |-> 0, a |-> 0] :> 1) /\\ t = {[b |-> 1, a |-> 1]}\nNext == x < 2 /\\ x' = x + 1 /\\ r' = [b |-> x, a |-> x] /\\ s' = ([b |-> x, a |-> x] :> 1) /\\ t' = {[b |-> x, a |-> 1]}\nView == x\nViewOfS == <<x, s>>\nSymmetry == Permutations(P)\nInv == x < 2\n====",
       config: `CONSTANT P = {p1, p2}\nINIT Init\nNEXT Next\nINVARIANT Inv\n${reduction}`,
@@ -630,7 +630,7 @@ describe("check matches TLC", () => {
 
   it("ranks a string literal as written where SANY parses it", async () => {
     const printed: string[] = [];
-    await check({
+    await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nA == "b"\nB == "a"\nASSUME PrintT({ToString("a"), ToString("b")})\nInit == x = 0\nNext == UNCHANGED x\n====',
       config: "INIT Init\nNEXT Next",
@@ -641,7 +641,7 @@ describe("check matches TLC", () => {
 
   it("orders strings, record fields, and model values by when TLC interns them", async () => {
     const printed: string[] = [];
-    const result = await check({
+    const result = await checkParsed({
       source: readFileSync(join(FIXTURES, "strings", "StringOrder.tla"), "utf8"),
       config: readFileSync(join(FIXTURES, "strings", "StringOrder.cfg"), "utf8"),
       onPrint: (text) => printed.push(text),
@@ -672,7 +672,7 @@ describe("check matches TLC", () => {
   );
 
   it("computes TLCFP with TLC's fingerprint", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----
 EXTENDS Integers, TLCExt
 CONSTANT a
@@ -688,7 +688,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("lists a trace's variables in TLC's order", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: readFileSync(join(FIXTURES, "randomization", "RandomModelValue.tla"), "utf8"),
       config: readFileSync(join(FIXTURES, "randomization", "RandomModelValue.cfg"), "utf8"),
     });
@@ -724,7 +724,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("enumerates subsets for x \\subseteq S in the initial predicate and next-state relation", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLE x\nInit == x \\subseteq {1, 2}\nNext == x' \\subseteq {1, 2, 3}\n====",
       config: "INIT Init\nNEXT Next",
@@ -738,7 +738,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("assigns operator constants from tables in the configuration", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nCONSTANT F(_)\nVARIABLE x\nInit == x = 0\nNext == x' = F(x)\nInv == x /= 2\n====",
       config: "INIT Init\nNEXT Next\nCONSTANT\n  F(0) = 1\n  F(1) = 2\n  F(2) = 2\nINVARIANT Inv",
@@ -758,7 +758,7 @@ ASSUME TLCFP(a) = -887695703
       'ToJson([n \\in {3, 2, 1} |-> 2 * n + 1]) = "[3,5,7]"',
       'ToJsonArray({}) = "[]"',
     ];
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Integers, TLC, Json\nVARIABLE x\n${assumptions.map((assumption) => `ASSUME ${assumption}`).join("\n")}\nInit == x = 0\nNext == x' = x\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -768,7 +768,7 @@ ASSUME TLCFP(a) = -887695703
   it("implements the TLCExt operators", async () => {
     const results = await Promise.all(
       ["Extensions", "ExtensionsShort"].map((name) =>
-        check({
+        checkParsed({
           source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
           config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
         }),
@@ -783,7 +783,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("rejects comparisons of differently-typed model values", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS TLCExt\nVARIABLE v\nInit == v = {TLCModelValue("A_a"), TLCModelValue("B_a")}\nNext == UNCHANGED v\n====',
       config: "INIT Init\nNEXT Next",
@@ -823,7 +823,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("reports a membership invariant that one changed entry violates", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers\nVARIABLE f\nInit == f = [p \\in 1..2 |-> [q \\in 1..2 |-> 0]]\nNext == \\E p, q \\in 1..2 : f' = [f EXCEPT ![p][q] = @ + 1]\nTypeOK == f \\in [1..2 -> [1..2 -> 0..2]]\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT TypeOK",
@@ -836,7 +836,7 @@ ASSUME TLCFP(a) = -887695703
 
   it("labels each step with the action TLC splits the next-state relation into", async () => {
     const getLabels = async (definitions: string, config = "INIT Init\nNEXT Next") => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\n${definitions}\nInv == x < 2\n====`,
         config: `${config}\nINVARIANT Inv`,
       });
@@ -863,7 +863,7 @@ ASSUME TLCFP(a) = -887695703
     ["OwnSpec", "Next line 4, col 1 to line 4, col 14 of module M"],
     ["NamedSpec", "Action line 7, col 1 to line 7, col 19 of module M"],
   ])("labels the steps of SPECIFICATION %s through an INSTANCE like TLC", async (spec, label) => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nINSTANCE Inner\nInv == x < 2\nOwnSpec == Init /\\ [][Next]_x\nI == INSTANCE Inner\nNamedSpec == I!Spec\n====",
       config: `SPECIFICATION ${spec}\nINVARIANT Inv`,
@@ -905,7 +905,7 @@ ASSUME TLCFP(a) = -887695703
 
   it("stops computing ENABLED at the first successor like TLC", async () => {
     const printed: string[] = [];
-    const result = await check({
+    const result = await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == ENABLED (x\' = 1 \\/ (PrintT("second") /\\ Assert(FALSE, "boom")))\n====',
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
@@ -928,7 +928,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("assigns a primed variable passed as an operator argument", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, y\nSend(p, old, new) == new = p\nInit == x = 0 /\\ y = 0\nNext == \\E p \\in {1, 2} : Send(p, x, x') /\\ y' = y\n====",
       config: "INIT Init\nNEXT Next",
@@ -971,7 +971,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("rebuilds a step under symmetry from the first action that takes it as TLC does", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nCONSTANTS p1, p2\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA1 == y' = 1 /\\ x' = x\nA2 == y' = Head(<<>>) /\\ x' = x\nSpec == Init /\\ [][A1 \\/ A2]_<<x, y>>\nProp == [][x' # x]_<<x, y>>\nSym == Permutations({p1, p2})\n====",
       config: "CONSTANTS p1 = p1 p2 = p2\nSPECIFICATION Spec\nPROPERTY Prop\nSYMMETRY Sym",
@@ -994,7 +994,7 @@ ASSUME TLCFP(a) = -887695703
     ],
   ])("finds the branches of %s like TLC", async (property, branches) => {
     const progress: CheckProgress[] = [];
-    await check({
+    await checkParsed({
       source: `---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nProp == ${property}\n====`,
       config: "INIT Init\nNEXT Next\nPROPERTY Prop",
       onProgress: (event) => {
@@ -1006,7 +1006,7 @@ ASSUME TLCFP(a) = -887695703
 
   it("warns about a permuted set with fewer than two elements", async () => {
     const warnings: CheckProgress[] = [];
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS S, T\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSym == Permutations(S) \\cup Permutations(T)\n====",
       config: "CONSTANTS S = {s1, s2}\nT = {t1}\nINIT Init\nNEXT Next\nSYMMETRY Sym",
@@ -1042,7 +1042,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("accepts a substitute that a constant-level standard operator defines", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS Json\nCONSTANT C\nVARIABLE x\nTrace == JsonDeserialize("missing.json")\nInit == x = 0\nNext == x\' = x\n====',
       config: "CONSTANT C <- Trace\nINIT Init\nNEXT Next",
@@ -1055,7 +1055,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("overrides definitions and ignores undeclared names assigned by the configuration", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in Nat \\cap {0, 9}\nNext == x' = x\n====",
       config: "CONSTANT Foo = 1\nCONSTANT Nat = {0, 1}\nINIT Init\nNEXT Next",
@@ -1076,7 +1076,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("follows definition overrides inside the specification", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nMCInit == x = 1\nSpec == Init /\\ [][x' = x]_x\nInv == x = 1\n====",
       config: "CONSTANT Init <- MCInit\nSPECIFICATION Spec\nINVARIANT Inv",
@@ -1087,7 +1087,7 @@ ASSUME TLCFP(a) = -887695703
 
   it("checks the Github687spec configs from TLC's tests", async () => {
     const checkConfig = (name: string) =>
-      check({
+      checkParsed({
         source: readFileSync(join(FIXTURES, "github687", "Github687spec.tla"), "utf8"),
         config: readFileSync(join(FIXTURES, "github687", `Github687spec${name}.cfg`), "utf8"),
       });
@@ -1112,7 +1112,7 @@ ASSUME TLCFP(a) = -887695703
 
   it("rejects constant conjuncts of the specification and properties that aren't TRUE", async () => {
     const checkSpec = (definitions: string, config: string) =>
-      check({
+      checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nTrue == 1 < 2\nFalse == 1 > 2\nFive == 5\n${definitions}\n====`,
         config: `CONSTANT C = FALSE\n${config}`,
       });
@@ -1147,7 +1147,7 @@ ASSUME TLCFP(a) = -887695703
     "Prop == LET E == {x} IN [](\\A e \\in E : e < 1)",
     "Holds(S) == [](\\A e \\in S : e < 1)\nProp == Holds({x})",
   ])("checks a []P property whose LET or argument reads a variable: %s", async (property) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\n${property}\n====`,
       config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
     });
@@ -1174,7 +1174,7 @@ ASSUME TLCFP(a) = -887695703
   ])(
     "checks the guards of a multi-bound \\E that read only the outer bound: %s",
     async (next, status, generatedStates, distinctStates) => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\n${next}\n====`,
         config: `INIT Init\nNEXT Next${status === "success" ? "\nCHECK_DEADLOCK FALSE" : ""}`,
       });
@@ -1187,7 +1187,7 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it("names the source of each set whose method failed when it replays a step", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = IF {x} \\subseteq {{}} THEN 1 ELSE 2\n====",
       config: "INIT Init\nNEXT Next",
@@ -1215,7 +1215,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("applies an operator to each value @ takes in the same state", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE f\nInc(n) == n + 1\nBump(g, k) == [g EXCEPT ![k] = Inc(@)]\nInit == f = <<1, 2>>\nNext == f[1] < 3 /\\ f' = Bump(Bump(f, 1), 2)\nInv == f[2] = f[1] + 1\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
@@ -1254,7 +1254,7 @@ ASSUME TLCFP(a) = -887695703
     ];
     for (const property of properties) {
       await expect(
-        check({
+        checkParsed({
           source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\nProp == ${property}\n====`,
           config: "SPECIFICATION Spec\nPROPERTY Prop",
         }),
@@ -1307,7 +1307,7 @@ ASSUME TLCFP(a) = -887695703
 describe("formatValue matches TLC", () => {
   it("prints functions as records only when every key is a field name", async () => {
     const printed: string[] = [];
-    const result = await check({
+    const result = await checkParsed({
       source: readFileSync(join(FIXTURES, "formatting", "Format.tla"), "utf8"),
       config: readFileSync(join(FIXTURES, "formatting", "Format.cfg"), "utf8"),
       onPrint: (text) => printed.push(text),
@@ -1326,7 +1326,7 @@ describe("formatValue matches TLC", () => {
     [undefined, ["<<>>", "<<>>", "<<>>", "<<>>", "<<<<>>>>"]],
   ])("prints an empty function that isn't a tuple like TLC %s", async (version, expected) => {
     const printed: string[] = [];
-    await check({
+    await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nE == [k \\in {} |-> k]\nASSUME \\A i \\in 1..5 : PrintT(<<[k \\in 1..0 |-> k], E @@ E, Tail(<<1>>), E \\o E, <<E>>>>[i])\n====",
       config: "",
@@ -1338,7 +1338,7 @@ describe("formatValue matches TLC", () => {
 
   it("prints a record whatever its fields, and a function with a key that isn't a name like TLC", async () => {
     const printed: string[] = [];
-    await check({
+    await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT(<<[_ |-> 1], [[_ |-> 1] EXCEPT !._ = 2], "_" :> 1, [_ |-> 1] @@ [b |-> 2]>>)\n====',
       config: "",
@@ -1350,7 +1350,7 @@ describe("formatValue matches TLC", () => {
   it.each(["", "SYMMETRY Sym"])(
     "keeps an empty function apart from an equal tuple in a trace with %j like TLC 1.7.4",
     async (symmetry) => {
-      const result = await check({
+      const result = await checkParsed({
         source:
           "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT P\nVARIABLES q, x\nSym == Permutations(P)\nInit == q = <<>> /\\ x = 0\nNext == x' = x + 1 /\\ q' = IF x = 0 THEN [k \\in 1..0 |-> k] ELSE q\nInv == x < 2\n====",
         config: `CONSTANT P = {p1, p2}\nINIT Init\nNEXT Next\nINVARIANT Inv\n${symmetry}`,
@@ -1366,7 +1366,7 @@ describe("formatValue matches TLC", () => {
 });
 
 const checkSteps = (definitions: string, config: string, version?: TlcVersion) =>
-  check({
+  checkParsed({
     source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n${definitions}\n====`,
     config,
     version,
@@ -1400,7 +1400,7 @@ describe("evaluation errors match TLC", () => {
     ["1 \\in [a |-> 1]", "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]"],
     ["1 \\in <<1>>", "Attempted to check set membership in a tuple value."],
   ])("words the function in %s like TLC", async (expression, message) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (${expression}) = TRUE\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -1413,7 +1413,7 @@ describe("evaluation errors match TLC", () => {
     ['"a" :> 1', "Attempted to check equality of the function [a |-> 1] with the value:\n{}"],
     ['"a b" :> 1', 'Attempted to check equality of the function ("a b" :> 1) with the value:\n{}'],
   ])("words a failed comparison of %s with a set like TLC", async (value, message) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = ${value}\nNext == UNCHANGED x\nInv == x = {}\n====`,
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
     });
@@ -1426,7 +1426,7 @@ describe("evaluation errors match TLC", () => {
     "evaluates %s in the current state first like TLC",
     async (form) => {
       const subscript = 'IF x = 0 THEN Assert(FALSE, "before") ELSE Assert(FALSE, "after")';
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 1 /\\ ${form.replace("(e)", `(${subscript})`)}\n====`,
         config: "INIT Init\nNEXT Next",
       });
@@ -1437,7 +1437,7 @@ describe("evaluation errors match TLC", () => {
   // TLC 1.8.0 takes a value a configuration substitutes for an operator with parameters, as
   // mongodb-txns' Storage.cfg substitutes FALSE for actions, and leaves the arguments unevaluated.
   it("takes a value substituted for an operator with parameters like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nA(n) == x' = n\nInit == x = 0\nNext == \\/ x < 3 /\\ x' = x + 1\n        \\/ \\E n \\in {0} : A(1 \\div n)\n====",
       config: "INIT Init\nNEXT Next\nCONSTANT A <- FALSE\nCHECK_DEADLOCK FALSE",
@@ -1450,7 +1450,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports a CASE with no true guard like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLE x\nASSUME CASE 1 = 2 -> 3\nInit == x = 0\nNext == UNCHANGED x\n====",
       config: "INIT Init\nNEXT Next",
@@ -1470,7 +1470,7 @@ describe("evaluation errors match TLC", () => {
       "TLC attempted to evaluate an unbounded \\A.\nMake sure that the expression is of form \\A x \\in S: P(x).\nline 3, col 8 to line 3, col 22 of module M",
     ],
   ])("reports an unbounded %s like TLC", async (assumption, message) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nVARIABLE x\nASSUME ${assumption}\nInit == x = 0\nNext == UNCHANGED x\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -1482,7 +1482,7 @@ describe("evaluation errors match TLC", () => {
     [undefined, 2],
     ["1.7.4" as const, 0],
   ])("reports a failure inside TLCEval in TLC %s as the method's", async (version, depth) => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(n) == TLCEval(1 \\div n)\nASSUME TLCEval(F(0)) = 1\nInit == x = 0\nNext == UNCHANGED x\n====",
       config: "INIT Init\nNEXT Next",
@@ -1504,7 +1504,7 @@ describe("evaluation errors match TLC", () => {
     ["42", "The third argument of ndJsonSerialize should be a sequence, but instead it is:\n42"],
     ["<<>>", "Attempted to access nonexistent field 'format' of record\n[]"],
   ])("reports a failure in IOUtils's Serialize with %s as Json's", async (options, error) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals, IOUtils\nVARIABLE x\nASSUME Serialize(1, "/tmp/x", ${options}).exitValue = 0\nInit == x = 0\nNext == UNCHANGED x\n====`,
       config: "INIT Init\nNEXT Next",
       loadModule: (name) =>
@@ -1518,7 +1518,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports a CASE with no true guard in the next-state relation like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == CASE x = 5 -> x' = 0\n  [] x = 6 -> x' = 1\n====",
       config: "INIT Init\nNEXT Next",
@@ -1573,7 +1573,7 @@ describe("evaluation errors match TLC", () => {
   // TLC's FingerprintExceptionHang: the replay of the failed expansion adds the successors TLC
   // hasn't seen and checks their invariants, which fail to fingerprint.
   it("counts the states that the replay of a failed invariant adds", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nCONSTANTS Nodes\nVARIABLES nodeState\nLegalSets == {{}}\nTypeOK == nodeState \\in [Nodes -> [set: LegalSets]]\nInit == nodeState = [n \\in Nodes |-> [set |-> {}]]\nNext == \\E n \\in Nodes : nodeState' = [nodeState EXCEPT ![n].set = 1]\n====",
       config:
@@ -1603,7 +1603,7 @@ describe("evaluation errors match TLC", () => {
   ])(
     "reports the sources of a set the replay of %s fails to enumerate like TLC",
     async (next, sources) => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
         config: "INIT Init\nNEXT Next",
       });
@@ -1624,7 +1624,7 @@ describe("evaluation errors match TLC", () => {
   ])(
     "reports the source of a value the replay of x' = %s fails to apply like TLC",
     async (value, sources) => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = ${value}\n====`,
         config: "INIT Init\nNEXT Next",
       });
@@ -1641,7 +1641,7 @@ describe("evaluation errors match TLC", () => {
     ["{k : k \\in {3}} \\cap (3 \\cup {1})", ["SetMap", "Apply"]],
     ["(3 \\cup {1}) \\cap {k : k \\in {3}}", ["SetMap", "Apply"]],
   ])("reports the set whose method computes %s and fails like TLC", async (set, sources) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (${set}) = {}\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -1657,7 +1657,7 @@ describe("evaluation errors match TLC", () => {
     ['(1..2) \\cap {"a"}', 'Attempted to check equality of string "a" with non-string:\n1'],
     ['{"a"} \\ {3}', 'Attempted to check equality of integer 3 with non-integer:\n"a"'],
   ])("fails to compute %s with TLC's reason", async (set, reason) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (${set}) = {}\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -1672,7 +1672,7 @@ describe("evaluation errors match TLC", () => {
     ["2 \\in {<<1>>}", ["SetEnumeration", "Tuple"]],
     ['{("a" :> 1), <<2>>} = {}', ["SetEnumeration", "Tuple"]],
   ])("reports the value that fails to compare in %s like TLC", async (predicate, sources) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${predicate}\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -1696,7 +1696,7 @@ describe("evaluation errors match TLC", () => {
   ])(
     "reports a function whose body fails in %s or %s as one TLC can't fingerprint",
     async (init, next, sources) => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == ${init}\nNext == ${next}\n====`,
         config: "INIT Init\nNEXT Next",
       });
@@ -1715,7 +1715,7 @@ describe("evaluation errors match TLC", () => {
     ["x' = Filter /\\ x' = {}", undefined],
     ["x' = 1 /\\ {} = (1 \\div 0)", undefined],
   ])("reports the left side of %s that fails to compare like TLC", async (next, sources) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nFilter == {n \\in SUBSET {1} : 1 \\div 0 = 1}\nNext == ${next}\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -1727,7 +1727,7 @@ describe("evaluation errors match TLC", () => {
   // TLC compares the sets as Value#equals does, and never takes tla-ts's faster comparison that
   // fails first.
   it("records the replay of a filter that fails to compare once", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = {n \\in SUBSET {1} : 1 \\div 0 = 1} /\\ x' = {}\n====",
       config: "INIT Init\nNEXT Next",
@@ -1743,7 +1743,7 @@ describe("evaluation errors match TLC", () => {
   // SpecProcessor.processConfigSpec keeps a definition that is a state predicate whole, so TLC's
   // call stack starts at the list the definition wrote (TLC's own run of this model).
   it("records the specification's initial predicate as the definition wrote it", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit ==\n  /\\ x \\in {0, 1, 2}\n  /\\ 3 \\div (x - 1) >= 0\n  /\\ Assert(x # 2, "two")\nNext == x\' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\n====',
       config: "SPECIFICATION Spec",
@@ -1766,7 +1766,7 @@ describe("evaluation errors match TLC", () => {
   // Tool.processUnchangedImplTuple puts the elements after the first in front of the conjuncts left,
   // in order.
   it("records the variables of an UNCHANGED tuple in order", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES a, b, c\nInit == a = 0 /\\ b = 0 /\\ c = 0\nNext == UNCHANGED <<a, b, c>> /\\ 1 \\div 0 = 1\n====",
       config: "INIT Init\nNEXT Next",
@@ -1780,7 +1780,7 @@ describe("evaluation errors match TLC", () => {
   // Tool.processUnchangedImplVar binds each unassigned variable and compares each assigned one, so a
   // later variable that changed drops the variables bound before it.
   it("keeps nested tuples and operators in an UNCHANGED as TLC does", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y, z\nvars == <<x, y>>\nInit == x = 0 /\\ y = 0 /\\ z = 0\nNext ==\n  \\/ z' = (z + 1) % 3 /\\ UNCHANGED <<vars, <<x>>>>\n  \\/ y' \\in {y, 1} /\\ UNCHANGED <<<<z>>, vars>>\n  \\/ x < 2 /\\ x' = x + 1 /\\ UNCHANGED <<z, <<y>>, x>>\n  \\/ x < 2 /\\ x' = x + 1 /\\ UNCHANGED <<z, y>>\n====",
       config: "INIT Init\nNEXT Next",
@@ -2098,11 +2098,14 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("checks only the assumptions of a model without variables or an initial predicate", async () => {
-    const result = await check({ source: "---- MODULE M ----\nASSUME TRUE\n====", config: "" });
+    const result = await checkParsed({
+      source: "---- MODULE M ----\nASSUME TRUE\n====",
+      config: "",
+    });
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([0, 0, 0]);
     await expect(
-      check({ source: "---- MODULE M ----\nVARIABLE x\n====", config: "" }),
+      checkParsed({ source: "---- MODULE M ----\nVARIABLE x\n====", config: "" }),
     ).rejects.toThrow(TlaConfigError);
   });
 
@@ -2118,7 +2121,7 @@ describe("evaluation errors match TLC", () => {
   // TLC fingerprints a state only once the constraints hold of it (isInModel), so one they
   // exclude never fails to fingerprint (TLC's own run of this model finds no error).
   it("doesn't fingerprint a state the constraints exclude", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == \\/ (x = SUBSET (1..31) /\\ y = 0) \\/ (x = 0 /\\ y = 1)\nNext == UNCHANGED <<x, y>>\nC == y = 1\n====",
       config: "INIT Init\nNEXT Next\nCONSTRAINT C",
@@ -2134,7 +2137,7 @@ describe("evaluation errors match TLC", () => {
   // before they fingerprint one, so both meet the assertion that fails after the successor TLC
   // couldn't fingerprint (TLC's own run of this model, which exits 14).
   it("reports what fails after a successor TLC can't fingerprint", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
       config: "INIT Init\nNEXT Next",
@@ -2152,7 +2155,7 @@ describe("evaluation errors match TLC", () => {
   // Under a VIEW TLC fingerprints the view's value alone, so the union a variable holds is never
   // normalized and streams {3} first each time (TLC's own run of this model).
   it("streams a set a variable holds as the spec built it under a VIEW", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n, s\nInit == x = {} /\\ n = 0 /\\ s = (SUBSET {1, 2}) \\cup {{3}}\nNext == n < 3 /\\ x' \\in s /\\ Cardinality(x') = 1 /\\ n' = n + 1 /\\ s' = s\nInv == n < 2\nV == <<n>>\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V",
@@ -2165,7 +2168,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("fails on zero to the power of zero in an invariant of a later state", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == x < 1 \\/ 0 ^ (x - 1) = 1\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
@@ -2336,7 +2339,7 @@ describe("evaluation errors match TLC", () => {
     ["1.7.4" as const, "Append(v, s)"],
     [undefined, "Append(s, v)"],
   ])("words a failed Append like TLC %s", async (version, form) => {
-    const result = await check({
+    const result = await checkParsed({
       source: "---- MODULE M ----\nEXTENDS Sequences\nASSUME Append(1, 2) = 0\n====",
       config: "",
       version,
@@ -2365,7 +2368,7 @@ describe("evaluation errors match TLC", () => {
     ["3 /\\ x = 0", "x' = x", "The init state relation is not a boolean expression.\n3"],
     ["x = 0", "3 /\\ x' = x", "The next state relation is not a boolean expression.\n3"],
   ])("words a conjunct of %s or %s that isn't a boolean like TLC", async (init, next, message) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == ${init}\nNext == ${next}\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -2404,7 +2407,7 @@ describe("evaluation errors match TLC", () => {
       "In computing initial states, the right side of \\IN is not enumerable.\nline 5, col 9 to line 5, col 17 of module M",
     ],
   ])("words a failed CASE, IF or \\IN in %s or %s like TLC", async (init, next, message) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == ${init}\nNext == ${next}\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -2425,7 +2428,7 @@ describe("evaluation errors match TLC", () => {
       "The right side of \\IN is not enumerable.\nline 5, col 6 to line 5, col 15 of module M",
     ],
   ])("words a failed %s in a fair action like TLC", async (action, message) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == ${action}\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)\n====`,
       config: "SPECIFICATION Spec\nPROPERTY P",
     });
@@ -2440,7 +2443,7 @@ describe("evaluation errors match TLC", () => {
       `In computing ENABLED, ${EXPECTED_BOOLEAN} 3.\nline 5, col 31 to line 5, col 35 of module M`,
     ],
   ])("words a conjunct of a fair action that is %s like TLC", async (value, message) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == x' = x /\\ (IF x = 0 THEN ${value} ELSE TRUE)\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)\n====`,
       config: "SPECIFICATION Spec\nPROPERTY P",
     });
@@ -2448,7 +2451,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   const checkFairPrint = (action: string, config: string, version: TlcVersion) =>
-    check({
+    checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(x) /\\ ${action}\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nP == [](x = 0 => <>(x = 1))\nInv == x < 1\n====`,
       config: `SPECIFICATION Spec\nPROPERTY P\n${config}`,
       version,
@@ -2463,7 +2466,7 @@ describe("evaluation errors match TLC", () => {
     "evaluates the action of ENABLED on a counterexample as TLC %s does",
     async (version, count) => {
       const prints: string[] = [];
-      await check({
+      await checkParsed({
         source:
           '---- MODULE M ----\nEXTENDS TLC\nVARIABLE y\nInit == y = 0\nA == y\' = 0 /\\ PrintT("A")\nNext == A\nProp == [](ENABLED A => <>FALSE)\n====',
         config: "INIT Init\nNEXT Next\nPROPERTY Prop",
@@ -2475,7 +2478,7 @@ describe("evaluation errors match TLC", () => {
   );
 
   it("adds a state to the behavior graph after a violation by a successor it never stored", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nA == x' = 0\nNext == A \\/ x' = 1\nSpec == Init /\\ [][Next]_x\nInv == x # 1\nLive == [](ENABLED A => <>FALSE)\n====",
       config: "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY Live",
@@ -2486,7 +2489,7 @@ describe("evaluation errors match TLC", () => {
   // CallStackTool gives a set a source, so TLC's worker fails with a FingerprintException as it adds
   // the state to the behavior graph again, which it doesn't catch, and TLC replays the next states.
   it("replays the next states when adding a state to the behavior graph fails to fingerprint", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == (\\E k \\in {1} \\cup SUBSET 3 : TRUE) /\\ x' = x\nSpec == Init /\\ [][A]_x /\\ SF_x(A)\nLive == <>(x = 0)\n====",
       config: "SPECIFICATION Spec\nPROPERTY Live",
@@ -2570,7 +2573,7 @@ describe("evaluation errors match TLC", () => {
   ] as const)(
     "words a key of the wrong type in TLC %s for y = %s and x' = %s like TLC",
     async (version, value, next, message) => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = ${value}\nNext == x' = ${next} /\\ UNCHANGED y\n====`,
         config: "INIT Init\nNEXT Next",
         version,
@@ -2590,7 +2593,7 @@ describe("evaluation errors match TLC", () => {
   ])(
     "names the Java class of .. by whether TLC records a trace (%s)",
     async (isTraceRecorded, module) => {
-      const result = await check({
+      const result = await checkParsed({
         source: '---- MODULE M ----\nEXTENDS Naturals\nASSUME 1 .. "a" = {}\n====',
         config: "",
         isTraceRecorded,
@@ -2609,7 +2612,7 @@ describe("evaluation errors match TLC", () => {
     "divides negative integers as TLC does when it records a trace (%s) for a spec of %s",
     async (isTraceRecorded, module, quotients) => {
       const printed: string[] = [];
-      await check({
+      await checkParsed({
         source: `---- MODULE M ----\nEXTENDS ${module}, TLC\nASSUME PrintT(<<1 \\div (0 - 2), (0 - 1) \\div 2, (0 - 3) \\div 2>>)\nASSUME PrintT((0 - 2147483647 - 1) \\div (0 - 1))\n====`,
         config: "",
         isTraceRecorded,
@@ -2724,7 +2727,7 @@ describe("evaluation errors match TLC", () => {
 
   it("shows a record in the order the spec writes it until TLC sorts it", async () => {
     const prints: string[] = [];
-    await check({
+    await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT([fld2 |-> 0])\nASSUME PrintT(ToString([fld1 |-> 1, fld2 |-> 2]))\nASSUME PrintT(ToString(("fld1" :> 1) @@ ("fld3" :> 3) @@ ("fld2" :> 2)))\nASSUME PrintT([fld1 |-> 1, fld2 |-> 2])\n====',
       config: "",
@@ -2739,7 +2742,7 @@ describe("evaluation errors match TLC", () => {
 
   it("sorts a record TLC compares with itself and the records inside it", async () => {
     const prints: string[] = [];
-    await check({
+    await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT([fld2 |-> 0])\nASSUME PrintT(ToString(LET r == <<[fld1 |-> 1, fld2 |-> 2]>> IN IF r = r THEN r ELSE r))\n====",
       config: "",
@@ -2751,7 +2754,7 @@ describe("evaluation errors match TLC", () => {
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
-    const instanced = await check({
+    const instanced = await checkParsed({
       source: "---- MODULE M ----\nEXTENDS TLC\nINSTANCE Inner WITH K <- 1\nASSUME Mixed\n====",
       config: "",
       loadModule: (name) => (name === "Inner" ? inner : undefined),
@@ -2764,7 +2767,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("rejects a mistyped membership outside an assumption", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = "a" /\\ x \\in Nat\nNext == x\' = x\n====',
       config: "INIT Init\nNEXT Next",
@@ -2835,7 +2838,7 @@ describe("evaluation errors match TLC", () => {
     ];
     const results = await Promise.all(
       cases.map((item) =>
-        check({
+        checkParsed({
           source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = ${item[0]}\nNext == UNCHANGED x\n====`,
           config: "INIT Init\nNEXT Next",
         }),
@@ -2889,7 +2892,7 @@ describe("evaluation errors match TLC", () => {
     ].join("\n");
     // TLC rejects the configuration before it searches.
     const getFailure = (property: string) =>
-      check({ source, config: `SPECIFICATION Spec\nPROPERTY ${property}` }).then(
+      checkParsed({ source, config: `SPECIFICATION Spec\nPROPERTY ${property}` }).then(
         () => undefined,
         (error: unknown) => (error instanceof TlaConfigError ? error.message : error),
       );
@@ -2913,7 +2916,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports action composition as unsupported like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = 1\nInv == ENABLED (Next \\cdot Next)\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
@@ -2925,7 +2928,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports a stack overflow in the next-state relation like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE R(_)\nR(n) == R(n + 1)\nInit == x = 0\nNext == x' = R(0)\n====",
       config: "INIT Init\nNEXT Next",
@@ -2936,7 +2939,7 @@ describe("evaluation errors match TLC", () => {
 
   it("reports a successor the next-state relation leaves incomplete like TLC", async () => {
     const getResult = (next: string) =>
-      check({
+      checkParsed({
         source: `---- MODULE M ----\nVARIABLES x, y, z\nInit == x = 0 /\\ y = 0 /\\ z = 0\nA1 == x' = 1\nA2 == x' = 2 /\\ y' = 2 /\\ z' = 2\nNext == ${next}\n====`,
         config: "INIT Init\nNEXT Next",
       });
@@ -2958,7 +2961,7 @@ describe("evaluation errors match TLC", () => {
 
   it("reports a value where the initial or next-state relation expects a formula like TLC", async () => {
     const getFailure = async (init: string, next: string) => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == ${init}\nNext == ${next}\n====`,
         config: "INIT Init\nNEXT Next",
       });
@@ -2980,7 +2983,7 @@ describe("evaluation errors match TLC", () => {
 
   it("reports a failing constraint on a successor like a failure of the next-state relation", async () => {
     const getFailure = async (constraint: string, config: string) => {
-      const result = await check({
+      const result = await checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nC == ${constraint}\n====`,
         config: `INIT Init\nNEXT Next\n${config} C`,
       });
@@ -2999,7 +3002,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports a successor it cannot fingerprint as a failure of the state it expands", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = SUBSET (SUBSET (1..32))\n====",
       config: "INIT Init\nNEXT Next",
@@ -3016,7 +3019,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports a SUBSET too large to enumerate like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = SUBSET (SUBSET (1..36))\nNext == x' = x\n====",
       config: "INIT Init\nNEXT Next",
@@ -3028,7 +3031,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports a variable read before the initial predicate assigns it like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLES x, y\nInit == y = x /\\ x = 0\nNext == UNCHANGED <<x, y>>\n====",
       config: "INIT Init\nNEXT Next",
@@ -3040,7 +3043,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports a variable drawn from a set it can't enumerate like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in Nat\nNext == UNCHANGED x\n====",
       config: "INIT Init\nNEXT Next",
@@ -3052,7 +3055,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports a CASE with no true guard in the initial predicate like TLC", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: "---- MODULE M ----\nVARIABLE x\nInit == CASE FALSE -> x = 0\nNext == x' = x\n====",
       config: "INIT Init\nNEXT Next",
     });
@@ -3065,7 +3068,7 @@ describe("evaluation errors match TLC", () => {
   it("reports a failure of the next-state relation as an unexpected exception like TLC", async () => {
     const results = await Promise.all(
       ["x' = CHOOSE n \\in {} : TRUE", "x' = 1 \\div 0"].map((next) =>
-        check({
+        checkParsed({
           source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
           config: "INIT Init\nNEXT Next",
         }),
@@ -3099,7 +3102,7 @@ describe("evaluation errors match TLC", () => {
         ["Nat", "UNCHANGED x"],
         ["{}", "x' = SUBSET Nat"],
       ].map((item) =>
-        check({
+        checkParsed({
           source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = ${item[0]}\nNext == ${item[1]}\n====`,
           config: "INIT Init\nNEXT Next",
         }),
@@ -3156,7 +3159,7 @@ describe("evaluation errors match TLC", () => {
       cases.map(
         async (item) =>
           (
-            await check({
+            await checkParsed({
               source: `---- MODULE M ----\nEXTENDS ${item[0]}\nASSUME 1 + "a" = 1\n====`,
               config: "",
             })
@@ -3252,7 +3255,7 @@ describe("evaluation errors match TLC", () => {
 
   it("evaluates a function over a domain TLC keeps lazy only where it is applied", async () => {
     const prints: string[] = [];
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nASSUME PrintT([b |-> 0])\nASSUME PrintT([s \\in SUBSET {1} |-> 1 \\div Cardinality(s)][{1}])\nASSUME PrintT([v \\in {0} |-> [a |-> 1, b |-> 2]])\nASSUME PrintT([v \\in SUBSET {0} |-> [a |-> 1, b |-> 2]])\nASSUME PrintT([v \\in {0} \\X {1} |-> [a |-> 1, b |-> 2]])\n====",
       config: "",
@@ -3271,7 +3274,7 @@ describe("evaluation errors match TLC", () => {
 describe("DOMAIN matches TLC", () => {
   const printDomain = async (expression: string) => {
     const printed: string[] = [];
-    await check({
+    await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Integers, TLC\nASSUME PrintT(${expression})\n====`,
       config: "",
       onPrint: (text) => printed.push(text),
@@ -3296,7 +3299,7 @@ describe("DOMAIN matches TLC", () => {
   });
 
   it("keeps the interval in a state", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLE b\nInit == b = DOMAIN <<7, 8>>\nNext == UNCHANGED b\nInv == b # b\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
@@ -3307,7 +3310,7 @@ describe("DOMAIN matches TLC", () => {
 
 describe("rejecting literals matches TLC", () => {
   const checkSource = (source: string) =>
-    check({
+    checkParsed({
       source: `---- MODULE M ----\n${source}\nNext == x' = x\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -3383,7 +3386,7 @@ describe("rejecting literals matches TLC", () => {
 
 describe("name resolution matches SANY", () => {
   const checkSource = (source: string) =>
-    check({
+    checkParsed({
       source: `---- MODULE M ----\n${source}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -3467,7 +3470,7 @@ describe("name resolution matches SANY", () => {
   });
 
   it("reads instance-qualified subscripts", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE x\nvars == <<x>>\nNext == x' = (x + 1) % 3\n====\nI == INSTANCE Inner\nSpec == x = 0 /\\ [][I!Next]_I!vars /\\ WF_I!vars(I!Next)\nProp == <>(x = 2)\nTHEOREM Spec => WF_I!vars(I!Next)\n====",
       config: "SPECIFICATION Spec\nPROPERTY Prop",
@@ -3515,8 +3518,8 @@ describe("name resolution matches SANY", () => {
     const source =
       "---- MODULE M ----\nVARIABLE x\nASSUME SUBSET {1} \\X {2} = {{}, {<<1, 2>>}}\nInit == x = 0\nNext == UNCHANGED x\n====";
     const config = "INIT Init\nNEXT Next";
-    expect((await check({ source, config })).status).toBe("success");
-    await expect(check({ source, config, version: "1.7.4" })).rejects.toThrow(
+    expect((await checkParsed({ source, config })).status).toBe("success");
+    await expect(checkParsed({ source, config, version: "1.7.4" })).rejects.toThrow(
       "Precedence conflict",
     );
   });
@@ -4664,7 +4667,7 @@ describe("name resolution matches SANY", () => {
     ],
   ])("warns of %s like SANY", async (_, source, warnings) => {
     const printed: string[] = [];
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\n${source}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
       config: "INIT Init\nNEXT Next",
       onPrint: (text) => printed.push(text),
@@ -4674,7 +4677,7 @@ describe("name resolution matches SANY", () => {
 
   it("reports RECURSIVE declarations it never defines like SANY", async () => {
     await expect(
-      check({
+      checkParsed({
         source:
           "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nRECURSIVE F(_), F(_)\n====",
         config: "INIT Init\nNEXT Next",
@@ -4705,7 +4708,7 @@ describe("name resolution matches SANY", () => {
 
 describe("level checking matches SANY", () => {
   const checkDefinition = (definition: string) =>
-    check({
+    checkParsed({
       source: `---- MODULE M ----\nVARIABLE x\nF == ${definition}\nInit == x = 0\nNext == x' = x\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -4738,7 +4741,7 @@ describe("level checking matches SANY", () => {
     "SortSeq(s, LAMBDA a, b : a = b')",
   ])("rejects a primed sequence where %s primes its elements", async (application) => {
     await expect(
-      check({
+      checkParsed({
         source: `---- MODULE M ----\nEXTENDS Sequences, TLC\nVARIABLE x\nF(s) == ${application}\nG == F(x')\nInit == x = 0\nNext == x' = x\n====`,
         config: "INIT Init\nNEXT Next",
       }),
@@ -4756,7 +4759,7 @@ describe("level checking matches SANY", () => {
 
   it("rejects an argument above the level an instantiated operator allows, naming it like SANY", async () => {
     await expect(
-      check({
+      checkParsed({
         source:
           "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE y\nFoo == y' = 0\n====\nI(z) == INSTANCE Inner WITH y <- z\nFooBar == I(x')!Foo\nInit == x = 0\nNext == x' = x\n====",
         config: "INIT Init\nNEXT Next",
@@ -4815,7 +4818,7 @@ describe("level checking matches SANY", () => {
     ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
     await expect(
-      check({
+      checkParsed({
         source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
         config: "INIT Init\nNEXT Next",
       }),
@@ -4828,7 +4831,7 @@ describe("level checking matches SANY", () => {
 
   it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
     await expect(
-      check({
+      checkParsed({
         source:
           "---- MODULE M ----\nVARIABLE x\nCONSTANT K\n---- MODULE Inner ----\nCONSTANT c\nASSUME c = {}\n====\nI == INSTANCE Inner WITH c <- [](x = 0)\nInit == x = 0\nNext == x' = x\n====",
         config: "INIT Init\nNEXT Next",
@@ -4840,7 +4843,7 @@ describe("level checking matches SANY", () => {
     `---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE y\nOp(a) == <<a, y>>\n====\nI(a) == INSTANCE Inner WITH y <- a\nF(G(_, _)) == G(1, 2)\n${definition}\nInit == x = 0\nNext == x' = x\n====`;
 
   it("passes an operator of a parameterized instance as an operator argument, like SANY", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: getParameterizedInstance("X == F(I!Op)"),
       config: "INIT Init\nNEXT Next",
     });
@@ -4852,7 +4855,7 @@ describe("level checking matches SANY", () => {
     ["X == I!Op(1)", 12],
   ])("rejects %s without the arguments of the instance, like SANY", async (definition, end) => {
     await expect(
-      check({ source: getParameterizedInstance(definition), config: "INIT Init\nNEXT Next" }),
+      checkParsed({ source: getParameterizedInstance(definition), config: "INIT Init\nNEXT Next" }),
     ).rejects.toThrow(
       createSemanticError("The operator I requires 1 arguments.", {
         module: "M",
@@ -5046,7 +5049,7 @@ describe("initial predicate and next-state relation match TLC", () => {
   it("warns about a state-level property before it reads the constraints", async () => {
     const warned: string[] = [];
     await expect(
-      check({
+      checkParsed({
         source:
           "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nP == x = 0\nC == FALSE\n====",
         config: "INIT Init\nNEXT Next\nPROPERTY P\nCONSTRAINT C",
@@ -5114,7 +5117,7 @@ describe("initial predicate and next-state relation match TLC", () => {
     ];
     const results = await Promise.all(
       nexts.map((next) =>
-        check({
+        checkParsed({
           source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == (${next}) /\\ UNCHANGED x\n====`,
           config: "INIT Init\nNEXT Next",
           version,
@@ -5156,7 +5159,7 @@ describe("initial predicate and next-state relation match TLC", () => {
   });
 
   const checkSource = (body: string, config: string) =>
-    check({ source: `---- MODULE M ----\n${body}\n====`, config });
+    checkParsed({ source: `---- MODULE M ----\n${body}\n====`, config });
 
   it.each([
     ["[](FALSE)", "FALSE"],
@@ -5177,7 +5180,7 @@ describe("initial predicate and next-state relation match TLC", () => {
   });
 
   it("names the invariant a property asserts by the operator an extended module defines", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Base\nSpec == x = 0 /\\ [][x' = x + 1 /\\ x < 3]_x\nProperty == []Small\n====",
       config: "SPECIFICATION Spec\nPROPERTY Property\nCHECK_DEADLOCK FALSE",
@@ -5224,7 +5227,7 @@ describe("initial predicate and next-state relation match TLC", () => {
 
 describe("check matches TLC 1.7.4", () => {
   const check174 = (definitions: string, config = "INIT Init\nNEXT Next") =>
-    check({
+    checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
       config,
       version: "1.7.4",
@@ -5244,7 +5247,7 @@ describe("check matches TLC 1.7.4", () => {
     const source =
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == \\E n \\in {1, 2} : x' = x + n\nInv == x # 3 \\/ CHOOSE n \\in {} : TRUE\n====";
     const getOutDegrees = async (version: TlcVersion) => {
-      const result = await check({
+      const result = await checkParsed({
         source,
         config: "INIT Init\nNEXT Next\nINVARIANT Inv",
         version,
@@ -5288,7 +5291,7 @@ describe("check matches TLC 1.7.4", () => {
   });
 
   const checkProperty = (property: string, version?: "1.7.4") =>
-    check({
+    checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, b\nInit == x = 0 /\\ b = FALSE\nNext == x' = x /\\ b' = ~b\nSpec == Init /\\ [][Next]_<<x, b>>\n${property}\n====`,
       config: "SPECIFICATION Spec\nPROPERTY P",
       version,
@@ -5334,7 +5337,7 @@ describe("check matches TLC 1.7.4", () => {
     "reports an error in the constant part of the property %s as TLC does",
     async (property, message) => {
       await expect(
-        check({
+        checkParsed({
           source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nSpec == Init /\\ [][x' = x]_x\nP == ${property}\n====`,
           config: "SPECIFICATION Spec\nPROPERTY P",
         }),
@@ -5367,7 +5370,7 @@ describe("check matches TLC 1.7.4", () => {
 
   it("reads only the keys TLC 1.7.4's TLCGet has", async () => {
     const getRevision = async (version: TlcVersion) => {
-      const result = await check({
+      const result = await checkParsed({
         source:
           '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = TLCGet("revision").tag\nNext == UNCHANGED x\n====',
         config: "INIT Init\nNEXT Next",
@@ -5381,7 +5384,7 @@ describe("check matches TLC 1.7.4", () => {
 
   it("sizes every component of a set of functions as TLC 1.7.4 does", async () => {
     const getCardinality = async (version: TlcVersion) => {
-      const result = await check({
+      const result = await checkParsed({
         source:
           "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = Cardinality([Nat -> {}])\nNext == UNCHANGED x\n====",
         config: "INIT Init\nNEXT Next",
@@ -5420,7 +5423,7 @@ describe("check matches TLC 1.7.4", () => {
 
   it("doesn't rebuild the trace, so it prints nothing of the states again", async () => {
     const getTraceOutput = async (version: TlcVersion) => {
-      const result = await check({
+      const result = await checkParsed({
         source:
           '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ PrintT("init")\nNext == x = 5 /\\ x\' = x\n====',
         config: "INIT Init\nNEXT Next",
@@ -5434,7 +5437,7 @@ describe("check matches TLC 1.7.4", () => {
 
   it("doesn't expand a specification that applies an operator to arguments", async () => {
     const getStatus = (version: TlcVersion) =>
-      check({
+      checkParsed({
         source:
           "---- MODULE M ----\nVARIABLE x\nS(v) == v = 0 /\\ [][v' = v]_v\nSpec == S(x)\n====",
         config: "SPECIFICATION Spec",
@@ -5448,7 +5451,7 @@ describe("check matches TLC 1.7.4", () => {
 
   it("reads the level of the state it explores in a constraint", async () => {
     const getDistinctStates = async (version: TlcVersion) => {
-      const result = await check({
+      const result = await checkParsed({
         source:
           '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = x + 1\nC == TLCGet("level") < 3\n====',
         config: "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
@@ -5462,7 +5465,7 @@ describe("check matches TLC 1.7.4", () => {
 
   it("evaluates TLCGet in a temporal property before it starts the model checker", async () => {
     const checkVersion = (version: TlcVersion) =>
-      check({
+      checkParsed({
         source:
           '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == <>[](x = 1 /\\ TLCGet("diameter") > 0)\n====',
         config: "SPECIFICATION Spec\nPROPERTY P",
@@ -5478,7 +5481,7 @@ describe("check matches TLC 1.7.4", () => {
 
   it("evaluates the arguments of a recursive temporal operator it expands", async () => {
     const getPropertyStatus = (property: string, version: TlcVersion) =>
-      check({
+      checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN <>(x = 1) ELSE R(n - 1)\nP == ${property}\n====`,
         config: "SPECIFICATION Spec\nPROPERTY P",
         version,
@@ -5495,7 +5498,7 @@ describe("check matches TLC 1.7.4", () => {
   it("overflows on an initial predicate the configuration redefines by itself", async () => {
     // The shape of TLC's CyclicRedefineVars: Init <- ReInit, whose body names Init.
     await expect(
-      check({
+      checkParsed({
         source:
           "---- MODULE M ----\nVARIABLE x\nInit == x = FALSE\nNext == x' = ~x\nSpec == Init /\\ [][Next]_x\nReInit == x \\in BOOLEAN /\\ Init\n====",
         config: "SPECIFICATION Spec\nCONSTANT Init <- ReInit",
@@ -5504,7 +5507,7 @@ describe("check matches TLC 1.7.4", () => {
   });
 
   it("doesn't expect an EvalException in the values a property quantifies over", async () => {
-    const error = await check({
+    const error = await checkParsed({
       source:
         "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in {1 \\div 0} : <>(x = k)\n====",
       config: "SPECIFICATION Spec\nPROPERTY P",
@@ -5521,7 +5524,7 @@ describe("check matches TLC 1.7.4", () => {
   it.each(["1.7.4" as const, "master" as const])(
     "reports a property quantified over no values as a tautology in TLC %s",
     async (version) => {
-      const result = check({
+      const result = checkParsed({
         source:
           "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in {} : <>TRUE\n====",
         config: "SPECIFICATION Spec\nPROPERTY P",
@@ -5559,7 +5562,7 @@ describe("check matches TLC 1.7.4", () => {
   ])(
     "fails a quantified formula whose body fails in TLC %s as one it can't handle",
     async (version, property, message) => {
-      const result = check({
+      const result = checkParsed({
         source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == ${property}\n====`,
         config: "SPECIFICATION Spec\nPROPERTY P",
         version,

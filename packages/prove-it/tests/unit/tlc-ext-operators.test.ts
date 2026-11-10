@@ -2,13 +2,14 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check, TlaUnsupportedError } from "../../src";
+import { TlaUnsupportedError } from "../../src";
+import { checkParsed } from "../../src/parallel";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
 const checkFixture = async (name: string, configName = name) => {
   const printed: string[] = [];
-  const result = await check({
+  const result = await checkParsed({
     source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
     onPrint: (text) => printed.push(text),
@@ -17,7 +18,7 @@ const checkFixture = async (name: string, configName = name) => {
 };
 
 const checkModule = (body: string, config: string) =>
-  check({
+  checkParsed({
     source: `---- MODULE M ----\nEXTENDS Naturals, TLCExt\nVARIABLE x\n${body}\n====`,
     config,
   });
@@ -79,7 +80,7 @@ describe("TLCExt operators match TLC", () => {
   it("compares AssertError's message with the error's, which holds its code under -tool", async () => {
     const results = await Promise.all(
       [false, true].map((isTool) =>
-        check({
+        checkParsed({
           source:
             '---- MODULE M ----\nEXTENDS Naturals, TLCExt\nASSUME AssertError("The second argument of \\\\div is 0.", 1 \\div 0)\n====',
           config: "",
