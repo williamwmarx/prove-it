@@ -11,7 +11,5 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-tla-engine = { path = "../tla-engine" }
-tla-ir = { path = "../tla-ir" }
-tla-live = { path = "../tla-live" }
+prove-it-host = { path = "../prove-it-host" }
 tla-values = { path = "../tla-values" }
