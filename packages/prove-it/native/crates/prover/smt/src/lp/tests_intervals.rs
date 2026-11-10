@@ -500,8 +500,8 @@ fn stops_when_the_resource_limit_runs_out_like_z3s_test_simplify() {
                 false
             },
             |_: usize| false,
+            || limit.inc(),
         ),
-        &|| limit.inc(),
         1,
         &mut creator,
     )
@@ -523,8 +523,8 @@ fn extracts_the_common_factor_of_every_summand() {
                 false
             },
             |_: usize| false,
+            || limit.inc(),
         ),
-        &|| limit.inc(),
         1,
         &mut creator,
     )
@@ -560,8 +560,8 @@ fn reports_forms_that_keep_the_value_of_the_sum() {
                 false
             },
             |_: usize| false,
+            || limit.inc(),
         ),
-        &|| limit.inc(),
         7,
         &mut creator,
     )

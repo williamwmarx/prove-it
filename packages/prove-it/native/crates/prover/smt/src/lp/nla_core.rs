@@ -1589,10 +1589,10 @@ pub(crate) mod tests {
         );
     }
 
-    // Until nlsat is ported, a check that reaches nra declines instead of answering. Here x >= 2,
-    // y >= 3 and x*y = 1: the patcher is blocked, and nothing before check_assignment yields.
+    // Here x >= 2, y >= 3 and x*y = 1: the patcher is blocked, and the bounds conflict before the
+    // check reaches nra. The expected result and lemma are the TS oracle's.
     #[test]
-    fn declines_the_check_that_reaches_nra() {
+    fn refutes_the_check_before_nra() {
         let (mut fixture, _) = NlaFixture::mk_scenario(
             3,
             &[(2, &[0, 1])],
@@ -1603,10 +1603,8 @@ pub(crate) mod tests {
                 (2, KIND_LE, 1),
             ],
         );
-        assert_eq!(
-            fixture.with_nla(|nla| nla.check(2)),
-            Err(SmtError::Unsupported("nra-solver is not ported yet".into()))
-        );
+        assert_eq!(fixture.with_nla(|nla| nla.check(2)), Ok(LBool::False));
+        assert_eq!(show_lemmas(&fixture.core), ["[] {0,1,2,3}"]);
     }
 
     #[test]

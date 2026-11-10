@@ -9,17 +9,17 @@ use std::collections::HashMap;
 use crate::lp::dependency::mk_join;
 use crate::lp::pdd_solver::{PddSolver, SOLVED, SetUpdate, TO_SIMPLIFY};
 
-pub struct PddSimplifier<'a, 'l> {
-    solver: &'a mut PddSolver<'l>,
+pub struct PddSimplifier<'a> {
+    solver: &'a mut PddSolver,
 }
 
-impl<'a, 'l> PddSimplifier<'a, 'l> {
-    pub fn new(solver: &'a mut PddSolver<'l>) -> PddSimplifier<'a, 'l> {
+impl<'a> PddSimplifier<'a> {
+    pub fn new(solver: &'a mut PddSolver) -> PddSimplifier<'a> {
         PddSimplifier { solver }
     }
 
-    pub fn run(&mut self) {
-        while !self.solver.is_done()
+    pub fn run(&mut self, is_canceled: &dyn Fn() -> bool) {
+        while !self.solver.is_done(is_canceled)
             && (self.simplify_linear_step(true)
                 || self.simplify_elim_pure_step()
                 || self.simplify_cc_step()

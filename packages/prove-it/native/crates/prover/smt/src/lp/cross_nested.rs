@@ -6,9 +6,10 @@
 // The occurrence map is a Map in insertion order, where Z3 has an unordered_map. So when several
 // variables divide every summand, the extracted common factor may list them in another order.
 //
-// The TypeScript takes two closures, the callback on a form and var_is_fixed, which both reach
-// nla's core; here they are the two methods of one `CrossNestedCallbacks`, so that one value can
-// hold the core mutably. The callback reads the form from the creator it is given.
+// The TypeScript takes two closures, the callback on a form and var_is_fixed, and the limit whose
+// inc it calls, which all reach nla's core; here they are the three methods of one
+// `CrossNestedCallbacks`, so that one value can hold the core mutably. The callback reads the
+// form from the creator it is given.
 use prove_num::Rational;
 
 use crate::lp::nex::{
@@ -21,12 +22,15 @@ pub trait CrossNestedCallbacks {
     // call_on_result: whether to stop at this form.
     fn call_on_result(&mut self, nex_creator: &NexCreator, expr: NexId) -> bool;
     fn var_is_fixed(&self, variable: usize) -> bool;
+    // The limit's inc: false when the search must stop.
+    fn inc(&mut self) -> bool;
 }
 
-impl<CallOnResult, VarIsFixed> CrossNestedCallbacks for (CallOnResult, VarIsFixed)
+impl<CallOnResult, VarIsFixed, Inc> CrossNestedCallbacks for (CallOnResult, VarIsFixed, Inc)
 where
     CallOnResult: FnMut(&NexCreator, NexId) -> bool,
     VarIsFixed: Fn(usize) -> bool,
+    Inc: FnMut() -> bool,
 {
     fn call_on_result(&mut self, nex_creator: &NexCreator, expr: NexId) -> bool {
         (self.0)(nex_creator, expr)
@@ -34,6 +38,10 @@ where
 
     fn var_is_fixed(&self, variable: usize) -> bool {
         (self.1)(variable)
+    }
+
+    fn inc(&mut self) -> bool {
+        (self.2)()
     }
 }
 
@@ -79,7 +87,6 @@ pub struct CrossNested<'a, Callbacks: CrossNestedCallbacks> {
     reported: u32,
     is_random_bit: bool,
     callbacks: Callbacks,
-    limit: &'a dyn Fn() -> bool,
     random: RandomGen,
     pub nex_creator: &'a mut NexCreator,
 }
@@ -87,7 +94,6 @@ pub struct CrossNested<'a, Callbacks: CrossNestedCallbacks> {
 impl<'a, Callbacks: CrossNestedCallbacks> CrossNested<'a, Callbacks> {
     pub fn new(
         callbacks: Callbacks,
-        limit: &'a dyn Fn() -> bool,
         random_seed: u32,
         nex_creator: &'a mut NexCreator,
     ) -> CrossNested<'a, Callbacks> {
@@ -99,7 +105,6 @@ impl<'a, Callbacks: CrossNestedCallbacks> CrossNested<'a, Callbacks> {
             reported: 0,
             is_random_bit: false,
             callbacks,
-            limit,
             random: RandomGen::new(random_seed),
             nex_creator,
         }
@@ -296,7 +301,7 @@ impl<'a, Callbacks: CrossNestedCallbacks> CrossNested<'a, Callbacks> {
         if self.is_done || self.is_limit_exceeded {
             return;
         }
-        if !(self.limit)() {
+        if !self.callbacks.inc() {
             self.is_limit_exceeded = true;
             return;
         }
@@ -328,7 +333,7 @@ impl<'a, Callbacks: CrossNestedCallbacks> CrossNested<'a, Callbacks> {
         if self.is_done || self.is_limit_exceeded {
             return;
         }
-        if !(self.limit)() {
+        if !self.callbacks.inc() {
             self.is_limit_exceeded = true;
             return;
         }

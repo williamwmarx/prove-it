@@ -8,6 +8,11 @@
 //
 // The equations live in the solver's arena, and the sets hold their indices there, which stand for
 // the TypeScript's object identity.
+//
+// The TypeScript gives the constructor the isCanceled closure, which nla's grobner makes from the
+// lar_solver's settings. Grobner's state holds the solver while it also changes the lar_solver,
+// so here the functions that check it (is_done, add_subst, saturate) take it as an argument, and
+// call it exactly where the TypeScript does.
 use crate::lp::dependency::{Dependency, mk_join};
 use crate::lp::pdd::{Pdd, PddManager};
 use crate::util::error::SmtError;
@@ -89,7 +94,7 @@ pub struct SetUpdate {
 }
 
 impl SetUpdate {
-    pub fn new(solver: &PddSolver<'_>, state: u8) -> SetUpdate {
+    pub fn new(solver: &PddSolver, state: u8) -> SetUpdate {
         SetUpdate {
             i: 0,
             j: 0,
@@ -98,18 +103,18 @@ impl SetUpdate {
         }
     }
 
-    pub fn get(&self, solver: &PddSolver<'_>) -> usize {
+    pub fn get(&self, solver: &PddSolver) -> usize {
         solver.get_queue(self.state)[self.i]
     }
 
-    pub fn nextj(&mut self, solver: &mut PddSolver<'_>) {
+    pub fn nextj(&mut self, solver: &mut PddSolver) {
         let equation = solver.get_queue(self.state)[self.i];
         solver.get_queue_mut(self.state)[self.j] = equation;
         solver.arena[equation].idx = self.j;
         self.j += 1;
     }
 
-    pub fn finish(&mut self, solver: &mut PddSolver<'_>) {
+    pub fn finish(&mut self, solver: &mut PddSolver) {
         while self.i < self.size {
             self.nextj(solver);
             self.i += 1;
@@ -129,7 +134,7 @@ enum Simplifier {
     Using(usize),
 }
 
-pub struct PddSolver<'l> {
+pub struct PddSolver {
     pub stats: PddSolverStats,
     pub config: PddSolverConfig,
     pub solved: Vec<usize>,
@@ -144,11 +149,10 @@ pub struct PddSolver<'l> {
     pub manager: PddManager,
     // Every equation made since the last reset, indexed by the sets and the conflict.
     pub arena: Vec<Equation>,
-    is_canceled: Box<dyn Fn() -> bool + 'l>,
 }
 
-impl<'l> PddSolver<'l> {
-    pub fn new(manager: PddManager, is_canceled: Box<dyn Fn() -> bool + 'l>) -> PddSolver<'l> {
+impl PddSolver {
+    pub fn new(manager: PddManager) -> PddSolver {
         PddSolver {
             stats: PddSolverStats::default(),
             config: get_default_pdd_solver_config(),
@@ -163,7 +167,6 @@ impl<'l> PddSolver<'l> {
             var2level: Vec::new(),
             manager,
             arena: Vec::new(),
-            is_canceled,
         }
     }
 
@@ -239,6 +242,7 @@ impl<'l> PddSolver<'l> {
         variable: usize,
         poly: Pdd,
         dep: Dependency,
+        is_canceled: &dyn Fn() -> bool,
     ) -> Result<(), SmtError> {
         self.substs.push(Subst {
             variable,
@@ -254,28 +258,28 @@ impl<'l> PddSolver<'l> {
             poly,
             dep,
         };
-        if !self.is_done() {
-            self.simplify_set_using(PROCESSED, &simplifier)?;
+        if !self.is_done(is_canceled) {
+            self.simplify_set_using(PROCESSED, &simplifier, is_canceled)?;
         }
-        if !self.is_done() {
-            self.simplify_set_using(TO_SIMPLIFY, &simplifier)?;
+        if !self.is_done(is_canceled) {
+            self.simplify_set_using(TO_SIMPLIFY, &simplifier, is_canceled)?;
         }
-        if !self.is_done() {
-            self.simplify_set_using(SOLVED, &simplifier)?;
+        if !self.is_done(is_canceled) {
+            self.simplify_set_using(SOLVED, &simplifier, is_canceled)?;
         }
         Ok(())
     }
 
-    pub fn saturate(&mut self) -> Result<(), SmtError> {
-        if self.is_done() {
+    pub fn saturate(&mut self, is_canceled: &dyn Fn() -> bool) -> Result<(), SmtError> {
+        if self.is_done(is_canceled) {
             return Ok(());
         }
         self.init_saturate();
         loop {
-            if self.is_done() {
+            if self.is_done(is_canceled) {
                 return Ok(());
             }
-            match self.step() {
+            match self.step(is_canceled) {
                 Ok(true) => {}
                 Ok(false) | Err(SmtError::PddMemoryOut) => return Ok(()),
                 Err(error) => return Err(error),
@@ -290,7 +294,7 @@ impl<'l> PddSolver<'l> {
         equations
     }
 
-    fn step(&mut self) -> Result<bool, SmtError> {
+    fn step(&mut self, is_canceled: &dyn Fn() -> bool) -> Result<bool, SmtError> {
         self.stats.compute_steps += 1;
         let Some(equation) = self.pick_next() else {
             return Ok(false);
@@ -298,7 +302,7 @@ impl<'l> PddSolver<'l> {
         // scoped_process: the equation goes back to processed unless the step settles it.
         let mut pending = Some(equation);
         let result = 'step: {
-            self.simplify_using_all(equation, PROCESSED);
+            self.simplify_using_all(equation, PROCESSED, is_canceled);
             if self.is_trivial(equation) {
                 pending = None;
                 break 'step Ok(true);
@@ -308,10 +312,12 @@ impl<'l> PddSolver<'l> {
                 break 'step Ok(false);
             }
             self.is_too_complex_found = false;
-            if let Err(error) = self.simplify_set_using(PROCESSED, &Simplifier::Using(equation)) {
+            if let Err(error) =
+                self.simplify_set_using(PROCESSED, &Simplifier::Using(equation), is_canceled)
+            {
                 break 'step Err(error);
             }
-            if self.is_done() {
+            if self.is_done(is_canceled) {
                 break 'step Ok(false);
             }
             let mut index = 0;
@@ -321,10 +327,12 @@ impl<'l> PddSolver<'l> {
                 }
                 index += 1;
             }
-            if let Err(error) = self.simplify_set_using(TO_SIMPLIFY, &Simplifier::Using(equation)) {
+            if let Err(error) =
+                self.simplify_set_using(TO_SIMPLIFY, &Simplifier::Using(equation), is_canceled)
+            {
                 break 'step Err(error);
             }
-            if self.is_done() {
+            if self.is_done(is_canceled) {
                 break 'step Ok(false);
             }
             if !self.is_too_complex_found {
@@ -400,7 +408,7 @@ impl<'l> PddSolver<'l> {
     }
 
     // simplify_using(eq, eqs): reduces eq by the set until no reduction applies.
-    fn simplify_using_all(&mut self, equation: usize, state: u8) {
+    fn simplify_using_all(&mut self, equation: usize, state: u8, is_canceled: &dyn Fn() -> bool) {
         loop {
             let mut is_simplified = false;
             let mut index = 0;
@@ -409,7 +417,7 @@ impl<'l> PddSolver<'l> {
                 if self.try_simplify_using(equation, source).is_some() {
                     is_simplified = true;
                 }
-                if (self.is_canceled)() || self.manager.is_val(self.arena[equation].poly) {
+                if is_canceled() || self.manager.is_val(self.arena[equation].poly) {
                     break;
                 }
                 index += 1;
@@ -426,11 +434,16 @@ impl<'l> PddSolver<'l> {
 
     // simplify_using(set, simplifier): the simplifier returns None when it leaves the target, and
     // otherwise whether the leading term changed.
-    fn simplify_set_using(&mut self, state: u8, simplifier: &Simplifier) -> Result<(), SmtError> {
+    fn simplify_set_using(
+        &mut self,
+        state: u8,
+        simplifier: &Simplifier,
+        is_canceled: &dyn Fn() -> bool,
+    ) -> Result<(), SmtError> {
         let mut update = SetUpdate::new(self, state);
         while update.i < update.size {
             let target = self.get_queue(state)[update.i];
-            let is_leading_term_changed = if self.is_done() {
+            let is_leading_term_changed = if self.is_done(is_canceled) {
                 None
             } else {
                 self.apply_simplifier(simplifier, target)?
@@ -534,10 +547,10 @@ impl<'l> PddSolver<'l> {
         is_leading_term_changed
     }
 
-    pub fn is_done(&self) -> bool {
+    pub fn is_done(&self, is_canceled: &dyn Fn() -> bool) -> bool {
         self.to_simplify.len() + self.processed.len() >= self.config.eqs_threshold
             || self.stats.simplified >= self.config.max_simplified
-            || (self.is_canceled)()
+            || is_canceled()
             || self.stats.compute_steps > self.config.max_steps
             || self.conflict.is_some()
     }
@@ -635,28 +648,28 @@ mod tests {
     use crate::lp::pdd::{Pdd, PddManager};
     use crate::lp::pdd_simplifier::PddSimplifier;
 
-    fn solve(polys: impl for<'m> Fn(&[Poly<'m>]) -> Vec<Poly<'m>>) -> PddSolver<'static> {
+    fn solve(polys: impl for<'m> Fn(&[Poly<'m>]) -> Vec<Poly<'m>>) -> PddSolver {
         let manager = RefCell::new(PddManager::new(4));
         let pdds: Vec<Pdd> = polys(&get_vars(&manager, 4))
             .iter()
             .map(|poly| poly.pdd)
             .collect();
-        let mut solver = PddSolver::new(manager.into_inner(), Box::new(|| false));
+        let mut solver = PddSolver::new(manager.into_inner());
         for (index, &poly) in pdds.iter().enumerate() {
             solver.add(poly, mk_leaf(index as u32));
         }
-        solver.saturate().unwrap();
+        solver.saturate(&|| false).unwrap();
         solver
     }
 
-    fn get_polys(solver: &PddSolver<'_>, equations: &[usize]) -> Vec<String> {
+    fn get_polys(solver: &PddSolver, equations: &[usize]) -> Vec<String> {
         equations
             .iter()
             .map(|&equation| solver.manager.display(solver.equation(equation).poly))
             .collect()
     }
 
-    fn get_sorted_polys(solver: &PddSolver<'_>) -> Vec<String> {
+    fn get_sorted_polys(solver: &PddSolver) -> Vec<String> {
         let mut polys = get_polys(solver, &solver.equations());
         polys.sort();
         polys
@@ -727,10 +740,10 @@ mod tests {
         let first = (v3 - v2 - 1).pdd;
         let second = (v3 * v1 + v0).pdd;
         drop(vars);
-        let mut solver = PddSolver::new(manager.into_inner(), Box::new(|| false));
+        let mut solver = PddSolver::new(manager.into_inner());
         solver.add(first, None);
         solver.add(second, None);
-        PddSimplifier::new(&mut solver).run();
+        PddSimplifier::new(&mut solver).run(&|| false);
         assert_eq!(get_polys(&solver, &solver.solved), vec!["v3 - v2 - 1"]);
         assert_eq!(
             get_polys(&solver, &solver.to_simplify),
