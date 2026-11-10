@@ -1,6 +1,8 @@
 //! `prove-it <Spec>...`: `checkSpecs` and `checkSpec` in `src/cli/tlc.ts`. Each spec is checked as
 //! TLC would in a process of its own; the exit code is the first that is not success.
 
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
@@ -10,7 +12,7 @@ use tla_engine::search::{
     ViolationKind, search,
 };
 use tla_live::{Liveness, Verdict};
-use tla_values::print::{is_printable, write_value};
+use tla_values::print::{is_printable, is_printable_normalized, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
@@ -25,7 +27,7 @@ use crate::summary::{
 use crate::time::{format_date, format_duration};
 use crate::trace::{
     PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
-    rebuild_accepted, rebuild_trace,
+    format_texts, rebuild_accepted, rebuild_trace,
 };
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
@@ -299,6 +301,10 @@ struct Relay<'ir> {
     /// its progress; the search ends there, if it gets that far.
     is_periodic: bool,
     is_periodic_reached: bool,
+    /// The file `-dump` writes each state the search found to, as TLC's `StateWriter` does.
+    dump: Option<BufWriter<File>>,
+    /// Whether the dump holds every state, or why it doesn't, once the search handed them over.
+    dumped: Option<Result<(), &'static str>>,
     ir: &'ir tla_ir::Ir,
     is_tool: bool,
     workers: usize,
@@ -504,6 +510,48 @@ impl Reporter for Relay<'_> {
             .sender
             .send(Event::SymmetrySetsTooSmall(names.to_vec()));
     }
+
+    // TLC writes "State N:", from 1, then the state as it prints it (`TLCStateMut.toString`) and
+    // a blank line.
+    fn dumped(&mut self, store: &Store, states: &[Id], width: usize) {
+        let Some(writer) = self.dump.as_mut() else {
+            return;
+        };
+        let ir = self.ir;
+        if width == 0 || width != ir.variables.len() {
+            self.dumped = Some(Err("-dump of states other than the variables' values"));
+            return;
+        }
+        let written = states
+            .chunks(width)
+            .enumerate()
+            .try_for_each(|(index, state)| {
+                let texts = state
+                    .iter()
+                    .map(|&id| {
+                        let mut text = Vec::new();
+                        // TLC fingerprints a state, which normalizes it, before it writes it.
+                        is_printable_normalized(store, id)
+                            .then(|| write_value(store, id, &mut text).ok())
+                            .flatten()
+                            .and_then(|()| String::from_utf16(&text).ok())
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or("dumping a value whose text depends on how TLC built it")?;
+                write!(
+                    writer,
+                    "State {}:\n{}\n",
+                    index + 1,
+                    format_texts(ir, &texts)
+                )
+                .map_err(|_| "-dump into a file it can't write")
+            });
+        self.dumped = Some(written.and_then(|()| {
+            writer
+                .flush()
+                .map_err(|_| "-dump into a file it can't write")
+        }));
+    }
 }
 
 // What Print or PrintT prints of the values, unless the store has forgotten how TLC built one.
@@ -595,6 +643,24 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     };
     print_welcome(printer);
     print_startup_banner(printer, seed, workers);
+    // TLC opens the file before it reads the configuration, and names it with a suffix of .dump
+    // unless it has one.
+    let dump = match dump {
+        None => None,
+        Some([file]) if !file.starts_with("${metadir}") => {
+            let path = if file.ends_with(".dump") {
+                file.clone()
+            } else {
+                format!("{file}.dump")
+            };
+            let Ok(file) = File::create(path) else {
+                return report_not_native(printer, "-dump into a file it can't create");
+            };
+            Some(BufWriter::new(file))
+        }
+        Some([_]) => return report_not_native(printer, "-dump into the meta directory"),
+        Some(_) => return report_not_native(printer, "-dump dot"),
+    };
     let config_path = match args.first("-config") {
         Some(path) => Some(path.to_string()),
         None => Some(match spec_path.strip_suffix(".tla") {
@@ -630,9 +696,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         None => return report_not_native(printer, "a configuration file the front end rejects"),
     };
-    if dump.is_some() {
-        return report_not_native(printer, "-dump");
-    }
     if args.has("-continue") {
         return report_not_native(printer, "-continue");
     }
@@ -742,6 +805,15 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let is_liveness_periodic = !args
         .first("-lncheck")
         .is_some_and(|check| ["final", "seqfinal"].contains(&check.to_lowercase().as_str()));
+    let is_dumped = dump.is_some();
+    if is_dumped && (ir.model.view.is_some() || ir.model.startup.symmetry.is_some()) {
+        return report_not_native(printer, "-dump under SYMMETRY or a VIEW");
+    }
+    // TLC writes each state again as it adds the state's stuttering step to the behavior graph
+    // (`Worker.doNextCheckLiveness`).
+    if is_dumped && !ir.model.live_formula.is_empty() {
+        return report_not_native(printer, "-dump with temporal properties");
+    }
     let settings = Settings {
         is_violation_reported: true,
         workers,
@@ -757,6 +829,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         test_live_check_at: std::env::var("PROVE_IT_TEST_LIVE_CHECK_AT")
             .ok()
             .and_then(|at| at.parse().ok()),
+        is_dumped,
         ..Settings::default()
     };
     let threads = settings.threads;
@@ -770,7 +843,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let mut is_misprinted = false;
     let mut is_periodic_reached = false;
     let is_periodic = config.periodic.is_some();
-    let (outcome, assumed_printed) = std::thread::scope(|scope| {
+    let (outcome, assumed_printed, dumped) = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
@@ -780,6 +853,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     is_misprinted: false,
                     is_periodic,
                     is_periodic_reached: false,
+                    dump,
+                    dumped: None,
                     ir,
                     is_tool,
                     workers,
@@ -791,7 +866,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     startup_texts: None,
                 };
                 let outcome = search(ir, &settings, &mut relay);
-                (outcome, relay.assumed_printed)
+                (outcome, relay.assumed_printed, relay.dumped)
             })
             .expect("a thread for the search");
         for event in receiver.iter() {
@@ -859,6 +934,37 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             printer,
             "printing a value whose text depends on how TLC built it",
         );
+    }
+    // A search that found no state hands none over, and one that stopped computing its initial
+    // states hands over none of those it found.
+    let is_stateless = matches!(
+        outcome,
+        SearchOutcome::Declined(_)
+            | SearchOutcome::AssumptionViolated { .. }
+            | SearchOutcome::ConfigError { .. }
+            | SearchOutcome::AssumptionFailed { .. }
+    );
+    // Where an invariant fails to evaluate, TLC expands the state again to print the call stack,
+    // and writes the new states it finds then too.
+    let is_replayed = matches!(
+        &outcome,
+        SearchOutcome::Stopped {
+            violation: Some(violation),
+            ..
+        } if !violation.fingerprints.is_empty()
+    );
+    match dumped {
+        Some(Err(reason)) => return report_not_native(printer, reason),
+        Some(Ok(())) if is_replayed => {
+            return report_not_native(printer, "-dump of states TLC finds as it replays a step");
+        }
+        None if is_dumped && !is_stateless => {
+            return report_not_native(
+                printer,
+                "-dump of a search stopped computing its initial states",
+            );
+        }
+        _ => {}
     }
     let (counts, fingerprints) = match outcome {
         SearchOutcome::Complete {
