@@ -840,9 +840,9 @@ is what must move.
 
 ```
 prove(mains, known, options)
-  → { kind: "proved", modules, reports }                 every obligation settled
-  | { kind: "needed", keys, texts, reports }             decisions Rust can't make yet
-  | { kind: "error", ... }                               as getObligations throws today
+  → { kind: "proved", modules, reports, warnings }       every obligation settled
+  | { kind: "needed", keys, texts, reports, warnings }   decisions Rust can't make yet
+  | { kind: "error", name, ... }                         as getObligations throws today
 ```
 
 - `known` holds the module texts under P5's keys (`tlapm:<name>`, `text:<path>`), and the answers
@@ -854,6 +854,9 @@ prove(mains, known, options)
 - Where an obligation needs a back end that is still TypeScript and the answer isn't in
   `known`, the obligation waits, and its key goes into `keys`, with the text in `texts`.
 - `reports` are the settled obligations, in order, so that `onObligation` streams as today.
+  `warnings` are what `index::get_obligations` gave its warning sink, for `onWarning`.
+- An error carries its name, `TlaProofError` or `TlaSyntaxError`, since `get_obligations` can
+  throw either.
 - JavaScript decides every needed key in the existing pool, in parallel, and calls again with
   the answers added.
 - The driver runs again from the start. It is deterministic, so the same obligations settle the
@@ -866,10 +869,26 @@ learn its CASE count. The end-to-end differential reports the rounds per module,
 is long, the CASE wait is the place to cut it: it only waits on obligations whose encoding has
 an incomplete CASE.
 
-**Cost of running again.** A per-process cache, keyed by the digest of `mains` and `known`'s
-module texts, keeps the parsed modules, the obligations, and every encoder text by
-(obligation, method, CASE count). A round then costs the driver's bookkeeping, not Prep's 520
-seconds. The cache changes no result, and the differential runs once with it cleared each round.
+**One thread for Prep, the pool for deciding.** The front end's IR is `Rc`, so the obligations,
+Prep and the encoders (P5c's `ship::encode_for_backend`, which takes the CASE count in its
+`EncodingSession` and leaves the count after it) stay on the driver's thread, in obligation
+order, as in the TypeScript, where they are about 9% of the time. Only the texts, which are
+`String`s, go to the Rust back ends' threads and to JavaScript.
+
+**Prep's order.** Prep keeps module-level caches, as the TypeScript does. All are memoisation
+but temporal's `constantBodies`, which is keyed by a body alone: the first scope a shared body is
+judged in decides it for every later one, even across modules. So an obligation's Prep result
+depends on which obligations ran Prep before it in the process. The driver clears these caches
+(P5c's `reset_caches`) at the start of each `prove` call and runs Prep in obligation order, which
+makes a run reproducible. The end-to-end differential also runs each module once in a fresh
+process, to show whether the TypeScript's carry-over between modules ever changes an answer.
+
+**Cost of running again.** A cache keyed by the digest of `mains` and `known`'s module texts
+keeps the parsed modules and the obligations, thread-local to the driver's thread, and every
+encoder text by (obligation, method, CASE count), process-wide. The texts are filled in the
+first round, whose Prep ran in a fresh run's order, so they are the texts a fresh run makes. A
+round then costs the driver's bookkeeping, not Prep's 520 seconds. The cache changes no result,
+and the differential runs once with it cleared each round.
 
 **Time and cancellation.** `timeUsedMs` comes from whichever side decided, and the reason
 `timeout` or `false` is computed from it as now. An abort stops JavaScript from calling again,
