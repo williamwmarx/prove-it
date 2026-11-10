@@ -145,6 +145,7 @@ fn reads_the_command_line_as_tlc() {
         (&["-simulate", "TCommit"], "the TLC option -simulate"),
         (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
         (&["-fp", "1", "TCommit"], "-fp 1"),
+        (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {
         let output = run(&directory, &[&["tlc2.TLC"], args].concat());
@@ -155,6 +156,23 @@ fn reads_the_command_line_as_tlc() {
             format!("prove-it: not native yet: {what}\n")
         );
     }
+    let property = run(
+        &directory,
+        &[
+            "-Dtlc2.tool.ModelChecker.BAQueue=true",
+            "tlc2.TLC",
+            "TCommit",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&property.stderr),
+        "prove-it: not native yet: the system property tlc2.tool.ModelChecker.BAQueue\n"
+    );
+    let silent = run(
+        &directory,
+        &["-Dtlc2.TLC.ide=vscode", "tlc2.TLC", "TCommit"],
+    );
+    assert_eq!(silent.status.code(), Some(0), "{}", stdout(&silent));
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
