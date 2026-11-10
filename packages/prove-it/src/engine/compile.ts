@@ -2023,7 +2023,6 @@ export const createCompiler = (environment: Environment): Compiler => {
     }
   };
 
-  // The recursive function an application applies, when it names one directly.
   // The recursive function an application applies, when it names one, or an operator or a LET
   // gives one, which TLC keeps lazy.
   const getAppliedRecursiveFunction = (
