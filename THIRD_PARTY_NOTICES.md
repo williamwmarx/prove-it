@@ -38,7 +38,7 @@ SOFTWARE.
 
 <https://github.com/tlaplus/tlapm>
 
-The proof obligations (`src/obligations/`), parts of the prover pipeline (`src/prover/`) and tlapm's fingerprints file are ported from tlapm, and `src/prover/tlaps-module.ts` includes tlapm's `library/TLAPS.tla` verbatim.
+The proof obligations (`src/obligations/`), parts of the prover pipeline (`src/prover/`) and tlapm's fingerprints file are ported from tlapm, and `src/prover/tlaps-module.ts` includes tlapm's `library/TLAPS.tla` verbatim. Their Rust port, `native/crates/prover/obligations/` (the obligations, Prep and the backends' encoders), is ported from the same code, and its `src/tlaps_module.rs` includes `library/TLAPS.tla` verbatim too.
 
 ```
 Copyright (c) 2008 INRIA and Microsoft Corporation
@@ -114,15 +114,17 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 <https://github.com/ocaml/ocaml>
 
-Five files are ported from the OCaml Core System and remain under its license, the GNU Lesser General Public License version 2.1 with OCaml's linking exception, rather than MIT:
+Seven files are ported from the OCaml Core System and remain under its license, the GNU Lesser General Public License version 2.1 with OCaml's linking exception, rather than MIT:
 
 - `src/prover/tlapm/ocaml-marshal.ts`, ported from `runtime/intern.c` and `runtime/extern.c`
 - `src/prover/zenon/ocaml.ts`, ported from `Hashtbl.hash` (`runtime/hash.c`) and `List.sort` and `List.stable_sort` (`stdlib/list.ml`)
 - `native/crates/prover/zenon/src/ocaml.rs`, the Rust port of `src/prover/zenon/ocaml.ts`
 - `src/obligations/format.ts`, ported from the `Format` module (`stdlib/format.ml`)
 - `src/obligations/action.ts`, whose `getHash` is ported from `runtime/hash.c`
+- `native/crates/prover/obligations/src/format.rs`, the Rust port of `src/obligations/format.ts`
+- `native/crates/prover/obligations/src/action.rs`, whose `get_hash`, between the markers that say so, is the Rust port of `getHash`
 
-Their source ships in the npm package under `src/`; the Rust port's is in this repository. Copyright Institut National de Recherche en Informatique et en Automatique (INRIA).
+Their source ships in the npm package under `src/`; the Rust ports' is in this repository. Copyright Institut National de Recherche en Informatique et en Automatique (INRIA).
 
 ```
 In the following, "the OCaml Core System" refers to all files marked
@@ -334,7 +336,7 @@ That's all there is to it!
 
 <https://github.com/Z3Prover/z3>
 
-The SMT solver in `src/prover/smt/`, including its linear arithmetic (`lp/`) and nonlinear (`nlsat/`) components, is ported from Z3.
+The SMT solver in `src/prover/smt/`, including its linear arithmetic (`lp/`) and nonlinear (`nlsat/`) components, is ported from Z3, and so is its Rust port in `native/crates/prover/smt/` (so far `src/util/` and the linear arithmetic, `src/lp/`).
 
 ```
 Z3

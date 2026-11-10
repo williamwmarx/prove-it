@@ -19,6 +19,8 @@ ignorePatterns = [
   # byte for byte. The conformance recordings keep one line per module, which keeps them small.
   "packages/prove-it/tests/fixtures/",
   "packages/prove-it/tests/conformance/",
+  # The counterexamples TLC dumps, which tla-trace's tests compare byte for byte.
+  "packages/prove-it/native/crates/tla-trace/tests/dump/",
 ]
 
 # `bun lint`: every rule the repository runs is named here, as an error, so a Bun upgrade that
