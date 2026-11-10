@@ -12,6 +12,7 @@ pub mod wtf8;
 /// on a thread whose stack holds that many levels. Ten thousand levels took between 128 and 256 MB
 /// in a debug build and under 32 MB in a release build; each size is about twice that. The stack
 /// is reserved, not committed.
+#[cfg(not(target_arch = "wasm32"))]
 const NESTING_STACK_BYTES: usize = if cfg!(debug_assertions) {
     512 * 1024 * 1024
 } else {
@@ -19,6 +20,10 @@ const NESTING_STACK_BYTES: usize = if cfg!(debug_assertions) {
 };
 
 fn on_nesting_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    // WebAssembly runs on one thread, whose stack the module sets as it links.
+    #[cfg(target_arch = "wasm32")]
+    return work();
+    #[cfg(not(target_arch = "wasm32"))]
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(NESTING_STACK_BYTES)

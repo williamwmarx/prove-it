@@ -15,8 +15,8 @@ name: Benchmark
         description: Only the models whose id contains this text
         default: ""
       checkers:
-        description: Comma-separated, from tlc, tlc-auto, tla-ts, tla-rs, prove-it, prove-it-aot, prove-it-rust, prove-it-rust-aot, prove-it-bun, prove-it-node
-        default: tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-aot,prove-it-rust,prove-it-rust-aot,prove-it-node
+        description: Comma-separated, from tlc, tlc-auto, tla-ts, tla-rs, prove-it, prove-it-aot, prove-it-bun, prove-it-node
+        default: tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-aot,prove-it-node
       timeout:
         description: Seconds before one run of a checker is stopped
         default: "300"
@@ -82,7 +82,7 @@ jobs:
           set -euo pipefail
           PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           bun run build
-          # The binaries embed the native engine, which prove-it-rust and prove-it-rust-aot run.
+          # The binaries embed the native engine, which they search with.
           (cd packages/prove-it && bun scripts/platform-packages.ts build && bun scripts/build-binary.ts)
           # The ahead-of-time binary needs the compiler in Bun's canary.
           canary="$(scripts/ci/bootstrap.sh bun-canary)"
@@ -97,7 +97,7 @@ jobs:
         env:
           RUNS: ${{ inputs.runs || '5' }}
           FILTER: ${{ inputs.filter || '' }}
-          CHECKERS: ${{ inputs.checkers || 'tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-aot,prove-it-rust,prove-it-rust-aot,prove-it-node' }}
+          CHECKERS: ${{ inputs.checkers || 'tlc,tlc-auto,tla-ts,tla-rs,prove-it,prove-it-aot,prove-it-node' }}
           TIMEOUT: ${{ inputs.timeout || '300' }}
           SUITE: ${{ inputs.suite || 'bench-suite.json' }}
         run: |
@@ -108,6 +108,8 @@ jobs:
           export TLA_RS_BIN="$RUNNER_TEMP/tla-rs/bin/tla"
           mkdir -p "$RUNNER_TEMP/benchmark"
           cd packages/prove-it
+          # The checkers that run dist/cli.js, under Node and Bun, check with the addon built above.
+          export PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node"
           status=0
           bun scripts/bench-suite.ts --runs "$RUNS" --checkers "$CHECKERS" --timeout "$TIMEOUT" \
             --suite "$SUITE" \

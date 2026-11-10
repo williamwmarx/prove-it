@@ -1,5 +1,5 @@
-// Compares two state logs PROVE_IT_STATE_LOG wrote (src/engine/state-log.ts) and reports the
-// first state where they differ, with both states and their parents decoded and printed.
+// Compares two state logs PROVE_IT_STATE_LOG wrote (native/crates/tla-engine/src/search.rs) and
+// reports the first state where they differ, with both states and their parents decoded and printed.
 // Usage: bun scripts/state-log-diff.ts <left log> <right log>
 
 import { getStateLogDifference, readLogLines } from "./state-logs";

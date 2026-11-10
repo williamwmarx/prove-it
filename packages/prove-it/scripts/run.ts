@@ -1,10 +1,14 @@
 // Runs a script under Node, so the backends it times get V8's speed, about 85 times Bun's on the SMT
 // solver. Bun bundles the script and the worker entries scripts start into .scripts, which sits
-// beside scripts, so paths built from import.meta.dirname resolve as they do from the source.
+// beside scripts, so paths built from import.meta.dirname resolve as they do from the source. The
+// script, and the CLIs it runs, check with the addon built for this system unless an engine is
+// named (platform-packages.ts).
 // Usage: bun scripts/run.ts <script name> [arguments]
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+
+import { useBuiltAddon } from "./platform-packages";
 
 const PACKAGE_DIRECTORY = join(import.meta.dirname, "..");
 const OUT_DIRECTORY = join(PACKAGE_DIRECTORY, ".scripts");
@@ -33,6 +37,7 @@ const build = spawnSync(
   { cwd: PACKAGE_DIRECTORY, stdio: ["ignore", "ignore", "inherit"] },
 );
 if (build.status !== 0) process.exit(build.status ?? 1);
+useBuiltAddon();
 
 const run = spawnSync("node", [join(OUT_DIRECTORY, `${name}.js`), ...process.argv.slice(3)], {
   stdio: "inherit",
