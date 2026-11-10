@@ -22,6 +22,7 @@ pub mod printer;
 pub mod proof;
 pub mod ptl;
 pub mod regroup;
+pub mod ship;
 pub mod simplify;
 pub mod smt;
 pub mod source;
