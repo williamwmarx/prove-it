@@ -409,8 +409,6 @@ const getReplayExitCode = (error: TlaEvaluationError): number => {
   return error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.specEvaluationFailure;
 };
 
-// TLC finishes the -dump file whether or not the search finds a violation. The readings are those
-// of a spec SANY accepted.
 // What TLC evaluates when it starts, for the engine IR: the substitutes it checks, the constant
 // definitions with effects (one without computes the same wherever it is first used), the
 // SYMMETRY definition, which the search found to be an operator without parameters, and the
@@ -511,6 +509,8 @@ export const lowerConstantSpec = (
     version,
   );
 
+// TLC finishes the -dump file whether or not the search finds a violation. The readings are those
+// of a spec SANY accepted.
 export const checkSequentially = (
   options: CheckOptions,
   readings?: ReadonlyMap<string, SanyReading>,
