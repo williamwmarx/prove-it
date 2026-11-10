@@ -3329,7 +3329,7 @@ fn reads_what_tlc_drew_at_startup_on_every_thread() {
 fn passes_the_elements_a_leading_field_test_rejects_where_tlc_does() {
     // Loops whose body starts with `m.type = c`: an action's \E, \A, ~\E and a set filter, over
     // records whose type is another string, records of which a later one lacks the field, a
-    // model value and integers. TLC 1.8.0's output for each: an element is passed only where the
+    // model value and integers, as TLC at d8fb231 prints them: an element is passed only where the
     // test is FALSE without failing, so a later element still fails where TLC fails, and \A
     // stops at the first element whose test is FALSE.
     let directory =
