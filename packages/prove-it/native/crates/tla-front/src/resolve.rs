@@ -2121,6 +2121,36 @@ fn check_facts(facts: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
     Ok(())
 }
 
+/// SANY's `generateDefs` rejects a DEF entry that names no defined operator, theorem or
+/// assumption, which the front end doesn't word yet: an entry that names something else, or
+/// nothing, stays `NotYet`.
+fn check_defs(defs: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
+    for def in defs {
+        let Fact::Expression(def) = def else {
+            continue;
+        };
+        let ExpressionKind::Identifier { name, .. } = &def.kind else {
+            continue;
+        };
+        // A step's name, which SANY takes when the step defines, and a selection.
+        if name.contains('!') || name.starts_with('<') {
+            continue;
+        }
+        let kind = find_current(scope, name, unit, def.location.range.as_ref())
+            .map(|local| local.binding().kind);
+        let is_defined = matches!(
+            kind,
+            Some(SymbolKind::Definition | SymbolKind::Instance | SymbolKind::Theorem)
+        );
+        if !is_defined {
+            return Err(FrontError::NotYet(format!(
+                "a DEF clause entry {name} SANY may reject"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn resolve_new_symbol(symbol: &NewSymbol, scope: &Scope, unit: &Unit) -> Result<Scope> {
     if let Some(set) = &symbol.set {
         resolve_expression(set, scope, unit)?;
@@ -2195,7 +2225,10 @@ fn resolve_proof(proof: Option<&Proof>, scope: &Scope, outer: &Unit) -> Result<(
         outer.clone()
     };
     match proof.map(|proof| &proof.kind) {
-        Some(ProofKind::By { facts, .. }) => check_facts(facts, scope, &unit),
+        Some(ProofKind::By { facts, defs, .. }) => {
+            check_facts(facts, scope, &unit)?;
+            check_defs(defs, scope, &unit)
+        }
         Some(ProofKind::Steps { steps, .. }) => {
             let mut current = scope.clone();
             // Whether the assertion step before is infix, which an @ step continues.
@@ -2343,6 +2376,7 @@ fn resolve_step(step: &ProofStep, scope: &Scope, unit: &Unit) -> Result<Scope> {
         }
         StepBody::UseOrHide(use_or_hide) => {
             check_facts(&use_or_hide.facts, scope, unit)?;
+            check_defs(&use_or_hide.defs, scope, unit)?;
             Ok(bind_non_fact_step(scope))
         }
         StepBody::Instance(instance) => Ok(bind_non_fact_step(&resolve_local_instance(
@@ -3142,17 +3176,15 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
         units.push(SemanticUnit {
             location: use_or_hide.location.position(),
             check: Box::new(move |errors, warnings| {
-                check_facts(
-                    &use_or_hide.facts,
-                    &None,
-                    &create_unit(
-                        use_or_hide.location.position(),
-                        None,
-                        errors,
-                        warnings,
-                        false,
-                    ),
-                )
+                let unit = create_unit(
+                    use_or_hide.location.position(),
+                    None,
+                    errors,
+                    warnings,
+                    false,
+                );
+                check_facts(&use_or_hide.facts, &None, &unit)?;
+                check_defs(&use_or_hide.defs, &None, &unit)
             }),
         });
     }
