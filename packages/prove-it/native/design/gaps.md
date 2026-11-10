@@ -1054,3 +1054,19 @@ function by its keys and values alone, so it can't tell the two apart.
   holds differently get different ids. The store could then compare as TLC does. Equal values would
   no longer always have equal ids, which the fingerprints, the state table and membership by id
   rely on, so it needs a design of its own.
+
+## _PERIODIC
+
+TLC evaluates the `_PERIODIC` expression in `doPeriodicWork`, just before it prints its progress,
+and not at all in a run that ends first. A constant-level expression it also computes as it starts,
+and then evaluates again at each progress point: a `PrintT` in one prints again there.
+
+- **What the binary does:** it declines at its first progress point, cancelling the search
+  (`Reporter::is_cancelled`). A run that ends first prints as TLC does, the startup print of a
+  constant-level expression included.
+- **What that costs:** a `_PERIODIC` that is TRUE without printing, constant or not, on a run that
+  reaches a progress point, printed TLC's output before, when the binary ignored `_PERIODIC`, and
+  declines now.
+- **What removes it:** evaluating the expression at each progress point, as TLC does: printing
+  what it prints, and, where it is FALSE, stopping with TLC's statistics, work left on the queue,
+  and exit 10. It comes after -dump and -continue.
