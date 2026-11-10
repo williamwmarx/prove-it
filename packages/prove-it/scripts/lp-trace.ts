@@ -5,9 +5,10 @@
 // one, which shows that tracing left the search as it was.
 //   --filter text keeps the inputs whose digest contains the text. --jobs n runs n workers.
 //   --inputs directory traces the .smt files of a directory, such as tests/fixtures/smt, instead:
-//     each is decided first without a trace, with the steps it takes within --time-limit
-//     milliseconds (5000 by default) as its step limit, and its traced answer must be that one.
-// Usage: bun scripts/run.ts lp-trace [--inputs directory] [--filter text] [--jobs n] [--verbose]
+//     each is decided first without a trace, and the steps it takes, within --time-limit
+//     milliseconds if given and with no time limit otherwise, become its step limit; its traced
+//     answer must be the untraced one under that step limit.
+// Usage: bun scripts/run.ts lp-trace [--inputs directory [--time-limit ms]] [--filter text] [--jobs n] [--verbose]
 
 import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -52,7 +53,8 @@ const SMT_PROVERS = new Set(["smt", "z3"]);
 
 const inputsDirectory = getOption("--inputs");
 const filter = getOption("--filter");
-const timeLimitMs = Number(getOption("--time-limit") ?? 5000);
+const timeLimitOption = getOption("--time-limit");
+const timeLimitMs = timeLimitOption === undefined ? Infinity : Number(timeLimitOption);
 
 useTypeScriptBackends();
 
