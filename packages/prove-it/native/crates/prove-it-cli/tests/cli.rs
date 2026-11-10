@@ -1957,3 +1957,27 @@ fn prints_an_assumption_value_as_tlc_built_it_without_a_recorded_front() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn labels_a_step_of_a_next_state_relation_that_instantiates_in_a_let_without_a_recorded_front() {
+    // test-model/CyclicRedefineInstance: TLC splits B!Next, which the LET's INSTANCE defines,
+    // into its body, and labels the step of the other disjunct.
+    let (output, directory) = run_front(
+        "let-instance",
+        "---- MODULE CyclicRedefineInstance ----\nEXTENDS Base\n\nReDefNext ==\n\tLET B == INSTANCE Base\n\tIN \\/ B!Next\n\t   \\/ x' = TRUE\n=====\n----- MODULE Base -----\nVARIABLE x\n\nNext ==\n    x' = FALSE\n\nSpec ==\n\tx = FALSE /\\ [][Next]_x\n\nInv ==\n\tx = FALSE\n====\n",
+        "SPECIFICATION Spec\nINVARIANT Inv\nCONSTANT\n\tNext <- ReDefNext\n",
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(12),
+        "{text}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("State 2: <ReDefNext line 7, col 15 to line 7, col 23 of module CyclicRedefineInstance>\nx = TRUE\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

@@ -64,7 +64,8 @@ struct Place {
 #[derive(Clone)]
 struct Closure {
     name: TextId,
-    definition: Index,
+    /// The module's definition, or none for one a LET binds.
+    definition: Option<Index>,
     parameters: Vec<Value>,
 }
 
@@ -373,7 +374,7 @@ impl Splitter<'_, '_> {
             place: place.clone(),
             name: closure.map(|closure| closure.name),
             location: Located::Node(expression),
-            definition: closure.map(|closure| closure.definition),
+            definition: closure.and_then(|closure| closure.definition),
             parameters: closure.map_or_else(Vec::new, |closure| closure.parameters.clone()),
         };
         let ir = self.evaluator.ir;
@@ -405,9 +406,22 @@ impl Splitter<'_, '_> {
             _ => return Ok(vec![whole()]),
         };
         if name.is_local {
-            return Err(Unsupported(
-                "TLC's actions through an operator bound locally".into(),
-            ));
+            // An operator a LET defines without parameters, such as one an INSTANCE in the LET
+            // copies, splits into its body, named as the LET names it.
+            let Some(body) = self
+                .get_let_operator(place.scope, name.text)
+                .filter(|_| args.is_empty())
+            else {
+                return Err(Unsupported(
+                    "TLC's actions through an operator bound locally".into(),
+                ));
+            };
+            let closure = Closure {
+                name: name.text,
+                definition: None,
+                parameters: Vec::new(),
+            };
+            return self.split(body, place, Some(&closure));
         }
         let Resolution::Definition(index) = name.resolution else {
             return Ok(vec![whole()]);
@@ -468,7 +482,7 @@ impl Splitter<'_, '_> {
         }
         let closure = Closure {
             name: called,
-            definition: index,
+            definition: Some(index),
             parameters: values,
         };
         let body = definition.body;
@@ -635,6 +649,24 @@ impl Splitter<'_, '_> {
             scope = Some(index);
         }
         Ok(Place { context, scope })
+    }
+
+    /// The body of the operator without parameters named `name` that a LET the split bound
+    /// defines, looking out from `scope`.
+    fn get_let_operator(&self, scope: Option<Index>, name: TextId) -> Option<NodeId> {
+        let own = self.evaluator.ir.scopes.len();
+        let mut scope = scope;
+        while let Some(index) = scope.and_then(|index| (index as usize).checked_sub(own)) {
+            let (parent, bound, added) = &self.scopes[index];
+            if *bound == name {
+                return match added {
+                    Added::Binding(ScopeBinding::Thunk { expression, .. }) => Some(*expression),
+                    _ => None,
+                };
+            }
+            scope = *parent;
+        }
+        None
     }
 
     // `isConstantDefinition`: a definition of constant level without parameters whose body isn't a
