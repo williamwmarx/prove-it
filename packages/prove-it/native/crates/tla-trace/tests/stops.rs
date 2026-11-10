@@ -9,7 +9,7 @@ use common::{Quiet, ir_directory, path_to, stop_search};
 use tla_engine::search::{
     ErrorSite, OUT_DEGREE_BUCKETS, SearchOutcome, Settings, Violation, ViolationKind, search,
 };
-use tla_trace::{Failure, Rebuilder, Replay, Site};
+use tla_trace::{Failure, Rebuilder, Replay, Site, add_actions};
 use tla_values::Id;
 
 const MODELS: &str = "tlc/tlatools/org.lamport.tlatools/test-model";
@@ -43,6 +43,8 @@ fn stop(path: &str) -> (ErrorSite, usize, Failure, [u64; OUT_DEGREE_BUCKETS]) {
     let bytes = std::fs::read(ir_directory().join(format!("{MODELS}/{path}.ir"))).expect("an IR");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     tla_values::on_nesting_stack(|| {
+        // The binary gives the IR TLC's actions before it searches, where the IR holds none.
+        let ir = add_actions(&ir).unwrap_or(ir);
         let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
         let rebuilt_site = match site {
             ErrorSite::Init => Site::Init,

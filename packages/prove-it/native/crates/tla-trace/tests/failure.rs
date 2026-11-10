@@ -5,7 +5,7 @@ mod common;
 
 use common::{Quiet, ir_directory, path_to, stop_search};
 use tla_engine::search::{SearchOutcome, Settings, search};
-use tla_trace::{Ending, Failure, Rebuilder, Site, format_call_stack, format_value};
+use tla_trace::{Ending, Failure, Rebuilder, Site, add_actions, format_call_stack, format_value};
 use tla_values::Id;
 
 // The search's stop on the model, evaluated again: in the initial predicate when the search kept
@@ -14,6 +14,8 @@ fn evaluate_failure(path: &str) -> (Failure, String) {
     let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     tla_values::on_nesting_stack(|| {
+        // The binary gives the IR TLC's actions before it searches, where the IR holds none.
+        let ir = add_actions(&ir).unwrap_or(ir);
         let stopped =
             tla_engine::on_nesting_stack(|| stop_search(&ir, None)).expect("a search that stops");
         let positions = if stopped.states.is_empty() {
