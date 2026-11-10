@@ -59,6 +59,14 @@ impl Compiler<'_> {
                 operators.push(applier);
             } else {
                 let value = self.operand(operand)?;
+                // TLC asks a set it keeps lazy whether it is finite by its parts
+                // (`SetOfFcnsValue.isFinite` and the like), where the engine would enumerate it.
+                if name == "IsFiniteSet" && value.may_be_infinite() {
+                    return Ok(Some(leaf(
+                        eval(|_| Err(Bail("unsupported: IsFiniteSet of a set TLC keeps lazy"))),
+                        value.footprint,
+                    )));
+                }
                 footprint = footprint.merge(&value.footprint);
                 values.push(value.eval);
             }
