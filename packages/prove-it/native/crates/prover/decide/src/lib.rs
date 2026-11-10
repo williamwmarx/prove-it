@@ -80,6 +80,11 @@ impl<'a> Limits<'a> {
         self.steps > self.step_limit
     }
 
+    /// Whether more steps than the limit have been taken, without counting one.
+    pub fn is_step_limit_passed(&self) -> bool {
+        self.steps > self.step_limit
+    }
+
     pub fn is_past_deadline(&self) -> bool {
         now() > self.deadline
     }
@@ -120,7 +125,9 @@ mod tests {
         let mut limits = Limits::new(f64::INFINITY, Some(2), None);
         assert!(!limits.is_step_limit_reached());
         assert!(!limits.is_step_limit_reached());
+        assert!(!limits.is_step_limit_passed());
         assert!(limits.is_step_limit_reached());
+        assert!(limits.is_step_limit_passed());
         assert_eq!(limits.steps(), 3);
     }
 
