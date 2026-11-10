@@ -38,6 +38,8 @@ export interface EngineProperties {
   invariantNames: string[];
   actionProperties: { action: Expression; subscript: Expression }[];
   initialPredicates: Expression[];
+  // The name TLC gives each initial predicate when an initial state violates it.
+  initialPredicateNames: string[];
 }
 
 interface ScopedExpression {
@@ -52,7 +54,7 @@ export const toEngineProperties = (properties: {
   actionProperties:
     | (ScopedExpression & { action: Expression; subscript: Expression })[]
     | { action: Expression; subscript: Expression; scope: unknown }[];
-  initialPredicates: ScopedExpression[];
+  initialPredicates: (ScopedExpression & { name: string })[];
 }): EngineProperties | undefined => {
   const all = [
     ...properties.invariants,
@@ -68,6 +70,7 @@ export const toEngineProperties = (properties: {
       subscript: property.subscript,
     })),
     initialPredicates: properties.initialPredicates.map((property) => property.expression),
+    initialPredicateNames: properties.initialPredicates.map((property) => property.name),
   };
 };
 
@@ -176,8 +179,8 @@ const buildStep = (
 
 // A compiler that tests ENABLED A by running A, as TLC does: without its shortcut once every
 // variable is assigned.
-export const createEngineCompiler = (environment: Environment): Compiler => {
-  const compiler = createCompiler(environment);
+export const createEngineCompiler = (environment: Environment, isViewed: boolean): Compiler => {
+  const compiler = createCompiler(environment, isViewed);
   compiler.setEnabledCompiler((action, context) =>
     createEnabledTest(
       buildStep(compiler, action, context, false, false).step,
@@ -197,7 +200,7 @@ export const createEngineContext = (
   // only a search on one thread that hands over no more than the state it was expanding allows.
   canPrint: boolean,
 ): EngineContext => {
-  const compiler = createEngineCompiler(environment);
+  const compiler = createEngineCompiler(environment, config.view !== undefined);
   const width = environment.variables.length;
   const compileNamed = (kind: string, name: string) => {
     if (!getDefinition(name, environment)) return bail(`the ${kind} ${name} isn't defined`);

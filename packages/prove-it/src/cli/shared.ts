@@ -98,6 +98,8 @@ export const reportMissingModules174 =
 
 export interface JavaProperties {
   libraries: string[];
+  // The system properties the launch sets with -Dname=value, which TLCGet("-Dname") reads.
+  properties: Map<string, string>;
   classPath?: string;
   temporaryDirectory?: string;
   tlcVersion?: TlcVersion;

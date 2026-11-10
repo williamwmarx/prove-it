@@ -5,35 +5,66 @@ use std::path::Path;
 use std::rc::Rc;
 
 use crate::TlcVersion;
+use crate::ast::SourceRange;
 use crate::config::parse_config;
 use crate::dependencies::create_definition_facts;
+use crate::describe::{Description, Part, describe};
 use crate::environment::{EnvironmentOptions, create_environment};
 use crate::errors::FrontError;
 use crate::eval::Evaluator;
 use crate::hash::FastMap;
 use crate::lower::{Lowering, RankedTexts};
 use crate::order::TlcOrder;
-use crate::spec::{get_properties, get_specification};
+use crate::spec::{
+    Properties, Specification, check_invariants, check_search_config, create_identifier,
+    get_properties, get_specification,
+};
 use crate::values::ValueOrder;
 
 /// What the model is checked with besides its files.
 pub struct ModelOptions<'a> {
-    /// The directory of the modules a spec reads that aren't beside it, such as the community
-    /// modules.
-    pub library: Option<&'a Path>,
+    /// The directories of the modules a spec reads that aren't beside it, such as the community
+    /// modules, in the order TLC searches them (`-DTLA-Library`).
+    pub libraries: &'a [&'a Path],
     /// The TLC version the run asks for, or none for the default, master's.
     pub version: Option<TlcVersion>,
     /// Whether TLC prints its warnings, which `-nowarning` turns off.
     pub is_warning_enabled: bool,
+    /// Whether the IR holds TLCGet("spec") where an expression reads it, which the native
+    /// binary checks the model with, as it holds TLC's actions; the TypeScript front end's model
+    /// lowers neither.
+    pub is_spec_described: bool,
+    /// The seed TLC seeds its generator with, which `-seed` gives.
+    pub random_seed: u64,
 }
 
-/// A module's text from the spec's directory, or else the library's.
-pub fn load_module(spec_path: &Path, library: Option<&Path>, name: &str) -> Option<String> {
+/// A module's text from the spec's directory, or else the first library's that has it.
+pub fn load_module(spec_path: &Path, libraries: &[&Path], name: &str) -> Option<String> {
     let directory = spec_path.parent().unwrap_or(Path::new("."));
     let file = format!("{name}.tla");
-    std::fs::read_to_string(directory.join(&file))
-        .ok()
-        .or_else(|| library.and_then(|library| std::fs::read_to_string(library.join(&file)).ok()))
+    std::iter::once(directory)
+        .chain(libraries.iter().copied())
+        .find_map(|directory| std::fs::read_to_string(directory.join(&file)).ok())
+}
+
+/// A message TLC prints itself as it starts, once it has computed the constant definitions and
+/// before it checks the assumptions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartupMessage {
+    pub code: u32,
+    pub is_warning: bool,
+    pub text: String,
+}
+
+/// A model's IR, and what TLC prints as it starts the model besides SANY's report and what the
+/// startup's Print and PrintT print.
+pub struct LoweredModel {
+    pub ir: Vec<u8>,
+    /// The messages, or why the front end doesn't know them yet.
+    pub startup_messages: Result<Vec<StartupMessage>, String>,
+    /// What TLC prints of the Java overrides it loads, right after `Starting...`, before it
+    /// computes the constant definitions.
+    pub override_messages: Vec<StartupMessage>,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -43,10 +74,61 @@ pub fn lower_model(
     config_text: &str,
     options: &ModelOptions,
 ) -> Result<Vec<u8>, FrontError> {
+    lower_front(spec_path, config_text, options).map(|lowered| lowered.ir)
+}
+
+/// The model's IR, with what TLC prints itself as it starts: `createSearch`'s warnings about the
+/// invariants and properties, then `createLivenessChecker`'s, in `printCheckProgress`'s words.
+pub fn lower_front(
+    spec_path: &Path,
+    config_text: &str,
+    options: &ModelOptions,
+) -> Result<LoweredModel, FrontError> {
+    lower_ranked(spec_path, config_text, options, &[]).map(|(lowered, _)| lowered)
+}
+
+/// What finds the texts TLC interns as it computes the constant definitions an IR holds, given
+/// their indexes in TLC's order.
+pub type StartupTexts = dyn Fn(&tla_ir::Ir, &[tla_ir::Index]) -> Vec<Box<[u16]>>;
+
+/// The model as `lower_front` lowers it, with the strings TLC makes as it computes the constant
+/// definitions ranked after the spec's, as `check.ts` lowers its IR once it has computed them.
+/// `get_startup_texts` finds them in the IR, given the indexes of the definitions TLC computes
+/// as it starts, in its order; where it finds some, the model is lowered again with them ranked.
+pub fn lower_front_ranking(
+    spec_path: &Path,
+    config_text: &str,
+    options: &ModelOptions,
+    get_startup_texts: &StartupTexts,
+) -> Result<LoweredModel, FrontError> {
+    let (lowered, startup) = lower_ranked(spec_path, config_text, options, &[])?;
+    let Ok(ir) = tla_ir::decode(&lowered.ir) else {
+        return Ok(lowered);
+    };
+    // A text Rust can't hold as a string ends the ranks, which stay TLC's up to it.
+    let startup_texts: Vec<Rc<str>> = get_startup_texts(&ir, &startup)
+        .iter()
+        .map_while(|units| String::from_utf16(units).ok().map(Rc::from))
+        .collect();
+    if startup_texts.is_empty() {
+        return Ok(lowered);
+    }
+    lower_ranked(spec_path, config_text, options, &startup_texts).map(|(lowered, _)| lowered)
+}
+
+fn lower_ranked(
+    spec_path: &Path,
+    config_text: &str,
+    options: &ModelOptions,
+    startup_texts: &[Rc<str>],
+) -> Result<(LoweredModel, Vec<tla_ir::Index>), FrontError> {
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = std::fs::read_to_string(spec_path)
         .map_err(|error| FrontError::Config(format!("{}: {error}", spec_path.display())))?;
-    let load = |name: &str| load_module(spec_path, options.library, name);
+    let load = |name: &str| load_module(spec_path, options.libraries, name);
+    // TLC loads the class named after a module from the spec's directory (`loadClass`).
+    let directory = spec_path.parent().unwrap_or(Path::new("."));
+    let load_class = |name: &str| std::fs::read(directory.join(format!("{name}.class"))).ok();
     let config =
         parse_config(config_text, version).map_err(|error| FrontError::Config(error.message))?;
     // SANY's errors come from linking, before TLC's orders parse the modules again.
@@ -57,55 +139,309 @@ pub fn lower_model(
         is_unconfigured: false,
         version,
         is_level_checked: false,
+        load_class: Some(&load_class),
     })?;
     let order = TlcOrder::new(&source, &load, version)?;
     let texts: Vec<Rc<str>> = order
         .get_string_order(&config)?
         .iter()
         .map(|text| Rc::from(text.as_str()))
+        .chain(startup_texts.iter().cloned())
         .collect();
     let variable_order = order.get_declaration_order(true)?;
     let facts = create_definition_facts(&environment);
-    let specification = get_specification(&config, &environment, &facts, version)?;
     let ranks: FastMap<Rc<str>, u32> = texts
         .iter()
         .enumerate()
         .map(|(rank, text)| (text.clone(), rank as u32))
         .collect();
-    let evaluator = Evaluator {
-        environment: &environment,
-        order: ValueOrder { ranks: &ranks },
-        version,
+    let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
+    let lowered = (|| {
+        let constant_invariants = check_invariants(&config, &environment, &facts, &evaluator)?;
+        let specification =
+            get_specification(&config, &environment, &facts, version, Some(&evaluator))?;
+        let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
+        // `getTlcOrder`: the variables in TLC's order of declarations.
+        let position = |index: &i32| {
+            let variable = &environment.variables[*index as usize];
+            variable_order
+                .iter()
+                .position(|name| name == variable)
+                .unwrap_or(environment.variables.len())
+        };
+        let mut tlc_order: Vec<i32> = (0..environment.variables.len() as i32).collect();
+        tlc_order.sort_by_key(position);
+        let mut lowering = Lowering::new(
+            &environment,
+            RankedTexts {
+                texts: &texts,
+                ranks: ranks.clone(),
+            },
+        );
+        lowering.evaluator = Some(&evaluator);
+        lowering.random_seed = options.random_seed;
+        let version_text = options.version.map(|version| match version {
+            TlcVersion::V1_7_4 => "1.7.4",
+            TlcVersion::Master => "master",
+        });
+        // `createSearch`'s checks of the configuration.
+        let is_checking_behaviors = !config.invariants.is_empty()
+            || !properties.invariants.is_empty()
+            || !properties.action_properties.is_empty()
+            || !properties.liveness.is_empty();
+        if specification.init.is_none()
+            && (is_checking_behaviors
+                || !properties.initial_predicates.is_empty()
+                || !environment.variables.is_empty())
+        {
+            return Err(match version {
+                TlcVersion::V1_7_4 => FrontError::NotYet("TLC 1.7.4's missing Init".to_owned()),
+                TlcVersion::Master => FrontError::Config(
+                    "The configuration file did not specify the initial state predicate."
+                        .to_owned(),
+                ),
+            });
+        }
+        if specification.next.is_none() && is_checking_behaviors {
+            return Err(FrontError::Config(
+                "The configuration file did not specify the next state predicate.".to_owned(),
+            ));
+        }
+        check_search_config(&config, &environment, &facts, &evaluator)?;
+        // TLC searches no states of a spec without variables, which `check.ts` lowers with FALSE for
+        // Init and Next.
+        let model = if environment.variables.is_empty() {
+            let no_behavior = Some(create_identifier("FALSE"));
+            let constant = Specification {
+                init: no_behavior.clone(),
+                next: no_behavior,
+                scope: None,
+                temporals: Vec::new(),
+            };
+            lowering.write_model(
+                &config,
+                &constant,
+                &Properties::default(),
+                options.is_warning_enabled,
+                version_text,
+                Vec::new(),
+            )?
+        } else {
+            lowering.write_model(
+                &config,
+                &specification,
+                &properties,
+                options.is_warning_enabled,
+                version_text,
+                tlc_order,
+            )?
+        };
+        let branches = lowering.branches;
+        let (ir, startup) = lowering.finish_indexing(model)?;
+        // TLCGet("spec"), where an expression reads it; where the front end can't describe the
+        // specification, the engine stops where TLC would read it.
+        let ir = if options.is_spec_described && reads_spec(&ir) {
+            describe(&config, &environment, &facts, &evaluator)
+                .ok()
+                .and_then(|description| {
+                    tla_trace::add_spec(&ir, &to_spec_description(&ir, description)).ok()
+                })
+                .unwrap_or(ir)
+        } else {
+            ir
+        };
+        // Under -nowarning TLC prints none of its warnings, so an invariant the engine checks at
+        // startup, which may be a constant TLC warns about, matters only without it.
+        let warnings = if options.is_warning_enabled {
+            constant_invariants
+                .as_ref()
+                .map(|constant_invariants| (&constant_invariants[..], &properties.state_level[..]))
+                .ok_or_else(|| {
+                    "a constant invariant the engine checks, which TLC may warn about".to_owned()
+                })
+        } else {
+            Ok((&[][..], &[][..]))
+        };
+        let startup_messages = warnings.and_then(|(constant_invariants, state_level)| {
+            get_startup_messages(
+                &config,
+                constant_invariants,
+                state_level,
+                branches,
+                version,
+                options.is_warning_enabled,
+            )
+        });
+        let override_messages = get_override_messages(&environment, directory)
+            .map(|messages| {
+                // -nowarning drops a method that matches no operator.
+                messages
+                    .into_iter()
+                    .filter(|message| options.is_warning_enabled || !message.is_warning)
+                    .collect::<Vec<_>>()
+            })
+            .and_then(|messages| {
+                // TLC lists the methods in an order that depends on the JVM.
+                if messages.len() > 1 {
+                    return Err("the Java overrides TLC lists in the JVM's order".to_owned());
+                }
+                Ok(messages)
+            });
+        let (startup_messages, override_messages) = match override_messages {
+            Ok(messages) => (startup_messages, messages),
+            Err(reason) => (Err(reason), Vec::new()),
+        };
+        Ok((
+            LoweredModel {
+                override_messages,
+                ir: tla_ir::encode(&ir),
+                startup_messages,
+            },
+            startup,
+        ))
+    })();
+    // TLC stops on a constant predicate the engine checks at startup before what follows it, so
+    // the front end can't report what follows.
+    match lowered {
+        Err(error) if evaluator.is_deferring() && !matches!(error, FrontError::NotYet(_)) => Err(
+            FrontError::NotYet("an error after a constant predicate the engine checks".to_owned()),
+        ),
+        lowered => lowered,
+    }
+}
+
+// `printCheckProgress`'s report of each method of a Java class that overrides a module, which
+// names the class file by its URL (`Class#getResource`).
+fn get_override_messages(
+    environment: &crate::environment::Environment,
+    directory: &Path,
+) -> Result<Vec<StartupMessage>, String> {
+    environment
+        .java_overrides
+        .iter()
+        .map(|java_override| {
+            let path =
+                std::path::absolute(directory.join(format!("{}.class", java_override.module)))
+                    .map_err(|error| error.to_string())?;
+            let path = path.to_str().unwrap_or_default();
+            // `pathToFileURL` escapes what a URL can't hold, which the front end doesn't follow.
+            let is_plain = !path.is_empty()
+                && path.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || "/._-".contains(character)
+                });
+            if !is_plain {
+                return Err("the URL of a Java class whose path a URL escapes".to_owned());
+            }
+            Ok(StartupMessage {
+                code: if java_override.is_matched { 2168 } else { 2400 },
+                is_warning: !java_override.is_matched,
+                text: format!(
+                    "{} {} operator override from file:{path} with signature: <Java Method: {}>.",
+                    if java_override.is_matched {
+                        "Loading"
+                    } else {
+                        "Failed to match"
+                    },
+                    java_override.operator,
+                    java_override.signature
+                ),
+            })
+        })
+        .collect()
+}
+
+// What TLC prints as it starts after the constant definitions: `createSearch`'s warnings, in the
+// order it makes them, then `createLivenessChecker`'s (`printCheckProgress`). The printer adds
+// the hint after TLC's first warning, drops a warning it printed already, and, under -nowarning,
+// every warning (`createMessagePrinter`); the front end gives no warnings under -nowarning.
+fn get_startup_messages(
+    config: &crate::config::ModelConfig,
+    constant_invariants: &[Rc<str>],
+    state_level_properties: &[Rc<str>],
+    branches: Option<usize>,
+    version: TlcVersion,
+    is_warning_enabled: bool,
+) -> Result<Vec<StartupMessage>, String> {
+    if version == TlcVersion::V1_7_4 {
+        return Err("what TLC 1.7.4 prints as it starts".to_owned());
+    }
+    let warning = |code: u32, text: String| StartupMessage {
+        code,
+        is_warning: true,
+        text,
     };
-    let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
-    // `getTlcOrder`: the variables in TLC's order of declarations.
-    let position = |index: &i32| {
-        let variable = &environment.variables[*index as usize];
-        variable_order
-            .iter()
-            .position(|name| name == variable)
-            .unwrap_or(environment.variables.len())
+    let mut messages: Vec<StartupMessage> = constant_invariants
+        .iter()
+        .map(|name| warning(2149, format!("The invariant {name} is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.")))
+        .chain(state_level_properties.iter().map(|name| warning(2255, format!("The formula {name} is a state-level formula, but it was used as a PROPERTY (or PROPERTIES), where a temporal formula is typically expected. State-level formulas used as PROPERTY or PROPERTIES are only checked in the initial state. To verify that the formula {name} holds in all states of every behavior, use INVARIANT {name} instead. Alternatively, applying the \"always\" temporal operator ([]) to the state-level formula {name} changes it into a temporal formula, asserting that {name} holds in all states of every behavior. See https://explain.tlapl.us/invariants-and-properties for additional details."))))
+        .collect();
+    // TLC warns about a symmetry set too small as it computes the symmetry, which the engine does
+    // between the constant definitions and these warnings' place in TLC's order: unchecked yet.
+    if config.symmetry.is_some() && !messages.is_empty() {
+        return Err("warnings about the invariants or properties with a symmetry".to_owned());
+    }
+    if let Some(branches) = branches {
+        if config.symmetry.is_some() && is_warning_enabled {
+            messages.push(warning(2279, "Declaring symmetry during liveness checking is dangerous. It might cause TLC to miss violations of the stated liveness properties. Please check liveness without symmetry defined.".to_owned()));
+        }
+        messages.push(StartupMessage {
+            code: 2212,
+            is_warning: false,
+            text: format!(
+                "Implied-temporal checking--satisfiability problem has {branches} branches."
+            ),
+        });
+    }
+    Ok(messages)
+}
+
+// Whether an expression of the IR applies TLC's TLCGet to "spec".
+fn reads_spec(ir: &tla_ir::Ir) -> bool {
+    ir.nodes.arena.iter().any(|node| match &node.kind {
+        tla_ir::NodeKind::Apply { name, args } => {
+            !name.is_local
+                && matches!(name.resolution, tla_ir::Resolution::Builtin(index)
+                    if &*ir.texts[ir.builtins[index as usize].name as usize] == "TLCGet")
+                && args.first().is_some_and(|&arg| {
+                    matches!(&ir.nodes.arena[arg as usize].kind,
+                        tla_ir::NodeKind::String(text) if &*ir.texts[*text as usize] == "spec")
+                })
+        }
+        _ => false,
+    })
+}
+
+// The description with each part's range in the IR's texts.
+fn to_spec_description(ir: &tla_ir::Ir, description: Description) -> tla_trace::SpecDescription {
+    let range = |range: Option<&SourceRange>| {
+        let range = range?;
+        let module = ir.texts.iter().position(|text| **text == *range.module)?;
+        Some(tla_ir::SourceRange {
+            module: module as tla_ir::TextId,
+            start_line: range.start.line as i32,
+            start_column: range.start.column as i32,
+            end_line: range.end.line as i32,
+            end_column: range.end.column as i32,
+        })
     };
-    let mut tlc_order: Vec<i32> = (0..environment.variables.len() as i32).collect();
-    tlc_order.sort_by_key(position);
-    let mut lowering = Lowering::new(
-        &environment,
-        RankedTexts {
-            texts: &texts,
-            ranks: ranks.clone(),
-        },
-    );
-    let version_text = options.version.map(|version| match version {
-        TlcVersion::V1_7_4 => "1.7.4",
-        TlcVersion::Master => "master",
-    });
-    let model = lowering.write_model(
-        &config,
-        &specification,
-        &properties,
-        options.is_warning_enabled,
-        version_text,
-        tlc_order,
-    )?;
-    Ok(tla_ir::encode(&lowering.finish(model)?))
+    let parts = |parts: Vec<Part>| {
+        parts
+            .into_iter()
+            .map(|part| tla_trace::Described {
+                name: part.name.to_string(),
+                range: range(part.location.range.as_ref()),
+            })
+            .collect()
+    };
+    tla_trace::SpecDescription {
+        inits: parts(description.inits),
+        temporals: parts(description.temporals),
+        invariants: parts(description.invariants),
+        implied_inits: parts(description.implied_inits),
+        implied_actions: parts(description.implied_actions),
+        implied_temporals: parts(description.implied_temporals),
+        variables: parts(description.variables),
+        action_constraints: parts(description.action_constraints),
+        constraints: parts(description.constraints),
+    }
 }

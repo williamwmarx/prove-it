@@ -5,15 +5,19 @@
 use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeKind};
+use tla_values::fingerprint::INITIAL;
+use tla_values::json;
 use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
-    EMPTY_SET, EMPTY_TUPLE, FALSE, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, TRUE,
-    is_function_kind,
+    EMPTY_SET, EMPTY_TUPLE, FALSE, INT, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, NAT, Outcome,
+    STRINGS, TRUE, is_function_kind,
 };
-use tla_values::{Bail, Id};
+use tla_values::transfer::UNENCODABLE;
+use tla_values::{Bail, Id, Store};
 
 use super::fused;
 use super::lazy::{Lazy, Operator, Reference};
+use super::lazy_function;
 use super::nodes::{evaluate_set, expect_set};
 use super::predicate::{Leaf, Predicate};
 use super::random;
@@ -186,6 +190,15 @@ impl Compiler<'_> {
     pub(crate) fn compile_nullary_builtin(&mut self, index: Index) -> Compiling<Compiled> {
         let builtin = &self.ir.builtins[index as usize];
         let name = self.text(builtin.name);
+        // TLCExt's Trace, the behavior up to the state, which the engine doesn't keep: a spec that
+        // never evaluates it, such as one that serializes it only once an invariant fails, still
+        // searches here, and one that does hands over then.
+        if name == "Trace" {
+            return Ok(leaf(
+                eval(|_| Err(Bail("TLCExt's Trace, the behavior the engine doesn't keep"))),
+                Footprint::default(),
+            ));
+        }
         if builtin.flags & Builtin::STATE_LEVEL != 0 || IMPURE_BUILTINS.contains(&name) {
             return unsupported(name);
         }
@@ -193,9 +206,9 @@ impl Compiler<'_> {
             "TRUE" => super::constant(TRUE),
             "FALSE" => super::constant(FALSE),
             "BOOLEAN" => super::constant(self.store.set_of(&[FALSE, TRUE])?),
-            "Nat" => Self::infinite_set("Nat", "enumerated Nat"),
-            "Int" => Self::infinite_set("Int", "enumerated Int"),
-            "STRING" => Self::infinite_set("STRING", "enumerated STRING"),
+            "Nat" => Self::infinite_set("Nat", NAT, "enumerated Nat"),
+            "Int" => Self::infinite_set("Int", INT, "enumerated Int"),
+            "STRING" => Self::infinite_set("STRING", STRINGS, "enumerated STRING"),
             "EmptyBag" => super::constant(EMPTY_TUPLE),
             name => {
                 return decline(format!(
@@ -205,11 +218,58 @@ impl Compiler<'_> {
         })
     }
 
+    /// `SUBSET S` of a compiled S, which TLC enumerates in the normalized order of S's elements.
+    pub(crate) fn compile_subset(&mut self, base: &Compiled) -> Compiled {
+        let base_member = self.member_test(base);
+        let base_parts = Self::parts_of(base);
+        Compiled {
+            is_normalized: false,
+            subset_base: Some(Box::new(base.clone())),
+            // It streams in its order, and its elements are set enumerations.
+            is_in_order: true,
+            are_elements_in_order: true,
+            // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
+            // own order (SubsetValue.elementsNormalized), so S's value does where S has no
+            // reference.
+            has_infinite_part: base.may_be_infinite(),
+            reference: combine_references(&[base], |_, mut bases| {
+                Ok(Lazy::Subset(Box::new(bases.remove(0))))
+            })
+            .or_else(|| {
+                let evaluate = base.eval.clone();
+                Some(Arc::new(move |machine| {
+                    Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
+                }))
+            }),
+            parts: Some(base_parts.clone()),
+            member: Some(member(move |machine, element| {
+                machine.run_parts(&base_parts)?;
+                // TLC fails on anything it can't enumerate, untyped model values included.
+                if machine.store.kind_of(element) != KIND_SET {
+                    return Err(Bail("a membership in SUBSET of a non-set"));
+                }
+                for index in 0..machine.store.size_of(element) {
+                    let value = machine.store.element_at(element, index);
+                    if !base_member(machine, value)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            })),
+            ..unary(
+                base,
+                |machine, set| power_set(machine, expect_set(machine, set, "expected a set")?),
+                true,
+            )
+        }
+    }
+
     // Nat, Int and STRING, which the engine only tests for membership.
-    fn infinite_set(name: &'static str, reason: &'static str) -> Compiled {
+    fn infinite_set(name: &'static str, value: i32, reason: &'static str) -> Compiled {
         Compiled {
             is_normalized: false,
             infinite: Some(name),
+            infinite_value: Some(value),
             reference: Some(Arc::new(move |_| Ok(Lazy::Infinite(name)))),
             ..leaf(eval(move |_| Err(Bail(reason))), Footprint::default())
         }
@@ -243,15 +303,70 @@ impl Compiler<'_> {
         if name == "TLCGet" {
             return self.compile_tlc_get(operands, context);
         }
+        if self.is_native && name == "TLCSet" {
+            return self.compile_register(operands, context, true);
+        }
+        if self.is_native && name == "TLCFP" {
+            return self.compile_tlc_fp(operands);
+        }
+        if self.is_native && name == "TLCCache" {
+            return self.compile_tlc_cache(operands, context);
+        }
         if name == "RandomElement" || name == "RandomSubset" {
             return self.compile_random(name, operands, context);
+        }
+        if matches!(
+            name,
+            "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize" | "ndJsonDeserialize"
+        ) && self.is_native
+        {
+            return self.compile_json_file(name, operands, context);
         }
         if builtin.flags & Builtin::TABLE != 0 {
             return self.compile_table(index, operands);
         }
+        // `TLCExt.tlcDefer`: TLC's breadth-first search never runs the deferred expression.
+        if name == "TLCDefer" {
+            return Ok(super::constant(TRUE));
+        }
+        // AssertError compares TLC's message for a failure, which the engine doesn't word, so
+        // the native checker leaves the assumption it is in to its caller.
+        if self.is_native && name == "AssertError" {
+            return Ok(leaf(
+                eval(|_| Err(Bail(crate::search::DELEGATED_ASSUMPTION))),
+                Footprint::default(),
+            ));
+        }
         if builtin.flags & Builtin::STATE_LEVEL != 0 || IMPURE_BUILTINS.contains(&name) {
+            // TLCEval makes a set an enumerated one and a function a built one (`convert`), so
+            // what TLC kept lazy of the operand is forgotten: a set of functions is then drawn
+            // from and enumerated as its elements.
             if name == "TLCEval" && operands.len() == 1 {
-                return self.operand(&operands[0]);
+                let operand = self.operand(&operands[0])?;
+                if operand.infinite.is_some() || operand.has_infinite_part {
+                    return unsupported("TLCEval of a set TLC may not enumerate");
+                }
+                let evaluate = operand.eval;
+                return Ok(Compiled {
+                    is_costly: operand.is_costly,
+                    is_boolean: operand.is_boolean,
+                    is_constant: operand.is_constant,
+                    is_enumerated: true,
+                    is_in_order: true,
+                    ..leaf(
+                        eval(move |machine| {
+                            let value = evaluate(machine)?;
+                            if machine.store.kind_of(value) == tla_values::store::KIND_LAZY_FUNCTION
+                            {
+                                return Err(Bail(
+                                    "unsupported: TLCEval of a function TLC keeps lazy",
+                                ));
+                            }
+                            Ok(value)
+                        }),
+                        operand.footprint,
+                    )
+                });
             }
             return unsupported(name);
         }
@@ -438,7 +553,7 @@ impl Compiler<'_> {
         context: &Context,
     ) -> Compiling<Compiled> {
         if !context.can_print {
-            return unsupported(name);
+            return self.decline_print(name);
         }
         let is_print = name == "Print";
         if operands.len() != if is_print { 2 } else { 1 } {
@@ -453,6 +568,9 @@ impl Compiler<'_> {
             .merge(&Footprint::slot(super::PRINT_SLOT));
         let is_boolean = !is_print || compiled[1].is_boolean;
         let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
+        // The native binary's reporter finds what it can't print itself: TLC prints the startup's
+        // in the front the binary records, and the binary stops at any later one.
+        let is_native = self.is_native;
         Ok(Compiled {
             is_boolean,
             ..leaf(
@@ -462,10 +580,15 @@ impl Compiler<'_> {
                         values.push(evaluate(machine)?);
                     }
                     for &value in &values {
-                        if !is_printable(&machine.store, value) {
+                        if !is_native && !is_printable(&machine.store, value) {
                             return Err(Bail(
                                 "printing a value whose text depends on how TLC built it",
                             ));
+                        }
+                        // The addon hands what it prints to the interpreter, whose encoding has
+                        // no Nat, Int or STRING.
+                        if !is_native && machine.store.holds_lazy_function(value) {
+                            return Err(UNENCODABLE);
                         }
                     }
                     let result = if is_print { values[1] } else { TRUE };
@@ -477,17 +600,170 @@ impl Compiler<'_> {
         })
     }
 
-    // TLCGet("level") and TLCGet("distinct") read the slots the search sets.
+    // The Json module's operators that write a value to the file a string names, as JSON or one
+    // element of a sequence per line, or read one, as TLC's Json class does (`src/json.ts`). Only
+    // the native checker reads and writes the files: the interpreter does beside the addon.
+    // Writing prints in TLC's order, as Print does; reading ranks the strings it reads. Where the
+    // model writes a file, a read sees what was last written, so it too is evaluated only where,
+    // and as often as, TLC does; where it writes none, every read of a file reads the same, as
+    // TLC's reading it once at startup does.
+    fn compile_json_file(
+        &mut self,
+        name: &str,
+        operands: &[Operand],
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        let is_written = name.ends_with("Serialize");
+        let is_ordered = is_written
+            || self.ir.builtins.iter().any(|builtin| {
+                matches!(self.text(builtin.name), "JsonSerialize" | "ndJsonSerialize")
+            });
+        if is_ordered && !context.can_print {
+            return self.decline_print(name);
+        }
+        if operands.len() != if is_written { 2 } else { 1 } {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        let compiled = operands
+            .iter()
+            .map(|operand| self.operand(operand))
+            .collect::<Compiling<Vec<Compiled>>>()?;
+        let mut footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint));
+        if is_ordered {
+            footprint = footprint.merge(&Footprint::slot(super::PRINT_SLOT));
+            self.is_printing = true;
+        }
+        let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
+        let is_lines = name.starts_with("nd");
+        let read_path = move |machine: &mut Machine<'_>, evaluate: &Eval| -> Outcome<String> {
+            let path = evaluate(machine)?;
+            if machine.store.kind_of(path) != KIND_STRING {
+                return Err(Bail("a Json operator's file that isn't a string"));
+            }
+            Ok(String::from_utf16_lossy(machine.store.text_of(path)))
+        };
+        if !is_written {
+            self.is_ranking = true;
+            return Ok(leaf(
+                eval(move |machine| {
+                    let path = read_path(machine, &evaluators[0])?;
+                    let text: Vec<u16> = std::fs::read(&path)
+                        .map_err(|_| Bail("a Json operator's file that can't be read"))
+                        .map(|bytes| String::from_utf8_lossy(&bytes).encode_utf16().collect())?;
+                    if is_lines {
+                        json::read_nd_json(&mut machine.store, &text)
+                    } else {
+                        json::read_json(&mut machine.store, &text)
+                    }
+                }),
+                footprint,
+            ));
+        }
+        Ok(Compiled {
+            is_boolean: true,
+            ..leaf(
+                eval(move |machine| {
+                    let path = read_path(machine, &evaluators[0])?;
+                    let value = evaluators[1](machine)?;
+                    let store = &machine.store;
+                    if json::holds_ordered_keys(store, value) {
+                        return Err(Bail(
+                            "a Json operator's record, whose fields TLC writes as it holds them",
+                        ));
+                    }
+                    let mut text = Vec::new();
+                    if is_lines {
+                        if store.kind_of(value) != KIND_TUPLE {
+                            return Err(Bail("ndJsonSerialize of a value that isn't a sequence"));
+                        }
+                        for index in 0..store.size_of(value) {
+                            json::write_json(
+                                store,
+                                store.get_range_value(value, index),
+                                &mut text,
+                            )?;
+                            text.push(u16::from(b'\n'));
+                        }
+                    } else {
+                        if store.kind_of(value) != KIND_TUPLE && !json::is_json_record(store, value)
+                        {
+                            return Err(Bail(
+                                "JsonSerialize of a value that isn't a sequence or a record",
+                            ));
+                        }
+                        json::write_json(store, value, &mut text)?;
+                    }
+                    // TLC makes the file's directories first, whether or not it then can.
+                    if let Some(parent) = std::path::Path::new(&path).parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    std::fs::write(&path, String::from_utf16_lossy(&text))
+                        .map_err(|_| Bail("a Json operator's file that can't be written"))?;
+                    Ok(TRUE)
+                }),
+                footprint,
+            )
+        })
+    }
+
+    // TLCGet("level"), TLCGet("distinct") and TLCGet("diameter") read the slots the search sets,
+    // and TLCGet of a number or of a name that starts with "s:" reads a register.
     fn compile_tlc_get(&mut self, operands: &[Operand], context: &Context) -> Compiling<Compiled> {
         let key = match operands {
-            [operand] if !operand.is_param => match self.node(operand.node).1 {
-                NodeKind::String(text) => Some(self.text(*text)),
-                _ => None,
-            },
+            // An operand bound to a parameter (TLC's TLCGet through an INSTANCE of TLC) is its
+            // argument, unless the builtin is itself an operator argument.
+            [operand] if operand.slot.is_none() => {
+                self.string_literal(operand.node, &operand.context)
+            }
             _ => None,
         };
-        if key != Some("level") && key != Some("distinct") && key != Some("diameter") {
+        // The interpreter would take a search over without TLC's registers, so under the
+        // TypeScript engine the engine declines all but the search's own keys, as it does.
+        if !self.is_native
+            && key.is_none_or(|key| !matches!(key, "level" | "distinct" | "diameter"))
+        {
             return unsupported("TLCGet");
+        }
+        if key.is_none_or(|key| key.starts_with(NAMED_REGISTER_PREFIX)) {
+            return self.compile_register(operands, context, false);
+        }
+        if key == Some("config") {
+            return self.compile_config();
+        }
+        // A Java system property (`System.getProperty` with the key as the default): the key
+        // itself for one nothing sets. The binary declines a command line that sets one the spec
+        // names, and the engine one the JVM sets, but for the separators it knows.
+        if let Some(key) = key.filter(|key| key.starts_with(JAVA_PROPERTY_PREFIX)) {
+            let name = &key[JAVA_PROPERTY_PREFIX.len()..];
+            let value = match name {
+                "file.separator" => std::path::MAIN_SEPARATOR_STR,
+                "path.separator" if cfg!(windows) => ";",
+                "path.separator" => ":",
+                _ if JVM_PROPERTY_NAMESPACES
+                    .iter()
+                    .any(|namespace| name.starts_with(namespace)) =>
+                {
+                    return unsupported("TLCGet of a system property the JVM sets");
+                }
+                _ => key,
+            };
+            let units: Vec<u16> = value.encode_utf16().collect();
+            return Ok(super::constant(self.store.str(&units)));
+        }
+        // The specification's record, which the IR holds as the interpreter computes it for TLC's.
+        if key == Some("spec")
+            && let Some(index) = self.ir.model.tlc_spec
+        {
+            return Ok(super::constant(self.intern_value(index)?));
+        }
+        // TLC reads the other keys of its run, which the search doesn't keep: the native checker
+        // stops where TLC would read one, which TLC may never do, as where an assumption before
+        // it is false.
+        if key != Some("level") && key != Some("distinct") && key != Some("diameter") {
+            return Ok(leaf(
+                eval(|_| Err(Bail("unsupported: TLCGet of a key the search doesn't keep"))),
+                Footprint::slot(super::REGISTER_SLOT),
+            ));
         }
         if context.is_init && context.is_primed {
             return unsupported("TLCGet");
@@ -510,6 +786,179 @@ impl Compiler<'_> {
                 Footprint::slot(slot),
             )
         })
+    }
+
+    // The string an expression is written as, through the parameters bound to it, as TLC's
+    // TLC.tla binds TLCGet's to the key an INSTANCE of TLC passes it.
+    fn string_literal(&self, node: tla_ir::NodeId, context: &Context) -> Option<&str> {
+        match self.node(node).1 {
+            NodeKind::String(text) => Some(self.text(*text)),
+            NodeKind::Identifier(name) if name.is_local => {
+                let found = super::lookup(&context.scope, name.text)?;
+                match &found.binding {
+                    super::Binding::Argument(argument) => {
+                        self.string_literal(argument.expression, &argument.context)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    // TLCGet("config"), the run's settings as TLC's model checker records them
+    // (`AbstractChecker.createConfig`). TLC's install is where its jar is, which the native
+    // checker has none of, so it is TLC's answer where it can't tell.
+    fn compile_config(&mut self) -> Compiling<Compiled> {
+        let model = &self.ir.model;
+        let text = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
+        let fields = [
+            ("mode", Field::Text("bfs".into())),
+            ("deadlock", Field::Bool(model.check_deadlock)),
+            ("worker", Field::Int(self.workers as i64)),
+            ("seed", Field::Text((model.random_seed as i64).to_string())),
+            ("fingerprint", Field::Text((INITIAL as i64).to_string())),
+            ("install", Field::Text("unknown".into())),
+        ];
+        let mut keys = Vec::with_capacity(fields.len());
+        let mut values = Vec::with_capacity(fields.len());
+        for (name, field) in fields {
+            keys.push(self.store.str(&text(name)));
+            values.push(match field {
+                Field::Text(value) => self.store.str(&text(&value)),
+                Field::Bool(value) => bool_id(value),
+                Field::Int(value) => self.store.int(value)?,
+            });
+        }
+        Ok(super::constant(self.store.function_of(&keys, &values)?))
+    }
+
+    // TLCSet(key, value) and TLCGet(key) of a register, as TLC runs them on one worker
+    // (`TLCGetSet.TLCSet`, `TLCGetSet.TLCGetEval`). TLCSet writes in the order TLC evaluates it,
+    // so like Print it compiles only where the engine evaluates as TLC does, and nothing caches
+    // what reads a register. TLCSet("exit", FALSE) and TLCSet("pause", FALSE) do nothing; the
+    // keys that stop or pause TLC, or set a Java property, stop the search.
+    fn compile_register(
+        &mut self,
+        operands: &[Operand],
+        context: &Context,
+        is_set: bool,
+    ) -> Compiling<Compiled> {
+        if is_set && !context.can_print {
+            return unsupported("TLCSet");
+        }
+        if operands.len() != if is_set { 2 } else { 1 } {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        self.is_printing = true;
+        let compiled = operands
+            .iter()
+            .map(|operand| self.compile(operand.node, &operand.context))
+            .collect::<Compiling<Vec<Compiled>>>()?;
+        let footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint))
+            .merge(&Footprint::slot(super::REGISTER_SLOT));
+        let footprint = if is_set {
+            footprint.merge(&Footprint::slot(super::PRINT_SLOT))
+        } else {
+            footprint
+        };
+        let mut evaluators = compiled.into_iter().map(|operand| operand.eval);
+        let evaluate_key = evaluators.next().expect("a key");
+        let evaluate_value = evaluators.next();
+        Ok(Compiled {
+            is_boolean: is_set,
+            ..leaf(
+                eval(move |machine| {
+                    let key = evaluate_key(machine)?;
+                    let Some(evaluate_value) = &evaluate_value else {
+                        return get_register(machine, key);
+                    };
+                    let value = evaluate_value(machine)?;
+                    set_register(machine, key, value)?;
+                    Ok(TRUE)
+                }),
+                footprint,
+            )
+        })
+    }
+
+    // TLCFP(v), TLC's fingerprint of v as a number: the low 32 bits of the fingerprint of a state
+    // of v alone (`TLCExt.tlcFingerprint`).
+    fn compile_tlc_fp(&mut self, operands: &[Operand]) -> Compiling<Compiled> {
+        let [operand] = operands else {
+            return unsupported("an operator applied to the wrong number of arguments");
+        };
+        let value = self.operand(operand)?;
+        let evaluate = value.eval;
+        Ok(leaf(
+            eval(move |machine| {
+                let value = evaluate(machine)?;
+                let fingerprint = machine
+                    .fingerprints
+                    .get_state(&machine.store, &[value], &[0])?;
+                machine.store.int(i64::from(fingerprint as i32))
+            }),
+            value.footprint,
+        ))
+    }
+
+    // TLCCache(e, key) (`TLCExt.tlcEval2`), by SANY's level of e. Where e is constant, TLC
+    // evaluates the key each time and caches e's value by e's node and the key's hash, a
+    // fingerprint, for the rest of the run: the bindings of bound identifiers that the key doesn't
+    // tell apart share the value first cached, and e's effects happen once, where e is first
+    // evaluated, so they may wherever TLCCache is. Where e reads a variable TLC caches nothing,
+    // evaluates the key in the current state alone and e twice, and where e reads a primed
+    // variable, e alone. A constant e can read a variable through an operator's argument, which
+    // the engine can't tell from one that reads it itself, so it declines e that reads one.
+    fn compile_tlc_cache(
+        &mut self,
+        operands: &[Operand],
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        let [expression, key] = operands else {
+            return unsupported("an operator applied to the wrong number of arguments");
+        };
+        if expression.is_param || expression.slot.is_some() {
+            return unsupported("TLCCache of an argument");
+        }
+        let node = expression.node;
+        self.is_tlc_cache_used = true;
+        let key = self.compile(key.node, &key.context.without_print())?;
+        let is_key_constant = key.footprint.width() == 0;
+        let value = self.compile(
+            node,
+            &Context {
+                can_print: context.can_print || is_key_constant,
+                ..expression.context.clone()
+            },
+        )?;
+        if !value.footprint.vars.is_empty() || !value.footprint.primes.is_empty() {
+            return unsupported("TLCCache of an expression that reads variables");
+        }
+        // What the cache holds then depends on the order in which TLC first evaluates e, with one
+        // cache for every worker.
+        self.is_cached |= value.footprint.width() > 0;
+        let footprint = key.footprint.merge(&if is_key_constant {
+            value.footprint.without_slots(&[super::PRINT_SLOT])
+        } else {
+            value.footprint
+        });
+        let (evaluate_key, evaluate_value) = (key.eval, value.eval);
+        Ok(leaf(
+            eval(move |machine| {
+                let key = evaluate_key(machine)?;
+                let hash = machine
+                    .fingerprints
+                    .get_state(&machine.store, &[key], &[0])?;
+                if let Some(&value) = machine.tlc_caches.get(&(node, hash)) {
+                    return Ok(value);
+                }
+                let value = evaluate_value(machine)?;
+                machine.tlc_caches.insert((node, hash), value);
+                Ok(value)
+            }),
+            footprint,
+        ))
     }
 
     // Whether an argument names or writes an operator, such as Test in SelectSeq(s, Test).
@@ -715,49 +1164,7 @@ impl Compiler<'_> {
             "SUBSET" => {
                 arity(1)?;
                 let base = self.operand(&operands[0])?;
-                let base_member = self.member_test(&base);
-                let base_parts = Self::parts_of(&base);
-                Compiled {
-                    is_normalized: false,
-                    subset_base: Some(Box::new(base.clone())),
-                    // It streams in its order, and its elements are set enumerations.
-                    is_in_order: true,
-                    are_elements_in_order: true,
-                    // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
-                    // own order (SubsetValue.elementsNormalized), so S's value does where S has no
-                    // reference.
-                    reference: combine_references(&[&base], |_, mut bases| {
-                        Ok(Lazy::Subset(Box::new(bases.remove(0))))
-                    })
-                    .or_else(|| {
-                        let evaluate = base.eval.clone();
-                        Some(Arc::new(move |machine| {
-                            Ok(Lazy::Subset(Box::new(Lazy::Set(evaluate(machine)?))))
-                        }))
-                    }),
-                    parts: Some(base_parts.clone()),
-                    member: Some(member(move |machine, element| {
-                        machine.run_parts(&base_parts)?;
-                        // TLC fails on anything it can't enumerate, untyped model values included.
-                        if machine.store.kind_of(element) != KIND_SET {
-                            return Err(Bail("a membership in SUBSET of a non-set"));
-                        }
-                        for index in 0..machine.store.size_of(element) {
-                            let value = machine.store.element_at(element, index);
-                            if !base_member(machine, value)? {
-                                return Ok(false);
-                            }
-                        }
-                        Ok(true)
-                    })),
-                    ..unary(
-                        &base,
-                        |machine, set| {
-                            power_set(machine, expect_set(machine, set, "expected a set")?)
-                        },
-                        true,
-                    )
-                }
+                self.compile_subset(&base)
             }
             "UNION" => {
                 arity(1)?;
@@ -835,16 +1242,36 @@ impl Compiler<'_> {
                     return Ok(Some(recursive.domain.clone()));
                 }
                 let function = self.operand(operand)?;
-                unary(
+                let domain = unary(
                     &function,
                     |machine, function| {
+                        if lazy_function::is_lazy(machine, function) {
+                            return Err(lazy_function::DOMAIN);
+                        }
                         if !is_function_kind(machine.store.kind_of(function)) {
                             return Err(Bail("DOMAIN of a non-function"));
                         }
                         Ok(machine.store.domain_of(function))
                     },
                     true,
-                )
+                );
+                // The domain of a function TLC keeps lazy is its bound's set
+                // (`FcnLambdaValue.getDomain`), which the engine has no value for but can test.
+                let function = function.eval;
+                Compiled {
+                    member: Some(super::member(move |machine, element| {
+                        let function = function(machine)?;
+                        if lazy_function::is_lazy(machine, function) {
+                            return lazy_function::is_in_domain(machine, function, element);
+                        }
+                        if !is_function_kind(machine.store.kind_of(function)) {
+                            return Err(Bail("DOMAIN of a non-function"));
+                        }
+                        let domain = machine.store.domain_of(function);
+                        machine.store.is_member(element, domain)
+                    })),
+                    ..domain
+                }
             }
             "+" | "-" | "*" | "\\div" | "%" | "^" => {
                 arity(2)?;
@@ -876,6 +1303,9 @@ impl Compiler<'_> {
                         _ => |base: i64, exponent: i64| {
                             if exponent < 0 {
                                 return Err(Bail("negative exponent"));
+                            }
+                            if base == 0 && exponent == 0 {
+                                return Err(Bail("zero to the power of zero"));
                             }
                             // Past 32 bits the store fails as TLC's arithmetic overflows.
                             Ok(u32::try_from(exponent)
@@ -946,7 +1376,12 @@ impl Compiler<'_> {
                 let sequence = self.operand(&operands[0])?;
                 unary(
                     &sequence,
+                    // Sequences.Len takes a string too, by its UTF-16 units.
                     |machine, sequence| {
+                        if machine.store.kind_of(sequence) == KIND_STRING {
+                            let length = machine.store.text_of(sequence).len();
+                            return machine.store.int(length as i64);
+                        }
                         let size = machine.store.size_of(expect_sequence(machine, sequence)?);
                         machine.store.int(i64::from(size))
                     },
@@ -973,7 +1408,16 @@ impl Compiler<'_> {
                 let sequence = self.operand(&operands[0])?;
                 unary(
                     &sequence,
+                    // Sequences.Tail takes a string too, dropping its first UTF-16 unit.
                     |machine, sequence| {
+                        if machine.store.kind_of(sequence) == KIND_STRING {
+                            let text = machine.store.text_of(sequence);
+                            if text.is_empty() {
+                                return Err(Bail("Tail of an empty sequence"));
+                            }
+                            let tail = text[1..].to_vec();
+                            return Ok(machine.store.str(&tail));
+                        }
                         let tuple = expect_sequence(machine, sequence)?;
                         let size = machine.store.size_of(tuple);
                         if size == 0 {
@@ -1033,6 +1477,8 @@ impl Compiler<'_> {
                 Compiled {
                     is_normalized: false,
                     infinite: Some("Seq"),
+                    // Seq(S) is never empty, and TLC can't enumerate it.
+                    reference: Some(Arc::new(|_| Ok(Lazy::Infinite("Seq")))),
                     parts: Some(base_parts.clone()),
                     member: Some(member(move |machine, element| {
                         machine.run_parts(&base_parts)?;
@@ -1054,22 +1500,26 @@ impl Compiler<'_> {
                 }
             }
             "Assert" => {
-                arity(1)?;
-                // Assert(P, message) is TRUE when P holds. When it doesn't, TLC fails with the
-                // message, which the interpreter reports.
+                arity(2)?;
+                // Assert(P, message) is TRUE when P holds. TLC evaluates the message too, as it
+                // does any Java method's arguments, whose effects and failures show. When P
+                // doesn't hold, TLC fails with the message, which the interpreter reports.
                 let condition = self.boolean_operand(&operands[0])?;
-                let test = condition.eval.clone();
+                let message = self.operand(&operands[1])?;
+                let (test, evaluate_message) = (condition.eval.clone(), message.eval);
                 Compiled {
                     is_boolean: true,
                     ..leaf(
                         eval(move |machine| {
-                            if test(machine)? == TRUE {
+                            let holds = test(machine)?;
+                            evaluate_message(machine)?;
+                            if holds == TRUE {
                                 Ok(TRUE)
                             } else {
                                 Err(Bail("an assertion failed"))
                             }
                         }),
-                        condition.footprint,
+                        condition.footprint.merge(&message.footprint),
                     )
                 }
             }
@@ -1143,6 +1593,29 @@ impl Compiler<'_> {
                         fused::cardinality_filter(Arc::clone(filter)),
                         set.footprint.clone(),
                     ),
+                    // TLC sizes a set of functions, records or tuples by its parts
+                    // (`Lazy::size`): an empty part empties it before TLC asks anything of a part
+                    // it can't enumerate, as in `[Nat -> {}]`, or of one too large to.
+                    // A power set of a set the engine holds is counted as it was, by building it.
+                    None if set.reference.is_some()
+                        && !set.is_normalized
+                        && !set
+                            .subset_base
+                            .as_ref()
+                            .is_some_and(|base| base.is_normalized) =>
+                    {
+                        let reference = set.reference.clone().expect("a reference");
+                        Compiled {
+                            is_costly: true,
+                            ..leaf(
+                                eval(move |machine| {
+                                    let size = reference(machine)?.size(machine)?;
+                                    machine.store.int(size as i64)
+                                }),
+                                set.footprint.clone(),
+                            )
+                        }
+                    }
                     None => unary(
                         &set,
                         |machine, set| {
@@ -1230,18 +1703,60 @@ impl Compiler<'_> {
         } else {
             None
         };
+        // TLC enumerates the left set of an intersection or a difference where it can, testing
+        // each element for membership in the right one (SetCapValue.elements and
+        // SetDiffValue.elements), so a set enumeration it keeps in order keeps that order.
+        if name != "\\cup"
+            && left.infinite.is_none()
+            && right.infinite.is_some()
+            && left.is_normalized
+        {
+            let right_member = self.member_test(right);
+            let left_eval = left.eval.clone();
+            let is_kept_in_right = name == "\\cap";
+            return Ok(Some(Compiled {
+                is_costly: true,
+                member: lazy_member,
+                ..leaf(
+                    eval(move |machine| {
+                        let left = left_eval(machine)?;
+                        let set = expect_set(machine, left, "expected a set")?;
+                        let mut kept = Vec::new();
+                        for index in 0..machine.store.size_of(set) {
+                            let element = machine.store.element_at(set, index);
+                            if right_member(machine, element)? == is_kept_in_right {
+                                kept.push(element);
+                            }
+                        }
+                        Ok(machine.store.set_of_sorted(&kept))
+                    }),
+                    left.footprint.merge(&right.footprint),
+                )
+            }));
+        }
         if left.infinite.is_some() || right.infinite.is_some() {
-            if if name == "\\" {
-                right.infinite.is_some()
-            } else {
-                name != "\\cup"
-            } {
-                return Ok(None);
-            }
+            // A combination of sets TLC can't enumerate is one it only tests for membership.
+            let operator = match name {
+                "\\cup" => Operator::Union,
+                "\\cap" => Operator::Intersection,
+                _ => Operator::Difference,
+            };
+            // TLC evaluates both operands as it builds the set (SetCupValue, SetCapValue,
+            // SetDiffValue), whatever it tests later.
+            let (left_parts, right_parts) = (Self::parts_of(left), Self::parts_of(right));
             return Ok(Some(Compiled {
                 is_normalized: false,
                 infinite: Some("Combined"),
                 member: lazy_member,
+                parts: Some(super::parts(move |machine| {
+                    left_parts(machine)?;
+                    right_parts(machine)
+                })),
+                reference: combine_references(&[left, right], move |machine, mut sets| {
+                    let right = sets.pop().expect("the right set");
+                    let left = sets.pop().expect("the left set");
+                    Lazy::combine(machine, operator, left, right)
+                }),
                 ..leaf(
                     eval(|_| Err(Bail("an enumerated infinite set"))),
                     left.footprint.merge(&right.footprint),
@@ -1321,7 +1836,7 @@ fn to_string(machine: &mut Machine<'_>, value: Id) -> Outcome<Id> {
         ));
     }
     let mut text = Vec::new();
-    write_value(&machine.store, value, &mut text);
+    write_value(&machine.store, value, &mut text)?;
     // A text the engine made before, such as by \o, keeps the rank it had then, -1, which the
     // store's guard on unordered strings doesn't see.
     if let Some(string) = machine.store.find_str(&text)
@@ -1344,6 +1859,96 @@ fn model_value(machine: &mut Machine<'_>, name: Id) -> Outcome<Id> {
     let text = machine.store.text_of(name).to_vec();
     machine.store.rank_text(&text);
     Ok(machine.store.model(&text))
+}
+
+/// The prefix of the names of TLC's named registers (`TLCGetSet.NAMED_REGISTER_PREFIX`).
+const NAMED_REGISTER_PREFIX: &str = "s:";
+
+/// The prefix of a key of TLCGet and TLCSet that names a Java system property, whose value
+/// `System.getProperty` gives with the key as the default.
+const JAVA_PROPERTY_PREFIX: &str = "-D";
+
+/// Where the JVM and its libraries name the system properties they set themselves.
+const JVM_PROPERTY_NAMESPACES: [&str; 16] = [
+    "java.", "javax.", "jdk.", "sun.", "os.", "user.", "file.", "line.", "path.", "native.",
+    "stdout.", "stderr.", "awt.", "http.", "https.", "ftp.",
+];
+
+// Where TLC keeps a register's value: under a natural number, or under a name that starts with
+// "s:".
+enum RegisterKey {
+    Numbered(usize),
+    Named(Id),
+}
+
+fn get_register_key(store: &Store, key: Id) -> Option<RegisterKey> {
+    match store.kind_of(key) {
+        KIND_INT if store.int_of(key) >= 0 => {
+            Some(RegisterKey::Numbered(store.int_of(key) as usize))
+        }
+        KIND_STRING
+            if String::from_utf16_lossy(store.text_of(key)).starts_with(NAMED_REGISTER_PREFIX) =>
+        {
+            Some(RegisterKey::Named(key))
+        }
+        _ => None,
+    }
+}
+
+fn get_register(machine: &mut Machine<'_>, key: Id) -> Outcome<Id> {
+    let registers = &machine.registers;
+    let value = match get_register_key(&machine.store, key) {
+        Some(RegisterKey::Numbered(index)) => registers.numbered.get(index).copied().flatten(),
+        Some(RegisterKey::Named(name)) => registers
+            .named
+            .iter()
+            .find(|&&(named, _)| named == name)
+            .map(|&(_, value)| value),
+        None if machine.store.kind_of(key) == KIND_STRING => {
+            // A key the spec computes may name a system property, which the search doesn't keep
+            // either.
+            return Err(Bail("unsupported: TLCGet of a key the search doesn't keep"));
+        }
+        None => return Err(Bail("TLCGet of a key that isn't a natural number")),
+    };
+    value.ok_or(Bail("TLCGet of a register TLC hasn't set"))
+}
+
+fn set_register(machine: &mut Machine<'_>, key: Id, value: Id) -> Outcome<()> {
+    let registers = &mut machine.registers;
+    match get_register_key(&machine.store, key) {
+        Some(RegisterKey::Numbered(index)) => {
+            if registers.numbered.len() <= index {
+                registers.numbered.resize(index + 1, None);
+            }
+            registers.numbered[index] = Some(value);
+        }
+        Some(RegisterKey::Named(name)) => {
+            match registers.named.iter_mut().find(|(named, _)| *named == name) {
+                Some(entry) => entry.1 = value,
+                None => registers.named.push((name, value)),
+            }
+        }
+        None if machine.store.kind_of(key) == KIND_STRING => {
+            let text = String::from_utf16_lossy(machine.store.text_of(key));
+            if text == "exit" && value == TRUE {
+                registers.is_exit = true;
+            } else if !(matches!(text.as_str(), "exit" | "pause") && value != TRUE) {
+                return Err(Bail(
+                    "unsupported: TLCSet of a key that stops or configures TLC",
+                ));
+            }
+        }
+        None => return Err(Bail("TLCSet of a key that isn't a natural number")),
+    }
+    Ok(())
+}
+
+// A field of TLCGet("config").
+enum Field {
+    Text(String),
+    Bool(bool),
+    Int(i64),
 }
 
 #[cfg(test)]

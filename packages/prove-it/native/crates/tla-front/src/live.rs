@@ -7,9 +7,11 @@ use std::rc::Rc;
 
 use crate::TlcVersion;
 use crate::ast::*;
+use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
-use crate::errors::FrontError;
+use crate::errors::{FrontError, describe_range};
+use crate::eval::Evaluator;
 use crate::resolve::Result;
 use crate::spec::{
     Binding, Expanded, Property, Scope, ScopeOf, bind_definitions, bind_operator_arguments,
@@ -53,10 +55,20 @@ pub struct Liveness {
     pub formula: Rc<Live>,
     pub properties: Vec<(Name, Rc<Live>)>,
     pub atoms: Vec<Rc<Live>>,
+    /// How many solutions of the formula TLC checks, which it calls branches.
+    pub branches: usize,
 }
 
 fn not_yet(reason: &str) -> FrontError {
     FrontError::NotYet(reason.to_owned())
+}
+
+/// `createCannotHandleError`, without the message of an error TLC adds.
+fn cannot_handle(expression: &Expr) -> FrontError {
+    FrontError::Evaluation(format!(
+        "TLC cannot handle the temporal formula {}",
+        describe_range(expression)
+    ))
 }
 
 /// `createJunction`: the operands, those of the same junction in their place.
@@ -104,12 +116,33 @@ fn live_level(live: &Live) -> Level {
 struct Converter<'a> {
     environment: &'a Environment,
     facts: &'a DefinitionFacts,
+    evaluator: Option<&'a Evaluator<'a>>,
     depth: usize,
 }
 
 impl Converter<'_> {
     fn level(&self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Level {
         get_level(expression, scope, self.environment, self.facts, &[])
+    }
+
+    /// The evaluator, whose failures TLC words in ways the front end doesn't follow yet.
+    fn get_evaluator(&self, reason: &str) -> Result<&Evaluator<'_>> {
+        self.evaluator.ok_or_else(|| not_yet(reason))
+    }
+
+    /// A constant formula's value, or `None` where it isn't a boolean.
+    fn evaluate_boolean(
+        &self,
+        expression: &Expr,
+        scope: Option<&Rc<Scope>>,
+        reason: &str,
+    ) -> Result<Option<bool>> {
+        match self.get_evaluator(reason)?.evaluate(expression, scope) {
+            Ok(ConfigValue::Boolean(value)) => Ok(Some(value)),
+            Ok(_) => Ok(None),
+            // TLC's own failure, which `toAtom` and the IF's guard raise as it is.
+            Err(error) => Err(error),
+        }
     }
 
     /// `toAtom`: TLC bounds the level of a formula whose parts are constant by the formula's own.
@@ -120,7 +153,15 @@ impl Converter<'_> {
             level
         };
         Ok(Rc::new(match level {
-            Level::Constant => return Err(not_yet("a constant part of a temporal formula")),
+            Level::Constant => {
+                let reason = "a constant part of a temporal formula";
+                return match self.evaluate_boolean(expression, scope, reason)? {
+                    Some(value) => Ok(Rc::new(Live::Boolean(value))),
+                    None => Err(not_yet(
+                        "a constant part of a temporal formula that isn't a boolean",
+                    )),
+                };
+            }
             Level::Variable => Live::State {
                 expression: expression.clone(),
                 scope: scope.cloned(),
@@ -157,8 +198,10 @@ impl Converter<'_> {
         expression: &Expr,
         scope: Option<&Rc<Scope>>,
     ) -> Result<Rc<Live>> {
+        // TLC's translation of the formula recurses until it overflows its stack, as on its
+        // Github1389Loops and Github1389StateGuard (`createStackOverflowError`).
         if self.depth >= MAXIMUM_EXPANSION_DEPTH {
-            return Err(not_yet("a temporal formula expanded too deep"));
+            return Err(FrontError::StackOverflow);
         }
         self.depth += 1;
         let result = self.convert(body, body_scope);
@@ -184,21 +227,38 @@ impl Converter<'_> {
         )) = binding
         {
             let body_scope = definition_scope.resolve(node);
-            return self.expand(body, body_scope.as_ref(), expression, scope);
+            let expanded = self.expand(body, body_scope.as_ref(), expression, scope);
+            return Self::expanded_call(expression, expanded, false);
         }
-        let cannot_handle = || not_yet("a temporal formula TLC can't handle");
         if binding.is_some_and(|(_, binding)| !matches!(binding, Binding::Closure { .. })) {
-            return Err(cannot_handle());
+            return Err(cannot_handle(expression));
         }
         let (params, body, closure_scope) =
             resolve_apply_operator(expression, scope, self.environment)
-                .ok_or_else(cannot_handle)?;
+                .ok_or_else(|| cannot_handle(expression))?;
         let args = match &expression.kind {
             ExpressionKind::Apply { args, .. } => &args[..],
             _ => &[],
         };
+        let is_recursive = !is_local
+            && get_definition(&name, self.environment)
+                .is_some_and(|definition| definition.is_recursive);
         let bound = bind_operator_arguments(&params, args, closure_scope, scope, self.environment)?;
-        self.expand(&body, bound.as_ref(), expression, scope)
+        let expanded = self.expand(&body, bound.as_ref(), expression, scope);
+        Self::expanded_call(expression, expanded, is_recursive)
+    }
+
+    /// `expandCall`: TLC takes an application whose expansion fails for a formula it can't
+    /// handle, except that a recursive operator's fails as its expansion does.
+    fn expanded_call(
+        expression: &Expr,
+        expanded: Result<Rc<Live>>,
+        is_recursive: bool,
+    ) -> Result<Rc<Live>> {
+        match expanded {
+            Err(FrontError::Evaluation(_)) if !is_recursive => Err(cannot_handle(expression)),
+            expanded => expanded,
+        }
     }
 
     // The formulas below temporal level whose parts TLC's Liveness.astToLive translates, as one
@@ -262,18 +322,49 @@ impl Converter<'_> {
                     .collect::<Result<Vec<_>>>()?;
                 self.whole(expression, scope, junction(*is_and, parts))
             }
-            ExpressionKind::Quantified { bounds, .. } => {
+            ExpressionKind::Quantified {
+                quantifier,
+                bounds,
+                body,
+            } => {
+                let is_forall = *quantifier == Quantifier::Forall;
                 let is_constant = bounds
                     .iter()
                     .all(|bound| self.level(&bound.set, scope) == Level::Constant);
-                if is_constant {
-                    return Err(not_yet("a temporal quantifier over a constant set"));
+                if !is_constant {
+                    return if level <= Level::Action {
+                        self.atom(expression, scope, level)
+                    } else {
+                        Err(cannot_handle(expression))
+                    };
                 }
-                if level <= Level::Action {
-                    self.atom(expression, scope, level)
-                } else {
-                    Err(not_yet("a temporal formula TLC can't handle"))
+                let reason = "a temporal quantifier over a set TLC fails to list";
+                let bindings = match self.get_evaluator(reason)?.get_bindings(bounds, scope) {
+                    Err(FrontError::Evaluation(_)) => return Err(not_yet(reason)),
+                    bindings => bindings?,
+                };
+                // TLC takes a quantified formula whose body fails for one it can't handle, and
+                // under \A it adds the message of a failure that isn't an EvalException.
+                let operands = match bindings
+                    .iter()
+                    .map(|bound| self.convert(body, bound.as_ref()))
+                    .collect::<Result<Vec<_>>>()
+                {
+                    Err(FrontError::Evaluation(_)) if level <= Level::Action => {
+                        return self.atom(expression, scope, level);
+                    }
+                    Err(FrontError::Evaluation(_)) if !is_forall => {
+                        return Err(cannot_handle(expression));
+                    }
+                    Err(FrontError::Evaluation(_)) => {
+                        return Err(not_yet("a temporal \\A whose body TLC can't handle"));
+                    }
+                    operands => operands?,
+                };
+                if operands.is_empty() {
+                    return Ok(Rc::new(Live::Boolean(is_forall)));
                 }
+                self.whole(expression, scope, junction(is_forall, operands))
             }
             ExpressionKind::If {
                 condition,
@@ -281,7 +372,10 @@ impl Converter<'_> {
                 alternative,
             } => {
                 if self.level(condition, scope) == Level::Constant {
-                    return Err(not_yet("a temporal IF with a constant condition"));
+                    let reason = "a temporal IF whose condition TLC fails to evaluate";
+                    if let Some(value) = self.evaluate_boolean(condition, scope, reason)? {
+                        return self.convert(if value { consequent } else { alternative }, scope);
+                    }
                 }
                 let condition = self.convert(condition, scope)?;
                 let consequent = self.convert(consequent, scope)?;
@@ -338,7 +432,7 @@ impl Converter<'_> {
                     )))))
                 })
             }
-            _ => Err(not_yet("a temporal formula TLC can't handle")),
+            _ => Err(cannot_handle(expression)),
         }
     }
 }
@@ -349,6 +443,7 @@ pub fn get_liveness(
     properties: &[Property],
     environment: &Environment,
     facts: &DefinitionFacts,
+    evaluator: Option<&Evaluator>,
     version: TlcVersion,
 ) -> Result<Option<Liveness>> {
     if properties.is_empty() {
@@ -360,6 +455,7 @@ pub fn get_liveness(
     let mut converter = Converter {
         environment,
         facts,
+        evaluator,
         depth: 0,
     };
     let fairness = temporals
@@ -383,29 +479,43 @@ pub fn get_liveness(
     } else {
         junction(true, [fairness, vec![violation]].concat())
     };
-    let atoms = order_atoms(&formula)?;
+    let (atoms, branches) = order_atoms(&formula)?;
     Ok(Some(Liveness {
         formula,
         properties: named,
         atoms,
+        branches,
     }))
 }
 
 /// The atoms in the order the checker asks about them, as `tla_live::atom_order` finds it from the
-/// solutions of the formula, each atom by its position among those of the formula.
-fn order_atoms(formula: &Rc<Live>) -> Result<Vec<Rc<Live>>> {
+/// solutions of the formula, each atom by its position among those of the formula, and how many
+/// solutions there are.
+fn order_atoms(formula: &Rc<Live>) -> Result<(Vec<Rc<Live>>, usize)> {
     let mut atoms: Vec<Rc<Live>> = Vec::new();
     let mut ids: HashMap<*const Live, u32> = HashMap::new();
     let mut terms = Vec::new();
     write_terms(formula, &mut atoms, &mut ids, &mut terms);
     let order = tla_live::atom_order(&terms).map_err(|declined| match &*declined.0 {
-        "a tautology" => not_yet("a temporal property that is a tautology"),
+        "a tautology" => FrontError::Evaluation(
+            "Temporal formula is a tautology (its negation is unsatisfiable).".to_owned(),
+        ),
+        "a temporal formula too large in disjunctive normal form" => FrontError::Evaluation(
+            "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.".to_owned(),
+        ),
+        "a temporal formula with actions not of the forms <>[]A or []<>A" => FrontError::Evaluation(
+            "Temporal formulas containing actions must be of forms <>[]A or []<>A.".to_owned(),
+        ),
         _ => not_yet("a temporal formula the tableau declines"),
     })?;
-    Ok(order
+    // The tableau found the solutions as it ordered the atoms, so counting them again succeeds.
+    let branches = tla_live::count_branches(&terms)
+        .map_err(|declined| not_yet(&format!("the liveness branches: {}", declined.0)))?;
+    let atoms = order
         .into_iter()
         .map(|id| atoms[id as usize].clone())
-        .collect())
+        .collect();
+    Ok((atoms, branches))
 }
 
 fn write_terms(

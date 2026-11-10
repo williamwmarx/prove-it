@@ -136,6 +136,46 @@ const getConstantValue = (name: string, definition: Definition, environment: Env
 };
 
 // TLC takes for an operator only a definition it hasn't replaced with its value.
+interface NamedPredicate {
+  form: "predicate" | "definition" | "specification";
+  kind: string;
+  name: string;
+}
+
+// The constant definitions the configuration names, which TLC evaluates as it reads the
+// configuration, in its order, each with how TLC rejects its value: a predicate for any value but
+// TRUE, a definition and the SPECIFICATION for any value.
+export const getConstantPredicates = (config: ModelConfig, environment: Environment) => {
+  const getNamed = (form: NamedPredicate["form"], kind: string, names: string[]) =>
+    names.map((name): NamedPredicate => ({ form, kind, name }));
+  const optional = (name: string | undefined) => (name === undefined ? [] : [name]);
+  const named = [
+    ...getNamed("predicate", "invariant", config.invariants),
+    ...(config.specification === undefined
+      ? [
+          ...getNamed("definition", "initial predicate", optional(config.init)),
+          ...getNamed("definition", "next state action", optional(config.next)),
+        ]
+      : getNamed("specification", "name", [config.specification])),
+    ...getNamed("predicate", "property", config.properties),
+    ...getNamed("predicate", "constraint", config.constraints),
+    ...getNamed("predicate", "action constraint", config.actionConstraints),
+    ...getNamed("definition", "possible", config.possible),
+  ];
+  return named.flatMap((item) => {
+    const definition = environment.constants.has(item.name)
+      ? undefined
+      : getDefinition(item.name, environment);
+    const isEvaluated =
+      definition?.kind === "Operator" &&
+      definition.params.length === 0 &&
+      isConstantLevel(definition, environment) &&
+      definition.body.kind !== "Number" &&
+      definition.body.kind !== "String";
+    return isEvaluated ? [{ ...item, definition }] : [];
+  });
+};
+
 export const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
   const definition = getConfigOperator(kind, name, environment);
   if (getConstantValue(name, definition, environment) !== undefined) {
@@ -287,7 +327,16 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
       `The value of ${config.specification} is equal to ${formatValue(value)}`,
     );
   }
-  expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
+  expandTemporal(
+    definition.body,
+    undefined,
+    environment,
+    false,
+    undefined,
+    false,
+    undefined,
+    true,
+  ).forEach((item) => {
     const conjunct = item.expression;
     if (isConstantTrue(item, environment, "spec")) return;
     if (conjunct.kind === "UnboundedQuantifier" && conjunct.isTemporal) {
@@ -372,6 +421,21 @@ export const getSpecification = (config: ModelConfig, environment: Environment):
   };
 };
 
+const BOOK = "https://lamport.azurewebsites.net/tla/book.html";
+
+// TLC's error for a property that is an action, which says how to make [A]_v, <<A>>_v or another
+// action a temporal formula.
+const getActionPropertyMessage = (name: string, conjunct: Expression) => {
+  const at = describeRange(conjunct);
+  const advice =
+    conjunct.kind === "BoxAction"
+      ? `To check that action ${name} holds in *every* step of the behavior, define a temporal property by applying the "always" temporal operator ([]) to the formula at ${at} (compare page 90 of Specifying Systems at ${BOOK}).`
+      : conjunct.kind === "AngleAction"
+        ? `To check that infinitely many ${name} steps occur, define a temporal property by applying the "always eventually" temporal operator combination ([]<>) to the formula at ${at} (compare page 91 of Specifying Systems at ${BOOK}).`
+        : `To check that action ${name} holds in *every* step of the behavior, define a temporal property: Let A be the formula at ${at}; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at ${BOOK}).`;
+  return `The formula ${name} at ${at} is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. ${advice}`;
+};
+
 export const getProperties = (
   config: ModelConfig,
   environment: Environment,
@@ -436,9 +500,8 @@ export const getProperties = (
         });
         return;
       }
-      if (level === ACTION_LEVEL) {
-        throw new TlaConfigError(`The property ${name} is an action-level formula`);
-      }
+      if (level === ACTION_LEVEL)
+        throw new TlaConfigError(getActionPropertyMessage(partName, conjunct));
       properties.liveness.push({ name, expression: conjunct, scope: item.scope });
     });
   });

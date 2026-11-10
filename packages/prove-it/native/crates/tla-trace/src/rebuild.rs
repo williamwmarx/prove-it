@@ -10,7 +10,7 @@ use tla_values::fingerprint::Fingerprints;
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
 
-use crate::eval::{Context, Evaluator};
+use crate::eval::{Context, Evaluator, Registers};
 use std::rc::Rc;
 
 use crate::value::{
@@ -25,6 +25,11 @@ pub struct Rebuilder<'ir> {
     key: Key,
     /// The state of the generator TLC's startup left, which the initial predicate draws from.
     startup_random: u64,
+    /// The state of the generator where an invariant of the trace's last state stopped the
+    /// search, where the caller gave it.
+    violation_random: Option<u64>,
+    /// TLC's set of fingerprints when the search stopped, sorted, where the caller gave it.
+    pub(crate) fingerprints: Option<Vec<u64>>,
 }
 
 /// How TLC tells a candidate is the state it looks for: by its fingerprint, which is of the state,
@@ -44,6 +49,13 @@ fn unsupported<T>(reason: impl Into<String>) -> Result<T, Unsupported> {
 }
 
 impl<'ir> Rebuilder<'ir> {
+    /// Whether TLC computes the definition at this index of the IR's definitions as it starts,
+    /// as `Evaluator::is_precomputed` says.
+    pub fn is_precomputed(&mut self, definition: u32) -> bool {
+        let node = self.evaluator.ir.definitions[definition as usize];
+        self.evaluator.is_precomputed(node)
+    }
+
     pub(crate) fn evaluator(&mut self) -> &mut Evaluator<'ir> {
         &mut self.evaluator
     }
@@ -66,14 +78,46 @@ impl<'ir> Rebuilder<'ir> {
             evaluator,
             key,
             startup_random: JavaRandom::seeded(ir.model.random_seed).state(),
+            violation_random: None,
+            fingerprints: None,
         })
+    }
+
+    /// Takes TLC's set of fingerprints when the search stopped at an invariant that fails to
+    /// evaluate, sorted (`Violation::fingerprints`), which TLC's replay of the expansion tests
+    /// each successor against.
+    pub fn set_fingerprints(&mut self, fingerprints: &[u64]) {
+        self.fingerprints = Some(fingerprints.to_vec());
+    }
+
+    /// Whether TLC fingerprints the state itself, with no VIEW or SYMMETRY.
+    pub(crate) fn is_keyed_by_state(&self) -> bool {
+        matches!(self.key, Key::State)
     }
 
     /// Takes the values the search computed at startup, ids of `store`, which TLC's trace reads
     /// as it computed them, and the state of the generator the startup left.
-    pub fn set_startup(&mut self, store: &Store, values: &[Id], random: u64) {
-        self.evaluator.set_startup(store, values);
+    pub fn set_startup(
+        &mut self,
+        store: &Store,
+        values: &[Id],
+        random: u64,
+    ) -> Result<(), Unsupported> {
+        self.evaluator.set_startup(store, values)?;
         self.startup_random = random;
+        Ok(())
+    }
+
+    /// Takes the state of the generator where an invariant of the trace's last state stopped the
+    /// search (`Violation::random`), which TLC goes on drawing from as it finds that state again.
+    pub fn set_violation_random(&mut self, random: u64) {
+        self.violation_random = Some(random);
+    }
+
+    /// Takes TLC's registers as the search left them, which TLC's trace reads and sets again as
+    /// TLC rebuilds it.
+    pub fn set_registers(&mut self, registers: Registers) {
+        self.evaluator.registers = registers;
     }
 
     /// What a state of a rebuilt lasso, or its step to the next, answers of the liveness checker's
@@ -111,6 +155,11 @@ impl<'ir> Rebuilder<'ir> {
                 run(evaluator.boolean(atom.expression, &context))
             }
         }
+    }
+
+    /// Takes how many workers TLC runs, which TLCGet("config") reads.
+    pub fn set_workers(&mut self, workers: usize) {
+        self.evaluator.workers = Some(workers);
     }
 
     /// Takes the symmetry group the search reduced by, each permutation as the names of the model
@@ -157,6 +206,66 @@ impl<'ir> Rebuilder<'ir> {
         ending: Ending,
         is_checked: bool,
     ) -> Result<Trace, Unsupported> {
+        let Some(first) = self.rebuild_pass(store, states, actions, ending, is_checked, true)?
+        else {
+            return Ok(Trace {
+                states: Vec::new(),
+                trace_output: Vec::new(),
+            });
+        };
+        // TLC rebuilds a violation's trace once more after it has printed it, for the
+        // counterexample its postconditions read: the spec prints again, as the registers then
+        // are, and sets them again.
+        let ir = self.evaluator.ir;
+        let is_effectful = ir.builtins.iter().any(|builtin| {
+            matches!(
+                &*ir.texts[builtin.name as usize],
+                "Print" | "PrintT" | "TLCSet"
+            )
+        });
+        let again = if !matches!(ending, Ending::Lasso) && first.rebuilt.len() > 1 && is_effectful {
+            // TLC's second rebuild resets the generator with the thread's current state set, so
+            // it draws from a seed this rebuild doesn't follow: what it prints or sets then isn't
+            // followed.
+            let is_drawing = ir.builtins.iter().any(|builtin| {
+                matches!(
+                    &*ir.texts[builtin.name as usize],
+                    "RandomElement" | "RandomSubset"
+                )
+            });
+            let registers = format!("{:?}", self.evaluator.registers);
+            let output: Option<Vec<Vec<String>>> = self
+                .rebuild_pass(store, states, actions, ending, false, false)?
+                .map(|pass| {
+                    pass.initial_output
+                        .into_iter()
+                        .chain(pass.outputs.into_iter().flatten())
+                        .collect()
+                });
+            let is_effective = output.as_ref().is_some_and(|output| !output.is_empty())
+                || format!("{:?}", self.evaluator.registers) != registers;
+            if is_drawing && is_effective {
+                return Err(Unsupported(
+                    "the second rebuild of a trace of a spec that draws at random".into(),
+                ));
+            }
+            output
+        } else {
+            None
+        };
+        Ok(compose(first, again, ending))
+    }
+
+    // One rebuild of the path, with what the spec printed finding the first state and each step.
+    fn rebuild_pass(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        ending: Ending,
+        is_checked: bool,
+        is_first: bool,
+    ) -> Result<Option<Pass>, Unsupported> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
         let width = ir.variables.len();
@@ -164,10 +273,7 @@ impl<'ir> Rebuilder<'ir> {
             return unsupported("a state of another width than the model's");
         }
         let Some(&first) = states.first() else {
-            return Ok(Trace {
-                states: Vec::new(),
-                trace_output: Vec::new(),
-            });
+            return Ok(None);
         };
         // What the spec prints depends on every state TLC enumerates, so where it prints, each
         // walk runs to its end, and each step tries TLC's actions in order, as `findStepAction`
@@ -179,22 +285,26 @@ impl<'ir> Rebuilder<'ir> {
             )
         });
         // A random draw depends on every draw before it in the expansion, as what the spec prints
-        // does.
+        // and the registers it sets do.
         let is_printing = is_drawing
-            || ir
-                .builtins
-                .iter()
-                .any(|builtin| matches!(&*ir.texts[builtin.name as usize], "Print" | "PrintT"));
+            || ir.builtins.iter().any(|builtin| {
+                matches!(
+                    &*ir.texts[builtin.name as usize],
+                    "Print" | "PrintT" | "TLCSet"
+                )
+            });
         // TLC's worker seeds the draws of each expansion with the fingerprint of the state it
         // expands, which is of the state itself where TLC fingerprints no other key.
         let order: Vec<usize> = ir.tlc_order.iter().map(|&index| index as usize).collect();
         let mut fingerprints = Fingerprints::new();
-        let mut seeded = |state: &[Id]| {
-            (is_drawing && matches!(self.key, Key::State)).then(|| {
-                JavaRandom::seeded(
-                    fingerprints.get_state(store, state, &order) ^ ir.model.random_seed,
-                )
-            })
+        let mut seeded = |state: &[Id]| -> Result<Option<JavaRandom>, Unsupported> {
+            if !is_drawing || !matches!(self.key, Key::State) {
+                return Ok(None);
+            }
+            match fingerprints.get_state(store, state, &order) {
+                Ok(fingerprint) => Ok(Some(JavaRandom::seeded(fingerprint ^ ir.model.random_seed))),
+                Err(bail) => unsupported(bail.0),
+            }
         };
         evaluator.printed.clear();
         let mut rebuilt: Vec<Vec<Value>> = Vec::with_capacity(states.len());
@@ -204,6 +314,9 @@ impl<'ir> Rebuilder<'ir> {
         // TLC prints a violating state as it found it, not as it recovers a state, so it is the
         // candidate equal to the search's, whatever the VIEW or SYMMETRY.
         let is_held = matches!(ending, Ending::Violation);
+        // TLC's first rebuild of a violation's trace of two states prints the initial state as it
+        // holds it (`printTrace`), so the walk of the initial predicate sets no register of TLC's.
+        let is_initial_held = is_first && is_held && states.len() == 2;
         let key_of = |position: usize| {
             if is_held && position + 1 == states.len() {
                 &Key::State
@@ -211,9 +324,28 @@ impl<'ir> Rebuilder<'ir> {
                 &self.key
             }
         };
-        // The initial states draw from the generator startup left, which TLC never reseeds
-        // there, so walking the whole initial predicate draws as the search drew.
-        evaluator.random = is_drawing.then(|| JavaRandom::from_state(self.startup_random));
+        // The search's initial states draw from the generator startup left. TLC rebuilds the
+        // initial state of a trace from the seed instead (`TLCTrace.getTrace` resets the
+        // generator, and a lasso's prefix is rebuilt on a thread of its own): where startup drew,
+        // a drawing initial predicate finds no initial state, and TLC fails. It holds the initial
+        // state of a violation of two states and of a trace of one state, which it doesn't rebuild.
+        let is_initial_rebuilt = is_first
+            && match ending {
+                Ending::Violation => states.len() > 2,
+                Ending::Kept => states.len() > 1,
+                Ending::Lasso => true,
+            };
+        evaluator.random = is_drawing.then(|| {
+            if is_initial_rebuilt {
+                JavaRandom::seeded(ir.model.random_seed)
+            } else {
+                JavaRandom::from_state(self.startup_random)
+            }
+        });
+        let violation_random = self
+            .violation_random
+            .filter(|_| matches!(self.key, Key::State));
+        let registers = evaluator.registers.clone();
         let initial = find(
             evaluator,
             key_of(0),
@@ -222,7 +354,15 @@ impl<'ir> Rebuilder<'ir> {
             store,
             first,
         )?;
+        if is_initial_held {
+            evaluator.registers = registers;
+        }
         let Some(initial) = initial else {
+            if is_initial_rebuilt && is_drawing {
+                return unsupported(
+                    "a trace whose initial state TLC fails to rebuild from the generator it resets",
+                );
+            }
             return unsupported("no initial state is the trace's first");
         };
         let initial_output = std::mem::take(&mut evaluator.printed);
@@ -230,8 +370,11 @@ impl<'ir> Rebuilder<'ir> {
         rebuilt.push(initial);
         // Each candidate action, with its position in the model's actions: the next-state
         // relation, which is none of them, when the IR has none.
+        let Some(next) = ir.model.next else {
+            return unsupported("a trace of a model without a next-state relation");
+        };
         let all_actions: Vec<(NodeId, Option<u32>, Option<u32>)> = if ir.model.actions.is_empty() {
-            vec![(ir.model.next, ir.model.scope, None)]
+            vec![(next, ir.model.scope, None)]
         } else {
             ir.model
                 .actions
@@ -253,7 +396,15 @@ impl<'ir> Rebuilder<'ir> {
             }
             evaluator.current = previous.into_iter().map(Some).collect();
             evaluator.level = position as i32 + 1;
-            evaluator.random = seeded(pair[0]);
+            // TLC finds the successor of an initial state it holds by its worker's generator as
+            // the search left it, still seeded for that state (`TLCTrace.printTrace`,
+            // `Tool.getState`, `TLCStateRandom.initialize`): where the search drew, the walk may
+            // find no such successor, and TLC fails.
+            evaluator.random = if is_initial_held {
+                violation_random.map(JavaRandom::from_state)
+            } else {
+                seeded(pair[0])?
+            };
             let candidates = match actions.get(position).copied().flatten() {
                 Some(index) if !is_printing => match ir.model.actions.get(index as usize) {
                     Some(action) => vec![(action.expression, action.scope, Some(index))],
@@ -280,6 +431,11 @@ impl<'ir> Rebuilder<'ir> {
                 }
             }
             let Some(state) = found else {
+                if is_initial_held && is_drawing && violation_random.is_some() {
+                    return unsupported(
+                        "a violating successor TLC fails to find again from its generator",
+                    );
+                }
                 return unsupported(format!(
                     "no step from state {} is the trace's next",
                     position + 1
@@ -297,16 +453,36 @@ impl<'ir> Rebuilder<'ir> {
         if is_held && is_reducing {
             // TLC finds the violating state among the successors by equality, which sorts it.
             last.iter().for_each(settle_deep);
-        } else if is_in_model(evaluator, &rebuilt)? {
-            settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
-        } else if is_held && is_checked {
-            // A violating state outside the model isn't fingerprinted, but TLC's checks of it
-            // sort what their comparisons reach.
-            check_violation(evaluator, &rebuilt)?;
+        } else {
+            // TLC's rebuild evaluates neither the constraints nor the invariants
+            // (`Tool.getState`): what these checks set of its registers is undone.
+            let registers = evaluator.registers.clone();
+            if is_in_model(evaluator, &rebuilt)? {
+                settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
+            } else if is_held && is_checked {
+                // A violating state outside the model isn't fingerprinted, but TLC's checks of it
+                // sort what their comparisons reach.
+                check_violation(evaluator, &rebuilt)?;
+            }
+            evaluator.registers = registers;
         }
         evaluator.printed.clear();
-        Ok(compose(rebuilt, steps, initial_output, outputs, ending))
+        Ok(Some(Pass {
+            rebuilt,
+            steps,
+            initial_output,
+            outputs,
+        }))
     }
+}
+
+// What a rebuild of a path gives: its states, the action of each step, and what the spec printed
+// finding the first state and then each step.
+struct Pass {
+    rebuilt: Vec<Vec<Value>>,
+    steps: Vec<Option<u32>>,
+    initial_output: Vec<Vec<String>>,
+    outputs: Vec<Vec<Vec<String>>>,
 }
 
 // What TLC's fingerprint of a recovered state sorts, as `settleRecoveredState` gives it: under
@@ -349,14 +525,14 @@ fn settle_recovered(
 // before it prints the trace, all but the last of a violation's and all of a lasso's, and then
 // prints each later state with what finding its step printed. A trace of one state prints only
 // what the initial predicate printed, after it. A violation's trace is rebuilt once more after it
-// is printed.
-fn compose(
-    rebuilt: Vec<Vec<Value>>,
-    steps: Vec<Option<u32>>,
-    initial_output: Vec<Vec<String>>,
-    outputs: Vec<Vec<Vec<String>>>,
-    ending: Ending,
-) -> Trace {
+// is printed, which `again` holds what the spec printed in where it may differ.
+fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace {
+    let Pass {
+        rebuilt,
+        steps,
+        initial_output,
+        outputs,
+    } = pass;
     let count = rebuilt.len();
     if count == 1 {
         return Trace {
@@ -378,14 +554,14 @@ fn compose(
         Ending::Lasso => 0,
     };
     let recovered = count - known;
-    let trace_output = if known > 0 {
-        initial_output
+    let trace_output = match again {
+        Some(again) => again,
+        None if known > 0 => initial_output
             .iter()
             .chain(outputs.iter().flatten())
             .cloned()
-            .collect()
-    } else {
-        Vec::new()
+            .collect(),
+        None => Vec::new(),
     };
     let mut prefix = Some(if recovered > 0 {
         initial_output
@@ -432,11 +608,17 @@ fn find(
 ) -> Result<Option<Vec<Value>>, Unsupported> {
     let target_view = match key {
         Key::View(view) => {
-            let state: Vec<Value> = target.iter().map(|&id| from_store(store, id)).collect();
+            let state: Vec<Value> = target
+                .iter()
+                .map(|&id| from_store(store, id))
+                .collect::<Result<_, _>>()?;
             Some(run(view_of(evaluator, *view, &state))?)
         }
         Key::ViewOfSymmetry(view, group) => {
-            let state: Vec<Value> = target.iter().map(|&id| from_store(store, id)).collect();
+            let state: Vec<Value> = target
+                .iter()
+                .map(|&id| from_store(store, id))
+                .collect::<Result<_, _>>()?;
             let least = run(least_in_orbit(evaluator.ir, group, &state))?;
             Some(run(view_of(evaluator, *view, &least))?)
         }
@@ -604,7 +786,10 @@ pub(crate) fn is_same(store: &Store, target: &[Id], state: &[Value]) -> bool {
 
 // Whether the last state satisfies the model's constraints and, if a step reached it, its action
 // constraints, as TLC's `isInModel` and `isInActions` find before it fingerprints a state.
-fn is_in_model(evaluator: &mut Evaluator<'_>, rebuilt: &[Vec<Value>]) -> Result<bool, Unsupported> {
+pub(crate) fn is_in_model(
+    evaluator: &mut Evaluator<'_>,
+    rebuilt: &[Vec<Value>],
+) -> Result<bool, Unsupported> {
     let ir = evaluator.ir;
     let state = |values: &[Value]| values.iter().cloned().map(Some).collect();
     let last = rebuilt.len() - 1;
@@ -652,16 +837,21 @@ fn check_violation(
         let Some(index) = invariant.root.definition else {
             return unsupported("an invariant without a definition");
         };
-        invariants.push(evaluator.definition(ir.definitions[index as usize]).body);
+        invariants.push((
+            evaluator.definition(ir.definitions[index as usize]).body,
+            None,
+        ));
     }
     invariants.extend(
         ir.model
             .property_invariants
             .iter()
-            .map(|invariant| invariant.root),
+            .zip(&ir.model.property_invariant_scopes)
+            .map(|(invariant, &scope)| (invariant.root, scope)),
     );
-    for invariant in invariants {
-        if !run(evaluator.boolean(invariant, &Context::default()))? {
+    for (invariant, scope) in invariants {
+        let context = run(evaluator.scope_context(scope))?;
+        if !run(evaluator.boolean(invariant, &context))? {
             return Ok(());
         }
     }
@@ -673,7 +863,7 @@ fn check_violation(
     evaluator.level = last as i32;
     for property in &ir.model.action_properties {
         // `[A]_v`: A, or else v unchanged.
-        let context = Context::default();
+        let context = run(evaluator.scope_context(property.scope))?;
         if run(evaluator.boolean(property.action, &context))? {
             continue;
         }
@@ -703,10 +893,13 @@ mod tests {
             })
             .collect();
         compose(
-            vec![Vec::new(); count],
-            vec![None; count],
-            vec![print("i")],
-            outputs,
+            Pass {
+                rebuilt: vec![Vec::new(); count],
+                steps: vec![None; count],
+                initial_output: vec![print("i")],
+                outputs,
+            },
+            None,
             ending,
         )
     }

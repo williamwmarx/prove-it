@@ -4,12 +4,14 @@
 pub mod ast;
 pub mod config;
 pub mod dependencies;
+pub mod describe;
 pub mod dump;
 pub mod environment;
 pub mod errors;
 pub mod eval;
 pub mod hash;
 pub mod instances;
+pub mod java_overrides;
 pub mod json;
 pub mod levels;
 pub mod lexer;

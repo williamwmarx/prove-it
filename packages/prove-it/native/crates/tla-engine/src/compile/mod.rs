@@ -18,6 +18,9 @@ mod bridged;
 mod builtins;
 mod fused;
 pub(crate) mod lazy;
+pub(crate) mod lazy_function;
+
+pub(crate) use lazy_function::Lambda;
 mod nodes;
 mod predicate;
 pub(crate) mod random;
@@ -25,6 +28,7 @@ mod sets;
 mod walker;
 
 pub use walker::ActionOptions;
+pub(crate) use walker::INFINITE_BOUND;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -53,12 +57,15 @@ pub const DISTINCT_SLOT: u32 = 2;
 const PRINT_SLOT: u32 = 3;
 /// TLCGet("diameter"), which only the liveness checker's atoms read.
 pub const DIAMETER_SLOT: u32 = 4;
-const SEARCH_SLOTS: [u32; 5] = [
+/// What reads a TLC register, which nothing sets either, so nothing caches it.
+const REGISTER_SLOT: u32 = 5;
+const SEARCH_SLOTS: [u32; 6] = [
     LEVEL_SLOT,
     NEXT_LEVEL_SLOT,
     DISTINCT_SLOT,
     PRINT_SLOT,
     DIAMETER_SLOT,
+    REGISTER_SLOT,
 ];
 
 const MAXIMUM_MEMO_WIDTH: usize = 6;
@@ -193,6 +200,12 @@ pub struct Compiled {
     pub(crate) is_constant: bool,
     /// Nat, Int, STRING, Seq(S), or a union with one of them, which the engine only tests.
     pub(crate) infinite: Option<&'static str>,
+    /// For Nat, Int or STRING itself: the store's name of it, which a set that holds it as an
+    /// element takes as its value (`tla_values::store::NAT`).
+    pub(crate) infinite_value: Option<i32>,
+    /// For a set built from others, such as `SUBSET S` or `S \X T`: whether one of them may be
+    /// one the engine only tests, which would make it one TLC can't enumerate either.
+    pub(crate) has_infinite_part: bool,
     /// Membership, when the engine can test it without building the set.
     pub(crate) member: Option<Member>,
     /// What TLC evaluates to make the set's value, its parts in TLC's order.
@@ -211,6 +224,11 @@ pub struct Compiled {
 }
 
 impl Compiled {
+    /// Whether the set may be one TLC can't enumerate.
+    pub(crate) fn may_be_infinite(&self) -> bool {
+        self.infinite.is_some() || self.has_infinite_part
+    }
+
     pub fn eval(&self) -> &Eval {
         &self.eval
     }
@@ -230,6 +248,11 @@ impl Compiled {
             .slots
             .iter()
             .any(|&slot| slot == LEVEL_SLOT || slot == NEXT_LEVEL_SLOT || slot == DISTINCT_SLOT)
+    }
+
+    /// Whether the expression sets or reads TLC's registers.
+    pub fn uses_registers(&self) -> bool {
+        self.footprint.slots.contains(&REGISTER_SLOT)
     }
 
     /// Whether the expression reads TLCGet("diameter").
@@ -271,6 +294,8 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         is_boolean: false,
         is_constant: false,
         infinite: None,
+        infinite_value: None,
+        has_infinite_part: false,
         member: None,
         parts: None,
         shape: Shape::Other,
@@ -459,6 +484,12 @@ enum Binding {
 struct Argument {
     expression: NodeId,
     context: Context,
+    /// Whether evaluating it at each use gives the value TLC keeps: TLC evaluates a LET
+    /// definition or an argument once, at its first use, and keeps the value (`LazyValue`),
+    /// where the engine evaluates it at each use. That differs only for one that reads a
+    /// register something writes between its uses, so this holds where it is used once or
+    /// nothing where it is used may write one.
+    is_each_use_alike: bool,
     compiled: RefCell<[Option<Compiled>; 2]>,
     /// For a binding of an instance's scope whose expression closes over that scope: the scope
     /// that binds it, which its context reaches.
@@ -648,6 +679,8 @@ pub struct Compiler<'a> {
     /// How many ENABLED actions the compiler is inside, whose private next state also holds the
     /// variables ENABLED's rewrite of an instance names (`x@ENABLED`), at slots past the state's.
     enabled_depth: u32,
+    /// How many of them are where the engine doesn't evaluate as TLC does, so don't print.
+    silent_enabled_depth: u32,
     /// The variables an ENABLED's next state holds: the state's and those past it.
     variable_extent: usize,
     /// The name EXCEPT binds `@` to: its text, or one no text has if the IR holds none.
@@ -661,6 +694,9 @@ pub struct Compiler<'a> {
     /// The bodies of recursive functions an action applies, each walked once for what the walk
     /// knows where it applies it (`walker::WalkedFunction`).
     walked_functions: Vec<walker::WalkedFunction>,
+    /// The bodies of RECURSIVE operators an action applies, each walked once likewise
+    /// (`walker::WalkedOperator`).
+    walked_operators: Vec<walker::WalkedOperator>,
     // What cached compiles read of fixed points that hadn't settled when they compiled.
     provisional: HashMap<u64, Vec<Rc<FixedPoint>>>,
     entry_count: u64,
@@ -673,6 +709,26 @@ pub struct Compiler<'a> {
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
     pub is_ranking: bool,
+    /// Whether a variable is assigned a set TLC keeps lazy, and whether a set read out of the
+    /// state is enumerated in TLC's order: under a VIEW TLC never normalizes the first, so the
+    /// second would come in an order the store doesn't keep.
+    pub is_lazy_set_held: bool,
+    pub is_held_set_enumerated: bool,
+    /// Whether the caller reports what the search finds itself (`Settings::is_violation_reported`),
+    /// as the native checker does: only then does the engine follow what the interpreter wouldn't
+    /// take a search over with, such as TLC's registers, and otherwise declines it as the
+    /// TypeScript engine does.
+    pub is_native: bool,
+    /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
+    pub workers: usize,
+    /// Whether anything compiled may build a function TLC keeps lazy, which only the machine that
+    /// built it can apply.
+    pub is_lambda_built: bool,
+    /// Whether TLCCache caches anything compiled whose value depends on what TLC evaluates first.
+    pub is_cached: bool,
+    /// Whether anything compiled applies TLCCache, whose cache is the machine's own, where TLC
+    /// keeps one for every worker.
+    pub is_tlc_cache_used: bool,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
 }
@@ -722,6 +778,7 @@ impl<'a> Compiler<'a> {
             global_function_scopes: HashMap::new(),
             int_slots: HashSet::new(),
             enabled_depth: 0,
+            silent_enabled_depth: 0,
             variable_extent: ir.variables.len(),
             at: ir
                 .texts
@@ -732,6 +789,7 @@ impl<'a> Compiler<'a> {
             reads: None,
             leading_guards: HashMap::new(),
             walked_functions: Vec::new(),
+            walked_operators: Vec::new(),
             provisional: HashMap::new(),
             entry_count: 0,
             specialisations: 0,
@@ -739,6 +797,13 @@ impl<'a> Compiler<'a> {
             is_diameter_read: false,
             is_printing: false,
             is_ranking: false,
+            is_lazy_set_held: false,
+            is_held_set_enumerated: false,
+            is_native: false,
+            workers: 1,
+            is_lambda_built: false,
+            is_cached: false,
+            is_tlc_cache_used: false,
             scope_contexts: HashMap::new(),
         }
     }
@@ -770,22 +835,7 @@ impl<'a> Compiler<'a> {
         root: Root,
         can_print: bool,
     ) -> Result<Compiled, CompileError> {
-        let context = Context {
-            can_print,
-            ..Context::ROOT
-        };
-        match root {
-            Root::Definition(index) => {
-                let definition = self.ir.definitions[index as usize];
-                self.wrap_compile(|compiler| {
-                    compiler.compile_definition_reference(definition, &context)
-                })
-            }
-            Root::Expression(node) => self.compile(node, &context),
-            Root::Unchanged(node) => {
-                self.wrap_compile(|compiler| compiler.compile_unchanged(node, &context))
-            }
-        }
+        self.compile_scoped(root, None, can_print)
     }
 
     // --- the IR ---
@@ -807,7 +857,7 @@ impl<'a> Compiler<'a> {
     fn units(&mut self, text: TextId) -> Vec<u16> {
         let ir = self.ir;
         self.texts[text as usize]
-            .get_or_insert_with(|| ir.texts[text as usize].encode_utf16().collect())
+            .get_or_insert_with(|| ir.get_text_units(text))
             .clone()
     }
 
@@ -935,7 +985,7 @@ impl<'a> Compiler<'a> {
     // Caches a costly expression by the ids it reads, and evaluates one that reads nothing only
     // once.
     fn cached(&mut self, compiled: Compiled) -> Compiled {
-        if compiled.is_printing() || self.options.is_memo_off {
+        if compiled.is_printing() || compiled.uses_registers() || self.options.is_memo_off {
             return compiled;
         }
         let width = compiled.footprint.width();
@@ -1097,7 +1147,7 @@ impl<'a> Compiler<'a> {
                 // A definition compiled where it may print may be cached, then named where it
                 // may not.
                 if !context.can_print && compiled.is_printing() {
-                    return unsupported("Print where TLC evaluates it otherwise");
+                    return self.decline_print("Print where TLC evaluates it otherwise");
                 }
                 Ok(if compiled.is_costly || compiled.footprint.width() == 0 {
                     self.cached(compiled)
@@ -1108,6 +1158,19 @@ impl<'a> Compiler<'a> {
         };
         self.depth -= 1;
         result
+    }
+
+    // A Print where the engine doesn't evaluate as TLC does. ENABLED evaluates its action until
+    // the first successor, which often passes no Print: one inside an ENABLED that doesn't print
+    // stops the search only where it is evaluated.
+    fn decline_print(&self, what: &str) -> Compiling<Compiled> {
+        if self.silent_enabled_depth == 0 {
+            return unsupported(what);
+        }
+        Ok(leaf(
+            eval(|_| Err(Bail("Print inside ENABLED"))),
+            Footprint::default(),
+        ))
     }
 
     // Whether the engine evaluates the operands of an expression exactly when TLC does, as long
@@ -1128,11 +1191,14 @@ impl<'a> Compiler<'a> {
             | NodeKind::Record(_)
             | NodeKind::FieldAccess { .. } => true,
             // TLC evaluates the body once for each element of the set, in the set's order, which
-            // is the engine's where TLC normalizes the set. The engine evaluates the set of an
-            // inner bound once for each element of the outer one, where TLC evaluates it once.
+            // is the engine's where TLC normalizes the set. Prints under several bounds stay
+            // TLC's to check.
             NodeKind::SetMap { bounds, .. } => {
                 matches!(&bounds[..], [bound] if !self.may_be_lazy(bound.set, &mut HashSet::new()))
             }
+            // TLC evaluates the body for each element in the order it enumerates the set, until
+            // one decides the quantifier, as the engine does for one bound where the body prints.
+            NodeKind::Forall { bounds, .. } | NodeKind::Exists { bounds, .. } => bounds.len() == 1,
             NodeKind::Apply { name, args } => {
                 if name.is_local
                     && let Some(found) = lookup(&context.scope, name.text)
@@ -1149,7 +1215,9 @@ impl<'a> Compiler<'a> {
                     }
                     Resolution::Builtin(index) => match self.builtin_name(index) {
                         "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCEval" | "="
-                        | "#" | "~" => true,
+                        | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCFP" | "TLCCache"
+                        | "Assert" | "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize"
+                        | "ndJsonDeserialize" => true,
                         // TLC evaluates the operands, then builds the set, which the engine
                         // builds the same way unless an operand is a set TLC keeps lazy.
                         "\\cup" | "\\cap" | "\\" | "UNION" => !args
@@ -1174,8 +1242,9 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    // Whether evaluating an expression may print, draw or set a TLC register, itself or through
-    // the definitions it names. An operator bound locally may do anything.
+    // Whether evaluating an expression may print, draw, set a TLC register, or write or read a
+    // file, itself or through the definitions it names. An operator bound locally may do
+    // anything.
     fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         if !seen.insert(node) {
             return false;
@@ -1186,7 +1255,15 @@ impl<'a> Compiler<'a> {
                 match name.resolution {
                     Resolution::Builtin(index) => matches!(
                         self.builtin_name(index),
-                        "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCSet"
+                        "Print"
+                            | "PrintT"
+                            | "RandomElement"
+                            | "RandomSubset"
+                            | "TLCSet"
+                            | "JsonSerialize"
+                            | "ndJsonSerialize"
+                            | "JsonDeserialize"
+                            | "ndJsonDeserialize"
                     ),
                     Resolution::Definition(index) => self.may_have_effect(
                         self.definition(self.ir.definitions[index as usize]).body,
@@ -1350,14 +1427,23 @@ impl<'a> Compiler<'a> {
             Binding::Argument(argument) => {
                 let is_primed = context.is_primed || argument.context.is_primed;
                 let index = usize::from(is_primed);
-                if let Some(known) = &argument.compiled.borrow()[index] {
-                    return Ok(known.clone());
+                let known = argument.compiled.borrow()[index].clone();
+                let compiled = match known {
+                    Some(known) => known,
+                    None => {
+                        let compiled = self.compile(
+                            argument.expression,
+                            &argument_context(argument).primed(is_primed),
+                        )?;
+                        argument.compiled.borrow_mut()[index] = Some(compiled.clone());
+                        compiled
+                    }
+                };
+                if !argument.is_each_use_alike && compiled.uses_registers() {
+                    return unsupported(
+                        "a definition or an argument that reads a register, evaluated more than once",
+                    );
                 }
-                let compiled = self.compile(
-                    argument.expression,
-                    &argument_context(argument).primed(is_primed),
-                )?;
-                argument.compiled.borrow_mut()[index] = Some(compiled.clone());
                 Ok(compiled)
             }
             Binding::Value { compiled, lazy } => {
@@ -1535,7 +1621,8 @@ impl<'a> Compiler<'a> {
 
     // How many times an expression names a local name, or `None` where it may evaluate a name
     // more than once each time it is evaluated, under a binder, or where it isn't known.
-    fn count_uses(&self, node: NodeId, name: TextId) -> Option<u32> {
+    // `users` names the operators that may use the name in their bodies.
+    fn count_uses(&self, node: NodeId, name: TextId, users: &[TextId]) -> Option<u32> {
         match self.node(node).1 {
             NodeKind::Number(_)
             | NodeKind::WideNumber(_)
@@ -1548,26 +1635,35 @@ impl<'a> Compiler<'a> {
                 name: applied,
                 args,
             } => {
+                // A later definition of the LET may use the name, as often as it is applied.
+                if applied.is_local && users.contains(&applied.text) {
+                    return None;
+                }
                 let own = u32::from(applied.is_local && applied.text == name);
-                Some(own + self.sum_uses(name, args.iter().copied())?)
+                Some(own + self.sum_uses(name, users, args.iter().copied())?)
             }
             NodeKind::And(operands)
             | NodeKind::Or(operands)
             | NodeKind::SetEnumeration(operands)
             | NodeKind::Tuple(operands)
-            | NodeKind::Product(operands) => self.sum_uses(name, operands.iter().copied()),
-            NodeKind::Record(fields) => self.sum_uses(name, fields.iter().map(|&(_, field)| field)),
-            NodeKind::FieldAccess { record, .. } => self.count_uses(*record, name),
-            NodeKind::FunctionApplication { function, args } => {
-                self.sum_uses(name, std::iter::once(*function).chain(args.iter().copied()))
+            | NodeKind::Product(operands) => self.sum_uses(name, users, operands.iter().copied()),
+            NodeKind::Record(fields) => {
+                self.sum_uses(name, users, fields.iter().map(|&(_, field)| field))
             }
+            NodeKind::FieldAccess { record, .. } => self.count_uses(*record, name, users),
+            NodeKind::FunctionApplication { function, args } => self.sum_uses(
+                name,
+                users,
+                std::iter::once(*function).chain(args.iter().copied()),
+            ),
             NodeKind::If {
                 condition,
                 consequent,
                 alternative,
-            } => self.sum_uses(name, [*condition, *consequent, *alternative]),
+            } => self.sum_uses(name, users, [*condition, *consequent, *alternative]),
             NodeKind::Case { arms, other } => self.sum_uses(
                 name,
+                users,
                 arms.iter()
                     .flat_map(|&(guard, arm)| [guard, arm])
                     .chain(*other),
@@ -1576,33 +1672,93 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn sum_uses(&self, name: TextId, nodes: impl IntoIterator<Item = NodeId>) -> Option<u32> {
-        nodes
-            .into_iter()
-            .try_fold(0, |count, node| Some(count + self.count_uses(node, name)?))
+    fn sum_uses(
+        &self,
+        name: TextId,
+        users: &[TextId],
+        nodes: impl IntoIterator<Item = NodeId>,
+    ) -> Option<u32> {
+        nodes.into_iter().try_fold(0, |count, node| {
+            Some(count + self.count_uses(node, name, users)?)
+        })
     }
 
+    // Whether evaluating an expression may write a TLC register: it applies TLCSet or
+    // TLCGetAndSet, a definition or a name of `scope` that may, or an operator it can't see the
+    // body of.
+    fn may_write_register(
+        &self,
+        node: NodeId,
+        scope: &Option<Rc<Scope>>,
+        seen: &mut HashSet<NodeId>,
+    ) -> bool {
+        let (id, kind) = self.node(node);
+        if !seen.insert(id) {
+            return false;
+        }
+        let resolution = match kind {
+            NodeKind::Apply { name, .. } | NodeKind::Identifier(name) if !name.is_local => {
+                Some(name.resolution)
+            }
+            // A name the scope doesn't bind is a definition of the LET being bound, which is
+            // scanned itself.
+            NodeKind::Identifier(name) => {
+                return lookup(scope, name.text)
+                    .map(|found| match &found.binding {
+                        Binding::Slot(_) => false,
+                        Binding::Argument(argument) => self.may_write_register(
+                            argument.expression,
+                            &argument.context.scope,
+                            seen,
+                        ),
+                        _ => true,
+                    })
+                    .unwrap_or_default();
+            }
+            NodeKind::Apply { .. } | NodeKind::OperatorReference(_) => return true,
+            _ => None,
+        };
+        let is_writing = match resolution {
+            Some(Resolution::Builtin(index)) => {
+                matches!(self.builtin_name(index), "TLCSet" | "TLCGetAndSet")
+            }
+            Some(Resolution::Definition(index)) => self.may_write_register(
+                self.definition(self.ir.definitions[index as usize]).body,
+                &None,
+                seen,
+            ),
+            _ => false,
+        };
+        is_writing
+            || kind
+                .children()
+                .into_iter()
+                .any(|child| self.may_write_register(child, scope, seen))
+    }
+
+    // A LET's definitions, those an INSTANCE in it copies in among them.
     fn bind_let_definitions(
         &mut self,
-        instances: u32,
         definitions: &[NodeId],
         body: NodeId,
         context: &Context,
     ) -> Compiling<Context> {
-        if instances > 0 {
-            return unsupported("INSTANCE in LET");
-        }
         let mut scope = context.scope.clone();
         for (position, &node) in definitions.iter().enumerate() {
             let definition = self.definition(node);
             // A definition the rest of the LET names once is evaluated once, as TLC evaluates
             // it, so it may print.
-            let uses = definitions[position + 1..]
+            let later = &definitions[position + 1..];
+            let users: Vec<TextId> = later
+                .iter()
+                .map(|&later| self.definition(later).name)
+                .collect();
+            let uses = later
                 .iter()
                 .map(|&later| self.definition(later).body)
                 .chain([body])
                 .try_fold(0, |count, root| {
-                    Some(count + self.count_uses(root, definition.name)?)
+                    Some(count + self.count_uses(root, definition.name, &users)?)
                 });
             let definition_context = Context {
                 scope: scope.clone(),
@@ -1649,6 +1805,10 @@ impl<'a> Compiler<'a> {
                         definition.name,
                         Binding::Argument(Rc::new(Argument {
                             expression: definition.body,
+                            is_each_use_alike: uses.is_some_and(|count| count <= 1)
+                                || !definitions.iter().chain([&body]).any(|&root| {
+                                    self.may_write_register(root, &scope, &mut HashSet::new())
+                                }),
                             context: definition_context,
                             compiled: RefCell::new([None, None]),
                             own_scope: RefCell::new(Weak::new()),
@@ -1681,10 +1841,12 @@ impl<'a> Compiler<'a> {
     // --- operator application ---
 
     // Binds the parameters of an operator to its arguments.
+    // `body` is the operator's body, which says how often it uses each parameter.
     fn bind_arguments(
         &mut self,
         params: &[Param],
         args: &[NodeId],
+        body: Option<NodeId>,
         caller: &Context,
         callee: Context,
     ) -> Compiling<Context> {
@@ -1699,6 +1861,11 @@ impl<'a> Compiler<'a> {
             } else {
                 Binding::Argument(Rc::new(Argument {
                     expression: argument,
+                    is_each_use_alike: body.is_some_and(|body| {
+                        self.count_uses(body, param.name, &[])
+                            .is_some_and(|count| count <= 1)
+                            || !self.may_write_register(body, &callee.scope, &mut HashSet::new())
+                    }),
                     context: argument_context.clone(),
                     compiled: RefCell::new([None, None]),
                     own_scope: RefCell::new(Weak::new()),
@@ -1799,7 +1966,8 @@ impl<'a> Compiler<'a> {
                     expanding: context.expanding_with(node),
                     ..context.global(context.can_print)
                 };
-                let callee = self.bind_arguments(params, args, context, base)?;
+                let callee =
+                    self.bind_arguments(params, args, Some(definition.body), context, base)?;
                 let compiled = self.compile(definition.body, &callee)?;
                 return Ok(self.cached(compiled));
             }
@@ -1855,7 +2023,11 @@ impl<'a> Compiler<'a> {
         }
         let base =
             operator_context(operator).primed(context.is_primed || operator.context.is_primed);
-        let callee = self.bind_arguments(&operator.params, args, context, base)?;
+        let body = match operator.body {
+            OperatorBody::Node(body) => Some(body),
+            OperatorBody::Builtin(_) => None,
+        };
+        let callee = self.bind_arguments(&operator.params, args, body, context, base)?;
         let compiled = match operator.body {
             OperatorBody::Node(body) => self.compile(body, &callee)?,
             OperatorBody::Builtin(index) => {
@@ -2426,11 +2598,9 @@ impl<'a> Compiler<'a> {
         let name = match self.node(function).1 {
             NodeKind::Identifier(name) => *name,
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let inner = self.bind_let_definitions(*instances, definitions, *body, context)?;
+                let inner = self.bind_let_definitions(definitions, *body, context)?;
                 return self.get_applied_recursive_function(*body, &inner);
             }
             NodeKind::Apply { .. } => {

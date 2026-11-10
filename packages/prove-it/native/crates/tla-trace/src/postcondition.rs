@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use tla_ir::{DefinitionForm, ScopeBinding};
 
+use crate::alias::Alias;
 use crate::eval::{Context, Evaluator, Runtime};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, Value, set_of, sorted_function};
@@ -33,10 +34,11 @@ pub struct Stats {
 }
 
 /// A violation's trace: its states with the actions of their steps, and for a lasso the state its
-/// cycle starts at with the position in the model's actions of the step back to it.
+/// cycle starts at with the position in the model's actions of the step back to it, or none where
+/// TLC holds no action for it, as for a lasso that stutters at its initial state.
 pub struct CounterExample<'a> {
     pub trace: &'a Trace,
-    pub cycle: Option<(usize, u32)>,
+    pub cycle: Option<(usize, Option<u32>)>,
 }
 
 /// What TLC finds of a postcondition, and what it printed as TLC evaluated it.
@@ -50,8 +52,11 @@ pub struct Checked {
 pub enum Verdict {
     Holds,
     False,
-    /// The message of the error TLC reports evaluating it.
-    Failed(String),
+    /// The message of the error TLC reports evaluating it, and as -tool nests it.
+    Failed {
+        text: String,
+        tool_text: String,
+    },
 }
 
 fn unsupported<T>(reason: &str) -> Result<T, Unsupported> {
@@ -65,6 +70,15 @@ impl Rebuilder<'_> {
         index: usize,
         inputs: &PostconditionInputs<'_>,
     ) -> Result<Checked, Unsupported> {
+        // TLC builds a safety violation's counterexample from the ALIAS of each state, the last
+        // state's with itself as the next (`Worker.doPostCondition`, `evalAlias`), and a
+        // liveness checker's lasso from the states.
+        let aliases = match &inputs.counter_example {
+            Some(counter_example) if counter_example.cycle.is_none() => {
+                self.alias(counter_example.trace, None, false)?
+            }
+            _ => None,
+        };
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         let Some(definition) = ir
@@ -75,12 +89,6 @@ impl Rebuilder<'_> {
         else {
             return unsupported("the IR doesn't define");
         };
-        // The module the postcondition is defined in, the spec's.
-        let module = ir.nodes.arena[evaluator
-            .definition(ir.definitions[definition as usize])
-            .body as usize]
-            .range
-            .map(|range| range.module);
         // The values TLC binds the parameters of each action of the trace's steps to.
         let mut parameters = HashMap::new();
         if let Some(counter_example) = &inputs.counter_example {
@@ -90,7 +98,7 @@ impl Rebuilder<'_> {
                 .iter()
                 .skip(1)
                 .map(|state| state.action)
-                .chain(counter_example.cycle.map(|(_, closing)| Some(closing)));
+                .chain(counter_example.cycle.map(|(_, closing)| closing));
             for position in positions.flatten() {
                 if let (Some(action), None) = (
                     ir.model.actions.get(position as usize),
@@ -106,7 +114,7 @@ impl Rebuilder<'_> {
             Value::record(
                 fields
                     .into_iter()
-                    .map(|(name, value)| (evaluator.text_of(name.encode_utf16().collect()), value))
+                    .map(|(name, value)| (evaluator.counterexample_field(name), value))
                     .collect(),
             )
         };
@@ -138,13 +146,20 @@ impl Rebuilder<'_> {
             .chain([("worker", Value::Int(0))])
             .collect(),
         ))?;
-        // The named registers hold each `_POSSIBLE` count TLC took, by name.
+        // The named registers, each the tuple of one worker's value: those TLCSet set, and each
+        // `_POSSIBLE` count TLC took, by name.
         let counted: Vec<_> = inputs
             .possible
             .iter()
             .filter(|(_, count)| *count >= 0)
             .collect();
-        let named = if counted.is_empty() {
+        let (mut names, mut values): (Vec<_>, Vec<_>) = evaluator
+            .registers
+            .named
+            .iter()
+            .map(|(name, value)| (name.clone(), Value::tuple(vec![value.clone()])))
+            .unzip();
+        let possible_counts = if counted.is_empty() {
             run(sorted_function(Vec::new(), Vec::new(), Class::Plain))?
         } else {
             let mut counts = Vec::with_capacity(counted.len());
@@ -154,14 +169,13 @@ impl Rebuilder<'_> {
                 };
                 counts.push(count);
             }
-            let names = counted.iter().map(|(name, _)| text(name)).collect();
-            let counts = run(sorted_function(names, counts, Class::Plain))?;
-            run(sorted_function(
-                vec![text("s:_possible")],
-                vec![Value::tuple(vec![counts])],
-                Class::Plain,
-            ))?
+            let counted_names = counted.iter().map(|(name, _)| text(name)).collect();
+            let counts = run(sorted_function(counted_names, counts, Class::Plain))?;
+            names.push(text("s:_possible"));
+            values.push(Value::tuple(vec![counts.clone()]));
+            counts
         };
+        let named = run(sorted_function(names, values, Class::Plain))?;
         let counter_example = match &inputs.counter_example {
             None => run(record(vec![
                 ("action", Value::empty_set()),
@@ -174,6 +188,26 @@ impl Rebuilder<'_> {
                     .iter()
                     .enumerate()
                     .map(|(position, state)| {
+                        if let Some(Alias::Record(fields)) =
+                            aliases.as_ref().map(|aliases| &aliases[position])
+                        {
+                            if fields.iter().any(|(name, _)| name == "_ALIASEvalError") {
+                                return unsupported("of a model whose ALIAS fails");
+                            }
+                            let fields = fields
+                                .iter()
+                                .map(|(name, value)| {
+                                    (
+                                        evaluator.text_of(name.encode_utf16().collect()),
+                                        value.clone(),
+                                    )
+                                })
+                                .collect();
+                            return Ok(Value::tuple(vec![
+                                Value::Int(position as i32 + 1),
+                                run(Value::record(fields))?,
+                            ]));
+                        }
                         let fields = ir
                             .tlc_order
                             .iter()
@@ -201,19 +235,11 @@ impl Rebuilder<'_> {
                     else {
                         return unsupported("of a step whose action the trace lacks");
                     };
-                    let label = &ir.texts[action.label as usize];
-                    // A label names an action with the values of its parameters, which the
-                    // record holds apart.
-                    let name = label.split(['(', ' ']).next().unwrap_or(label);
-                    let Some(range) = ir.nodes.arena[action.expression as usize].range else {
-                        return unsupported("of an action without a range");
+                    // TLC records the name and location its action holds (`TLCStateInfo`).
+                    let name = &ir.texts[action.name as usize];
+                    let Some(range) = action.location else {
+                        return unsupported("of an action without a location");
                     };
-                    // TLC records an action another module defines, as through an INSTANCE, as
-                    // the unnamed action of the statement that brings it in, which the IR
-                    // doesn't carry.
-                    if Some(range.module) != module {
-                        return unsupported("of an action another module defines");
-                    }
                     let location = run(record(vec![
                         ("beginLine", Value::Int(range.start_line)),
                         ("beginColumn", Value::Int(range.start_column)),
@@ -247,11 +273,25 @@ impl Rebuilder<'_> {
                     let (Some(last), Some(first)) = (states.last(), states.get(start)) else {
                         return unsupported("of a lasso outside its trace");
                     };
-                    steps.push(Value::tuple(vec![
-                        last.clone(),
-                        action(Some(closing))?,
-                        first.clone(),
-                    ]));
+                    // TLC records a step it holds no action for as `Action.UNKNOWN`'s: unnamed, at
+                    // the null location.
+                    let closing = match closing {
+                        Some(closing) => action(Some(closing))?,
+                        None => {
+                            let location = run(record(vec![
+                                ("beginLine", Value::Int(0)),
+                                ("beginColumn", Value::Int(0)),
+                                ("endLine", Value::Int(0)),
+                                ("endColumn", Value::Int(0)),
+                                ("module", text("--TLA+ BUILTINS--")),
+                            ]))?;
+                            run(record(vec![
+                                ("name", text("UnnamedAction")),
+                                ("location", location),
+                            ]))?
+                        }
+                    };
+                    steps.push(Value::tuple(vec![last.clone(), closing, first.clone()]));
                 }
                 run(record(vec![
                     ("action", run(set_of(steps))?),
@@ -271,6 +311,7 @@ impl Rebuilder<'_> {
             named,
             stats,
             counter_example,
+            possible_counts,
         });
         let result = evaluator.evaluate(body, &Context::default());
         evaluator.runtime = None;
@@ -280,7 +321,10 @@ impl Rebuilder<'_> {
             Ok(Value::Bool(false)) => Verdict::False,
             Ok(_) => return unsupported("that isn't a boolean"),
             Err(error) => match error.message {
-                Some(message) => Verdict::Failed(message.text),
+                Some(message) => Verdict::Failed {
+                    tool_text: crate::failure::nested(&message),
+                    text: message.text,
+                },
                 None => return Err(Unsupported(format!("a postcondition: {}", error.reason))),
             },
         };
@@ -295,33 +339,20 @@ fn action_parameters<'ir>(
     action: &tla_ir::Action,
 ) -> Result<Vec<(&'ir str, Value)>, Unsupported> {
     let ir = evaluator.ir;
-    let label = &ir.texts[action.label as usize];
-    let Some((name, _)) = label.split_once('(') else {
-        return Ok(Vec::new());
+    // The operator TLC split the action from, whose parameters the action's scope binds. None
+    // stands for an action of no operator, which has no parameters, or for an operator a LET
+    // defines, which a label naming the values of parameters gives away.
+    let Some(index) = action.definition else {
+        return if ir.texts[action.label as usize].contains('(') {
+            unsupported("of an action of an operator a LET defines")
+        } else {
+            Ok(Vec::new())
+        };
     };
-    let operators: Vec<_> = ir
-        .definitions
-        .iter()
-        .map(|&node| evaluator.definition(node))
-        .filter(|definition| {
-            &*ir.texts[definition.name as usize] == name
-                && matches!(definition.form, DefinitionForm::Operator(_))
-        })
-        .collect();
-    // Where several operators share the name, as in a LET, the action's is the one whose body it
-    // is.
-    let operator = match operators[..] {
-        [operator] => operator,
-        _ => match operators
-            .iter()
-            .find(|definition| definition.body == action.expression)
-        {
-            Some(operator) => operator,
-            None => return unsupported("of an action whose operator the IR doesn't single out"),
-        },
-    };
-    let DefinitionForm::Operator(params) = &operator.form else {
-        return unsupported("of an action whose operator the IR doesn't single out");
+    let DefinitionForm::Operator(params) =
+        &evaluator.definition(ir.definitions[index as usize]).form
+    else {
+        return unsupported("of an action of a function definition");
     };
     let mut bound = Vec::with_capacity(params.len());
     for param in params {

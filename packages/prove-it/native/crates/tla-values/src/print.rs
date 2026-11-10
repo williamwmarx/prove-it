@@ -3,11 +3,12 @@
 //! [`is_printable`] says whether that is TLC's text, since the store forgets how TLC built a
 //! value, such as an interval or a record's written field order, which TLC prints.
 
+use crate::store::Outcome;
 use crate::store::{
-    KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, TRUE,
-    is_function_kind,
+    KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING,
+    KIND_TUPLE, TRUE, infinite_set_name, is_function_kind,
 };
-use crate::{Id, Store};
+use crate::{Bail, Id, Store};
 
 /// Whether TLC writes the value an id holds as [`format_value`] does: whether its text doesn't
 /// depend on how TLC built it, which the store forgets. It is false for a value holding a set of
@@ -28,8 +29,11 @@ pub fn is_printable_normalized(store: &Store, id: Id) -> bool {
 
 fn is_written_as_held(store: &Store, id: Id, is_normalized: bool) -> bool {
     let kind = store.kind_of(id);
-    if kind != KIND_SET && kind != KIND_TUPLE && kind != KIND_FUNCTION {
-        return true;
+    match kind {
+        KIND_BOOL | KIND_INT | KIND_STRING | KIND_MODEL | KIND_INFINITE_SET => return true,
+        KIND_SET | KIND_TUPLE | KIND_FUNCTION => {}
+        // TLC prints a function it keeps lazy as written.
+        _ => return false,
     }
     let size = store.size_of(id);
     let part = |index: u32| {
@@ -88,34 +92,37 @@ fn is_written_as_held(store: &Store, id: Id, is_normalized: bool) -> bool {
 /// `<<1, 2>>`, `[f |-> 1]` for a function whose keys are all field names, and `(1 :> 2 @@ 3 :> 4)`
 /// for any other function. A string escapes `"`, `\\`, tab, newline, form feed and carriage
 /// return, as `StringValue.PrintVersion` does. It is TLC's text where [`is_printable`] holds.
-pub fn format_value(store: &Store, id: Id) -> String {
+pub fn format_value(store: &Store, id: Id) -> Outcome<String> {
     let mut text = Vec::new();
-    write_value(store, id, &mut text);
-    String::from_utf16_lossy(&text)
+    write_value(store, id, &mut text)?;
+    Ok(String::from_utf16_lossy(&text))
 }
 
-/// [`format_value`] appended to UTF-16 text, the store's form of a string.
-pub fn write_value(store: &Store, id: Id, out: &mut Vec<u16>) {
+/// [`format_value`] appended to UTF-16 text, the store's form of a string. A function TLC keeps
+/// lazy, which TLC prints as written, isn't [`is_printable`], and fails.
+pub fn write_value(store: &Store, id: Id, out: &mut Vec<u16>) -> Outcome<()> {
     let push = |out: &mut Vec<u16>, text: &str| out.extend(text.encode_utf16());
     let size = store.size_of(id);
     let join = |out: &mut Vec<u16>,
                 open: &str,
                 separator: &str,
                 close: &str,
-                part: &dyn Fn(&mut Vec<u16>, u32)| {
+                part: &dyn Fn(&mut Vec<u16>, u32) -> Outcome<()>| {
         push(out, open);
         for index in 0..size {
             if index > 0 {
                 push(out, separator);
             }
-            part(out, index);
+            part(out, index)?;
         }
         push(out, close);
+        Ok(())
     };
     match store.kind_of(id) {
         KIND_BOOL => push(out, if id == TRUE { "TRUE" } else { "FALSE" }),
         KIND_INT => push(out, &store.int_of(id).to_string()),
         KIND_MODEL => out.extend_from_slice(store.text_of(id)),
+        KIND_INFINITE_SET => push(out, infinite_set_name(store.infinite_name_of(id))),
         KIND_STRING => {
             out.push(u16::from(b'"'));
             for &unit in store.text_of(id) {
@@ -136,12 +143,12 @@ pub fn write_value(store: &Store, id: Id, out: &mut Vec<u16>) {
             out.push(u16::from(b'"'));
         }
         KIND_SET => join(out, "{", ", ", "}", &|out, index| {
-            write_value(store, store.element_at(id, index), out);
-        }),
+            write_value(store, store.element_at(id, index), out)
+        })?,
         KIND_TUPLE => join(out, "<<", ", ", ">>", &|out, index| {
-            write_value(store, store.get_range_value(id, index), out);
-        }),
-        _ => {
+            write_value(store, store.get_range_value(id, index), out)
+        })?,
+        KIND_FUNCTION => {
             // A function's keys are interned; only a tuple's may not be.
             let keys: Vec<Id> = (0..size)
                 .filter_map(|index| store.peek_key(id, index))
@@ -159,13 +166,19 @@ pub fn write_value(store: &Store, id: Id, out: &mut Vec<u16>) {
                 if is_record {
                     out.extend_from_slice(store.text_of(key));
                 } else {
-                    write_value(store, key, out);
+                    write_value(store, key, out)?;
                 }
                 push(out, arrow);
-                write_value(store, store.get_range_value(id, index), out);
-            });
+                write_value(store, store.get_range_value(id, index), out)
+            })?;
+        }
+        _ => {
+            return Err(Bail(
+                "unsupported: printing a function TLC keeps lazy, as TLC writes it",
+            ));
         }
     }
+    Ok(())
 }
 
 /// `isFieldName` of `values.ts` (`FcnRcdValue.isName`) on ASCII text: letters, digits and `_`,
@@ -234,7 +247,7 @@ mod tests {
             (function, r#"(0 :> "a" @@ 2 :> {})"#),
         ] {
             assert!(is_printable(&store, id), "{expected}");
-            assert_eq!(format_value(&store, id), expected);
+            assert_eq!(format_value(&store, id).unwrap(), expected);
         }
     }
 
@@ -278,7 +291,11 @@ mod tests {
         let functions = store.set_of(&pairs).expect("a set");
         let nested = store.tuple_of(&[interval]);
         for id in [interval, record, spaced, power_set, functions, nested] {
-            assert!(!is_printable(&store, id), "{}", format_value(&store, id));
+            assert!(
+                !is_printable(&store, id),
+                "{}",
+                format_value(&store, id).unwrap()
+            );
         }
         // Normalized, a record's fields are sorted, which is the order the store keeps.
         assert!(is_printable_normalized(&store, record));
@@ -286,7 +303,7 @@ mod tests {
             assert!(
                 !is_printable_normalized(&store, id),
                 "{}",
-                format_value(&store, id)
+                format_value(&store, id).unwrap()
             );
         }
     }

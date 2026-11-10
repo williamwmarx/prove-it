@@ -55,6 +55,68 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("searches strings with a lone surrogate, which TLC computes at startup", async () => {
+    // Java's strings are UTF-16, as JavaScript's are: Tail("😀a") is half the emoji and "a".
+    const body = [
+      "EXTENDS Sequences",
+      "VARIABLE x",
+      'Lone == Tail("😀a")',
+      "Init == x = Lone",
+      'Next == x\' \\in {Lone, SubSeq("😀b", 1, 1), "b"}',
+    ];
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
+  it("assigns each subset of a set to x' \\subseteq S, as x' \\in SUBSET S", async () => {
+    // TLC's test-model/SubseteqNextState.tla. The TypeScript engine leaves it to the interpreter.
+    const body = [
+      "VARIABLES x, y",
+      "Init == x \\subseteq {1, 2} /\\ y = {1, 2, 3}",
+      "Next == UNCHANGED y /\\ x' \\subseteq y'",
+    ];
+    const config = "INIT Init\nNEXT Next";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
+  it("intersects and subtracts sets TLC only tests for membership, as TLC enumerates them", async () => {
+    // From TLC's test-model/suite/test8.tla, which the TypeScript engine leaves to the interpreter.
+    const body = [
+      "EXTENDS Integers, Sequences",
+      "VARIABLE x",
+      "Init == x \\in {1, 2, 3, 4} \\cap {i \\in Int : i > 2}",
+      "Next ==",
+      "  /\\ x' \\in ({1, 2, 3, 4} \\ {i \\in Int : i > 2}) \\cup {x}",
+      "  /\\ -5 \\notin {-5} \\ Int",
+      "  /\\ <<1, 2>> \\in Seq({1, 2, 3}) \\cap Seq({0, 1, 2})",
+      "  /\\ <<1, 2>> \\notin Seq({1, 2, 3}) \\ Seq({1, 2})",
+    ];
+    const config = "INIT Init\nNEXT Next";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
+  it("searches an invariant that reads TLCExt's Trace only once it fails", async () => {
+    // As ewd840/EWD840_json does: the second disjunct, which serializes the trace, is never reached.
+    const body = [
+      "EXTENDS Naturals, Sequences, TLCExt",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == x < 3 /\\ x' = x + 1",
+      "Inv == x < 10 \\/ Len(Trace) > 0",
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("tests guards fused in place: f[k] = c, f[k] = j, x = c and membership", async () => {
     const body = [
       "CONSTANT P",
@@ -179,6 +241,22 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       "Next == \\A i \\in {1, 2, 3} : IF i = 1 THEN x' = (x + 1) % 3 ELSE y' = i \\/ y' \\in 0..4",
     ];
     await compareStateLogs(reversed, "INIT Init\nNEXT Next", false);
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+  });
+
+  it("walks a universal quantifier whose body only assigns, in the initial predicate", async () => {
+    // TLC walks \A in getInitStates whatever its body, so s = v assigns s for the first binding
+    // and tests it for the others, as AssignmentInit (TLC's tests) does.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE s",
+      "Init == \\/ \\A v \\in {2} : s = v /\\ s \\in {2}",
+      "        \\/ \\A v \\in {6, 7} : s = v",
+      "        \\/ \\A v \\in {9} : s \\in {8, 9} /\\ s > v - 1",
+      "Next == UNCHANGED s",
+    ];
     expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
       expect.stringMatching(COMPLETE),
     );
@@ -387,6 +465,51 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     expect(await compareWithInterpreter(named, "INIT Init\nNEXT Next")).toContainEqual(
       expect.stringMatching(COMPLETE),
     );
+  });
+
+  it("fails where TLC's evaluation of a lazy function or a later bound fails", async () => {
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+    for (const [invariant, reason] of [
+      // TLC reads a function it keeps lazy at the key of an EXCEPT (FcnLambdaValue.select): the
+      // EXCEPT changes nothing outside the domain, and the value there may fail.
+      [
+        "LET f == [i \\in Nat |-> i + x] g == [f EXCEPT ![-1] = 5] IN g[-1] = 5",
+        "applied a function outside its domain",
+      ],
+      [
+        "LET f == [i \\in Nat |-> 10 \\div (i + x)] IN [f EXCEPT ![0] = 7][3] = 3",
+        "division by zero",
+      ],
+      // TLC builds a lazy function to compare it, with itself too.
+      [
+        "LET f == [i \\in Nat |-> i + x] IN f = f",
+        "unsupported: comparing a function TLC keeps lazy",
+      ],
+      [
+        "LET f == [i \\in Nat |-> i + x] IN {f} = {f}",
+        "unsupported: comparing a function TLC keeps lazy",
+      ],
+      [
+        "LET f == [i \\in Nat |-> i + x] IN f \\in {f}",
+        "unsupported: comparing a function TLC keeps lazy",
+      ],
+      // TLC evaluates every bound's set before it binds any (Tool.contexts).
+      ["~(\\E i \\in {}, j \\in (1 \\div x) .. 2 : TRUE)", "division by zero"],
+      ["\\A i \\in {}, j \\in x : FALSE", "quantified over a non-set"],
+      ["{<<i, j>> : i \\in {}, j \\in (1 \\div x) .. 2} = {}", "division by zero"],
+    ]) {
+      const body = [
+        "EXTENDS Integers",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x < 1 /\\ x' = x + 1",
+        `Inv == ${invariant}`,
+      ];
+      expect([invariant, await compareWithInterpreter(body, config)]).toEqual([
+        invariant,
+        expect.arrayContaining([expect.stringMatching(stopped(reason))]),
+      ]);
+    }
   });
 
   it("checks invariants, constraints, action constraints and action properties", async () => {
@@ -1019,12 +1142,11 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
 
   it("hands over a failure in the initial predicate with nothing found yet", async () => {
     // The interpreter computes the initial states again from the start, as it does when the
-    // TypeScript engine stops there.
+    // TypeScript engine stops there. TLC builds the function at once, so s has no value.
     const body = [
       "EXTENDS Naturals",
       "VARIABLE s",
-      "All(var, S) == \\A v \\in S : var = v",
-      "Init == All(s, {2}) \\/ s \\in {3, 4}",
+      "Init == [k \\in {1} |-> s = 2][1] \\/ s \\in {3, 4}",
       "Next == UNCHANGED s",
     ];
     expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
@@ -1165,7 +1287,6 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         "",
         " where TLC evaluates it otherwise",
       ],
-      [[`A == ${prints} /\\ ${next}`, "Next == A \\/ (~ENABLED A /\\ x' = 0)"], ""],
       [[`Next == ${next}`, `Constraint == ${prints}`], "\nCONSTRAINT Constraint"],
       [[`Next == ${next}`, "Constraint == Print(x', TRUE)"], "\nACTION_CONSTRAINT Constraint"],
       [[`Next == ${next}`, "View == Print(x, x)"], "\nVIEW View"],
@@ -1177,6 +1298,20 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
         await compareWithInterpreter([...body, spec], `SPECIFICATION Spec${config}`),
       ).toContainEqual(expect.stringMatching(declined(`unsupported: Print${where}`)));
     }
+    // ENABLED evaluates its action until the first successor, so a Print inside it stops the
+    // search only where it is evaluated.
+    const enabled = ["EXTENDS Naturals, TLC", "VARIABLE x", "Init == x = 0"];
+    const reached = [`A == ${prints} /\\ ${next}`, "Next == A \\/ (~ENABLED A /\\ x' = 0)"];
+    expect(
+      await compareWithInterpreter([...enabled, ...reached], "INIT Init\nNEXT Next"),
+    ).toContainEqual(expect.stringMatching(stopped("Print inside ENABLED")));
+    const passed = [
+      `A == ${next} \\/ (${prints} /\\ x' = 5)`,
+      "Next == A \\/ (~ENABLED A /\\ x' = 0)",
+    ];
+    expect(
+      await compareWithInterpreter([...enabled, ...passed], "INIT Init\nNEXT Next"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 
   it("evaluates the guard of x' \\in S only where x' has a value", async () => {
@@ -1248,14 +1383,135 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   });
 
   it("leaves a model it can't search to the TypeScript engine", async () => {
-    // TLC assigns x' \subseteq S as x' \in SUBSET S, which neither engine does.
-    const body = ["VARIABLE x", "Init == x = {}", "Next == x' \\subseteq {1, 2}"];
+    // UNCHANGED in the initial predicate, which TLC evaluates and neither engine walks.
+    const body = ["VARIABLE x", "Init == x = 0 /\\ UNCHANGED x", "Next == x' = x"];
     const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
     expect(lines).toEqual([
       expect.stringMatching(/^\[engine\] native: ir: /),
-      expect.stringMatching(declined("unsupported: x' \\\\subseteq S")),
-      expect.stringMatching(/^\[engine\] handed over after \d+ ms: x' \\subseteq S$/),
+      expect.stringMatching(declined("unsupported: UNCHANGED in the initial predicate")),
+      expect.stringMatching(/^\[engine\] handed over after \d+ ms: primed variable not assigned$/),
     ]);
+  });
+
+  it("walks the body of a recursive operator as it runs", async () => {
+    // TLC walks a RECURSIVE operator's body as any other's, so it assigns the variables its
+    // arguments name however deep, as coverage/Github649's Flip does, and each disjunct at each
+    // level makes a state (checked with TLC: 3 initial states, 72 generated, 12 distinct).
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "RECURSIVE Pick(_, _), Both(_, _, _), Step(_, _), Keep(_, _)",
+      "Pick(v, n) == IF n = 0 THEN v = 0 ELSE (v = n \\/ Pick(v, n - 1))",
+      "Both(a, b, n) ==",
+      "  IF n = 0 THEN a \\in {0, 1} /\\ b = 0 ELSE Both(a, b, n - 1) /\\ b < 5",
+      "Step(n, k) ==",
+      "  IF n = 0 THEN x' = (x + k) % 4 /\\ UNCHANGED y",
+      "  ELSE Step(n - 1, k + 1) \\/ (y' = (y + n) % 3 /\\ Keep(x', n))",
+      "Keep(v, n) == IF n = 0 THEN v \\in {x, 0} ELSE Keep(v, n - 1)",
+      "Init == Pick(x, 2) /\\ Both(y, y, 1)",
+      "Next ==",
+      "  \\/ Step(2, 0)",
+      "  \\/ LET RECURSIVE Last(_)",
+      "         Last(n) == IF n = 0 THEN x' = 3 /\\ y' = y ELSE Last(n - 1)",
+      "     IN Last(3)",
+    ];
+    const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] checked 12 states /));
+  });
+
+  it("evaluates ENABLED in the initial predicate", async () => {
+    // TLC's EWD840/MC02 conjoins ENABLED Next to its specification, so the initial predicate
+    // evaluates it once every variable has a value.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Step == x < 2 /\\ x' = x + 1 /\\ y' = y",
+      "Init == x \\in 0..3 /\\ y = 0 /\\ ENABLED Step",
+      "Next == Step \\/ (x = 2 /\\ x' = 0 /\\ y' = 1 - y)",
+    ];
+    const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] checked 6 states /));
+  });
+
+  it("walks a function of several arguments an action applies", async () => {
+    // TLC keeps the function lazy and walks its body with each name bound to its argument, as
+    // spectacle's Elevator applies CanServiceCall[e, call] (checked with TLC: 10 states generated,
+    // 3 distinct).
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Move[a \\in 0..2, b \\in 0..1] == x' = (a + b) % 3 \\/ (b = 1 /\\ x' = a)",
+      "Init == x = 0",
+      "Next == \\E b \\in 0..1 : Move[x, b]",
+    ];
+    const lines = await compareWithInterpreter(body, "INIT Init\nNEXT Next");
+    expect(lines).toContainEqual(expect.stringMatching(COMPLETE));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] checked 3 states /));
+    const outside = body.map((line) => line.replace("Move[x, b]", "Move[x + 1, b]"));
+    expect(await compareWithInterpreter(outside, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("applied a function outside its domain")),
+    );
+  });
+
+  it("stops where an action quantifies over a set TLC can't enumerate", async () => {
+    // TLC fails on \E k \in Nat in an action, as spectacle's Bakery does.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == (x < 2 /\\ x' = x + 1) \\/ (x = 2 /\\ \\E k \\in Nat : x' = k)",
+    ];
+    expect(await compareWithInterpreter(body, "INIT Init\nNEXT Next")).toContainEqual(
+      expect.stringMatching(stopped("enumerated a set TLC can't enumerate")),
+    );
+  });
+
+  it("tests membership in the domain of a function TLC keeps lazy", async () => {
+    // FcnLambdaValue.getDomain gives the bound's set, or the tuples of the bounds' sets, which
+    // TLC only tests (suite/test11).
+    const body = [
+      "EXTENDS Integers",
+      "VARIABLE x",
+      "Shift[i \\in Int] == i + 3",
+      "Init == x = 0",
+      "Next == x' = (x + 1) % 3",
+      "Inv == /\\ x \\in DOMAIN Shift",
+      "       /\\ {x, -1} \\in DOMAIN [s \\in SUBSET Int |-> s \\cup {1}]",
+      "       /\\ <<x, -2>> \\in DOMAIN [i \\in Nat, j \\in Int |-> i + j]",
+      "       /\\ <<-1, x>> \\notin DOMAIN [i \\in Nat, j \\in Int |-> i + j]",
+      "       /\\ <<x>> \\notin DOMAIN [i \\in Nat, j \\in Int |-> i + j]",
+      "       /\\ x \\in DOMAIN [i \\in 0..2 |-> i]",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
+  it("compares a function that is no record with a record as TLC's function does", async () => {
+    // FcnRcdValue.equals takes any function, where RecordValue.equals fails on one that is no
+    // record: the left side of = decides (tla-rs model_values_distinct).
+    const body = [
+      "EXTENDS Naturals",
+      "CONSTANT Node",
+      "VARIABLE x",
+      "ByNode == [n \\in Node |-> 1]",
+      'ByName == [n \\in {"n1", "n2"} |-> 1]',
+      "Init == x = 0",
+      "Next == x' = 1 - x",
+      "Inv == ByNode # ByName /\\ ByNode # [n1 |-> 1, n2 |-> 1] /\\ ~(ByNode = [n1 |-> 1])",
+    ];
+    const config = "CONSTANT Node = {n1, n2}\nINIT Init\nNEXT Next\nINVARIANT Inv";
+    expect(await compareWithInterpreter(body, config)).toContainEqual(
+      expect.stringMatching(COMPLETE),
+    );
+    // The store can't tell a record from a function over strings, so it stops where the one
+    // asked may be a record.
+    const asked = body.map((line) => line.replace(/^Inv == .*/, "Inv == ByName # ByNode"));
+    expect(await compareWithInterpreter(asked, config)).toContainEqual(
+      expect.stringMatching(/record compared with a function/),
+    );
   });
 
   it("counts the _POSSIBLE predicates as TLC does, and hands the counts over", async () => {
@@ -1431,6 +1687,23 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
 
   // Tool.evalAppl evaluates UNCHANGED e, [A]_e and <<A>>_e in the current state first, so the
   // search stops on the current state's failure.
+  it("goes through UNCHANGED of a tuple element by element, as TLC's processUnchanged", async () => {
+    // As Github702 (TLC's tests), whose instance substitutes a constant for x in UNCHANGED <<x, z>>:
+    // TLC compares the constant's values and assigns z.
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLES y, z",
+      "c == 1",
+      "Keep(v) == UNCHANGED <<c, v>>",
+      "Init == y \\in {1, 2} /\\ z \\in {1, 2}",
+      "Next == \\/ y < 4 /\\ y' = y + 1 /\\ UNCHANGED <<c, z>>",
+      "        \\/ y < 3 /\\ y' = y + 2 /\\ Keep(z)",
+    ];
+    expect(
+      await compareWithInterpreter(body, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
   it("evaluates UNCHANGED in the current state first like TLC", async () => {
     const subscript = 'IF x = 0 THEN Assert(FALSE, "before") ELSE <<>>[1]';
     for (const form of ["[FALSE]_(e)", "IF UNCHANGED (e) THEN TRUE ELSE TRUE", "<<TRUE>>_(e)"]) {
@@ -1543,6 +1816,56 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ];
     expect(
       await compareWithInterpreter(body, "INIT Init\nNEXT Next\nINVARIANT Inv"),
+    ).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
+  it("walks and evaluates what an INSTANCE in a LET defines, as CyclicRedefineInstance does", async () => {
+    // The INSTANCE copies the module's definitions into the LET, under names it binds there.
+    const counter = [
+      "---- MODULE Counter ----",
+      "EXTENDS Naturals",
+      "VARIABLE v",
+      "CONSTANT K",
+      "Bump == v' = (v + K) % 5",
+      "Big == v > 2",
+      "====",
+    ].join("\n");
+    const body = [
+      "EXTENDS Naturals",
+      "VARIABLE x",
+      "Init == x = 0",
+      "Next == LET S == INSTANCE Counter WITH v <- x, K <- 2",
+      "        IN  \\/ S!Bump",
+      "            \\/ S!Big /\\ x' = 0",
+      "Inv == LET T == INSTANCE Counter WITH v <- x, K <- 1 IN T!Big => x \\in {3, 4}",
+    ];
+    const options = {
+      source: toModule(body),
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name: string) => (name === "Counter" ? counter : undefined),
+    };
+    const native = await run(options, {
+      PROVE_IT_ENGINE: "debug",
+      PROVE_IT_ENGINE_BACKEND: "rust",
+    });
+    const interpreter = await run(options, { PROVE_IT_ENGINE: "0" });
+    expect(native.result).toEqual(interpreter.result);
+    expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
+  });
+
+  it("takes a string as a sequence in Len and Tail, as TLC's Sequences does", async () => {
+    const body = [
+      "EXTENDS Naturals, Sequences",
+      "VARIABLE x",
+      'Init == x = "abc"',
+      'Next == x # "" /\\ x\' = Tail(x)',
+      'Inv == Len(x) <= 3 /\\ (x # "" => Len(Tail(x)) = Len(x) - 1)',
+    ];
+    expect(
+      await compareWithInterpreter(
+        body,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ),
     ).toContainEqual(expect.stringMatching(COMPLETE));
   });
 

@@ -29,6 +29,7 @@ import {
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { mapChildren } from "./instances";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import { getWrittenName } from "./resolve";
 import { isEnabled } from "./successors";
 import {
   createBoolean,
@@ -183,6 +184,9 @@ export const expandTemporal = (
   // longer expands an operator applied to arguments.
   isSubstituted = false,
   name?: string,
+  // Whether the formula is the specification's, of which TLC keeps a definition that is a state
+  // predicate whole, as one initial predicate (SpecProcessor.processConfigSpec).
+  isSpecification = false,
 ): ExpandedExpression[] => {
   const expand = (
     child: Expression,
@@ -200,6 +204,7 @@ export const expandTemporal = (
       isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
       childName,
+      isSpecification,
     );
   if (expression.kind === "And") {
     return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
@@ -225,13 +230,20 @@ export const expandTemporal = (
       if (expanding.has(definition)) {
         throw createStackOverflowError();
       }
-      return expand(
+      // TLC names a property by the operator as written (`opNode.getName()`), as A!Safe for an
+      // instance's.
+      const writtenName = getWrittenName(expression) ?? definition.name;
+      const expanded = expand(
         definition.body,
         undefined,
-        definition.name,
+        writtenName,
         new Set([...expanding, definition]),
         definition,
       );
+      // The body is walked all the same, so one that names itself overflows.
+      return isSpecification && getDefinitionLevel(definition, environment) === VARIABLE_LEVEL
+        ? [{ expression: definition.body, scope: undefined, name: writtenName }]
+        : expanded;
     }
   }
   const context = getConstantContext(environment, scope);

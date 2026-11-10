@@ -4,7 +4,13 @@ import { hasEffect, isConstantLevel, isImpureDefinition } from "./dependencies";
 import { getMemoStatistics } from "./engine/compile";
 import { toEngineProperties } from "./engine/context";
 import { toValue as toEngineValue } from "./engine/convert";
-import { type IrOutcome, type IrStartup, lowerToIr } from "./engine/ir";
+import {
+  type IrOutcome,
+  type IrProperties,
+  type IrSpec,
+  type IrStartup,
+  lowerToIr,
+} from "./engine/ir";
 import { checkNatively, type NativeLiveness, toEngineResult, toStop } from "./engine/native";
 import {
   type EngineCheckpoint,
@@ -65,6 +71,7 @@ import {
   createSearch,
   findAssumptionViolation,
   getConfigDefinition,
+  getConstantPredicates,
   getContext,
   reportInitialStatesProgress,
   reportStartup,
@@ -76,6 +83,7 @@ import {
   getActionSignature,
   getInitActions,
   getNextActions,
+  getNextSubstitution,
   getSpecificationValue,
   type SpecAction,
   toActionValue,
@@ -140,6 +148,9 @@ export interface CheckOptions {
   readFile?: (path: string) => string | undefined;
   writeFile?: (path: string, content: string) => void;
   seed?: bigint;
+  // The Java system properties TLCGet("-Dname") reads: those the command line sets, and the
+  // platform's that the caller knows as a JVM would.
+  systemProperties?: ReadonlyMap<string, string>;
   workers?: number;
   // TLC's -lncheck: "final" checks liveness only on the complete state graph.
   livenessCheck?: "default" | "final";
@@ -289,6 +300,9 @@ export interface EvaluationFailure {
 interface ReplayFailure {
   callStack: Expression[];
   fingerprint: FingerprintFailure | undefined;
+  // What the replay failed with, which may come after the failure it replays: the replay takes
+  // all of an action's successors before it fingerprints one.
+  replayError?: TlaEvaluationError;
 }
 
 export interface InitialStates {
@@ -342,6 +356,7 @@ interface FailureOptions {
   isNextState?: boolean;
   isCallStackFirst?: boolean;
   traceFailure?: FailureMessage;
+  replayError?: TlaEvaluationError;
   // Whether the call stack is of adding the state to the behavior graph, which TLC prints instead
   // of replaying the error.
   isLiveCallStack?: boolean;
@@ -401,8 +416,6 @@ const getReplayExitCode = (error: TlaEvaluationError): number => {
   return error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.specEvaluationFailure;
 };
 
-// TLC finishes the -dump file whether or not the search finds a violation. The readings are those
-// of a spec SANY accepted.
 // What TLC evaluates when it starts, for the engine IR: the substitutes it checks, the constant
 // definitions with effects (one without computes the same wherever it is first used), the
 // SYMMETRY definition, which the search found to be an operator without parameters, and the
@@ -433,6 +446,12 @@ export const getIrStartup = (
         ),
       ),
     ],
+    normalized: new Set(
+      specification.startupDefinitions.filter((definition) =>
+        isStartupDefinition(definition, environment),
+      ),
+    ),
+    predicates: getConstantPredicates(config, environment),
     symmetry:
       symmetry?.kind === "Operator"
         ? { definition: symmetry, permutedSets: getPermutedSets(symmetry, config.substitutions) }
@@ -446,6 +465,59 @@ export const getIrStartup = (
   };
 };
 
+// The engine IR of a model TLC searches no states of, for the native binary: one without
+// variables, whose initial predicate and next-state relation are FALSE, so it finds no state, and
+// one without a next-state relation, whose initial states TLC computes before it stops.
+export const lowerUnsearchedSpec = (
+  config: ModelConfig,
+  specification: ReturnType<typeof createEnvironment>,
+  spec: IrSpec,
+  tlcOrder: number[],
+  properties: IrProperties,
+  version: TlcVersion | undefined,
+) =>
+  lowerToIr({
+    config,
+    environment: specification.environment,
+    spec,
+    traceActions: [],
+    isWarningEnabled: specification.environment.runtime.isWarningEnabled,
+    tlcOrder,
+    properties,
+    isRecordingGraph: false,
+    version,
+    atoms: [],
+    liveFormula: undefined,
+    liveProperties: [],
+    startup: getIrStartup(config, specification),
+    // Without a next-state relation, there is none to name actions of.
+    nextSubstitution: undefined,
+    getSpecification: undefined,
+    instanceActions: specification.instanceActions,
+  });
+
+const NO_BEHAVIOR: Expression = {
+  kind: "Identifier",
+  name: "FALSE",
+  location: { line: 0, column: 0 },
+};
+
+export const lowerConstantSpec = (
+  config: ModelConfig,
+  specification: ReturnType<typeof createEnvironment>,
+  version: TlcVersion | undefined,
+) =>
+  lowerUnsearchedSpec(
+    config,
+    specification,
+    { init: NO_BEHAVIOR, next: NO_BEHAVIOR },
+    [],
+    { invariants: [], actionProperties: [], initialPredicates: [] },
+    version,
+  );
+
+// TLC finishes the -dump file whether or not the search finds a violation. The readings are those
+// of a spec SANY accepted.
 export const checkSequentially = (
   options: CheckOptions,
   readings?: ReadonlyMap<string, SanyReading>,
@@ -506,6 +578,7 @@ const searchStates = (
     print,
     files: { readFile: options.readFile, writeFile: options.writeFile },
     seed: options.seed,
+    systemProperties: options.systemProperties,
     isTool: options.isTool,
     isTraceRecorded: options.isTraceRecorded,
     isSanyReported: options.isSanyReported,
@@ -600,31 +673,7 @@ const searchStates = (
     // The engine IR of a spec without variables, for the native binary: its initial predicate and
     // next-state relation are FALSE, so it finds no state, as TLC does.
     if (isIrDumped()) {
-      const noBehavior: Expression = {
-        kind: "Identifier",
-        name: "FALSE",
-        location: { line: 0, column: 0 },
-      };
-      const outcome = lowerToIr({
-        config,
-        environment,
-        spec: { init: noBehavior, next: noBehavior, scope: undefined },
-        traceActions: [],
-        isWarningEnabled: environment.runtime.isWarningEnabled,
-        tlcOrder: [],
-        properties: {
-          invariants: [],
-          invariantNames: [],
-          actionProperties: [],
-          initialPredicates: [],
-        },
-        isRecordingGraph: false,
-        version: options.version,
-        atoms: [],
-        liveFormula: undefined,
-        liveProperties: [],
-        startup: getIrStartup(config, specification),
-      });
+      const outcome = lowerConstantSpec(config, specification, options.version);
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
     }
     const assumptionViolation = findViolatedAssumption();
@@ -709,7 +758,11 @@ const searchStates = (
       // A replay that overflows the stack again has an empty call stack.
       if (isStackOverflow(error)) return { callStack: [], fingerprint: undefined };
       if (!(error instanceof TlaEvaluationError) || !callStack) return undefined;
-      return { callStack: callStack.expressions, fingerprint: callStack.fingerprint };
+      return {
+        callStack: callStack.expressions,
+        fingerprint: callStack.fingerprint,
+        replayError: error,
+      };
     }
   };
   // The sources of the values a fingerprint fails inside, outermost first: each value fails as it
@@ -1133,7 +1186,7 @@ const searchStates = (
     // it does for a replay that fails to fingerprint.
     return failureOptions.isInitial || failureOptions.fingerprint
       ? EXIT_STATUS.specEvaluationFailure
-      : getReplayExitCode(error);
+      : getReplayExitCode(failureOptions.replayError ?? error);
   };
   const createFailureResult = (
     failed: unknown,
@@ -1230,6 +1283,10 @@ const searchStates = (
       if (error) throw error;
     }
   };
+  // Under a VIEW TLC fingerprints the view's value alone, so what the state holds beside it stays
+  // as the spec built it: a set TLC streams in an order of its own keeps that order.
+  const markModelState = (state: Value[], fingerprintState: Value[]) =>
+    (config.view === undefined ? state : fingerprintState).forEach(markFingerprinted);
   const isSameState = (stored: Value[], state: Value[]) => {
     for (let position = 0; position < state.length; position++) {
       if (!isSameValue(stored[position], state[position])) return false;
@@ -1359,12 +1416,13 @@ const searchStates = (
     current.candidate = state;
     current.candidateLevel = 1;
     const fingerprintState = getFingerprintState(state);
-    const hash = getStateHash(fingerprintState);
+    // TLC fingerprints a state only once its constraints hold of it (isInModel).
     const isInModel = search.satisfiesConstraints(state);
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
     if (isInModel) {
       search.trackStatePossible(state);
       fingerprintModelState(fingerprintState);
-      state.forEach(markFingerprinted);
+      markModelState(state, fingerprintState);
     }
     const isSeen = isInModel && findStateIndex(hash, fingerprintState) !== -1;
     if (isSeen) return undefined;
@@ -1415,31 +1473,30 @@ const searchStates = (
     current.candidateLevel = depths[index] + 1;
     if (isCanonicalizedFirst) canonicalizeState(successor.state);
     const fingerprintState = getFingerprintState(successor.state);
-    const hash = getStateHash(fingerprintState);
-    const foundIndex = findStateIndex(hash, fingerprintState);
     const isStateInModel = search.satisfiesConstraints(successor.state, state);
     if (isStateInModel) search.trackStatePossible(successor.state);
     const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
+    const foundIndex = isInModel ? findStateIndex(hash, fingerprintState) : -1;
     if (isInModel) {
       search.trackActionPossible(state, successor.state);
       fingerprintModelState(fingerprintState);
-      successor.state.forEach(markFingerprinted);
+      markModelState(successor.state, fingerprintState);
     }
-    const existing = isInModel ? foundIndex : -1;
     if (source && isInModel) {
       stateWriter?.writeSuccessor(
         source,
         getGraphState(successor.state, depths[index] + 1),
-        existing !== -1,
+        foundIndex !== -1,
         action && { name: action.name, signature: getActionSignature(action) },
       );
     }
-    if (existing !== -1 && liveness) {
-      const stored = states[existing];
+    if (foundIndex !== -1 && liveness) {
+      const stored = states[foundIndex];
       const isStored = stored.every((value, position) => value === successor.state[position]);
-      liveSuccessors.push({ index: existing, state: isStored ? stored : successor.state });
+      liveSuccessors.push({ index: foundIndex, state: isStored ? stored : successor.state });
     }
-    const isNew = isInModel && existing === -1;
+    const isNew = isInModel && foundIndex === -1;
     // TLC adds a new state to the behavior graph's successors before it checks the invariants.
     if (isNew && liveness) liveSuccessors.push({ index: states.length, state: successor.state });
     unstoredState.fingerprint = isNew ? fingerprintState : undefined;
@@ -1447,7 +1504,7 @@ const searchStates = (
       countDistinctState(depths[index] + 1);
       expansion.newStates++;
     }
-    if (existing === -1) {
+    if (foundIndex === -1) {
       try {
         const violated = search.findViolatedInvariant(successor.state, state);
         const violation = violated && { name: violated.name, ...getTrace(index, successor) };
@@ -1594,7 +1651,7 @@ const searchStates = (
     const state = toEngineState(checkpoint, index);
     engineIndices.set(state, index);
     const fingerprintState = toEngineKey(checkpoint, index, state);
-    state.forEach(markFingerprinted);
+    markModelState(state, fingerprintState);
     return { state, fingerprintState, hash: getStateHash(fingerprintState) };
   };
   // TLC reports an error in an initial state once it has replayed the initial predicate with its call
@@ -1736,7 +1793,23 @@ const searchStates = (
     }
     const init = spec.init;
     const next = spec.next;
-    if (init === undefined || next === undefined) return undefined;
+    if (init === undefined) return undefined;
+    // TLC computes the initial states of a model without a next-state relation and then stops. The
+    // native binary does so from the IR; here the interpreter does.
+    if (next === undefined) {
+      if (isIrDumped()) {
+        const outcome = lowerUnsearchedSpec(
+          config,
+          specification,
+          { init, next, scope: spec.scope },
+          search.getTlcOrder(),
+          search.properties,
+          options.version,
+        );
+        if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
+      }
+      return undefined;
+    }
     // The engine answers ENABLED <<A>>_v of a state from the steps its search took when A is made of
     // TLC's actions of the next-state relation. A constraint drops steps, and TLC's ENABLED shows
     // the effects of running A, such as printing, so then the engine runs A.
@@ -1788,7 +1861,9 @@ const searchStates = (
         })),
       }),
     };
-    const engineProperties = toEngineProperties(search.properties)!;
+    // The engine here checks no property read in an instance's scope; the IR holds it for the
+    // native binary.
+    const engineProperties = toEngineProperties(search.properties);
     const tlcOrder = search.getTlcOrder();
     const symmetry = search.symmetryGroup?.map((images) =>
       [...images].map(([name, image]): [string, string] => [name, image.name]),
@@ -1826,11 +1901,18 @@ const searchStates = (
         traceActions: (isLabelled ? getSpecNextActions() : getTraceActions()).map((action) => {
           const label = getActionLabel(action, options.version);
           engineReport.actionLabels.push(label);
-          return { expression: action.expression, scope: action.scope, label };
+          return {
+            expression: action.expression,
+            scope: action.scope,
+            label,
+            name: action.name,
+            range: action.location.range,
+            operator: action.operator,
+          };
         }),
         isWarningEnabled: runtime.isWarningEnabled,
         tlcOrder,
-        properties: engineProperties,
+        properties: search.properties,
         isRecordingGraph: liveness !== undefined,
         version: options.version,
         atoms: (liveness?.atoms ?? []).map((atom) => ({
@@ -1840,6 +1922,9 @@ const searchStates = (
         liveFormula: liveness?.formula,
         liveProperties: liveness?.properties ?? [],
         startup: getIrStartup(config, specification),
+        nextSubstitution: getNextSubstitution(config, environment, specification.instanceActions),
+        instanceActions: specification.instanceActions,
+        getSpecification: runtime.getSpecification,
       });
       const milliseconds = performance.now() - loweredAt;
       if ("ir" in outcome) writeDebugBytes("PROVE_IT_IR_DUMP", outcome.ir);
@@ -1851,6 +1936,10 @@ const searchStates = (
     };
     if (isIrDumped()) lowerModel();
     if (isLoweredOnly) return undefined;
+    if (!engineProperties) {
+      reportEngine("skipped: properties in an instance");
+      return undefined;
+    }
     const callbacks = {
       onProgress: (progress: CheckProgress) => {
         engineReport.isReported = true;
@@ -2061,7 +2150,6 @@ const searchStates = (
     if (nativeOnlyReason && !isNativeBackend()) return nativeOnlyReason;
     if (config.periodic !== undefined) return "periodic";
     if (is174) return "TLC 1.7.4";
-    if (!toEngineProperties(search.properties)) return "properties in an instance";
     return undefined;
   };
 
@@ -2207,7 +2295,11 @@ const searchStates = (
   const replayFailedNext = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
     if (live.result) {
-      const result = { callStack: live.result, fingerprint: undefined, isLiveCallStack: true };
+      const result: ReplayFailure & { isLiveCallStack: boolean } = {
+        callStack: live.result,
+        fingerprint: undefined,
+        isLiveCallStack: true,
+      };
       return { result, lines: live.lines };
     }
     const replay = captureOutput(() => replayNext(index));
@@ -2283,12 +2375,18 @@ const searchStates = (
             const isTraceFailed = getFingerprintState(successor.state).some(
               (value) => getFingerprintError(value) !== undefined,
             );
+            // Tool.getState takes all of the action's successors to find the one to print, so a
+            // later successor that fails to evaluate fails there first, as it fails the replay.
+            const traceError =
+              replay.result?.fingerprint === undefined
+                ? (replay.result?.replayError ?? error)
+                : error;
             const traceFailure =
-              isTraceFailed && error instanceof TlaEvaluationError
+              isTraceFailed && traceError instanceof TlaEvaluationError
                 ? getFailureMessage(
-                    isEvalException(error)
-                      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
-                      : error,
+                    isEvalException(traceError)
+                      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${traceError.message}`)
+                      : traceError,
                     true,
                   )
                 : undefined;

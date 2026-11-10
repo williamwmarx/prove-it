@@ -28,9 +28,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
-import { getIrStartup } from "../src/check";
+import { getIrStartup, lowerConstantSpec, lowerUnsearchedSpec } from "../src/check";
 import { type ModelConfig, parseConfig } from "../src/config";
-import { toEngineProperties } from "../src/engine/context";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import {
@@ -43,7 +42,7 @@ import {
   TlaModuleError,
   TlaSyntaxError,
 } from "../src/errors";
-import { type Builtin, describeRange, type Environment } from "../src/evaluate";
+import { type Builtin, describeRange } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
 import { getLevel } from "../src/liveness";
 import { createLivenessChecker } from "../src/liveness-checker";
@@ -54,7 +53,9 @@ import { validatePcalModule } from "../src/pcal/validate";
 import { getSany174LexicalError } from "../src/sany/lexer";
 import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
-import { getProperties, getSpecification } from "../src/search";
+import { createSearch, getProperties, getSpecification } from "../src/search";
+import { getNextSubstitution } from "../src/spec-description";
+import { withUnexpectedException } from "../src/tlc/messages";
 import { createTlcOrder } from "../src/tlc/order";
 import type { TlcVersion } from "../src/tlc/version";
 import { setStringOrder } from "../src/values";
@@ -104,7 +105,10 @@ const writeResult =
   };
 
 const getBuiltinFlags = (builtin: Builtin) =>
-  (builtin.isStateLevel ? 1 : 0) | (builtin.isLevelConstant ? 2 : 0) | (builtin.isLazy ? 4 : 0);
+  (builtin.isStateLevel ? 1 : 0) |
+  (builtin.isLevelConstant ? 2 : 0) |
+  (builtin.isLazy ? 4 : 0) |
+  (builtin.isNaturalsGeq ? 16 : 0);
 
 // The spec whose root module is the file, linked with the model's configuration, or without a
 // model, and what linking prints.
@@ -193,7 +197,7 @@ const readEnvironment = (source: string, path: string, config?: ModelConfig) => 
 // ranked, so the texts follow their first use.
 const lowerDefinitions = (source: string, path: string) => {
   setStringOrder([]);
-  return lowerEnvironment(linkSpec(source, path).specification.environment);
+  return lowerEnvironment(undefined, linkSpec(source, path).specification);
 };
 
 // The IR of a model's environment, with the texts ranked in TLC's string order as check.ts ranks
@@ -212,7 +216,7 @@ const lowerModel = (source: string, _path: string, spec: string) => {
     files: { readFile: () => undefined, writeFile: () => {} },
     isSanyAccepted: true,
   });
-  return lowerEnvironment(specification.environment);
+  return lowerEnvironment(config, specification);
 };
 
 // A model as check.ts lowers it, without TLC's actions, which the engine splits.
@@ -225,37 +229,80 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
   const linked = createEnvironment(config, {
     source: specSource,
     loadModule,
+    // TLC loads the class named after a module from the spec's directory, as the CLI does.
+    loadClass: (name) => {
+      const classPath = join(dirname(spec), `${name}.class`);
+      return existsSync(classPath) ? readFileSync(classPath) : undefined;
+    },
     order,
     print: () => {},
     files: { readFile: () => undefined, writeFile: () => {} },
     isSanyAccepted: true,
   });
+  // createSearch checks the configuration, as check.ts does first, so its error comes first, and
+  // gives no search for a spec without variables, whose IR check.ts lowers with FALSE for Init and
+  // Next. Its checks evaluate the invariants, which ranks the strings TLC computes at startup,
+  // which this mode leaves out, so it runs after the model is lowered.
+  const lowered = (() => {
+    try {
+      return { outcome: lowerLinkedModel(config, linked, order) };
+    } catch (error) {
+      return { error };
+    }
+  })();
+  createSearch(config, linked.environment, () => [], undefined);
+  if ("error" in lowered) throw lowered.error;
+  return lowered.outcome;
+};
+
+const lowerLinkedModel = (
+  config: ModelConfig,
+  linked: ReturnType<typeof createEnvironment>,
+  order: ReturnType<typeof createTlcOrder>,
+) => {
   const environment = linked.environment;
   const specification = getSpecification(config, environment);
   const search = getProperties(config, environment, () => {});
-  const properties = toEngineProperties(search);
-  if (!specification.init || !specification.next) return { reason: "no Init or Next" };
-  if (!properties) return { reason: "a property read in a scope" };
+  if (environment.variables.length === 0) {
+    const constant = lowerConstantSpec(config, linked, undefined);
+    return "ir" in constant ? { ir: Buffer.from(constant.ir).toString("hex") } : constant;
+  }
+  if (!specification.init) return { reason: "no Init" };
   const variableOrder = order.getDeclarationOrder("variable");
   const getPosition = (index: number) => {
     const position = variableOrder.indexOf(environment.variables[index]);
     return position === -1 ? environment.variables.length : position;
   };
-  // The checker's formula and atoms, which need no graph before it checks.
-  const liveness = createLivenessChecker(search.liveness, specification.temporals, environment, {
-    getFingerprint: () => 0,
-    getSuccessors: () => [],
-  });
+  const tlcOrder = environment.variables
+    .map((_, index) => index)
+    .sort((left, right) => getPosition(left) - getPosition(right));
+  if (!specification.next) {
+    const unsearched = lowerUnsearchedSpec(
+      config,
+      linked,
+      { init: specification.init, next: undefined, scope: specification.scope },
+      tlcOrder,
+      search,
+      undefined,
+    );
+    return "ir" in unsearched ? { ir: Buffer.from(unsearched.ir).toString("hex") } : unsearched;
+  }
+  // The checker's formula and atoms, which need no graph before it checks. check.ts builds it
+  // inside withUnexpectedException, as TLC reports a RuntimeException it raises.
+  const liveness = withUnexpectedException(() =>
+    createLivenessChecker(search.liveness, specification.temporals, environment, {
+      getFingerprint: () => 0,
+      getSuccessors: () => [],
+    }),
+  );
   const outcome = lowerToIr({
     config,
     environment,
     spec: { init: specification.init!, next: specification.next!, scope: specification.scope },
     traceActions: [],
     isWarningEnabled: true,
-    tlcOrder: environment.variables
-      .map((_, index) => index)
-      .sort((left, right) => getPosition(left) - getPosition(right)),
-    properties,
+    tlcOrder,
+    properties: search,
     isRecordingGraph: liveness !== undefined,
     version: undefined,
     // Without TLC's actions, which ENABLED's split into.
@@ -263,11 +310,18 @@ const lowerFullModel = (source: string, _path: string, spec: string) => {
     liveFormula: liveness?.formula,
     liveProperties: liveness?.properties ?? [],
     startup: getIrStartup(config, linked),
+    nextSubstitution: getNextSubstitution(config, environment, linked.instanceActions),
+    instanceActions: linked.instanceActions,
+    getSpecification: undefined,
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };
 
-const lowerEnvironment = (environment: Environment) => {
+const lowerEnvironment = (
+  config: ModelConfig | undefined,
+  specification: ReturnType<typeof createEnvironment>,
+) => {
+  const environment = specification.environment;
   const root: Expression = { kind: "Number", value: 0, location: { line: 0, column: 0 } };
   const outcome = lowerToIr({
     config: { ...parseConfig(""), invariants: [...environment.definitions.keys()] },
@@ -276,13 +330,24 @@ const lowerEnvironment = (environment: Environment) => {
     traceActions: [],
     isWarningEnabled: true,
     tlcOrder: [],
-    properties: { invariants: [], invariantNames: [], actionProperties: [], initialPredicates: [] },
+    properties: { invariants: [], actionProperties: [], initialPredicates: [] },
     isRecordingGraph: false,
     version: undefined,
     atoms: [],
     liveFormula: undefined,
     liveProperties: [],
-    startup: { substitutes: [], definitions: [], symmetry: undefined, assumptions: [] },
+    startup: {
+      substitutes: [],
+      definitions: [],
+      // Without a configuration, TLC computes no definition at startup.
+      normalized: config ? getIrStartup(config, specification).normalized : new Set(),
+      predicates: [],
+      symmetry: undefined,
+      assumptions: [],
+    },
+    nextSubstitution: undefined,
+    instanceActions: specification.instanceActions,
+    getSpecification: undefined,
   });
   return "ir" in outcome ? { ir: Buffer.from(outcome.ir).toString("hex") } : outcome;
 };
@@ -546,6 +611,8 @@ const time = () => {
 const compare = (write: (source: string, path: string, spec: string) => string) => {
   const rustLines: string[] = [];
   const unported = new Map<string, number>();
+  // A text TLC's strings hold but UTF-8 can't, which the TypeScript IR declines and Rust can't make.
+  const surrogates: string[] = [];
   const differences = modules.filter((module, index) => {
     if (index % BATCH === 0) {
       rustLines.splice(0, Infinity, ...runRust(modules.slice(index, index + BATCH)));
@@ -558,6 +625,10 @@ const compare = (write: (source: string, path: string, spec: string) => string) 
     }
     const expected = write(readFileSync(module.path, "utf8"), module.path, module.spec ?? "");
     if (expected === actual) return false;
+    if (expected === '{"reason":"a text with a lone surrogate"}') {
+      surrogates.push(module.id);
+      return false;
+    }
     const start = Array.from(expected).findIndex(
       (_, position) => actual?.[position] !== expected[position],
     );
@@ -568,8 +639,12 @@ const compare = (write: (source: string, path: string, spec: string) => string) 
   });
   const unportedCount = [...unported.values()].reduce((sum, count) => sum + count, 0);
   unported.forEach((count, reason) => console.log(`not linked yet: ${count} with ${reason}`));
+  surrogates.forEach((id) =>
+    console.log(`no TypeScript IR: ${id} has a text with a lone surrogate`),
+  );
+  const uncompared = unportedCount + surrogates.length;
   console.log(
-    `${mode}: ${modules.length - differences.length - unportedCount} of ${modules.length} modules match${unportedCount > 0 ? `, ${unportedCount} not compared yet` : ""}`,
+    `${mode}: ${modules.length - differences.length - uncompared} of ${modules.length} modules match${uncompared > 0 ? `, ${uncompared} not compared yet` : ""}`,
   );
   return differences.length === 0;
 };

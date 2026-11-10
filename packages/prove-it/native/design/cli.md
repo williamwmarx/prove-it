@@ -236,5 +236,122 @@ Still to do:
   is reported after the step back into a lasso's cycle. The violation's exit code stands.
 - Still not native:
   - a postcondition TLC computes as it starts, which it rejects;
-  - an unwitnessed `_POSSIBLE` predicate, and `_POSSIBLE` counts after a search that stopped;
+  - an unwitnessed `_POSSIBLE` predicate after a violation (the violation carries the counts as
+    the search left them, `Violation::possible`, which a witnessed one checks with);
   - what `Rebuilder::postcondition` declines, such as CounterExample's actions with parameters.
+
+## Specs TLC stops at before the search
+
+- Where the differential records no front, the binary asks tla-front whether TLC stops before it
+  searches, and prints what TLC prints then:
+  - SANY's report, framed by 2220 "Starting SANY..." and 2219 "SANY finished." under -tool;
+  - 2185 `Starting... (…)`;
+  - SANY's rejection of the spec (3002, exit 150), or the error tla-front's lowering raises with
+    TLC's code and exit code (`FrontError::get_coded`: configuration errors with 151, evaluation
+    errors with 75, a stack overflow with 255, and TLC's `errorConstantToExitStatus` by code:
+    2146 with 76, 2253 with 77, 2213 and 2214 and an unexpected exception with 255);
+  - then 2186.
+- A configuration file `parse_config` rejects is reported the same way, right after the banner, as
+  TLC reads it before it parses the spec.
+- Lowering reads modules beside the spec, then from each `-DTLA-Library` directory in order.
+- Where tla-front doesn't find where TLC stops, the not-native reason says why.
+
+## The front from tla-front alone
+
+- Without `PROVE_IT_FRONT`, tla-front is the whole front end: the binary prints SANY's report as
+  tla-front writes it (framed by 2220 and 2219 under -tool), then `Starting...`, and lowers the
+  model itself. What TLC prints as it starts comes from the engine's startup hooks, which the
+  binary wires only on this path (`Relay::is_startup_printed`), since a recorded front holds it:
+  - `startup_print` prints as `Relay::print` does, with the same `is_printable` check, so a value
+    whose text depends on how TLC built it stops the run as not native;
+    Where the store has forgotten how TLC built a value, the binary takes what the substitutes,
+    constant definitions and configured definitions print from the trace evaluator
+    (`Rebuilder::startup_prints`), so long as each print the store words is the same and there
+    are as many; not under SYMMETRY, whose body the evaluator doesn't evaluate;
+  - `symmetry_sets_too_small` prints 2300 as `Tool.getSymmetryPerms` words it.
+- Still not native on this path, as TLC prints more as it starts:
+  - the Java overrides TLC loads (any `.class` file beside the spec);
+  - the warning of a constant-level invariant (2149), which the IR drops;
+  - a PROPERTY: the warning of a state-level property and the tableau's branches (2212);
+  - the trace exploration spec TLC parses with the spec, unless `-tool`, `-noGenerateSpecTE`
+    (`-noTE`) or `-continue` (`isTraceRecorded`).
+- The binary seeds TLC's generator with -seed, which tla-front's IR doesn't hold.
+- `differential --native <binary> --native-front` runs the binary this way.
+- Measured (2026-11-09) on the TLC test models of up to 5 s: 462 of 758 runs print what TLC
+  prints with no recorded front, and none differs once the seed is set. What only this path
+  declines:
+  - a PROPERTY (244 runs, 122 models): TLC's warning of a state-level property (2255,
+    `getProperties`), the warning of symmetry with liveness (2279), and 2212 `Implied-temporal
+    checking--satisfiability problem has N branches.`, with N the tableau's solutions
+    (`Tableau::solutions` on the IR's `live_formula`), all in TLC's order after 2300 and before
+    the assumptions. The state-level check needs a property's level, which tla-front knows
+    (`get_properties`) and the IR doesn't carry;
+  - an assumption's print whose value the store forgot (SetPredValue): it needs the trace
+    evaluator's prints of the assumptions, with a check of their count where the search starts;
+  - Java overrides (UserModuleOverride): TLC's report of the class it loads (2168, or 2400
+    where a method matches no operator).
+
+## AssertError assumptions
+
+- AssertError compares TLC's message for a failure, which the engine doesn't word. Under
+  `compiler.is_native` it compiles to a failure `DELEGATED_ASSUMPTION`, and an assumption that
+  fails with it is left to the caller (`Reporter::check_assumption`): the binary checks it with
+  the trace evaluator (`Rebuilder::check_assumption`), after the startup and the assumptions
+  before it, with -tool or without, since under -tool a message TLC raises with a code holds the
+  code's markers. The engine takes TLC's generator from where the check left it and checks the
+  assumptions after it itself.
+- Still not native: an AssertError assumption that fails to evaluate, sets a register, or follows
+  the configuration's predicates or a SYMMETRY, and AssertError anywhere but an assumption.
+- The corpus models with AssertError assumptions are blocked elsewhere:
+  - ModuleSemanticsAssume: `RandomSubset` in an operator's argument doesn't compile (the argument
+    may not print);
+  - EmptySetEqAssume (`{<<>>} = [{} -> Nat]`) and RandomSubsetEmpty: the engine fails on an
+    assumption TLC finds true, which the replay catches ("it didn't fail");
+  - ValueSemanticsAssume: the replay enumerates an infinite set the engine failed on.
+
+## The command line
+
+`args.rs` reads the arguments as `TLC.handleParameters` does, in order, and stops at the first one
+TLC rejects with TLC's message (1102 and the usage line, marked only where `-tool` came before it):
+an option TLC doesn't know, a missing or malformed value of `-seed`, `-workers`, `-fp`, `-config`,
+`-lncheck` or `-metadir`, and, on the `tlc2.TLC` form, a second module or none. Each message was
+compared with a TLC built from the clone at d8fb231.
+
+It models `-config` (with or without `.cfg`, as TLC), `-continue`, `-deadlock`, `-dump`,
+`-fp 0`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
+trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`,
+`-noGenerateSpecTEBin`/`-noTEBin`). Every other option TLC reads (`-simulate`, `-difftrace`,
+`-coverage`, `-maxSetSize`, `-dfid`, `-fp N`, ...) is not native, as are the shapes where TLC
+throws (`-dump` last, an empty argument), an argument that isn't ASCII, and `Spec.cfg` named as
+the module on the `tlc2.TLC` form. `-lncheck off` is not native either: TLC then checks no temporal property (`LiveCheck.java:238`).
+`seqfinal` is `final` with one worker for the liveness check (`LiveCheck.java:291`), so the two
+read alike.
+
+On the `tlc2.TLC` form a system property in TLC's namespaces (`-Dtlc2.…`, `-Dutil.…`,
+`-Dtla2sany.…`, `-Dtlc.…`) is not native, except the two that only reach the execution statistics
+TLC reports home and change nothing it prints: `tlc2.TLC.ide` (`TLC.java:1710`, `REPL.java:275`)
+and `util.ExecutionStatisticsCollector.id` (`ExecutionStatisticsCollector.java:74`, `205`).
+
+`TLCGet("-Dname")` reads a system property with the key as the default
+(`TLCGetSet.java:485`). The engine answers the key for a name nothing sets and the platform's
+`file.separator` and `path.separator`, and declines any other name in the JVM's own namespaces
+(`java.`, `os.`, `user.`, ...) and a key the spec computes. The binary declines a command line
+that sets a property whose `-Dname` the model's strings hold, since the spec may read it.
+The TypeScript CLI carries the launch's properties into the run (`systemProperties`), with the
+platform's separators and `user.dir`, and fails as unsupported on another of the JVM's own.
+
+`prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
+form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.
+
+## Handoff
+
+- Two paths feed the search. With a recorded front (`PROVE_IT_FRONT/<spec>.front`, what TLC
+  printed from the banner to "Computing initial states", which the differential records), the
+  binary prints that text and lowers the IR itself where no `.ir` is recorded. Where the directory
+  has no recorded front, it only reports where TLC stops before the search. Without
+  `PROVE_IT_FRONT`, tla-front is the whole front end (above).
+- Sweep for wrong output after a big push: list the corpus models whose configuration uses
+  SYMMETRY, VIEW, ALIAS, POSTCONDITION(S) or `_POSSIBLE`, and run
+  `bun scripts/run.ts differential --compare-backends --filter <id> --native
+  native/target/release/prove-it` for each, on freshly built `dist/`, addon and binary. Any native
+  "differs" is a blocker: fix it or decline the run as not native.

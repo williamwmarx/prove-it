@@ -6,12 +6,18 @@ use std::collections::HashSet;
 use std::io::{BufWriter, Stdout, Write};
 
 pub const COMMAND_LINE_ERROR: u32 = 1102;
+pub const STARTING: u32 = 2185;
 pub const FINISHED: u32 = 2186;
+pub const SANY_FINISHED: u32 = 2219;
+pub const STARTING_SANY: u32 = 2220;
+pub const PARSING_FAILED: u32 = 3002;
 pub const MODEL_CHECKING: u32 = 2187;
 pub const COMPUTING_INIT: u32 = 2189;
 pub const INVARIANT_VIOLATED_INITIAL: u32 = 2107;
+pub const PROPERTY_VIOLATED_INITIAL: u32 = 2108;
 pub const INVARIANT_VIOLATED_BEHAVIOR: u32 = 2110;
 pub const DEADLOCK_REACHED: u32 = 2114;
+pub const NO_NEXT_ACTION: u32 = 2115;
 pub const BEHAVIOR_UP_TO_THIS_POINT: u32 = 2121;
 pub const NESTED_EXPRESSION: u32 = 2103;
 pub const INCOMPLETE_SUCCESSOR: u32 = 2109;
@@ -35,7 +41,9 @@ pub const ASSUMPTION_FALSE: u32 = 2104;
 pub const POSTCONDITION_FALSE: u32 = 2404;
 pub const POSTCONDITION_FAILED: u32 = 2405;
 pub const NO_SPECIFICATION_BUT_PROPERTY: u32 = 2257;
+pub const NO_FAIRNESS_BUT_PROPERTY: u32 = 2259;
 pub const COMPUTING_INIT_PROGRESS: u32 = 2269;
+pub const SYMMETRY_SET_TOO_SMALL: u32 = 2300;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

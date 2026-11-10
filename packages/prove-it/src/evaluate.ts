@@ -102,6 +102,8 @@ export interface Builtin {
   // Whether TLC takes an application for a constant one although its value depends on the state.
   isLevelConstant?: boolean;
   isLazy?: boolean;
+  // Whether it is the >= of tlc2.module.Naturals, which names itself > in its errors.
+  isNaturalsGeq?: boolean;
   // A configuration's definition of a constant operator by its values, F(0) = 1: each row's
   // arguments and value.
   table?: [Value[], Value][];
@@ -316,12 +318,14 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
     `Attempted to select nonexistent field "${field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
   const describeNotInDomain = (functionValue: Value) =>
     `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument "${field}", which is not in the domain of the function.`;
-  return (value: Value) => {
-    if (!isFunctionValue(value)) {
+  return (selected: Value) => {
+    if (!isFunctionValue(selected)) {
       throw new TlaEvaluationError(
-        `Attempted to select field "${field}" from a non-record value ${prettyPrint(formatValue(value))}\n${describeRange(expression)}`,
+        `Attempted to select field "${field}" from a non-record value ${prettyPrint(formatValue(selected))}\n${describeRange(expression)}`,
       );
     }
+    // TLC selects from the function it builds of one it keeps lazy (toFcnRcd).
+    const value = selected.kind === "LazyFunction" ? toFiniteFunction(selected) : selected;
     const functionClass = getFunctionClass(value);
     if (functionClass === "tuple") throw createNonIntegerKeyError(field);
     // Only TLC's RecordValue names the field it lacks. Any other function, such as a FcnRcdValue

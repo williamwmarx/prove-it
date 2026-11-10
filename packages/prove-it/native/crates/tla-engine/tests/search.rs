@@ -29,6 +29,7 @@ fn describe(outcome: &SearchOutcome) -> String {
     match outcome {
         SearchOutcome::Declined(reason) => format!("declined: {reason}"),
         SearchOutcome::AssumptionViolated { name } => format!("assumption {name} is false"),
+        SearchOutcome::ConfigError { message } => format!("configuration error: {message}"),
         SearchOutcome::AssumptionFailed { position } => {
             format!("assumption {position} failed to evaluate")
         }
@@ -126,7 +127,7 @@ impl Reporter for Recorded {
 fn format_values(store: &tla_values::Store, values: &[tla_values::Id]) -> String {
     values
         .iter()
-        .map(|&value| tla_values::print::format_value(store, value))
+        .map(|&value| tla_values::print::format_value(store, value).expect("printable"))
         .collect::<Vec<_>>()
         .join("  ")
 }
@@ -360,7 +361,7 @@ fn finds_on_any_number_of_threads_what_one_thread_finds() {
             );
         }
     }
-    assert_eq!(logged.len(), 7);
+    assert_eq!(logged.len(), 9);
 }
 
 // A search stopped where PROVE_IT_STOP_AT asks, inside a level the threads share or at its end,

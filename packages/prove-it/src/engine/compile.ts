@@ -881,7 +881,7 @@ export const getStartupEffectValue = (definition: Definition, environment: Envir
     ? getStartupValue(definition, environment)
     : undefined;
 
-export const createCompiler = (environment: Environment): Compiler => {
+export const createCompiler = (environment: Environment, isViewed: boolean): Compiler => {
   const variableCount = environment.variables.length;
   const definitionCache = new Map<Definition, Compiled[]>();
   // A RECURSIVE operator's body, for its unprimed and its primed calls.
@@ -1460,7 +1460,6 @@ export const createCompiler = (environment: Environment): Compiler => {
     expression: Expression & { kind: "Let" },
     context: Context,
   ): Context => {
-    if (expression.instances && expression.instances.length > 0) unsupported("INSTANCE in LET");
     let scope = context.scope;
     for (const definition of expression.definitions) {
       const definitionContext = { ...context, scope, canPrint: false };
@@ -2024,7 +2023,6 @@ export const createCompiler = (environment: Environment): Compiler => {
     }
   };
 
-  // The recursive function an application applies, when it names one directly.
   // The recursive function an application applies, when it names one, or an operator or a LET
   // gives one, which TLC keeps lazy.
   const getAppliedRecursiveFunction = (
@@ -3175,7 +3173,9 @@ export const createCompiler = (environment: Environment): Compiler => {
         return binary(operand(0), operand(1), (left, right) => {
           const exponent = expectInt(right);
           if (exponent < 0) return bail("negative exponent");
-          return int(Math.pow(expectInt(left), exponent));
+          const base = expectInt(left);
+          if (base === 0 && exponent === 0) return bail("zero to the power of zero");
+          return int(Math.pow(base, exponent));
         });
       case "<":
         return binary(
@@ -3262,14 +3262,21 @@ export const createCompiler = (environment: Environment): Compiler => {
         } as LazySet;
       }
       case "Assert": {
-        // Assert(P, message) is TRUE when P holds. When it doesn't, TLC fails with the message,
-        // which the interpreter reports.
+        // Assert(P, message) is TRUE when P holds. TLC evaluates the message too, as it does any
+        // Java method's arguments, whose effects and failures show. When P doesn't hold, TLC fails
+        // with the message, which the interpreter reports.
         const condition = compileBoolean(args[0], context);
+        const message = operand(1);
         const conditionEvaluate = condition.evaluate;
+        const messageEvaluate = message.evaluate;
         return {
           ...leaf(
-            () => (conditionEvaluate() === TRUE ? TRUE : bail("an assertion failed")),
-            condition.footprint,
+            () => {
+              const holds = conditionEvaluate();
+              messageEvaluate();
+              return holds === TRUE ? TRUE : bail("an assertion failed");
+            },
+            mergeFootprints(condition.footprint, message.footprint),
           ),
           isBoolean: true,
         };
@@ -3621,6 +3628,19 @@ export const createCompiler = (environment: Environment): Compiler => {
     mode: "quantifier" | "streamed",
   ): Compiled => {
     const set = compile(expression, context);
+    // Under a VIEW TLC fingerprints the view's value alone, so a set a variable holds stays as
+    // the spec built it, in an order the engine's states don't keep.
+    if (
+      isViewed &&
+      set.footprint.vars.length > 0 &&
+      ((expression.kind === "Identifier" &&
+        !isLocallyResolved(expression) &&
+        environment.variables.includes(expression.name)) ||
+        expression.kind === "FunctionApplication" ||
+        expression.kind === "FieldAccess")
+    ) {
+      return unsupported("enumerating a set of the state under a VIEW");
+    }
     if (set.isNormalized) return set;
     const reference = set.reference;
     if (!reference) {

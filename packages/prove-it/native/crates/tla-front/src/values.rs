@@ -37,11 +37,7 @@ impl ValueOrder<'_> {
         Ok(match (left, right) {
             (ConfigValue::Number(left), ConfigValue::Number(right)) => left.total_cmp(right),
             (ConfigValue::String(left), ConfigValue::String(right)) => {
-                if left == right {
-                    Ordering::Equal
-                } else {
-                    self.get_rank(left)?.cmp(&self.get_rank(right)?)
-                }
+                self.compare_strings(left, right)?
             }
             (ConfigValue::Boolean(left), ConfigValue::Boolean(right)) => {
                 if left == right {
@@ -85,12 +81,39 @@ impl ValueOrder<'_> {
                     Ordering::Equal
                 }
             }
+            // `compareFunctions` on two records: their sizes, then their names, then their values.
+            (ConfigValue::Record(left), ConfigValue::Record(right)) => {
+                if left.len() != right.len() {
+                    return Ok(left.len().cmp(&right.len()));
+                }
+                for ((left, _), (right, _)) in left.iter().zip(right) {
+                    let comparison = self.compare_strings(left, right)?;
+                    if comparison != Ordering::Equal {
+                        return Ok(comparison);
+                    }
+                }
+                for ((_, left), (_, right)) in left.iter().zip(right) {
+                    let comparison = self.compare(left, right)?;
+                    if comparison != Ordering::Equal {
+                        return Ok(comparison);
+                    }
+                }
+                Ordering::Equal
+            }
             _ => {
                 return Err(FrontError::NotYet(
                     "configuration values TLC can't compare".to_owned(),
                 ));
             }
         })
+    }
+
+    /// `compareStrings`: by the texts' ranks.
+    pub fn compare_strings(&self, left: &str, right: &str) -> Result<Ordering> {
+        if left == right {
+            return Ok(Ordering::Equal);
+        }
+        Ok(self.get_rank(left)?.cmp(&self.get_rank(right)?))
     }
 
     /// `toValue`: a set of the configuration is sorted and its duplicates dropped, as `createSet`

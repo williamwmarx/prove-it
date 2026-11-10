@@ -42,7 +42,7 @@ describe("Java module overrides match TLC", () => {
         ["Mismatch", "(tlc2.value.impl.Value)", false],
         ["Name", "()", true],
         ["Small", "()", true],
-        ["Twice", "(tlc2.value.impl.Value)", true],
+        ["Twice", "(tlc2.value.impl.Value)", false],
       ].map(([operator, parameters, isMatched]) => ({
         kind: "java-override",
         module: "Overrides",
@@ -51,6 +51,44 @@ describe("Java module overrides match TLC", () => {
         isMatched,
       })),
     );
+  });
+
+  it("rejects an override with parameters, whose arguments TLC evaluates first", async () => {
+    // TLC evaluates 1 \div 0 before it calls Twice, and reports the division, not -2.
+    await expect(
+      check({
+        source:
+          "---- MODULE Overrides ----\nEXTENDS Integers\nVARIABLE x\nTwice(n) == 2 * n\nInit == x = Twice(1 \\div 0)\nNext == x' = x\nInv == x = -2\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        loadClass,
+      }),
+    ).rejects.toThrow(TlaUnsupportedError);
+  });
+
+  it("rejects an override class it does not read whole", async () => {
+    // tests/fixtures/override-shapes: in each, TLC runs what the front end can't, or matches
+    // otherwise (each P.java says what TLC does).
+    for (const [shape, reason] of [
+      ["clinit", "A Java override class with a static initializer"],
+      ["field", "A Java override class with fields"],
+      ["super", "A Java override class with a superclass"],
+      ["overload", "A Java override class with methods of one name"],
+      ["annotation", "A Java override class with annotations"],
+      ["trycatch", "The Java override P.K computes its value"],
+      ["registry", "A Java override of a name TLC maps to an operator's"],
+    ]) {
+      const directory = join(import.meta.dirname, "../fixtures/override-shapes", shape);
+      await expect(
+        check({
+          source: readFileSync(join(directory, "P.tla"), "utf8"),
+          config: readFileSync(join(directory, "P.cfg"), "utf8"),
+          loadClass: (name) => {
+            const path = join(directory, `${name}.class`);
+            return existsSync(path) ? readFileSync(path) : undefined;
+          },
+        }),
+      ).rejects.toThrow(`${reason}, which tla-ts cannot run`);
+    }
   });
 
   it("rejects an override whose method computes its value", async () => {

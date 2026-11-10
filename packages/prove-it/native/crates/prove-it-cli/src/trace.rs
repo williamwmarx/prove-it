@@ -3,11 +3,11 @@
 //! (`formatState` in `values.ts`) writes them, a line per variable in TLC's order, as a conjunction
 //! when there are several. What the spec printed as TLC rebuilt the trace comes with it.
 
-use tla_engine::search::{Violation, ViolationKind};
+use tla_engine::search::{AcceptedTrace, FinalRegisters, Violation, ViolationKind};
 use tla_ir::Ir;
 use tla_trace::{
-    Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Stats, Unsupported, Value,
-    Verdict, format_value,
+    Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Registers, Stats, Unsupported,
+    Value, Verdict, format_value,
 };
 use tla_values::Id;
 
@@ -56,18 +56,58 @@ pub fn rebuild_trace(
     ir: &Ir,
     violation: &Violation,
     postconditions: Option<&PostconditionRun>,
+    is_tool: bool,
+) -> Result<PrintedTrace, String> {
+    rebuild(
+        ir,
+        violation,
+        &violation.kind,
+        &violation.states,
+        violation.labels.clone(),
+        postconditions,
+        is_tool,
+    )
+}
+
+/// The trace of the tableau node a deadlocked state reaches, from the deadlock's store.
+pub fn rebuild_accepted(
+    ir: &Ir,
+    violation: &Violation,
+    accepted: &AcceptedTrace,
+    is_tool: bool,
+) -> Result<PrintedTrace, String> {
+    rebuild(
+        ir,
+        violation,
+        &ViolationKind::Accepted {
+            violated: accepted.violated.clone(),
+        },
+        &accepted.states,
+        vec![None; accepted.states.len().saturating_sub(1)],
+        None,
+        is_tool,
+    )
+}
+
+fn rebuild(
+    ir: &Ir,
+    violation: &Violation,
+    kind: &ViolationKind,
+    states: &[Vec<Id>],
+    mut labels: Vec<Option<u32>>,
+    postconditions: Option<&PostconditionRun>,
+    is_tool: bool,
 ) -> Result<PrintedTrace, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
             .spawn_scoped(scope, || {
-                let mut states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
-                let mut labels = violation.labels.clone();
+                let mut states: Vec<&[Id]> = states.iter().map(Vec::as_slice).collect();
                 // Under SYMMETRY or a VIEW the lasso's states are the stored ones: TLC rebuilds
                 // the states it prints, the step back into the cycle with them, to a state whose
                 // key is the stored first state of the cycle's.
                 let is_reduced = violation.symmetry.is_some() || ir.model.view.is_some();
-                let reduced_cycle = match violation.kind {
+                let reduced_cycle = match *kind {
                     ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
                     _ => None,
                 };
@@ -77,17 +117,17 @@ pub fn rebuild_trace(
                     labels.push(None);
                 }
                 // TLC holds a violating state as it found it, and recovers a deadlocked one.
-                let ending = match violation.kind {
-                    ViolationKind::Deadlock => Ending::Kept,
-                    ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
-                        Ending::Violation
-                    }
+                let ending = match *kind {
+                    ViolationKind::Deadlock { .. } => Ending::Kept,
+                    ViolationKind::Invariant(_)
+                    | ViolationKind::InitialInvariant(_)
+                    | ViolationKind::InitialPredicate(_) => Ending::Violation,
                     ViolationKind::Lasso { .. } | ViolationKind::Accepted { .. } => Ending::Lasso,
-                    ViolationKind::Error { .. } => {
-                        return Err("a failure evaluating the model".into());
+                    ViolationKind::NoNextState | ViolationKind::Error { .. } => {
+                        return Err("a stop with no trace".into());
                     }
                 };
-                let cycle_start = match violation.kind {
+                let cycle_start = match *kind {
                     ViolationKind::Lasso { loop_start, .. } => Some(loop_start),
                     _ => None,
                 };
@@ -97,10 +137,18 @@ pub fn rebuild_trace(
                         &violation.store,
                         &violation.startup,
                         violation.startup_random,
-                    );
+                    )?;
+                    if let Some(random) = violation.random {
+                        rebuilder.set_violation_random(random);
+                    }
                     if let Some(group) = &violation.symmetry {
                         rebuilder.set_symmetry(group);
                     }
+                    rebuilder.set_registers(Registers::from_store(
+                        &violation.store,
+                        &violation.registers.numbered,
+                        &violation.registers.named,
+                    )?);
                     let mut trace =
                         rebuilder.rebuild(&violation.store, &states, &labels, ending)?;
                     let loop_action = match closing {
@@ -118,14 +166,36 @@ pub fn rebuild_trace(
                         }
                         None => None,
                     };
-                    let aliases = rebuilder.alias(&trace, cycle_start)?;
+                    // TLC prints a deadlocked initial state as it is (`TLCTrace.printTrace`).
+                    let is_alone =
+                        matches!(kind, ViolationKind::Deadlock { .. }) && trace.states.len() == 1;
+                    let aliases = if is_alone {
+                        None
+                    } else {
+                        rebuilder.alias(&trace, cycle_start, is_tool)?
+                    };
                     // CounterExample closes a lasso with its step back into the cycle, which a
                     // stuttering one doesn't take.
-                    let cycle = match violation.kind {
+                    let cycle = match *kind {
                         ViolationKind::Lasso {
                             loop_start,
                             loop_label,
-                        } => loop_label.or(loop_action).map(|label| (loop_start, label)),
+                            ..
+                        } => loop_label
+                            .or(loop_action)
+                            // TLC's record of a stuttering lasso closes it by the action of its
+                            // last step, as `getStepAction` gives it.
+                            .or_else(|| {
+                                (loop_start + 1 == trace.states.len())
+                                    .then(|| trace.states.last().and_then(|state| state.action))
+                                    .flatten()
+                            })
+                            .map(|label| (loop_start, Some(label)))
+                            // TLC holds no action for a lasso that stutters at its initial
+                            // state, whose TLCStateInfo it rebuilt from the initial predicate.
+                            .or_else(|| {
+                                (loop_start == 0 && trace.states.len() == 1).then_some((0, None))
+                            }),
                         _ => None,
                     };
                     let checked = postconditions
@@ -242,13 +312,26 @@ fn to_term(term: tla_ir::LiveTerm) -> tla_live::Term {
 }
 
 /// The postconditions of a search that completed, as TLC checks them, or why `tla-trace` can't.
-pub fn check_postconditions(ir: &Ir, run: &PostconditionRun) -> Result<Postconditions, String> {
+pub fn check_postconditions(
+    ir: &Ir,
+    run: &PostconditionRun,
+    registers: Option<&FinalRegisters>,
+) -> Result<Postconditions, String> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(SEARCH_STACK_BYTES)
             .spawn_scoped(scope, || {
                 Rebuilder::new(ir)
-                    .and_then(|mut rebuilder| check(&mut rebuilder, ir, run, None))
+                    .and_then(|mut rebuilder| {
+                        if let Some(stored) = registers {
+                            rebuilder.set_registers(Registers::from_store(
+                                &stored.store,
+                                &stored.registers.numbered,
+                                &stored.registers.named,
+                            )?);
+                        }
+                        check(&mut rebuilder, ir, run, None)
+                    })
                     .map_err(|Unsupported(reason)| reason)
             })
             .expect("a thread to check the postconditions")
@@ -258,7 +341,7 @@ pub fn check_postconditions(ir: &Ir, run: &PostconditionRun) -> Result<Postcondi
 }
 
 // Each postcondition in turn, up to the first that doesn't hold.
-fn check(
+pub(crate) fn check(
     rebuilder: &mut Rebuilder<'_>,
     ir: &Ir,
     run: &PostconditionRun,
@@ -334,7 +417,7 @@ pub(crate) fn format_texts(ir: &Ir, texts: &[String]) -> String {
 
 /// Named values as TLC prints a state (`TLCStateMut.toString`): a line each, as a conjunction when
 /// there are several.
-fn format_fields<'v>(
+pub(crate) fn format_fields<'v>(
     fields: impl ExactSizeIterator<Item = (&'v str, Option<&'v Value>)>,
 ) -> String {
     let is_conjunction = fields.len() > 1;

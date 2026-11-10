@@ -52,8 +52,80 @@ pub struct RankedTexts<'a> {
     pub ranks: FastMap<Rc<str>, u32>,
 }
 
+/// `isStartupDefinition`: a constant definition without parameters the configuration doesn't
+/// replace.
+fn is_startup_definition(
+    definition: &Rc<Definition>,
+    environment: &Environment,
+    facts: &DefinitionFacts,
+) -> bool {
+    let is_nullary = match &definition.kind {
+        DefinitionKind::Operator { params, .. } => params.is_empty(),
+        DefinitionKind::Function { .. } => true,
+    };
+    is_nullary
+        && !environment.constants.contains_key(&definition.name)
+        && !environment.substitutions.contains_key(&definition.name)
+        && facts.is_constant_level(definition, environment)
+}
+
+/// The builtins whose effects show each time TLC evaluates them again: they print, set a
+/// register, draw at random, or read the clock or TLC's registers. Reading a file or the process's
+/// environment again reads the same.
+const SHOWN_EFFECTS: [&str; 9] = [
+    "Print",
+    "PrintT",
+    "TLCSet",
+    "TLCGet",
+    "JavaTime",
+    "RandomElement",
+    "RandomSubset",
+    "RandomSetOfSubsets",
+    "RandomSubsetSet",
+];
+
+/// Whether evaluating the definition again can show, as by printing twice, other than through
+/// `cached`, whose value TLC keeps.
+fn reaches_shown_effect(
+    definition: &Rc<Definition>,
+    environment: &Environment,
+    cached: Option<&Rc<Definition>>,
+) -> bool {
+    let mut seen: FastSet<usize> = cached
+        .map(|cached| Rc::as_ptr(cached) as usize)
+        .into_iter()
+        .collect();
+    let mut pending = vec![definition.body.clone()];
+    while let Some(expression) = pending.pop() {
+        if let Some(name) = expression.reference()
+            && !expression.is_locally_resolved()
+        {
+            if SHOWN_EFFECTS.contains(&&*name) && !environment.definitions.contains_key(&name) {
+                return true;
+            }
+            let target = environment.substitutions.get(&name).unwrap_or(&name);
+            if let Some(callee) = environment.definitions.get(target)
+                && seen.insert(Rc::as_ptr(callee) as usize)
+            {
+                pending.push(callee.body.clone());
+            }
+        }
+        pending.extend(expression.children());
+    }
+    false
+}
+
 pub struct Lowering<'a> {
     environment: &'a Environment,
+    /// How many branches TLC's liveness checker has, once the model is written with one.
+    pub branches: Option<usize>,
+    /// The seed TLC seeds its generator with.
+    pub random_seed: u64,
+    /// The evaluator of the constant parts of the liveness formula, without which they stay
+    /// `NotYet`.
+    pub evaluator: Option<&'a crate::eval::Evaluator<'a>>,
+    /// The constant definitions TLC computes and deep-normalizes at startup, by address.
+    normalized: FastSet<usize>,
     facts: DefinitionFacts,
     ranked: RankedTexts<'a>,
     extra_texts: Vec<Name>,
@@ -67,6 +139,9 @@ pub struct Lowering<'a> {
     definition_queue: Vec<Rc<Definition>>,
     builtins: Vec<IrBuiltin>,
     builtin_ids: FastMap<Name, Index>,
+    /// Where the specification reaches the next-state relation through an INSTANCE with
+    /// substitutions, which `finish` writes after the definitions, as `lowerToIr` does.
+    next_substitution: Option<Location>,
     constants: Vec<Constant>,
     constant_ids: FastMap<Name, Index>,
     values: Vec<Value>,
@@ -82,9 +157,19 @@ pub struct Lowering<'a> {
 
 impl<'a> Lowering<'a> {
     pub fn new(environment: &'a Environment, ranked: RankedTexts<'a>) -> Lowering<'a> {
+        let facts = create_definition_facts(environment);
         Lowering {
-            facts: create_definition_facts(environment),
+            branches: None,
+            random_seed: 0,
+            normalized: environment
+                .startup_definitions
+                .iter()
+                .filter(|definition| is_startup_definition(definition, environment, &facts))
+                .map(|definition| Rc::as_ptr(definition) as usize)
+                .collect(),
+            facts,
             environment,
+            evaluator: None,
             ranked,
             extra_texts: Vec::new(),
             extra_ids: FastMap::default(),
@@ -101,6 +186,7 @@ impl<'a> Lowering<'a> {
             values: Vec::new(),
             scope_ids: FastMap::default(),
             tlc_order: Vec::new(),
+            next_substitution: None,
             scope_queue: Vec::new(),
             scopes: Vec::new(),
             value_strings: Vec::new(),
@@ -197,6 +283,21 @@ impl<'a> Lowering<'a> {
                     .map(|element| self.write_value(element))
                     .collect(),
             ),
+            // A record is TLC's RecordValue, class 3, its names before its values.
+            ConfigValue::Record(fields) => {
+                let domain = fields
+                    .iter()
+                    .map(|(name, _)| Value::String(self.get_value_string(name)))
+                    .collect();
+                Value::Function {
+                    class: 3,
+                    domain,
+                    range: fields
+                        .iter()
+                        .map(|(_, value)| self.write_value(value))
+                        .collect(),
+                }
+            }
         }
     }
 
@@ -299,6 +400,21 @@ impl<'a> Lowering<'a> {
         })
     }
 
+    /// A name nothing global resolves is one a scope binds, as a definition an INSTANCE in a LET
+    /// copies in under a key the resolver leaves alone, so `ir.ts` writes it as local.
+    fn write_bound_name(
+        &mut self,
+        name: &Name,
+        is_operator: bool,
+        is_local: bool,
+    ) -> Result<IrName> {
+        let name = self.write_name(name, is_operator, is_local)?;
+        Ok(IrName {
+            is_local: name.is_local || name.resolution == Resolution::None,
+            ..name
+        })
+    }
+
     fn write_texts(&mut self, texts: &[Name]) -> Vec<TextId> {
         texts.iter().map(|text| self.get_text(text)).collect()
     }
@@ -379,6 +495,10 @@ impl<'a> Lowering<'a> {
             IrDefinition::SUBSTITUTED
         } else {
             0
+        } | if self.normalized.contains(&(Rc::as_ptr(definition) as usize)) {
+            IrDefinition::NORMALIZED
+        } else {
+            0
         };
         let id = self.open(&definition.location);
         let name = self.get_text(&definition.name);
@@ -437,11 +557,11 @@ impl<'a> Lowering<'a> {
             ExpressionKind::String { value } => NodeKind::String(self.get_text(value)),
             ExpressionKind::Identifier { .. } => {
                 let name = expression.reference().unwrap_or_default();
-                NodeKind::Identifier(self.write_name(&name, false, is_local)?)
+                NodeKind::Identifier(self.write_bound_name(&name, false, is_local)?)
             }
             ExpressionKind::Apply { args, .. } => {
                 let name = expression.reference().unwrap_or_default();
-                let name = self.write_name(&name, true, is_local)?;
+                let name = self.write_bound_name(&name, true, is_local)?;
                 NodeKind::Apply {
                     name,
                     args: self.write_nodes(args)?,
@@ -793,38 +913,31 @@ impl<'a> Lowering<'a> {
         tlc_order: Vec<i32>,
     ) -> Result<Model> {
         self.tlc_order = tlc_order;
+        self.next_substitution =
+            crate::spec::get_next_substitution(config, self.environment, &self.facts)?;
         let not_yet = |reason: &str| FrontError::NotYet(reason.to_owned());
-        let (Some(init), Some(next)) = (&specification.init, &specification.next) else {
-            return Err(not_yet("a model without Init or Next"));
+        let Some(init) = &specification.init else {
+            return Err(not_yet("a model without Init"));
         };
         let liveness = crate::live::get_liveness(
             &specification.temporals,
             &properties.liveness,
             self.environment,
             &self.facts,
+            self.evaluator,
             if version == Some("1.7.4") {
                 crate::TlcVersion::V1_7_4
             } else {
                 crate::TlcVersion::Master
             },
-        )?;
-        let is_scoped = properties
-            .invariants
-            .iter()
-            .any(|property| property.scope.is_some())
-            || properties
-                .initial_predicates
-                .iter()
-                .any(|property| property.scope.is_some())
-            || properties
-                .action_properties
-                .iter()
-                .any(|property| property.scope.is_some());
-        if is_scoped {
-            return Err(not_yet("a property read in a scope"));
-        }
+        )
+        // `createLivenessChecker` runs inside `withUnexpectedException`.
+        .map_err(crate::tlc_messages::with_unexpected_exception)?;
         let init = self.write_root(init)?;
-        let next = self.write_root(next)?;
+        let next = match &specification.next {
+            Some(next) => Some(self.write_root(next)?),
+            None => None,
+        };
         let scope = self.get_scope_index(specification.scope.as_ref());
         let invariants = config
             .invariants
@@ -833,8 +946,10 @@ impl<'a> Lowering<'a> {
             .collect();
         let mut property_invariants = Vec::new();
         let mut property_invariant_names = Vec::new();
+        let mut property_invariant_scopes = Vec::new();
         for invariant in &properties.invariants {
             let root = self.write_root(&invariant.expression)?;
+            property_invariant_scopes.push(self.get_scope_index(invariant.scope.as_ref()));
             property_invariants.push(Printed {
                 root,
                 has_repeated_effect: self
@@ -871,11 +986,19 @@ impl<'a> Lowering<'a> {
         for property in &properties.action_properties {
             let action = self.write_root(&property.action)?;
             let subscript = self.write_root(&property.subscript)?;
-            action_properties.push(IrActionProperty { action, subscript });
+            action_properties.push(IrActionProperty {
+                action,
+                subscript,
+                scope: self.get_scope_index(property.scope.as_ref()),
+            });
         }
         let mut initial_predicates = Vec::new();
+        let mut initial_predicate_scopes = Vec::new();
+        let mut initial_predicate_names = Vec::new();
         for predicate in &properties.initial_predicates {
             initial_predicates.push(self.write_root(&predicate.expression)?);
+            initial_predicate_names.push(self.get_text(&predicate.name));
+            initial_predicate_scopes.push(self.get_scope_index(predicate.scope.as_ref()));
         }
         let view = config
             .view
@@ -891,10 +1014,18 @@ impl<'a> Lowering<'a> {
             .map(|name| self.config_name(name).root)
             .collect();
         let version = version.map(|version| self.get_text(version));
+        self.branches = liveness.as_ref().map(|liveness| liveness.branches);
         let (atoms, live_formula, live_properties) = match &liveness {
             Some(liveness) => self.write_liveness(liveness)?,
             None => (Vec::new(), Vec::new(), Vec::new()),
         };
+        let definition = config
+            .specification
+            .as_deref()
+            .and_then(|name| crate::spec::get_definition(name, self.environment))
+            .cloned();
+        let specification =
+            definition.and_then(|definition| self.write_range(definition.location.range.as_ref()));
         let startup = self.write_startup(config)?;
         Ok(Model {
             init,
@@ -905,11 +1036,14 @@ impl<'a> Lowering<'a> {
             invariants,
             property_invariants,
             property_invariant_names,
+            property_invariant_scopes,
             constraints,
             action_constraints,
             possible,
             action_properties,
             initial_predicates,
+            initial_predicate_scopes,
+            initial_predicate_names,
             view,
             alias,
             postconditions,
@@ -918,11 +1052,16 @@ impl<'a> Lowering<'a> {
             is_recording_graph: liveness.is_some(),
             version,
             // TLC's default seed.
-            random_seed: 0,
+            random_seed: self.random_seed,
             atoms,
             live_formula,
             live_properties,
+            specification,
             startup,
+            next_substitution: None,
+            instance_actions: Vec::new(),
+            instance_names: Vec::new(),
+            tlc_spec: None,
         })
     }
 
@@ -936,10 +1075,33 @@ impl<'a> Lowering<'a> {
             let Some(definition) = environment.definitions.get(target) else {
                 continue;
             };
-            let is_checked = environment
+            // TLC evaluates a substitute before the constant definitions and again wherever the
+            // name it replaces is read, which repeats its effects; the IR evaluates it once, in
+            // definition order. TLC keeps the value of a constant TLCEval in the semantic graph
+            // (`tlcEvalConst`), which then shows its effects once, in TLC's order where no other
+            // constant definition shows any.
+            let is_constant = environment
                 .root_constants
                 .iter()
-                .any(|constant| constant.name == *name)
+                .any(|constant| constant.name == *name);
+            let is_cached = || {
+                matches!(
+                    &definition.body.kind,
+                    ExpressionKind::Apply { operator, args, .. } if &**operator == "TLCEval" && args.len() == 1
+                ) && self.facts.is_constant_level(definition, environment)
+                    && !environment.startup_definitions.iter().any(|other| {
+                        !Rc::ptr_eq(other, definition)
+                            && is_startup_definition(other, environment, &self.facts)
+                            && reaches_shown_effect(other, environment, Some(definition))
+                    })
+            };
+            if is_constant && reaches_shown_effect(definition, environment, None) && !is_cached() {
+                return Err(FrontError::NotYet(format!(
+                    "a configuration substitute with effects, which TLC evaluates at every use: \
+                     {name} <- {target}"
+                )));
+            }
+            let is_checked = is_constant
                 && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
                 && !self.facts.is_constant_level(definition, environment);
             if is_checked {
@@ -947,23 +1109,12 @@ impl<'a> Lowering<'a> {
                 substitutes.push((text, self.get_definition_index(definition)));
             }
         }
-        // `isStartupDefinition`: a constant definition the configuration doesn't replace.
-        let is_startup_definition = |definition: &Rc<Definition>| {
-            let is_nullary = match &definition.kind {
-                DefinitionKind::Operator { params, .. } => params.is_empty(),
-                DefinitionKind::Function { .. } => true,
-            };
-            is_nullary
-                && !environment.constants.contains_key(&definition.name)
-                && !environment.substitutions.contains_key(&definition.name)
-                && self.facts.is_constant_level(definition, environment)
-        };
         let mut seen = FastSet::default();
         let startup_definitions: Vec<Rc<Definition>> = environment
             .startup_definitions
             .iter()
             .filter(|definition| {
-                is_startup_definition(definition)
+                is_startup_definition(definition, environment, &self.facts)
                     && self.facts.is_impure_definition(definition, environment)
                     && seen.insert(Rc::as_ptr(definition) as usize)
             })
@@ -973,6 +1124,17 @@ impl<'a> Lowering<'a> {
             .iter()
             .map(|definition| self.get_definition_index(definition))
             .collect();
+        let mut predicates = Vec::new();
+        for (form, kind, name, definition) in
+            crate::spec::get_constant_predicates(config, environment, &self.facts)
+        {
+            predicates.push(tla_ir::StartupPredicate {
+                form,
+                kind: self.get_text(kind),
+                name: self.get_text(&name),
+                definition: self.get_definition_index(&definition),
+            });
+        }
         let symmetry = match &config.symmetry {
             None => None,
             Some(name) => Some(self.write_symmetry(config, name)?),
@@ -989,6 +1151,7 @@ impl<'a> Lowering<'a> {
         Ok(Startup {
             substitutes,
             definitions,
+            predicates,
             symmetry,
             assumptions,
         })
@@ -1028,9 +1191,16 @@ impl<'a> Lowering<'a> {
                 .iter()
                 .any(|substitution| substitution.name == name)
         };
+        // TLC takes the arguments of the body's node, whatever operator SANY made of it, and
+        // fails on a body that is no application, such as a LET (`Tool.getSymmetryPerms`).
         let permuted = match &definition.body.kind {
             ExpressionKind::Apply { args, .. } => args.clone(),
-            _ => Vec::new(),
+            ExpressionKind::Identifier { .. } => Vec::new(),
+            _ => {
+                return Err(FrontError::NotYet(
+                    "a SYMMETRY definition that isn't an operator applied to its sets".to_owned(),
+                ));
+            }
         };
         let mut permuted_sets = Vec::new();
         for set in permuted {
@@ -1193,7 +1363,13 @@ impl<'a> Lowering<'a> {
         })
     }
 
-    pub fn finish(mut self, model: Model) -> Result<Ir> {
+    pub fn finish(self, model: Model) -> Result<Ir> {
+        self.finish_indexing(model).map(|(ir, _)| ir)
+    }
+
+    /// The IR, and the indexes of the definitions it holds that TLC computes as it starts
+    /// (`processConstantDefns`), in TLC's order.
+    pub fn finish_indexing(mut self, mut model: Model) -> Result<(Ir, Vec<Index>)> {
         let mut definitions = Vec::new();
         let (mut next, mut next_scope) = (0, 0);
         loop {
@@ -1210,6 +1386,52 @@ impl<'a> Lowering<'a> {
                 definitions.push(id);
             } else {
                 break;
+            }
+        }
+        // Where the specification reaches the next-state relation through an INSTANCE, and what TLC
+        // names the actions of the definitions INSTANCEs copy, of the definitions the IR holds, by
+        // index.
+        let next_substitution = self.next_substitution.take();
+        model.next_substitution = self.write_range(
+            next_substitution
+                .as_ref()
+                .and_then(|location| location.range.as_ref()),
+        );
+        let environment = self.environment;
+        let indexed = |keys: &mut dyn Iterator<Item = &Name>, ids: &FastMap<usize, Index>| {
+            let mut indexed: Vec<(Index, Name)> = keys
+                .filter_map(|key| {
+                    let definition = environment.definitions.get(key)?;
+                    let index = ids.get(&(Rc::as_ptr(definition) as usize))?;
+                    Some((*index, key.clone()))
+                })
+                .collect();
+            // As a JavaScript Map of them, the last key of a definition named by several.
+            indexed.sort_by_key(|(index, _)| *index);
+            indexed.reverse();
+            indexed.dedup_by_key(|(index, _)| *index);
+            indexed.reverse();
+            indexed
+        };
+        for (index, key) in indexed(
+            &mut environment.instance_actions.keys(),
+            &self.definition_ids,
+        ) {
+            let Some(action) = environment.instance_actions.get(&key) else {
+                continue;
+            };
+            let name = self.get_text(&action.name);
+            let location = self.write_range(action.location.range.as_ref());
+            model.instance_actions.push(tla_ir::InstanceAction {
+                definition: index,
+                name,
+                location,
+            });
+        }
+        for (index, key) in indexed(&mut environment.instance_names.keys(), &self.definition_ids) {
+            if let Some(name) = environment.instance_names.get(&key) {
+                let name = self.get_text(name);
+                model.instance_names.push((index, name));
             }
         }
         let value_strings = std::mem::take(&mut self.value_strings)
@@ -1229,9 +1451,24 @@ impl<'a> Lowering<'a> {
             .chain(&self.extra_texts)
             .map(|text| Box::from(&**text))
             .collect();
-        Ok(Ir {
+        let mut seen = FastSet::default();
+        let startup = environment
+            .startup_definitions
+            .iter()
+            .filter(|definition| {
+                is_startup_definition(definition, environment, &self.facts)
+                    && seen.insert(Rc::as_ptr(definition) as usize)
+            })
+            .filter_map(|definition| {
+                self.definition_ids
+                    .get(&(Rc::as_ptr(definition) as usize))
+                    .copied()
+            })
+            .collect();
+        let ir = Ir {
             ranked_count: self.ranked.texts.len() as u32,
             texts,
+            wide_texts: std::collections::BTreeMap::new(),
             variables,
             tlc_order: self.tlc_order,
             builtins: self.builtins,
@@ -1248,7 +1485,8 @@ impl<'a> Lowering<'a> {
                 top: self.top,
                 junctions: self.junctions,
             },
-        })
+        };
+        Ok((ir, startup))
     }
 }
 

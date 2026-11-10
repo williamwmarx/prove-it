@@ -78,10 +78,21 @@ fn describe_actions(ir: &Ir) -> Vec<String> {
         .iter()
         .map(|action| {
             format!(
-                "{} @{} {:?}",
+                "{} @{} {:?} {} {:?} {:?}",
                 ir.texts[action.label as usize],
                 action.expression,
-                describe_scope(ir, action.scope)
+                describe_scope(ir, action.scope),
+                ir.texts[action.name as usize],
+                action.location.map(|range| (
+                    ir.texts[range.module as usize].to_string(),
+                    range.start_line,
+                    range.start_column,
+                    range.end_line,
+                    range.end_column
+                )),
+                action
+                    .definition
+                    .map(|index| ir.definitions[index as usize])
             )
         })
         .collect()

@@ -69,7 +69,7 @@ pub fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
     let ids = decode_shared_states(&mut store, &checkpoint.states, width).ok()?;
     let startup = decode_shared_states(
         &mut store,
-        &checkpoint.startup,
+        checkpoint.startup.as_ref()?,
         ir.model.startup.definitions.len(),
     )
     .ok()?;

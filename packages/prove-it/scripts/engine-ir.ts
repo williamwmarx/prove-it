@@ -30,9 +30,11 @@ import {
 // ENABLED, a VIEW, action constraints, properties checked as invariants, action properties and
 // initial predicates, invariants that print, recursion, LAMBDA, function definitions, values
 // TLC computes at startup, invariants an initial state violates, the run-time errors whose
-// messages and call stacks tla-trace's evaluate_failure gives, tableau nodes that accept every
-// behavior, assumptions that print, the records TLC sorts as it permutes a state under
-// SYMMETRY, and a lasso under a VIEW.
+// messages and call stacks tla-trace's evaluate_failure gives, an expansion TLC replays after an
+// invariant fails to evaluate, tableau nodes that accept every behavior, assumptions that print,
+// the records TLC sorts as it permutes a state under SYMMETRY, a lasso under a VIEW, action
+// composition, an operator the configuration defines by its values, a postcondition that reads
+// the _POSSIBLE counts, and one that reads a lasso stuttering at its initial state.
 const GOLDEN_MODELS = [
   "examples/specifications/btree/MCbtree.cfg",
   "examples/specifications/TeachingConcurrency/SimpleRegular.cfg",
@@ -77,8 +79,10 @@ const GOLDEN_MODELS = [
   "tlc/tlatools/org.lamport.tlatools/test-model/Github461.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/TESpecTest/TESpecRuntimeErrorTest.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/EvaluatingValueTest.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/FingerprintExceptionHang.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorEvalException.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/DoInitFunctor/DoInitFunctorMinimalErrorStack.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextB.cfg",
   "spectacle/specs/bfs_anim.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest4.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/suite/etest6.cfg",
@@ -94,9 +98,20 @@ const GOLDEN_MODELS = [
   "spectacle/specs/with_state_graphs/Elevator.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/Github710b.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/Github710d.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/Github607.cfg",
+  "tla-rs/test_cases/should_error/liveness_error.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/FiniteMonotonic/MCDistributedReplicatedLog.cfg",
   "mongodb-txns/MultiShardTxn/Storage.cfg",
   "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/AsyncTerminationDetection.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/ConstantOperatorConfiguration.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/PossibleCountsTest.cfg",
+  "etcd-raft/tla/etcdraft.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/examples/allocator/SchedulingAllocator.cfg",
+  "raft/specifications/pull-raft/PullRaft.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/EmptySubsetEq.cfg",
+  "tlc/tlatools/org.lamport.tlatools/test-model/examples/SpecifyingSystems/Liveness/MCLiveWriteThroughCache.cfg",
 ];
 
 const GOLDEN_DIRECTORY = join(CONFORMANCE_DIRECTORY, "ir");

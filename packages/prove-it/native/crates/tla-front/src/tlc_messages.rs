@@ -5,12 +5,24 @@ use crate::errors::FrontError;
 
 /// EXIT_STATUS in `src/exit-codes.ts`.
 const SPEC_EVALUATION_FAILURE: i32 = 75;
+const SAFETY_EVALUATION_FAILURE: i32 = 76;
+const LIVENESS_EVALUATION_FAILURE: i32 = 77;
 const CONFIG_PARSE_ERROR: i32 = 151;
 const GENERAL_ERROR: i32 = 255;
 
 /// EC.SYSTEM_STACK_OVERFLOW, and STACK_OVERFLOW_MESSAGE in `src/errors.ts`.
 const STACK_OVERFLOW: u32 = 1005;
 pub const STACK_OVERFLOW_MESSAGE: &str = "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
+
+/// EC.TLC_INVARIANT_VIOLATED_LEVEL, which `errorConstantToExitStatus` exits with as a failure to
+/// evaluate an invariant.
+const INVARIANT_VIOLATED_LEVEL: u32 = 2146;
+/// EC.TLC_LIVE_FORMULA_TAUTOLOGY, which it exits with as a failure to evaluate a liveness property.
+const LIVE_FORMULA_TAUTOLOGY: u32 = 2253;
+/// EC.TLC_LIVE_CANNOT_HANDLE_FORMULA and EC.TLC_LIVE_WRONG_FORMULA_FORMAT, which it exits with as
+/// any general error.
+const LIVE_CANNOT_HANDLE_FORMULA: u32 = 2213;
+const LIVE_WRONG_FORMULA_FORMAT: u32 = 2214;
 
 /// MESSAGE_CODE.general, the code of a message TLC builds from no template.
 pub const GENERAL: u32 = 1000;
@@ -74,6 +86,9 @@ const CODED_MESSAGES: &[(u32, &str, bool)] = &[
     (2261, "TLC encountered a temporal formula (%1%) when evaluating a predicate or action.\n%2%", false),
     (2265, "TLC can't handle a number this big.\n%1%", false),
     (2266, "The %1% argument of %2% should be an %3%, but instead it is:\n%4%", true),
+    (2272, "The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action %1% holds in *every* step of the behavior, define a temporal property: Let A be the formula at %2%; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).", false),
+    (2273, "The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that action %1% holds in *every* step of the behavior, define a temporal property by applying the \"always\" temporal operator ([]) to the formula at %2% (compare page 90 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).", false),
+    (2274, "The formula %1% at %2% is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES. To check that infinitely many %1% steps occur, define a temporal property by applying the \"always eventually\" temporal operator combination ([]<>) to the formula at %2% (compare page 91 of Specifying Systems at https://lamport.azurewebsites.net/tla/book.html).", false),
     (2280, "In evaluation, the identifier %1% is either undefined or not an operator.\n%2%", false),
     (2281, "The configuration file substitutes constant %1% with non-constant %2%%3%", false),
     (2283, "The argument of %1% should be a %2%, but instead it is:\n%3%", true),
@@ -177,6 +192,20 @@ pub fn get_coded_message(text: &str) -> Option<CodedMessage> {
         })
 }
 
+/// `withUnexpectedException`: TLC reports an EvalException, or a RuntimeException without a
+/// message of its own, as an exception it didn't expect.
+pub fn with_unexpected_exception(error: FrontError) -> FrontError {
+    let FrontError::Evaluation(message) = error else {
+        return error;
+    };
+    let prefix = match get_coded_message(&message) {
+        Some(coded) if coded.is_eval_exception => crate::errors::UNEXPECTED_EVAL_EXCEPTION,
+        Some(_) => return FrontError::Evaluation(message),
+        None => crate::errors::UNEXPECTED_EXCEPTION,
+    };
+    FrontError::Evaluation(format!("{prefix}{message}"))
+}
+
 /// The messages that end with the message of the error they report, after this text.
 fn get_inner_message_prefix(code: u32) -> Option<&'static str> {
     match code {
@@ -225,6 +254,29 @@ pub fn format_nested_message(text: &str, is_tool: bool) -> String {
     }
 }
 
+/// SpecProcessor.processConstants's Assert.fail for a literal TLC can't hold, from the front end's
+/// "TLC can't handle ...: <literal> at <location>": the literal on a line of its own, and the exit
+/// code EC.ExitStatus gives the message's code.
+fn get_rejected_literal(error: &FrontError) -> Option<CodedError> {
+    let FrontError::Evaluation(message) = error else {
+        return None;
+    };
+    [
+        (2244, "TLC can't handle real numbers", CONFIG_PARSE_ERROR),
+        (2265, "TLC can't handle a number this big", GENERAL_ERROR),
+    ]
+    .into_iter()
+    .find_map(|(code, headline, exit_code)| {
+        let literal = message.strip_prefix(headline)?.strip_prefix(": ")?;
+        let literal = &literal[..literal.find(" at ")?];
+        Some(CodedError {
+            code,
+            text: format!("{headline}.\n{literal}"),
+            exit_code,
+        })
+    })
+}
+
 /// An error TLC prints with its message code, at level error, and the exit code it ends with.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodedError {
@@ -252,13 +304,23 @@ impl FrontError {
             }
             _ => return None,
         };
+        if let Some(literal) = get_rejected_literal(self) {
+            return Some(literal);
+        }
         let code = get_coded_message(message)
             .filter(|coded| !coded.is_eval_exception)
             .map_or(GENERAL, |coded| coded.code);
         Some(CodedError {
             code,
             text: format_inner_message(code, message, is_tool),
-            exit_code,
+            // TLC exits as for any general error after an exception it didn't expect.
+            exit_code: match code {
+                INVARIANT_VIOLATED_LEVEL => SAFETY_EVALUATION_FAILURE,
+                LIVE_FORMULA_TAUTOLOGY => LIVENESS_EVALUATION_FAILURE,
+                LIVE_CANNOT_HANDLE_FORMULA | LIVE_WRONG_FORMULA_FORMAT => GENERAL_ERROR,
+                _ if message.starts_with(crate::errors::UNEXPECTED_EXCEPTION) => GENERAL_ERROR,
+                _ => exit_code,
+            },
         })
     }
 }

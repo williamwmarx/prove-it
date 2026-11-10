@@ -5,6 +5,7 @@
 
 mod decode;
 mod encode;
+pub mod wtf8;
 
 /// The stack the decoder and the encoder run on. Both follow nested nodes by recursion, up to the
 /// decoder's limit, and a Rust stack overflow aborts the process rather than failing, so they run
@@ -39,7 +40,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 12;
+pub const IR_VERSION: u32 = 13;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -51,12 +52,25 @@ pub type NodeId = u32;
 /// An index into [`Ir::definitions`], [`Ir::scopes`], [`Ir::constants`] or [`Ir::builtins`].
 pub type Index = u32;
 
+impl Ir {
+    /// A text's UTF-16 code units, as the store holds a string.
+    pub fn get_text_units(&self, text: TextId) -> Vec<u16> {
+        self.wide_texts.get(&text).map_or_else(
+            || self.texts[text as usize].encode_utf16().collect(),
+            |units| units.to_vec(),
+        )
+    }
+}
+
 /// A decoded IR. Everything that refers to a node does so by its [`NodeId`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ir {
     /// How many of the texts TLC ranks: text `i` below this has rank `i`.
     pub ranked_count: u32,
     pub texts: Vec<Box<str>>,
+    /// The UTF-16 code units of each text with a lone surrogate, which a `str` can't hold: TLC
+    /// computes such strings, as `Tail("😀a")`, and ranks them.
+    pub wide_texts: std::collections::BTreeMap<TextId, Box<[u16]>>,
     /// The variables in the engine's order.
     pub variables: Vec<TextId>,
     /// TLC's order of the variables, as positions in [`Ir::variables`].
@@ -86,6 +100,9 @@ impl Builtin {
     pub const LEVEL_CONSTANT: i32 = 2;
     pub const LAZY: i32 = 4;
     pub const TABLE: i32 = 8;
+    /// `>=` of `tlc2.module.Naturals`, which names itself `>` in its errors, where the `>=` of
+    /// Integers names itself.
+    pub const NATURALS_GEQ: i32 = 16;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,6 +195,23 @@ pub struct Action {
     pub scope: Option<Index>,
     /// How TLC names the action in a trace: `Inc line 5, col 8 to line 5, col 41 of module D`.
     pub label: TextId,
+    /// The name and location TLC's `Action` holds, which TLCExt's CounterExample records:
+    /// `UnnamedAction` for an action of no operator.
+    pub name: TextId,
+    pub location: Option<SourceRange>,
+    /// The definition TLC split the action from (`Action.getOpDef`), whose parameters
+    /// CounterExample binds, by index; none for an action of no operator, or of one a LET
+    /// defines.
+    pub definition: Option<Index>,
+}
+
+/// A definition an INSTANCE with substitutions copies, and the name and location TLC gives an
+/// action that applies it: the name the instance exports it by, at the INSTANCE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstanceAction {
+    pub definition: Index,
+    pub name: TextId,
+    pub location: Option<SourceRange>,
 }
 
 /// A `_POSSIBLE` predicate, which TLC counts the states, or with `is_action` the steps, it holds of.
@@ -191,6 +225,8 @@ pub struct Possible {
 pub struct ActionProperty {
     pub action: NodeId,
     pub subscript: NodeId,
+    /// The scope of the instance the property comes from, which it is read in.
+    pub scope: Option<Index>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,7 +286,9 @@ pub struct LiveProperty {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
     pub init: NodeId,
-    pub next: NodeId,
+    /// The next-state relation, none where the configuration names none: TLC then computes
+    /// the initial states only, and the configuration checks nothing of behaviors.
+    pub next: Option<NodeId>,
     pub scope: Option<Index>,
     /// TLC's actions of the next-state relation, which a trace labels its steps with.
     pub actions: Vec<Action>,
@@ -262,11 +300,18 @@ pub struct Model {
     /// The name TLC gives each of `property_invariants` when it reports it violated: the operator
     /// the property asserts always holds, or the property's name.
     pub property_invariant_names: Vec<TextId>,
+    /// The scope of the instance each of `property_invariants` comes from, which it is read in.
+    pub property_invariant_scopes: Vec<Option<Index>>,
     pub constraints: Vec<ConfigName>,
     pub action_constraints: Vec<ConfigName>,
     pub possible: Vec<Possible>,
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
+    /// The scope of the instance each of `initial_predicates` comes from, which it is read in.
+    pub initial_predicate_scopes: Vec<Option<Index>>,
+    /// The name TLC gives each of `initial_predicates` when an initial state violates it: the
+    /// property's.
+    pub initial_predicate_names: Vec<TextId>,
     pub view: Option<ConfigName>,
     /// The configuration's ALIAS, which TLC prints each state of a trace through.
     pub alias: Option<ConfigName>,
@@ -284,6 +329,22 @@ pub struct Model {
     pub live_formula: Vec<LiveTerm>,
     /// Each property, whose violation a counterexample's checks find, in the configuration's order.
     pub live_properties: Vec<LiveProperty>,
+    /// The source range of the definition the configuration's SPECIFICATION names, which TLC's
+    /// warning of a stuttering counterexample prints.
+    pub specification: Option<SourceRange>,
+    /// Where the SPECIFICATION reaches the next-state relation through a definition an INSTANCE
+    /// with substitutions copies, the first such INSTANCE, at which TLC takes the relation as one
+    /// unnamed action (`describeSpecification`).
+    pub next_substitution: Option<SourceRange>,
+    /// The definitions of the IR an INSTANCE with substitutions copies (`instanceActions`), by
+    /// index.
+    pub instance_actions: Vec<InstanceAction>,
+    /// The name TLC gives each definition of the IR a named INSTANCE copies, such as `I!Foo`
+    /// (`instanceNames`), by index.
+    pub instance_names: Vec<(Index, TextId)>,
+    /// TLCGet("spec"), the record of the specification as TLC processed it, by its position in
+    /// the IR's values, where an expression reads it (`TLCGetSet.TLCGetStringValue`).
+    pub tlc_spec: Option<u32>,
     /// What TLC evaluates when it starts, before the search.
     pub startup: Startup,
 }
@@ -299,10 +360,35 @@ pub struct Startup {
     /// The constant definitions with effects that TLC evaluates once, in TLC's order. Each keeps
     /// the value it computes.
     pub definitions: Vec<Index>,
+    /// The constant definitions the configuration names, which TLC evaluates as it reads the
+    /// configuration (`getConstantValue`) and rejects for their value, in TLC's order.
+    pub predicates: Vec<StartupPredicate>,
     /// The SYMMETRY definition, which TLC evaluates to its group as it builds its `Tool`.
     pub symmetry: Option<Symmetry>,
     /// The assumptions that aren't axioms, each with the name TLC reports it by.
     pub assumptions: Vec<(NodeId, TextId)>,
+}
+
+/// A constant definition the configuration names, which TLC rejects for its value. A definition
+/// that fails to evaluate is no error: TLC keeps it as an operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartupPredicate {
+    pub form: PredicateForm,
+    /// What the configuration names it as, such as `invariant`.
+    pub kind: TextId,
+    pub name: TextId,
+    pub definition: Index,
+}
+
+/// How TLC rejects a constant definition the configuration names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredicateForm {
+    /// `getConfigPredicate`: any value but TRUE, as "The {kind} of {name} is equal to {value}".
+    Predicate = 0,
+    /// `getConfigDefinition`: any value, as "The {kind} {name} cannot be a constant.".
+    Definition = 1,
+    /// The SPECIFICATION: any value, as "The value of {name} is equal to {value}".
+    Specification = 2,
 }
 
 /// The configuration's SYMMETRY: a 0-ary definition whose value is a set of permutations of
@@ -440,6 +526,8 @@ impl Definition {
     pub const SELF_REFERENTIAL: i32 = 4;
     pub const REPEATED_EFFECT: i32 = 8;
     pub const SUBSTITUTED: i32 = 16;
+    /// A constant definition TLC computes and deep-normalizes at startup (`processConstantDefns`).
+    pub const NORMALIZED: i32 = 32;
 }
 
 #[derive(Debug, Clone, PartialEq)]

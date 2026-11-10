@@ -2,8 +2,10 @@
 //! src/tlc/fingerprint.ts (DESIGN.md 10.3), and the engine's ways of fingerprinting a state against
 //! each other.
 
-use tla_values::fingerprint::{Fingerprints, INITIAL, Overlaid, Parent, extend_byte, extend_int};
-use tla_values::store::{Id, Store, TRUE};
+use tla_values::fingerprint::{
+    Fingerprints, INITIAL, Overlaid, Parent, UNFINGERPRINTABLE, extend_byte, extend_int,
+};
+use tla_values::store::{Id, NAT, Store, TRUE};
 
 fn utf16(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
@@ -32,13 +34,20 @@ fn match_tlc_on_a_sample_of_each_kind() {
     let order: Vec<usize> = (0..state.len()).collect();
     let mut fingerprints = Fingerprints::new();
     let expected = -2179341659381351120i64 as u64;
-    assert_eq!(fingerprints.get_state(&store, &state, &order), expected);
     assert_eq!(
-        fingerprints.get_states(&store, &state, state.len(), &order, None),
+        fingerprints.get_state(&store, &state, &order).unwrap(),
+        expected
+    );
+    assert_eq!(
+        fingerprints
+            .get_states(&store, &state, state.len(), &order, None)
+            .unwrap(),
         [expected]
     );
     assert_eq!(
-        fingerprints.get_states_reference(&store, &state, state.len(), &order),
+        fingerprints
+            .get_states_reference(&store, &state, state.len(), &order)
+            .unwrap(),
         [expected]
     );
 }
@@ -54,11 +63,11 @@ fn match_tlc_on_model_values_by_their_rank() {
     let set = store.set_of(&[seven, model]).unwrap();
     let mut fingerprints = Fingerprints::new();
     assert_eq!(
-        fingerprints.get_state(&store, &[model], &[0]),
+        fingerprints.get_state(&store, &[model], &[0]).unwrap(),
         5068397444161466873
     );
     assert_eq!(
-        fingerprints.get_state(&store, &[set], &[0]),
+        fingerprints.get_state(&store, &[set], &[0]).unwrap(),
         -1941079772221809000i64 as u64
     );
 }
@@ -80,7 +89,9 @@ fn match_tlc_on_a_million_states_of_five_integers() {
             .fold(0, |sum, fingerprint| sum ^ fingerprint)
     };
     assert_eq!(
-        xor(fingerprints.get_states(&store, &states, 5, &order, None)),
+        xor(fingerprints
+            .get_states(&store, &states, 5, &order, None)
+            .unwrap()),
         8882444436892305134
     );
     // The states from scratch, extending FP64 byte by byte as TLC does.
@@ -166,18 +177,24 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
     let mut fingerprints = Fingerprints::new();
     let scratch: Vec<u64> = states
         .chunks_exact(width)
-        .map(|row| fingerprints.get_state(&store, row, &order))
+        .map(|row| fingerprints.get_state(&store, row, &order).unwrap())
         .collect();
     assert_eq!(
-        fingerprints.get_states(&store, &states, width, &order, Some(&parents)),
+        fingerprints
+            .get_states(&store, &states, width, &order, Some(&parents))
+            .unwrap(),
         scratch
     );
     assert_eq!(
-        fingerprints.get_states(&store, &states, width, &order, None),
+        fingerprints
+            .get_states(&store, &states, width, &order, None)
+            .unwrap(),
         scratch
     );
     assert_eq!(
-        Fingerprints::new().get_states_reference(&store, &states, width, &order),
+        Fingerprints::new()
+            .get_states_reference(&store, &states, width, &order)
+            .unwrap(),
         scratch
     );
     // As the search fingerprints a successor, from the parent being expanded, whether or not the
@@ -189,16 +206,20 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
             continue;
         };
         let parent_row = &states[index * width..][..width];
-        from_parents.set_parent(&store, parent_row, &order, scratch[index], &mut parent);
+        from_parents
+            .set_parent(&store, parent_row, &order, scratch[index], &mut parent)
+            .unwrap();
         assert_eq!(
-            from_parents.get_child(&store, &mut parent, parent_row, row, &order),
+            from_parents
+                .get_child(&store, &mut parent, parent_row, row, &order)
+                .unwrap(),
             scratch[state]
         );
     }
     // A tuple's keys are fingerprinted, not interned.
     let count = store.value_count();
     let mut fresh = Fingerprints::new();
-    fresh.get_value(&store, values[13]);
+    fresh.get_value(&store, values[13]).unwrap();
     assert_eq!(store.value_count(), count);
 }
 
@@ -207,14 +228,14 @@ fn forget_the_values_of_a_store_that_was_reset() {
     let mut store = Store::new();
     let mut fingerprints = Fingerprints::new();
     let first = store.str(&utf16("first"));
-    let before = fingerprints.get_value(&store, first);
+    let before = fingerprints.get_value(&store, first).unwrap();
     store.reset(std::iter::empty::<&[u16]>());
     let second = store.str(&utf16("second"));
     assert_eq!(first, second);
-    assert_ne!(fingerprints.get_value(&store, second), before);
+    assert_ne!(fingerprints.get_value(&store, second).unwrap(), before);
     assert_eq!(
-        fingerprints.get_value(&store, second),
-        Fingerprints::new().get_value(&store, second)
+        fingerprints.get_value(&store, second).unwrap(),
+        Fingerprints::new().get_value(&store, second).unwrap()
     );
 }
 
@@ -230,11 +251,17 @@ fn are_the_same_from_a_parent_past_the_tables_for_tails() {
     for length in 1..if cfg!(miri) { 20 } else { 700 } {
         let text = store.str(&utf16(&"x".repeat(length)));
         let (parent_row, row) = ([one, text], [two, text]);
-        let expected = Fingerprints::new().get_state(&store, &parent_row, &order);
-        fingerprints.set_parent(&store, &parent_row, &order, expected, &mut parent);
+        let expected = Fingerprints::new()
+            .get_state(&store, &parent_row, &order)
+            .unwrap();
+        fingerprints
+            .set_parent(&store, &parent_row, &order, expected, &mut parent)
+            .unwrap();
         assert_eq!(
-            fingerprints.get_child(&store, &mut parent, &parent_row, &row, &order),
-            Fingerprints::new().get_state(&store, &row, &order)
+            fingerprints
+                .get_child(&store, &mut parent, &parent_row, &row, &order)
+                .unwrap(),
+            Fingerprints::new().get_state(&store, &row, &order).unwrap()
         );
     }
 }
@@ -247,7 +274,7 @@ fn absorb_what_an_overlay_computed_by_the_ids_its_values_were_imported_as() {
     let unseen = store.set_of(&[one]).unwrap();
     // The search fingerprints some of the store's values, and lends them to a thread's cache.
     let mut search = Fingerprints::new();
-    search.get_value(&store, one);
+    search.get_value(&store, one).unwrap();
     let base = std::sync::Arc::new(store);
     let bound = base.value_count() as Id;
     let shared = search.share();
@@ -264,9 +291,9 @@ fn absorb_what_an_overlay_computed_by_the_ids_its_values_were_imported_as() {
         .collect();
     let computed: Vec<(u64, u64)> = made
         .iter()
-        .map(|&id| worker.get_value(&overlay, id))
+        .map(|&id| worker.get_value(&overlay, id).unwrap())
         .collect();
-    let unseen_value = worker.get_value(&overlay, unseen);
+    let unseen_value = worker.get_value(&overlay, unseen).unwrap();
     overlay.detach();
     worker.detach();
     search.take_back(shared);
@@ -276,11 +303,31 @@ fn absorb_what_an_overlay_computed_by_the_ids_its_values_were_imported_as() {
     let mut imported = Vec::new();
     let ids = [made[2], made[0]].map(|id| store.import(&overlay, id, &mut imported));
     search.absorb(&worker, &imported);
-    let fresh = |id: Id| Fingerprints::new().get_value(&store, id);
-    assert_eq!(search.get_value(&store, ids[0]), computed[2]);
-    assert_eq!(search.get_value(&store, ids[1]), computed[0]);
-    assert_eq!(search.get_value(&store, unseen), unseen_value);
+    let fresh = |id: Id| Fingerprints::new().get_value(&store, id).unwrap();
+    assert_eq!(search.get_value(&store, ids[0]).unwrap(), computed[2]);
+    assert_eq!(search.get_value(&store, ids[1]).unwrap(), computed[0]);
+    assert_eq!(search.get_value(&store, unseen).unwrap(), unseen_value);
     for id in ids.into_iter().chain([one, unseen]) {
-        assert_eq!(search.get_value(&store, id), fresh(id));
+        assert_eq!(search.get_value(&store, id).unwrap(), fresh(id));
     }
+}
+
+#[test]
+fn refuse_a_value_holding_one_tlc_cannot_fingerprint() {
+    // TLC fails to fingerprint Nat, Int and STRING, and a function it keeps lazy, at any depth.
+    let mut store = Store::new();
+    let nat = store.infinite_set(NAT);
+    let lazy = store.lazy_function(0);
+    let one = store.int(1).unwrap();
+    let set = store.set_of(&[nat]).unwrap();
+    let tuple = store.tuple_of(&[one, lazy]);
+    let outer = store.set_of(&[tuple]).unwrap();
+    let mut fingerprints = Fingerprints::new();
+    for value in [nat, lazy, set, tuple, outer] {
+        assert_eq!(
+            fingerprints.get_state(&store, &[one, value], &[0, 1]),
+            Err(UNFINGERPRINTABLE)
+        );
+    }
+    assert!(fingerprints.get_state(&store, &[one], &[0]).is_ok());
 }

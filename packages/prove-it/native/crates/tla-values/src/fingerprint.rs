@@ -11,8 +11,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::store::{
-    EMPTY_SLOT, Id, KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, Store, TRUE,
+    Bail, EMPTY_SLOT, Id, KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT,
+    KIND_LAZY_FUNCTION, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, Store, TRUE,
 };
+
+/// Why a value has no fingerprint here: it holds, at any depth, a function TLC keeps lazy or
+/// Nat, Int or STRING, which TLC fails to fingerprint with an error the engine doesn't model.
+pub const UNFINGERPRINTABLE: Bail =
+    Bail("unsupported: fingerprinting a function TLC keeps lazy, or Nat, Int or STRING");
 
 /// FP64.Polys[0], which `-fp 0` selects. A fingerprint starts as the polynomial.
 pub const INITIAL: u64 = 0x911498ae0e66bad6;
@@ -462,32 +468,33 @@ impl<E: Entries> Fingerprints<E> {
     }
 
     /// F(v) and |v| of a value.
-    pub fn get_value(&mut self, store: &Store, id: Id) -> (u64, u64) {
+    pub fn get_value(&mut self, store: &Store, id: Id) -> Outcome<(u64, u64)> {
         self.check_generation(store);
-        self.compute(store, id);
+        self.compute(store, id)?;
         let entry = self.values.entry(id);
-        (entry.fingerprint, entry.length)
+        Ok((entry.fingerprint, entry.length))
     }
 
     // Computes a value's F and length, its parts' first, without recursing: a value is computed
     // when it comes off the stack the second time, after the parts pushed above it.
     #[inline(always)]
-    fn compute(&mut self, store: &Store, id: Id) {
+    fn compute(&mut self, store: &Store, id: Id) -> Outcome<()> {
         // A value met before is known, as nearly every value of a generated state is.
-        if !self.values.is_computed(id) {
-            self.compute_new(store, id);
+        if self.values.is_computed(id) {
+            return Ok(());
         }
+        self.compute_new(store, id)
     }
 
     #[inline(never)]
-    fn compute_new(&mut self, store: &Store, id: Id) {
+    fn compute_new(&mut self, store: &Store, id: Id) -> Outcome<()> {
         let mut pending = vec![(id, false)];
         while let Some((top, is_expanded)) = pending.pop() {
             if self.values.is_computed(top) {
                 continue;
             }
             if is_expanded {
-                let computed = self.compute_one(store, top);
+                let computed = self.compute_one(store, top)?;
                 self.values.set(top, computed);
                 continue;
             }
@@ -498,31 +505,17 @@ impl<E: Entries> Fingerprints<E> {
                 }
             });
         }
+        Ok(())
     }
 
-    fn compute_one(&mut self, store: &Store, id: Id) -> ValueFingerprint {
+    fn compute_one(&mut self, store: &Store, id: Id) -> Outcome<ValueFingerprint> {
         let (fingerprint, length) = match store.kind_of(id) {
-            KIND_BOOL => (
-                extend_byte(
-                    extend_byte(0, BOOL_VALUE),
-                    if id == TRUE { b't' } else { b'f' },
-                ),
-                2,
-            ),
-            KIND_INT => (get_int(store.int_of(id)), 5),
-            KIND_STRING => {
-                let text = store.text_of(id);
-                let start = extend_int(extend_byte(0, STRING_VALUE), text.len() as i32);
-                let fingerprint = text.iter().fold(start, |fingerprint, &unit| {
-                    extend_byte(fingerprint, unit as u8)
-                });
-                (fingerprint, 5 + text.len() as u64)
-            }
-            KIND_MODEL => (
-                extend_int(extend_byte(0, MODEL_VALUE), store.text_rank_of(id) + 1),
-                5,
-            ),
-            kind => {
+            KIND_BOOL => of_bool(id == TRUE),
+            KIND_INT => of_int(store.int_of(id)),
+            KIND_STRING => of_string(store.text_of(id)),
+            KIND_MODEL => of_model(store.text_rank_of(id)),
+            KIND_LAZY_FUNCTION | KIND_INFINITE_SET => return Err(UNFINGERPRINTABLE),
+            kind @ (KIND_SET | KIND_FUNCTION | KIND_TUPLE) => {
                 let tag = if kind == KIND_SET {
                     SET_ENUM_VALUE
                 } else {
@@ -546,21 +539,51 @@ impl<E: Entries> Fingerprints<E> {
                 }
                 (fingerprint, length)
             }
+            _ => return Err(UNFINGERPRINTABLE),
         };
-        ValueFingerprint {
+        Ok(ValueFingerprint {
             fingerprint,
             length,
             table: UNKNOWN_TABLE,
             is_computed: true,
-        }
+        })
+    }
+
+    /// F and length of a set outside a store, from those of its elements in TLC's order, or of a
+    /// function, from those of each key and its value in turn.
+    pub fn of_parts(&mut self, is_set: bool, parts: &[(u64, u64)]) -> (u64, u64) {
+        let (tag, size) = if is_set {
+            (SET_ENUM_VALUE, parts.len())
+        } else {
+            (FCN_RCD_VALUE, parts.len() / 2)
+        };
+        let start = (extend_int(extend_byte(0, tag), size as i32), 5);
+        parts
+            .iter()
+            .fold(start, |(fingerprint, length), &(part, part_length)| {
+                (
+                    self.shift(fingerprint, part_length) ^ part,
+                    length + part_length,
+                )
+            })
+    }
+
+    /// TLC's fingerprint of a state outside a store, from F and length of its values in TLC's
+    /// order.
+    pub fn of_state(&mut self, values: &[(u64, u64)]) -> u64 {
+        values
+            .iter()
+            .fold(INITIAL, |fingerprint, &(value, length)| {
+                self.shift(fingerprint, length) ^ value
+            })
     }
 
     /// TLC's fingerprint of one state, its values read in `order`.
-    pub fn get_state(&mut self, store: &Store, state: &[Id], order: &[usize]) -> u64 {
+    pub fn get_state(&mut self, store: &Store, state: &[Id], order: &[usize]) -> Outcome<u64> {
         self.check_generation(store);
-        order.iter().fold(INITIAL, |fingerprint, &index| {
-            self.compute(store, state[index]);
-            self.extend_known(fingerprint, state[index])
+        order.iter().try_fold(INITIAL, |fingerprint, &index| {
+            self.compute(store, state[index])?;
+            Ok(self.extend_known(fingerprint, state[index]))
         })
     }
 
@@ -580,7 +603,7 @@ impl<E: Entries> Fingerprints<E> {
         width: usize,
         order: &[usize],
         parents: Option<&[i32]>,
-    ) -> Vec<u64> {
+    ) -> Outcome<Vec<u64>> {
         self.check_generation(store);
         let count = states.len().checked_div(width).unwrap_or(0);
         let mut fingerprints = Vec::with_capacity(count);
@@ -604,14 +627,17 @@ impl<E: Entries> Fingerprints<E> {
                     fingerprints[earlier],
                     order,
                     &mut tails,
-                )
+                )?
             } else {
                 None
             };
-            let fingerprint = from_earlier.unwrap_or_else(|| self.get_state(store, row, order));
+            let fingerprint = match from_earlier {
+                Some(fingerprint) => fingerprint,
+                None => self.get_state(store, row, order)?,
+            };
             fingerprints.push(fingerprint);
         }
-        fingerprints
+        Ok(fingerprints)
     }
 
     // A state's fingerprint from that of an earlier one, if the values that differ keep their
@@ -624,17 +650,17 @@ impl<E: Entries> Fingerprints<E> {
         earlier_fingerprint: u64,
         order: &[usize],
         tails: &mut [(u64, i32)],
-    ) -> Option<u64> {
+    ) -> Outcome<Option<u64>> {
         let mut fingerprint = earlier_fingerprint;
         let mut tail = 0;
         for (position, &index) in order.iter().enumerate().rev() {
             let (id, earlier_id) = (row[index], earlier_row[index]);
-            self.compute(store, id);
+            self.compute(store, id)?;
             if id != earlier_id {
-                self.compute(store, earlier_id);
+                self.compute(store, earlier_id)?;
                 let (value, earlier_value) = (self.values.entry(id), self.values.entry(earlier_id));
                 if value.length != earlier_value.length {
-                    return None;
+                    return Ok(None);
                 }
                 if tails[position].0 != tail {
                     tails[position] = (tail, self.get_length_table(tail));
@@ -644,7 +670,7 @@ impl<E: Entries> Fingerprints<E> {
             }
             tail += self.values.entry(id).length;
         }
-        Some(fingerprint)
+        Ok(Some(fingerprint))
     }
 
     /// Makes `state`, its values read in `order` and its fingerprint `fingerprint`, the parent
@@ -657,7 +683,7 @@ impl<E: Entries> Fingerprints<E> {
         order: &[usize],
         fingerprint: u64,
         parent: &mut Parent,
-    ) {
+    ) -> Outcome<()> {
         self.check_generation(store);
         parent.fingerprint = fingerprint;
         parent.positions.resize(state.len(), 0);
@@ -677,9 +703,10 @@ impl<E: Entries> Fingerprints<E> {
                 let table = self.get_table_under(tail, MAXIMUM_LENGTH_TABLES / 2);
                 parent.tails[position] = (tail, table);
             }
-            self.compute(store, state[index]);
+            self.compute(store, state[index])?;
             tail += self.values.entry(state[index]).length;
         }
+        Ok(())
     }
 
     /// The fingerprint of a successor of the parent [`Fingerprints::set_parent`] last set, from
@@ -694,7 +721,7 @@ impl<E: Entries> Fingerprints<E> {
         parent_state: &[Id],
         state: &[Id],
         order: &[usize],
-    ) -> u64 {
+    ) -> Outcome<u64> {
         self.check_generation(store);
         let mut fingerprint = parent.fingerprint;
         let mut first = order.len();
@@ -705,8 +732,8 @@ impl<E: Entries> Fingerprints<E> {
             }
             let position = parent.positions[index];
             first = first.min(position);
-            self.compute(store, id);
-            self.compute(store, parent_id);
+            self.compute(store, id)?;
+            self.compute(store, parent_id)?;
             let (value, parent_value) = (self.values.entry(id), self.values.entry(parent_id));
             let (tail, table) = parent.tails[position];
             is_in_place &= value.length == parent_value.length && table != NO_TABLE;
@@ -716,7 +743,7 @@ impl<E: Entries> Fingerprints<E> {
             }
         }
         if is_in_place {
-            return fingerprint;
+            return Ok(fingerprint);
         }
         while parent.prefixes.len() <= first {
             let position = parent.prefixes.len() - 1;
@@ -724,11 +751,11 @@ impl<E: Entries> Fingerprints<E> {
                 self.extend_known(parent.prefixes[position], parent_state[order[position]]);
             parent.prefixes.push(prefix);
         }
-        order[first..]
+        Ok(order[first..]
             .iter()
             .fold(parent.prefixes[first], |fingerprint, &index| {
                 self.extend_known(fingerprint, state[index])
-            })
+            }))
     }
 
     /// The fingerprints extended over every value of every state, which
@@ -739,17 +766,17 @@ impl<E: Entries> Fingerprints<E> {
         states: &[Id],
         width: usize,
         order: &[usize],
-    ) -> Vec<u64> {
+    ) -> Outcome<Vec<u64>> {
         self.check_generation(store);
         if width == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         states
             .chunks_exact(width)
             .map(|row| {
-                order.iter().fold(INITIAL, |fingerprint, &index| {
-                    let (value, length) = self.get_value(store, row[index]);
-                    self.shift_by_powers(fingerprint, length) ^ value
+                order.iter().try_fold(INITIAL, |fingerprint, &index| {
+                    let (value, length) = self.get_value(store, row[index])?;
+                    Ok(self.shift_by_powers(fingerprint, length) ^ value)
                 })
             })
             .collect()
@@ -759,4 +786,29 @@ impl<E: Entries> Fingerprints<E> {
 // F of an integer.
 fn get_int(value: i32) -> u64 {
     extend_int(extend_byte(0, INT_VALUE), value)
+}
+
+/// F and length of a boolean, as of a store's.
+pub fn of_bool(value: bool) -> (u64, u64) {
+    let byte = if value { b't' } else { b'f' };
+    (extend_byte(extend_byte(0, BOOL_VALUE), byte), 2)
+}
+
+/// F and length of an integer.
+pub fn of_int(value: i32) -> (u64, u64) {
+    (get_int(value), 5)
+}
+
+/// F and length of a string.
+pub fn of_string(text: &[u16]) -> (u64, u64) {
+    let start = extend_int(extend_byte(0, STRING_VALUE), text.len() as i32);
+    let fingerprint = text.iter().fold(start, |fingerprint, &unit| {
+        extend_byte(fingerprint, unit as u8)
+    });
+    (fingerprint, 5 + text.len() as u64)
+}
+
+/// F and length of a model value, by the rank of its name.
+pub fn of_model(rank: i32) -> (u64, u64) {
+    (extend_int(extend_byte(0, MODEL_VALUE), rank + 1), 5)
 }

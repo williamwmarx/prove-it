@@ -1,7 +1,10 @@
 //! The native liveness checker on small graphs: two states that step to each other, from state 0.
 
+use std::cell::RefCell;
+
 use tla_live::{
-    Declined, Graph, Term, Verdict, atom_order, check, find_accepted, violated_on_lasso,
+    Answers, Declined, Event, Graph, Online, Slot, Source, Term, Unanswered, Verdict, atom_order,
+    check, find_accepted, violated_on_lasso,
 };
 
 const PARENTS: [i32; 2] = [-1, 0];
@@ -180,4 +183,124 @@ fn names_the_properties_a_lasso_violates() {
         },
     );
     assert_eq!(violated, Ok(vec![1, 2]));
+}
+
+#[test]
+fn names_the_first_atom_it_leaves_unanswered_as_it_adds_the_states() {
+    let unanswered = |answers: &[u8]| {
+        check(
+            &NOT_INFINITELY_OFTEN,
+            &[&INFINITELY_OFTEN],
+            &graph(),
+            &[Some(answers)],
+            false,
+        )
+        .unanswered
+    };
+    assert_eq!(unanswered(&[1, 0]), None);
+    // State 1's predicate, which TLC evaluates as it adds state 1.
+    assert_eq!(
+        unanswered(&[1, 2]),
+        Some(Unanswered {
+            state: 1,
+            atom: 0,
+            slot: 1,
+            is_initial: false,
+        })
+    );
+}
+
+// Answers atom 0 of each state from a list, and records each time the checker asks.
+struct Asked<'a> {
+    answers: &'a [bool],
+    asked: RefCell<Vec<Slot>>,
+}
+
+impl Answers for Asked<'_> {
+    fn answer(&self, _atom: u32, slot: Slot, _diameter: u32) -> Result<bool, Declined> {
+        self.asked.borrow_mut().push(slot);
+        match slot {
+            Slot::State(state) => Ok(self.answers[state as usize]),
+            _ => Err(Declined::from("a step")),
+        }
+    }
+
+    fn position(&self, _atom: u32, slot: Slot, _diameter: u32) -> usize {
+        match slot {
+            Slot::State(state) | Slot::Stutter(state) => state as usize,
+            Slot::Step { edge, .. } => edge as usize,
+        }
+    }
+}
+
+#[test]
+fn asks_each_atom_as_the_search_adds_its_state() {
+    // The search adds a state once it has expanded it, when the graph holds the state's steps
+    // and no later state's: the checker asks the state's predicate then, each time TLC evaluates
+    // it, which for this formula is twice, as a predicate that counts in a register shows of TLC.
+    let check_online = |answers: &[bool]| {
+        let mut online =
+            Online::new(&NOT_INFINITELY_OFTEN, &[&INFINITELY_OFTEN]).expect("a checker");
+        assert!(!online.asks_initial_states());
+        let asked = Asked {
+            answers,
+            asked: RefCell::new(Vec::new()),
+        };
+        let mut asked_by_state = Vec::new();
+        for expanded in 0..2 {
+            let graph = Graph {
+                parents: &PARENTS[..expanded + 1],
+                edge_offsets: &OFFSETS[..expanded + 2],
+                edges: &EDGES[..expanded + 1],
+                fingerprints: &FINGERPRINTS,
+                reals: None,
+                diameters: None,
+            };
+            let source = Source {
+                graph: &graph,
+                answers: &asked,
+            };
+            if expanded == 0 {
+                online.add_initial_state(&source, 0).expect("added");
+                assert_eq!(online.take_events(), [Event::Initial(0)]);
+            }
+            assert_eq!(online.add_state(&source, expanded as u32), Ok(None));
+            assert_eq!(
+                online.take_events(),
+                [
+                    Event::Expanded(expanded as u32),
+                    Event::Atom {
+                        atom: 0,
+                        slot: expanded
+                    },
+                    Event::Atom {
+                        atom: 0,
+                        slot: expanded
+                    }
+                ]
+            );
+            asked_by_state.push(std::mem::take(&mut *asked.asked.borrow_mut()));
+        }
+        assert_eq!(
+            asked_by_state,
+            [
+                [Slot::State(0), Slot::State(0)],
+                [Slot::State(1), Slot::State(1)]
+            ]
+        );
+        let whole = graph();
+        online.finish(&Source {
+            graph: &whole,
+            answers: &asked,
+        })
+    };
+    assert_eq!(check_online(&[true, true]), Ok(Verdict::Holds));
+    assert_eq!(check_online(&[true, false]), Ok(verdict(Some(&[1, 0]))));
+    assert_eq!(online_unanswered(), None);
+}
+
+fn online_unanswered() -> Option<Unanswered> {
+    Online::new(&NOT_INFINITELY_OFTEN, &[&INFINITELY_OFTEN])
+        .expect("a checker")
+        .unanswered()
 }

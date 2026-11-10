@@ -184,9 +184,8 @@ pub fn replay(arguments: &[String]) -> Result<String, String> {
                 machine.evaluate(compiled.eval())
             };
             evaluations += 1;
-            match value {
-                Ok(id) => {
-                    let fingerprint = fingerprints.get_state(&machine.store, &[id], &[0]);
+            match value.and_then(|id| fingerprints.get_state(&machine.store, &[id], &[0])) {
+                Ok(fingerprint) => {
                     writeln!(out, "{count} {root} fp {fingerprint:016x}").map_err(write_error)?
                 }
                 Err(bail) => {

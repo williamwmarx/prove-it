@@ -42,7 +42,9 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
         Ok(rebuilder) => rebuilder,
         Err(Unsupported(reason)) => return Err(reason),
     };
-    rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+    rebuilder
+        .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+        .expect("startup values");
     if let Some(group) = &stopped.symmetry {
         rebuilder.set_symmetry(group);
     }
@@ -64,15 +66,26 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
             .map_err(|Unsupported(reason)| format!("state {index}: {reason}"))?;
         assert_eq!(trace.states.len(), states.len());
         // A violation's last state is found by its value, even where VIEW or SYMMETRY would take
-        // another state for it, so it rebuilds only as the search's own.
-        rebuilder
-            .rebuild(
-                &stopped.store,
-                &states,
-                &vec![None; states.len() - 1],
-                Ending::Violation,
-            )
-            .map_err(|Unsupported(reason)| format!("state {index} as a violation: {reason}"))?;
+        // another state for it, so it rebuilds only as the search's own. TLC draws the step to
+        // a violating successor of an initial state from the generator its search left, which a
+        // path the search didn't stop at gives none of.
+        match rebuilder.rebuild(
+            &stopped.store,
+            &states,
+            &vec![None; states.len() - 1],
+            Ending::Violation,
+        ) {
+            Err(Unsupported(reason))
+                if states.len() == 2
+                    && reason.ends_with(
+                        "a random draw where the evaluator doesn't follow TLC's generator",
+                    ) => {}
+            violation => {
+                violation.map_err(|Unsupported(reason)| {
+                    format!("state {index} as a violation: {reason}")
+                })?;
+            }
+        }
         let last = &trace.states[states.len() - 1];
         let text: Vec<String> = last.values.iter().map(format_value).collect();
         assert!(!text.is_empty() || ir.variables.is_empty());
@@ -178,7 +191,9 @@ fn deadlock_trace(path: &str, is_split: bool) -> (Vec<String>, Option<Vec<String
             .collect();
         let trace = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
-                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+                rebuilder
+                    .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+                    .expect("startup values");
                 if let Some(group) = &stopped.symmetry {
                     rebuilder.set_symmetry(group);
                 }
@@ -283,13 +298,15 @@ fn rebuild_violation<T: Send>(
             panic!("{path}: a search that stops at a violation");
         };
         let (ending, cycle_start) = match violation.kind {
-            ViolationKind::Deadlock => (Ending::Kept, None),
-            ViolationKind::Invariant(_) | ViolationKind::InitialInvariant(_) => {
-                (Ending::Violation, None)
-            }
+            ViolationKind::Deadlock { .. } => (Ending::Kept, None),
+            ViolationKind::Invariant(_)
+            | ViolationKind::InitialInvariant(_)
+            | ViolationKind::InitialPredicate(_) => (Ending::Violation, None),
             ViolationKind::Lasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
             ViolationKind::Accepted { .. } => (Ending::Lasso, None),
-            ViolationKind::Error { .. } => panic!("{path}: a failure evaluating the model"),
+            ViolationKind::NoNextState | ViolationKind::Error { .. } => {
+                panic!("{path}: a stop with no trace")
+            }
         };
         let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
         let mut rebuilder = Rebuilder::new(&ir)?;
@@ -297,7 +314,7 @@ fn rebuild_violation<T: Send>(
             &violation.store,
             &violation.startup,
             violation.startup_random,
-        );
+        )?;
         let trace = rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
         then(&ir, &mut rebuilder, &trace, cycle_start)
     })
@@ -332,7 +349,7 @@ fn draws_random_elements_and_subsets_as_tlc_does() {
 fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
     rebuild_violation(path, |ir, rebuilder, trace, cycle_start| {
         let aliases = rebuilder
-            .alias(trace, cycle_start)?
+            .alias(trace, cycle_start, false)?
             .expect("a model with an ALIAS");
         let text = |fields: Vec<(String, String)>| {
             fields
@@ -450,7 +467,9 @@ fn records_the_parameters_of_the_counter_examples_actions() {
         let stopped = tla_engine::on_nesting_stack(|| stop_search(&ir, Some(400)))
             .expect("a search that stops");
         let mut rebuilder = Rebuilder::new(&ir)?;
-        rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+        rebuilder
+            .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+            .expect("startup values");
         // TLC's lasso starts in the initial state where only node 3 is active.
         let active = ir
             .variables
@@ -495,7 +514,7 @@ fn records_the_parameters_of_the_counter_examples_actions() {
                         },
                         counter_example: Some(CounterExample {
                             trace: &trace,
-                            cycle: Some((0, closing)),
+                            cycle: Some((0, Some(closing))),
                         }),
                     },
                 )
@@ -504,4 +523,35 @@ fn records_the_parameters_of_the_counter_examples_actions() {
         Ok::<_, Unsupported>((check(receive)?, check(terminate)?))
     });
     assert_eq!(verdict, Ok((Verdict::Holds, Verdict::False)));
+}
+
+#[test]
+fn reads_the_possible_counts_in_a_postcondition() {
+    // PossibleCountsTest's postcondition holds where TLC counted each _POSSIBLE predicate once.
+    let bytes = std::fs::read(
+        ir_directory().join("tlc/tlatools/org.lamport.tlatools/test-model/PossibleCountsTest.ir"),
+    )
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let verdict = |at_one: i64| {
+        Rebuilder::new(&ir)?
+            .postcondition(
+                0,
+                &PostconditionInputs {
+                    possible: &[("AtOne".to_string(), at_one), ("WrapAround".to_string(), 1)],
+                    stats: Stats {
+                        queue: 0,
+                        distinct: 3,
+                        initial: 1,
+                        generated: 4,
+                        diameter: 3,
+                        duration: 0,
+                    },
+                    counter_example: None,
+                },
+            )
+            .map(|checked| checked.verdict)
+    };
+    assert_eq!(verdict(1), Ok(Verdict::Holds));
+    assert_eq!(verdict(2), Ok(Verdict::False));
 }

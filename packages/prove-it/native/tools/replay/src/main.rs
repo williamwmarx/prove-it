@@ -224,8 +224,12 @@ fn replay_log(path: &str) -> Result<String, String> {
     })?;
     let (width, order, _) = shape.ok_or("an empty log")?;
     let mut fingerprints = Fingerprints::new();
-    let from_parents = fingerprints.get_states(&store, &keys, width, &order, Some(&parents));
-    let reference = fingerprints.get_states_reference(&store, &keys, width, &order);
+    let from_parents = fingerprints
+        .get_states(&store, &keys, width, &order, Some(&parents))
+        .map_err(|bail| bail.0)?;
+    let reference = fingerprints
+        .get_states_reference(&store, &keys, width, &order)
+        .map_err(|bail| bail.0)?;
     for (index, &expected) in logged.iter().enumerate() {
         for (how, fingerprints) in [
             ("from its parent", &from_parents),

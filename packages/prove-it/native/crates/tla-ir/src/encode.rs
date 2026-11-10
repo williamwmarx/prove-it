@@ -4,7 +4,7 @@
 use crate::{
     AtomKind, Bound, Builtin, ConfigName, DefinitionForm, EnabledActions, IR_VERSION, Ir, Junction,
     LiveTerm, MAGIC, Name, NodeId, NodeKind, Param, PathStep, Pattern, Resolution, ScopeBinding,
-    Selector, Value, code, tag,
+    Selector, SourceRange, Value, code, tag,
 };
 
 /// Encodes an IR.
@@ -32,13 +32,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         ir.ranked_count as i32,
     ];
     words.push(ir.texts.len() as i32);
-    let mut text = Vec::new();
-    let mut units = 0;
-    for entry in &ir.texts {
-        text.extend_from_slice(entry.as_bytes());
-        units += entry.encode_utf16().count() as i32;
-        words.push(units);
+    // The texts' units are encoded together, as JavaScript encodes them joined, so a lone surrogate
+    // that ends a text and one that starts the next are one code point.
+    let mut units = Vec::new();
+    for id in 0..ir.texts.len() as crate::TextId {
+        units.extend(ir.get_text_units(id));
+        words.push(units.len() as i32);
     }
+    let mut text = Vec::new();
+    crate::wtf8::encode(&units, &mut text);
     words.push(ir.variables.len() as i32);
     words.extend(ir.variables.iter().map(|&variable| variable as i32));
     words.push(ir.tlc_order.len() as i32);
@@ -91,7 +93,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     let model = &ir.model;
     words.extend([
         offset(model.init),
-        offset(model.next),
+        model.next.map_or(-1, offset),
         optional(model.scope),
     ]);
     words.push(model.actions.len() as i32);
@@ -100,7 +102,10 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             offset(action.expression),
             optional(action.scope),
             action.label as i32,
+            action.name as i32,
         ]);
+        words.extend(range_words(action.location));
+        words.push(optional(action.definition));
     }
     words.push(model.is_labelled as i32);
     let config_name = |name: &ConfigName| [name.name as i32, optional(name.definition)].into_iter();
@@ -110,13 +115,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.push(invariant.has_repeated_effect as i32);
     }
     words.push(model.property_invariants.len() as i32);
-    for (invariant, &name) in model
+    for ((invariant, &name), &scope) in model
         .property_invariants
         .iter()
         .zip(&model.property_invariant_names)
+        .zip(&model.property_invariant_scopes)
     {
         words.extend([
             offset(invariant.root),
+            optional(scope),
             invariant.has_repeated_effect as i32,
             name as i32,
         ]);
@@ -132,10 +139,21 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     }
     words.push(model.action_properties.len() as i32);
     for property in &model.action_properties {
-        words.extend([offset(property.action), offset(property.subscript)]);
+        words.extend([
+            offset(property.action),
+            offset(property.subscript),
+            optional(property.scope),
+        ]);
     }
     words.push(model.initial_predicates.len() as i32);
-    words.extend(model.initial_predicates.iter().map(|&id| offset(id)));
+    for ((&predicate, &scope), &name) in model
+        .initial_predicates
+        .iter()
+        .zip(&model.initial_predicate_scopes)
+        .zip(&model.initial_predicate_names)
+    {
+        words.extend([offset(predicate), name as i32, optional(scope)]);
+    }
     words.push(model.view.is_some() as i32);
     words.extend(model.view.iter().flat_map(config_name));
     words.push(model.alias.is_some() as i32);
@@ -183,6 +201,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.push(property.name as i32);
         push_live(&mut words, &property.formula);
     }
+    words.extend(range_words(model.specification));
     let startup = &model.startup;
     words.push(startup.substitutes.len() as i32);
     for &(name, definition) in &startup.substitutes {
@@ -195,6 +214,15 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             .iter()
             .map(|&definition| definition as i32),
     );
+    words.push(startup.predicates.len() as i32);
+    for predicate in &startup.predicates {
+        words.extend([
+            predicate.form as i32,
+            predicate.kind as i32,
+            predicate.name as i32,
+            predicate.definition as i32,
+        ]);
+    }
     match &startup.symmetry {
         None => words.push(-1),
         Some(symmetry) => {
@@ -211,6 +239,17 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     for &(assumption, name) in &startup.assumptions {
         words.extend([offset(assumption), name as i32]);
     }
+    words.extend(range_words(model.next_substitution));
+    words.push(model.instance_actions.len() as i32);
+    for action in &model.instance_actions {
+        words.extend([action.definition as i32, action.name as i32]);
+        words.extend(range_words(action.location));
+    }
+    words.push(model.instance_names.len() as i32);
+    for &(definition, name) in &model.instance_names {
+        words.extend([definition as i32, name as i32]);
+    }
+    words.push(model.tlc_spec.map_or(-1, |value| value as i32));
     words.push(ir.definitions.len() as i32);
     words.extend(ir.definitions.iter().map(|&id| offset(id)));
     words.push(nodes.words.len() as i32);
@@ -225,6 +264,20 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
     bytes.extend_from_slice(&text);
     bytes.resize(bytes.len().next_multiple_of(4), 0);
     bytes
+}
+
+// A source range: its module's text and its positions, or -1 and zeros for none.
+fn range_words(range: Option<SourceRange>) -> [i32; 5] {
+    match range {
+        Some(range) => [
+            range.module as i32,
+            range.start_line,
+            range.start_column,
+            range.end_line,
+            range.end_column,
+        ],
+        None => [-1, 0, 0, 0, 0],
+    }
 }
 
 fn write_params(words: &mut Vec<i32>, params: &[Param]) {
@@ -335,16 +388,7 @@ impl<'a> NodeWriter<'a> {
             NodeKind::Reference(_) => unreachable!("written above"),
         };
         self.words.extend([tag_word, node.line, node.column]);
-        match node.range {
-            Some(range) => self.words.extend([
-                range.module as i32,
-                range.start_line,
-                range.start_column,
-                range.end_line,
-                range.end_column,
-            ]),
-            None => self.words.extend([-1, 0, 0, 0, 0]),
-        }
+        self.words.extend(range_words(node.range));
         match &node.kind {
             NodeKind::Number(value) => self.words.push(*value),
             NodeKind::WideNumber(text) | NodeKind::Decimal(text) | NodeKind::String(text) => {

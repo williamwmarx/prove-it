@@ -180,7 +180,9 @@ pub fn store_encode(words: Vec<i32>, width: usize) -> HookResult {
         let states = get_states(store, &words, width)?;
         let mut encoder = StateEncoder::new();
         for state in states.chunks_exact(width) {
-            encoder.encode(store, state);
+            encoder
+                .encode(store, state)
+                .map_err(|bail| bail.0.to_owned())?;
         }
         Ok::<_, String>(encoder.finish())
     })?;
@@ -215,11 +217,12 @@ pub fn store_fingerprints(
         }) {
             return Err("parents must name a state or be -1".to_owned());
         }
-        Ok(if is_reference {
+        if is_reference {
             fingerprints.get_states_reference(store, &states, width, &order)
         } else {
             fingerprints.get_states(store, &states, width, &order, parents)
-        })
+        }
+        .map_err(|bail| bail.0.to_owned())
     })?;
     if out_length < fingerprints.len() {
         return Err("fingerprints must have room for every state".into());

@@ -16,6 +16,7 @@ fn lower(source: &str, name: &str) -> Ir {
         is_unconfigured: true,
         version: TlcVersion::Master,
         is_level_checked: false,
+        load_class: None,
     })
     .expect("an environment");
     let mut lowering = Lowering::new(
@@ -29,18 +30,21 @@ fn lower(source: &str, name: &str) -> Ir {
     lowering
         .finish(Model {
             init: 0,
-            next: 0,
+            next: Some(0),
             scope: None,
             actions: Vec::new(),
             is_labelled: false,
             invariants: vec![invariant],
             property_invariants: Vec::new(),
             property_invariant_names: Vec::new(),
+            property_invariant_scopes: Vec::new(),
             constraints: Vec::new(),
             action_constraints: Vec::new(),
             possible: Vec::new(),
             action_properties: Vec::new(),
             initial_predicates: Vec::new(),
+            initial_predicate_scopes: Vec::new(),
+            initial_predicate_names: Vec::new(),
             view: None,
             alias: None,
             postconditions: Vec::new(),
@@ -54,7 +58,12 @@ fn lower(source: &str, name: &str) -> Ir {
             atoms: Vec::new(),
             live_formula: Vec::new(),
             live_properties: Vec::new(),
+            specification: None,
             startup: Startup::default(),
+            next_substitution: None,
+            instance_actions: Vec::new(),
+            instance_names: Vec::new(),
+            tlc_spec: None,
         })
         .expect("an IR")
 }

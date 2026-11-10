@@ -68,6 +68,8 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         state_log: (!state_log.is_empty()).then_some(state_log),
         is_live_checked: live_checked != 0,
         threads: usize::try_from(threads).unwrap_or(1).max(1),
+        // The engine declines TLCGet("config") here.
+        workers: 1,
         minimum_shared_level: usize::try_from(minimum_shared_level).unwrap_or(MINIMUM_SHARED_LEVEL),
         // The interpreter reports a violation itself.
         is_violation_reported: false,
@@ -253,6 +255,8 @@ pub fn get_outcome(outcome: &SearchOutcome) -> HostValue {
         SearchOutcome::AssumptionFailed { .. } => {
             declined("an assumption's failure reported without is_violation_reported")
         }
+        // The interpreter rejects the configuration before it hands the search over.
+        SearchOutcome::ConfigError { message } => declined(message),
         // The interpreter checks the assumptions before it hands the search over.
         SearchOutcome::AssumptionViolated { name } => {
             declined(&format!("the assumption {name} is false"))
@@ -269,6 +273,7 @@ pub fn get_outcome(outcome: &SearchOutcome) -> HostValue {
             possible,
             // The interpreter prints a lasso.
             violation: _,
+            registers: _,
         } => {
             let mut properties = vec![("possible", get_possible(possible))];
             if let Some(verdict) = liveness {

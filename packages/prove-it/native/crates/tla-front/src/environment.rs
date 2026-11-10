@@ -9,15 +9,16 @@ use std::rc::Rc;
 use crate::TlcVersion;
 use crate::ast::*;
 use crate::config::{ConfigValue, ModelConfig};
-use crate::dependencies::create_definition_facts;
 use crate::errors::{FrontError, SanyError, SanyReport, SyntaxError, format_range};
+use crate::eval::Evaluator;
 use crate::hash::{FastMap, FastSet};
 use crate::instances::{
     AddDefinition, Instantiation, Instantiator, apply, identifier, let_expression, local_arguments,
     local_identifier, operator_definition, param, rename_locals, with_let_instances,
 };
 use crate::levels::{
-    InstanceCheck, LevelAnalyzer, LevelContext, ModuleLevelContext, check_instance, get_level_units,
+    InstanceCheck, LevelAnalyzer, LevelContext, ModuleLevelContext, Scope, check_instance,
+    get_level_units,
 };
 use crate::lexer::tokenize;
 use crate::order::TlcOrder;
@@ -29,11 +30,13 @@ use crate::resolve::{
     get_arity, get_param_arities, is_before, is_theorem_definition, resolve_module,
     resolve_substitutions,
 };
+use crate::spec::get_definition;
 use crate::standard_builtins::{
     self, CORE_OPERATORS, STANDARD_DEPENDENCIES, StandardModule, USER_STANDARD_MODULES,
 };
 use crate::standard_modules;
 use crate::subexpressions::{resolve_instance_subexpressions, resolve_module_subexpressions};
+use crate::values::ValueOrder;
 
 /// A builtin the environment holds: its name, arity and flags (state-level, level-constant,
 /// lazy), which the IR writes.
@@ -60,11 +63,18 @@ pub struct Environment {
     /// The values the configuration assigns, by key.
     pub constants: OrderedMap<Name, ConfigValue>,
     pub variables: Vec<Name>,
+    /// Where the root module declares each of its variables (`variableLocations`).
+    pub variable_locations: Vec<Location>,
     pub variable_index: OrderedMap<Name, usize>,
     pub root_constants: Vec<Rc<Declaration>>,
     pub root_symbols: Rc<Symbols>,
     /// The copies an INSTANCE with substitutions makes (`substitutedDefinitions`), by address.
     pub substituted_definitions: FastMap<usize, Rc<Definition>>,
+    /// The copies an INSTANCE with substitutions makes, by key, with the name and location TLC
+    /// gives an action that applies one (`instanceActions`).
+    pub instance_actions: OrderedMap<Name, InstanceAction>,
+    /// The name TLC gives each copy a named INSTANCE makes, by key: `I!Foo` (`instanceNames`).
+    pub instance_names: OrderedMap<Name, Name>,
     /// What linking prints: SANY's warnings.
     pub printed: Vec<String>,
     /// The definitions TLC computes when it starts, each module's in the order TLC computes them,
@@ -73,7 +83,49 @@ pub struct Environment {
     pub startup_definitions: Vec<Rc<Definition>>,
     /// The assumptions of the root module and the modules it extends, an extended module's first.
     pub assumptions: Vec<Rc<Assumption>>,
+    /// The resolution tables SANY's level analysis reads.
+    pub tables: Rc<Tables>,
+    /// The methods of the Java class that overrides a module's operators, which TLC reports as it
+    /// starts.
+    pub java_overrides: Vec<crate::java_overrides::JavaOverride>,
 }
+
+impl Environment {
+    /// `createLevelAnalyzer` over the model: its assigned constants, and its variables with the
+    /// builtins of `state_builtins` the spec has.
+    pub fn create_level_analyzer(&self, state_builtins: &[&str]) -> LevelAnalyzer<'_> {
+        LevelAnalyzer::new(
+            LevelContext {
+                constants: self.constants.keys().cloned().collect(),
+                variables: self
+                    .variables
+                    .iter()
+                    .cloned()
+                    .chain(
+                        state_builtins
+                            .iter()
+                            .map(|name| Name::from(*name))
+                            .filter(|name| self.builtins.contains_key(name)),
+                    )
+                    .collect(),
+                get_definition: Box::new(|name| get_definition(name, self).cloned()),
+                get_qualified_name: Box::new(|_| None),
+            },
+            &self.tables,
+        )
+    }
+}
+
+/// The name and location TLC gives an action that applies a definition an INSTANCE with
+/// substitutions copies: the name the instance exports it by, at the INSTANCE.
+#[derive(Clone)]
+pub struct InstanceAction {
+    pub name: Name,
+    pub location: Location,
+}
+
+/// What reads the bytes of the Java class TLC loads for a module, if it has one.
+pub type ClassLoader<'a> = dyn Fn(&str) -> Option<Vec<u8>> + 'a;
 
 pub struct EnvironmentOptions<'a> {
     pub source: &'a str,
@@ -85,6 +137,9 @@ pub struct EnvironmentOptions<'a> {
     /// Checks the levels of each module, as `createEnvironment` does for a spec SANY hasn't
     /// accepted (`isSanyAccepted`).
     pub is_level_checked: bool,
+    /// The bytes of the Java class TLC loads for a module (`loadClass`), whose public static
+    /// methods override the module's operators.
+    pub load_class: Option<&'a ClassLoader<'a>>,
 }
 
 struct LinkedModule {
@@ -277,6 +332,8 @@ struct Linker<'a> {
     linked_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     nested_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     link_order: RefCell<Vec<Rc<LinkedModule>>>,
+    /// The methods of the Java class that overrides a module's operators.
+    java_overrides: RefCell<Vec<crate::java_overrides::JavaOverride>>,
     dependencies: RefCell<FastMap<Name, FastSet<Name>>>,
     loading: RefCell<Vec<FastSet<Name>>>,
     /// The top-level modules being linked, to report a cycle of EXTENDS or INSTANCE.
@@ -296,6 +353,8 @@ struct Linker<'a> {
     checked_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     /// The qualified name, such as I!Foo, of each copy a named INSTANCE makes.
     qualified_names: RefCell<FastMap<Name, Name>>,
+    instance_actions: RefCell<OrderedMap<Name, InstanceAction>>,
+    instance_names: RefCell<OrderedMap<Name, Name>>,
     /// Whether linking goes on after a module's errors, as SANY's semantic analysis does,
     /// keeping each module's messages and level checks in `collected`.
     is_collecting: Cell<bool>,
@@ -461,6 +520,25 @@ impl Linker<'_> {
         symbols
     }
 
+    /// `overrideDefinitions` with the class TLC loads for the module, if any.
+    fn override_module(&self, module: Rc<Module>, is_root: bool) -> Result<Rc<Module>> {
+        let Some(bytes) = self.options.load_class.and_then(|load| load(&module.name)) else {
+            return Ok(module);
+        };
+        let (module, overrides) =
+            crate::java_overrides::override_definitions(&module, &bytes, is_root)?;
+        let mut java_overrides = self.java_overrides.borrow_mut();
+        // TLC reports the overrides in the order it links the modules, which matters only for
+        // two of them.
+        if !java_overrides.is_empty() {
+            return Err(FrontError::NotYet(
+                "Java classes overriding two modules".to_owned(),
+            ));
+        }
+        *java_overrides = overrides;
+        Ok(module)
+    }
+
     fn load_module(&self, name: &Name, importer: &str) -> Result<Rc<Module>> {
         let source = (self.options.load_module)(name)
             .or_else(|| {
@@ -475,6 +553,7 @@ impl Linker<'_> {
         let module = self
             .parse_text(&source)
             .map_err(|_| FrontError::NotYet(format!("SANY's parse error for module {name}")))?;
+        let module = self.override_module(module, false)?;
         if module.name != *name {
             return Err(sany_error(
                 vec![SanyError {
@@ -1336,6 +1415,7 @@ impl Linker<'_> {
         let has_declarations = !declarations.is_empty();
         let prefix = instance.params.len();
         let module_name = module.name.clone();
+        let instance_name = instance.name.clone();
         let instantiator = self.instantiation(
             instance
                 .params
@@ -1372,6 +1452,14 @@ impl Linker<'_> {
                 self.copy_sources
                     .borrow_mut()
                     .insert(key.clone(), (source.clone(), prefix));
+                if let Some(instance_name) = &instance_name {
+                    let mut instance_names = self.instance_names.borrow_mut();
+                    let source_name = instance_names.get(source).cloned().unwrap_or(name.clone());
+                    instance_names.insert(
+                        key.clone(),
+                        Rc::from(format!("{instance_name}!{source_name}")),
+                    );
+                }
                 Ok(key)
             }),
         );
@@ -1380,13 +1468,24 @@ impl Linker<'_> {
             &linked.exported,
             &declarations,
             &mut |key, name| {
-                if instance.name.is_none() {
-                    return instantiator.get_key(key);
+                let copy = match instance.name {
+                    None => instantiator.get_key(key)?,
+                    Some(_) => instantiator.get_qualified_key(key)?,
+                };
+                if has_declarations {
+                    self.instance_actions.borrow_mut().insert(
+                        copy.clone(),
+                        InstanceAction {
+                            name: name.clone(),
+                            location: instance.location.clone(),
+                        },
+                    );
                 }
-                let copy = instantiator.get_qualified_key(key)?;
-                self.qualified_names
-                    .borrow_mut()
-                    .insert(copy.clone(), name.clone());
+                if instance.name.is_some() {
+                    self.qualified_names
+                        .borrow_mut()
+                        .insert(copy.clone(), name.clone());
+                }
                 Ok(copy)
             },
         )
@@ -1778,6 +1877,7 @@ fn create_linker<'a>(options: &'a EnvironmentOptions<'a>, root: &Rc<Module>) -> 
         linked_modules: RefCell::default(),
         nested_modules: RefCell::default(),
         link_order: RefCell::default(),
+        java_overrides: RefCell::default(),
         dependencies: RefCell::default(),
         loading: RefCell::default(),
         linking: RefCell::default(),
@@ -1790,6 +1890,8 @@ fn create_linker<'a>(options: &'a EnvironmentOptions<'a>, root: &Rc<Module>) -> 
         instance_checks: RefCell::default(),
         checked_modules: RefCell::default(),
         qualified_names: RefCell::default(),
+        instance_actions: RefCell::default(),
+        instance_names: RefCell::default(),
         is_collecting: Cell::new(false),
         collected: RefCell::default(),
     }
@@ -1819,9 +1921,11 @@ pub fn get_sany_messages(
         else {
             return Err(error);
         };
+        // SANY places the arity of a substitution in the builtins' module.
         let is_in_root = |location: &str| {
             location.ends_with(&format!(" of module {}", root.name))
                 || location == format!("In module {}", root.name)
+                || location == "In module --TLA+ BUILTINS--"
         };
         if report.is_fatal || !report.errors.iter().all(|item| is_in_root(&item.location)) {
             return Err(error);
@@ -1900,12 +2004,17 @@ pub fn get_sany_messages(
 /// Links the spec's modules as `createEnvironment` does for a spec without a model
 /// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
 pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
-    let root = Rc::new(parse_module_tokens(
+    let parsed = Rc::new(parse_module_tokens(
         options.source,
         &tokenize(options.source)?,
         options.version,
     )?);
+    let (root, root_overrides) = match options.load_class.and_then(|load| load(&parsed.name)) {
+        Some(bytes) => crate::java_overrides::override_definitions(&parsed, &bytes, true)?,
+        None => (parsed, Vec::new()),
+    };
     let linker = create_linker(options, &root);
+    *linker.java_overrides.borrow_mut() = root_overrides;
     reject_module_literals(&root)?;
     let (linked_root, _) = linker.link_top_level(&root)?;
     let warnings = linker.warnings.borrow().clone();
@@ -2229,37 +2338,60 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     let environment = Environment {
         startup_definitions,
         assumptions,
+        tables: linker.tables.clone(),
         definitions,
         builtins,
         substitutions,
         constants,
         variables,
+        variable_locations: linked_root.variable_locations.clone(),
         variable_index,
         root_constants: linked_root.constants.clone(),
         root_symbols: linked_root.visible.clone(),
         substituted_definitions: linker.substituted_definitions.take(),
+        instance_actions: linker.instance_actions.take(),
+        instance_names: linker.instance_names.take(),
         printed,
+        java_overrides: linker.java_overrides.take(),
     };
-    // TLC evaluates a substitute for a constant at startup, and rejects it only when that fails
-    // and the level it bounds is above constant: the engine's startup phase will evaluate it.
-    let substitutes: Vec<&Rc<Definition>> = environment
-        .substitutions
-        .iter()
-        .filter(|(name, _)| declared_constants.contains(name))
-        .filter_map(|(_, target)| environment.definitions.get(target))
-        .filter(|definition| {
-            matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
-        })
-        .collect();
-    if !substitutes.is_empty() {
-        let facts = create_definition_facts(&environment);
-        if substitutes
-            .iter()
-            .any(|definition| !facts.is_constant_level(definition, &environment))
-        {
-            return Err(FrontError::NotYet(
-                "a substitute TLC evaluates at startup".to_owned(),
-            ));
+    // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
+    // the level bound it computes is above constant. The bound counts the operators that TLC's
+    // Java code overrides with a minimum level as state-level, so the analyzer takes them for
+    // variables.
+    {
+        let analyzer = environment.create_level_analyzer(&["TLCGet", "Trace", "CounterExample"]);
+        let ranks = FastMap::default();
+        let evaluator = Evaluator::new(
+            &environment,
+            ValueOrder { ranks: &ranks },
+            options.version,
+            false,
+        );
+        for (name, target) in environment.substitutions.iter() {
+            let Some(definition) = environment.definitions.get(target) else {
+                continue;
+            };
+            let is_parameterless = matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty());
+            if !declared_constants.contains(name)
+                || !is_parameterless
+                || analyzer
+                    .analyze_definition(definition, &Scope::default())?
+                    .data
+                    .level
+                    == 0
+            {
+                continue;
+            }
+            match evaluator.evaluate(&definition.body, None) {
+                // TLC's SpecProcessor adds the message of a TLCRuntimeException, which these are.
+                Err(FrontError::Evaluation(message)) => {
+                    return Err(FrontError::Config(format!(
+                        "The configuration file substitutes constant {name} with non-constant {target} - specifically: {message}"
+                    )));
+                }
+                Err(error) => return Err(error),
+                Ok(_) => {}
+            }
         }
     }
     Ok(environment)

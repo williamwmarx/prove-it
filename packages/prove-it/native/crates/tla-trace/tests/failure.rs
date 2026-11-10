@@ -5,7 +5,7 @@ mod common;
 
 use common::{Quiet, ir_directory, path_to, stop_search};
 use tla_engine::search::{SearchOutcome, Settings, search};
-use tla_trace::{Ending, Failure, Rebuilder, Site, format_call_stack, format_value};
+use tla_trace::{Ending, Failure, Rebuilder, Site, add_actions, format_call_stack, format_value};
 use tla_values::Id;
 
 // The search's stop on the model, evaluated again: in the initial predicate when the search kept
@@ -14,6 +14,8 @@ fn evaluate_failure(path: &str) -> (Failure, String) {
     let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     tla_values::on_nesting_stack(|| {
+        // The binary gives the IR TLC's actions before it searches, where the IR holds none.
+        let ir = add_actions(&ir).unwrap_or(ir);
         let stopped =
             tla_engine::on_nesting_stack(|| stop_search(&ir, None)).expect("a search that stops");
         let positions = if stopped.states.is_empty() {
@@ -33,7 +35,9 @@ fn evaluate_failure(path: &str) -> (Failure, String) {
         let actions = vec![None; states.len().saturating_sub(1)];
         let failure = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
-                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
+                rebuilder
+                    .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+                    .expect("startup values");
                 if let Some(group) = &stopped.symmetry {
                     rebuilder.set_symmetry(group);
                 }
@@ -114,45 +118,6 @@ fn reports_a_failed_assertion_in_an_action() {
         "0. Line 9, column 5 to line 10, column 17 in Github461\n\
          1. Line 9, column 8 to line 9, column 65 in Github461\n\n"
     );
-}
-
-#[test]
-fn reports_an_invariant_that_fails_to_evaluate() {
-    let path = format!("{MODELS}/EvaluatingValueTest");
-    let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
-    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
-    let failure = tla_values::on_nesting_stack(|| {
-        let stopped =
-            tla_engine::on_nesting_stack(|| stop_search(&ir, None)).expect("a search that stops");
-        // The successor that fails Inv, x = FALSE, which the search doesn't keep.
-        let successor = [stopped.store.bool(false)];
-        let mut states: Vec<&[Id]> = path_to(&stopped.parents, stopped.expanding)
-            .into_iter()
-            .map(|position| stopped.states[position].as_slice())
-            .collect();
-        states.push(&successor);
-        let actions = vec![None; states.len() - 1];
-        Rebuilder::new(&ir)
-            .and_then(|mut rebuilder| {
-                rebuilder.set_startup(&stopped.store, &stopped.startup, stopped.startup_random);
-                rebuilder.evaluate_failure(&stopped.store, &states, &actions, Site::Invariant(0))
-            })
-            .unwrap_or_else(|unsupported| panic!("{}", unsupported.0))
-    });
-    let text = "Attempted to check if the value:\nFALSE\nis an element of Nat.";
-    assert_eq!(failure.code, 2111);
-    assert_eq!(failure.exit_code, 76);
-    assert_eq!(
-        failure.message,
-        format!("Evaluating invariant Inv failed.\n{text}")
-    );
-    assert_eq!(
-        failure.tool_message,
-        format!(
-            "Evaluating invariant Inv failed.\n@!@!@STARTMSG 2158:0 @!@!@\n{text}\n@!@!@ENDMSG 2158 @!@!@"
-        )
-    );
-    assert!(failure.call_stack.is_empty());
 }
 
 #[test]

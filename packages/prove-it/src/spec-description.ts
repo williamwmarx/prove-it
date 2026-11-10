@@ -36,6 +36,8 @@ import {
 export interface SpecAction {
   name: string;
   location: SourceLocation;
+  // The operator TLC split the action from (Action.getOpDef), whose parameters it binds.
+  operator?: Closure;
   parameters: [string, Value][];
   expression: Expression;
   scope: Scope | undefined;
@@ -180,10 +182,17 @@ const getInstanceActions = (
 ): SpecAction[] => {
   const args = getArguments(expression);
   const callAction = (): SpecAction[] => [
-    { name: instanceAction.name, location: expression.location, parameters: [], expression, scope },
+    {
+      name: instanceAction.name,
+      location: expression.location,
+      operator: called,
+      parameters: [],
+      expression,
+      scope,
+    },
   ];
   if (!called || args.length === 0) {
-    return [{ ...instanceAction, parameters: [], expression, scope }];
+    return [{ ...instanceAction, operator: called, parameters: [], expression, scope }];
   }
   if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
     return callAction();
@@ -192,6 +201,7 @@ const getInstanceActions = (
     () => [
       {
         ...instanceAction,
+        operator: called,
         parameters: args.map((arg, index): [string, Value] => [
           called.params[index].name.replace(/#\d+$/, ""),
           evaluate(arg, getConstantContext(environment, scope)),
@@ -214,6 +224,7 @@ const getActions = (
   const createSplitAction = (): SpecAction => ({
     name: closure?.name ?? UNNAMED_ACTION,
     location: expression.location,
+    operator: closure,
     parameters: getParameters(closure, scope),
     expression,
     scope,
@@ -265,7 +276,14 @@ const getActions = (
     ? called.name
     : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
   const callAction = (): SpecAction[] => [
-    { name: calledName, location: expression.location, parameters: [], expression, scope },
+    {
+      name: calledName,
+      location: expression.location,
+      operator: called,
+      parameters: [],
+      expression,
+      scope,
+    },
   ];
   if (isConstantDefinition(called, environment)) return callAction();
   if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
@@ -374,6 +392,68 @@ const describeSpecification = (
   else if (level === TEMPORAL_LEVEL) {
     description.temporals.push(createAction(UNNAMED_ACTION, expression));
   }
+};
+
+// Where the configuration's SPECIFICATION reaches its next-state relation through a definition an
+// INSTANCE with substitutions copies, the first such INSTANCE on the way to [][Next]_v, at which
+// TLC takes the relation as one unnamed action: describeSpecification's search for it, without
+// evaluating anything, since a definition of constant level holds no next-state relation.
+export const getNextSubstitution = (
+  config: ModelConfig,
+  environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
+) => {
+  const find = (
+    expression: Expression,
+    scope: Scope | undefined,
+    substitution: SourceLocation | undefined,
+  ): { substitution: SourceLocation | undefined } | undefined => {
+    if (expression.kind === "Let") {
+      return find(
+        expression.body,
+        bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+        substitution,
+      );
+    }
+    if (expression.kind === "Label") return find(expression.body, scope, substitution);
+    if (expression.kind === "And") {
+      for (const operand of expression.operands) {
+        const found = find(operand, scope, substitution);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    if (expression.kind === "Always") {
+      return expression.expression.kind === "BoxAction" ? { substitution } : undefined;
+    }
+    const thunk = getThunk(expression, scope);
+    if (thunk) return find(thunk.expression, thunk.scope, substitution);
+    const called = resolveClosure(expression, scope, environment);
+    if (!called) return undefined;
+    if (called.params.length === 0) {
+      if (getLevel(called.body, called.scope, environment) <= VARIABLE_LEVEL) return undefined;
+      const instanceAction = isLocallyResolved(expression)
+        ? undefined
+        : instanceActions.get(getOperatorName(expression) ?? "");
+      return find(called.body, called.scope, substitution ?? instanceAction?.location);
+    }
+    if (expression.kind !== "Apply" || called.params.length !== expression.args.length) {
+      return undefined;
+    }
+    return find(
+      called.body,
+      bindOperatorArguments(called, expression.args, getConstantContext(environment, scope)),
+      substitution,
+    );
+  };
+  const specification =
+    config.specification === undefined
+      ? undefined
+      : getOperatorDefinition(config.specification, environment);
+  return specification
+    ? find(specification.body, undefined, instanceActions.get(config.specification ?? "")?.location)
+        ?.substitution?.range
+    : undefined;
 };
 
 const describeProperty = (

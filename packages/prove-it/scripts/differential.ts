@@ -13,11 +13,15 @@
 // --native names the native prove-it binary (native/DESIGN.md 13), which then runs on each model
 // too, with the front the first backend's run recorded, and is compared with TLC as tlc/native.
 // That pair fails nothing yet: the run reports how many runs it matches and why the others differ.
+// With --native-front, the binary runs with no recorded front, as tla-front is its whole front end.
+// --native-only runs the native binary alone that way, without the TypeScript runs, so a pass over
+// the whole corpus takes minutes, and fails if it prints something TLC doesn't that
+// known-differences.json doesn't list for tlc/native; a run it declines as not native fails nothing.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
 //        [--modes default,tool] [--stop-at] [--timeout-ms ms] [--update] [--out path]
-//        [--backend ts | --compare-backends] [--native path]
+//        [--backend ts | --compare-backends] [--native path [--native-front | --native-only]]
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -53,6 +57,8 @@ import {
 interface Output {
   // The exit code, stdout and stderr, normalised, as one text.
   transcript: string;
+  // Whether a signal ended the process other than the timeout's, as when it overflows its stack.
+  isAborted: boolean;
   engineLine: string | undefined;
   stdout: string;
   stderr: string;
@@ -95,6 +101,9 @@ const backends = getBackends();
 // Resolved here, since each checker runs from its model's directory.
 const nativeOption = getOption("--native");
 const nativeBinary = nativeOption && resolve(nativeOption);
+const isNativeFront = process.argv.includes("--native-front");
+const isNativeOnly = process.argv.includes("--native-only");
+if (isNativeOnly && !nativeBinary) throw new Error("--native-only needs --native");
 // The native binary reads the IR the Rust engine reads, so the run on that backend records its
 // front: the TypeScript engine skips models the Rust engine takes.
 const frontBackend = backends.includes("rust") ? "rust" : backends[0];
@@ -133,6 +142,7 @@ const runChecker = (
           output,
           errorOutput,
         ),
+        isAborted: signal !== null && !child.killed,
         engineLine: getEngineLine(errorOutput),
         stdout: output,
         stderr: errorOutput,
@@ -153,10 +163,15 @@ const getFront = (stdout: string) => {
   const start = isTool
     ? bannerAt + banner.length
     : stdout.indexOf("\n", bannerAt + banner.length) + 1;
-  // The front ends where TLC computes the initial states, or where it reports an assumption false.
+  // The front ends where TLC computes the initial states, or where it reports an assumption that is
+  // false or fails to evaluate.
   const ends = isTool
-    ? ["@!@!@STARTMSG 2189:", "@!@!@STARTMSG 2104:"]
-    : ["\nComputing initial states...\n", "\nError: Assumption "];
+    ? ["@!@!@STARTMSG 2189:", "@!@!@STARTMSG 2104:", "@!@!@STARTMSG 2105:"]
+    : [
+        "\nComputing initial states...\n",
+        "\nError: Assumption ",
+        "\nError: Evaluating assumption ",
+      ];
   const end = Math.min(
     ...ends.map((marker) => stdout.indexOf(marker)).filter((index) => index !== -1),
   );
@@ -176,10 +191,13 @@ const runNative = async (
   const stem = basename(model.specPath, ".tla");
   const front = getFront(recorded.stdout);
   if (front !== undefined) writeFileSync(join(directory, `${stem}.front`), front);
-  const native = await runChecker(binary, [], model, mode, {
-    ...process.env,
-    PROVE_IT_FRONT: directory,
-  });
+  const native = await runChecker(
+    binary,
+    [],
+    model,
+    mode,
+    isNativeFront ? process.env : { ...process.env, PROVE_IT_FRONT: directory },
+  );
   rmSync(directory, { recursive: true, force: true });
   return native;
 };
@@ -231,7 +249,9 @@ const STOPPED_REASON = "stopped where PROVE_IT_STOP_AT asked";
 const comparisons: Comparison[] = [];
 // The native binary's comparisons with TLC, which measure how much of TLC's output it prints and
 // fail nothing yet: why it couldn't do a run, if it said.
-const nativeComparisons: (Comparison & { reason: string | undefined })[] = [];
+// The last line of a --native-only run: how many native runs differ unlisted and how many aborted.
+const nativeSummary: { text?: string } = {};
+const nativeComparisons: (Comparison & { reason: string | undefined; isAborted: boolean })[] = [];
 const missing: string[] = [];
 // The runs --stop-at couldn't stop, since the engine handed over before the first state it could.
 const unforced: string[] = [];
@@ -261,6 +281,20 @@ const compare = (id: string, mode: OutputMode, pair: string, left: string, right
   return comparison;
 };
 
+// Compares the native binary's run with TLC's, why it couldn't do the run if it said.
+const compareNative = (id: string, mode: OutputMode, tlc: string, native: Output) => {
+  const comparison = getComparison(id, mode, "tlc/native", tlc, native.transcript);
+  nativeComparisons.push({
+    ...comparison,
+    // A run with no front never reached the engine in TypeScript: SANY, the configuration or
+    // an assumption stopped it, which tla-front will report.
+    reason: /^prove-it: not native yet: (.*)$/m
+      .exec(native.stderr)?.[1]
+      ?.replace(/^no recorded front of .*$/, "no recorded front"),
+    isAborted: native.isAborted,
+  });
+};
+
 const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: number) => {
   for (let run = queue.shift(); run; run = queue.shift()) {
     const model = run.model;
@@ -269,6 +303,18 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     if (!recording) missing.push(`${model.id} ${mode}`);
     const tlc =
       recording && getTranscript(String(recording.exitCode), recording.stdout, recording.stderr);
+    if (nativeBinary && isNativeOnly) {
+      const environment = { ...process.env };
+      delete environment.PROVE_IT_FRONT;
+      const native = await runChecker(nativeBinary, [], model, mode, environment);
+      if (tlc) compareNative(model.id, mode, tlc, native);
+      results.push({ id: model.id, mode, tlc, outputs: { native } });
+      const isSame = native.transcript === tlc;
+      console.log(
+        `[${results.length}/${total}] ${isSame ? "same" : "native"}  ${mode.padEnd(7)} ${model.id}`,
+      );
+      continue;
+    }
     const interpreter = await runCli(model, mode, { ...process.env, PROVE_IT_ENGINE: "0" });
     const modelComparisons: Comparison[] = [];
     const outputs: Record<string, Output> = { interpreter };
@@ -341,17 +387,7 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
         frontDirectory,
       );
       outputs.native = native;
-      if (tlc) {
-        const comparison = getComparison(model.id, mode, "tlc/native", tlc, native.transcript);
-        nativeComparisons.push({
-          ...comparison,
-          // A run with no front never reached the engine in TypeScript: SANY, the configuration or
-          // an assumption stopped it, which tla-front will report.
-          reason: /^prove-it: not native yet: (.*)$/m
-            .exec(native.stderr)?.[1]
-            ?.replace(/^no recorded front of .*$/, "no recorded front"),
-        });
-      }
+      if (tlc) compareNative(model.id, mode, tlc, native);
     }
     results.push({ id: model.id, mode, tlc, outputs, comparisons: modelComparisons });
     const unknown = modelComparisons.filter((comparison) => !comparison.isKnown);
@@ -409,11 +445,33 @@ if (nativeBinary) {
   const reasons = new Map<string, number>();
   for (const comparison of nativeComparisons) {
     if (comparison.diff.length === 0) continue;
-    const reason = comparison.reason ?? (comparison.isKnown ? "known" : "differs");
+    const reason = comparison.isAborted
+      ? "aborted"
+      : (comparison.reason ?? (comparison.isKnown ? "known" : "differs"));
     reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
   }
   for (const [reason, count] of [...reasons].sort((left, right) => right[1] - left[1])) {
     console.log(`  ${String(count).padStart(5)}  ${reason}`);
+  }
+  // A run that aborted fails even where its model is a listed difference.
+  const aborted = nativeComparisons.filter((comparison) => comparison.isAborted);
+  const differing = nativeComparisons.filter(
+    (comparison) => !comparison.isAborted && comparison.reason === undefined && !comparison.isKnown,
+  );
+  if (isNativeOnly) {
+    for (const [failed, heading] of [
+      [aborted, "native runs aborted"],
+      [differing, "native runs print what TLC doesn't"],
+    ] as const) {
+      if (failed.length === 0) continue;
+      console.log(`\n${failed.length} ${heading}:`);
+      for (const comparison of failed) {
+        console.log(`  ${comparison.mode} ${comparison.id}`);
+        for (const line of comparison.diff.slice(0, 10)) console.log(`    ${line}`);
+      }
+    }
+    if (aborted.length > 0 || differing.length > 0) process.exitCode = 1;
+    nativeSummary.text = `${differing.length} native differences known-differences.json doesn't list, and ${aborted.length} native runs aborted.`;
   }
 }
 if (missing.length > 0) {
@@ -460,6 +518,9 @@ if (isUpdate) {
     for (const line of comparison.diff.slice(0, 10)) console.log(`    ${line}`);
   }
   process.exitCode = 1;
+} else if (nativeSummary.text !== undefined) {
+  // --native-only compares no other pair, so its own tally ends the run.
+  console.log(`\n${nativeSummary.text}`);
 } else {
   console.log("\nEvery difference is one known-differences.json lists.");
 }

@@ -137,6 +137,7 @@ fn link_checked(
                 is_unconfigured: config.is_none(),
                 version: TlcVersion::Master,
                 is_level_checked,
+                load_class: None,
             })
         })
 }
@@ -178,18 +179,21 @@ fn lower_definitions(
         .collect();
     let model = Model {
         init,
-        next,
+        next: Some(next),
         scope: None,
         actions: Vec::new(),
         is_labelled: false,
         invariants,
         property_invariants: Vec::new(),
         property_invariant_names: Vec::new(),
+        property_invariant_scopes: Vec::new(),
         constraints: Vec::new(),
         action_constraints: Vec::new(),
         possible: Vec::new(),
         action_properties: Vec::new(),
         initial_predicates: Vec::new(),
+        initial_predicate_scopes: Vec::new(),
+        initial_predicate_names: Vec::new(),
         view: None,
         alias: None,
         postconditions: Vec::new(),
@@ -202,7 +206,12 @@ fn lower_definitions(
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
+        specification: None,
         startup: Startup::default(),
+        next_substitution: None,
+        instance_actions: Vec::new(),
+        instance_names: Vec::new(),
+        tlc_spec: None,
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }
@@ -251,6 +260,7 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
                 is_unconfigured: false,
                 version: TlcVersion::Master,
                 is_level_checked: false,
+                load_class: None,
             })?;
             let ranks = texts
                 .iter()
@@ -298,9 +308,11 @@ fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
 
 fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: Option<&Path>) {
     let options = ModelOptions {
-        library,
+        libraries: library.as_slice(),
         version: None,
         is_warning_enabled: true,
+        is_spec_described: false,
+        random_seed: 0,
     };
     write_ir(out, lower_model(spec_path, config, &options));
 }
@@ -520,7 +532,7 @@ fn main() -> ExitCode {
                 let config = parse_config(&source, TlcVersion::Master)
                     .map_err(|error| FrontError::Config(error.message))?;
                 let facts = create_definition_facts(&environment);
-                get_specification(&config, &environment, &facts, TlcVersion::Master)
+                get_specification(&config, &environment, &facts, TlcVersion::Master, None)
             });
             dump::specification(&specification).write(&mut line);
         } else if mode == "model" {

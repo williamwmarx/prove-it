@@ -3,10 +3,10 @@
 // out what it holds, and native/crates/tla-ir decodes it and encodes it again byte for byte.
 //
 // The blob is little-endian 32-bit words. A header gives the magic, IR_VERSION, the number of
-// words and the number of bytes of UTF-8 text after them. The words hold, in order:
+// words and the number of bytes of WTF-8 text after them. The words hold, in order:
 // - the texts: how many TLC ranks, how many there are, and where each ends in the text, in UTF-16
 //   code units. Text i below the ranked count is the string of rank i in createTlcOrder's order.
-//   The texts themselves are one UTF-8 string after the words;
+//   The texts themselves are one WTF-8 string after the words;
 // - the variables, by name, in the engine's order, and TLC's order of them;
 // - the builtins the model names: name, arity and flags, then for a configuration's table of an
 //   operator's values its number of rows, and each row's arguments as a tuple and its value;
@@ -19,7 +19,8 @@
 //   checker's atoms, each action atom with the position of the ENABLED atom of its fairness, or -1,
 //   and the formula the checker solves, as its number of words and its terms in prefix order, each
 //   atom by its position among the atoms, or past them for one the checker asks nothing of, then
-//   the properties, each its name and its formula the same way, then what TLC evaluates when it
+//   the properties, each its name and its formula the same way, then the source range of the
+//   definition SPECIFICATION names, or -1 and zeros, then what TLC evaluates when it
 //   starts: the substitutes it checks, each its constant's name and its definition; the constant
 //   definitions with effects, in the order TLC evaluates them; the SYMMETRY definition, or -1, with
 //   the sets it permutes, each the name TLC's warning gives it and the set it checks, or -1; and
@@ -44,9 +45,11 @@ import type {
 } from "../ast";
 import type { ModelConfig } from "../config";
 import { hasRepeatedEffect, isImpureDefinition } from "../dependencies";
-import { type Environment, type EvaluationScope, getDefinition } from "../evaluate";
+import type { InstanceAction } from "../environment";
+import { type Closure, type Environment, type EvaluationScope, getDefinition } from "../evaluate";
 import { ACTION_LEVEL } from "../levels";
 import { getLevel } from "../liveness";
+import type { getConstantPredicates } from "../search";
 import type { PermutedSet } from "../symmetry";
 import type { LiveExpression } from "../tableau";
 import type { TlcVersion } from "../tlc/version";
@@ -58,10 +61,10 @@ import {
   getStringOrder,
   type Value,
 } from "../values";
-import type { EngineProperties, EngineSpec } from "./context";
+import type { EngineSpec } from "./context";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 12;
+export const IR_VERSION = 13;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -128,6 +131,7 @@ const DEFINITION_LOCAL = 1 << 9;
 const DEFINITION_SELF_REFERENTIAL = 1 << 10;
 const DEFINITION_REPEATED_EFFECT = 1 << 11;
 const DEFINITION_SUBSTITUTED = 1 << 12;
+const DEFINITION_NORMALIZED = 1 << 13;
 
 // What a name refers to outside any binding of it, in the order the compiler looks.
 const NO_RESOLUTION = 0;
@@ -142,6 +146,7 @@ const BUILTIN_STATE_LEVEL = 1;
 const BUILTIN_LEVEL_CONSTANT = 2;
 const BUILTIN_LAZY = 4;
 const BUILTIN_TABLE = 8;
+const BUILTIN_NATURALS_GEQ = 16;
 
 const SCOPE_VALUE = 0;
 const SCOPE_THUNK = 1;
@@ -173,18 +178,39 @@ export interface TraceAction {
   expression: Expression;
   scope: EvaluationScope | undefined;
   label: string;
+  // The name and location TLC's Action holds, which TLCExt's CounterExample records.
+  name: string;
+  range: SourceRange | undefined;
+  // The operator TLC split the action from (Action.getOpDef), if any.
+  operator: Closure | undefined;
+}
+
+// The specification the IR holds, with no next-state relation where the configuration names none.
+export interface IrSpec extends Omit<EngineSpec, "next"> {
+  next: Expression | undefined;
+}
+
+// The properties the IR holds, each read in the scope of the instance it comes from, if any.
+export interface IrProperties {
+  invariants: { expression: Expression; scope: EvaluationScope | undefined; name: string }[];
+  actionProperties: {
+    action: Expression;
+    subscript: Expression;
+    scope: EvaluationScope | undefined;
+  }[];
+  initialPredicates: { expression: Expression; scope: EvaluationScope | undefined; name: string }[];
 }
 
 export interface IrInput {
   config: ModelConfig;
   environment: Environment;
-  spec: EngineSpec;
+  spec: IrSpec;
   // TLC's actions, with the label a trace gives each step one takes. The search takes its steps
   // through them only when spec.actions is given.
   traceActions: TraceAction[];
   isWarningEnabled: boolean;
   tlcOrder: number[];
-  properties: EngineProperties;
+  properties: IrProperties;
   isRecordingGraph: boolean;
   version: TlcVersion | undefined;
   atoms: IrAtom[];
@@ -192,6 +218,13 @@ export interface IrInput {
   liveFormula: LiveExpression | undefined;
   liveProperties: { name: string; formula: LiveExpression }[];
   startup: IrStartup;
+  // Where the specification reaches the next-state relation through an INSTANCE with
+  // substitutions, the first such INSTANCE (getNextSubstitution).
+  nextSubstitution: SourceRange | undefined;
+  instanceActions: Map<string, InstanceAction>;
+  // TLCGet("spec") as the interpreter computes it, which the IR holds where an expression reads
+  // it, as TLC's actions; the front end's model has neither.
+  getSpecification: (() => Value) | undefined;
 }
 
 // What TLC evaluates when it starts, which the engine evaluates before its search.
@@ -200,11 +233,17 @@ export interface IrStartup {
   substitutes: { name: string; definition: Definition }[];
   // The constant definitions with effects, in the order TLC evaluates them.
   definitions: Definition[];
+  // The constant definitions TLC computes and deep-normalizes at startup (processConstantDefns).
+  normalized: ReadonlySet<Definition>;
+  // The constant definitions the configuration names, which TLC rejects for their value.
+  predicates: ReturnType<typeof getConstantPredicates>;
   // The SYMMETRY definition, which TLC evaluates to its group, and the sets it permutes.
   symmetry: { definition: Definition; permutedSets: PermutedSet[] } | undefined;
   // The assumptions that aren't axioms, each with the name TLC reports it by.
   assumptions: { expression: Expression; name: string }[];
 }
+
+const PREDICATE_FORMS = { predicate: 0, definition: 1, specification: 2 };
 
 export type IrOutcome = { ir: Uint8Array } | { reason: string };
 
@@ -238,18 +277,39 @@ const pushWords = (words: Words, from: Words) => {
   words.length += from.length;
 };
 
-// The texts in UTF-8, in one call, and where each ends in UTF-16 code units, or undefined if one
-// has a lone surrogate, which UTF-8 can't hold.
+// A string in WTF-8: UTF-8 that also encodes a lone surrogate as a code point of three bytes, as
+// tla-ir's wtf8.rs reads it, since a string TLC computes can hold one, as Tail("😀a") does.
+const encodeWtf8 = (text: string) => {
+  if (text.isWellFormed()) return new TextEncoder().encode(text);
+  const bytes: number[] = [];
+  for (const character of text) {
+    const point = character.codePointAt(0) ?? 0;
+    if (point < 0x80) bytes.push(point);
+    else if (point < 0x800) bytes.push(0xc0 | (point >> 6), 0x80 | (point & 0x3f));
+    else if (point < 0x10000) {
+      bytes.push(0xe0 | (point >> 12), 0x80 | ((point >> 6) & 0x3f), 0x80 | (point & 0x3f));
+    } else {
+      bytes.push(
+        0xf0 | (point >> 18),
+        0x80 | ((point >> 12) & 0x3f),
+        0x80 | ((point >> 6) & 0x3f),
+        0x80 | (point & 0x3f),
+      );
+    }
+  }
+  return Uint8Array.from(bytes);
+};
+
+// The texts in WTF-8, in one call, and where each ends in UTF-16 code units.
 const encodeTexts = (ranked: readonly string[], rankedCount: number, extra: string[]) => {
   const joined = ranked.slice(0, rankedCount).join("") + extra.join("");
-  if (!joined.isWellFormed()) return undefined;
   const ends = new Int32Array(rankedCount + extra.length);
   let end = 0;
   for (let index = 0; index < rankedCount; index++) ends[index] = end += ranked[index].length;
   for (let index = 0; index < extra.length; index++) {
     ends[rankedCount + index] = end += extra[index].length;
   }
-  return { bytes: new TextEncoder().encode(joined), ends };
+  return { bytes: encodeWtf8(joined), ends };
 };
 
 const isWide = (value: number) => (value | 0) !== value;
@@ -288,6 +348,25 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   const valueCount = { encoded: 0 };
 
   const getValue = (value: Value) => (valueEncoder.encode([value]) ? valueCount.encoded++ : -1);
+  // Whether a node reads TLCGet("spec"), whose record the IR then holds.
+  const specificationRead = { isRead: false };
+  const isSpecificationRead = (expression: Expression & { kind: "Apply" }) =>
+    expression.operator === "TLCGet" &&
+    expression.args[0]?.kind === "String" &&
+    expression.args[0].value === "spec" &&
+    expression.resolution?.kind !== "Local" &&
+    (resolveOperator(expression.operator) & RESOLUTION_MASK) === BUILTIN_RESOLUTION;
+
+  // The definition of the module an operator is, by its body, or -1 for one a LET defines.
+  const definitionsByBody = new Map(
+    [...environment.definitions.values()]
+      .reverse()
+      .map((definition) => [definition.body, definition]),
+  );
+  const getOperatorDefinitionIndex = (operator: Closure | undefined) => {
+    const definition = operator && definitionsByBody.get(operator.body);
+    return definition ? getDefinitionIndex(definition) : -1;
+  };
 
   const getDefinitionIndex = (definition: Definition) => {
     const known = definitionIndices.get(definition);
@@ -332,7 +411,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
       (builtin.isStateLevel ? BUILTIN_STATE_LEVEL : 0) |
         (builtin.isLevelConstant ? BUILTIN_LEVEL_CONSTANT : 0) |
         (builtin.isLazy ? BUILTIN_LAZY : 0) |
-        (builtin.table ? BUILTIN_TABLE : 0),
+        (builtin.table ? BUILTIN_TABLE : 0) |
+        (builtin.isNaturalsGeq ? BUILTIN_NATURALS_GEQ : 0),
     );
     if (builtin.table) {
       push(builtins, builtin.table.length);
@@ -366,14 +446,17 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     return builtin === -1 ? NO_RESOLUTION : BUILTIN_RESOLUTION | (builtin << RESOLUTION_BITS);
   };
 
-  // Each name's text and resolution, as a name and as an operator, since names recur.
+  // Each name's text and resolution, as a name and as an operator, since names recur. A name
+  // nothing global resolves is one a scope binds, as a definition an INSTANCE in a LET copies in
+  // under a key the resolver leaves alone, so it is written as local.
   const names = new Map<string, number[]>();
   const operators = new Map<string, number[]>();
-  const writeName = (name: string, isOperator: boolean) => {
+  const writeName = (name: string, isOperator: boolean, at?: number) => {
     const cache = isOperator ? operators : names;
     const known = cache.get(name);
     const entry = known ?? [getText(name), isOperator ? resolveOperator(name) : resolveName(name)];
     if (!known) cache.set(name, entry);
+    if (at !== undefined && entry[1] === NO_RESOLUTION) nodes.data[at] |= LOCAL_FLAG;
     reserve(nodes, 3);
     nodes.data[nodes.length++] = entry[0];
     nodes.data[nodes.length++] = entry[1] & RESOLUTION_MASK;
@@ -418,16 +501,16 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     }
   };
 
-  const writeRange = (range: SourceRange | undefined) => {
+  const writeRange = (words: Words, range: SourceRange | undefined) => {
     if (!range) {
-      for (const word of [-1, 0, 0, 0, 0]) push(nodes, word);
+      for (const word of [-1, 0, 0, 0, 0]) push(words, word);
       return;
     }
-    push(nodes, getText(range.module));
-    push(nodes, range.start.line);
-    push(nodes, range.start.column);
-    push(nodes, range.end.line);
-    push(nodes, range.end.column);
+    push(words, getText(range.module));
+    push(words, range.start.line);
+    push(words, range.start.column);
+    push(words, range.end.line);
+    push(words, range.end.column);
   };
 
   const writeDefinition = (definition: Definition) => {
@@ -441,11 +524,12 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
           ? DEFINITION_SELF_REFERENTIAL
           : 0) |
         (isRepeated ? DEFINITION_REPEATED_EFFECT : 0) |
-        (environment.substitutedDefinitions.has(definition) ? DEFINITION_SUBSTITUTED : 0),
+        (environment.substitutedDefinitions.has(definition) ? DEFINITION_SUBSTITUTED : 0) |
+        (input.startup.normalized.has(definition) ? DEFINITION_NORMALIZED : 0),
     );
     push(nodes, definition.location.line);
     push(nodes, definition.location.column);
-    writeRange(definition.location.range);
+    writeRange(nodes, definition.location.range);
     push(nodes, getText(definition.name));
     if (definition.kind === "Operator") {
       push(nodes, 0);
@@ -472,7 +556,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     nodes.data[at + 1] = location.line;
     nodes.data[at + 2] = location.column;
     nodes.length = at + 3;
-    writeRange(location.range);
+    writeRange(nodes, location.range);
     switch (expression.kind) {
       case "Number": {
         if (isWide(expression.value)) {
@@ -489,11 +573,12 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
         return;
       case "Identifier":
         if (expression.resolution?.kind === "Local") nodes.data[at] |= LOCAL_FLAG;
-        writeName(expression.name, false);
+        writeName(expression.name, false, at);
         return;
       case "Apply":
         if (expression.resolution?.kind === "Local") nodes.data[at] |= LOCAL_FLAG;
-        writeName(expression.operator, true);
+        if (isSpecificationRead(expression)) specificationRead.isRead = true;
+        writeName(expression.operator, true, at);
         writeNodes(expression.args);
         return;
       case "OperatorReference":
@@ -723,29 +808,28 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   };
   const hasRepeatedEffectOfName = (name: string) =>
     hasRepeatedEffect({ kind: "Identifier", name, location: { line: 0, column: 0 } }, environment);
-  const writeRoots = (expressions: readonly Expression[]) => {
-    push(model, expressions.length);
-    for (const expression of expressions) push(model, writeRoot(expression));
-  };
-
   const spec = input.spec;
   push(model, writeRoot(spec.init));
-  push(model, writeRoot(spec.next));
+  push(model, spec.next === undefined ? -1 : writeRoot(spec.next));
   push(model, getScopeIndex(spec.scope));
   push(model, input.traceActions.length);
   for (const action of input.traceActions) {
     push(model, writeRoot(action.expression));
     push(model, getScopeIndex(action.scope));
     push(model, getText(action.label));
+    push(model, getText(action.name));
+    writeRange(model, action.range);
+    push(model, getOperatorDefinitionIndex(action.operator));
   }
   push(model, spec.actions ? 1 : 0);
   writeConfigNames(config.invariants, true);
   push(model, input.properties.invariants.length);
-  input.properties.invariants.forEach((invariant, index) => {
-    push(model, writeRoot(invariant));
-    push(model, hasRepeatedEffect(invariant, environment) ? 1 : 0);
-    push(model, getText(input.properties.invariantNames[index]));
-  });
+  for (const invariant of input.properties.invariants) {
+    push(model, writeRoot(invariant.expression));
+    push(model, getScopeIndex(invariant.scope));
+    push(model, hasRepeatedEffect(invariant.expression, environment) ? 1 : 0);
+    push(model, getText(invariant.name));
+  }
   writeConfigNames(config.constraints);
   writeConfigNames(config.actionConstraints);
   // Each _POSSIBLE predicate, and whether it is of a step rather than a state.
@@ -761,8 +845,14 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   for (const property of input.properties.actionProperties) {
     push(model, writeRoot(property.action));
     push(model, writeRoot(property.subscript));
+    push(model, getScopeIndex(property.scope));
   }
-  writeRoots(input.properties.initialPredicates);
+  push(model, input.properties.initialPredicates.length);
+  for (const predicate of input.properties.initialPredicates) {
+    push(model, writeRoot(predicate.expression));
+    push(model, getText(predicate.name));
+    push(model, getScopeIndex(predicate.scope));
+  }
   writeConfigNames(config.view === undefined ? [] : [config.view]);
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
   writeConfigNames(config.postconditions);
@@ -854,6 +944,13 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, getText(property.name));
     pushLive(property.formula);
   }
+  // The range of the definition SPECIFICATION names, which TLC's warning of a stuttering
+  // counterexample prints.
+  const specification =
+    input.config.specification === undefined
+      ? undefined
+      : getDefinition(input.config.specification, environment)?.location.range;
+  writeRange(model, specification);
   const startup = input.startup;
   push(model, startup.substitutes.length);
   for (const substitute of startup.substitutes) {
@@ -862,6 +959,13 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
   }
   push(model, startup.definitions.length);
   for (const definition of startup.definitions) push(model, getDefinitionIndex(definition));
+  push(model, startup.predicates.length);
+  for (const predicate of startup.predicates) {
+    push(model, PREDICATE_FORMS[predicate.form]);
+    push(model, getText(predicate.kind));
+    push(model, getText(predicate.name));
+    push(model, getDefinitionIndex(predicate.definition));
+  }
   if (startup.symmetry === undefined) push(model, -1);
   if (startup.symmetry !== undefined) {
     push(model, getDefinitionIndex(startup.symmetry.definition));
@@ -886,13 +990,44 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     } else break;
   }
 
+  // Where the specification reaches the next-state relation through an INSTANCE, and what TLC
+  // names the actions of the definitions INSTANCEs copy, of the definitions the IR holds, by index.
+  writeRange(model, input.nextSubstitution);
+  const getIndexed = <Item>(entries: Iterable<[string, Item]>) =>
+    [
+      ...new Map(
+        [...entries].flatMap(([key, item]): [number, Item][] => {
+          const definition = environment.definitions.get(key);
+          const index = definition && definitionIndices.get(definition);
+          return index === undefined ? [] : [[index, item]];
+        }),
+      ),
+    ].sort(([left], [right]) => left - right);
+  const instanceActions = getIndexed(input.instanceActions);
+  push(model, instanceActions.length);
+  for (const [index, action] of instanceActions) {
+    push(model, index);
+    push(model, getText(action.name));
+    writeRange(model, action.location.range);
+  }
+  const instanceNames = getIndexed(environment.instanceNames);
+  push(model, instanceNames.length);
+  for (const [index, name] of instanceNames) {
+    push(model, index);
+    push(model, getText(name));
+  }
+  // TLCGet("spec"), where a node reads it, as the interpreter computes it.
+  push(
+    model,
+    specificationRead.isRead && input.getSpecification ? getValue(input.getSpecification()) : -1,
+  );
+
   // --- the blob ---
 
   const encodedValues = valueEncoder.finish();
   const valueStrings = encodedValues.strings.map(getText);
   const variables = environment.variables.map(getText);
   const texts = encodeTexts(rankedTexts, rankedCount, extraTexts);
-  if (!texts) return { reason: "a text with a lone surrogate" };
   const words = createWords();
   reserve(words, 64 + texts.ends.length + model.length + nodes.length + encodedValues.words.length);
   pushAll(words, [MAGIC, IR_VERSION, 0, texts.bytes.length, rankedCount, texts.ends.length]);

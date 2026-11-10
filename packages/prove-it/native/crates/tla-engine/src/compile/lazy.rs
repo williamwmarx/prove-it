@@ -8,10 +8,11 @@
 use std::sync::Arc;
 
 use tla_values::store::{
-    EMPTY_SET, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind,
+    EMPTY_SET, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind,
 };
 use tla_values::{Bail, Id};
 
+use super::sets::{is_in_named, not_in};
 use crate::machine::Machine;
 
 // Beyond these the interpreter would list more elements than a search can use.
@@ -19,8 +20,10 @@ const MAXIMUM_SUBSET_BASE: usize = 20;
 /// TLC counts a power set's elements in an int, and fails counting those of SUBSET S where S has
 /// this many elements or more (`SubsetValue.size`).
 pub(crate) const OVERFLOWING_SUBSET_BASE: usize = 31;
+/// What enumerating a set of functions stops with where TLC can't enumerate its domain.
+pub(crate) const INFINITE_DOMAIN: &str = "enumerated [D -> R] with D infinite";
 pub(crate) const SUBSET_OVERFLOW: &str = "an overflow counting the elements of a power set";
-const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
+pub(crate) const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
 
 /// What a set expression's value is, as the interpreter builds it.
 pub(crate) type Reference = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Lazy> + Send + Sync>;
@@ -37,10 +40,14 @@ pub(crate) enum Operator {
 
 /// The interpreter's value of a set: a normalized set (TLC's SetEnumValue), or one of the sets
 /// TLC implements lazily.
+#[derive(Clone)]
 pub(crate) enum Lazy {
     Set(Id),
     /// Nat, Int or STRING, which TLC tests for membership and can't enumerate.
     Infinite(&'static str),
+    /// Another set TLC can't enumerate, such as `{n \in Nat : p}` or `Seq(S)`, with the
+    /// engine's test of membership in it.
+    Tested(Test),
     Subset(Box<Lazy>),
     FunctionSet(Box<Lazy>, Box<Lazy>),
     /// The keys in TLC's order, each with its set.
@@ -55,7 +62,19 @@ pub(crate) enum Lazy {
 
 impl Lazy {
     fn is_enumerable(&self) -> bool {
-        !matches!(self, Lazy::Infinite(_))
+        !matches!(self, Lazy::Infinite(_) | Lazy::Tested(_))
+    }
+
+    /// Whether the set is or is built of a set TLC can't enumerate.
+    pub(crate) fn is_infinite(&self) -> bool {
+        match self {
+            Lazy::Set(_) => false,
+            Lazy::Infinite(_) | Lazy::Tested(_) => true,
+            Lazy::Subset(base) | Lazy::Filtered(base, _) | Lazy::Union(base) => base.is_infinite(),
+            Lazy::FunctionSet(domain, range) => domain.is_infinite() || range.is_infinite(),
+            Lazy::RecordSet(_, sets) | Lazy::Product(sets) => sets.iter().any(Lazy::is_infinite),
+            Lazy::Operation(_, left, right) => left.is_infinite() || right.is_infinite(),
+        }
     }
 
     fn set(machine: &Machine<'_>, id: Id) -> Outcome<Id> {
@@ -158,7 +177,7 @@ impl Lazy {
                 .store
                 .set_elements(Self::set(machine, *set)?)
                 .to_vec()),
-            Lazy::Infinite(_) => Err(Bail("enumerated an infinite set")),
+            Lazy::Infinite(_) | Lazy::Tested(_) => Err(Bail("enumerated an infinite set")),
             Lazy::Subset(base) => {
                 // SubsetValue sizes and lists its base, never streaming it.
                 let base = base.elements(machine, false)?;
@@ -186,7 +205,7 @@ impl Lazy {
                     return Ok(Vec::new());
                 }
                 if !domain.is_enumerable() {
-                    return Err(Bail("enumerated [D -> R] with D infinite"));
+                    return Err(Bail(INFINITE_DOMAIN));
                 }
                 let is_sorted = matches!(**domain, Lazy::Set(_));
                 let keys = domain.elements(machine, false)?;
@@ -328,27 +347,87 @@ impl Lazy {
                 }
                 false
             }
-            Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
+            // `UnionValue.isEmpty`: each set of the union is.
+            Lazy::Union(base) if base.is_enumerable() => {
+                for set in base.enumerate(machine)? {
+                    let set = Self::set(machine, set)?;
+                    if machine.store.size_of(set) != 0 {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            Lazy::Tested(_) | Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
                 self.enumerate(machine)?.is_empty()
             }
         })
     }
 
+    /// TLC's `size` of the set, which sets of functions, records and tuples answer from their
+    /// parts: an empty part decides before one TLC can't enumerate, or one too large to, is
+    /// asked, and a range of one element makes one function whatever the domain
+    /// (`SetOfFcnsValue.size`, `SetOfRcdsValue.size`, `SetOfTuplesValue.size`).
+    pub(crate) fn size(&self, machine: &mut Machine<'_>) -> Outcome<u64> {
+        const OVERFLOW: Bail = Bail("a lazy set too large to count");
+        let bounded = |size: u64| {
+            if size > i32::MAX as u64 {
+                Err(OVERFLOW)
+            } else {
+                Ok(size)
+            }
+        };
+        match self {
+            Lazy::Set(set) => Ok(u64::from(machine.store.size_of(Self::set(machine, *set)?))),
+            Lazy::Infinite(_) | Lazy::Tested(_) => {
+                Err(Bail("counted the elements of an infinite set"))
+            }
+            Lazy::Subset(base) => {
+                let size = base.size(machine)?;
+                if size >= 31 {
+                    return Err(Bail(SUBSET_OVERFLOW));
+                }
+                Ok(1 << size)
+            }
+            Lazy::FunctionSet(domain, range) => {
+                if domain.is_empty(machine)? {
+                    return Ok(1);
+                }
+                if range.is_empty(machine)? {
+                    return Ok(0);
+                }
+                let range = range.size(machine)?;
+                if range == 1 {
+                    return Ok(1);
+                }
+                let domain = domain.size(machine)?;
+                (0..domain).try_fold(1u64, |size, _| bounded(size * range))
+            }
+            Lazy::RecordSet(_, sets) | Lazy::Product(sets) => {
+                if self.is_empty(machine)? {
+                    return Ok(0);
+                }
+                sets.iter()
+                    .try_fold(1u64, |size, set| bounded(size * set.size(machine)?))
+            }
+            Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
+                let elements = self.enumerate(machine)?;
+                let set = machine.store.set_of(&elements)?;
+                Ok(u64::from(machine.store.size_of(set)))
+            }
+        }
+    }
+
     /// Membership as the interpreter tests it (`isElementOf`), failing where it fails.
     pub(crate) fn contains(&self, machine: &mut Machine<'_>, element: Id) -> Outcome<bool> {
         let kind = machine.store.kind_of(element);
-        let is_model = kind == KIND_MODEL;
         match self {
             Lazy::Set(set) => {
                 let set = Self::set(machine, *set)?;
                 machine.store.is_member(element, set)
             }
-            Lazy::Infinite(name) => match (*name, kind) {
-                ("Nat", KIND_INT) => Ok(machine.store.int_of(element) >= 0),
-                ("Int", KIND_INT) | ("STRING", KIND_STRING) => Ok(true),
-                _ if is_model => Ok(false),
-                _ => Err(Bail("a mistyped membership in an infinite set")),
-            },
+            // Seq(S) holds sequences of S's elements, which its reference doesn't keep.
+            Lazy::Infinite(name) => is_in_named(machine, name, element),
+            Lazy::Tested(test) => test(machine, element),
             Lazy::Subset(base) => {
                 if kind != KIND_SET {
                     return Err(Bail("a membership in SUBSET of a non-set"));
@@ -363,11 +442,11 @@ impl Lazy {
             }
             Lazy::FunctionSet(domain, range) => {
                 if !is_function_kind(kind) {
-                    return if is_model {
-                        Ok(false)
-                    } else {
-                        Err(Bail("a mistyped membership in a set of functions"))
-                    };
+                    return not_in(
+                        machine,
+                        element,
+                        "a mistyped membership in a set of functions",
+                    );
                 }
                 let keys = domain.enumerate(machine)?;
                 let domain = machine.store.set_of(&keys)?;
@@ -398,11 +477,11 @@ impl Lazy {
                         machine.store.kind_of(key) == KIND_STRING
                     });
                 if !is_record {
-                    return if is_model {
-                        Ok(false)
-                    } else {
-                        Err(Bail("a mistyped membership in a set of records"))
-                    };
+                    return not_in(
+                        machine,
+                        element,
+                        "a mistyped membership in a set of records",
+                    );
                 }
                 if size as usize != keys.len() {
                     return Ok(false);
@@ -429,10 +508,10 @@ impl Lazy {
                             let key = machine.store.get_key(element, index);
                             machine.store.kind_of(key) == KIND_INT
                         });
-                    return if is_integer_function || is_model {
+                    return if is_integer_function {
                         Ok(false)
                     } else {
-                        Err(Bail("a mistyped membership in a set of tuples"))
+                        not_in(machine, element, "a mistyped membership in a set of tuples")
                     };
                 }
                 if machine.store.size_of(element) as usize != factors.len() {
@@ -589,5 +668,46 @@ mod tests {
         assert!(of_integers.stream(&mut machine).is_err());
         let infinite = Lazy::Union(Box::new(Lazy::Infinite("Nat")));
         assert!(infinite.enumerate(&mut machine).is_err());
+    }
+
+    // `SetOfFcnsValue.size` and its like: an empty part decides before a part TLC can't enumerate
+    // is asked, and a range of one element makes one function.
+    #[test]
+    fn sizes_a_set_by_its_parts_as_tlc_does() {
+        let program = Program::default();
+        let mut store = Store::new();
+        store.reset(std::iter::empty::<&[u16]>());
+        let mut machine = Machine::new(&program, store);
+        let integers: Vec<Id> = (1..=3)
+            .map(|value| machine.store.int(value).expect("an integer"))
+            .collect();
+        let nat = || Box::new(Lazy::Infinite("Nat"));
+        let empty = || Box::new(Lazy::Set(EMPTY_SET));
+        let one = machine.store.set_of(&integers[..1]).expect("a set");
+        let three = machine.store.set_of(&integers).expect("a set");
+        let mut size = |set: Lazy| set.size(&mut machine).ok();
+        assert_eq!(size(Lazy::FunctionSet(nat(), empty())), Some(0));
+        assert_eq!(size(Lazy::FunctionSet(empty(), nat())), Some(1));
+        assert_eq!(
+            size(Lazy::FunctionSet(nat(), Box::new(Lazy::Set(one)))),
+            Some(1)
+        );
+        assert_eq!(
+            size(Lazy::FunctionSet(
+                Box::new(Lazy::Set(three)),
+                Box::new(Lazy::Set(three))
+            )),
+            Some(27)
+        );
+        assert_eq!(
+            size(Lazy::FunctionSet(nat(), Box::new(Lazy::Set(three)))),
+            None
+        );
+        assert_eq!(size(Lazy::Product(vec![*nat(), *empty()])), Some(0));
+        assert_eq!(
+            size(Lazy::Product(vec![Lazy::Set(three), Lazy::Set(three)])),
+            Some(9)
+        );
+        assert_eq!(size(Lazy::Subset(Box::new(Lazy::Set(three)))), Some(8));
     }
 }

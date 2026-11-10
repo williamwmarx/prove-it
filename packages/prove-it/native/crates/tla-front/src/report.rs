@@ -302,6 +302,12 @@ impl Loader<'_> {
         if self.modules.contains_key(name) {
             return Ok(());
         }
+        // TLC's jar bundles the CommunityModules, which the front end doesn't have.
+        if text.is_none() && COMMUNITY_MODULES.contains(&&**name) {
+            return Err(not_yet(
+                "a module of the CommunityModules TLC's jar bundles",
+            ));
+        }
         let Some(text) = text else {
             return Err(Stop::Fatal {
                 location: Some(importer.clone()),
@@ -323,9 +329,10 @@ impl Loader<'_> {
             .flatten();
         let parse_error = match (lexical_error, &parsed) {
             (Some(lexical_error), _) => Some(lexical_error),
-            (None, Err(error)) => Some(
+            // SANY's parser accepts what the front end's parser doesn't.
+            (None, Err(_)) => Some(
                 get_sany_parse_error(&text, self.options.version)
-                    .unwrap_or_else(|| format!("***Parse Error***\n{}", error.message)),
+                    .ok_or_else(|| not_yet("a module SANY's parser accepts"))?,
             ),
             (None, Ok(_)) => None,
         };
@@ -610,6 +617,46 @@ impl Loader<'_> {
     }
 }
 
+/// The modules of `lib/CommunityModules.jar`, which TLC's jar bundles and finds after the spec's
+/// directory and the library path.
+const COMMUNITY_MODULES: &[&str] = &[
+    "BagsExt",
+    "Bitwise",
+    "CBOR",
+    "CSV",
+    "Combinatorics",
+    "DifferentialEquations",
+    "DyadicRationals",
+    "FiniteSetsExt",
+    "FiniteSetsExtTheorems",
+    "FiniteSetsExtTheorems_proofs",
+    "Folds",
+    "FoldsTheorems",
+    "FoldsTheorems_proofs",
+    "FunctionTheorems",
+    "FunctionTheorems_proofs",
+    "Functions",
+    "GraphTheorems",
+    "GraphTheorems_proofs",
+    "GraphViz",
+    "Graphs",
+    "HTML",
+    "IOUtils",
+    "Json",
+    "Quorum",
+    "QuorumTheorems",
+    "QuorumTheorems_proofs",
+    "Relation",
+    "SVG",
+    "SequencesExt",
+    "SequencesExtTheorems",
+    "SequencesExtTheorems_proofs",
+    "ShiViz",
+    "Statistics",
+    "UndirectedGraphs",
+    "VectorClocks",
+];
+
 /// What SANY prints for the spec at `spec_path` while TLC runs it: when SANY accepts the spec
 /// without a message, or stops at a fatal error other than a parse error. `NotYet` for SANY's
 /// other messages, PlusCal and what SANY's linter could warn about.
@@ -721,6 +768,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             is_unconfigured: true,
             version: options.version,
             is_level_checked: true,
+            load_class: None,
         },
         &order,
     )

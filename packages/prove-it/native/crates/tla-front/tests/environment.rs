@@ -30,6 +30,7 @@ fn link_model(
         is_unconfigured: config.is_none(),
         version: TlcVersion::Master,
         is_level_checked: false,
+        load_class: None,
     })
 }
 
@@ -212,6 +213,24 @@ fn assigns_and_substitutes_the_constants_of_the_configuration() {
             "The constant parameter Op is not assigned a value by the configuration file."
                 .to_owned()
         )
+    );
+}
+
+#[test]
+fn rejects_a_substitute_that_fails_at_startup() {
+    // TLC's etest7 and TLCGetNamedUndefined: TLC evaluates a non-constant substitute at startup.
+    let variable = "---- MODULE Main ----\nCONSTANT C\nVARIABLE x\nFoo == x\n====";
+    assert_eq!(
+        link_model(variable, &[], Some("CONSTANT C <- Foo")).err(),
+        Some(FrontError::Config(
+            "The configuration file substitutes constant C with non-constant Foo - specifically: In evaluation, the identifier x is either undefined or not an operator.\nline 4, col 8 to line 4, col 8 of module Main".to_owned()
+        ))
+    );
+    let checker =
+        "---- MODULE Main ----\nEXTENDS TLC\nCONSTANT A\nqueue == TLCGet(\"queue\")\n====";
+    let error = link_model(checker, &[], Some("CONSTANT A <- queue")).err();
+    assert!(
+        matches!(error, Some(FrontError::Config(message)) if message.ends_with("TLCGet(queue) was undefined."))
     );
 }
 
