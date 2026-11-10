@@ -57,6 +57,8 @@ import {
 interface Output {
   // The exit code, stdout and stderr, normalised, as one text.
   transcript: string;
+  // Whether a signal ended the process other than the timeout's, as when it overflows its stack.
+  isAborted: boolean;
   engineLine: string | undefined;
   stdout: string;
   stderr: string;
@@ -140,6 +142,7 @@ const runChecker = (
           output,
           errorOutput,
         ),
+        isAborted: signal !== null && !child.killed,
         engineLine: getEngineLine(errorOutput),
         stdout: output,
         stderr: errorOutput,
@@ -246,7 +249,10 @@ const STOPPED_REASON = "stopped where PROVE_IT_STOP_AT asked";
 const comparisons: Comparison[] = [];
 // The native binary's comparisons with TLC, which measure how much of TLC's output it prints and
 // fail nothing yet: why it couldn't do a run, if it said.
-const nativeComparisons: (Comparison & { reason: string | undefined })[] = [];
+// The last line of a --native-only run: how many native runs differ unlisted and how many aborted.
+const nativeSummary: { text?: string } = {};
+const nativeComparisons: (Comparison & { reason: string | undefined; isAborted: boolean })[] =
+  [];
 const missing: string[] = [];
 // The runs --stop-at couldn't stop, since the engine handed over before the first state it could.
 const unforced: string[] = [];
@@ -286,6 +292,7 @@ const compareNative = (id: string, mode: OutputMode, tlc: string, native: Output
     reason: /^prove-it: not native yet: (.*)$/m
       .exec(native.stderr)?.[1]
       ?.replace(/^no recorded front of .*$/, "no recorded front"),
+    isAborted: native.isAborted,
   });
 };
 
@@ -439,22 +446,34 @@ if (nativeBinary) {
   const reasons = new Map<string, number>();
   for (const comparison of nativeComparisons) {
     if (comparison.diff.length === 0) continue;
-    const reason = comparison.reason ?? (comparison.isKnown ? "known" : "differs");
+    const reason = comparison.isAborted
+      ? "aborted"
+      : (comparison.reason ?? (comparison.isKnown ? "known" : "differs"));
     reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
   }
   for (const [reason, count] of [...reasons].sort((left, right) => right[1] - left[1])) {
     console.log(`  ${String(count).padStart(5)}  ${reason}`);
   }
+  // A run that aborted fails even where its model is a listed difference.
+  const aborted = nativeComparisons.filter((comparison) => comparison.isAborted);
   const differing = nativeComparisons.filter(
-    (comparison) => comparison.reason === undefined && !comparison.isKnown,
+    (comparison) =>
+      !comparison.isAborted && comparison.reason === undefined && !comparison.isKnown,
   );
-  if (isNativeOnly && differing.length > 0) {
-    console.log(`\n${differing.length} native runs print what TLC doesn't:`);
-    for (const comparison of differing) {
-      console.log(`  ${comparison.mode} ${comparison.id}`);
-      for (const line of comparison.diff.slice(0, 10)) console.log(`    ${line}`);
+  if (isNativeOnly) {
+    for (const [failed, heading] of [
+      [aborted, "native runs aborted"],
+      [differing, "native runs print what TLC doesn't"],
+    ] as const) {
+      if (failed.length === 0) continue;
+      console.log(`\n${failed.length} ${heading}:`);
+      for (const comparison of failed) {
+        console.log(`  ${comparison.mode} ${comparison.id}`);
+        for (const line of comparison.diff.slice(0, 10)) console.log(`    ${line}`);
+      }
     }
-    process.exitCode = 1;
+    if (aborted.length > 0 || differing.length > 0) process.exitCode = 1;
+    nativeSummary.text = `${differing.length} native differences known-differences.json doesn't list, and ${aborted.length} native runs aborted.`;
   }
 }
 if (missing.length > 0) {
@@ -501,6 +520,9 @@ if (isUpdate) {
     for (const line of comparison.diff.slice(0, 10)) console.log(`    ${line}`);
   }
   process.exitCode = 1;
+} else if (nativeSummary.text !== undefined) {
+  // --native-only compares no other pair, so its own tally ends the run.
+  console.log(`\n${nativeSummary.text}`);
 } else {
   console.log("\nEvery difference is one known-differences.json lists.");
 }
