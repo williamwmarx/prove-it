@@ -2398,6 +2398,3 @@ pub fn translate_proof(
     });
     Ok(lemmas)
 }
-
-#[cfg(test)]
-mod tests;
