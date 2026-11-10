@@ -247,3 +247,27 @@ fn declines_continue_on_a_spec_that_prints_or_sets_registers() {
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
+
+// As TLC ran it at d8fb231 with `-workers 1`: TLC reports an invariant an initial state violates
+// once, however many of its conjuncts fail, and then goes on to the next invariant.
+#[test]
+fn reports_an_initial_invariant_once_under_continue_as_tlc() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x' = x + 1\nInv == x > 0 /\\ x > 1\nSmall == x > 5\n====\n";
+    let (output, directory) = run_spec_with(
+        "continue-conjuncts",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nINVARIANT Small\nCHECK_DEADLOCK FALSE\n",
+        &["-continue"],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: Invariant Inv is violated by the initial state:\nx = 0\n\nError: Invariant Small is violated by the initial state:\nx = 0\n\nFinished computing initial states: 1 distinct state generated at "),
+        "{text}"
+    );
+    assert!(
+        text.contains("Error: Invariant Inv is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module Stop>\nx = 1\n\nModel checking completed. No error has been found.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

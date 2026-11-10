@@ -1210,15 +1210,22 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                 self.set_distinct(machine, self.states.count() + 1)?;
             }
             let mut failing = None;
+            // Under -continue, the invariant whose conjuncts the loop skips once one of them
+            // failed, as TLC evaluates the invariant whole.
+            let mut violated_owner = None;
             for (position, invariant) in context.initial_invariants.iter().enumerate() {
+                let owner = context.initial_invariant_owners[position];
+                if violated_owner == Some(owner) {
+                    continue;
+                }
                 match crate::context::holds(machine, invariant) {
                     Ok(true) => {}
                     // TLC goes on past each invariant an initial state violates
                     // (ModelChecker.DoInitFunctor).
                     Ok(false) if self.is_continued => {
-                        let kind =
-                            Continued::InitialInvariant(context.initial_invariant_owners[position]);
+                        violated_owner = Some(owner);
                         let states = vec![machine.current().to_vec()];
+                        let kind = Continued::InitialInvariant(owner);
                         self.report_continued(machine, context, kind, states, None)?;
                     }
                     Ok(false) => {
