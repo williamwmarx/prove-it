@@ -24,6 +24,8 @@ interface LoggedCheck {
   isContinued: boolean;
   isWarningEnabled: boolean;
   version?: string;
+  // PROVE_IT_TEST_LIVE_CHECK_AT, which has the search check the temporal properties at that state.
+  testLiveCheckAt: number;
   caller?: string;
 }
 
@@ -131,6 +133,7 @@ for (const entry of entries) {
         entry.source,
         entry.config,
         getOptions(entry),
+        entry.testLiveCheckAt,
         [...modules].sort(),
         [...classes].sort(),
       ]),
@@ -142,11 +145,18 @@ for (const entry of entries) {
   }
 }
 
-const runBinary = (directory: string, name: string, options: string[], threads: string) =>
+const runBinary = (run: Run, directory: string, name: string, options: string[], threads: string) =>
   new Promise<string>((resolve) => {
+    // Node leaves out a variable whose value is undefined.
     const child = spawn(binary, [...options, name], {
       cwd: directory,
-      env: { ...process.env, PROVE_IT_WORKERS: threads, PROVE_IT_SHARED_LEVEL: "1" },
+      env: {
+        ...process.env,
+        PROVE_IT_WORKERS: threads,
+        PROVE_IT_SHARED_LEVEL: "1",
+        PROVE_IT_TEST_LIVE_CHECK_AT:
+          run.check.testLiveCheckAt > 0 ? String(run.check.testLiveCheckAt) : undefined,
+      },
     });
     const stderr: Buffer[] = [];
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
@@ -177,8 +187,9 @@ const answer = async (run: Run): Promise<Answer> => {
   const options = getOptions(run.check);
   const answers: Record<string, string> = {};
   for (const threads of THREADS)
-    answers[threads] = await runBinary(directory, name, options, threads);
+    answers[threads] = await runBinary(run, directory, name, options, threads);
   answers.default = await runBinary(
+    run,
     directory,
     name,
     options.filter((option) => option !== "-noGenerateSpecTE"),

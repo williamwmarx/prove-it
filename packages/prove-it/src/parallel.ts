@@ -8,7 +8,7 @@ import {
 } from "./check";
 import { type ModelConfig, parseConfig } from "./config";
 import { loadWasmEngine } from "./engine/native";
-import { getCheckLog, getEngineSetting } from "./engine/settings";
+import { getCheckLog, getEngineSetting, getTestLiveCheckAt } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import { TlaEvaluationError } from "./errors";
 import { isImpure } from "./evaluate";
@@ -92,6 +92,7 @@ const logCheck = (options: CheckOptions): CheckOptions => {
     isContinued: options.isContinued === true,
     isWarningEnabled: options.isWarningEnabled !== false,
     version: options.version,
+    testLiveCheckAt: getTestLiveCheckAt(),
     caller: new Error().stack,
   });
   const loadModule = options.loadModule;
