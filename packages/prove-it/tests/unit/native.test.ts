@@ -83,6 +83,25 @@ describe("the native engine", () => {
     SPAWN_LIMIT_MS,
   );
 
+  it.each([
+    ["PROVE_IT_MEMO", "off"],
+    ["PROVE_IT_EPOCH_CHECK", "1"],
+    ["PROVE_IT_FP_VERIFY", "1"],
+    ["PROVE_IT_LIVE_CHECK", "1"],
+  ])(
+    "leaves a run with the engine's self-check %s to the TypeScript check",
+    (name, value) => {
+      const run = spawnSync("bun", [SOURCE_CLI, "-noGenerateSpecTE", "Commit.cfg"], {
+        cwd: COMMIT,
+        encoding: "utf8",
+        env: { ...process.env, PROVE_IT_ENGINE: "debug", [name]: value },
+      });
+      expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
+      expect(run.stderr).not.toContain("native: checkSources");
+    },
+    SPAWN_LIMIT_MS,
+  );
+
   it(
     "exits 255 where it can't load the engine, naming PROVE_IT_ENGINE=0",
     () => {

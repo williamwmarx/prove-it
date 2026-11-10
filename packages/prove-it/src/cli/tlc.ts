@@ -27,14 +27,7 @@ import type {
 } from "../check";
 import { parseConfig } from "../config";
 import { getNativeAddon, loadWasmEngine, type NativeCheckSources } from "../engine/native";
-import {
-  getEngineSetting,
-  getFingerprintSetting,
-  getStopAt,
-  isIrDumped,
-  isStateLogged,
-  reportEngine,
-} from "../engine/settings";
+import { getEngineSetting, getEnvironmentSetting, reportEngine } from "../engine/settings";
 import {
   getErrorExitCode,
   getUnexpectedException,
@@ -961,6 +954,21 @@ const getZoneRule = () => {
   return `<${offset < 0 ? "-" : "+"}${String(hours).padStart(2, "0")}${minutes}>${offset > 0 ? "-" : ""}${hours}:${minutes}`;
 };
 
+// The debug settings only the TypeScript check honours, which leave the command line to it:
+// PROVE_IT_STOP_AT tests its hand-over from the engine, the IR dump, the state log and the
+// fingerprint setting are written or checked there, and the memo, epoch, fingerprint and liveness
+// self-checks are the engine settings it passes, which the binary doesn't read.
+const TYPESCRIPT_SETTINGS = [
+  "PROVE_IT_STOP_AT",
+  "PROVE_IT_IR_DUMP",
+  "PROVE_IT_STATE_LOG",
+  "PROVE_IT_FINGERPRINT",
+  "PROVE_IT_MEMO",
+  "PROVE_IT_EPOCH_CHECK",
+  "PROVE_IT_FP_VERIFY",
+  "PROVE_IT_LIVE_CHECK",
+];
+
 // The check the native binary runs for the command line, run in-process: its exit code, once it
 // printed what the binary prints, or undefined where it declines the model or no engine loads, for
 // the TypeScript check to check it. The command line is TLC's as given, the Java launch's included;
@@ -972,14 +980,9 @@ export const checkNatively = async (
   args: string[],
   java: JavaProperties,
 ) => {
-  // The debug settings only the TypeScript check honours: PROVE_IT_STOP_AT tests its hand-over from
-  // the engine, and the IR dump, the state log and the fingerprint check are written there.
   if (
     getEngineSetting() === "0" ||
-    getStopAt() !== -1 ||
-    isIrDumped() ||
-    isStateLogged() ||
-    getFingerprintSetting() !== undefined
+    TYPESCRIPT_SETTINGS.some((name) => Boolean(getEnvironmentSetting(name)))
   ) {
     return undefined;
   }
