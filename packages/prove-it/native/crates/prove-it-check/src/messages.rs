@@ -5,6 +5,8 @@
 use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 
+use tla_engine::search::Advice;
+
 pub const COMMAND_LINE_ERROR: u32 = 1102;
 pub const STARTING: u32 = 2185;
 pub const FINISHED: u32 = 2186;
@@ -56,10 +58,13 @@ pub enum Level {
 }
 
 /// Where a check writes: what TLC prints, and Prove It's own notes, such as that a model isn't
-/// native yet, which the binary writes to stdout and stderr.
+/// native yet, which the binary writes to stdout and stderr. With them, what the host tells the
+/// system of the search's large regions of memory (`Settings::large_region_advice`): the binary
+/// asks Linux for huge pages.
 pub struct Output<'o> {
     pub out: &'o mut dyn Write,
     pub err: &'o mut dyn Write,
+    pub large_region_advice: Option<Advice>,
 }
 
 /// Writes TLC's messages. MP.printWarning prints a warning once, which -nowarning drops, and
@@ -68,6 +73,7 @@ pub struct Printer<'o> {
     pub is_tool: bool,
     is_warning_enabled: bool,
     warnings: HashSet<String>,
+    pub large_region_advice: Option<Advice>,
     out: BufWriter<&'o mut dyn Write>,
     err: &'o mut dyn Write,
 }
@@ -78,6 +84,7 @@ impl<'o> Printer<'o> {
             is_tool,
             is_warning_enabled,
             warnings: HashSet::new(),
+            large_region_advice: output.large_region_advice,
             out: BufWriter::new(&mut *output.out),
             err: &mut *output.err,
         }

@@ -1007,6 +1007,85 @@ fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
     (run(&directory, &["-noTE", "Stop"]), directory)
 }
 
+// A counter with a `_PERIODIC` expression, as TLC's ran at d8fb231 with `-workers 1`: TLC
+// evaluates the expression just before it prints its progress, about 3 s in, and not at all in a
+// run that ends first. A constant-level expression it evaluates once, at startup.
+fn periodic_spec(next: &str, periodic: &str) -> String {
+    format!(
+        "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == {next}\nPeriodic == {periodic}\n====\n"
+    )
+}
+
+const PERIODIC_CONFIG: &str = "INIT Init\nNEXT Next\n_PERIODIC Periodic\nCHECK_DEADLOCK FALSE\n";
+
+#[test]
+fn prints_a_constant_periodic_expression_at_startup_as_tlc() {
+    let spec = periodic_spec("x < 3 /\\ x' = x + 1", "PrintT(\"periodic\")");
+    let (output, directory) = run_spec("periodic-constant", &spec, PERIODIC_CONFIG);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            "\n\"periodic\"\nComputing initial states...\nFinished computing initial states: 1 distinct state generated at "
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("Model checking completed. No error has been found."),
+        "{text}"
+    );
+    assert!(
+        text.contains("4 states generated, 4 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn completes_where_tlc_ends_before_it_evaluates_the_periodic_expression() {
+    for (test, periodic) in [
+        (
+            "periodic-print",
+            "PrintT(<<\"periodic\", TLCGet(\"distinct\")>>)",
+        ),
+        ("periodic-false", "TLCGet(\"distinct\") < 0"),
+    ] {
+        let spec = periodic_spec("x < 3 /\\ x' = x + 1", periodic);
+        let (output, directory) = run_spec(test, &spec, PERIODIC_CONFIG);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(0), "{test}: {text}");
+        assert!(!text.contains("\"periodic\""), "{test}: {text}");
+        assert!(
+            text.contains("Model checking completed. No error has been found."),
+            "{test}: {text}"
+        );
+        assert!(
+            text.contains("4 states generated, 4 distinct states found, 0 states left on queue.\n"),
+            "{test}: {text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn declines_where_tlc_would_evaluate_the_periodic_expression() {
+    // A search that runs until TLC's first progress, where TLC prints <<"periodic", n>>.
+    let spec = periodic_spec(
+        "x' = x + 1",
+        "PrintT(<<\"periodic\", TLCGet(\"distinct\")>>)",
+    );
+    let (output, directory) = run_spec("periodic-long", &spec, PERIODIC_CONFIG);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: _PERIODIC, which TLC evaluates as it prints its progress\n"
+    );
+    assert!(!text.contains("\"periodic\""), "{text}");
+    assert!(!text.contains("Progress("), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn reports_a_constant_the_configuration_leaves_unassigned() {
     let spec =

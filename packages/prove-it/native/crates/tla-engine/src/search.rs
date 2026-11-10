@@ -75,7 +75,14 @@ pub struct Settings {
     /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
     /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
     pub test_live_check_at: Option<usize>,
+    /// What the caller tells the system of a large region of memory the search has just allocated
+    /// and not yet touched, its address and length in bytes: the state table, from 32 MB, whose
+    /// probes land anywhere in it. The CLI asks Linux to back it with huge pages.
+    pub large_region_advice: Option<Advice>,
 }
+
+/// See [`Settings::large_region_advice`].
+pub type Advice = fn(address: *const u8, length: usize);
 
 // How many candidates ahead the merge reads the state table.
 const MERGE_PREFETCH: usize = 16;
@@ -104,6 +111,7 @@ impl Default for Settings {
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
+            large_region_advice: None,
         }
     }
 }
@@ -581,6 +589,7 @@ struct FingerprintSet {
     mask: usize,
     len: usize,
     zero: Option<u32>,
+    advice: Option<Advice>,
 }
 
 // The slot that stands for the fingerprint 0, past the table's.
@@ -589,7 +598,7 @@ const ZERO_SLOT: usize = usize::MAX;
 impl FingerprintSet {
     const INITIAL_CAPACITY: usize = 1 << 12;
 
-    fn new(is_indexed: bool) -> FingerprintSet {
+    fn new(is_indexed: bool, advice: Option<Advice>) -> FingerprintSet {
         let capacity = Self::INITIAL_CAPACITY;
         FingerprintSet {
             fingerprints: vec![0; capacity],
@@ -598,6 +607,7 @@ impl FingerprintSet {
             mask: capacity - 1,
             len: 0,
             zero: None,
+            advice,
         }
     }
 
@@ -673,6 +683,14 @@ impl FingerprintSet {
     fn grow(&mut self) {
         let capacity = self.fingerprints.len() * 2;
         let fingerprints = std::mem::replace(&mut self.fingerprints, vec![0; capacity]);
+        if let Some(advice) = self.advice
+            && capacity * size_of::<u64>() >= LARGE_TABLE_BYTES
+        {
+            advice(
+                self.fingerprints.as_ptr().cast(),
+                capacity * size_of::<u64>(),
+            );
+        }
         let indices = self
             .indices
             .as_mut()
@@ -750,6 +768,10 @@ const FILL_LEFT: u8 = 2;
 fn home_slot(fingerprint: u64, shift: u32) -> usize {
     (fingerprint.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> shift) as usize
 }
+
+// The size from which a state table is a large region, which the caller may advise: its probes
+// land anywhere in it, and smaller tables stay in the cache.
+const LARGE_TABLE_BYTES: usize = 32 << 20;
 
 // The states found so far and how the search tells them apart.
 struct States {
@@ -1823,7 +1845,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     let (before, level) = (shared.before, shared.level);
     let candidates = Candidates {
         before,
-        seen: FingerprintSet::new(before.set.indices.is_some()),
+        seen: FingerprintSet::new(before.set.indices.is_some(), None),
         ids: Vec::new(),
         keys: Vec::new(),
         fingerprints: Vec::new(),
@@ -2623,7 +2645,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         keys: Vec::new(),
         parents: Vec::new(),
         fingerprints: Vec::new(),
-        set: FingerprintSet::new(settings.is_fingerprint_verified || model.is_recording_graph),
+        set: FingerprintSet::new(
+            settings.is_fingerprint_verified || model.is_recording_graph,
+            settings.large_region_advice,
+        ),
         order,
         is_verified: settings.is_fingerprint_verified,
         collisions: 0,
@@ -4931,7 +4956,7 @@ mod tests {
             keys: Vec::new(),
             parents: Vec::new(),
             fingerprints: Vec::new(),
-            set: FingerprintSet::new(true),
+            set: FingerprintSet::new(true, None),
             order: vec![0],
             is_verified: true,
             collisions: 0,
@@ -5010,7 +5035,7 @@ mod tests {
         }
         let mut thread = Candidates {
             before: &before,
-            seen: FingerprintSet::new(true),
+            seen: FingerprintSet::new(true, None),
             ids: Vec::new(),
             keys: Vec::new(),
             fingerprints: Vec::new(),
@@ -5026,7 +5051,7 @@ mod tests {
         let own = verified_states();
         let mut thread = Candidates {
             before: &own,
-            seen: FingerprintSet::new(true),
+            seen: FingerprintSet::new(true, None),
             ids: Vec::new(),
             keys: Vec::new(),
             fingerprints: Vec::new(),
@@ -5066,6 +5091,29 @@ mod tests {
         );
     }
 
+    // A table that grows to a large region, as a fill reserves it or as inserts fill it, asks the
+    // caller's advice for each table from that size on, and a smaller one never does.
+    #[test]
+    fn advises_a_table_that_grows_large() {
+        static ADVISED: AtomicUsize = AtomicUsize::new(0);
+        fn count(_: *const u8, length: usize) {
+            assert!(length >= LARGE_TABLE_BYTES);
+            ADVISED.fetch_add(1, Ordering::Relaxed);
+        }
+        let slots = LARGE_TABLE_BYTES / size_of::<u64>();
+        let mut set = FingerprintSet::new(false, Some(count));
+        set.reserve(slots / 4);
+        assert_eq!(ADVISED.load(Ordering::Relaxed), 0);
+        set.reserve(slots / 2);
+        assert_eq!(ADVISED.load(Ordering::Relaxed), 1);
+        for fingerprint in 1..=(slots / 2 + 1) as u64 {
+            if let Err(slot) = set.find(fingerprint) {
+                set.insert(slot, fingerprint, 0);
+            }
+        }
+        assert_eq!(ADVISED.load(Ordering::Relaxed), 2);
+    }
+
     #[test]
     fn fills_on_threads_what_inserting_one_by_one_adds() {
         let mut random = 0x2545_f491_4f6c_dd1d_u64;
@@ -5076,7 +5124,7 @@ mod tests {
             random % 3000
         };
         let scattered: Vec<u64> = (0..5000).map(|_| next()).collect();
-        let mut set = FingerprintSet::new(false);
+        let mut set = FingerprintSet::new(false, None);
         set.reserve(scattered.len() + 3);
         // Three fingerprints whose probes start at the last slot of the first thread's range: the
         // second and third run past it.
@@ -5086,7 +5134,7 @@ mod tests {
             .take(3)
             .collect();
         let statuses = set.fill(&[&scattered, &crowded], 4);
-        let mut expected = FingerprintSet::new(false);
+        let mut expected = FingerprintSet::new(false, None);
         for (&status, &fingerprint) in statuses.iter().zip(scattered.iter().chain(&crowded)) {
             let is_new = match expected.find(fingerprint) {
                 Ok(_) => false,
