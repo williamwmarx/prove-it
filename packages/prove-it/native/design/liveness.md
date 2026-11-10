@@ -99,6 +99,19 @@ isn't native where it holds. TLC's call stack records no node for the `<<A>>_v` 
 which the front writes at A, and ENABLED names the fairness condition where A leaves a variable of
 v unassigned (2148).
 
+An atom that fails on an initial state stops TLC's `DoInitFunctor` there, and TLC reports it with
+the state. TLC then replays the initial states with its `CallStackTool` (`ModelChecker#doInit`),
+adding to the behavior graphs only those its first pass didn't find. Where an atom fails again on
+one of them, TLC prints that call stack, the initial predicate's frames then the atom's, and exits
+as for it. Its counts are the replay's, up to that state, or all the initial states where nothing
+fails again. The engine hands this over (`ErrorSite::InitialAtom`, with the atom the replay may
+fail at and its state) where every initial state it generated is distinct, so a state's position
+is its count, and where it printed the progress TLC did before the failing state. The invariants
+and implied inits the replay checks again held of every initial state, as the engine checked them
+before it got there. A property `[]P` of a
+state predicate P isn't an atom: TLC checks it as an invariant, which the replay checks again on
+the states it found, the failing one first.
+
 ## A failure of the next-state relation in a model with temporal properties (planned)
 
 The binary declines it (the `tlc-replay` test's two runs and one of `check`'s). It has to print

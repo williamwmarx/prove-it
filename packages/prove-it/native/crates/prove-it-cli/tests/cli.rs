@@ -4176,3 +4176,48 @@ fn reports_a_property_checked_as_an_invariant_that_fails_on_an_initial_state() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn reports_an_atom_that_fails_on_one_of_the_initial_states() {
+    // TLC adds each initial state to the behavior graphs as it finds it and stops where an atom
+    // fails, then replays the initial states with its call stack, adding those it hadn't found:
+    // where an atom fails again there, it prints that call stack and the counts of the replay.
+    let cases = [
+        (
+            "TRUE",
+            75,
+            "Computing initial states...\nError: A non-function (an integer) was applied as a function.\nline 7, col 23 to line 7, col 26 of module M\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 20 in M\n1. Line 7, column 23 to line 7, column 30 in M\n2. Line 7, column 23 to line 7, column 26 in M\n\n\n2 states generated, 2 distinct states found, 2 states left on queue.\nThe depth of the complete state graph search is 1.\n",
+        ),
+        (
+            "x = 1",
+            255,
+            "Computing initial states...\nError: A non-function (an integer) was applied as a function.\nline 7, col 24 to line 7, col 27 of module M\nWhile working on the initial state:\nx = 1\n\n2 states generated, 2 distinct states found, 2 states left on queue.\nThe depth of the complete state graph search is 1.\n",
+        ),
+    ];
+    for (index, (condition, status, expected)) in cases.iter().enumerate() {
+        let spec = format!(
+            "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in {{0, 1}}\nA == x' = x\nSpec == Init /\\ [][A]_x\nP == []((IF {condition} THEN x[1] = 0 ELSE TRUE) => <>(x = 0))\n====\n"
+        );
+        let directory = std::env::temp_dir().join(format!(
+            "prove-it-cli-initial-atoms-{index}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        std::fs::write(directory.join("M.tla"), spec).expect("a spec");
+        std::fs::write(directory.join("M.cfg"), "SPECIFICATION Spec\nPROPERTY P\n")
+            .expect("a configuration");
+        for threads in ["1", "4"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                .args(["-noTE", "M"])
+                .current_dir(&directory)
+                .env("PROVE_IT_WORKERS", threads)
+                .env("PROVE_IT_SHARED_LEVEL", "1")
+                .output()
+                .expect("the binary runs");
+            let text = stdout(&output);
+            assert_eq!(output.status.code(), Some(*status), "{threads}: {text}");
+            assert!(text.contains(expected), "{threads}: {text}");
+        }
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}

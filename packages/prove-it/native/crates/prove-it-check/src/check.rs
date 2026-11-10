@@ -1092,7 +1092,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                                 Site::InitialPredicate(position)
                             }
                             ErrorSite::Atom { atom, is_extra } => Site::Atom { atom, is_extra },
-                            ErrorSite::InitialAtom(atom) => Site::InitialAtom(atom),
+                            ErrorSite::InitialAtom { atom, replayed } => {
+                                Site::InitialAtom { atom, replayed }
+                            }
                         },
                         statistics: Statistics {
                             generated: counts.generated,
@@ -1271,7 +1273,7 @@ fn is_initial_site(site: ErrorSite) -> bool {
             | ErrorSite::InitialConstraint(_)
             | ErrorSite::InitialInvariant(_)
             | ErrorSite::InitialPredicate(_)
-            | ErrorSite::InitialAtom(_)
+            | ErrorSite::InitialAtom { .. }
     )
 }
 
