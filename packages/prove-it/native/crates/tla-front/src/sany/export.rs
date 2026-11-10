@@ -3,7 +3,8 @@
 
 use std::rc::Rc;
 
-use crate::TlcVersion;
+use crate::parser::extract_module;
+use crate::{TlcVersion, get_standard_module};
 use crate::report::{ReportOptions, get_sany_text_of};
 use crate::sany::generator::{GenerationOptions, generate_sany_specification};
 use crate::sany::levels::{LevelCheck, check_module_levels};
@@ -59,9 +60,16 @@ pub fn export_xml(
             check_module_levels(graph, module, &mut LevelCheck { messages });
         }
     };
+    // `SimpleFilenameToStream.locate`: a module's own file, then a standard module, then a module
+    // of the root module's file, as the report reads them.
+    let load_source = |name: &str| {
+        load_module(name)
+            .or_else(|| get_standard_module(name, TlcVersion::Master).map(str::to_owned))
+            .or_else(|| extract_module(source, name))
+    };
     let specification = generate_sany_specification(
         source,
-        load_module,
+        &load_source,
         &GenerationOptions {
             root_file_name: Some(Rc::from(root)),
             root_file_path: Some(format!(
