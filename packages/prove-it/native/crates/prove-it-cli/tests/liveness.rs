@@ -328,3 +328,32 @@ fn reports_an_atom_that_fails_on_one_of_the_initial_states() {
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
+
+#[test]
+fn reads_the_next_states_level_in_the_alias_of_a_lassos_last_state() {
+    // TLC evaluates the ALIAS of a lasso's last state with the state its cycle starts at as the
+    // next state, at that state's level, the state itself where the lasso stutters
+    // (`LiveWorker.printTrace`'s `evalAlias`), as TLC built at d8fb231 prints them.
+    let cases = [
+        (
+            "Next == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == <>(TLCGet(\"level\") = 4)\nF == WF_x(Next)\nAlias == [x |-> x, l |-> TLCGet(\"level\")']\n",
+            "SPECIFICATION Spec\nPROPERTY P\nPROPERTY F\nALIAS Alias\n",
+            "State 1: <Initial predicate>\n/\\ x = 0\n/\\ l = 1\n\nState 2: Stuttering\n",
+        ),
+        (
+            "Next == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nP == <>(x = 7)\nAlias == [x |-> x, l |-> TLCGet(\"level\"), n |-> TLCGet(\"level\")']\n",
+            "SPECIFICATION Spec\nPROPERTY P\nALIAS Alias\n",
+            "State 1: <Initial predicate>\n/\\ x = 0\n/\\ l = 1\n/\\ n = 2\n\nState 2: <Next line 5, col 9 to line 5, col 24 of module M>\n/\\ x = 1\n/\\ l = 2\n/\\ n = 3\n\nState 3: <Next line 5, col 9 to line 5, col 24 of module M>\n/\\ x = 2\n/\\ l = 3\n/\\ n = 1\n\nBack to state 1: <Next line 5, col 9 to line 5, col 24 of module M>\n",
+        ),
+    ];
+    for (index, (definitions, config, expected)) in cases.iter().enumerate() {
+        let spec = format!(
+            "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\n{definitions}====\n"
+        );
+        let (output, directory) = run_lowered(&format!("alias-level-{index}"), &spec, config);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(13), "{index}: {text}");
+        assert!(text.contains(expected), "{index}: {text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
