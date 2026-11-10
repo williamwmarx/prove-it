@@ -3,6 +3,7 @@
 //! reports, which are the same in every port of a backend so that two ports can be shown to make
 //! the same search.
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 /// A backend's answer. tlapm frames an obligation as unsat when the backend proves it.
@@ -50,10 +51,12 @@ pub enum DecideError {
 /// sets to cancel it. Each check of the limits is a step, as in the TypeScript backends; past the
 /// step limit a backend gives up as it does at the deadline. Scripts set a step limit and no
 /// deadline, so that what a backend answers doesn't depend on the machine; prove sets a deadline.
+/// Every check takes `&self`, so that a backend's parts can share one, as Z3's contexts and
+/// rewriters share their manager's resource limit.
 pub struct Limits<'a> {
     deadline: f64,
     step_limit: u64,
-    steps: u64,
+    steps: Cell<u64>,
     cancel: Option<&'a AtomicI32>,
 }
 
@@ -64,20 +67,20 @@ impl<'a> Limits<'a> {
         Limits {
             deadline: now() + time_limit,
             step_limit: step_limit.unwrap_or(u64::MAX),
-            steps: 0,
+            steps: Cell::new(0),
             cancel,
         }
     }
 
     /// The steps taken so far.
     pub fn steps(&self) -> u64 {
-        self.steps
+        self.steps.get()
     }
 
     /// Counts a step, and returns whether the step limit is reached: `isStepLimitReached`.
-    pub fn is_step_limit_reached(&mut self) -> bool {
-        self.steps += 1;
-        self.steps > self.step_limit
+    pub fn is_step_limit_reached(&self) -> bool {
+        self.steps.set(self.steps.get() + 1);
+        self.steps.get() > self.step_limit
     }
 
     pub fn is_past_deadline(&self) -> bool {
@@ -117,7 +120,7 @@ mod tests {
 
     #[test]
     fn the_step_limit_is_reached_on_the_step_past_it() {
-        let mut limits = Limits::new(f64::INFINITY, Some(2), None);
+        let limits = Limits::new(f64::INFINITY, Some(2), None);
         assert!(!limits.is_step_limit_reached());
         assert!(!limits.is_step_limit_reached());
         assert!(limits.is_step_limit_reached());
