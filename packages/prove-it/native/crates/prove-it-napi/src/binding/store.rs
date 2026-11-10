@@ -259,6 +259,9 @@ pub(super) unsafe fn get_host(env: napi_env, value: napi_value) -> Result<HostVa
     if let Some(words) = unsafe { get_typed::<i32>(env, value, NAPI_INT32_ARRAY) }? {
         return Ok(HostValue::Int32s(words.to_vec()));
     }
+    if let Some(bytes) = unsafe { get_typed::<u8>(env, value, NAPI_UINT8_ARRAY) }? {
+        return Ok(HostValue::Uint8s(bytes.to_vec()));
+    }
     match unsafe { get_elements(env, value) }? {
         Some(elements) => elements
             .into_iter()

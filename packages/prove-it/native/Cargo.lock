@@ -27,6 +27,7 @@ dependencies = [
 name = "prove-it-host"
 version = "0.1.0"
 dependencies = [
+ "prove-it-check",
  "tla-engine",
  "tla-front",
  "tla-ir",

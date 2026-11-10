@@ -3,7 +3,7 @@
 
 mod pages;
 
-use prove_it_check::Output;
+use prove_it_check::{Output, SystemHost};
 
 /// The stack of the run's thread: the front end recurses as deep as TLC's translation of a
 /// formula does before it reports TLC's stack overflow, which a main thread's stack, 1 MiB on
@@ -24,7 +24,7 @@ fn main() {
                 &mut Output {
                     out: &mut out,
                     err: &mut err,
-                    large_region_advice: pages::LARGE_REGION_ADVICE,
+                    host: &SystemHost::new(pages::LARGE_REGION_ADVICE),
                 },
             )
         })
