@@ -1,0 +1,16 @@
+[package]
+name = "prove-it-check"
+description = "Checks a TLA+ spec as TLC's command line asks and writes what TLC prints"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tla-engine = { path = "../tla-engine" }
+tla-ir = { path = "../tla-ir" }
+tla-values = { path = "../tla-values" }
+tla-front = { path = "../tla-front" }
+tla-live = { path = "../tla-live" }
+tla-trace = { path = "../tla-trace" }

@@ -1,13 +1,11 @@
 //! How the binary backs the search's large regions of memory.
 
-use tla_engine::search::Advice;
-
 /// On Linux, huge pages, where transparent huge pages are on for regions that ask for them.
 #[cfg(target_os = "linux")]
-pub const LARGE_REGION_ADVICE: Option<Advice> = Some(advise_huge_pages);
+pub const LARGE_REGION_ADVICE: Option<fn(*const u8, usize)> = Some(advise_huge_pages);
 
 #[cfg(not(target_os = "linux"))]
-pub const LARGE_REGION_ADVICE: Option<Advice> = None;
+pub const LARGE_REGION_ADVICE: Option<fn(*const u8, usize)> = None;
 
 // Asks the kernel to back the region's whole 2 MB pages with huge pages. A probe anywhere in a
 // large table then misses the TLB far less often, and growing the table faults it in 2 MB at a
