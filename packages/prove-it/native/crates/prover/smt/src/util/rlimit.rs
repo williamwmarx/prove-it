@@ -7,6 +7,7 @@
 //! (design/prover.md 3.6), with `stop(StopReason::Heap)`.
 
 use std::cell::Cell;
+use std::rc::Rc;
 
 use prove_decide::Limits;
 
@@ -36,17 +37,19 @@ impl StopReason {
 }
 
 /// Holds a clone of the decision's `Limits`, which counts the same steps; nothing keeps it after
-/// `decide` returns.
+/// `decide` returns. A clone is the same limit, as the TypeScript shares one `ResourceLimit` object:
+/// `decideSmt` reads the count and the stop reason of the limit `checkSmt`'s manager used.
+#[derive(Clone)]
 pub struct ResourceLimit {
     limits: Limits,
-    stop_reason: Cell<Option<StopReason>>,
+    stop_reason: Rc<Cell<Option<StopReason>>>,
 }
 
 impl ResourceLimit {
     pub fn new(limits: &Limits) -> ResourceLimit {
         ResourceLimit {
             limits: limits.clone(),
-            stop_reason: Cell::new(None),
+            stop_reason: Rc::new(Cell::new(None)),
         }
     }
 
@@ -124,5 +127,16 @@ mod tests {
         assert!((1..256).all(|_| limit.inc()));
         assert!(!limit.inc());
         assert_eq!(limit.stop_reason(), Some(StopReason::Time));
+    }
+
+    #[test]
+    fn a_clone_is_the_same_limit() {
+        let limits = Limits::new(f64::INFINITY, Some(1), None);
+        let limit = ResourceLimit::new(&limits);
+        let clone = limit.clone();
+        assert!(clone.inc());
+        assert!(!clone.inc());
+        assert_eq!(limit.count(), 2);
+        assert_eq!(limit.stop_reason(), Some(StopReason::Steps));
     }
 }

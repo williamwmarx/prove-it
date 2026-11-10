@@ -51,6 +51,7 @@ pub mod relevancy;
 pub mod rewriter;
 pub mod rewriter_tpl;
 pub mod smtlib_parser;
+pub mod solver;
 pub mod sort;
 pub mod sticky_generations;
 pub mod theory_lra;
