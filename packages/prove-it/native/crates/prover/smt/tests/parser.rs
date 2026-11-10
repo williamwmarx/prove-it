@@ -16,10 +16,7 @@ use prove_smt::util::rlimit::ResourceLimit;
 const MAX_TEXT_LENGTH: usize = 400;
 
 // The inputs not compared yet, with the reason.
-const SKIPPED: [(&str, &str); 2] = [
-    // Its let bindings are used under a binder, which the parser shifts with
-    // var_subst::replace_free_vars, a stub until the port of var-subst.ts merges: remove it then.
-    ("script let-under-binder", "needs var_subst"),
+const SKIPPED: [(&str, &str); 1] = [
     // (and) and (=) apply and to no arguments. ast.ts hashes the Z3 declaration with the sort of a
     // missing argument (undefined), and ast.rs refuses it as an invariant error.
     ("script nullary-connectives", "ast.rs refuses a nullary and"),

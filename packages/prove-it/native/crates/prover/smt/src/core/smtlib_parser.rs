@@ -747,7 +747,7 @@ impl<'a> SmtlibParser<'a> {
                 } else {
                     replace_free_vars(m, expr, |m, variable, index, shift| {
                         let sort = m.sorts[variable as usize];
-                        m.mk_var(index + shift + depth - binding_depth, sort)
+                        Ok(m.mk_var(index + shift + depth - binding_depth, sort))
                     })
                 }
             }

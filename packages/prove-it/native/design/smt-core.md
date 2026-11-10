@@ -21,6 +21,7 @@ track: keep it current.
 | `core::{ast, flat_literals, ref_vector, expr_ref}` | the AST manager | done; a 3000-step trace of the TS manager (ids, hashes, small ids, ref counts, recycling) in `smt/tests/tables/ast.txt`, written by `scripts/smt-core-tables.ts` |
 | `core::{literal, sort, enode, cg_table, case_split_queue, sticky_generations, clause}` | the e-graph's and the clauses' types | done; `smt-clause-store` ported |
 | `core::{smtlib_parser, goal}` | the SMT-LIB reader, goals | done; all 46 `tests/fixtures/smt` and 52 of 54 short scripts against the TS (`smt/tests/tables/parser.txt`, `scripts/smt-parser-tables.ts`); the two skipped are listed in `tests/parser.rs` |
+| `core::{act_cache, rewriter_tpl, var_subst, expr_safe_replace, ast_lt, ast_util}` | the rewriter template and substitution | done; a 6,192-line TS trace (results, ids, step counts, ref counts) in `smt/tests/tables/rewriter.txt`, written by `scripts/smt-rewriter-tables.ts`. A rewriter's configuration is a `RewriterConfig` trait (module header of `rewriter_tpl.rs`) |
 | `core::*` | the rest of `smt/solver/*.ts` | §3 |
 
 The tables are written by `scripts/smt-foundation-tables.ts` (`bun scripts/smt-foundation-tables.ts`)
