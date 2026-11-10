@@ -8,9 +8,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::Int;
 use super::polynomial::{NULL_VAR, Polynomial, PolynomialCache, PolynomialManager, Var};
 use super::types::{Atom, AtomRef, IneqAtom, IneqKind, RootAtom, RootKind};
+use super::{Int, LBool};
 
 pub const TRUE_BOOL_VAR: u32 = 0;
 pub const TRUE_LITERAL: u32 = 0;
@@ -24,10 +24,12 @@ pub fn flip_kind(kind: IneqKind) -> IneqKind {
     }
 }
 
-// What the solver keeps per Boolean variable, reset when a variable is made or deleted.
+// What the solver keeps per Boolean variable, reset when a variable is made or deleted. Explain
+// reads the live Boolean values through it, since deleting an atom resets its variable's value.
 pub trait BoolVarHooks {
     fn on_mk(&mut self, bool_var: u32);
     fn on_delete(&mut self, bool_var: u32);
+    fn bvalues(&self) -> &[LBool];
 }
 
 pub struct AtomTable {
