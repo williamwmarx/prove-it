@@ -927,6 +927,62 @@ several steps s→t carry different labels, the answer is TRUE if any label is i
 step is a step of A, so `<<A>>_v` is the subscript test alone, with no labels at all. Needs the
 walker-hook shape guard and the fallbacks below.
 
+**Plan (i), as built.**
+- `compile_atom` marks an action atom `is_next` where its expression is the next-state relation:
+  the same node, or the same global definition named with no arguments, in the same scope. Its
+  compiled footprint must read nothing of the search (TLCGet, the registers, prints and draws), and
+  `Compiler::is_walk_repeatable` must find no ENABLED, `\cdot`, `[A]_v`, `<<A>>_v`, temporal
+  operator, subexpression selector, or JavaTime, TLCModelValue, TLCDefer, Trace or JSON builtin
+  through the definitions it names. It doesn't look into the constant definitions TLC computes as
+  it starts (`NORMALIZED`), such as SpanTreeRandom's `Edges`, which draws.
+- Where an atom is marked, the machine keeps a `ShapeJoin` per variable (`Machine::assigned_shapes`,
+  on #176's shapes), and the walker joins every value it assigns: `Op::Assign`, `either_step` and
+  the membership enumeration, in Init and Next. Each search thread joins in its own overlay, and the
+  level's merge imports the values that widened a thread's joins into the store and joins them
+  there. Unmarked runs pay one branch on a `None` per assignment.
+- A membership `x' \in S` joins only the elements the walk enumerates, but TLC's predicate
+  evaluation tests `t[x]` against S itself, through S's `member`. Three Codex findings on #197 were
+  sets whose `member` fails where the walk joined nothing: an empty `[a : {}]`, which still checks
+  the kind; `[a : {}] \cup {1}` and `SUBSET [a : {}]`, which hold such a part; and
+  `x' \subseteq [a : {}]`. So the guard is a whitelist (`is_membership_covered`), each form from its
+  `member` at d8fb231, and every other set turns the shortcut off (`Machine::is_membership_unsafe`):
+  - an enumerated set: `SetEnumValue.member` is `ValueVec.search`, which compares `t[x]` with the
+    elements by `compareTo` (sorted) or `equals`. The walk assigned each element, so the join
+    covers each comparison; an empty one compares nothing;
+  - an integer interval: `IntervalValue.member` takes an integer, and fails otherwise only where
+    the interval isn't empty and `t[x]` isn't an untyped model value; the walk assigned an integer
+    from it, so a comparable join is integers and untyped model values;
+  - a definition with no arguments, which is the set its body is.
+
+  Records, functions, products, SUBSET, unions, UNION, filters, maps, constants, Nat and the rest
+  go back on only with a citation of their `member`, the argument for an empty part, and the grid
+  below. A walk of Next that enumerates an empty set, or assigns by `x' \subseteq S`, also turns
+  it off. Init's memberships don't (cf1s's `pc \in [Proc -> {"V0", "V1"}]`): `LNAction.eval`
+  (`LNAction.java:66-85`) evaluates the atom's action body alone, which for `WF_v(Next)` is Next,
+  so the memberships predicate mode tests are nodes of Next, reached, by the induction above, on
+  a path a walk of Next took, and that walk turns the shortcut off where it enumerates one the
+  guard doesn't cover. Init's walk is of the initial predicate, which TLC doesn't evaluate there;
+  where Next names Init, its walk of Next walks those nodes too. Init's values are still joined,
+  which UNCHANGED compares. The grid has 22 cells for it: Init assigns from each of the eleven
+  forms, with a part empty and not, and Next assigns values of that kind.
+  The grid, `prove-it-cli/tests/membership-grid`, has 396 specs: x' \in S beside two other
+  assignments, under WF_x(Next) (answered from the steps where the guard lets it) and
+  WF_x(Alias) with Alias == Next (evaluated). S is each of eleven forms, with a part empty and not,
+  in seven nestings, and the other assignments are integers, values of S's kind, or integers in
+  the nesting's shape. Both formulations must print the same and match TLC's output at d8fb231, at
+  1 and 4 workers. The PR's first head fails it on 102 runs, the head after the union fix on 6.
+- `LiveGraph::is_next_taken` holds where no walk took the shortcut (`is_enabled_exact`), no string
+  was ranked since the order froze (which can take a string out of its class after its shape was
+  joined), and every variable's join is comparable. TLC's `equals` fails only where `compareTo`
+  does, for these classes: an untyped model value is never equal to another kind
+  (`modelValueEquals`), and a typed one fails against other kinds in both.
+- `answer_atoms` answers a marked atom on a step the search took with 1 once the subscript test
+  finds the subscript changed, on both the helpers' path and the one-thread path; the stuttering
+  steps and everything else are evaluated as before. PROVE_IT_LIVE_CHECK evaluates the action too
+  and stops with `NEXT_DIFFERS` where it doesn't hold.
+- SYMMETRY and VIEW need no fallback: the graph's steps are then the real successors (`Reals`),
+  which the walk generated, and expanding the states past the stored ones walks Next too.
+
 **Plan (ii): cf1s-shaped atoms.**
 - Record per step the path of disjuncts and `\E` values the walker took, through conjunctions too.
 - Split each atom's action by the walker's own split, not TLC's. Match by node and bound values.
