@@ -986,6 +986,27 @@ fn reports_a_bound_that_filters_a_set_tlc_cant_enumerate() {
 }
 
 #[test]
+fn checks_assumptions_that_draw_in_an_argument_and_add_bags() {
+    // The shapes of ModuleSemanticsAssume: TLC keeps an argument's value once it has drawn it,
+    // so both uses of T are the same subset, and reports a bag's count past an int and a
+    // negative count by the messages AssertError compares.
+    let spec = "---- MODULE Stop ----\nEXTENDS Bags, Integers, Randomization, TLC, TLCExt\nVARIABLE x\nSame(T) == T = T /\\ \\A y \\in T : y \\in T\nASSUME Same(RandomSubset(1, 1..1000))\nASSUME BagUnion({[y \\in {1} |-> 2], [y \\in {1} |-> 1]}) = [y \\in {1} |-> 3]\nASSUME AssertError(\"Overflow when computing 2147483647+1\", ([y \\in {1} |-> 2147483647] (+) [y \\in {1} |-> 1])[1] > 0)\nASSUME AssertError(\"Overflow when computing 2147483647+2147483647\", BagCardinality([y \\in {1, 2} |-> 2147483647]) > 0)\nASSUME AssertError(\"Attempted to apply the operator overridden by the Java method\\npublic static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value),\\nbut it produced the following error:\\n-1\", RandomSubset(-1, {1, 2}) = {})\nInit == x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_lowered("drawn-argument", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{text}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("Model checking completed. No error has been found."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.
@@ -1129,16 +1150,14 @@ fn reports_a_union_with_an_operand_that_isnt_a_set_as_it_fingerprints_it() {
 #[test]
 fn stops_where_an_invariant_sets_exit_as_tlc_does() {
     // TLC's test EWD998Chan: TLCSet("exit", TRUE) finishes the queue, so the worker completes the
-    // state it expands and stops, and TLC's main thread prints the progress as the invariant that
-    // set it left it. TLCGet's key reaches it through an INSTANCE of TLC.
+    // state it expands and stops. TLC's main thread, woken by the stop, prints its progress or not
+    // as the threads race; the binary prints none. TLCGet's key reaches it through an INSTANCE of
+    // TLC.
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' \\in {x + 1, x + 2}\nStop == LET T == INSTANCE TLC IN T!TLCSet(\"exit\", T!TLCGet(\"distinct\") > 4)\n====\n";
     let (output, directory) = run_lowered("exit", spec, "INIT Init\nNEXT Next\nINVARIANT Stop\n");
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains(": 7 states generated (") && text.contains(", 5 distinct states found (") && text.contains("ds/min), 1 states left on queue.\nModel checking completed. No error has been found.\n"),
-        "{text}"
-    );
+    assert!(!text.contains("Progress("), "{text}");
     assert!(
         text.contains("\n7 states generated, 5 distinct states found, 2 states left on queue.\nThe depth of the complete state graph search is 3.\n"),
         "{text}"

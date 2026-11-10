@@ -678,7 +678,7 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   `>` there, which the IR flags on the builtin (`Builtin::NATURALS_GEQ`, IR 13).
 - DoInitFunctorMinimalErrorStack now prints what TLC prints.
 
-## Open: what the infinite-sets session left (2026-11-09)
+## The assumption models, MCEWD687a and what stays declined (infinite-sets session)
 
 - **EmptySetEqAssume** and **ValueSemanticsAssume** now print what TLC prints. The engine took
   three stops for failures of TLC's that aren't in an assumption: "EXCEPT outside the domain",
@@ -689,6 +689,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   (`INFINITE_BOUND`, as `Nat \cap S`) is delegated like a limit, since TLC compares such sets
   and enumerates such a bound by rules of its own. Where the caller can't check a delegated one,
   it is reported as failing, as before.
+- **ModuleSemanticsAssume** now prints what TLC prints. The engine declined the model compiling
+  RandomSubset in an operator's argument. The native checker now leaves an assumption the engine
+  doesn't compile to its caller, as it does one it stops at a limit of, and `tla-trace` follows
+  TLC there: a drawn argument keeps its value, `(+)`, BagCardinality and BagUnion add counts in
+  an int and fail with TLC's overflow message (`Bags.addCounts`), and RandomSubset of a
+  negative count fails as the Java method does.
 - **MCEWD687a** (both copies) stops where TLC fails (`SetPredValue.elements`: "Attempted to
   enumerate { x \in S : p(x) } when S: ... is not enumerable") evaluating the property
   TreeWithRoot as an invariant. The engine and the CLI now follow TLC there: the stop is among
@@ -708,9 +714,7 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   otherwise than the sorted search does. `evaluate_failure` declines an invariant's failure
   whose membership passes through such a set (`CallStack::is_member_followed`); the replay of the
   expansion after it is done.
-- **ccf TraceMultiNodeReads** ("enumerated STRING"): TLC fails as it enumerates
-  `[STRING -> STRING]` (IOUtils' IOEnv) checking an implied init of a liveness model, with a
-  FingerprintException whose call stack runs through Json and IOUtils. Not attempted.
+- **ccf TraceMultiNodeReads** was done by the liveness session: see `liveness.md`.
 
 ## Test2, liveness atoms answered as the search goes (as built)
 

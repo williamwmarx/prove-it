@@ -393,7 +393,10 @@ value. Any other set draws from its normalized elements. TLC's thread-local gene
 from the state startup left (`Model.startup_random`). It walks the whole initial predicate, so it
 draws as the search drew. Each step draws from a generator seeded with the predecessor's
 fingerprint XOR `Model.random_seed`, as the worker does. A model that draws walks each step
-through all of TLC's actions in order, as one that prints does. `Unsupported` covers:
+through all of TLC's actions in order, as one that prints does. An operator's argument or a LET
+definition that drew keeps its value for the uses that follow, as TLC's `LazyValue` keeps it, so
+`T` in `Same(RandomSubset(1, S))` is one subset. A negative count of a set enumeration or an
+interval fails as the Java method does making room for the subset. `Unsupported` covers:
 - draws under a VIEW or SYMMETRY, whose key the seed is the fingerprint of;
 - draws in the checks after the last step;
 - RandomSubset in TLC 1.7.4, which draws a subset's indices another way.
@@ -501,10 +504,10 @@ Done:
 - EWD998Chan: TLCGet's key is read through the parameter an INSTANCE of TLC binds it to.
   TLCSet("exit", TRUE) in an invariant stops the search once the state being expanded is done,
   with the states left on the queue (`ModelChecker.stop` finishes the queue). TLC's main thread,
-  woken by it, prints a progress line with the counts as the invariant left them: the new state
-  counted as distinct, not yet queued. That line races the worker in TLC; the binary prints it as
-  TLC's recording does. Exit set elsewhere (Next, a constraint, the initial states) or with
-  temporal properties is not native.
+  woken by the stop, prints a progress line or not as the threads race: TLC at d8fb231 with one
+  worker printed it in 6 of 8 runs of EWD998Chan, with three different counts, and in none of 6
+  runs of a smaller spec. The binary prints none; the differential drops progress lines. Exit set
+  elsewhere (Next, a constraint, the initial states) or with temporal properties is not native.
 
 Open:
 - Sets TLC holds unnormalized: `\cup` and DOMAIN, above.
