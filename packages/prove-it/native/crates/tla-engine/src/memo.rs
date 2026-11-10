@@ -18,15 +18,18 @@ const DIRECT_SPARSITY: usize = 16;
 const DIRECT_MINIMUM: usize = 1 << 16;
 const DIRECT_MAXIMUM: usize = 1 << 23;
 
-// A table of two keys or more starts clustered: an entry's home is a hash of its first key alone,
-// so the entries that share it, such as those a state's variable and the bound names of a
-// quantifier over it key, lie in one run that a state's lookups read from one place in memory.
+// A table of two keys or more clusters once it grows to CLUSTER_CAPACITY slots, past which its
+// rows mostly miss the cache: an entry's home is then a hash of its first key alone, so the entries
+// that share it, such as those a state's variable and the bound names of a quantifier over it key,
+// lie in one run that a state's lookups read from one place in memory. A smaller table stays
+// scattered by all its keys, which probes less.
 // Where too many entries share a first key, the runs grow long, and the table scatters its entries
-// by all their keys as soon as the lookups of a window of WINDOW lookups have probed more than
-// PROBE_BUDGET slots past their homes: a run's slots are read one after another, mostly from the
-// cache, so a clustered table pays for far more probes than a scattered one makes.
+// for good as soon as the lookups of a window of WINDOW lookups have probed more than PROBE_BUDGET
+// slots past their homes: a run's slots are read one after another, mostly from the cache, so a
+// clustered table pays for far more probes than a scattered one makes.
 const WINDOW: u64 = 1 << 14;
 const PROBE_BUDGET: u64 = 32 * WINDOW;
+const CLUSTER_CAPACITY: usize = 1 << 12;
 
 const OFFSET_BASIS: u32 = 0x811c_9dc5;
 
@@ -95,6 +98,8 @@ pub struct MemoTable {
     is_enabled: bool,
     is_direct: bool,
     is_clustered: bool,
+    // Whether the table may cluster: it has two keys or more, and has never scattered.
+    can_cluster: bool,
     // The largest id stored since the table last forgot, so that it forgets only if it must.
     largest: Id,
 }
@@ -127,7 +132,8 @@ impl MemoTable {
             probes: 0,
             is_enabled: true,
             is_direct: width == 1,
-            is_clustered: width > 1,
+            is_clustered: false,
+            can_cluster: width > 1,
             largest: 0,
         }
     }
@@ -157,7 +163,9 @@ impl MemoTable {
     }
 
     fn grow(&mut self) {
-        self.rehash(self.capacity() * 2);
+        let capacity = self.capacity() * 2;
+        self.is_clustered = self.can_cluster && capacity >= CLUSTER_CAPACITY;
+        self.rehash(capacity);
     }
 
     fn rehash(&mut self, capacity: usize) {
@@ -198,6 +206,7 @@ impl MemoTable {
     fn review(&mut self) {
         if self.is_clustered && self.probes > PROBE_BUDGET {
             self.is_clustered = false;
+            self.can_cluster = false;
             self.rehash(self.capacity());
         }
         if self.lookups % WINDOW == 0 {
