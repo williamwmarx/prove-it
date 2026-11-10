@@ -563,6 +563,11 @@ run with and without `-noGenerateSpecTE`):
 | `-dump`, `-continue` | 7 | S2 |
 | the 518 of the library's `check` calls, by mechanism (above) | the rest | as staffed |
 
+Since then, the binary reads the version of the jar on the class path from its manifest, with a
+zip reader and inflater of its own (`zip.rs`, `inflate.rs`), and checks a master TLC's launch. It
+declines TLC 1.7.4's jar and a manifest it can't read with certainty. Of the 117 CLI test runs, 56
+now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator.
+
 ### The public API afterwards
 
 `check` and its option, progress, result and status types, `prove` and its types, `parseConfig`,
