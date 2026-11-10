@@ -3,10 +3,12 @@
 //! `src/engine/compile.ts` turns the TypeScript AST into closures over its ids, and a
 //! [`machine::Machine`] runs them. The search is M5's.
 
+mod clock;
 pub mod compile;
 pub mod context;
 pub mod footprint;
 pub mod live;
+mod log_file;
 pub mod machine;
 pub mod memo;
 pub mod oracle;

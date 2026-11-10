@@ -7,6 +7,7 @@ import {
   type InitialStates,
 } from "./check";
 import { type ModelConfig, parseConfig } from "./config";
+import { loadWasmEngine } from "./engine/native";
 import { getEngineSetting } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import { TlaEvaluationError } from "./errors";
@@ -80,6 +81,7 @@ export const checkParsed = async (
   options: CheckOptions,
   readings?: ReadonlyMap<string, SanyReading>,
 ): Promise<CheckResult> => {
+  await loadWasmEngine();
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
