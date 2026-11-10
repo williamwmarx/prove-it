@@ -662,13 +662,12 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   (`tlc_invariants`); and the CLI no longer declines an invariant that fails to evaluate in a
   model with temporal properties, unless an atom of theirs may print (`atoms_print`), since
   TLC's worker stops before it adds the state to the behavior graphs and its replay adds nothing
-  to them. `tla-trace` builds a filter where TLC keeps it lazy, so it fails a filter of Nat,
-  Int, Real, STRING or `Seq(S)` with TLC's message as it evaluates it, and follows the failure
-  only into a bound that is the filter as written, or operators whose definitions are, one after
-  the other (`follow_infinite_filter`): `Tool.contexts` enumerates the bound in the frame of the
-  quantifier or the set it is a bound of. Through anything else, as a CHOOSE, a LET, a union
-  or Cardinality, the replay declines. Both copies now print what TLC prints; the examples copy
-  fails on an initial state.
+  to them. `tla-trace` keeps the filter lazy as TLC does (`Lazy::Filter`) and fails with TLC's
+  message where a bound enumerates it. Both copies now print what TLC prints; the examples copy
+  fails on an initial state. A function over such a filter, `[p \in Path(G) |-> e]`, is one TLC
+  keeps lazy and applies by the filter's membership: the engine declines it (membership in
+  `Seq(S)` by its lazy reference is a limit, not a failure of TLC's), and `tla-trace` asks no
+  set whether it is finite to decide what stays lazy, as `Tool` doesn't.
 - **PrintTraceRace** declines on purpose: TLC searches a set enumeration it hasn't normalized,
   as `{1..2}` built by the invariant, element by element with `equals`, and words the failure
   otherwise than the sorted search does. `evaluate_failure` declines an invariant's failure

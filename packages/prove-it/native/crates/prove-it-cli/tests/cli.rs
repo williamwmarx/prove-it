@@ -940,18 +940,19 @@ fn reports_a_bound_that_filters_a_set_tlc_cant_enumerate() {
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
-    // A union with the filter is a set TLC enumerates by its own rules, which the binary leaves.
-    let spec = spec.replace("P({1, 2}) :", "P({1, 2}) \\cup {<<2>>} :");
+    // A function over the filter is one TLC keeps lazy and applies by the filter's membership,
+    // which holds: TLC finds no error, and the binary doesn't report one.
+    let spec = spec.replace(
+        "\\E p \\in P({1, 2}) : p[1] = 1",
+        "[p \\in P({1}) |-> 1][<<1>>] = 1",
+    );
     let (output, directory) = run_lowered(
-        "filter-union",
+        "filter-function",
         &spec,
         "INIT Init\nNEXT Next\nINVARIANT Inv\n",
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("a filter of a set TLC can't enumerate"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let text = stdout(&output);
+    assert!(!text.contains("Error:"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
 

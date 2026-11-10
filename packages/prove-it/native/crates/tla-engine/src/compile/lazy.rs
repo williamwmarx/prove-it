@@ -422,6 +422,8 @@ impl Lazy {
             Lazy::Infinite(name) => match (*name, kind) {
                 ("Nat", KIND_INT) => Ok(machine.store.int_of(element) >= 0),
                 ("Int", KIND_INT) | ("STRING", KIND_STRING) => Ok(true),
+                // Seq(S) holds sequences of S's elements, which this reference doesn't keep.
+                ("Seq", _) => Err(Bail("unsupported: membership in Seq(S) by its name alone")),
                 _ if is_model => Ok(false),
                 _ => Err(Bail("a mistyped membership in an infinite set")),
             },
