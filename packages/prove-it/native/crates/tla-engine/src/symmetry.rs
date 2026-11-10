@@ -6,13 +6,46 @@
 //! A state's values are mostly new, but their parts mostly aren't, so a permutation's image of a
 //! state's value is compared with the smallest image so far without building it, from the cached
 //! images of its parts. Only the image of a permutation that wins is built.
+//!
+//! The smallest image is the least in the lexicographic order of the variables, so it is found
+//! variable by variable: the least image of the first variable under the whole group, then the
+//! least image of the next under the permutations that gave that, and so on. A step depends only
+//! on the value and the permutations left, and successors share their parents' values, so each
+//! step is remembered. The least image is the same whatever order the permutations are tried in;
+//! only the comparisons made differ, which matters where one fails, as one of model values of
+//! different types does, so a group that can mix them is tried permutation by permutation, in
+//! TLC's order, as the comparisons of unbuilt images above are.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
 
 use tla_values::store::{Bail, KIND_FUNCTION, KIND_MODEL, KIND_SET, KIND_TUPLE, Outcome};
 use tla_values::{Id, Store};
 
 const NONE: Id = u32::MAX;
+
+// The identity, among the permutations left at a step: permutation `index` is `index + 1`.
+const IDENTITY: u32 = 0;
+
+/// A multiplicative hash of the integer keys of the remembered steps.
+#[derive(Default)]
+struct IntegerHasher(u64);
+
+impl Hasher for IntegerHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
 
 /// A symmetry group, each permutation as the model values it moves, each to its image.
 pub type Group = Vec<HashMap<Id, Id>>;
@@ -39,6 +72,17 @@ pub struct Canonicalizer {
     positions: Vec<u32>,
     stamp: u32,
     smallest: Vec<Id>,
+    // Each set of permutations left at a step, the whole group first, and the index of each.
+    survivors: Vec<Vec<u32>>,
+    survivor_indices: HashMap<Vec<u32>, u32>,
+    // Each step taken, by the value and the permutations left (`step_key`): the least image and the
+    // permutations that give it.
+    steps: HashMap<u64, (Id, u32), BuildHasherDefault<IntegerHasher>>,
+    kept: Vec<u32>,
+}
+
+fn step_key(id: Id, survivors: u32) -> u64 {
+    u64::from(survivors) << 32 | u64::from(id)
 }
 
 fn get(table: &[Id], id: Id) -> Id {
@@ -157,18 +201,26 @@ impl Canonicalizer {
                 .iter()
                 .all(|(&id, &image)| store.get_model_type(id) == store.get_model_type(image))
         });
-        let width = order.len();
+        Self::with(permutations, is_type_preserving, order)
+    }
+
+    fn with(permutations: Group, is_type_preserving: bool, order: Vec<usize>) -> Self {
+        let group: Vec<u32> = (IDENTITY..=permutations.len() as u32).collect();
         Canonicalizer {
             images: vec![Vec::new(); permutations.len()],
             larger_than: vec![Vec::new(); permutations.len()],
             permutations,
             is_type_preserving,
-            order,
             parts: Vec::new(),
             marks: Vec::new(),
             positions: Vec::new(),
             stamp: 0,
-            smallest: vec![NONE; width],
+            smallest: vec![NONE; order.len()],
+            order,
+            survivor_indices: HashMap::from([(group.clone(), 0)]),
+            survivors: vec![group],
+            steps: HashMap::default(),
+            kept: Vec::new(),
         }
     }
 
@@ -179,18 +231,11 @@ impl Canonicalizer {
 
     /// A canonicalizer for the same group that has permuted nothing yet, for another thread.
     pub fn fresh(&self) -> Canonicalizer {
-        Canonicalizer {
-            permutations: self.permutations.clone(),
-            is_type_preserving: self.is_type_preserving,
-            images: vec![Vec::new(); self.permutations.len()],
-            larger_than: vec![Vec::new(); self.permutations.len()],
-            order: self.order.clone(),
-            parts: Vec::new(),
-            marks: Vec::new(),
-            positions: Vec::new(),
-            stamp: 0,
-            smallest: vec![NONE; self.order.len()],
-        }
+        Self::with(
+            self.permutations.clone(),
+            self.is_type_preserving,
+            self.order.clone(),
+        )
     }
 
     /// Forgets the images of ids from `bound` on, and the images that are such ids, which the
@@ -202,6 +247,8 @@ impl Canonicalizer {
                 *image = NONE;
             }
         }
+        self.steps
+            .retain(|&key, &mut (image, _)| (key as Id) < bound && image < bound);
     }
 
     fn remember(&mut self, store: &Store, id: Id, index: usize, image: Id) {
@@ -416,6 +463,86 @@ impl Canonicalizer {
 
     /// Replaces the state with its representative.
     pub fn canonicalize(&mut self, store: &mut Store, state: &mut [Id]) -> Outcome<()> {
+        if !self.is_type_preserving {
+            return self.canonicalize_in_order(store, state);
+        }
+        let mut survivors = 0;
+        for at in 0..self.order.len() {
+            let variable = self.order[at];
+            let members = &self.survivors[survivors as usize];
+            if members == &[IDENTITY] {
+                return Ok(());
+            }
+            if members.len() == 1 {
+                let index = members[0] as usize - 1;
+                for rest in at..self.order.len() {
+                    let variable = self.order[rest];
+                    state[variable] = self.permute(store, state[variable], index)?;
+                }
+                return Ok(());
+            }
+            let key = step_key(state[variable], survivors);
+            let (image, left) = match self.steps.get(&key) {
+                Some(&step) => step,
+                None => {
+                    let step = self.step(store, state[variable], survivors)?;
+                    self.steps.insert(key, step);
+                    step
+                }
+            };
+            state[variable] = image;
+            survivors = left;
+        }
+        Ok(())
+    }
+
+    // The least image of the value under the permutations left, and the permutations that give it.
+    fn step(&mut self, store: &mut Store, id: Id, survivors: u32) -> Outcome<(Id, u32)> {
+        let members = std::mem::take(&mut self.survivors[survivors as usize]);
+        let least = self.least_image(store, id, &members);
+        self.survivors[survivors as usize] = members;
+        let least = least?;
+        let left = match self.survivor_indices.get(&self.kept) {
+            Some(&index) => index,
+            None => {
+                let index = self.survivors.len() as u32;
+                self.survivors.push(self.kept.clone());
+                self.survivor_indices.insert(self.kept.clone(), index);
+                index
+            }
+        };
+        Ok((least, left))
+    }
+
+    fn least_image(&mut self, store: &mut Store, id: Id, members: &[u32]) -> Outcome<Id> {
+        self.kept.clear();
+        let mut least = NONE;
+        for &member in members {
+            if member == IDENTITY {
+                least = id;
+                self.kept.push(member);
+                continue;
+            }
+            let index = member as usize - 1;
+            if least == NONE {
+                least = self.permute(store, id, index)?;
+                self.kept.push(member);
+                continue;
+            }
+            let comparison = self.compare_image(store, id, index, least)?;
+            if comparison < 0 {
+                least = self.permute(store, id, index)?;
+                self.kept.clear();
+            }
+            if comparison <= 0 {
+                self.kept.push(member);
+            }
+        }
+        Ok(least)
+    }
+
+    // TLC's own search for the representative, permutation by permutation.
+    fn canonicalize_in_order(&mut self, store: &mut Store, state: &mut [Id]) -> Outcome<()> {
         let mut smallest = std::mem::take(&mut self.smallest);
         smallest.copy_from_slice(state);
         for index in 0..self.permutations.len() {
@@ -481,6 +608,52 @@ mod tests {
         let permutations = get_permutations(&mut store, set).expect("permutations");
         assert_eq!(permutations.len(), 3);
         assert_eq!(close_group(permutations).len(), 5);
+    }
+
+    #[test]
+    fn picks_the_representative_tlc_picks_permutation_by_permutation() {
+        let mut store = Store::new();
+        let replicas = ["r1", "r2", "r3"].map(|name| model(&mut store, name));
+        let values = ["v1", "v2"].map(|name| model(&mut store, name));
+        let generators = [
+            function(&mut store, &[("r1", "r2"), ("r2", "r1"), ("r3", "r3")]),
+            function(&mut store, &[("r1", "r1"), ("r2", "r3"), ("r3", "r2")]),
+            function(&mut store, &[("v1", "v2"), ("v2", "v1")]),
+        ];
+        let set = store.set_of(&generators).expect("a set");
+        let group = close_group(get_permutations(&mut store, set).expect("permutations"));
+        assert_eq!(group.len(), 11);
+        let mut canonicalizer = Canonicalizer::new(&store, group, vec![2, 0, 1]);
+        let mut seed = 7_u64;
+        let mut next = |bound: usize| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 33) as usize % bound
+        };
+        let mut representatives = HashSet::new();
+        for _ in 0..2000 {
+            let ballots: Vec<Id> = (0..3)
+                .map(|_| store.int(next(3) as i64).expect("an int"))
+                .collect();
+            let ballots = store.function_of(&replicas, &ballots).expect("a function");
+            let messages: Vec<Id> = (0..next(5))
+                .map(|_| store.tuple_of(&[replicas[next(3)], values[next(2)]]))
+                .collect();
+            let messages = store.set_of(&messages).expect("a set");
+            let chosen = [values[0], values[1], replicas[0]][next(3)];
+            let state = [ballots, messages, chosen];
+            let mut in_order = state;
+            canonicalizer
+                .canonicalize_in_order(&mut store, &mut in_order)
+                .expect("a representative");
+            let mut by_variable = state;
+            canonicalizer
+                .canonicalize(&mut store, &mut by_variable)
+                .expect("a representative");
+            assert_eq!(by_variable, in_order);
+            representatives.insert(in_order);
+        }
+        // The states fall into fewer orbits than there are states.
+        assert!(representatives.len() < 1000);
     }
 
     #[test]
