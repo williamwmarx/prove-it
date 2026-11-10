@@ -11,6 +11,9 @@ use crate::tableau::{Kind, Model, Solution, Tableau, TermId, Terms};
 use crate::{Declined, Event, Graph, Slot, Source, Unanswered, Verdict};
 
 const NO_NODE: u32 = u32::MAX;
+/// The most words of a state's row of consistency the checker reads from the tables: tableaux of
+/// up to 256 nodes.
+const READ_WORDS: usize = 4;
 const UNWRITTEN: usize = usize::MAX;
 const SUCCESSOR_CAPACITY: usize = 16;
 const SCC_MARKER: i64 = -42;
@@ -59,7 +62,7 @@ enum Partial {
 /// Buffers kept between the states the checker adds, so that adding one allocates nothing.
 #[derive(Default)]
 struct Scratch {
-    consistency: Vec<bool>,
+    consistency: Vec<u64>,
     successors: Vec<u32>,
     targets: Vec<u32>,
     steps: Vec<u32>,
@@ -162,6 +165,10 @@ struct Behavior {
     /// Whether the behaviors before this one have every action check of this one.
     is_covered: bool,
     consistency: Vec<u8>,
+    /// Each state's consistency with the tableau's nodes as the tables answer it, a row of
+    /// `words` words of bits by node, where `is_read` says the state has its row.
+    read_consistency: Vec<u64>,
+    is_read: Vec<bool>,
     initial: Vec<u32>,
     first_nodes: Vec<u32>,
     last_nodes: Vec<u32>,
@@ -276,6 +283,8 @@ impl Checker {
                 state_results: Vec::new(),
                 is_covered,
                 consistency: Vec::new(),
+                read_consistency: Vec::new(),
+                is_read: Vec::new(),
                 initial: Vec::new(),
                 first_nodes: Vec::new(),
                 last_nodes: Vec::new(),
@@ -796,6 +805,54 @@ impl Checker {
         Ok(is_held)
     }
 
+    // Reads a state's row of consistency from the tables, where they answer every node's
+    // predicates, and whether they did.
+    fn read_consistency(
+        &mut self,
+        tables: &[Option<&[u8]>],
+        graph: &Graph<'_>,
+        behavior: usize,
+        state: u32,
+        words: usize,
+    ) -> bool {
+        let index = state as usize;
+        if self.behaviors[behavior].is_read.get(index) == Some(&true) {
+            return true;
+        }
+        let Some(tableau) = self.tableau(behavior) else {
+            return false;
+        };
+        let mut row = [0u64; READ_WORDS];
+        if words > READ_WORDS {
+            return false;
+        }
+        for (node, tableau_node) in tableau.nodes.iter().enumerate() {
+            let mut is_held = true;
+            for &predicate in &tableau_node.state_predicates {
+                match self.read(tables, graph, predicate, state, None) {
+                    Some(true) => {}
+                    Some(false) => {
+                        is_held = false;
+                        break;
+                    }
+                    None => return false,
+                }
+            }
+            if is_held {
+                row[node / 64] |= 1 << (node % 64);
+            }
+        }
+        let behavior = &mut self.behaviors[behavior];
+        if behavior.is_read.len() <= index {
+            behavior.is_read.resize(index + 1, false);
+            behavior.read_consistency.resize((index + 1) * words, 0);
+        }
+        behavior.is_read[index] = true;
+        behavior.read_consistency[index * words..(index + 1) * words]
+            .copy_from_slice(&row[..words]);
+        true
+    }
+
     fn tableau_size(&self, behavior: usize) -> usize {
         self.tableau(behavior)
             .map_or(0, |tableau| tableau.nodes.len())
@@ -1007,11 +1064,30 @@ impl Checker {
         state: u32,
     ) -> Result<Option<Vec<u32>>, Declined> {
         let node_count = self.tableau_size(behavior);
+        let words = node_count.div_ceil(64).max(1);
         let mut consistency = std::mem::take(&mut self.scratch.consistency);
         consistency.clear();
-        for node in 0..node_count {
-            for step in set {
-                consistency.push(self.is_consistent(source, behavior, node as u32, step.real)?);
+        consistency.resize(set.len() * words, 0);
+        let tables = source.answers.tables().filter(|_| !self.is_effectful());
+        let is_read = tables.is_some_and(|tables| {
+            set.iter()
+                .all(|step| self.read_consistency(tables, source.graph, behavior, step.real, words))
+        });
+        if is_read {
+            let rows = &self.behaviors[behavior].read_consistency;
+            for (position, step) in set.iter().enumerate() {
+                let row = step.real as usize * words;
+                consistency[position * words..(position + 1) * words]
+                    .copy_from_slice(&rows[row..row + words]);
+            }
+        } else {
+            // In TLC's order, which decides the first atom left unanswered.
+            for node in 0..node_count {
+                for (position, step) in set.iter().enumerate() {
+                    if self.is_consistent(source, behavior, node as u32, step.real)? {
+                        consistency[position * words + node / 64] |= 1 << (node % 64);
+                    }
+                }
             }
         }
         let mut tableau_successors = std::mem::take(&mut self.scratch.successors);
@@ -1037,7 +1113,8 @@ impl Checker {
             for (position, step) in set.iter().enumerate() {
                 let is_done = self.is_done(behavior, step.target);
                 for &next in &tableau_successors {
-                    if !consistency[next as usize * set.len() + position] {
+                    let next_bit = next as usize;
+                    if consistency[position * words + next_bit / 64] >> (next_bit % 64) & 1 == 0 {
                         continue;
                     }
                     let existing = self.node_id(behavior, step.target, next);
@@ -1062,12 +1139,10 @@ impl Checker {
                 self.behaviors[behavior].next_siblings[node as usize]
             };
         }
-        self.scratch = Scratch {
-            consistency,
-            successors: tableau_successors,
-            targets,
-            steps,
-        };
+        self.scratch.consistency = consistency;
+        self.scratch.successors = tableau_successors;
+        self.scratch.targets = targets;
+        self.scratch.steps = steps;
         let Some(error_node) = self.behaviors[behavior].error_node else {
             return Ok(None);
         };
