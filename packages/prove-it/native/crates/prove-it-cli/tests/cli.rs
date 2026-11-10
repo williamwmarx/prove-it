@@ -1626,14 +1626,6 @@ fn declines_what_it_doesnt_follow_of_the_behavior_graphs() {
         &["-deadlock"],
         "prints it doesn't place in TLC's order",
     );
-    // TLC ends this lasso, whose last state is its cycle's first, with "State 3: Stuttering".
-    declines(
-        "lasso-end",
-        "VARIABLES x, y\nvars == <<x, y>>\nInit == x \\in {0, 1} /\\ y = 0\nA0 == x = 1 /\\ y = 0 /\\ x' = 1 /\\ y' \\in {0, 1}\nA1 == x = 1 /\\ x' = 0 /\\ y' = 1\nA2 == x = 1 /\\ y = 0 /\\ x' = 0 /\\ y' = y\nA3 == x = 0 /\\ x' = 1 /\\ y' \\in {0, 0}\nNext == A0 \\/ A1 \\/ A2 \\/ A3\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\nP0 == []<>(x # 0)\nP1 == []((x = 0) => <>[](y = 1))",
-        "SPECIFICATION Spec\nPROPERTY P0\nPROPERTY P1\n",
-        &[],
-        "a lasso that ends in the first state of its cycle",
-    );
 }
 
 #[test]
@@ -3889,4 +3881,145 @@ fn prints_a_lasso_whose_actions_print_as_tlc_rebuilds_it() {
         }
         std::fs::remove_dir_all(directory).expect("removed");
     }
+}
+
+// Small specs of two to four actions over two variables, with fairness and one or two temporal
+// properties, whose lassos take many shapes: the binary prints what TLC built at d8fb231 prints
+// for each (`lasso-grid/*.out`, with -fp 0 -seed 0 -nowarning), on one thread and with every level
+// shared between four, checking the properties periodically and at the end.
+#[test]
+fn prints_the_lassos_tlc_prints() {
+    let grid = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lasso-grid");
+    let mut names: Vec<String> = std::fs::read_dir(&grid)
+        .expect("the grid")
+        .filter_map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.extension()? == "tla").then(|| path.file_stem()?.to_str().map(String::from))?
+        })
+        .collect();
+    names.sort();
+    assert!(!names.is_empty());
+    let untimed_lines = |text: &str| {
+        text.lines()
+            .filter(|line| {
+                ![
+                    "Running breadth-first search",
+                    "Starting...",
+                    "Finished in",
+                    "Progress(",
+                    "TLC2 Version",
+                    "Parsing file",
+                    "Finished computing initial states",
+                    "Checking ",
+                    "Finished checking temporal properties",
+                    "Estimates of the probability",
+                    "because two distinct states had the same fingerprint",
+                    "calculated (optimistic)",
+                ]
+                .iter()
+                .any(|timed| line.contains(timed))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-lasso-grid-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let mut differences = Vec::new();
+    for name in &names {
+        for extension in ["tla", "cfg"] {
+            std::fs::copy(
+                grid.join(format!("{name}.{extension}")),
+                directory.join(format!("{name}.{extension}")),
+            )
+            .expect("a copy");
+        }
+        let expected =
+            std::fs::read_to_string(grid.join(format!("{name}.out"))).expect("TLC's output");
+        for check in [&[][..], &["-lncheck", "final"][..]] {
+            for threads in ["1", "4"] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .args([
+                        "-workers",
+                        "1",
+                        "-fp",
+                        "0",
+                        "-seed",
+                        "0",
+                        "-nowarning",
+                        "-noTE",
+                    ])
+                    .args(check)
+                    .arg(name)
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let actual = format!(
+                    "exit {}\n{}\n",
+                    output.status.code().unwrap_or(-1),
+                    untimed_lines(&stdout(&output))
+                );
+                if actual != expected {
+                    differences.push(format!(
+                        "{name} {check:?} on {threads}: {}\n{actual}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                }
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
+}
+
+// A lasso whose cycle ends in its first state: TLC prints every state of the path, the last
+// included, then stutters at the cycle's first, as `LiveWorker.printTrace` finds the last state's
+// fingerprint the cycle state's. TLC built at d8fb231, with -fp 0, prints this.
+#[test]
+fn prints_a_lasso_that_ends_in_the_first_state_of_its_cycle() {
+    let spec = "---- MODULE Stop ----\nVARIABLES x, y\nvars == <<x, y>>\nInit == x \\in {0, 1} /\\ y = 0\nA0 == x = 1 /\\ y = 0 /\\ x' = 1 /\\ y' \\in {0, 1}\nA1 == x = 1 /\\ x' = 0 /\\ y' = 1\nA2 == x = 1 /\\ y = 0 /\\ x' = 0 /\\ y' = y\nA3 == x = 0 /\\ x' = 1 /\\ y' \\in {0, 0}\nNext == A0 \\/ A1 \\/ A2 \\/ A3\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\nP0 == []<>(x # 0)\nP1 == []((x = 0) => <>[](y = 1))\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-lasso-end-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
+    std::fs::write(
+        directory.join("Stop.cfg"),
+        "SPECIFICATION Spec\nPROPERTY P0\nPROPERTY P1\n",
+    )
+    .expect("a configuration");
+    let mut trace = String::from(
+        "Error: Temporal property P1 was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\n/\\ x = 0\n/\\ y = 0\n\n",
+    );
+    let steps = [
+        ("A3 line 8, col 7 to line 8, col 38", 1, 0),
+        ("A1 line 6, col 7 to line 6, col 31", 0, 1),
+        ("A3 line 8, col 7 to line 8, col 38", 1, 0),
+        ("A0 line 5, col 7 to line 5, col 47", 1, 1),
+        ("A1 line 6, col 7 to line 6, col 31", 0, 1),
+        ("A3 line 8, col 7 to line 8, col 38", 1, 0),
+    ];
+    for (position, (action, x, y)) in steps.iter().enumerate() {
+        trace.push_str(&format!(
+            "State {}: <{action} of module Stop>\n/\\ x = {x}\n/\\ y = {y}\n\n",
+            position + 2
+        ));
+    }
+    trace.push_str("State 3: Stuttering\n");
+    for threads in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args([
+                "tlc2.TLC", "-noTE", "-workers", "1", "-lncheck", "final", "Stop",
+            ])
+            .current_dir(&directory)
+            .env("PROVE_IT_WORKERS", threads)
+            .env("PROVE_IT_SHARED_LEVEL", "1")
+            .output()
+            .expect("the binary runs");
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(13), "{threads}: {text}");
+        assert!(text.contains(&trace), "{threads}: {text}");
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
 }

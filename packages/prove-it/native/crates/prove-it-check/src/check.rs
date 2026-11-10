@@ -1391,12 +1391,11 @@ fn print_violation(
             loop_label,
             ..
         } => {
-            let is_stuttering = loop_start + 1 == violation.states.len();
-            // TLC ends a lasso whose last state is the cycle's first as a stuttering one
-            // (`LiveWorker.printTrace`), which the binary doesn't follow.
-            if !is_stuttering && violation.states.last() == violation.states.get(loop_start) {
-                return Err("a lasso that ends in the first state of its cycle");
-            }
+            // TLC ends a lasso whose last state is the cycle's first as a stuttering one: it
+            // prints every state, then finds the last state's fingerprint the cycle state's
+            // (`LiveWorker.printTrace`).
+            let is_stuttering = loop_start + 1 == violation.states.len()
+                || violation.states.last() == violation.states.get(loop_start);
             // TLC warns of a stuttering counterexample where the solution constrains the cycle,
             // and prints what the spec prints as it finds the step back into the cycle.
             let Verdict::Lasso {

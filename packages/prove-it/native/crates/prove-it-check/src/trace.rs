@@ -112,13 +112,18 @@ fn rebuild(
                     _ => None,
                 };
                 // A step back into the cycle the search didn't label, as under SYMMETRY or a
-                // VIEW, is found as TLC finds it, from the last state.
+                // VIEW, is found as TLC finds it, from the last state, unless the cycle ends in
+                // its first state, where TLC stutters.
                 let closing = match *kind {
                     ViolationKind::Lasso {
                         loop_start,
                         loop_label: None,
                         ..
-                    } if loop_start + 1 < states.len() => Some(loop_start),
+                    } if loop_start + 1 < states.len()
+                        && states.last() != states.get(loop_start) =>
+                    {
+                        Some(loop_start)
+                    }
                     _ => None,
                 };
                 if let Some(loop_start) = closing {

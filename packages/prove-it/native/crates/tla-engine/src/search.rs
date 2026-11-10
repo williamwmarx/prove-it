@@ -4554,7 +4554,9 @@ fn to_lasso(
     // them to rebuild the trace. The caller's rebuild then finds the steps' actions, the step
     // back into the cycle's too, as TLC does.
     let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
-    let is_stuttering = loop_start + 1 == path.len();
+    // A cycle that ends in its first state is printed as stuttering there, as TLC's
+    // `LiveWorker.printTrace` finds the last state's fingerprint the cycle state's.
+    let is_stuttering = loop_start + 1 == path.len() || path.last() == path.get(loop_start);
     let (labels, loop_label) = match actions.split_last() {
         Some((&loop_label, steps))
             if !is_reduced
