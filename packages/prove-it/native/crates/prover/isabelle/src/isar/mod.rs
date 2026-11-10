@@ -2,4 +2,6 @@
 //! and proof methods they declare.
 
 pub mod inner_syntax;
+pub mod statement;
 pub mod theory;
+pub mod type_check;
