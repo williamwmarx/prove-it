@@ -1,0 +1,556 @@
+== int-bounds ==
+text (declare-const x Int) (assert (> x 3)) (assert (< x 5)) (assert (not (= x 4))) (check-sat)
+result=-1 conflicts=1 steps=91 instances=0 asts=192
+== real-bounds ==
+text (declare-const x Real) (assert (> x 3.0)) (assert (< x 4.0)) (check-sat)
+result=1 conflicts=0 steps=71 instances=0 asts=192
+const x = (/ 7.0 2.0)#29
+modeled: steps=72 asts=194
+== int-chain ==
+text (declare-const x Int) (declare-const y Int) (declare-const z Int) (assert (= x (+ y 1))) (assert (= y (+ z 1))) (assert (>= z 0)) (assert (<= z 0)) (assert (not (= x 2))) (check-sat)
+result=-1 conflicts=1 steps=171 instances=0 asts=206
+== disequalities ==
+text (declare-const x Int) (declare-const y Int) (assert (<= 0 x)) (assert (<= x 2)) (assert (<= 0 y)) (assert (<= y 2)) (assert (distinct x y)) (assert (= (+ x y) 2)) (check-sat)
+result=1 conflicts=0 steps=175 instances=0 asts=208
+const y = 2#25
+const x = 0#22
+modeled: steps=176 asts=214
+== real-cycle ==
+text (declare-const x Real) (declare-const y Real) (declare-const z Real) (assert (< x y)) (assert (< y z)) (assert (< z x)) (check-sat)
+result=-1 conflicts=1 steps=144 instances=0 asts=195
+== ite-abs ==
+text (declare-const x Int) (declare-const y Int) (assert (= y (ite (> x 0) x (- x)))) (assert (< y 0)) (check-sat)
+result=-1 conflicts=2 steps=152 instances=0 asts=198
+== ite-choice ==
+text (declare-const p Bool) (declare-const x Int) (assert (= x (ite p 3 5))) (assert (> x 4)) (assert p) (check-sat)
+result=-1 conflicts=1 steps=63 instances=0 asts=193
+== div-mod ==
+text (declare-const x Int) (assert (= (mod x 3) 2)) (assert (= (div x 3) 4)) (assert (not (= x 14))) (check-sat)
+result=-1 conflicts=1 steps=114 instances=0 asts=206
+== div-mod-sat ==
+text (declare-const x Int) (declare-const y Int) (assert (= (mod x 4) 3)) (assert (> x 10)) (assert (= y (div x 4))) (check-sat)
+result=1 conflicts=0 steps=162 instances=0 asts=216
+const y = 2#55
+const x = 11#56
+modeled: steps=163 asts=228
+== real-division ==
+text (declare-const x Real) (declare-const y Real) (assert (= (/ x 2.0) y)) (assert (> y 3.0)) (assert (< x 6.0)) (check-sat)
+result=-1 conflicts=1 steps=116 instances=0 asts=203
+== mod-by-term ==
+text (declare-const x Int) (declare-const y Int) (assert (> y 0)) (assert (= (mod x y) y)) (check-sat)
+result=-1 conflicts=1 steps=160 instances=0 asts=225
+== to-int ==
+text (declare-const r Real) (assert (> r 1.5)) (assert (< r 2.5)) (assert (is_int r)) (assert (not (= r 2.0))) (check-sat)
+result=-1 conflicts=5 steps=369 instances=0 asts=219
+== mixed-sum ==
+text (declare-const x Int) (declare-const r Real) (assert (= (+ (to_real x) r) 2.5)) (assert (>= r 0.0)) (assert (<= r 1.0)) (assert (>= x 2)) (check-sat)
+result=1 conflicts=0 steps=110 instances=0 asts=197
+const r = (/ 1.0 2.0)#38
+const x = 2#32
+modeled: steps=111 asts=201
+== nonlinear ==
+text (declare-const x Int) (declare-const y Int) (assert (= (* x y) 6)) (assert (= x 2)) (assert (not (= y 3))) (check-sat)
+result=-1 conflicts=0 steps=61 instances=0 asts=189
+== nonlinear-order ==
+text (declare-const x Int) (declare-const y Int) (declare-const z Int) (assert (= z (* x y))) (assert (> x 1)) (assert (> y 1)) (assert (< z 4)) (check-sat)
+result=-1 conflicts=1 steps=143 instances=0 asts=201
+== nonlinear-sat ==
+text (declare-const x Int) (declare-const y Int) (assert (= (* x y) 12)) (assert (> x y)) (assert (> y 2)) (check-sat)
+result=1 conflicts=0 steps=127 instances=0 asts=203
+const y = 3#44
+const x = 4#43
+modeled: steps=128 asts=209
+== nonlinear-real ==
+text (declare-const x Real) (declare-const y Real) (assert (> x 1.0)) (assert (> y 1.0)) (assert (< (* x y) 1.0)) (check-sat)
+result=-1 conflicts=1 steps=102 instances=0 asts=187
+== theory-combination ==
+text (declare-fun f (Int) Int) (declare-const x Int) (declare-const y Int) (assert (<= x y)) (assert (<= y x)) (assert (not (= (f x) (f y)))) (check-sat)
+result=-1 conflicts=1 steps=110 instances=0 asts=191
+== shared-values ==
+text (declare-fun f (Int) Int) (declare-const x Int) (declare-const y Int) (assert (>= x 0)) (assert (<= x 1)) (assert (>= y 0)) (assert (<= y 1)) (assert (not (= (f x) (f y)))) (assert (not (= (f x) (f 0)))) (check-sat)
+result=1 conflicts=0 steps=191 instances=0 asts=199
+const y = 0#23
+const x = 1#25
+func f [1#25 -> 2#41] [0#23 -> 3#42] else 2#41
+modeled: steps=192 asts=203
+== propagation-core ==
+text (declare-const a Int) (declare-const b Int) (declare-const c Int) (declare-const p Bool) (assert (or p (> a 10))) (assert (or (not p) (> b 10))) (assert (< (+ a b) 5)) (assert (>= a 0)) (assert (>= b 0)) (assert (=> (> c 0) (< a 3))) (check-sat)
+result=-1 conflicts=1 steps=223 instances=0 asts=211
+== sat-model ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (assert (= (+ x y) 10)) (assert (>= x 3)) (assert (<= y 4)) (assert (= r (/ (to_real x) 2.0))) (assert (> r 3.0)) (check-sat)
+result=1 conflicts=1 steps=232 instances=0 asts=221
+const y = 3#27
+const r = (/ 7.0 2.0)#56
+const x = 7#53
+modeled: steps=233 asts=225
+== quantified ==
+text (declare-fun f (Int) Int) (assert (forall ((i Int)) (! (=> (> i 0) (> (f i) i)) :pattern ((f i))))) (assert (< (f 5) 3)) (check-sat)
+result=-1 conflicts=1 steps=211 instances=1 asts=209
+== gcd-test ==
+text (declare-const x Int) (declare-const y Int) (assert (= (* 2 x) (+ (* 2 y) 1))) (check-sat)
+result=-1 conflicts=0 steps=9 instances=0 asts=184
+== bounds-before-search ==
+text (declare-const x Int) (assert (or (< x 2) (> x 5))) (assert (or (<= x 3) (>= x 7))) (assert (> x 0)) (assert (not (= x 1))) (assert (<= x 8)) (check-sat)
+result=1 conflicts=0 steps=202 instances=0 asts=212
+const x = 7#30
+modeled: steps=203 asts=212
+== branch ==
+text (declare-const x Int) (declare-const y Int) (assert (>= (+ (* 3 x) (* 2 y)) 7)) (assert (<= (+ (* 3 x) (* 2 y)) 7)) (assert (>= x 0)) (assert (>= y 0)) (assert (<= x 1)) (check-sat)
+result=1 conflicts=0 steps=130 instances=0 asts=198
+const y = 2#25
+const x = 1#35
+modeled: steps=131 asts=204
+== pigeons ==
+text (declare-const a Int) (declare-const b Int) (declare-const c Int) (declare-const d Int) (declare-const e Int) (assert (and (<= 0 a) (<= a 3) (<= 0 b) (<= b 3) (<= 0 c) (<= c 3) (<= 0 d) (<= d 3) (<= 0 e) (<= e 3))) (assert (distinct a b c d e)) (check-sat)
+result=-1 conflicts=102 steps=6789 instances=0 asts=260
+== real-pigeons ==
+text (declare-const a Real) (declare-const b Real) (declare-const c Real) (declare-fun f (Real) Int) (assert (and (<= 0.0 a) (<= a 1.0) (<= 0.0 b) (<= b 1.0) (<= 0.0 c) (<= c 1.0))) (assert (distinct (f a) (f b) (f c))) (assert (or (= a b) (= b c) (= a c))) (check-sat)
+result=-1 conflicts=3 steps=336 instances=0 asts=220
+== random-0 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (= (* (- 2) y) 3) (<= (+ (* 0.0 r) (* 3.0 s)) 2.0))) (assert (or (<= x (- 4)) (<= (* (- 2) x) 5))) (assert (>= (+ (* (- 3) x) (* (- 2) y)) (- 3))) (assert (or (= (+ (* 0 x) x) (- 5)) (not (= (* 3 x) (* 0 x))))) (assert (<= (ite (> (+ (* (- 3) x) (* (- 3) y)) 4) (+ (* (- 1) x) (* (- 1) y)) (+ (* 3 y) (* 0 y))) 5)) (assert (or (not (= (+ (* (- 2) x) y) (* (- 2) y))) (>= (+ (* (- 2) y) y) (- 4)))) (assert (or (> (* (- 3.0) r) (- 4.0)) (< (+ (* (- 3) x) (* (- 2) x)) 1))) (assert (<= (* (- 3.0) r) (- 2.0))) (assert (<= (ite (> (* 3.0 r) 2.0) s (+ (* (- 2.0) s) (* 0.0 r))) (- 2.0))) (assert (< (* (- 3) y) (- 3))) (assert (<= (* (- 1) y) 3)) (assert (<= (+ (* (- 1) x) (* (- 3) y)) (- 4))) (check-sat)
+result=1 conflicts=2 steps=887 instances=0 asts=347
+const y = 3#26
+const s = -2.0#149
+const r = (/ 5.0 6.0)#173
+const x = -5#109
+modeled: steps=888 asts=377
+== random-1 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (* 3 y) 3)) (assert (or (<= (ite (> (+ (* 0 x) (* (- 2) y)) (- 4)) (+ (* (- 3) x) (* 0 x)) (+ (* (- 3) y) (* 2 x))) (- 1)) (>= (+ y (* 0 y)) 3))) (assert (= (* 2 y) (- 1))) (assert (<= (ite (> (+ (* 3.0 s) (* 3.0 r)) (- 1.0)) r (* 0.0 r)) (- 5.0))) (assert (> y 1)) (assert (<= (+ (* 2 x) (* (- 3) y)) (- 1))) (assert (>= (* 3 y) (- 1))) (assert (or (>= (+ (* 0 y) (* 0 x)) 5) (= (* 3.0 r) (- 1.0)))) (assert (< (+ (* 0.0 s) s) (- 2.0))) (check-sat)
+result=-1 conflicts=0 steps=51 instances=0 asts=264
+== random-2 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (ite (> (+ y (* (- 3) x)) 0) (+ y (* 0 y)) (+ (* 0 y) (* (- 2) y))) 0)) (assert (>= (* (- 1.0) r) (- 4.0))) (assert (< (+ (* (- 3) y) (* (- 1) x)) 2)) (assert (or (= (+ (* 2.0 s) (* 3.0 s)) 1.0) (> s 5.0))) (assert (not (= (* 2 x) (+ y (* (- 3) y))))) (assert (or (not (= r (* 0.0 r))) (not (= (+ (* 2.0 s) (* (- 3.0) s)) (+ (* 3.0 r) (* (- 3.0) r)))))) (assert (<= (* 0.0 r) 1.0)) (assert (or (not (= (* (- 1.0) r) s)) (> (* 3.0 s) (- 3.0)))) (assert (or (> (+ (* (- 1) y) (* 2 y)) 0) (> (* 0 x) (- 1)))) (assert (>= (+ (* 2.0 r) (* (- 1.0) r)) (- 2.0))) (check-sat)
+result=1 conflicts=1 steps=660 instances=0 asts=321
+const y = 0#28
+const r = (/ -7.0 10.0)#148
+const s = (/ 1.0 5.0)#117
+const x = -1#111
+modeled: steps=661 asts=337
+== random-3 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (* 0 y) 0) (>= (* (- 1.0) s) (- 3.0)))) (assert (not (= (+ (* (- 2.0) r) (* (- 3.0) s)) (* 3.0 s)))) (assert (> (+ (* (- 1.0) r) (* 0.0 r)) (- 1.0))) (assert (or (not (= (* (- 3.0) s) (* (- 1.0) s))) (>= (* 2.0 s) (- 3.0)))) (assert (or (< (+ (* (- 3) y) (* 3 y)) (- 1)) (not (= (* 2 x) (+ x (* 2 y)))))) (assert (> (+ (* (- 1.0) s) (* 0.0 r)) 2.0)) (assert (or (<= (+ (* (- 3.0) s) (* (- 1.0) s)) (- 4.0)) (>= (+ (* 3 x) (* (- 3) y)) (- 1)))) (assert (>= (+ (* (- 1) x) (* (- 3) y)) (- 5))) (assert (>= (+ (* (- 3) y) (* (- 1) x)) 5)) (assert (not (= (* 2.0 r) (+ (* (- 2.0) s) (* (- 2.0) r))))) (assert (= (+ (* 0 x) (* (- 2) y)) 4)) (assert (> (* 0 x) 5)) (check-sat)
+result=-1 conflicts=0 steps=139 instances=0 asts=317
+== random-4 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (> (+ (* (- 1) x) (* 2 y)) 5)) (assert (<= (ite (> (+ (* 2 x) x) 5) (* (- 1) x) (* 0 x)) 0)) (assert (<= (ite (> (+ (* 3.0 r) (* 0.0 r)) 1.0) (+ s (* 0.0 r)) (+ (* (- 2.0) r) (* (- 2.0) s))) 1.0)) (assert (<= (+ (* 3.0 s) (* 3.0 r)) (- 1.0))) (check-sat)
+result=1 conflicts=0 steps=327 instances=0 asts=258
+const y = 0#35
+const r = (/ 4.0 3.0)#62
+const s = (/ -5.0 3.0)#63
+const x = -6#79
+modeled: steps=328 asts=272
+== random-5 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (< (* (- 1) x) (- 3)) (< (+ r (* (- 1.0) s)) (- 4.0)))) (assert (or (>= (* (- 3) y) 1) (< (* 2.0 r) (- 4.0)))) (assert (<= (* 0 x) (- 3))) (assert (<= (ite (> (* (- 2) x) (- 3)) (+ (* 0 y) (* (- 2) y)) (* (- 1) x)) 5)) (assert (< (+ (* (- 3) x) (* 2 x)) (- 4))) (assert (>= (+ x x) 4)) (assert (<= (+ (* 0 y) (* 0 y)) (- 2))) (check-sat)
+result=-1 conflicts=0 steps=47 instances=0 asts=256
+== random-6 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (+ (* 0.0 r) (* (- 2.0) r)) 0.0)) (assert (>= (* (- 3.0) r) 3.0)) (assert (< (+ r (* (- 3.0) r)) 0.0)) (assert (= (* (- 1.0) s) (- 5.0))) (assert (or (= (* (- 1) y) (- 1)) (<= (+ (* 0.0 s) (* 3.0 s)) 5.0))) (assert (or (>= (* 3 x) (- 3)) (= (* (- 1) y) (- 2)))) (assert (>= (+ x (* 3 y)) (- 3))) (assert (or (> (* 0 y) (- 3)) (<= (* 2.0 s) (- 5.0)))) (assert (or (> (+ (* 0 y) x) 3) (= s (- 4.0)))) (assert (not (= (* 2.0 r) (* 3.0 s)))) (check-sat)
+result=-1 conflicts=0 steps=181 instances=0 asts=252
+== random-7 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (* (- 2) y) (- 3))) (assert (>= (+ (* (- 3.0) s) (* 3.0 s)) 3.0)) (assert (or (= (* 3 x) 2) (< (* 0 x) (- 3)))) (assert (< (+ (* 3.0 s) s) (- 2.0))) (assert (or (not (= (+ (* 3.0 r) (* 0.0 r)) (+ (* (- 2.0) r) (* 3.0 r)))) (<= (ite (> r (- 1.0)) (* 0.0 r) (* 3.0 s)) 4.0))) (assert (or (= (+ (* 0.0 s) s) 0.0) (<= (* 2.0 s) 0.0))) (check-sat)
+result=-1 conflicts=0 steps=9 instances=0 asts=231
+== random-8 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (< (+ (* (- 3) y) (* (- 3) y)) (- 2)) (>= (* (- 1) y) (- 5)))) (assert (< (+ (* 0 y) (* (- 3) x)) (- 3))) (assert (or (< (+ (* 3.0 s) (* 2.0 r)) 3.0) (= (+ (* 3 y) y) (- 5)))) (assert (> (* (- 2.0) s) 4.0)) (assert (<= (* 0.0 s) (- 3.0))) (assert (<= (* 2 y) (- 5))) (assert (< (+ r s) 0.0)) (assert (or (< (+ r (* 2.0 r)) 1.0) (<= (* 0.0 r) 0.0))) (assert (<= (ite (> (+ (* (- 1) y) x) 2) (* (- 1) y) (+ (* 2 y) (* (- 1) y))) (- 2))) (assert (< x (- 3))) (assert (<= (+ (* (- 2) y) (* 3 y)) 5)) (check-sat)
+result=-1 conflicts=0 steps=73 instances=0 asts=280
+== random-9 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (* (- 3) y) 0)) (assert (<= (ite (> (+ s (* (- 1.0) r)) (- 2.0)) (+ r s) r) (- 3.0))) (assert (>= (+ (* 3 x) (* 0 x)) 2)) (assert (or (< (* 0.0 r) 1.0) (<= (ite (> (* 0 y) 4) (+ y (* (- 1) y)) (* (- 1) y)) 4))) (assert (<= (ite (> (* 0 x) 0) x (* 0 x)) (- 1))) (assert (or (> (+ (* 3.0 s) (* (- 2.0) s)) 1.0) (< (* 2 x) 2))) (assert (or (not (= (* 2 x) (* (- 1) x))) (= (* (- 2.0) s) 1.0))) (check-sat)
+result=-1 conflicts=0 steps=73 instances=0 asts=260
+== random-10 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (* 2.0 s) (- 4.0)) (< (+ (* (- 2.0) s) (* (- 2.0) s)) 2.0))) (assert (or (>= (+ (* 3.0 s) (* 2.0 r)) (- 1.0)) (<= (ite (> (+ y (* 3 x)) 4) (* (- 2) x) (+ y (* 2 x))) 0))) (assert (not (= (+ (* (- 2.0) r) (* (- 2.0) r)) (* 2.0 s)))) (assert (<= (ite (> (* (- 3) x) (- 2)) (* (- 2) x) (+ (* (- 2) y) (* 0 y))) (- 3))) (assert (or (not (= (* 0 y) (+ (* (- 1) x) (* 2 x)))) (>= y 3))) (assert (or (<= (ite (> (* 2 y) (- 5)) (+ (* 0 y) (* (- 2) y)) (* 0 y)) (- 1)) (< (+ (* (- 1) x) (* 2 y)) 4))) (assert (or (< (* (- 3) y) 2) (>= (* 3 x) 0))) (assert (or (<= (ite (> (+ r (* (- 1.0) r)) 0.0) (* (- 1.0) r) (* (- 3.0) s)) 4.0) (<= (ite (> (+ (* 2 x) (* 2 x)) 1) (* 2 x) (* 3 x)) 3))) (assert (= (* 3.0 r) 0.0)) (assert (or (= (* (- 3) y) 1) (> (+ (* (- 3) x) (* 2 y)) 0))) (check-sat)
+result=1 conflicts=1 steps=1056 instances=0 asts=355
+const y = 2#48
+const s = -2.0#111
+const r = 0.0#93
+const x = 1#69
+modeled: steps=1057 asts=377
+== random-11 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (>= (* 2 x) (- 5))) (assert (> (* (- 1.0) s) (- 5.0))) (assert (<= (ite (> (+ (* 3.0 s) (* (- 1.0) r)) 1.0) r (* 0.0 s)) 1.0)) (assert (or (<= (* (- 3) y) 0) (not (= (+ (* 2.0 s) (* 2.0 s)) (+ (* 0.0 r) (* 2.0 r)))))) (assert (or (< (+ y (* 2 x)) 3) (< (+ (* 3.0 s) (* 3.0 s)) 0.0))) (assert (>= (* (- 2.0) s) (- 5.0))) (assert (or (<= (* 2 x) 3) (>= (+ r (* (- 1.0) s)) 5.0))) (assert (= (* (- 2) x) 1)) (check-sat)
+result=-1 conflicts=0 steps=103 instances=0 asts=285
+== random-12 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (* (- 1) y) (- 5)) (>= (* (- 1.0) s) 0.0))) (assert (not (= (* 3.0 s) (+ (* (- 1.0) s) (* 0.0 r))))) (assert (>= (+ (* (- 1) x) (* 2 x)) (- 1))) (assert (< (+ s s) (- 5.0))) (assert (or (> (* (- 2) x) (- 4)) (<= (+ (* 0.0 s) (* (- 3.0) s)) 5.0))) (assert (or (<= (+ (* (- 3) y) (* (- 2) y)) 4) (< (* (- 2.0) s) (- 3.0)))) (assert (or (= (+ (* (- 1.0) r) (* 3.0 s)) 2.0) (< y 0))) (assert (< s 5.0)) (assert (or (> (+ (* (- 3.0) s) (* 2.0 s)) 0.0) (> (* (- 3.0) s) 3.0))) (assert (< (+ (* 2 y) (* (- 3) y)) 1)) (assert (> (* 2 x) 0)) (assert (not (= (+ (* (- 1.0) s) (* 0.0 s)) (+ r (* 0.0 s))))) (assert (>= (+ (* 2.0 r) (* (- 2.0) s)) 2.0)) (check-sat)
+result=-1 conflicts=1 steps=631 instances=0 asts=315
+== random-13 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (ite (> (+ (* (- 1.0) r) r) 5.0) (* (- 2.0) s) s) (- 5.0)) (>= (+ (* 0 y) (* 0 x)) (- 3)))) (assert (or (>= (* 0.0 r) 3.0) (<= (* (- 2.0) s) (- 5.0)))) (assert (<= (ite (> (* (- 1.0) r) (- 2.0)) r (* 0.0 r)) (- 4.0))) (assert (not (= (+ (* (- 3) y) x) (+ x (* 3 x))))) (check-sat)
+result=1 conflicts=0 steps=194 instances=0 asts=245
+const r = -4.0#78
+const s = (/ 5.0 2.0)#71
+const y = 0#36
+const x = -1#64
+modeled: steps=195 asts=247
+== random-14 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (ite (> (+ (* 2 x) (* 2 x)) 3) (* (- 2) y) (* (- 2) y)) 3)) (assert (<= (* 3 y) 1)) (assert (<= (ite (> (* 0 y) (- 3)) (* (- 3) y) (+ (* 2 y) (* (- 1) y))) 2)) (assert (or (< (* (- 2.0) s) (- 3.0)) (<= (+ (* (- 2) y) (* (- 2) y)) 5))) (assert (not (= (* (- 3.0) r) (* 2.0 s)))) (assert (<= (ite (> (* (- 3) x) (- 2)) (* (- 1) y) (* 2 x)) (- 3))) (assert (or (= (* (- 2) x) (- 4)) (>= (+ (* 3.0 r) (* (- 1.0) r)) (- 3.0)))) (assert (<= (+ (* 0 x) (* 3 x)) 4)) (assert (> (+ (* (- 3) x) (* 0 x)) (- 4))) (check-sat)
+result=-1 conflicts=2 steps=455 instances=0 asts=278
+== random-15 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (>= (+ r (* (- 3.0) s)) (- 2.0)) (<= (* (- 2.0) s) (- 1.0)))) (assert (< (+ (* 2 y) x) 4)) (assert (or (not (= (* 3.0 s) (* (- 2.0) r))) (<= (ite (> (+ r (* 0.0 r)) 1.0) (* 0.0 r) (* 0.0 s)) (- 1.0)))) (assert (= (* 2.0 s) 5.0)) (assert (<= (* (- 3) x) 2)) (assert (> (+ (* 2.0 r) (* (- 1.0) r)) (- 5.0))) (check-sat)
+result=1 conflicts=0 steps=275 instances=0 asts=251
+const y = 0#89
+const r = 0.0#47
+const s = (/ 5.0 2.0)#85
+const x = 0#89
+modeled: steps=276 asts=251
+== random-16 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (+ x (* (- 1) y)) (- 4))) (assert (or (not (= (* (- 2.0) s) (+ (* (- 2.0) s) (* (- 1.0) r)))) (>= (* (- 2.0) r) 2.0))) (assert (or (<= (ite (> (+ (* 3.0 s) s) (- 2.0)) (* (- 1.0) r) (+ (* 0.0 r) (* 0.0 s))) (- 5.0)) (< (* 0 y) (- 1)))) (assert (< (+ (* 2.0 s) (* 2.0 s)) 1.0)) (assert (or (not (= (* 2 x) (* 0 y))) (not (= (+ y (* 0 y)) (+ (* (- 2) y) (* 2 x)))))) (assert (or (not (= y (+ (* (- 1) y) (* (- 1) x)))) (not (= (+ (* 0.0 r) s) (* 2.0 r))))) (assert (<= (ite (> (+ (* (- 1) x) (* (- 1) y)) (- 1)) (* 3 y) (+ x (* 2 x))) (- 5))) (assert (<= (* 3.0 s) 3.0)) (assert (< s (- 1.0))) (assert (= (+ (* 0.0 r) (* (- 1.0) s)) (- 5.0))) (assert (<= (+ (* 2 y) (* 0 y)) 5)) (assert (> (+ (* (- 1) y) (* 0 y)) (- 2))) (check-sat)
+result=-1 conflicts=0 steps=401 instances=0 asts=309
+== random-17 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (>= (* (- 2.0) s) 0.0)) (assert (or (> (* 0.0 s) 1.0) (> (+ (* 3.0 r) (* 0.0 r)) (- 2.0)))) (assert (not (= (* 0 x) (+ x (* (- 1) x))))) (assert (>= (+ (* (- 3) y) (* (- 1) y)) (- 2))) (assert (or (<= (+ (* 0.0 s) (* (- 3.0) s)) 0.0) (> (+ x y) (- 5)))) (assert (>= (* 0 x) (- 5))) (assert (or (<= (* (- 1) y) (- 2)) (= (+ (* 3.0 s) (* (- 2.0) s)) 4.0))) (assert (> (+ (* (- 2.0) s) (* 2.0 s)) 2.0)) (assert (= (+ (* (- 2.0) s) (* 2.0 r)) (- 5.0))) (check-sat)
+result=-1 conflicts=0 steps=41 instances=0 asts=254
+== random-18 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (< (+ (* 2 x) (* 2 y)) 3) (not (= (* 3 y) (* (- 2) x))))) (assert (= (* (- 2.0) r) (- 4.0))) (assert (> (+ (* (- 3.0) r) (* (- 2.0) s)) (- 4.0))) (assert (or (= (* 3 x) 1) (< (* 3 x) 1))) (assert (= (+ (* 2 x) (* (- 1) y)) (- 3))) (assert (or (= (+ (* 2 x) (* (- 1) x)) (- 1)) (= (* (- 1) x) (- 1)))) (assert (< (* (- 1) y) 0)) (assert (<= (ite (> (+ (* 2 y) x) 2) (* 0 y) (* 2 y)) 2)) (assert (< (+ x (* (- 1) y)) (- 4))) (assert (not (= (* (- 3.0) s) (+ (* 3.0 r) (* 3.0 r))))) (assert (<= (ite (> (* 3.0 r) 5.0) (+ s r) (* (- 2.0) r)) (- 4.0))) (assert (< (* (- 2.0) s) 0.0)) (check-sat)
+result=-1 conflicts=1 steps=614 instances=0 asts=310
+== random-19 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (not (= (* 3 y) (+ (* 2 y) (* (- 3) x))))) (assert (= (+ (* 0 x) (* 2 x)) 2)) (assert (<= (+ r (* 3.0 r)) (- 4.0))) (assert (< (+ (* 0.0 r) (* 2.0 s)) 0.0)) (assert (or (< (+ (* (- 3.0) r) (* (- 3.0) s)) (- 3.0)) (<= (ite (> (+ (* 3.0 s) (* 3.0 r)) 0.0) (* 2.0 r) (+ (* 2.0 r) s)) 1.0))) (assert (or (= (* 0 y) (- 2)) (>= (* 3.0 r) 0.0))) (check-sat)
+result=-1 conflicts=1 steps=311 instances=0 asts=251
+== random-20 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (+ (* (- 2.0) s) (* 3.0 r)) (- 2.0))) (assert (not (= (* (- 3) x) (* (- 2) x)))) (assert (or (< (* 2 x) 4) (not (= (* (- 2) y) (* (- 3) x))))) (assert (not (= (+ (* (- 2) x) (* (- 2) x)) (+ (* (- 3) x) y)))) (assert (or (= (+ s (* (- 1.0) s)) 0.0) (not (= (+ (* (- 2.0) r) (* 2.0 r)) (+ (* 2.0 r) (* 0.0 s)))))) (assert (not (= (* (- 3) y) (+ y y)))) (check-sat)
+result=1 conflicts=0 steps=391 instances=0 asts=270
+const r = 0.0#56
+const s = 1.0#52
+const y = -1#103
+const x = -1#103
+modeled: steps=392 asts=280
+== random-21 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (< (* (- 3.0) r) 4.0)) (assert (not (= (+ (* 0 y) (* 3 x)) (+ (* 0 y) (* 0 y))))) (assert (<= (+ (* 3.0 s) (* 3.0 r)) 5.0)) (assert (<= (+ (* (- 3.0) r) (* (- 3.0) r)) 2.0)) (assert (< (* (- 3) y) (- 5))) (assert (or (<= (ite (> (* 2 x) 4) (+ (* 3 x) (* 3 y)) (* 2 y)) (- 3)) (= (+ (* (- 3) x) (* (- 2) y)) 5))) (assert (< (+ (* 3 y) (* 2 x)) (- 1))) (assert (or (<= (ite (> (+ (* (- 2) x) (* 3 x)) 3) (+ (* 2 y) (* (- 2) x)) (+ (* 3 y) y)) (- 5)) (<= (ite (> y 2) (+ (* (- 2) y) (* (- 3) y)) (+ (* 2 x) x)) 5))) (assert (= (* (- 2.0) s) (- 2.0))) (assert (or (= (* (- 1) y) (- 3)) (= (* 3 y) 5))) (assert (or (<= (ite (> (+ (* 3.0 r) s) (- 2.0)) (* 2.0 r) (+ (* 2.0 s) (* 0.0 r))) 3.0) (not (= (+ (* 2.0 s) (* 0.0 r)) (+ (* (- 2.0) r) (* 2.0 r)))))) (assert (not (= (+ (* 3.0 r) (* 3.0 r)) (* 2.0 r)))) (assert (> (+ (* (- 2) y) (* (- 2) y)) 5)) (check-sat)
+result=-1 conflicts=0 steps=417 instances=0 asts=308
+== random-22 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (* 0 y) (- 1))) (assert (<= (ite (> (+ (* 0.0 s) (* 3.0 r)) 3.0) (+ r (* (- 1.0) s)) (* 0.0 r)) 1.0)) (assert (< (+ (* (- 2) x) (* 2 x)) (- 2))) (assert (or (< (* (- 2.0) r) 1.0) (<= (* 0 y) (- 2)))) (assert (>= (* 0.0 r) (- 1.0))) (assert (> (+ (* 0.0 r) r) 0.0)) (assert (<= (ite (> (* 2 x) 1) (+ (* 3 y) (* 2 x)) (+ (* (- 1) x) (* (- 1) x))) 4)) (assert (or (< (+ (* (- 3) x) (* (- 1) x)) (- 4)) (>= (* (- 2) y) (- 1)))) (assert (not (= (* 3.0 r) (+ (* (- 3.0) s) (* 0.0 r))))) (check-sat)
+result=-1 conflicts=0 steps=7 instances=0 asts=243
+== random-23 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (+ (* (- 1.0) s) (* (- 1.0) r)) (- 4.0)) (not (= (+ (* 0.0 s) (* 3.0 r)) (* 2.0 r))))) (assert (< (+ (* (- 1.0) r) (* 3.0 s)) (- 1.0))) (assert (<= (* 0 y) 4)) (assert (< (* 0 x) 1)) (assert (<= (* 0.0 s) (- 1.0))) (assert (or (not (= x (+ (* 0 y) y))) (< (* (- 2) x) 3))) (check-sat)
+result=-1 conflicts=0 steps=51 instances=0 asts=238
+== random-24 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (ite (> (+ (* (- 3) x) (* (- 1) y)) (- 2)) (+ (* (- 3) x) (* (- 2) x)) (* 2 x)) 3)) (assert (<= (+ (* 0.0 r) (* (- 3.0) s)) (- 5.0))) (assert (<= (ite (> (* 3.0 r) (- 5.0)) (+ (* (- 1.0) s) (* 0.0 r)) (* 0.0 s)) 5.0)) (assert (<= (* (- 1.0) r) (- 1.0))) (assert (or (<= (+ x x) (- 3)) (= (+ (* (- 1.0) s) (* (- 1.0) s)) 0.0))) (assert (<= (ite (> (* 0 x) 1) (* (- 3) x) (* (- 2) x)) (- 1))) (assert (<= r 0.0)) (assert (> (+ (* 3 x) (* 0 y)) 1)) (assert (or (>= (* (- 2.0) s) (- 1.0)) (> s (- 2.0)))) (assert (or (<= (ite (> (+ (* 3.0 s) (* 0.0 s)) 4.0) (+ s (* (- 3.0) s)) (* (- 2.0) r)) (- 1.0)) (<= (* 0 x) (- 2)))) (assert (= (+ s (* (- 2.0) s)) 4.0)) (assert (= (+ (* 2.0 r) (* 0.0 r)) (- 4.0))) (check-sat)
+result=-1 conflicts=0 steps=305 instances=0 asts=277
+== random-25 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (> (+ (* (- 2.0) r) (* 3.0 s)) 2.0) (= (+ (* (- 3.0) s) (* (- 1.0) s)) (- 3.0)))) (assert (< (+ (* 3.0 r) (* (- 1.0) r)) 0.0)) (assert (< (+ (* (- 2) y) (* (- 3) y)) (- 1))) (assert (or (<= (ite (> (* (- 1.0) r) 4.0) (* 3.0 r) (+ (* (- 1.0) r) (* 0.0 s))) (- 3.0)) (= (* (- 3.0) r) 4.0))) (check-sat)
+result=1 conflicts=2 steps=421 instances=0 asts=274
+const r = -5.0#94
+const s = 0.0#42
+const y = 1#52
+modeled: steps=422 asts=292
+== random-26 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (>= (* 3.0 r) (- 4.0))) (assert (< (* (- 3.0) r) 3.0)) (assert (<= (ite (> s 2.0) (+ (* (- 2.0) s) (* (- 1.0) r)) (+ (* (- 3.0) s) (* 3.0 s))) 4.0)) (assert (<= (* 2 y) (- 1))) (assert (not (= s (+ (* (- 3.0) r) (* (- 3.0) r))))) (assert (or (<= (+ (* 2 x) x) 2) (not (= (* 0.0 r) r)))) (assert (or (<= (* 0 y) (- 2)) (= (* 3.0 r) (- 4.0)))) (assert (<= (ite (> (* 0.0 s) 3.0) (* 0.0 s) (+ s (* (- 3.0) r))) (- 2.0))) (assert (< (+ (* (- 2) y) (* 2 y)) (- 4))) (assert (<= x (- 1))) (assert (= (+ (* (- 3.0) s) (* (- 2.0) s)) (- 1.0))) (check-sat)
+result=-1 conflicts=0 steps=111 instances=0 asts=296
+== random-27 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (ite (> (+ (* (- 3) y) (* (- 1) y)) 1) (* 0 y) x) (- 1))) (assert (or (= (* (- 1) x) (- 5)) (<= (ite (> (* (- 1) y) 2) (* 0 x) (* 2 y)) (- 4)))) (assert (<= (ite (> (* (- 1) x) 0) (* (- 3) y) (+ (* 3 y) (* (- 2) y))) (- 2))) (assert (or (= (* (- 2.0) s) (- 1.0)) (<= (* 2 x) 5))) (assert (> (+ (* 0 y) (* (- 3) x)) (- 3))) (check-sat)
+result=-1 conflicts=1 steps=291 instances=0 asts=257
+== random-28 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (+ (* 0.0 s) (* (- 2.0) r)) 0.0)) (assert (or (= x (- 3)) (>= (+ (* (- 1) x) (* (- 3) x)) 2))) (assert (or (not (= (+ (* (- 1) x) y) (+ (* 3 y) (* (- 1) y)))) (> (+ (* (- 1.0) s) (* 2.0 r)) 0.0))) (assert (> (* (- 3) x) 3)) (assert (or (<= (+ (* (- 2.0) r) (* (- 3.0) s)) 3.0) (not (= r (+ (* (- 2.0) s) (* (- 3.0) s)))))) (assert (or (<= (+ (* (- 1) x) (* (- 3) x)) 0) (<= (* 0.0 r) (- 4.0)))) (assert (= (+ (* 2.0 s) (* (- 1.0) r)) (- 1.0))) (check-sat)
+result=-1 conflicts=1 steps=265 instances=0 asts=255
+== random-29 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (ite (> (+ (* (- 1) x) (* 3 x)) (- 1)) (* (- 3) x) y) (- 2))) (assert (or (> (+ (* (- 1.0) r) (* 3.0 s)) 5.0) (<= (+ (* 3.0 s) (* (- 2.0) r)) (- 4.0)))) (assert (= (+ (* (- 1.0) s) (* 3.0 r)) 1.0)) (assert (<= (* 2 x) 2)) (check-sat)
+result=1 conflicts=0 steps=348 instances=0 asts=267
+const r = (/ 9.0 8.0)#95
+const s = (/ 19.0 8.0)#94
+const x = 1#22
+modeled: steps=349 asts=281
+== random-30 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (+ x (* 0 x)) 3)) (assert (< (+ (* 2 x) (* (- 3) y)) 5)) (assert (not (= (* (- 1.0) s) (* (- 1.0) r)))) (assert (<= (* 3 y) (- 5))) (assert (< (* 2.0 r) 2.0)) (assert (= (+ (* (- 3) x) y) (- 3))) (assert (or (= (* (- 2.0) s) (- 2.0)) (> (* (- 1.0) s) 4.0))) (assert (or (< (+ (* 0.0 s) (* 3.0 s)) 4.0) (> (+ (* (- 3.0) r) (* (- 2.0) r)) 5.0))) (assert (or (= (* 3 x) (- 5)) (>= (+ s (* (- 3.0) s)) 5.0))) (assert (< (+ s (* 3.0 r)) 5.0)) (assert (> (* (- 3) y) (- 4))) (assert (> (+ (* 0 x) (* (- 3) y)) 3)) (check-sat)
+result=-1 conflicts=1 steps=529 instances=0 asts=302
+== random-31 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (> (* (- 2) x) (- 2))) (assert (or (= (+ r (* 3.0 r)) 3.0) (< (* 2.0 r) 1.0))) (assert (> (+ (* (- 3) x) (* (- 1) x)) (- 5))) (assert (or (not (= (* (- 3) y) (+ (* (- 2) x) (* (- 2) x)))) (>= (* (- 2) x) (- 1)))) (assert (or (> (* 0.0 r) 5.0) (> (+ (* (- 2.0) s) (* 2.0 s)) 3.0))) (assert (<= (ite (> (* 0.0 s) 1.0) (+ (* (- 3.0) s) (* 3.0 s)) (* (- 2.0) r)) (- 4.0))) (assert (< (+ s (* (- 2.0) s)) 1.0)) (assert (or (>= (+ (* (- 2) y) (* 3 y)) 1) (<= (* (- 2.0) s) 1.0))) (assert (or (<= (ite (> (+ (* (- 1.0) r) (* (- 2.0) s)) (- 5.0)) (* 0.0 s) (* 3.0 s)) 0.0) (not (= (* (- 2.0) s) (+ (* (- 2.0) s) (* 3.0 r)))))) (check-sat)
+result=-1 conflicts=0 steps=81 instances=0 asts=303
+== random-32 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (ite (> (+ (* (- 3.0) r) (* 2.0 s)) (- 4.0)) (+ (* (- 3.0) r) (* 3.0 s)) (+ (* (- 3.0) r) (* 0.0 r))) 2.0) (<= s 4.0))) (assert (or (> (+ (* (- 2.0) s) (* (- 1.0) s)) (- 4.0)) (<= (* 0 y) 4))) (assert (not (= (+ (* 3.0 s) r) (+ (* 2.0 r) s)))) (assert (<= (+ (* (- 1) x) (* 2 y)) 1)) (assert (<= (+ (* 3 y) (* 3 x)) (- 4))) (assert (or (<= (* (- 1.0) r) 1.0) (<= (* 2.0 s) 3.0))) (assert (or (= (* 3.0 r) (- 5.0)) (not (= x (* (- 2) x))))) (assert (not (= (+ (* 0 x) (* (- 2) y)) (+ (* (- 2) x) y)))) (assert (or (> x (- 2)) (<= (* 2 x) 3))) (assert (or (<= (ite (> (+ (* 2 x) (* (- 1) y)) 5) (+ (* (- 1) x) (* 3 y)) (+ (* 2 y) (* (- 1) y))) (- 4)) (>= (+ (* 2.0 s) s) (- 3.0)))) (assert (not (= (* 0 x) (+ (* 0 y) (* (- 1) y))))) (check-sat)
+result=1 conflicts=0 steps=896 instances=0 asts=361
+const r = 0.0#35
+const s = (/ 1.0 4.0)#185
+const y = -4#140
+const x = -1#135
+modeled: steps=897 asts=381
+== random-33 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (* (- 1.0) r) (- 2.0)) (<= (* (- 3.0) s) (- 5.0)))) (assert (<= (+ (* (- 1) x) (* (- 2) x)) 1)) (assert (or (> (* (- 2) x) 1) (<= (ite (> (+ (* (- 2.0) s) (* (- 1.0) r)) (- 4.0)) (* 0.0 r) (+ (* (- 1.0) r) r)) 3.0))) (assert (or (< (* (- 2) y) (- 5)) (< (* (- 1.0) r) (- 2.0)))) (assert (or (not (= (+ (* 3.0 s) (* (- 3.0) s)) (* 3.0 r))) (<= (ite (> (* (- 1) y) 5) (+ (* (- 1) x) x) (+ (* (- 1) y) (* 3 x))) (- 4)))) (assert (or (<= (ite (> (+ (* 3 x) (* 3 x)) (- 5)) x (* 2 y)) 4) (> (+ (* 0.0 s) (* (- 3.0) r)) (- 1.0)))) (assert (= (* 2 x) 3)) (assert (or (<= (ite (> (* 3 y) 2) (* 2 x) (* 0 y)) (- 3)) (> (* 0.0 s) (- 2.0)))) (assert (> (* 3.0 s) (- 3.0))) (assert (>= (+ (* 3.0 s) (* (- 3.0) s)) 2.0)) (check-sat)
+result=-1 conflicts=0 steps=147 instances=0 asts=342
+== random-34 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (not (= s (+ (* (- 3.0) s) (* 0.0 r))))) (assert (or (<= (ite (> (+ (* (- 3.0) r) (* (- 1.0) r)) 1.0) (+ (* 2.0 r) (* (- 2.0) s)) (+ (* 2.0 s) (* (- 2.0) s))) 5.0) (not (= (* 3.0 r) (* 2.0 r))))) (assert (or (> (* (- 3.0) s) 3.0) (= (+ (* (- 1.0) s) s) 4.0))) (assert (or (<= (ite (> (+ (* (- 1.0) r) (* (- 2.0) r)) (- 2.0)) (+ (* 0.0 r) (* (- 1.0) r)) (+ (* (- 3.0) r) (* 2.0 r))) (- 1.0)) (not (= (* (- 2) y) (* 2 x))))) (assert (or (not (= y (+ (* (- 1) x) x))) (> x 3))) (assert (<= (* (- 2.0) r) 2.0)) (check-sat)
+result=1 conflicts=0 steps=488 instances=0 asts=291
+const r = (/ -1.0 2.0)#92
+const s = (/ -3.0 2.0)#91
+const y = -1#97
+const x = 0#124
+modeled: steps=489 asts=297
+== random-35 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (> (* (- 2.0) s) (- 2.0))) (assert (< (* (- 2.0) s) (- 5.0))) (assert (or (< (* (- 3.0) r) 3.0) (<= (+ y (* (- 3) y)) 3))) (assert (or (<= (ite (> (* 3.0 s) 4.0) (+ (* (- 1.0) s) (* 0.0 s)) (+ (* 3.0 r) (* 3.0 r))) (- 1.0)) (>= (* 0 y) 3))) (assert (<= (ite (> (+ s (* 3.0 s)) 5.0) (+ (* (- 3.0) s) (* (- 1.0) r)) (+ (* 0.0 s) (* (- 3.0) s))) 5.0)) (assert (or (> (+ (* (- 3.0) s) (* (- 3.0) r)) 5.0) (<= (ite (> s 4.0) (+ (* (- 2.0) s) s) (* (- 3.0) r)) 4.0))) (assert (> (+ (* 0 y) (* (- 1) y)) (- 2))) (assert (or (< (* 3.0 r) 2.0) (> (+ y (* (- 3) x)) (- 2)))) (assert (>= (+ (* 2 x) (* 2 y)) (- 5))) (assert (= (+ (* (- 2) x) (* 2 y)) (- 3))) (assert (<= (ite (> (+ (* (- 1) y) (* (- 3) x)) (- 1)) y (* (- 1) x)) (- 1))) (check-sat)
+result=-1 conflicts=0 steps=159 instances=0 asts=347
+== random-36 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (< (* 0.0 r) (- 2.0)) (<= (* (- 2.0) s) (- 1.0)))) (assert (>= (* 3 x) (- 3))) (assert (or (= (+ (* (- 1) y) (* (- 3) y)) 5) (<= (* (- 1) y) (- 5)))) (assert (or (> (* 0 x) 2) (>= (* 0 x) (- 2)))) (assert (or (>= (+ (* (- 2) x) (* 3 y)) 5) (<= (ite (> (+ (* 3.0 r) (* (- 1.0) s)) 3.0) (+ (* 3.0 s) (* (- 2.0) s)) (+ (* (- 3.0) s) r)) (- 3.0)))) (assert (<= (ite (> (* 0 x) 3) (+ (* (- 2) y) y) (* 3 y)) (- 1))) (assert (>= (+ y (* 0 x)) (- 3))) (check-sat)
+result=-1 conflicts=1 steps=295 instances=0 asts=272
+== random-37 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (< (+ (* 0 x) (* (- 3) x)) 0)) (assert (or (not (= (* 2 x) (+ y (* (- 3) y)))) (<= (ite (> (* (- 1) x) 3) (+ (* 3 x) (* (- 3) x)) (* (- 1) y)) 4))) (assert (or (not (= (+ (* 0 x) (* 0 x)) (+ x (* 3 y)))) (<= (ite (> (+ (* (- 2.0) s) (* (- 2.0) r)) (- 4.0)) (* 3.0 s) (* (- 1.0) s)) 1.0))) (assert (or (not (= (+ (* 2 y) (* 3 x)) (* 0 x))) (<= (* (- 1) y) 3))) (assert (not (= (* (- 3) y) (+ (* (- 1) y) (* 0 x))))) (assert (<= (ite (> (* 3.0 r) (- 5.0)) r (* 3.0 r)) 1.0)) (assert (> (* 0 x) 3)) (assert (<= (+ (* 0.0 s) (* (- 1.0) r)) 2.0)) (assert (= (+ x (* (- 2) x)) 4)) (assert (not (= (+ (* (- 3) y) (* 2 x)) (+ y (* 0 y))))) (assert (>= (* (- 2.0) r) (- 3.0))) (assert (or (>= (+ (* (- 2.0) r) (* 0.0 r)) (- 3.0)) (>= (+ (* (- 3.0) s) (* 0.0 s)) 3.0))) (check-sat)
+result=-1 conflicts=0 steps=129 instances=0 asts=338
+== random-38 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (* 3.0 r) 0.0)) (assert (not (= (* (- 3) y) (* (- 3) x)))) (assert (= (+ (* (- 3.0) s) s) (- 4.0))) (assert (>= (+ (* (- 1.0) r) (* (- 2.0) r)) (- 5.0))) (assert (<= (ite (> (+ (* 3 y) (* (- 1) y)) 2) (* 2 y) (* (- 1) x)) (- 2))) (assert (>= x 5)) (assert (or (not (= (+ (* 0 x) (* (- 1) x)) (* (- 3) y))) (< (+ (* (- 1) y) (* (- 1) y)) 4))) (assert (<= (+ (* (- 3) y) (* 0 x)) (- 5))) (assert (or (not (= (* 0.0 r) (+ (* 3.0 s) (* (- 3.0) s)))) (<= (* 3 x) (- 4)))) (assert (<= (ite (> (+ (* (- 2.0) r) (* 3.0 r)) 2.0) (* 3.0 s) (+ s (* 3.0 s))) (- 1.0))) (assert (or (< (+ (* (- 1.0) r) (* 3.0 r)) (- 2.0)) (= (+ r (* 0.0 s)) (- 2.0)))) (assert (< (+ (* 2.0 r) (* (- 3.0) r)) (- 4.0))) (assert (or (> (* 3.0 s) (- 3.0)) (>= (+ (* (- 2) y) x) 1))) (check-sat)
+result=-1 conflicts=0 steps=355 instances=0 asts=308
+== random-39 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (< (+ (* (- 2) y) (* 3 y)) 5) (= (* (- 3) x) 2))) (assert (<= (ite (> (+ (* 3 y) (* (- 1) y)) 2) (+ (* (- 2) y) (* 3 x)) (* (- 3) y)) (- 4))) (assert (or (> (+ (* (- 1.0) r) (* (- 2.0) s)) (- 2.0)) (not (= (* (- 2) x) (+ (* 0 x) (* 0 x)))))) (assert (> (* 2.0 r) 1.0)) (assert (<= (ite (> (* (- 1) y) (- 3)) (* (- 2) x) (+ (* (- 2) y) y)) (- 2))) (assert (not (= (+ (* (- 1) x) (* 3 y)) (* 3 x)))) (assert (<= (ite (> (* (- 1) x) 4) (+ (* 2 y) (* 2 x)) (+ (* (- 1) x) (* (- 1) x))) 0)) (assert (not (= (+ (* (- 3) x) (* 3 x)) (* (- 1) y)))) (assert (not (= (+ (* 0.0 r) (* (- 1.0) r)) (+ (* 0.0 s) (* (- 1.0) r))))) (assert (or (<= (* (- 3) y) 2) (<= (+ (* (- 2.0) s) (* (- 2.0) r)) (- 4.0)))) (assert (or (= (* 2 x) 2) (< (* 3.0 s) 5.0))) (assert (or (> r 0.0) (= (+ (* 2 x) (* 2 x)) (- 4)))) (check-sat)
+result=-1 conflicts=0 steps=139 instances=0 asts=336
+== random-40 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (* (- 1) x) (- 5)) (= (* (- 3.0) r) 3.0))) (assert (or (not (= (+ (* (- 2.0) s) (* (- 3.0) r)) (* 0.0 r))) (= (* (- 2.0) s) 1.0))) (assert (<= (* (- 1) y) 2)) (assert (> y 1)) (check-sat)
+result=1 conflicts=0 steps=254 instances=0 asts=240
+const r = 0.0#40
+const s = (/ -1.0 8.0)#74
+const y = 2#49
+const x = 5#26
+modeled: steps=255 asts=248
+== random-41 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (not (= y x))) (assert (not (= (+ (* (- 2.0) s) (* 2.0 r)) (* 0.0 r)))) (assert (>= (* (- 2) x) (- 5))) (assert (not (= (+ r (* (- 3.0) r)) (* 0.0 r)))) (assert (>= (* (- 3.0) s) 3.0)) (check-sat)
+result=1 conflicts=0 steps=214 instances=0 asts=236
+const y = 2#37
+const r = (/ 1.0 2.0)#70
+const s = -1.0#62
+const x = 0#65
+modeled: steps=215 asts=244
+== random-42 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (>= (* (- 1.0) r) (- 5.0))) (assert (<= (+ (* (- 2) y) (* (- 2) y)) (- 1))) (assert (>= (+ (* 2 x) (* (- 1) y)) 0)) (assert (or (= (* (- 2) y) (- 3)) (> (* (- 2.0) s) 1.0))) (assert (or (= (+ (* 3 y) (* (- 2) x)) 2) (<= (* (- 1.0) s) (- 4.0)))) (assert (= (* 2.0 r) (- 1.0))) (assert (> (* 3.0 r) 2.0)) (check-sat)
+result=-1 conflicts=0 steps=154 instances=0 asts=241
+== random-43 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (+ (* (- 3.0) s) (* 2.0 s)) 1.0)) (assert (< (* (- 2.0) r) 5.0)) (assert (< (+ y (* 0 x)) (- 2))) (assert (>= (+ (* (- 2.0) s) s) 1.0)) (assert (= (+ (* (- 1.0) r) (* 3.0 r)) (- 2.0))) (assert (or (>= (+ (* 2 y) (* (- 1) y)) 4) (<= (ite (> (* (- 1) x) 4) (+ (* (- 2) x) (* (- 2) x)) x) (- 2)))) (assert (<= (ite (> (* 0.0 r) 0.0) (+ (* (- 2.0) r) (* (- 3.0) s)) r) 4.0)) (assert (not (= (* 2.0 s) (+ (* (- 3.0) s) (* (- 1.0) r))))) (assert (<= (ite (> (* (- 2.0) r) 5.0) (+ (* 2.0 s) (* 2.0 s)) (* (- 1.0) r)) 4.0)) (assert (or (<= (+ (* 3.0 s) r) (- 3.0)) (= (+ (* 0 x) y) (- 4)))) (assert (< (+ (* 0 x) (* (- 3) y)) 3)) (assert (= (* 3 x) 4)) (assert (= (* (- 3) y) 0)) (check-sat)
+result=-1 conflicts=0 steps=137 instances=0 asts=320
+== random-44 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (< (+ (* (- 3) y) (* 0 y)) (- 4))) (assert (or (<= (ite (> (+ (* (- 2.0) s) (* 2.0 s)) 5.0) (* (- 3.0) s) (+ (* (- 2.0) r) (* (- 1.0) s))) (- 4.0)) (not (= (* 2 x) (* (- 3) x))))) (assert (or (< (+ (* (- 1) y) (* (- 2) y)) (- 5)) (= (* (- 3.0) s) 1.0))) (assert (<= (+ (* 2.0 r) (* (- 3.0) s)) (- 3.0))) (assert (>= s 2.0)) (assert (or (<= (+ (* (- 1) x) (* 3 y)) 2) (< (* 2 y) (- 3)))) (assert (or (<= (+ (* 3 x) (* (- 1) x)) 2) (<= (+ (* 3.0 r) (* (- 1.0) r)) (- 4.0)))) (check-sat)
+result=1 conflicts=0 steps=492 instances=0 asts=287
+const y = 2#53
+const r = -2.0#97
+const s = 2.0#32
+const x = 4#29
+modeled: steps=493 asts=297
+== random-45 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (+ (* (- 2.0) r) r) (- 2.0)) (= (* 3 x) (- 4)))) (assert (<= (* 0.0 s) 1.0)) (assert (>= (+ (* (- 1.0) s) r) 2.0)) (assert (<= (ite (> (* (- 3) x) 1) (* (- 2) x) (+ (* 3 x) (* (- 3) x))) 4)) (assert (>= (* (- 3.0) r) (- 4.0))) (assert (or (<= (ite (> (+ (* (- 2.0) s) (* (- 2.0) s)) 5.0) (+ s (* 0.0 r)) (+ (* 2.0 r) (* (- 1.0) s))) (- 2.0)) (< (+ (* 2 x) (* (- 2) x)) (- 2)))) (assert (>= (* 0.0 r) 4.0)) (assert (> (+ (* 0.0 r) (* (- 3.0) r)) 0.0)) (assert (> s 3.0)) (assert (not (= (* (- 2) x) (+ (* 2 y) (* 2 y))))) (assert (or (>= (* 2 y) (- 1)) (<= (* (- 1.0) s) 5.0))) (assert (or (<= (* 2.0 s) 2.0) (<= (ite (> (+ r (* 2.0 s)) (- 3.0)) (+ (* 2.0 s) (* (- 1.0) s)) r) (- 3.0)))) (assert (< (+ (* (- 1) y) (* (- 3) x)) 1)) (check-sat)
+result=-1 conflicts=0 steps=99 instances=0 asts=303
+== random-46 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (< (+ (* 2.0 r) (* (- 2.0) r)) 0.0)) (assert (<= (ite (> s (- 4.0)) (* 0.0 r) (+ (* 3.0 r) (* (- 1.0) s))) (- 3.0))) (assert (<= (ite (> (+ r (* (- 3.0) r)) 0.0) (* 3.0 r) (* 2.0 r)) (- 1.0))) (assert (not (= (* (- 2.0) r) (+ (* (- 1.0) r) s)))) (assert (not (= (* 0 y) (+ (* 0 x) (* (- 1) x))))) (assert (not (= (+ (* (- 1) y) (* (- 1) x)) (+ (* (- 2) y) (* (- 1) y))))) (assert (or (< r (- 2.0)) (< (+ (* (- 1) y) (* 0 x)) 0))) (assert (not (= (+ (* (- 2.0) s) (* (- 2.0) s)) (+ (* 3.0 s) (* 2.0 s))))) (assert (< x 5)) (assert (>= (* 3.0 s) 0.0)) (assert (> (+ (* 2 y) x) (- 3))) (assert (<= (* (- 2) y) 5)) (check-sat)
+result=-1 conflicts=0 steps=15 instances=0 asts=257
+== random-47 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (not (= (+ (* 0 y) (* (- 3) y)) (* 3 y)))) (assert (= x (- 5))) (assert (<= (+ x y) 4)) (assert (> (* 0 y) 0)) (assert (<= (+ (* 3 y) (* 0 x)) (- 4))) (assert (or (= (+ (* 0.0 s) (* (- 1.0) s)) 0.0) (<= (ite (> (* 2.0 r) 1.0) (+ (* 3.0 s) (* 2.0 s)) (* (- 3.0) r)) 4.0))) (assert (or (<= (ite (> (+ (* (- 3.0) s) (* (- 2.0) r)) 3.0) (* 3.0 s) (+ (* 3.0 r) (* 2.0 s))) 5.0) (> (+ (* 0 x) y) 2))) (assert (= (* 2 x) (- 4))) (assert (<= (ite (> (* (- 3) y) (- 3)) (+ (* 2 y) (* 0 x)) (+ (* 0 y) (* (- 2) y))) (- 2))) (assert (<= (ite (> (+ (* 2.0 s) (* 0.0 r)) (- 5.0)) (+ (* (- 1.0) r) (* 2.0 r)) (+ (* (- 2.0) s) (* (- 2.0) r))) (- 5.0))) (assert (not (= (* 0 x) (* 0 y)))) (assert (or (< (+ (* 2.0 s) (* 0.0 r)) (- 4.0)) (<= (+ (* 2.0 s) (* 3.0 s)) 3.0))) (assert (not (= (+ (* 2.0 s) r) (* (- 3.0) r)))) (check-sat)
+result=-1 conflicts=0 steps=29 instances=0 asts=286
+== random-48 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (>= (+ s (* 2.0 r)) (- 4.0))) (assert (<= (* 2.0 r) (- 4.0))) (assert (<= (* 2 y) 4)) (assert (> r 5.0)) (assert (= (+ (* (- 3.0) r) (* 3.0 r)) 2.0)) (assert (or (not (= (* 3 x) (+ (* 2 y) (* 3 x)))) (not (= (* (- 2.0) r) (+ (* (- 2.0) r) (* (- 3.0) r)))))) (assert (or (< (* (- 2) y) 1) (>= y (- 4)))) (assert (or (> (+ (* (- 2) y) (* (- 2) x)) (- 4)) (<= y 0))) (assert (or (>= (+ s (* (- 2.0) s)) 1.0) (>= (* (- 3) x) 1))) (check-sat)
+result=-1 conflicts=0 steps=31 instances=0 asts=250
+== random-49 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (ite (> (* (- 3.0) r) 3.0) (+ (* 2.0 s) (* (- 3.0) r)) (* 2.0 s)) (- 2.0)) (= (* (- 1) x) (- 4)))) (assert (<= (ite (> (* (- 3.0) s) 3.0) (* (- 1.0) r) r) 0.0)) (assert (or (= (* (- 2.0) r) 4.0) (>= (+ x (* (- 2) x)) 2))) (assert (>= (+ (* (- 3.0) r) (* (- 3.0) r)) (- 5.0))) (assert (or (<= (ite (> (+ (* 3.0 r) (* (- 1.0) s)) (- 3.0)) (+ (* 3.0 s) (* (- 3.0) s)) r) 2.0) (>= (+ (* 3.0 s) (* (- 2.0) r)) (- 2.0)))) (assert (not (= x (* 0 x)))) (assert (or (<= (ite (> (+ (* 2.0 r) (* (- 2.0) r)) 2.0) r (* (- 3.0) s)) 5.0) (not (= (+ x (* 3 x)) (* 3 x))))) (check-sat)
+result=1 conflicts=3 steps=880 instances=0 asts=311
+const r = 0.0#48
+const s = (/ -3.0 2.0)#137
+const x = -2#112
+modeled: steps=881 asts=315
+== random-50 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (+ (* 3 x) (* (- 3) x)) (- 5))) (assert (or (<= (* (- 2) x) 0) (> (+ s (* (- 2.0) s)) (- 2.0)))) (assert (or (not (= (+ y (* 3 x)) (+ (* (- 2) y) (* 2 x)))) (< (+ (* (- 1.0) r) s) 0.0))) (assert (or (= (* 2 y) (- 4)) (< (* 3.0 r) (- 2.0)))) (assert (or (> (+ y (* 2 y)) 3) (>= (+ (* 3.0 r) (* (- 2.0) r)) (- 5.0)))) (assert (<= (ite (> (+ (* (- 1) y) (* (- 1) x)) (- 2)) (+ (* 2 y) y) (+ (* (- 2) y) (* (- 1) x))) 5)) (assert (<= (+ (* 0 x) (* (- 1) y)) (- 4))) (assert (not (= (* (- 2) y) (* 0 y)))) (assert (or (>= (* (- 2) x) 2) (<= (+ (* 3.0 s) (* (- 2.0) s)) 1.0))) (assert (or (<= (ite (> (+ (* 2 x) (* (- 1) y)) 1) (* 2 x) (+ (* 3 y) (* (- 3) x))) 2) (>= (+ (* 3.0 s) (* 3.0 s)) 2.0))) (assert (>= s (- 3.0))) (assert (>= (* (- 3.0) r) (- 3.0))) (check-sat)
+result=-1 conflicts=0 steps=13 instances=0 asts=271
+== random-51 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (ite (> (+ (* (- 1.0) s) r) 0.0) (* 3.0 s) (+ (* (- 3.0) r) (* 0.0 s))) 1.0)) (assert (> (* (- 1.0) s) 0.0)) (assert (or (>= (+ (* (- 3.0) r) (* (- 3.0) s)) (- 3.0)) (<= (ite (> (* 3 y) 4) (+ y (* (- 3) x)) (+ y (* (- 3) y))) 2))) (assert (= (+ (* 3.0 s) (* 3.0 r)) 5.0)) (assert (or (= (+ (* 2 y) (* (- 1) y)) (- 5)) (< (* 0.0 s) (- 5.0)))) (assert (= (+ (* (- 1) y) (* 2 y)) (- 4))) (assert (< (* (- 1.0) r) 2.0)) (assert (< (+ (* 3.0 s) (* 0.0 s)) (- 5.0))) (check-sat)
+result=-1 conflicts=0 steps=248 instances=0 asts=270
+== random-52 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (* (- 2.0) s) 5.0)) (assert (> (+ (* (- 1) x) (* 3 y)) (- 3))) (assert (= (+ y (* 2 x)) 0)) (assert (>= r 4.0)) (check-sat)
+result=1 conflicts=0 steps=163 instances=0 asts=227
+const y = 0#41
+const s = (/ -5.0 2.0)#48
+const r = 4.0#44
+const x = 0#41
+modeled: steps=164 asts=231
+== random-53 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (ite (> (* (- 2.0) r) (- 5.0)) (+ (* (- 1.0) s) (* 3.0 r)) (* (- 1.0) r)) (- 1.0)) (= x (- 3)))) (assert (> (* (- 1.0) s) (- 1.0))) (assert (not (= (+ (* 2.0 s) (* (- 3.0) r)) (+ (* (- 1.0) r) (* 2.0 r))))) (assert (> (+ (* (- 3.0) s) (* (- 2.0) s)) (- 3.0))) (assert (<= (ite (> (+ y (* (- 1) x)) (- 1)) (* 3 y) (* 0 y)) 4)) (assert (> (+ (* (- 3) x) (* (- 2) y)) 5)) (assert (not (= (* (- 2.0) s) (+ (* 3.0 r) (* 2.0 r))))) (assert (<= (ite (> (* (- 1.0) r) (- 1.0)) (+ (* (- 3.0) s) (* 2.0 r)) r) 5.0)) (assert (= s (- 2.0))) (assert (or (>= (* 2 x) (- 1)) (< (+ (* (- 2.0) r) (* (- 1.0) r)) 1.0))) (assert (<= (ite (> (+ (* 2 x) x) 1) (* (- 3) x) (* 3 y)) 2)) (check-sat)
+result=1 conflicts=1 steps=977 instances=0 asts=341
+const r = (/ 5.0 2.0)#98
+const y = -5#151
+const s = -2.0#93
+const x = 1#58
+modeled: steps=978 asts=359
+== random-54 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (= (* 0 y) (- 1)) (> (* 2 y) 2))) (assert (or (<= (+ x (* (- 2) y)) 5) (>= (* (- 2.0) r) 4.0))) (assert (>= (* (- 3) x) 1)) (assert (<= (ite (> (+ (* (- 1.0) r) (* (- 2.0) r)) 0.0) r (* 2.0 s)) (- 1.0))) (assert (not (= (* (- 1.0) s) (* (- 2.0) r)))) (assert (or (= (* (- 1) y) 5) (<= (* 0 x) 0))) (assert (>= (+ (* (- 2.0) s) (* (- 3.0) r)) (- 5.0))) (assert (<= (ite (> (+ (* (- 3) x) (* 0 x)) (- 2)) (+ (* 0 x) (* 0 y)) (+ (* 2 y) (* 2 x))) 2)) (assert (= (+ (* 0.0 s) (* 3.0 r)) 1.0)) (assert (< (+ (* 3 y) (* 3 x)) 0)) (check-sat)
+result=1 conflicts=0 steps=448 instances=0 asts=289
+const y = 2#28
+const s = (/ -1.0 2.0)#117
+const r = (/ 1.0 3.0)#132
+const x = -3#103
+modeled: steps=449 asts=297
+== random-55 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (+ y (* (- 3) y)) (- 2))) (assert (= (* (- 2.0) r) (- 5.0))) (assert (or (> (* (- 2) y) 5) (>= (+ (* (- 3) y) (* 0 y)) (- 5)))) (assert (> (+ (* 3.0 s) (* 0.0 r)) 4.0)) (assert (< (+ (* 0.0 r) r) 2.0)) (assert (not (= (* (- 3) y) x))) (assert (or (not (= (+ (* (- 3) x) y) (* 3 y))) (= (* 0.0 s) 5.0))) (assert (not (= (* (- 3.0) s) (+ (* 0.0 s) (* (- 3.0) r))))) (assert (not (= (+ (* 2 x) (* (- 2) x)) (+ (* 3 y) (* (- 1) x))))) (assert (<= (+ (* 2.0 r) (* 3.0 r)) 1.0)) (assert (or (<= (ite (> (+ (* (- 2.0) s) (* (- 3.0) r)) 2.0) (* (- 3.0) s) (+ (* (- 1.0) r) (* 0.0 s))) (- 2.0)) (> (+ (* 0 x) (* (- 2) y)) 5))) (assert (not (= x (* (- 3) x)))) (assert (< (+ y (* 0 x)) 3)) (check-sat)
+result=-1 conflicts=0 steps=309 instances=0 asts=291
+== random-56 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (>= s 1.0)) (assert (or (<= (ite (> (+ (* (- 2.0) r) (* (- 3.0) s)) (- 3.0)) (+ (* (- 2.0) r) (* 2.0 s)) (+ (* (- 3.0) r) (* 3.0 r))) (- 3.0)) (< (* (- 1.0) s) 5.0))) (assert (>= (+ (* (- 3.0) s) (* (- 3.0) s)) 3.0)) (assert (>= (+ (* (- 2) y) (* (- 1) y)) (- 2))) (assert (= (* (- 3.0) s) (- 1.0))) (assert (= x (- 3))) (assert (or (= (+ s (* 0.0 r)) (- 1.0)) (<= (ite (> (* 0 x) (- 3)) y (* (- 2) x)) (- 4)))) (assert (<= (+ (* 3.0 r) (* (- 1.0) s)) 5.0)) (assert (>= x 3)) (check-sat)
+result=-1 conflicts=0 steps=206 instances=0 asts=256
+== random-57 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (not (= (* 3 x) (+ (* 3 y) x)))) (assert (> (* 0 y) 3)) (assert (> (* (- 3) x) 3)) (assert (not (= y (* 2 y)))) (assert (<= (ite (> (+ (* (- 2) y) (* 3 x)) 1) (* 0 y) (* (- 1) y)) 5)) (assert (<= (ite (> (+ (* 0 x) (* 0 y)) 4) (* (- 1) y) (* 3 x)) 3)) (assert (< y 3)) (assert (not (= (* 0 y) (+ (* 2 x) (* (- 2) x))))) (check-sat)
+result=-1 conflicts=0 steps=19 instances=0 asts=229
+== random-58 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (> (* (- 1) x) (- 1))) (assert (<= (* (- 2) x) 5)) (assert (< (+ (* (- 2.0) r) (* 3.0 r)) 2.0)) (assert (not (= (+ (* (- 2) x) (* 3 x)) x))) (assert (<= (* (- 3.0) s) (- 5.0))) (assert (<= (ite (> (+ (* 3.0 r) (* (- 1.0) s)) 2.0) (+ (* 2.0 s) (* 2.0 r)) (* 0.0 s)) (- 4.0))) (check-sat)
+result=-1 conflicts=0 steps=39 instances=0 asts=241
+== random-59 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (= (* (- 3.0) r) 0.0)) (assert (>= x (- 1))) (assert (>= (+ (* (- 1.0) r) (* 0.0 r)) (- 4.0))) (assert (>= (+ y (* (- 1) x)) (- 2))) (assert (= (* 0.0 r) 0.0)) (assert (< (* (- 1) x) 2)) (assert (or (>= x (- 2)) (< (* 2 y) 3))) (assert (< (* 2 y) 2)) (assert (or (> (+ (* 0 y) (* 0 x)) (- 2)) (<= (* (- 3.0) r) (- 1.0)))) (check-sat)
+result=1 conflicts=0 steps=271 instances=0 asts=241
+const r = 0.0#26
+const y = 0#54
+const x = 0#54
+modeled: steps=272 asts=241
+== random-60 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (not (= (+ (* (- 3.0) s) (* (- 1.0) r)) (* 3.0 r)))) (assert (or (< r (- 1.0)) (>= (+ (* (- 3.0) s) (* (- 2.0) s)) (- 4.0)))) (assert (> (+ r (* (- 3.0) r)) 1.0)) (assert (> (+ (* (- 1) y) (* 3 x)) 5)) (assert (= (+ (* (- 2.0) s) (* 2.0 s)) (- 2.0))) (assert (> (+ (* (- 3.0) r) (* (- 3.0) r)) 4.0)) (assert (or (not (= (+ (* 3 y) (* 0 y)) (* (- 2) y))) (>= (+ (* 3 x) (* (- 2) x)) (- 1)))) (assert (or (>= (* (- 1) y) (- 3)) (> (* (- 3.0) s) 5.0))) (assert (= (* 2.0 s) (- 3.0))) (assert (or (< (* 3.0 s) 0.0) (<= (* (- 2.0) s) 0.0))) (assert (<= (* 0.0 s) (- 2.0))) (check-sat)
+result=-1 conflicts=0 steps=65 instances=0 asts=289
+== random-61 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (>= r (- 4.0)) (<= (ite (> (+ (* (- 3) y) y) (- 2)) (+ (* 0 x) (* (- 3) x)) (* 0 y)) 0))) (assert (< (+ (* 0 x) (* (- 2) y)) (- 2))) (assert (or (= (* 0 x) (- 3)) (<= (+ (* (- 1) x) x) (- 2)))) (assert (or (not (= (+ (* (- 1) y) (* 3 y)) y)) (not (= (+ (* 3 y) x) (* (- 3) y))))) (assert (or (= s (- 2.0)) (>= x (- 1)))) (assert (or (> (+ (* 3 y) (* 3 y)) 5) (not (= (* (- 1.0) s) (+ (* 0.0 s) (* 2.0 s)))))) (assert (<= (* 3.0 s) 3.0)) (assert (> (* 3 x) 3)) (assert (or (>= (+ (* (- 2.0) s) (* 0.0 r)) (- 1.0)) (= (* 2 x) 4))) (assert (or (> (* 3.0 r) 5.0) (= (* (- 1.0) s) 4.0))) (assert (< (* (- 2.0) r) 0.0)) (check-sat)
+result=-1 conflicts=0 steps=61 instances=0 asts=288
+== random-62 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= x (- 4))) (assert (not (= (+ (* 3 y) (* 2 y)) (* 2 y)))) (assert (or (< (* (- 2.0) r) 1.0) (= (* (- 3) x) 5))) (assert (or (< (* (- 3) y) (- 5)) (<= (ite (> (+ (* (- 3.0) s) (* 2.0 r)) (- 4.0)) (+ (* 3.0 r) s) (+ (* (- 2.0) s) (* (- 1.0) s))) 1.0))) (assert (>= (+ (* (- 3.0) r) (* 3.0 s)) (- 2.0))) (assert (<= (+ (* (- 2) x) (* (- 1) x)) 2)) (assert (or (not (= (* 3.0 r) (+ (* 3.0 s) (* (- 3.0) r)))) (> (+ (* (- 3) x) (* 0 x)) 1))) (assert (<= (* (- 1.0) r) 3.0)) (check-sat)
+result=-1 conflicts=1 steps=418 instances=0 asts=287
+== random-63 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (ite (> (+ (* 3.0 s) (* 3.0 r)) 4.0) (* (- 3.0) r) (+ r (* 2.0 r))) 0.0)) (assert (= y (- 4))) (assert (= (* 0 y) (- 1))) (assert (not (= (+ r (* (- 3.0) s)) (* (- 2.0) s)))) (check-sat)
+result=-1 conflicts=0 steps=35 instances=0 asts=222
+== random-64 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (>= (+ x (* (- 1) x)) (- 5))) (assert (or (>= (+ (* (- 3.0) r) (* 0.0 r)) 0.0) (< (+ (* (- 2.0) r) r) (- 1.0)))) (assert (<= (ite (> (+ y (* 0 x)) (- 2)) (+ (* (- 2) y) (* (- 1) y)) (* 2 x)) 4)) (assert (or (<= (ite (> (+ y (* 0 y)) (- 5)) (* (- 1) x) (* 2 y)) 4) (< (* 3.0 s) (- 5.0)))) (assert (>= (* 3.0 s) 3.0)) (assert (<= (ite (> (+ s (* 2.0 s)) 0.0) s (+ s (* (- 1.0) s))) 2.0)) (assert (or (= (* (- 1) y) (- 5)) (> (* (- 2.0) r) (- 1.0)))) (assert (= (+ (* 3 y) (* (- 3) y)) (- 4))) (assert (or (< (* (- 1.0) r) 1.0) (< (+ (* (- 2.0) r) s) (- 1.0)))) (assert (> (* 0.0 s) (- 1.0))) (assert (or (<= (ite (> (+ (* (- 2.0) s) r) (- 2.0)) (* (- 2.0) s) (+ (* 3.0 s) r)) 2.0) (>= (* 3.0 r) (- 4.0)))) (check-sat)
+result=-1 conflicts=0 steps=137 instances=0 asts=325
+== random-65 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (>= (* 0 x) 5)) (assert (= (+ (* (- 2) x) (* 0 y)) 1)) (assert (= (* (- 1) y) 0)) (assert (or (<= (ite (> (+ (* (- 1) y) x) (- 4)) (* (- 1) y) (+ (* 2 y) (* 2 x))) 4) (<= (* (- 2.0) r) 2.0))) (check-sat)
+result=-1 conflicts=0 steps=5 instances=0 asts=212
+== random-66 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (not (= (* (- 1.0) r) (* (- 1.0) r))) (> (+ (* (- 1.0) s) (* 3.0 s)) (- 3.0)))) (assert (< (+ (* 2 y) (* 2 y)) 1)) (assert (> (+ (* (- 3) y) y) 1)) (assert (<= (+ (* 2.0 r) (* (- 2.0) s)) 1.0)) (assert (or (= (+ (* (- 1.0) r) (* 2.0 r)) (- 1.0)) (> (* (- 2.0) r) 4.0))) (assert (<= (ite (> (+ (* (- 3) y) (* 3 x)) (- 1)) (* (- 3) y) (+ (* (- 3) y) (* (- 2) y))) 0)) (assert (< (* (- 1) x) (- 4))) (assert (> (+ (* (- 2) y) (* 0 y)) 0)) (assert (or (>= (+ (* 3.0 r) (* (- 1.0) s)) (- 5.0)) (= (+ (* (- 2.0) s) (* (- 1.0) r)) 0.0))) (assert (or (= (* (- 1) x) 5) (> (* 0.0 r) (- 1.0)))) (assert (<= (* 3 y) 4)) (check-sat)
+result=-1 conflicts=1 steps=589 instances=0 asts=310
+== random-67 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (> (* (- 3) x) 5)) (assert (or (>= (+ (* (- 3.0) r) (* 2.0 r)) 5.0) (not (= (* 2.0 r) (* 2.0 r))))) (assert (> (* 3 x) 4)) (assert (>= (* (- 2.0) s) 4.0)) (assert (<= (ite (> (+ (* 3.0 s) (* (- 1.0) r)) (- 1.0)) (+ (* 3.0 r) (* 0.0 r)) (* (- 1.0) s)) 2.0)) (assert (<= (ite (> s 4.0) (* 2.0 s) (+ (* 2.0 r) (* 0.0 s))) 1.0)) (assert (= (+ (* 3 y) (* 0 y)) (- 5))) (assert (or (<= (ite (> (* (- 1) x) 3) (* (- 1) x) (+ (* 0 y) (* (- 3) x))) (- 3)) (> (+ (* (- 1) x) (* (- 3) x)) 5))) (assert (>= (+ (* (- 2.0) r) (* 0.0 r)) (- 1.0))) (assert (<= (ite (> (* (- 2.0) s) 4.0) (* 2.0 r) r) 4.0)) (assert (not (= (* 2.0 r) (* (- 3.0) r)))) (assert (or (<= (ite (> (+ (* (- 1) x) (* (- 2) x)) (- 1)) (+ (* 2 x) (* (- 3) x)) y) (- 3)) (<= (+ (* (- 2.0) r) (* (- 3.0) s)) (- 3.0)))) (check-sat)
+result=-1 conflicts=0 steps=93 instances=0 asts=308
+== random-68 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (<= (ite (> (* 0 y) 1) (* (- 3) y) (+ (* (- 3) x) (* 2 x))) 4) (<= (ite (> (+ (* (- 3.0) r) (* (- 1.0) r)) 4.0) (+ (* (- 1.0) s) (* (- 1.0) s)) (+ (* 3.0 r) (* (- 2.0) r))) 1.0))) (assert (< (* (- 1.0) s) (- 3.0))) (assert (> (* 2 x) 2)) (assert (or (not (= (* 0 y) (* 2 y))) (< (* 0 y) 4))) (assert (>= (* 0.0 s) (- 3.0))) (check-sat)
+result=1 conflicts=0 steps=233 instances=0 asts=255
+const s = 4.0#46
+const x = 2#32
+modeled: steps=234 asts=255
+== random-69 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (< (+ (* 0.0 r) s) 2.0)) (assert (> (+ (* 3.0 r) (* (- 3.0) s)) (- 3.0))) (assert (< (+ (* 0.0 s) (* (- 2.0) r)) 5.0)) (assert (= (+ (* (- 2) y) (* (- 1) x)) 3)) (assert (> (+ (* (- 1.0) s) (* (- 3.0) s)) 2.0)) (assert (> (+ r (* 2.0 r)) (- 5.0))) (assert (< (+ y (* (- 3) x)) 2)) (assert (< (+ (* 0.0 s) (* 2.0 s)) (- 2.0))) (check-sat)
+result=1 conflicts=0 steps=370 instances=0 asts=268
+const r = 0.0#22
+const s = (/ -3.0 2.0)#107
+const y = -2#77
+const x = 1#45
+modeled: steps=371 asts=280
+== random-70 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (> (* (- 2) y) (- 3))) (assert (< (* (- 1.0) s) 5.0)) (assert (not (= (+ (* (- 3.0) r) (* (- 2.0) r)) (+ (* 0.0 r) r)))) (assert (>= (* 0 y) 1)) (assert (= (+ (* (- 3) x) (* (- 3) y)) 2)) (assert (<= (ite (> (+ (* 3 y) (* 3 x)) (- 5)) (+ (* (- 1) x) (* 2 y)) (* 2 y)) 5)) (assert (= (+ (* (- 1.0) s) (* 3.0 s)) (- 2.0))) (assert (or (> (* 3 x) 0) (<= (ite (> (+ (* (- 3.0) s) (* (- 2.0) s)) 0.0) (+ (* 2.0 r) (* (- 2.0) r)) (+ (* (- 2.0) r) (* (- 2.0) r))) 2.0))) (assert (or (< (* (- 3) y) 3) (>= (* 3 y) 2))) (assert (or (<= (+ (* (- 1.0) r) (* 0.0 s)) 2.0) (>= (+ (* (- 3) y) (* 0 x)) (- 4)))) (assert (not (= (+ (* (- 3.0) s) (* (- 1.0) r)) (+ (* 2.0 r) (* 2.0 r))))) (assert (>= (+ (* 2.0 r) (* (- 1.0) r)) 3.0)) (assert (or (>= (* (- 3) y) (- 3)) (= (+ (* 2.0 s) s) 1.0))) (check-sat)
+result=-1 conflicts=0 steps=45 instances=0 asts=294
+== random-71 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (not (= (+ (* (- 1) y) (* (- 1) x)) (+ (* 3 x) (* 2 y))))) (assert (not (= (* 3 x) (* (- 2) y)))) (assert (<= (* (- 2.0) r) 1.0)) (assert (or (> (* 0.0 r) (- 5.0)) (<= (ite (> y 1) (+ (* 3 y) (* (- 3) y)) (* (- 2) y)) 4))) (assert (or (<= (* 2 x) 1) (not (= (* (- 1) x) (* (- 2) y))))) (assert (<= y 0)) (assert (or (> (* (- 1.0) r) 0.0) (<= (ite (> x (- 5)) (* (- 3) x) (+ (* (- 1) x) x)) (- 4)))) (assert (>= (* (- 1.0) r) (- 4.0))) (check-sat)
+result=1 conflicts=0 steps=537 instances=0 asts=286
+const y = -2#102
+const r = (/ -1.0 2.0)#95
+const x = 1#22
+modeled: steps=538 asts=298
+== random-72 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (= (+ (* 3.0 s) (* 2.0 r)) 1.0) (>= (+ (* (- 1.0) s) (* (- 2.0) r)) 4.0))) (assert (>= (+ (* 3 y) y) 5)) (assert (or (<= (ite (> (* 0.0 r) 5.0) (* (- 1.0) s) (+ (* (- 2.0) r) (* (- 2.0) r))) (- 3.0)) (<= (ite (> (* (- 1.0) r) (- 5.0)) (+ s (* (- 3.0) r)) r) 1.0))) (assert (or (= r 2.0) (> (+ (* (- 3) x) (* 3 x)) 5))) (assert (<= (+ r (* 3.0 r)) (- 3.0))) (assert (>= (+ r (* 3.0 s)) 5.0)) (assert (< (+ (* 2.0 r) (* 3.0 s)) (- 5.0))) (assert (<= (+ (* (- 1) y) x) 1)) (assert (not (= (* (- 1.0) s) (* 2.0 r)))) (assert (= (* 3.0 s) (- 4.0))) (check-sat)
+result=-1 conflicts=0 steps=251 instances=0 asts=271
+== random-73 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (not (= (+ (* (- 2) y) (* 0 x)) (+ (* (- 2) y) (* (- 2) y)))) (< x (- 5)))) (assert (<= (* 0 y) (- 2))) (assert (or (>= (+ (* (- 2) x) (* 0 y)) (- 1)) (<= (ite (> (+ (* (- 1) x) (* 2 y)) 1) (* (- 3) y) (+ (* (- 1) y) x)) (- 5)))) (assert (> (+ (* 2.0 s) (* 3.0 s)) 5.0)) (assert (<= (* (- 3.0) r) 5.0)) (assert (< (+ (* (- 2.0) r) (* (- 1.0) r)) (- 1.0))) (assert (or (> (+ (* 0 y) (* (- 3) y)) 5) (<= (+ (* (- 1.0) r) (* (- 2.0) r)) 4.0))) (assert (= (+ (* 3 y) (* (- 3) x)) (- 4))) (check-sat)
+result=-1 conflicts=0 steps=29 instances=0 asts=261
+== random-74 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (> (+ (* 3 y) x) 5)) (assert (> y (- 5))) (assert (or (>= (* 3.0 s) (- 1.0)) (< (* 2 y) 5))) (assert (not (= (* (- 1) x) (+ (* (- 3) x) (* 0 y))))) (assert (<= (* (- 2.0) r) 0.0)) (check-sat)
+result=1 conflicts=0 steps=258 instances=0 asts=238
+const y = 1#41
+const r = 0.0#55
+const x = 3#22
+modeled: steps=259 asts=242
+== random-75 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (ite (> (* (- 2.0) r) (- 4.0)) (+ (* 3.0 s) (* 2.0 r)) (* (- 3.0) s)) 2.0)) (assert (or (not (= (* 0.0 s) (+ (* 0.0 r) (* (- 2.0) s)))) (not (= (+ (* (- 3.0) r) r) s)))) (assert (= (* (- 3.0) s) (- 4.0))) (assert (or (>= (+ y (* (- 3) y)) (- 1)) (>= (* 3.0 s) (- 1.0)))) (assert (<= (ite (> (+ (* 2.0 r) (* (- 3.0) s)) (- 3.0)) (* 0.0 s) (* 0.0 s)) 0.0)) (check-sat)
+result=1 conflicts=0 steps=212 instances=0 asts=242
+const r = 2.0#22
+const s = (/ 4.0 3.0)#85
+modeled: steps=213 asts=242
+== random-76 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (not (= (+ (* (- 1) y) x) (+ (* (- 2) y) (* (- 3) y))))) (assert (<= (+ (* (- 3.0) r) (* (- 3.0) r)) 4.0)) (assert (not (= (+ r (* 2.0 r)) (* (- 1.0) r)))) (assert (>= (+ (* (- 2) y) (* (- 3) y)) (- 2))) (assert (= (+ (* 2.0 r) (* (- 2.0) s)) (- 2.0))) (assert (< (+ (* 3.0 r) (* (- 3.0) s)) (- 3.0))) (assert (or (> x (- 3)) (>= y 0))) (assert (or (> (+ y (* 0 x)) (- 3)) (not (= (* 3 x) (+ y (* (- 2) y)))))) (assert (= (+ (* (- 1) y) x) 0)) (check-sat)
+result=-1 conflicts=1 steps=447 instances=0 asts=289
+== random-77 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (<= (ite (> (* (- 1) x) 3) (* 0 x) (+ (* (- 3) y) (* (- 2) x))) 1)) (assert (> (+ (* 3.0 s) (* 0.0 r)) 1.0)) (assert (< (* 2 x) 0)) (assert (not (= (* 2 y) (+ (* (- 2) x) (* 2 y))))) (check-sat)
+result=1 conflicts=0 steps=237 instances=0 asts=236
+const s = (/ 4.0 3.0)#64
+const x = -4#63
+modeled: steps=238 asts=242
+== random-78 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (> (+ y (* 3 y)) (- 2))) (assert (or (<= (+ (* (- 3.0) s) s) (- 2.0)) (<= (* (- 1) x) (- 2)))) (assert (< (+ r (* 3.0 s)) 3.0)) (assert (> (* (- 3) y) (- 5))) (assert (or (< (* (- 1) x) 5) (<= (ite (> x 1) (+ (* 2 x) (* (- 3) x)) (* (- 2) x)) (- 5)))) (check-sat)
+result=1 conflicts=0 steps=345 instances=0 asts=257
+const y = 0#96
+const s = 0.0#97
+const r = 0.0#97
+const x = 2#26
+modeled: steps=346 asts=259
+== random-79 ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (= r (- 5.0)) (= (+ (* (- 1) x) x) 2))) (assert (<= (ite (> (+ (* (- 3) x) (* 3 x)) 5) x (* 0 y)) 2)) (assert (or (< (+ (* 3.0 r) (* 0.0 s)) (- 4.0)) (> (+ (* (- 3.0) s) (* 0.0 r)) (- 2.0)))) (assert (< (* 3 x) 5)) (assert (or (<= (+ y (* (- 3) y)) 2) (> (* 0.0 r) 4.0))) (assert (or (>= s 3.0) (<= r 0.0))) (assert (> x 4)) (check-sat)
+result=-1 conflicts=1 steps=201 instances=0 asts=247
+== Allocator-37.smt ==
+result=-1 conflicts=1 steps=4626 instances=14
+== Barriers-63.smt ==
+result=-1 conflicts=3 steps=10245 instances=155
+== CRDT_proof-49.smt ==
+result=-1 conflicts=1 steps=4087 instances=6
+== CigaretteSmokers_proof-30.smt ==
+result=-1 conflicts=1 steps=2221 instances=2
+== Dekker-146.smt ==
+result=-1 conflicts=7 steps=4380 instances=34
+== DieHard_proof-46.smt ==
+result=-1 conflicts=0 steps=2725 instances=0
+== DiningPhilosophers_proof-323.smt ==
+result=-1 conflicts=1 steps=1414 instances=1
+== ENABLED_INSTANCE_nullary_op_two_vars_test-1.smt ==
+result=1 conflicts=0 steps=159 instances=0
+== ENABLED_INSTANCE_op_with_args_test-1.smt ==
+result=1 conflicts=0 steps=159 instances=0
+== ENABLEDaxioms_test-96.smt ==
+result=-1 conflicts=0 steps=930 instances=0
+== EWD840_proof-49.smt ==
+result=-1 conflicts=1 steps=3261 instances=2
+== EWD998PCal_proof-475.smt ==
+result=-1 conflicts=0 steps=4886 instances=0
+== EmptySetEqCases_proofs-1004.smt ==
+result=-1 conflicts=1 steps=4377 instances=2
+== EmptySetEqTheorems_proofs-453.smt ==
+result=-1 conflicts=1 steps=2836 instances=3
+== Enabled_test-43.smt ==
+goal=unsat steps=26
+== FingerprintVariablesParameters_test-1.smt ==
+result=1 conflicts=0 steps=166 instances=0
+== FingerprintVariablesParameters_test-2.smt ==
+goal=sat steps=14
+== FiniteSetTheorems_proofs-238.smt ==
+result=-1 conflicts=1 steps=2817 instances=6
+== FiniteSetsExtTheorems_proofs-202.smt ==
+result=-1 conflicts=2 steps=3517 instances=11
+== FunctionTheorems_proofs-779.smt ==
+result=-1 conflicts=1 steps=2811 instances=4
+== GFX_test-729.smt ==
+result=-1 conflicts=1 steps=3692 instances=5
+== NaturalsInduction_proofs-228.smt ==
+result=-1 conflicts=4 steps=5227 instances=33
+== Quicksort-149.smt ==
+result=-1 conflicts=2 steps=8139 instances=21
+== Sets-174.smt ==
+result=-1 conflicts=1 steps=5239 instances=12
+== Sets-3.smt ==
+result=-1 conflicts=1 steps=2000 instances=5
+== SnapShot_test-1731.smt ==
+result=-1 conflicts=1 steps=3174 instances=10
+== SubrefLL_test-39.smt ==
+goal=unsat steps=142
+== Subref_test-22.smt ==
+goal=unsat steps=318
+== VoteProof-82.smt ==
+goal=unsat steps=1299
+== VoteProof-83.smt ==
+goal=unsat steps=286
+== WellFoundedInduction_proofs-226.smt ==
+result=1 conflicts=0 steps=441 instances=0
+== WellFoundedInduction_proofs-317.smt ==
+result=-1 conflicts=1 steps=3937 instances=2
+== bcastByz-314.smt ==
+goal=unsat steps=76
+== clean_proof-39.smt ==
+result=-1 conflicts=4 steps=5300 instances=49
+== hidedef_test-1.smt ==
+result=1 conflicts=0 steps=73 instances=0
+== nonexistent_test-1.smt ==
+goal=sat steps=6
+== quant_level_test-1.smt ==
+result=1 conflicts=0 steps=106 instances=0
+== recorddom_test-1.smt ==
+result=-1 conflicts=3 steps=2782 instances=10
+== recordeq_swap_stest-1.smt ==
+result=1 conflicts=0 steps=141 instances=0
+== setext_test-1.smt ==
+result=-1 conflicts=1 steps=883 instances=5
+== smt_false_test-1.smt ==
+goal=sat steps=6
+== sndord_bis_test-2.smt ==
+result=1 conflicts=0 steps=73 instances=0
+== sndord_test-2.smt ==
+result=1 conflicts=0 steps=109 instances=0
+== sndordthm_test-2.smt ==
+result=1 conflicts=0 steps=99 instances=0
+== test213-5.smt ==
+result=1 conflicts=0 steps=73 instances=0

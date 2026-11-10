@@ -7,6 +7,7 @@
 //! (design/prover.md 3.6), with `stop(StopReason::Heap)`.
 
 use std::cell::Cell;
+use std::rc::Rc;
 
 use prove_decide::Limits;
 
@@ -36,17 +37,19 @@ impl StopReason {
 }
 
 /// Holds a clone of the decision's `Limits`, which counts the same steps; nothing keeps it after
-/// `decide` returns.
+/// `decide` returns. A clone is the same limit, its stop reason shared, as the arithmetic theory's
+/// lp solver keeps one in its cancel closure where the TypeScript's reads the context's manager.
+#[derive(Clone)]
 pub struct ResourceLimit {
     limits: Limits,
-    stop_reason: Cell<Option<StopReason>>,
+    stop_reason: Rc<Cell<Option<StopReason>>>,
 }
 
 impl ResourceLimit {
     pub fn new(limits: &Limits) -> ResourceLimit {
         ResourceLimit {
             limits: limits.clone(),
-            stop_reason: Cell::new(None),
+            stop_reason: Rc::new(Cell::new(None)),
         }
     }
 
