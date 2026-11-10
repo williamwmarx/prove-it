@@ -1432,6 +1432,19 @@ fn is_referenced(expression: &Expression, name: &str) -> bool {
             .any(|child| is_referenced(child, name))
 }
 
+/// Whether the expression, or one within it, is written with the name, or a selection from it.
+fn is_named_in(expression: &Expression, name: &str) -> bool {
+    expression.reference().is_some_and(|written| {
+        &*written == name
+            || written
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with('!'))
+    }) || expression
+        .children()
+        .iter()
+        .any(|child| is_named_in(child, name))
+}
+
 /// Gives each reference to name in the expression the arity given.
 fn set_reference_arities(expression: &Expr, name: &str, arity: usize, tables: &Tables) {
     if matches!(
@@ -1584,17 +1597,23 @@ fn bind_let_recursive(
         return Ok((declared, locals));
     }
     // SANY reads the declaration where it appears, which a definition before it doesn't see.
-    let is_after_definition = recursive.iter().any(|declaration| {
+    let is_named_before = recursive.iter().any(|declaration| {
         definitions.iter().any(|definition| {
             is_before(
                 definition.location.position(),
                 declaration.location.position(),
-            )
+            ) && is_named_in(&definition.body, &declaration.name)
         })
     });
-    if unit.is_generated || is_after_definition {
+    if is_named_before {
         return Err(FrontError::NotYet(
-            "a LET whose RECURSIVE declarations follow a definition, or analyzed again".to_owned(),
+            "a LET definition that names an operator the LET declares RECURSIVE after it"
+                .to_owned(),
+        ));
+    }
+    if unit.is_generated {
+        return Err(FrontError::NotYet(
+            "a LET with RECURSIVE declarations analyzed again".to_owned(),
         ));
     }
     for declaration in recursive {
