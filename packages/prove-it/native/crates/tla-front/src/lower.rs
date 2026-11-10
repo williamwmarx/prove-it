@@ -1237,7 +1237,8 @@ impl<'a> Lowering<'a> {
 
     /// The liveness checker's atoms, formula and properties, as `lowerToIr` writes them: each atom
     /// in the checker's order, then the terms, which take a position past them for an atom the
-    /// checker asks nothing of. TLC's actions aren't split here, so ENABLED's are unknown.
+    /// checker asks nothing of. TLC's actions aren't split here, so ENABLED's are unknown until
+    /// `tla_trace::add_actions` splits them.
     fn write_liveness(
         &mut self,
         liveness: &Liveness,

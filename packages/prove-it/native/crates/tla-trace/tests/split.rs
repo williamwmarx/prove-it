@@ -3,7 +3,7 @@
 //! bound, in the same order. `check.ts` writes none where the next-state relation may print, draw
 //! or set a register anywhere, which the split labels as TLC does, so those IRs aren't compared.
 
-use tla_ir::{Index, Ir, ScopeBinding, Value};
+use tla_ir::{AtomKind, EnabledActions, Index, Ir, ScopeBinding, Value};
 use tla_trace::add_actions;
 
 // The golden IRs, or those of every corpus model where PROVE_IT_SPLIT_IRS names the directory
@@ -134,5 +134,70 @@ fn splits_the_next_state_relation_as_tlc_does() {
     for line in &unsupported {
         eprintln!("unsupported {line}");
     }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+// The actions of each ENABLED atom, as `check.ts` found them for the golden IR or the split finds
+// them for the IR without them.
+fn enabled_actions(ir: &Ir) -> Vec<EnabledActions> {
+    ir.model
+        .atoms
+        .iter()
+        .filter_map(|atom| match &atom.kind {
+            AtomKind::Enabled { actions } => Some(actions.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn finds_the_actions_enabled_splits_into_as_check_ts_does() {
+    let mut paths = Vec::new();
+    golden_irs(&ir_directory(), &mut paths);
+    let mut mismatches = Vec::new();
+    let (mut found, mut found_more, mut run) = (0, 0, 0);
+    for path in &paths {
+        let bytes = std::fs::read(path).expect("a golden IR");
+        let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+        let expected = enabled_actions(&ir);
+        if expected.is_empty() {
+            continue;
+        }
+        let mut stripped = ir.clone();
+        stripped.model.actions.clear();
+        stripped.model.is_labelled = false;
+        for atom in &mut stripped.model.atoms {
+            if let AtomKind::Enabled { actions } = &mut atom.kind {
+                *actions = EnabledActions::Unknown;
+            }
+        }
+        let Ok(split) = tla_values::on_nesting_stack(|| add_actions(&stripped)) else {
+            continue;
+        };
+        let actual = enabled_actions(&split);
+        // `check.ts` runs every ENABLED where any definition may have an effect, such as a
+        // POSTCONDITION reading TLC's registers; the split runs one where A or the next-state
+        // relation may, or under a VIEW or SYMMETRY.
+        for (actual, expected) in actual.iter().zip(&expected) {
+            match (actual, expected) {
+                (EnabledActions::Unknown, EnabledActions::Unknown) => {}
+                (EnabledActions::Unknown, _) => run += 1,
+                (_, EnabledActions::Unknown) => found_more += 1,
+                _ if actual == expected => found += 1,
+                _ => mismatches.push(format!(
+                    "{}: expected {expected:?}, actual {actual:?}",
+                    path.display()
+                )),
+            }
+        }
+        let is_labelled = actual
+            .iter()
+            .any(|actions| matches!(actions, EnabledActions::Some(_)));
+        assert_eq!(split.model.is_labelled, is_labelled, "{}", path.display());
+    }
+    eprintln!(
+        "{found} found as check.ts finds them, {found_more} that check.ts runs, {run} left to the run"
+    );
+    assert!(found > 0, "no ENABLED atom of TLC's actions");
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
