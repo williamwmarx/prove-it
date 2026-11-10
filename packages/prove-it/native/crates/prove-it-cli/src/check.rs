@@ -64,7 +64,10 @@ pub fn run(args: &[String]) -> i32 {
         return not_native("reading the version of a tla2tools.jar");
     }
     match launch.main_class.as_str() {
-        "tlc2.TLC" => check_specs(&launch.args, &launch.java, true),
+        "tlc2.TLC" => match &launch.java.unmodelled_property {
+            Some(property) => not_native(&format!("the system property {property}")),
+            None => check_specs(&launch.args, &launch.java, true),
+        },
         "tla2sany.xml.XMLExporter" => not_native("tla2sany.xml.XMLExporter"),
         other => {
             eprintln!(
@@ -680,7 +683,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // the end.
     let is_liveness_periodic = !args
         .first("-lncheck")
-        .is_some_and(|check| ["final", "seqfinal", "off"].contains(&check.to_lowercase().as_str()));
+        .is_some_and(|check| ["final", "seqfinal"].contains(&check.to_lowercase().as_str()));
     let settings = Settings {
         is_violation_reported: true,
         workers,

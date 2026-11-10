@@ -323,7 +323,16 @@ trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`
 `-noGenerateSpecTEBin`/`-noTEBin`). Every other option TLC reads (`-simulate`, `-difftrace`,
 `-coverage`, `-maxSetSize`, `-dfid`, `-fp N`, ...) is not native, as are the shapes where TLC
 throws (`-dump` last, an empty argument), an argument that isn't ASCII, and `Spec.cfg` named as
-the module on the `tlc2.TLC` form. `prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
+the module on the `tlc2.TLC` form. `-lncheck off` is not native either: TLC then checks no temporal property (`LiveCheck.java:238`).
+`seqfinal` is `final` with one worker for the liveness check (`LiveCheck.java:291`), so the two
+read alike.
+
+On the `tlc2.TLC` form a system property in TLC's namespaces (`-Dtlc2.…`, `-Dutil.…`,
+`-Dtla2sany.…`, `-Dtlc.…`) is not native, except the two that only reach the execution statistics
+TLC reports home and change nothing it prints: `tlc2.TLC.ide` (`TLC.java:1710`, `REPL.java:275`)
+and `util.ExecutionStatisticsCollector.id` (`ExecutionStatisticsCollector.java:74`, `205`).
+
+`prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
 form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.
 
 ## Handoff

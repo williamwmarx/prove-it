@@ -155,6 +155,23 @@ fn reads_the_command_line_as_tlc() {
             format!("prove-it: not native yet: {what}\n")
         );
     }
+    let property = run(
+        &directory,
+        &[
+            "-Dtlc2.tool.ModelChecker.BAQueue=true",
+            "tlc2.TLC",
+            "TCommit",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&property.stderr),
+        "prove-it: not native yet: the system property tlc2.tool.ModelChecker.BAQueue\n"
+    );
+    let silent = run(
+        &directory,
+        &["-Dtlc2.TLC.ide=vscode", "tlc2.TLC", "TCommit"],
+    );
+    assert_eq!(silent.status.code(), Some(0), "{}", stdout(&silent));
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
