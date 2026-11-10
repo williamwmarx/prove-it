@@ -12,12 +12,20 @@ pub enum SmtError {
     Invariant(String),
     /// `SmtParseError`: malformed SMT-LIB.
     Parse(String),
+    /// `NlsatUnsupportedError`: what nlsat does not implement, which nra_solver answers unknown on.
+    NlsatUnsupported(String),
+    /// `PddMemoryOutError`: the pdd manager ran out of nodes; Grobner gives up on the round.
+    PddMemoryOut,
 }
 
 impl fmt::Display for SmtError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SmtError::Canceled => formatter.write_str("the SMT solver was canceled"),
+            SmtError::NlsatUnsupported(reason) => {
+                write!(formatter, "nlsat does not implement {reason}")
+            }
+            SmtError::PddMemoryOut => formatter.write_str("the pdd manager ran out of nodes"),
             SmtError::Unsupported(message)
             | SmtError::Invariant(message)
             | SmtError::Parse(message) => formatter.write_str(message),

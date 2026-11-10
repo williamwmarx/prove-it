@@ -126,6 +126,28 @@ impl Int {
         }
     }
 
+    /// `(value & 1n) === 1n`, whatever the sign.
+    pub fn is_odd(&self) -> bool {
+        match &self.0 {
+            Repr::Small(value) => value & 1 == 1,
+            Repr::Big { magnitude, .. } => magnitude[0] & 1 == 1,
+        }
+    }
+
+    /// The number of low zero bits of the magnitude, 0 for zero.
+    pub fn trailing_zeros(&self) -> u64 {
+        match &self.0 {
+            Repr::Small(0) => 0,
+            Repr::Small(value) => u64::from(value.trailing_zeros()),
+            Repr::Big { magnitude, .. } => magnitude
+                .iter()
+                .position(|limb| *limb != 0)
+                .map_or(0, |index| {
+                    32 * index as u64 + u64::from(magnitude[index].trailing_zeros())
+                }),
+        }
+    }
+
     /// `value ** exponent`.
     pub fn pow(&self, exponent: u32) -> Int {
         let mut result = Int::one();

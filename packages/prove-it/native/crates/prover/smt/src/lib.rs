@@ -1,7 +1,9 @@
 //! A port of Z3 as tlapm runs it, `z3 -smt2 AUTO_CONFIG=false smt.MBQI=true`, on the SMT-LIB text
 //! tlapm writes: `src/prover/smt/solver` in TypeScript (design/prover.md, stages P3a to P3c).
 
+pub mod core;
 pub mod lp;
+pub mod nlsat;
 pub mod util;
 
 use prove_decide::{DecideError, Decision, Limits};

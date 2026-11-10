@@ -120,3 +120,20 @@ fn integers_parse_only_decimal_text() {
         Int::from(12)
     );
 }
+
+#[test]
+fn parity_and_trailing_zeros_read_the_magnitude() {
+    for (text, is_odd, zeros) in [
+        ("0", false, 0),
+        ("-3", true, 0),
+        ("-12", false, 2),
+        ("18446744073709551616", false, 64),
+        ("-18446744073709551617", true, 0),
+        ("-36893488147419103232", false, 65),
+    ] {
+        let value: Int = text.parse().unwrap();
+        assert_eq!(value.is_odd(), is_odd, "{text}");
+        assert_eq!(value.trailing_zeros(), zeros, "{text}");
+        assert_eq!(value.is_odd(), !(&value & &Int::one()).is_zero(), "{text}");
+    }
+}
