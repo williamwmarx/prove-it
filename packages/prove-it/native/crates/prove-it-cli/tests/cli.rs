@@ -5152,11 +5152,13 @@ fn words_a_function_or_an_operators_table_applied_outside_its_domain_as_tlc() {
     // An operator the configuration defines by a table, applied outside its rows or to the wrong
     // number of arguments (`OpRcdValue.eval`), and a function the walk keeps lazy applied outside
     // its domain (`Tool.getFcnContext`), which TLC prints built, or as written where it can't
-    // count its domain or its body fails, with that failure's frames left on the call stack.
-    // Each text is what TLC at d8fb231 prints, and with -tool.
+    // count its domain or its body fails, with that failure's frames left on the call stack; and
+    // a non-function the walk of the initial predicate, an action or ENABLED applies, which each
+    // words apart from one applied inside an argument. Each text is what TLC at d8fb231 prints,
+    // and with -tool.
     // Its name, definitions, configuration, and what TLC prints, and with -tool.
     type Case<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str);
-    let cases: [Case; 7] = [
+    let cases: [Case; 11] = [
         (
             "an operator's table applied outside its rows",
             "CONSTANT F(_)\nInit == x = 0\nNext == x' = F(x)",
@@ -5205,6 +5207,34 @@ fn words_a_function_or_an_operators_table_applied_outside_its_domain_as_tlc() {
             "INIT Init\nNEXT Next\n",
             "Error: In applying the function\n[k \\in Nat |-> <expression line 4, col 24 to line 4, col 28 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 4, col 9 to line 4, col 29 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 33 in M\n\n\n",
             "@!@!@STARTMSG 1000:1 @!@!@\nIn applying the function\n[k \\in Nat |-> <expression line 4, col 24 to line 4, col 28 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 4, col 9 to line 4, col 29 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 33 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a non-function the initial predicate applies",
+            "Init == 1[1] /\\ x = 0\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            "Error: In computing initial states, a non-function (an integer) was applied as a function.\nline 4, col 9 to line 4, col 12 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 21 in M\n1. Line 4, column 9 to line 4, column 12 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nIn computing initial states, a non-function (an integer) was applied as a function.\nline 4, col 9 to line 4, col 12 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 21 in M\n1. Line 4, column 9 to line 4, column 12 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a non-function an action applies",
+            "Init == x = 0\nNext == 1[1] /\\ UNCHANGED x",
+            "INIT Init\nNEXT Next\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, a non-function (an integer) was applied as a function.\nline 5, col 9 to line 5, col 12 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 27 in M\n1. Line 5, column 9 to line 5, column 12 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, a non-function (an integer) was applied as a function.\nline 5, col 9 to line 5, col 12 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 27 in M\n1. Line 5, column 9 to line 5, column 12 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a non-function ENABLED applies",
+            "Init == x = 0\nA == x' = x /\\ 1[1]\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 19 in M\n2. Line 5, column 6 to line 5, column 11 in M\n3. Line 5, column 16 to line 5, column 19 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, a non-function (an integer) was applied as a function.\nline 5, col 16 to line 5, col 19 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 19 in M\n2. Line 5, column 6 to line 5, column 11 in M\n3. Line 5, column 16 to line 5, column 19 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, a non-function (an integer) was applied as a function.\nline 5, col 16 to line 5, col 19 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "a non-function applied inside an argument",
+            "f == <<1>>\nInit == x = 0\nNext == f[2[1]] /\\ UNCHANGED x",
+            "INIT Init\nNEXT Next\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-function (an integer) was applied as a function.\nline 6, col 11 to line 6, col 14 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 30 in M\n1. Line 6, column 9 to line 6, column 15 in M\n2. Line 6, column 11 to line 6, column 14 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-function (an integer) was applied as a function.\nline 6, col 11 to line 6, col 14 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 30 in M\n1. Line 6, column 9 to line 6, column 15 in M\n2. Line 6, column 11 to line 6, column 14 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
         ),
     ];
     let directory = std::env::temp_dir().join(format!(

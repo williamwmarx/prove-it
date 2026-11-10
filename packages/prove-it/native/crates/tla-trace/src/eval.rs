@@ -373,6 +373,9 @@ pub struct Evaluator<'ir> {
     pub target: Option<Vec<Value>>,
     /// Whether a walk is ENABLED's, which TLC's `Tool#enabled` runs.
     pub(crate) is_enabling: bool,
+    /// The function application the walk tests, and whether it walks the initial predicate:
+    /// `getInitStates`, `getNextStates` and `enabled` word a non-function applied there apart.
+    pub(crate) walked_application: Option<(NodeId, bool)>,
     /// Where a replay of a failure is, as TLC's `CallStackTool` records it: each node the walks and
     /// the evaluation are in, outermost first, frozen once an evaluation fails.
     pub call_stack: Option<CallStack>,
@@ -659,6 +662,7 @@ impl<'ir> Evaluator<'ir> {
             printed: Vec::new(),
             target: None,
             is_enabling: false,
+            walked_application: None,
             call_stack: None,
             choices: Vec::new(),
             random: None,
@@ -2757,10 +2761,16 @@ impl<'ir> Evaluator<'ir> {
         let function_node = function;
         let function = self.evaluate(function, context)?;
         if let Some(kind) = non_function_kind(&function) {
+            let computing = match self.walked_application {
+                Some((walked, is_init)) if walked == self.resolved(node) => {
+                    format!("In computing {}, a", self.computing(is_init))
+                }
+                _ => "A".to_string(),
+            };
             return fail_runtime(
                 "applied a non-function",
                 format!(
-                    "A non-function ({kind}) was applied as a function.\n{}",
+                    "{computing} non-function ({kind}) was applied as a function.\n{}",
                     self.describe_range(node)
                 ),
             );
