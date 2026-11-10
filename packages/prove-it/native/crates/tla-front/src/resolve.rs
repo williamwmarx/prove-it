@@ -2683,7 +2683,10 @@ fn check_substitutions(
             parent,
         )))
     });
-    let resolve_substitute = |declaration: &Declaration, expression: &Expr| -> Result<()> {
+    let resolve_substitute = |declaration: &Declaration,
+                              expression: &Expr,
+                              is_explicit: bool|
+     -> Result<()> {
         if declaration.arity == 0 || !matches!(expression.kind, ExpressionKind::Identifier { .. }) {
             return resolve_expression(expression, &scope, unit);
         }
@@ -2701,9 +2704,12 @@ fn check_substitutions(
                 instance.location.column
             ));
             // Generator.checkSubstitutionForCorrectArity reports it at the substitute, which an
-            // implicit substitution places at the INSTANCE.
+            // implicit substitution places at the INSTANCE. An explicit one SANY's selector
+            // rejects first, at the substitute, so it reports the substitution in the builtins'
+            // module.
             if let Some(range) = &expression.location.range
                 && unit.tables.is_collecting.get()
+                && !is_explicit
             {
                 error.sany = SyntaxError::sany(vec![SanyError {
                     location: format_range(range),
@@ -2712,6 +2718,26 @@ fn check_substitutions(
                         declaration.name, declaration.arity
                     ),
                 }])
+                .sany;
+            } else if let Some(range) = &expression.location.range
+                && unit.tables.is_collecting.get()
+            {
+                error.sany = SyntaxError::sany(vec![
+                    SanyError {
+                        location: format_range(range),
+                        message: format!(
+                            "Expected arity {} but found operator of arity {arity}.",
+                            declaration.arity
+                        ),
+                    },
+                    SanyError {
+                        location: "In module --TLA+ BUILTINS--".to_owned(),
+                        message: format!(
+                            "An operator must be substituted for symbol '{}', and it must have arity {}.",
+                            declaration.name, declaration.arity
+                        ),
+                    },
+                ])
                 .sany;
             }
             return Err(error.into());
@@ -2731,7 +2757,7 @@ fn check_substitutions(
             continue;
         };
         let expression = &substitution.expression;
-        resolve_substitute(declaration, expression)?;
+        resolve_substitute(declaration, expression, true)?;
         if !substitutions.contains_key(name) {
             substitutions.insert(name.clone(), expression.clone());
         } else if let Some(range) = &expression.location.range {
@@ -2761,7 +2787,7 @@ fn check_substitutions(
             },
             instance.location.clone(),
         ));
-        resolve_substitute(declaration, &expression)?;
+        resolve_substitute(declaration, &expression, false)?;
         substitutions.insert(declaration.name.clone(), expression);
     }
     for declaration in implicit
