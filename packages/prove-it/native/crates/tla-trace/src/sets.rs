@@ -376,12 +376,27 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
             }
             Ok(false)
         }
-        // An untyped model value is in no interval or lazy set: TLC's `member` of each hands it
-        // to `ModelValue.modelValueMember`, which says false.
-        Value::Interval(..) | Value::Lazy(_) if matches!(value, Value::Model(model) if model.model_type() == 0) => {
+        // An untyped model value is in no interval: `IntervalValue.member` says false.
+        Value::Interval(..) if matches!(value, Value::Model(model) if model.model_type() == 0) => {
             Ok(false)
         }
-        // A typed one fails there, for the sets whose `member` hands it to it.
+        // The sets the standard modules override and the sets of functions, records and tuples hand
+        // a model value to `ModelValue.modelValueMember`, which says false, unless it is typed.
+        Value::Lazy(lazy)
+            if matches!(value, Value::Model(model) if model.model_type() == 0)
+                && matches!(
+                    **lazy,
+                    Lazy::Nat
+                        | Lazy::Int
+                        | Lazy::Strings
+                        | Lazy::Seq(_)
+                        | Lazy::FunctionSet(..)
+                        | Lazy::RecordSet(..)
+                        | Lazy::Product(_)
+                ) =>
+        {
+            Ok(false)
+        }
         Value::Lazy(lazy)
             if matches!(value, Value::Model(_))
                 && matches!(
@@ -465,7 +480,16 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                         ),
                     );
                 };
-                if !equals(&Value::Set(Rc::new(function.domain.clone())), domain)? {
+                // `SetOfFcnsValue.member`: its domain equals the function's, or the interval a
+                // function is over equals its domain.
+                let is_domain = match (function.class.get(), function.interval) {
+                    (Class::Tuple, _) => {
+                        equals(&Value::Interval(1, function.range.len() as i32), domain)?
+                    }
+                    (_, Some((low, high))) => equals(&Value::Interval(low, high), domain)?,
+                    _ => equals(domain, &Value::Set(Rc::new(function.domain.clone())))?,
+                };
+                if !is_domain {
                     return Ok(false);
                 }
                 for element in &function.range {

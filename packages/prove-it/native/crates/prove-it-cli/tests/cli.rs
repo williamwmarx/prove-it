@@ -803,6 +803,33 @@ fn unites_and_compares_sets_and_functions_by_tlc_classes() {
 }
 
 #[test]
+fn compares_model_values_with_lazy_sets_as_tlc() {
+    for (model, assumption, expected) in [
+        // `SubsetValue.member` fails on any value it can't enumerate, an untyped model value too.
+        (
+            "m",
+            "m \\in SUBSET {1}",
+            "of module Lazy failed.\nAttempted to check if the non-enumerable value\nm\nis element of\n{{}, {1}}\n",
+        ),
+        // `UserValue.equals` compares, which puts any model value first, a typed one too.
+        ("A_b", "Nat = m", ")\nFALSE\n"),
+    ] {
+        let spec = format!(
+            "---- MODULE Lazy ----\nEXTENDS TLC, Naturals\nCONSTANT m\nVARIABLE x\nASSUME PrintT({assumption})\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front(
+            "model-lazy",
+            &spec,
+            &format!("CONSTANT m = {model}\nINIT Init\nNEXT Next\n"),
+            &[],
+        );
+        let text = stdout(&output);
+        assert!(text.contains(expected), "{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn fails_to_print_a_lazy_set_whose_expansion_fails() {
     // PrintT prints with `toStringUnchecked`, which fails where TLC can't expand a lazy set.
     for (set, error) in [

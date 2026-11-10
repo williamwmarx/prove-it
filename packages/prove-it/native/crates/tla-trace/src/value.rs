@@ -508,6 +508,8 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
                 typed_model_failure(left, right, false)
             }
         }
+        // `UserValue.compareTo` puts any model value first.
+        (Value::Lazy(lazy), Value::Model(_)) if lazy.is_overridden() => Ok(Ordering::Greater),
         (_, Value::Model(model)) => {
             if model.model_type() == 0 {
                 Ok(Ordering::Greater)
@@ -691,6 +693,8 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
             check_model_types(left, right, true)?;
             Ok(left_text.units == right_text.units)
         }
+        // `UserValue.equals` compares, which puts any model value first.
+        (Value::Lazy(lazy), Value::Model(_)) if lazy.is_overridden() => Ok(false),
         (Value::Model(model), _) | (_, Value::Model(model)) => {
             if model.model_type() == 0 {
                 Ok(false)
