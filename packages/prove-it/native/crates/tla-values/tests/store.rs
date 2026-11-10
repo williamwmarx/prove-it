@@ -526,21 +526,104 @@ fn builds_one_set_from_any_order_of_its_elements() {
     }
 }
 
+// TLC's SetEnumValue.member of a set it has normalized: ValueVec.search, a binary search with the
+// element's compareTo.
+fn search(store: &mut Store, element: Id, set: Id) -> Result<bool, Bail> {
+    let elements = store.set_elements(set).to_vec();
+    let (mut low, mut high) = (0, elements.len());
+    while low < high {
+        let middle = low + ((high - low) >> 1);
+        let comparison = store.compare(element, elements[middle])?;
+        if comparison == 0 {
+            return Ok(true);
+        }
+        if comparison < 0 {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    Ok(false)
+}
+
+// The store answers some memberships by id, without comparing: it must fail wherever TLC's search
+// fails, and find what it finds.
+#[test]
+fn fails_a_membership_wherever_tlcs_search_fails() {
+    let mut store = Store::new();
+    store.reset(
+        ["b", "a", "m1"]
+            .map(|text| text.encode_utf16().collect::<Vec<_>>())
+            .iter()
+            .map(Vec::as_slice),
+    );
+    let mut random = Random(0x2545f4914f6cdd1d);
+    let mut values: Vec<Id> = (0..if cfg!(miri) { 30 } else { 400 })
+        .map(|_| generate(&mut store, &mut random, 3))
+        .collect();
+    values.extend([EMPTY_TUPLE, EMPTY_SET]);
+    let mut sets: Vec<Id> = values
+        .iter()
+        .filter_map(|&value| store.set_of(&[value]).ok())
+        .collect();
+    for _ in 0..if cfg!(miri) { 30 } else { 2_000 } {
+        let length = random.next(30) as usize;
+        let elements: Vec<Id> = (0..length)
+            .map(|_| values[random.next(values.len() as u64) as usize])
+            .collect();
+        if let Ok(set) = store.set_of(&elements) {
+            sets.push(set);
+        }
+    }
+    let (mut failed, mut found) = (0, 0);
+    for &set in &sets {
+        let mut elements = store.set_elements(set).to_vec();
+        elements.extend((0..20).map(|_| values[random.next(values.len() as u64) as usize]));
+        for element in elements {
+            let member = store.is_member(element, set);
+            match search(&mut store, element, set) {
+                Err(_) => {
+                    failed += 1;
+                    assert!(member.is_err(), "{element} in {set}");
+                }
+                Ok(true) => {
+                    found += 1;
+                    assert_eq!(member, Ok(true), "{element} in {set}");
+                }
+                // TLC's equals of a set it hasn't normalized may still fail.
+                Ok(false) => assert!(member != Ok(true), "{element} in {set}"),
+            }
+        }
+    }
+    assert!(
+        failed > 1_000 && found > 500,
+        "{failed} failed, {found} found"
+    );
+}
+
 // A string ranked after the order is frozen, as ToString ranks one in a search, compares only
 // with itself; a reset orders all strings again.
 #[test]
 fn bails_on_ordering_a_string_ranked_after_the_order_is_frozen() {
     let mut store = Store::new();
     store.reset([&utf16("a")[..]]);
+    let a = str(&mut store, "a");
+    let set = store.set_of(&[a]).unwrap();
+    assert_eq!(store.is_member(a, set), Ok(true));
     store.freeze_string_order();
     assert!(!store.has_unordered_strings());
-    let a = str(&mut store, "a");
     store.get_string_rank(&utf16("12"));
     let twelve = str(&mut store, "12");
     assert!(store.has_unordered_strings());
     assert_eq!(store.compare(twelve, twelve), Ok(0));
     assert!(store.compare(a, twelve).is_err());
     assert!(store.set_of(&[a, twelve]).is_err());
+    // A string misses in a set of strings in any order.
+    assert_eq!(store.is_member(twelve, set), Ok(false));
+    let pair = store.tuple_of(&[twelve]);
+    let pairs = store.tuple_of(&[a]);
+    let pairs = store.set_of(&[pairs]).unwrap();
+    assert!(store.is_member(pair, pairs).is_err());
     store.reset([&utf16("a")[..]]);
     let (a, twelve) = (str(&mut store, "a"), str(&mut store, "12"));
     assert!(store.compare(a, twelve).is_ok());
