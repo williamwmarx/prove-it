@@ -66,6 +66,8 @@ export interface ModuleProofRecord {
   ls4: BackendRecord[];
 }
 
+export const getObligationCount = (record: ModuleProofRecord) => record.obligations.length;
+
 export const PROOFS_PATH = join(CONFORMANCE_DIRECTORY, "proofs.json");
 
 // The backend inputs themselves take hundreds of megabytes, so only their digests are committed.

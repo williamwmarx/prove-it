@@ -11,7 +11,12 @@ import { join } from "node:path";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption } from "./corpora";
 import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
-import { getModuleLoader, type ModuleProofRecord, readProofRecords } from "./proof-records";
+import {
+  getModuleLoader,
+  getObligationCount,
+  type ModuleProofRecord,
+  readProofRecords,
+} from "./proof-records";
 
 interface ModuleTime {
   wall: number;
@@ -55,7 +60,7 @@ const timeModule = async (record: ModuleProofRecord): Promise<ModuleTime | undef
 };
 
 const records = readProofRecords();
-const byModule = await runModuleWorkers(records, timeModule, 1);
+const byModule = await runModuleWorkers(records, getObligationCount, timeModule, 1);
 const timings = records.flatMap((record, index): Timing[] => {
   const time = byModule.get(index);
   if (time === undefined) return [];

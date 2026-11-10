@@ -4,10 +4,13 @@ import { TlaProverError } from "../errors";
 import { spawnWorker, type WorkerHandle } from "../worker";
 import type { DecideOptions, Decision } from "./verdict";
 
+// cancel is the worker's cell, which the pool sets when it stops: a native backend can't be
+// stopped by terminating its worker, but reads the cell as it runs.
 export interface DecideRequest {
   prover: string;
   text: string;
   timeLimitMs: number;
+  cancel?: Int32Array;
 }
 
 // A backend's decision, or the message of the TlaProverError it threw, which prove turns into a
@@ -37,6 +40,7 @@ export const createDecidePool = async (workerCount: number): Promise<DecidePool>
   const queue: PendingDecision[] = [];
   const running = new Map<number, PendingDecision>();
   const idle: number[] = [];
+  const cells: (Int32Array | undefined)[] = [];
   const state: { failure: { reason: unknown } | undefined } = { failure: undefined };
   const dispatch = () => {
     while (idle.length > 0 && queue.length > 0) {
@@ -47,7 +51,7 @@ export const createDecidePool = async (workerCount: number): Promise<DecidePool>
       const [decision] = queue.splice(earliest, 1);
       const index = idle.pop() ?? 0;
       running.set(index, decision);
-      workers[index].postMessage(decision.request);
+      workers[index].postMessage({ ...decision.request, cancel: cells[index] });
     }
   };
   const onResponse = (index: number, message: unknown) => {
@@ -64,6 +68,7 @@ export const createDecidePool = async (workerCount: number): Promise<DecidePool>
     state.failure = { reason };
     [...queue.splice(0), ...running.values()].forEach((decision) => decision.reject(reason));
     running.clear();
+    cells.forEach((cell) => cell && Atomics.store(cell, 0, 1));
     workers.forEach((worker) => worker.terminate());
   };
   workers.push(
@@ -78,6 +83,13 @@ export const createDecidePool = async (workerCount: number): Promise<DecidePool>
     )),
   );
   idle.push(...workers.keys());
+  cells.push(
+    ...workers.map(() =>
+      typeof SharedArrayBuffer === "undefined"
+        ? undefined
+        : new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+    ),
+  );
   return {
     decide: (prover, text, options, priority) =>
       new Promise((resolve, reject) => {
