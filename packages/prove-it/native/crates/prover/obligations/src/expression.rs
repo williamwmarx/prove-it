@@ -790,7 +790,43 @@ pub fn map_accumulate<State, Item, Output>(
     Ok((current, results))
 }
 
-type PrefixTable<State> = HashMap<*const HypNode, (Hyp, Rc<MappedPrefix<State>>)>;
+/// A prefix's children by the key hypothesis's pointer. The key is held weakly, as a `WeakMap`
+/// holds it: the `Weak` keeps the allocation, so the pointer cannot name another hypothesis while
+/// the entry exists, and an entry whose key has been dropped is pruned as the table grows.
+struct PrefixTable<State> {
+    entries: HashMap<*const HypNode, (Weak<HypNode>, Rc<MappedPrefix<State>>)>,
+    prune_at: usize,
+}
+
+const MINIMUM_PREFIX_PRUNE_SIZE: usize = 64;
+
+impl<State> PrefixTable<State> {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            prune_at: MINIMUM_PREFIX_PRUNE_SIZE,
+        }
+    }
+
+    fn get(&self, key: &Hyp) -> Option<Rc<MappedPrefix<State>>> {
+        self.entries
+            .get(&Rc::as_ptr(key))
+            .map(|entry| entry.1.clone())
+    }
+
+    fn insert(&mut self, key: &Hyp, prefix: Rc<MappedPrefix<State>>) {
+        if self.entries.len() >= self.prune_at {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "dropping the entries of dead keys observes no order"
+            )]
+            self.entries.retain(|_, entry| entry.0.strong_count() > 0);
+            self.prune_at = MINIMUM_PREFIX_PRUNE_SIZE.max(self.entries.len() * 2);
+        }
+        self.entries
+            .insert(Rc::as_ptr(key), (Rc::downgrade(key), prefix));
+    }
+}
 
 /// A mapped context prefix: the hypothesis its last key maps to, if any, and the state after it.
 struct MappedPrefix<State> {
@@ -799,8 +835,6 @@ struct MappedPrefix<State> {
     /// Weak, since the parent's `next` holds this prefix: the map owns its prefixes from the empty
     /// one down, so a parent outlives its children and dropping the map frees them all.
     parent: Option<Weak<MappedPrefix<State>>>,
-    /// Keyed by the key hypothesis's pointer. The key is kept alive beside the entry, so the
-    /// pointer cannot be reused while the entry exists, which a `WeakMap` gives the TypeScript.
     next: RefCell<PrefixTable<State>>,
 }
 
@@ -826,7 +860,7 @@ impl<State: Clone, Step: FnMut(&State, &Hyp, &Hyp) -> Result<(State, Option<Hyp>
                 state: initial,
                 hyp: None,
                 parent: None,
-                next: RefCell::new(HashMap::new()),
+                next: RefCell::new(PrefixTable::new()),
             }),
             step,
         }
@@ -837,11 +871,7 @@ impl<State: Clone, Step: FnMut(&State, &Hyp, &Hyp) -> Result<(State, Option<Hyp>
         let inputs = inputs.unwrap_or(keys);
         let mut prefix = self.empty.clone();
         for (index, key) in keys.iter().enumerate() {
-            let known = prefix
-                .next
-                .borrow()
-                .get(&Rc::as_ptr(key))
-                .map(|entry| entry.1.clone());
+            let known = prefix.next.borrow().get(key);
             if let Some(known) = known {
                 prefix = known;
                 continue;
@@ -851,12 +881,9 @@ impl<State: Clone, Step: FnMut(&State, &Hyp, &Hyp) -> Result<(State, Option<Hyp>
                 state,
                 hyp,
                 parent: Some(Rc::downgrade(&prefix)),
-                next: RefCell::new(HashMap::new()),
+                next: RefCell::new(PrefixTable::new()),
             });
-            prefix
-                .next
-                .borrow_mut()
-                .insert(Rc::as_ptr(key), (key.clone(), mapped.clone()));
+            prefix.next.borrow_mut().insert(key, mapped.clone());
             prefix = mapped;
         }
         let mut context = Vec::new();
@@ -1475,6 +1502,25 @@ mod tests {
         assert!(initial_watch.upgrade().is_none());
         assert_eq!(Rc::strong_count(&first), 1);
         assert_eq!(Rc::strong_count(&second), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn context_map_lets_go_of_entries_whose_key_is_dropped() -> Result<()> {
+        let mut map = ContextMap::new(Rc::new(0), |state: &Rc<usize>, _: &Hyp, _: &Hyp| {
+            Ok((Rc::new(**state + 1), None))
+        });
+        let watches = (0..200)
+            .map(|_| {
+                let key = get_fresh("x", Level::Constant, 0);
+                let mapped = map.map(std::slice::from_ref(&key), None)?;
+                Ok(Rc::downgrade(&mapped.state))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let kept = get_fresh("y", Level::Constant, 0);
+        map.map(std::slice::from_ref(&kept), None)?;
+        let alive = watches.iter().filter(|watch| watch.upgrade().is_some());
+        assert!(alive.count() < MINIMUM_PREFIX_PRUNE_SIZE);
         Ok(())
     }
 }
