@@ -1345,6 +1345,55 @@ fn declines_a_postcondition_or_alias_tlc_computes_as_it_starts() {
 }
 
 #[test]
+fn declines_an_alias_that_prints_as_it_fails() {
+    // TLC prints what the alias printed before the state whose alias fails, which the binary
+    // doesn't place.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLES x\nInit == x = 0\nNext == x' = x + 1\nAl == [x |-> x, z |-> IF x = 0 THEN TRUE ELSE PrintT(\"hello\") /\\ Assert(FALSE, \"boom\")]\nInv == x < 1\n====\n";
+    let (output, directory) = run_lowered(
+        "alias-prints",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Al\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not native yet: an ALIAS that prints"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn keeps_the_registers_as_tlc_rebuilds_a_violations_trace() {
+    // TLC's first rebuild walks neither the initial predicate of a trace of two states nor the
+    // step to the violating state, and no rebuild evaluates the constraints: only the search and
+    // the second rebuild, for the postcondition, set the register.
+    let post = "Post == PrintT(<<\"post\", TLCGet(1)>>)\n====\n";
+    let cases = [
+        (
+            "Init == /\\ TLCSet(1, TLCGet(1) + 1) /\\ x \\in {0, 1}\nNext == x' = x + 1\nInv == x < 2\n",
+            "",
+            "<<\"post\", 2>>",
+        ),
+        (
+            "Init == x = 0\nNext == x' = x + 1\nC == TLCSet(1, TLCGet(1) + 1)\nInv == x < 3\n",
+            "CONSTRAINT C\n",
+            "<<\"post\", 4>>",
+        ),
+    ];
+    for (definitions, constraint, printed) in cases {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME TLCSet(1, 0)\n{definitions}{post}"
+        );
+        let config =
+            format!("INIT Init\nNEXT Next\nINVARIANT Inv\n{constraint}POSTCONDITION Post\n");
+        let (output, directory) = run_lowered("registers", &spec, &config);
+        let text = stdout(&output);
+        assert!(text.contains(&format!("\n{printed}\n")), "{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn prints_what_the_expansion_printed_before_its_violation() {
     // TLC checks each successor as it finds it, so it prints what finding the violating one
     // printed before it reports the violation, as TLC 1.8 prints this spec's 1.

@@ -62,7 +62,19 @@ impl Rebuilder<'_> {
             evaluator.printed.clear();
             // TLC prints an alias that fails with its message as a field of the state
             // (`_ALIASEvalError`, `Tool.evalAlias`).
-            let value = match evaluator.evaluate(body, &context) {
+            let result = evaluator.evaluate(body, &context);
+            if !evaluator.printed.is_empty() {
+                return unsupported("that prints");
+            }
+            // TLC evaluates the alias again as it checks the postconditions, and as it prints the
+            // trace between its rebuilds: one that sets registers, or reads those the rebuilds
+            // set, isn't followed.
+            if (evaluator.register_reads, evaluator.register_writes) != (reads, writes)
+                && (writes > 0 || evaluator.register_writes != writes)
+            {
+                return unsupported("that uses registers the rebuild of the trace sets");
+            }
+            let value = match result {
                 Err(EvalError {
                     message: Some(message),
                     ..
@@ -91,14 +103,6 @@ impl Rebuilder<'_> {
                 }
                 value => run(value)?,
             };
-            if !evaluator.printed.is_empty() {
-                return unsupported("that prints");
-            }
-            if writes > 0
-                && (evaluator.register_reads, evaluator.register_writes) != (reads, writes)
-            {
-                return unsupported("that uses registers the rebuild of the trace sets");
-            }
             aliases.push(match &value {
                 Value::Function(function) if function.class.get() == Class::Record => {
                     let fields: Vec<_> = print_order(function, false)
