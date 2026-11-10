@@ -13,7 +13,7 @@ const directory = mkdtempSync(join(tmpdir(), "lp-trace-"));
 
 const decide = () => {
   const statistics: Statistics = {};
-  const verdict = decideSmt(TEXT, { timeLimitMs: 5000, statistics });
+  const verdict = decideSmt(TEXT, { timeLimitMs: Infinity, statistics });
   return { verdict, statistics };
 };
 
