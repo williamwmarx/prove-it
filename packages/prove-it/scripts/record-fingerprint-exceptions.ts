@@ -1,7 +1,7 @@
 // Records what TLC prints where it fails to fingerprint a state as it checks an invariant on an
 // initial state, for the cells the binary's test `fingerprint_exceptions` runs: memberships of
-// values in sets TLC tests by their own methods, and searches of a constant definition's sorted set
-// whose comparison fails. Each cell runs at -workers 1 and 4 and writes TLC's exit code and its
+// values in sets TLC tests by their own methods, searches of a constant definition's sorted set
+// whose comparison fails, and constant definitions TLC can't normalize at startup. Each cell runs at -workers 1 and 4 and writes TLC's exit code and its
 // output without the lines that differ from run to run, which the test drops from the binary's too.
 // Usage: TLA2TOOLS_JAR=path bun scripts/record-fingerprint-exceptions.ts
 // TLA2TOOLS_JAR is a classpath for java -cp: a tla2tools.jar, or a build's classes and libraries.
@@ -94,6 +94,24 @@ const comparisons: Cell[] = [
   config: "INIT Init\nNEXT Next\nINVARIANT Inv",
 }));
 
+// Constant definitions TLC can't normalize as it computes them at startup, which it evaluates
+// again where they are used.
+const startup: Cell[] = ["x = S", "x \\in {S}"].map((init) => ({
+  name: `S == {A_a, B_b}: ${init}`,
+  spec: [
+    "---- MODULE M ----",
+    "EXTENDS Naturals",
+    "CONSTANT A_a, B_b",
+    "VARIABLE x",
+    "S == {A_a, B_b}",
+    `Init == ${init}`,
+    "Next == x' = x",
+    "Inv == x # S",
+    "====",
+  ].join("\n"),
+  config: "CONSTANT A_a = A_a\nCONSTANT B_b = B_b\nINIT Init\nNEXT Next\nINVARIANT Inv",
+}));
+
 const record = (cell: Cell, workers: number) => {
   const directory = mkdtempSync(join(tmpdir(), "prove-it-fingerprint-"));
   writeFileSync(join(directory, "M.tla"), `${cell.spec}\n`);
@@ -125,7 +143,7 @@ const record = (cell: Cell, workers: number) => {
   return { exit: result.status, output: lines.join("\n").trimEnd() };
 };
 
-const blocks = [...memberships, ...comparisons].flatMap((cell) => [
+const blocks = [...memberships, ...comparisons, ...startup].flatMap((cell) => [
   `### ${cell.name}`,
   "--- spec",
   cell.spec,

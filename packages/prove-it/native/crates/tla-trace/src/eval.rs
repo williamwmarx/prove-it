@@ -1666,8 +1666,9 @@ impl<'ir> Evaluator<'ir> {
         let reads = self.reads;
         let printed = self.printed.len();
         // TLC computes a definition of constant level as it starts, with its plain `Tool`, whose
-        // values have no source (`processConstantDefns`). One that fails then it evaluates again
-        // where it is used.
+        // values have no source (`processConstantDefns`). One that fails, or that holds a set it
+        // can't normalize (`evalConstantDefn`'s `deepNormalize`), it evaluates again where it is
+        // used.
         if self.call_stack.is_some()
             && matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
             && self.is_precomputed(node)
@@ -1678,6 +1679,7 @@ impl<'ir> Evaluator<'ir> {
             if let Ok(value) = computed
                 && self.reads == reads
                 && self.printed.len() == printed
+                && !holds_unsorted(&value)
             {
                 note_sorted(&value);
                 self.cache.insert(key, value.clone());
@@ -4500,6 +4502,20 @@ fn bag_counts(bag: &Value) -> Evaluated<Vec<(Value, i32)>> {
             _ => fail("a bag whose count isn't an integer"),
         })
         .collect()
+}
+
+// Whether a value holds a set TLC can't normalize.
+fn holds_unsorted(value: &Value) -> bool {
+    match value {
+        Value::Unsorted(_) => true,
+        Value::Set(elements) => elements.iter().any(holds_unsorted),
+        Value::Function(function) => function
+            .domain
+            .iter()
+            .chain(&function.range)
+            .any(holds_unsorted),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
