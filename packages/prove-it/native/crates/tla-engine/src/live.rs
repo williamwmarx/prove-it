@@ -194,19 +194,38 @@ struct Run<'m, 'p, 'g> {
     start: usize,
     epochs: Vec<u64>,
     unassigned: Vec<Id>,
+    // A subscript's value on each state the helper evaluated it on, in the helper's store.
+    subscripts: Vec<Id>,
 }
 
 impl Run<'_, '_, '_> {
     fn set_current(&mut self, index: usize) {
-        let epoch = &mut self.epochs[index - self.start];
-        if *epoch == 0 {
-            *epoch = self.machine.next_epoch();
-        }
+        // A state past the run, the target of a step, is current under an epoch of its own.
+        let epoch = match self.epochs.get_mut(index.wrapping_sub(self.start)) {
+            Some(epoch) => {
+                if *epoch == 0 {
+                    *epoch = self.machine.next_epoch();
+                }
+                *epoch
+            }
+            None => self.machine.next_epoch(),
+        };
         let graph = self.graph;
         self.machine.set_current(
             &graph.states[index * graph.width..(index + 1) * graph.width],
-            *epoch,
+            epoch,
         );
+    }
+
+    fn subscript_value(&mut self, subscript: &Eval, index: usize) -> Outcome<Id> {
+        if self.subscripts[index] != UNASSIGNED {
+            return Ok(self.subscripts[index]);
+        }
+        self.set_current(index);
+        self.machine.set_next(&self.unassigned);
+        let value = subscript(self.machine)?;
+        self.subscripts[index] = value;
+        Ok(value)
     }
 
     fn state(&mut self, index: usize, eval: &Eval) -> u8 {
@@ -215,20 +234,16 @@ impl Run<'_, '_, '_> {
         answer(eval(self.machine))
     }
 
-    // An action on a step, false where the subscript's value, `values` of each state where it
-    // has one, is unchanged.
-    fn action(
-        &mut self,
-        action: &Eval,
-        values: Option<&[Option<Id>]>,
-        index: usize,
-        next: usize,
-    ) -> u8 {
-        if let Some(values) = values {
-            let (Some(after), Some(before)) = (values[next], values[index]) else {
-                return UNKNOWN;
-            };
-            match self.machine.store.equals(after, before) {
+    // An action on a step, false where the subscript's value is unchanged. Only the states asked
+    // about have their subscript evaluated, as on one thread, and an evaluation that fails leaves
+    // the step unknown on either.
+    fn action(&mut self, action: &Eval, subscript: Option<&Eval>, index: usize, next: usize) -> u8 {
+        if let Some(subscript) = subscript {
+            let unchanged = self.subscript_value(subscript, next).and_then(|after| {
+                let before = self.subscript_value(subscript, index)?;
+                self.machine.store.equals(after, before)
+            });
+            match unchanged {
                 Ok(true) => return 0,
                 Ok(false) => {}
                 Err(_) => return UNKNOWN,
@@ -292,6 +307,7 @@ fn on_helpers(
                             start,
                             epochs: vec![0; end - start],
                             unassigned: vec![UNASSIGNED; graph.width],
+                            subscripts: vec![UNASSIGNED; graph.count],
                         };
                         let mut answers = Vec::new();
                         for index in start..end {
@@ -425,17 +441,7 @@ pub fn answer_atoms(
                         .map(|table| &table.answers[..]);
                     let is_asked =
                         |index: usize| disabled.is_none_or(|answers| answers[index] != 0);
-                    // Each state's subscript value, found on this thread, which the helpers compare.
-                    let values: Option<Vec<Option<Id>>> = subscript.as_ref().map(|subscript| {
-                        (0..graph.count)
-                            .map(|index| {
-                                evaluator
-                                    .subscript_value(&mut values, subscript, index)
-                                    .ok()
-                            })
-                            .collect()
-                    });
-                    let values = values.as_deref();
+                    let subscript = subscript.as_ref();
                     let steps = on_helpers(
                         evaluator.machine,
                         helpers,
@@ -449,7 +455,7 @@ pub fn answer_atoms(
                             let end = graph.edge_offsets[index + 1] as usize;
                             for edge in start..end {
                                 answers.push(if is_asked(index) {
-                                    run.action(action, values, index, graph.edges[edge] as usize)
+                                    run.action(action, subscript, index, graph.edges[edge] as usize)
                                 } else {
                                     UNKNOWN
                                 });
@@ -464,7 +470,7 @@ pub fn answer_atoms(
                         |_| 1,
                         |run, index, answers| {
                             answers.push(if is_asked(index) {
-                                run.action(action, values, index, index)
+                                run.action(action, subscript, index, index)
                             } else {
                                 UNKNOWN
                             });
