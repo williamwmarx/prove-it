@@ -8,7 +8,7 @@ import {
 } from "./check";
 import { type ModelConfig, parseConfig } from "./config";
 import { loadWasmEngine } from "./engine/native";
-import { getEngineSetting } from "./engine/settings";
+import { getCheckLog, getEngineSetting } from "./engine/settings";
 import { createEnvironment } from "./environment";
 import { TlaEvaluationError } from "./errors";
 import { isImpure } from "./evaluate";
@@ -75,12 +75,44 @@ export type CoordinatorMessage =
 
 export const check = (options: CheckOptions): Promise<CheckResult> => checkParsed(options);
 
+// The options with the check written to PROVE_IT_CHECK_LOG, and each module it loads as it loads
+// it, where the configuration is text.
+const logCheck = (options: CheckOptions): CheckOptions => {
+  const append = getCheckLog();
+  if (!append || typeof options.config !== "string") return options;
+  const id = crypto.randomUUID();
+  append({
+    id,
+    source: options.source,
+    config: options.config,
+    seed: options.seed?.toString(),
+    livenessCheck: options.livenessCheck,
+    isTool: options.isTool === true,
+    isDumped: options.dump !== undefined,
+    isContinued: options.isContinued === true,
+    version: options.version,
+    caller: new Error().stack,
+  });
+  const loadModule = options.loadModule;
+  return loadModule
+    ? {
+        ...options,
+        loadModule: (name) => {
+          const text = loadModule(name);
+          if (text !== undefined) append({ id, module: name, source: text });
+          return text;
+        },
+      }
+    : options;
+};
+
 // Checks a spec as check does. The readings are those of a spec SANY accepted, which the check
 // reads its modules from.
 export const checkParsed = async (
-  options: CheckOptions,
+  unlogged: CheckOptions,
   readings?: ReadonlyMap<string, SanyReading>,
 ): Promise<CheckResult> => {
+  const options = logCheck(unlogged);
   await loadWasmEngine();
   const config =
     typeof options.config === "string"
