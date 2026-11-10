@@ -702,10 +702,24 @@ impl Compiler<'_> {
         if key == Some("config") {
             return self.compile_config();
         }
-        // A Java system property, which TLC's checker has none of but those its command line or
-        // TLCSet sets: the key itself.
+        // A Java system property (`System.getProperty` with the key as the default): the key
+        // itself for one nothing sets. The binary declines a command line that sets one the spec
+        // names, and the engine one the JVM sets, but for the separators it knows.
         if let Some(key) = key.filter(|key| key.starts_with(JAVA_PROPERTY_PREFIX)) {
-            let units: Vec<u16> = key.encode_utf16().collect();
+            let name = &key[JAVA_PROPERTY_PREFIX.len()..];
+            let value = match name {
+                "file.separator" => std::path::MAIN_SEPARATOR_STR,
+                "path.separator" if cfg!(windows) => ";",
+                "path.separator" => ":",
+                _ if JVM_PROPERTY_NAMESPACES
+                    .iter()
+                    .any(|namespace| name.starts_with(namespace)) =>
+                {
+                    return unsupported("TLCGet of a system property the JVM sets");
+                }
+                _ => key,
+            };
+            let units: Vec<u16> = value.encode_utf16().collect();
             return Ok(super::constant(self.store.str(&units)));
         }
         // The specification's record, which the IR holds as the interpreter computes it for TLC's.
@@ -1812,6 +1826,12 @@ const NAMED_REGISTER_PREFIX: &str = "s:";
 /// `System.getProperty` gives with the key as the default.
 const JAVA_PROPERTY_PREFIX: &str = "-D";
 
+/// Where the JVM and its libraries name the system properties they set themselves.
+const JVM_PROPERTY_NAMESPACES: [&str; 16] = [
+    "java.", "javax.", "jdk.", "sun.", "os.", "user.", "file.", "line.", "path.", "native.",
+    "stdout.", "stderr.", "awt.", "http.", "https.", "ftp.",
+];
+
 // Where TLC keeps a register's value: under a natural number, or under a name that starts with
 // "s:".
 enum RegisterKey {
@@ -1843,11 +1863,8 @@ fn get_register(machine: &mut Machine<'_>, key: Id) -> Outcome<Id> {
             .find(|&&(named, _)| named == name)
             .map(|&(_, value)| value),
         None if machine.store.kind_of(key) == KIND_STRING => {
-            if String::from_utf16_lossy(machine.store.text_of(key))
-                .starts_with(JAVA_PROPERTY_PREFIX)
-            {
-                return Ok(key);
-            }
+            // A key the spec computes may name a system property, which the search doesn't keep
+            // either.
             return Err(Bail("unsupported: TLCGet of a key the search doesn't keep"));
         }
         None => return Err(Bail("TLCGet of a key that isn't a natural number")),

@@ -634,6 +634,17 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return report_not_native(printer, &format!("the engine IR doesn't decode: {error}"));
         }
     };
+    // TLCGet("-Dname") reads a system property, which the engine takes for unset.
+    if let Some(name) = java
+        .properties
+        .iter()
+        .find(|name| ir.texts.iter().any(|text| **text == format!("-D{name}")))
+    {
+        return report_not_native(
+            printer,
+            &format!("TLCGet of the system property {name}, which the command line sets"),
+        );
+    }
     // TLC rejects a POSTCONDITION or an ALIAS it computed as it started (`Spec.getAlias`,
     // `getPostConditionSpecs`), which the binary doesn't report: it declines one that may be.
     let configured = ir.model.postconditions.iter().chain(&ir.model.alias);

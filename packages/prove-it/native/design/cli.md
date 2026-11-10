@@ -332,6 +332,12 @@ On the `tlc2.TLC` form a system property in TLC's namespaces (`-Dtlc2.…`, `-Du
 TLC reports home and change nothing it prints: `tlc2.TLC.ide` (`TLC.java:1710`, `REPL.java:275`)
 and `util.ExecutionStatisticsCollector.id` (`ExecutionStatisticsCollector.java:74`, `205`).
 
+`TLCGet("-Dname")` reads a system property with the key as the default
+(`TLCGetSet.java:485`). The engine answers the key for a name nothing sets and the platform's
+`file.separator` and `path.separator`, and declines any other name in the JVM's own namespaces
+(`java.`, `os.`, `user.`, ...) and a key the spec computes. The binary declines a command line
+that sets a property whose `-Dname` the model's strings hold, since the spec may read it.
+
 `prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
 form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.
 

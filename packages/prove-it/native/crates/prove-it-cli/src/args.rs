@@ -23,6 +23,8 @@ pub struct Java {
     pub is_174: bool,
     /// The first system property of TLC's that the binary doesn't model.
     pub unmodelled_property: Option<String>,
+    /// The names of the system properties the command line sets, which `TLCGet("-Dname")` reads.
+    pub properties: Vec<String>,
 }
 
 /// Where TLC's classes name their system properties.
@@ -46,6 +48,10 @@ pub fn get_java_launch(args: &[String]) -> Option<Launch> {
     while index < args.len() {
         let arg = &args[index];
         let rest = |from: usize| args.get(from..).unwrap_or_default().to_vec();
+        if let Some(property) = arg.strip_prefix("-D") {
+            let name = property.split_once('=').map_or(property, |(name, _)| name);
+            java.properties.push(name.into());
+        }
         if arg == "-cp" || arg == "-classpath" || arg == "--class-path" {
             index += 1;
             java.class_path = args.get(index).cloned();

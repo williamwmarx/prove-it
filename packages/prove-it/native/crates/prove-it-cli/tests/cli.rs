@@ -2731,3 +2731,46 @@ fn declines_a_substitute_with_effects_without_a_recorded_front() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// TLCGet("-Dname") reads a Java system property, the key itself where nothing sets it
+// (`System.getProperty(name, key)`): TLC at d8fb231 finds x = 1 with -Dfoo=bar and x = 0 without.
+#[test]
+fn reads_a_system_property_as_tlc_or_declines() {
+    let spec = "---- MODULE Property ----\nEXTENDS TLC\nVARIABLE x\nInit == x = IF TLCGet(\"-Dfoo\") = \"bar\" THEN 1 ELSE 0\nNext == x' = x\nInv == x = 0\nSeparator == TLCGet(\"-Dfile.separator\") = \"/\" \\/ TLCGet(\"-Dfile.separator\") = \"\\\\\"\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-property-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Property.tla"), spec).expect("the spec");
+    std::fs::write(
+        directory.join("Property.cfg"),
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nINVARIANT Separator\n",
+    )
+    .expect("the configuration");
+    let run_with = |property: &str| {
+        Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args([property, "tlc2.TLC", "-noTE", "Property"])
+            .current_dir(&directory)
+            .env_remove("PROVE_IT_FRONT")
+            .output()
+            .expect("the binary runs")
+    };
+    let unset = run_with("-Dother=bar");
+    let text = stdout(&unset);
+    assert_eq!(unset.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("Model checking completed. No error has been found."),
+        "{text}"
+    );
+    let set = run_with("-Dfoo=bar");
+    assert_eq!(set.status.code(), Some(1), "{}", stdout(&set));
+    assert!(
+        !stdout(&set).contains("Computing initial states"),
+        "{}",
+        stdout(&set)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&set.stderr),
+        "prove-it: not native yet: TLCGet of the system property foo, which the command line sets\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
