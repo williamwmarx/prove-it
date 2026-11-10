@@ -407,8 +407,9 @@ port keeps each one's semantics, including where sharing is observable:
   Jenkins hash (`hash.ts`), stored in Z3's open-addressing tables (`hashtable.ts`), whose slot
   order the model finder iterates. In Rust: one arena per check (`Vec<Node>`, `u32` ids), the same
   hash on `u32` with wrapping arithmetic, the same table with the same probe and growth. Reference
-  counting (`ref-vector.ts`, `expr-ref.ts`) becomes nothing: the arena lives for one check, as the
-  TS objects do.
+  counting (`ref-vector.ts`, `expr-ref.ts`) and id recycling are ported literally, `inc_ref`,
+  `dec_ref` and temporaries included, not dropped: recycled ids order Z3's sorts and the matcher
+  hashes small ids, so they steer the search (`native/design/smt-core.md` §2).
 - **Zenon:** hash-consed expressions whose equality is alpha-equivalence and whose hash ignores
   bound names, one store per run so that fresh names restart. In Rust: an arena per run with the
   same hash (`zenon/ocaml.ts`'s `Hashtbl.hash` port).
