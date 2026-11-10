@@ -267,6 +267,10 @@ fn on_helpers(
     }
     ends.resize(helpers.len(), count);
     let store = Arc::new(std::mem::take(&mut machine.store));
+    // The values of the definitions TLC computed once at startup, which may have drawn or printed:
+    // a helper reads them, as every evaluation after startup does, rather than computing them
+    // again with its own generator.
+    let onces = &machine.onces;
     let parts: Vec<Vec<u8>> = std::thread::scope(|scope| {
         let threads: Vec<_> = helpers
             .iter_mut()
@@ -280,6 +284,7 @@ fn on_helpers(
                         // What the helper cached in an earlier run may name values of the
                         // overlay it lays again, or ids the store has given since.
                         helper.forget_from(0);
+                        helper.onces.clone_from(onces);
                         helper.store.attach(store.clone());
                         let mut run = Run {
                             machine: helper,
