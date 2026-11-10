@@ -916,11 +916,17 @@ impl<'ir> Evaluator<'ir> {
         if stack.is_fingerprinted {
             return;
         }
+        let nested = element.and_then(|element| crate::sets::failing_sets(element, received));
         // The search of a sorted set fails in the element's `compareTo`, and in those of its parts
         // it compares, which have sources where the evaluation gave them: the set's, which a
-        // definition TLC computed as it started has none of, is outside them.
-        let compared: Vec<NodeId> = element
-            .map(|element| crate::sets::failing_search(element, received))
+        // definition TLC computed as it started has none of, is outside them. Where the failure
+        // passes through nested sets, the search is the innermost set's.
+        let (searched, searched_set) = match (&nested, element) {
+            (Some((_, inner_element, inner_set)), _) => (Some(inner_element), inner_set),
+            (None, element) => (element, received),
+        };
+        let compared: Vec<NodeId> = searched
+            .map(|searched| crate::sets::failing_search(searched, searched_set))
             .unwrap_or_default()
             .iter()
             .filter_map(|value| stack.source(value))
@@ -929,7 +935,7 @@ impl<'ir> Evaluator<'ir> {
         if source.is_none() && compared.is_empty() {
             return;
         }
-        let nested = element.and_then(|element| crate::sets::failing_sets(element, received));
+        let nested = nested.map(|(sets, _, _)| sets);
         // TLC searches a set enumeration it hasn't normalized, as one an evaluation just built,
         // element by element with `equals`, which fails otherwise than the search of a sorted one.
         // The evaluator searches so the sets it records as TLC holds them unnormalized.

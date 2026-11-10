@@ -1,7 +1,8 @@
 // Records what TLC prints where it fails to fingerprint a state as it checks an invariant on an
 // initial state, for the cells the binary's test `fingerprint_exceptions` runs: memberships of
 // values in sets TLC tests by their own methods, searches of a constant definition's sorted set
-// whose comparison fails, and constant definitions TLC can't normalize at startup. Each cell runs at -workers 1 and 4 and writes TLC's exit code and its
+// whose comparison fails, in it or in a set nested in it, and constant definitions TLC can't
+// normalize at startup. Each cell runs at -workers 1 and 4 and writes TLC's exit code and its
 // output without the lines that differ from run to run, which the test drops from the binary's too.
 // Usage: TLA2TOOLS_JAR=path bun scripts/record-fingerprint-exceptions.ts
 // TLA2TOOLS_JAR is a classpath for java -cp: a tla2tools.jar, or a build's classes and libraries.
@@ -112,6 +113,39 @@ const startup: Cell[] = ["x = S", "x \\in {S}"].map((init) => ({
   config: "CONSTANT A_a = A_a\nCONSTANT B_b = B_b\nINIT Init\nNEXT Next\nINVARIANT Inv",
 }));
 
+// Memberships whose failing comparison is in a set nested in the one tested, which TLC reports
+// with the sources of the values whose `compareTo` fails there.
+const nestedComparisons: Cell[] = [
+  "[a |-> [b |-> x]] \\in [a : S]",
+  "<<[b |-> x]>> \\in S \\X S",
+  "[a |-> [b |-> x]] \\in [a : SUBSET S]",
+  "{[b |-> x]} \\in SUBSET S",
+  "{{[b |-> x]}} \\in SUBSET SUBSET S",
+  "[k \\in {1} |-> [b |-> x]] \\in [{1} -> S]",
+  "<<[b |-> x]>> \\in Seq(S)",
+  "[a |-> <<[b |-> x]>>] \\in [a : S \\X S]",
+  "[a |-> [b |-> x]] \\in [a : S] \\cup {1}",
+  "[a |-> [b |-> x]] \\in {1} \\cup [a : S]",
+  "[a |-> [b |-> x]] \\in [a : S] \\cup [a : {2}]",
+  "[a |-> [b |-> x]] \\in UNION {[a : S]}",
+  "<<[b |-> x]>> \\in Seq(S) \\cup {1}",
+  "[a |-> x] \\in S \\cup {1}",
+  "x \\in SUBSET {1}",
+].map((membership) => ({
+  name: `S == {<<1>>, <<2>>}: ${membership}`,
+  spec: [
+    "---- MODULE M ----",
+    "EXTENDS Naturals, Sequences",
+    "VARIABLE x",
+    "S == {<<1>>, <<2>>}",
+    `Inv == ${membership}`,
+    "Init == x = 0",
+    "Next == x < 2 /\\ x' = x + 1",
+    "====",
+  ].join("\n"),
+  config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+}));
+
 const record = (cell: Cell, workers: number) => {
   const directory = mkdtempSync(join(tmpdir(), "prove-it-fingerprint-"));
   writeFileSync(join(directory, "M.tla"), `${cell.spec}\n`);
@@ -143,16 +177,18 @@ const record = (cell: Cell, workers: number) => {
   return { exit: result.status, output: lines.join("\n").trimEnd() };
 };
 
-const blocks = [...memberships, ...comparisons, ...startup].flatMap((cell) => [
-  `### ${cell.name}`,
-  "--- spec",
-  cell.spec,
-  "--- config",
-  cell.config,
-  ...[1, 4].flatMap((workers) => {
-    const recorded = record(cell, workers);
-    return [`--- workers ${workers} exit ${recorded.exit}`, recorded.output];
-  }),
-]);
+const blocks = [...memberships, ...comparisons, ...startup, ...nestedComparisons].flatMap(
+  (cell) => [
+    `### ${cell.name}`,
+    "--- spec",
+    cell.spec,
+    "--- config",
+    cell.config,
+    ...[1, 4].flatMap((workers) => {
+      const recorded = record(cell, workers);
+      return [`--- workers ${workers} exit ${recorded.exit}`, recorded.output];
+    }),
+  ],
+);
 writeFileSync(OUTPUT_PATH, `${blocks.join("\n")}\n### end\n`);
 console.log(`Wrote ${OUTPUT_PATH}`);

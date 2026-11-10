@@ -301,11 +301,13 @@ fn mistyped(value: &Value, set: &str) -> Evaluated<bool> {
 }
 
 /// The sets nested in `set` whose own membership tests a failing `is_member(value, set)` was in,
-/// outermost first: the values whose `member` TLC's failure passes through after `set`'s. `None`
-/// where the failure isn't followed to the set whose own test fails.
-pub fn failing_sets(value: &Value, set: &Value) -> Option<Vec<Value>> {
+/// outermost first: the values whose `member` TLC's failure passes through after `set`'s, and the
+/// element and the set of the test that fails itself. `None` where the failure isn't followed to
+/// the set whose own test fails.
+pub fn failing_sets(value: &Value, set: &Value) -> Option<(Vec<Value>, Value, Value)> {
+    let own = || Some((Vec::new(), value.clone(), set.clone()));
     let Value::Lazy(lazy) = set else {
-        return Some(Vec::new());
+        return own();
     };
     // `UnionValue.member` asks each set of the union in turn, and fails in the one that fails.
     if let Lazy::Union(sets) = &**lazy {
@@ -313,32 +315,40 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<Vec<Value>> {
             match is_member(value, inner) {
                 Ok(true) => return None,
                 Ok(false) => {}
-                Err(_) => {
-                    let mut sets = vec![inner.clone()];
-                    sets.extend(failing_sets(value, inner)?);
-                    return Some(sets);
-                }
+                Err(_) => return nested_failure(value, inner),
+            }
+        }
+        return None;
+    }
+    // `SetCupValue.member` asks its first set, then its second.
+    if let Lazy::Cup(first, second) = &**lazy {
+        for inner in [first, second] {
+            match is_member(value, inner) {
+                Ok(true) => return None,
+                Ok(false) => {}
+                Err(_) => return nested_failure(value, inner),
             }
         }
         return None;
     }
     // Each element a nested set tests, in the order `is_member` tests them.
-    let tested: Vec<(&Value, &Value)> = match (&**lazy, value) {
+    let tested: Vec<(Value, &Value)> = match (&**lazy, value) {
         (Lazy::FunctionSet(domain, range), Value::Function(function)) => {
             // `SetOfFcnsValue.member` compares its domain with the function's, which fails in the
             // domain's method, or for a function over an interval, a tuple's, in the interval's
             // (`fcn.intv.equals`), which has no source.
             if equals(&Value::Set(Rc::new(function.domain.clone())), domain).is_err() {
-                return Some(if function.interval.is_some() {
+                let sets = if function.interval.is_some() {
                     Vec::new()
                 } else {
                     vec![domain.clone()]
-                });
+                };
+                return Some((sets, value.clone(), set.clone()));
             }
             function
                 .range
                 .iter()
-                .map(|element| (element, range))
+                .map(|element| (element.clone(), range))
                 .collect()
         }
         (Lazy::RecordSet(fields, _), Value::Function(function)) => {
@@ -348,41 +358,57 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<Vec<Value>> {
                 .collect();
             // A function without the fields fails the set's own test: a value that isn't a record.
             let Some(positions) = positions else {
-                return Some(Vec::new());
+                return own();
             };
             positions
                 .into_iter()
                 .zip(fields)
-                .map(|(position, (_, set))| (&function.range[position], set))
+                .map(|(position, (_, set))| (function.range[position].clone(), set))
                 .collect()
         }
         (Lazy::Product(factors), _) => match as_tuple(value) {
-            Some(tuple) if tuple.len() == factors.len() => tuple.iter().zip(factors).collect(),
+            Some(tuple) if tuple.len() == factors.len() => {
+                tuple.iter().cloned().zip(factors).collect()
+            }
             _ => return None,
         },
         (Lazy::Seq(base), _) => as_tuple(value)?
             .iter()
-            .map(|element| (element, base))
+            .map(|element| (element.clone(), base))
+            .collect(),
+        // `SubsetValue.member` tests each element of an enumerable value in its base, and fails
+        // itself on another.
+        (Lazy::Subset(_), _) if !is_enumerable(value) => return own(),
+        (Lazy::Subset(base), _) => elements(value)
+            .ok()?
+            .iter()
+            .map(|element| (element.clone(), base))
             .collect(),
         // The failure is in the set's own test: a mistyped value.
         (
             Lazy::Nat | Lazy::Int | Lazy::Strings | Lazy::FunctionSet(..) | Lazy::RecordSet(..),
             _,
-        ) => return Some(Vec::new()),
+        ) => return own(),
         _ => return None,
     };
     for (element, nested) in tested {
-        match is_member(element, nested) {
+        match is_member(&element, nested) {
             Ok(true) => {}
             Ok(false) => return None,
-            Err(_) => {
-                let mut sets = vec![nested.clone()];
-                sets.extend(failing_sets(element, nested)?);
-                return Some(sets);
-            }
+            Err(_) => return nested_failure(&element, nested),
         }
     }
     None
+}
+
+// `failing_sets` of a nested set whose test of `value` fails, after the nested set.
+fn nested_failure(value: &Value, nested: &Value) -> Option<(Vec<Value>, Value, Value)> {
+    let (sets, element, set) = failing_sets(value, nested)?;
+    Some((
+        std::iter::once(nested.clone()).chain(sets).collect(),
+        element,
+        set,
+    ))
 }
 
 /// The values in whose `compareTo` TLC's binary search of a sorted set for `value` fails

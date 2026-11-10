@@ -91,7 +91,7 @@ fn directory(index: usize, cell: &Cell) -> PathBuf {
 #[test]
 fn fingerprint_exceptions() {
     let cells = parse(RECORDED);
-    assert_eq!(cells.len(), 78, "the recorded cells");
+    assert_eq!(cells.len(), 93, "the recorded cells");
     for (index, cell) in cells.iter().enumerate() {
         let directory = directory(index, cell);
         for (workers, exit, expected) in &cell.expected {

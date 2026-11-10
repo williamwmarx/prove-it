@@ -4110,4 +4110,810 @@ This was probably caused by an error in the spec or model.
 See the User Output or TLC Console for clues to what happened.
 The exception was a java.lang.RuntimeException
 : Attempted to compare the differently-typed model values B_b and A_a
+### S == {<<1>>, <<2>>}: [a |-> [b |-> x]] \in [a : S]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == [a |-> [b |-> x]] \in [a : S]
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 36 in M
+2. Line 5, column 30 to line 5, column 36 in M
+3. Line 5, column 15 to line 5, column 23 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 36 in M
+2. Line 5, column 30 to line 5, column 36 in M
+3. Line 5, column 15 to line 5, column 23 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: <<[b |-> x]>> \in S \X S
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == <<[b |-> x]>> \in S \X S
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 12
+Error: Invariant Inv is violated by the initial state:
+x = 0
+--- workers 4 exit 12
+Error: Invariant Inv is violated by the initial state:
+x = 0
+### S == {<<1>>, <<2>>}: [a |-> [b |-> x]] \in [a : SUBSET S]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == [a |-> [b |-> x]] \in [a : SUBSET S]
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to check if the non-enumerable value
+[b |-> 0]
+is element of
+{{}, {<<1>>}, {<<2>>}, {<<1>>, <<2>>}}
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 43 in M
+2. Line 5, column 30 to line 5, column 43 in M
+3. Line 5, column 35 to line 5, column 42 in M
+
+
+Reason:
+Attempted to check if the non-enumerable value
+[b |-> 0]
+is element of
+{{}, {<<1>>}, {<<2>>}, {<<1>>, <<2>>}}
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to check if the non-enumerable value
+[b |-> 0]
+is element of
+{{}, {<<1>>}, {<<2>>}, {<<1>>, <<2>>}}
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 43 in M
+2. Line 5, column 30 to line 5, column 43 in M
+3. Line 5, column 35 to line 5, column 42 in M
+
+
+Reason:
+Attempted to check if the non-enumerable value
+[b |-> 0]
+is element of
+{{}, {<<1>>}, {<<2>>}, {<<1>>, <<2>>}}
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: {[b |-> x]} \in SUBSET S
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == {[b |-> x]} \in SUBSET S
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 31 in M
+2. Line 5, column 24 to line 5, column 31 in M
+3. Line 5, column 9 to line 5, column 17 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 31 in M
+2. Line 5, column 24 to line 5, column 31 in M
+3. Line 5, column 9 to line 5, column 17 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: {{[b |-> x]}} \in SUBSET SUBSET S
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == {{[b |-> x]}} \in SUBSET SUBSET S
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 40 in M
+2. Line 5, column 26 to line 5, column 40 in M
+3. Line 5, column 33 to line 5, column 40 in M
+4. Line 5, column 10 to line 5, column 18 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 40 in M
+2. Line 5, column 26 to line 5, column 40 in M
+3. Line 5, column 33 to line 5, column 40 in M
+4. Line 5, column 10 to line 5, column 18 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: [k \in {1} |-> [b |-> x]] \in [{1} -> S]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == [k \in {1} |-> [b |-> x]] \in [{1} -> S]
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 47 in M
+2. Line 5, column 38 to line 5, column 47 in M
+3. Line 5, column 23 to line 5, column 31 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 47 in M
+2. Line 5, column 38 to line 5, column 47 in M
+3. Line 5, column 23 to line 5, column 31 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: <<[b |-> x]>> \in Seq(S)
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == <<[b |-> x]>> \in Seq(S)
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 31 in M
+2. Line 5, column 10 to line 5, column 18 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 31 in M
+2. Line 5, column 10 to line 5, column 18 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: [a |-> <<[b |-> x]>>] \in [a : S \X S]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == [a |-> <<[b |-> x]>>] \in [a : S \X S]
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 12
+Error: Invariant Inv is violated by the initial state:
+x = 0
+--- workers 4 exit 12
+Error: Invariant Inv is violated by the initial state:
+x = 0
+### S == {<<1>>, <<2>>}: [a |-> [b |-> x]] \in [a : S] \cup {1}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == [a |-> [b |-> x]] \in [a : S] \cup {1}
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to check equality of integer 1 with non-integer:
+[a |-> [b |-> 0]]
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 45 in M
+2. Line 5, column 30 to line 5, column 45 in M
+3. Line 5, column 43 to line 5, column 45 in M
+
+
+Reason:
+Attempted to check equality of integer 1 with non-integer:
+[a |-> [b |-> 0]]
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to check equality of integer 1 with non-integer:
+[a |-> [b |-> 0]]
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 45 in M
+2. Line 5, column 30 to line 5, column 45 in M
+3. Line 5, column 43 to line 5, column 45 in M
+
+
+Reason:
+Attempted to check equality of integer 1 with non-integer:
+[a |-> [b |-> 0]]
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: [a |-> [b |-> x]] \in {1} \cup [a : S]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == [a |-> [b |-> x]] \in {1} \cup [a : S]
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to check equality of integer 1 with non-integer:
+[a |-> [b |-> 0]]
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 45 in M
+2. Line 5, column 30 to line 5, column 45 in M
+3. Line 5, column 30 to line 5, column 32 in M
+
+
+Reason:
+Attempted to check equality of integer 1 with non-integer:
+[a |-> [b |-> 0]]
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to check equality of integer 1 with non-integer:
+[a |-> [b |-> 0]]
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 45 in M
+2. Line 5, column 30 to line 5, column 45 in M
+3. Line 5, column 30 to line 5, column 32 in M
+
+
+Reason:
+Attempted to check equality of integer 1 with non-integer:
+[a |-> [b |-> 0]]
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: [a |-> [b |-> x]] \in [a : S] \cup [a : {2}]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == [a |-> [b |-> x]] \in [a : S] \cup [a : {2}]
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 51 in M
+2. Line 5, column 30 to line 5, column 51 in M
+3. Line 5, column 30 to line 5, column 36 in M
+4. Line 5, column 15 to line 5, column 23 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 51 in M
+2. Line 5, column 30 to line 5, column 51 in M
+3. Line 5, column 30 to line 5, column 36 in M
+4. Line 5, column 15 to line 5, column 23 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: [a |-> [b |-> x]] \in UNION {[a : S]}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == [a |-> [b |-> x]] \in UNION {[a : S]}
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 44 in M
+2. Line 5, column 30 to line 5, column 44 in M
+3. Line 5, column 37 to line 5, column 43 in M
+4. Line 5, column 15 to line 5, column 23 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 44 in M
+2. Line 5, column 30 to line 5, column 44 in M
+3. Line 5, column 37 to line 5, column 43 in M
+4. Line 5, column 15 to line 5, column 23 in M
+
+
+Reason:
+Attempted to compare record:
+[b |-> 0]
+with non-record
+<<2>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: <<[b |-> x]>> \in Seq(S) \cup {1}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == <<[b |-> x]>> \in Seq(S) \cup {1}
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to check equality of integer 1 with non-integer:
+<<[b |-> 0]>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 40 in M
+2. Line 5, column 26 to line 5, column 40 in M
+3. Line 5, column 38 to line 5, column 40 in M
+
+
+Reason:
+Attempted to check equality of integer 1 with non-integer:
+<<[b |-> 0]>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to check equality of integer 1 with non-integer:
+<<[b |-> 0]>>
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 40 in M
+2. Line 5, column 26 to line 5, column 40 in M
+3. Line 5, column 38 to line 5, column 40 in M
+
+
+Reason:
+Attempted to check equality of integer 1 with non-integer:
+<<[b |-> 0]>>
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: [a |-> x] \in S \cup {1}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == [a |-> x] \in S \cup {1}
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to compare integer 1 with non-integer:
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 31 in M
+2. Line 5, column 22 to line 5, column 31 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to compare integer 1 with non-integer:
+<<2>>
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 31 in M
+2. Line 5, column 22 to line 5, column 31 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### S == {<<1>>, <<2>>}: x \in SUBSET {1}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences
+VARIABLE x
+S == {<<1>>, <<2>>}
+Inv == x \in SUBSET {1}
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to check if the non-enumerable value
+0
+is element of
+{{}, {1}}
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 23 in M
+2. Line 5, column 14 to line 5, column 23 in M
+
+
+Reason:
+Attempted to check if the non-enumerable value
+0
+is element of
+{{}, {1}}
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to check if the non-enumerable value
+0
+is element of
+{{}, {1}}
+While working on the initial state:
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 13 in M
+1. Line 5, column 8 to line 5, column 23 in M
+2. Line 5, column 14 to line 5, column 23 in M
+
+
+Reason:
+Attempted to check if the non-enumerable value
+0
+is element of
+{{}, {1}}
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
 ### end
