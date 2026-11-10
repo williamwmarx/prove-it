@@ -2895,6 +2895,32 @@ fn searches_a_functions_keys_as_tlc_does_where_one_cant_compare() {
 }
 
 #[test]
+fn declines_a_search_that_prints_a_value_as_tlc_built_it() {
+    // TLC prints 1..2 as written, which the store forgets. The search, which never ends, stops
+    // once the print is known to differ, on one thread and on several.
+    let spec = "---- MODULE Misprinted ----\nEXTENDS TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ PrintT(1..2)\n====\n";
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-misprinted-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Misprinted.tla"), spec).expect("the spec");
+    std::fs::write(directory.join("Misprinted.cfg"), "INIT Init\nNEXT Next\n")
+        .expect("the configuration");
+    for workers in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noGenerateSpecTE", "-workers", workers, "Misprinted"])
+            .current_dir(&directory)
+            .output()
+            .expect("the binary runs");
+        assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "prove-it: not native yet: printing a value whose text depends on how TLC built it\n"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn prints_an_assumption_value_as_tlc_built_it() {
     // test-model/SetPredValue: the store forgets how TLC built the set PrintT prints, which the
     // trace evaluator prints as TLC does.
@@ -3567,6 +3593,94 @@ fn passes_the_elements_a_leading_field_test_rejects_where_tlc_does() {
         let text = stdout(&output);
         for line in expected {
             assert!(text.contains(line), "{clause}: {line}\n{text}");
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn unites_a_set_with_one_element_in_tlcs_order() {
+    // S \cup {x} and {x} \cup S where no comparison can fail, which the store answers by a
+    // binary search for x's place: an element before, between and after the set's, one already
+    // in it, the empty set, tuples of other lengths, typed and untyped model values, and strings
+    // in the order TLC ranks them. Each set is what TLC at d8fb231 prints.
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-union-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let module = "---- MODULE Union ----\n\
+         EXTENDS Integers, Sequences\n\
+         CONSTANTS M1, M2, S1, S2, T1\n\
+         VARIABLE y\n\
+         Base(c) == CASE c = 1 -> {[t |-> \"a\", v |-> 1], [t |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 2 -> {[t |-> \"a\", v |-> 1], [t |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 3 -> {[t |-> \"a\", v |-> 1], [t |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 4 -> {}\n\
+         \x20            [] c = 5 -> {<<1>>, <<1, 2, 3>>}\n\
+         \x20            [] c = 6 -> {S1}\n\
+         \x20            [] c = 7 -> {S1}\n\
+         \x20            [] c = 8 -> {M1, 2}\n\
+         \x20            [] c = 9 -> {1, 2}\n\
+         \x20            [] c = 10 -> {[t |-> \"a\"]}\n\
+         \x20            [] c = 11 -> {<<\"a\", 1>>, <<\"b\", 2>>}\n\
+         \x20            [] OTHER -> {\"a\", \"c\"}\n\
+         Elem(c) == CASE c = 1 -> [t |-> \"b\", v |-> 2]\n\
+         \x20            [] c = 2 -> [t |-> \"a\", v |-> 1]\n\
+         \x20            [] c = 3 -> [t |-> \"z\", v |-> 9]\n\
+         \x20            [] c = 4 -> 7\n\
+         \x20            [] c = 5 -> <<1, 2>>\n\
+         \x20            [] c = 6 -> S2\n\
+         \x20            [] c = 7 -> T1\n\
+         \x20            [] c = 8 -> M2\n\
+         \x20            [] c = 9 -> \"a\"\n\
+         \x20            [] c = 10 -> <<1>>\n\
+         \x20            [] c = 11 -> <<\"a\", 0>>\n\
+         \x20            [] OTHER -> \"b\"\n\
+         Init == y = Base(C) \\cup {Elem(C)}\n\
+         Next == UNCHANGED y\n\
+         Inv == y = {}\n\
+         Rev == {Elem(C)} \\cup Base(C) = {}\n\
+         ====\n\
+         ";
+    let cases: [(u32, &str); 9] = [
+        (
+            1,
+            "y = {[t |-> \"c\", v |-> 3], [t |-> \"a\", v |-> 1], [t |-> \"b\", v |-> 2]}\n",
+        ),
+        (2, "y = {[t |-> \"c\", v |-> 3], [t |-> \"a\", v |-> 1]}\n"),
+        (
+            3,
+            "y = {[t |-> \"c\", v |-> 3], [t |-> \"a\", v |-> 1], [t |-> \"z\", v |-> 9]}\n",
+        ),
+        (4, "y = {7}\n"),
+        (5, "y = {<<1>>, <<1, 2>>, <<1, 2, 3>>}\n"),
+        (6, "y = {s_one, s_two}\n"),
+        (8, "y = {M1, M2, 2}\n"),
+        (11, "y = {<<\"a\", 0>>, <<\"a\", 1>>, <<\"b\", 2>>}\n"),
+        (12, "y = {\"c\", \"a\", \"b\"}\n"),
+    ];
+    for (case, expected) in cases {
+        std::fs::write(
+            directory.join("Union.tla"),
+            module.replace("Init ==", &format!("C == {case}\nInit ==")),
+        )
+        .expect("a file");
+        for (invariant, line) in [
+            ("Inv", expected),
+            ("Rev", "Error: The invariant of Rev is equal to FALSE\n"),
+        ] {
+            std::fs::write(
+                directory.join("Union.cfg"),
+                format!("CONSTANTS M1 = M1 M2 = M2 S1 = s_one S2 = s_two T1 = t_one\nINIT Init\nNEXT Next\nINVARIANT {invariant}\n"),
+            )
+            .expect("a file");
+            let output = run(
+                &directory,
+                &["-nowarning", "-fp", "0", "-noGenerateSpecTE", "Union"],
+            );
+            let text = stdout(&output);
+            assert!(
+                text.contains(line),
+                "case {case}, {invariant}: {line}\n{text}"
+            );
         }
     }
     std::fs::remove_dir_all(directory).expect("removed");

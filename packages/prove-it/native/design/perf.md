@@ -505,6 +505,102 @@ Each change, measured with the suite against the build before it: median wall se
 interleaved runs on the 4-core cloud container, with the min–max range. Models not listed moved
 within their range.
 
+### The suite again at 3f66319
+
+`main` at 3f66319, the same container, `bench-suite.ts` with `native` (one worker) and
+`native-auto` (4 threads): median wall seconds of 5 interleaved runs, with the min–max range. TLC
+is the baseline's single run of each (d8fb231, the same container), not run again. Every run agrees
+with TLC. MCabs, GameOfLife, BufferedRandomAccessFile, StarkMutex and cf1s_folklore were run again
+on an idle machine, since a build overlapped their first runs.
+
+| Model | Baseline, 1 worker | Now, 1 worker (range) | Gain | Now, 4 workers (range) | Over TLC, 1 | Over TLC, auto (4) |
+|---|---:|---:|---:|---:|---:|---:|
+| MCExactInitialSync | 17.24 | 15.47 (15.15–16.20) | 1.11× | 6.85 (6.78–7.38) | 8.2× | 11.8× |
+| PaxosCommit | 27.23 | 18.48 (17.19–19.49) | 1.47× | 8.45 (7.87–8.79) | 6.0× | 4.2× |
+| MCMultiNode | 7.79 | 5.75 (5.56–5.99) | 1.35× | 2.65 (2.53–2.95) | 11.4× | 7.6× |
+| MCLamportMutex | 3.08 | 2.45 (2.31–2.91) | 1.26× | 1.28 (1.14–1.39) | 5.0× | 6.3× |
+| MCbtree | 0.90 | 0.83 (0.81–0.85) | 1.09× | 0.39 (0.37–0.39) | 34.5× | 26.4× |
+| Detlefs | 4.14 | 2.57 (2.41–2.82) | 1.61× | 1.15 (1.10–1.21) | 11.1× | 11.0× |
+| FastPaxos | 3.28 | 1.79 (1.62–1.85) | 1.83× | 0.84 (0.82–0.98) | 16.2× | 10.0× |
+| TLCSailfish1 | 11.27 | 3.47 (3.38–3.78) | 3.25× | 1.23 (1.19–1.30) | 10.5× | 8.9× |
+| MCabs | 11.24 | 10.18 (9.73–11.16) | 1.10× | 3.06 (2.90–3.20) | 4.3× | 4.6× |
+| GameOfLife | 1.22 | 1.25 (1.21–1.29) | 0.97× | 0.41 (0.39–0.44) | 7.7× | 9.0× |
+| BufferedRandomAccessFile | 1.64 | 1.64 (1.61–1.67) | 1.00× | 0.54 (0.50–0.56) | 25.4× | 21.6× |
+| StarkMutex, N = 4 | 9.49 | 5.41 (4.71–5.66) | 1.76× | 3.61 (3.30–4.23) | 19.3× | 9.0× |
+| cf1s_folklore | 16.69 | 16.07 (14.70–17.13) | 1.04× | 9.37 (8.79–10.48) | 10.3× | 5.3× |
+| SpanTreeRandom (seed 4) | 2.05 | 1.93 (1.91–2.01) | 1.06× | 1.99 (1.81–2.07) | 15.2× | 4.8× |
+| 2PCwithBTM | 0.017 | 0.011 (0.011–0.012) | 1.55× | 0.011 (0.011–0.011) | 60.0× | 55.5× |
+
+Over the 14 models past 2PCwithBTM, whose 10–17 ms is start-up, in geomean: one worker is 1.34×
+the baseline, 4 threads are 2.15× one thread, one worker is 11.2× TLC on one worker (9.2× at the
+baseline), and 4 threads are 8.6× TLC on every core (3.5×).
+
+### 16 cores at de3a9f8
+
+`main` at de3a9f8 on `depot-ubuntu-24.04-16` (AMD EPYC 9R45), the Benchmark workflow, medians of
+3 runs: one thread, then 16, with the CPU seconds at 16 and the peak RSS.
+
+| Model | 1 thread, s | 16 threads, s | Speedup | CPU at 16, s | RSS MB, 1 → 16 |
+|---|---:|---:|---:|---:|---|
+| MCExactInitialSync | 12.22 | 1.95 | 6.3× | 19.6 | 901 → 1,446 |
+| PaxosCommit | 14.93 | 2.61 | 5.7× | 36.0 | 719 → 2,660 |
+| MCMultiNode | 4.41 | 0.86 | 5.1× | 9.2 | 522 → 1,690 |
+| MCLamportMutex | 1.80 | 0.48 | 3.8× | 4.9 | 136 → 378 |
+| MCbtree | 0.66 | 0.17 | 3.9× | 1.16 | |
+| Detlefs | 1.73 | 0.44 | 3.9× | 2.86 | |
+| FastPaxos | 1.36 | 0.27 | 5.0× | 3.11 | |
+| TLCSailfish1 | 2.98 | 0.40 | 7.5× | 4.87 | |
+| MCabs | 9.12 | 1.14 | 8.0× | | |
+| GameOfLife | 1.31 | 0.16 | 8.2× | | |
+| BufferedRandomAccessFile | 1.53 | 0.17 | 9.0× | | |
+| StarkMutex, N = 4 | 3.29 | 2.13 | 1.5× | 7.5 | |
+| cf1s_folklore | 12.48 | 5.51 | 2.3× | 47.7 | 559 → 2,251 |
+| SpanTreeRandom | 1.69 | 1.66 | 1.0× | | |
+
+Geomean 4.3×. Against d7c8b5d, MCExactInitialSync rose from 3.5× to 6.3×, cf1s_folklore from 1.45×
+to 2.3× and StarkMutex from 1.08× to 1.5×. Detlefs (4.6× → 3.9×) and TLCSailfish1 (9.8× → 7.5×)
+fell because one thread got faster.
+
+Two limits show. PaxosCommit takes 36 CPU seconds at 16 threads for 14.9 s of one thread's work,
+and cf1s_folklore 47.7 for 12.5: the cores contend for memory. MCbtree, Detlefs and MCLamportMutex
+stop near 3.9× with CPU only 1.6–2.7× one thread's: a serial part limits them. An instrumentation
+build timed the parts at 4 threads on the 4-core container:
+
+| Model | Wall, ms | Threads expanding | Merge after the threads | Levels on one thread |
+|---|---:|---:|---:|---:|
+| MCbtree | 342 | 257 | 53 (15%) | 28 (13 levels, 7,581 states) |
+| Detlefs | 1,121 | 758 | 295 (26%) | 53 (33 levels, 15,623 states) |
+| MCLamportMutex | 1,259 | 1,069 | 157 (12%) | 26 (18 levels, 2,104 states) |
+| PaxosCommit | 8,468 | 7,867 | 553 (6.5%) | 15 |
+| MCExactInitialSync | 6,747 | 5,263 | 1,439 (21%) | 10 |
+
+The merge doesn't shrink with the threads, so at 16 it is most of what is left: on Detlefs about
+300 ms against about 190 ms of expansion. Its time on the search thread, profiled on Detlefs:
+`Store::import` 18%, the merge's own loop 18%, the kernel 25% (page faults and the page-table locks
+of the vectors and table that grow, the states' arrays and the state table), copying 5% and the
+table's growth 4%. Keeping freed memory in the allocator (`glibc.malloc.mmap_threshold`,
+`trim_threshold`) changed nothing, so the faults are memory that is new, which huge pages for the
+state table (PR 199) address.
+
+**A parallel merge, bounded.** Its parts at 4 threads, on the search thread:
+
+| Model | Kernel | Import | Merge loop | Fill and growth | Copying | Other |
+|---|---:|---:|---:|---:|---:|---:|
+| MCbtree | 31% | 7% | 9% | 8% | 4% | 40% |
+| Detlefs | 25% | 18% | 18% | 4% | 5% | ~30% |
+| MCLamportMutex | 25% | 23% | 14% | 7% | 11% | 21% |
+| MCExactInitialSync | 42% | 12% | 21% | 14% | 6% | 5% |
+
+Threads could take only the import, the loop and the copying: page faults on one address space
+serialize on its locks, as the table grown on threads showed. Projected to 16 threads (the serial
+part scaled from the 4-core split, the rest the 16-core wall less it), a merge on threads would
+take MCbtree from 170 to about 156 ms (1.09×), Detlefs 440 → 340 (1.29×), MCLamportMutex
+480 → 419 (1.15×) and MCExactInitialSync 1,950 → 1,487 (1.31×). Its first step, the states'
+arrays reserved for the level's new states before the merge, with or without `MADV_HUGEPAGE`, was
+within noise at 4 threads (MCExactInitialSync 6.81 / 6.76 / 7.47 s, Detlefs 1.13 / 1.15 / 1.16,
+MCbtree 0.370 / 0.377 / 0.368, MCLamportMutex 1.25 / 1.25 / 1.25). Not built: the store's import
+rewritten for at most 1.3×. Huge pages on the state table, which cut the kernel's part, come first.
+
 ### Membership by id (plan item 3)
 
 The store gives each value a shape (`tla-values/src/store/shapes.rs`): a class of values any two
@@ -520,6 +616,21 @@ no failure of TLC's that the store misses.
 | PaxosCommit | 35.45 (34.35–36.91) | 33.30 (32.76–33.53) | 1.06× |
 | MCabs | 18.34 (17.77–18.71) | 17.48 (16.92–17.64) | 1.05× |
 
+### Function application by id
+
+TLC finds a key in a function's domain by a binary search with `compareTo` (`FcnRcdValue.select`)
+or a scan with `equals`. Where the key's shape joins the class of the function's keys, neither can
+fail, so the store finds the key's id in a domain of up to 256 keys instead of comparing. GameOfLife
+applies a function over 36 tuple keys 128 times a state. Measured against main fb05e28, one worker:
+
+| Model | Before, s | After, s | Speedup |
+|---|---|---|---:|
+| GameOfLife | 1.50 (1.47–1.64) | 1.20 (1.13–1.31) | 1.25× |
+
+MCabs spends a similar share in `find_in_block`, but on functions of a few model-value keys, which
+the store already scans by id: its cost is the misses of reading their values, which this doesn't
+change.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -534,7 +645,23 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | A table from label to walks for PlusCal's `switch` (string labels compare by id) | Detlefs | 4.70 → 4.63 s, within noise | The `switch`'s self time is the walks inlined into it, not the 49-label scan. |
 | An index, per (quantifier, set id), of the elements whose leading `m.f = c` holds | PaxosCommit | 33.1–35.0 s → 36.0–37.0 s | `msgs` is a new set in nearly every state, so the index is used only by that state's 3 acceptor scans. |
 | Fuse a whole PlusCal step into one closure | MCbtree, MCExactInitialSync | Not built: estimated 5–10% | `walker::segments`' self time is spread over the per-op dispatch, 1–2% a line, with no hot spot. |
+| Cache membership in a set that reads nothing (a type's record sets) by the element | PaxosCommit, MCExactInitialSync | PaxosCommit 21.85 → 21.63 s; MCExactInitialSync 18.41 → 20.94 s, 190 MB more | `msgs \in SUBSET Message` falls from 14% to 1% of the profile but not in wall time, and the tables of elements cost the fast model. |
+| Search a long set's ids in a sorted copy instead of scanning them | TLCSailfish1 | 4.15, 4.41, 3.88 s → 4.16, 4.38, 3.83 s | Its sets are new in most states, so each copy is sorted for few tests. |
+| Read a key's metadata only where a short domain doesn't hold its id | MCabs | 12.22, 11.21 s → 11.68, 11.48 s | The misses are on the function's own words, which are read either way. |
 | Share one parse between SANY's report and the lowering | 2PCwithBTM, TCommit, TwoPhase, DieHard (`-workers 1`) | Not built: tokenizing and parsing a spec and its standard modules takes 0.26–0.66 ms of 7.9–16.7 ms runs, 3–5% at most | The report's resolution, level checks and linting stay, and the run goes to lowering (25–33%), the process (about 2 ms) and the engine's setup; such a run is already far below TLC's startup. |
+| Read the operands of arithmetic, comparisons and other binary and unary builtins in place (`predicate::Leaf`) rather than through their closures | BufferedRandomAccessFile, MCabs, MCMultiNode, PaxosCommit | 1.66 → 1.59 s, 10.29 → 10.27 s, 5.71 → 5.66 s, 17.9 → 18.6 s | An indirect call to a leaf costs a nanosecond or two; see below. |
+| Intern the integers to 65,535 at reset rather than to 4,096 | BufferedRandomAccessFile | 1.60 → 1.62 s; 2PCwithBTM's start-up 14 → 21 ms | `store.int`'s share is the small integers' own path, not the hash table. |
+| Intern a tuple in place | cf1s_folklore | Not built | `tuple_of` already hashes the stack in place and copies only a new tuple; 69% of `intern_block` is the first load of the intern table's slot, a cache miss. |
+
+**Evaluator dispatch, bounded.** An instrumentation build counted every evaluation of a compiled
+closure (`eval`, by the place that made it), at one worker: 256M in BufferedRandomAccessFile's
+1.60 s, 2.05G in MCabs' 10.2 s, 376M in MCMultiNode's 5.7 s and 861M in PaxosCommit's 18.5 s, 5 to
+21 ns each with all their work. Leaves that only return a value (a constant, a variable, a bound
+name, a value computed once) are 42%, 33%, 10% and 57% of them. Samples whose instruction lies in
+the calls themselves (the `Arc` deref, `?`, the `Fn` shims) are 8–16% of the profiles. A flat
+register form or fused super-nodes would remove at most that, about 1.1–1.15×, and the operands read
+in place above, its cheapest slice, measured 0–4%. The rest of the closures' time is the store's,
+the memo tables' and the state table's memory, which their own tracks address.
 
 Counts behind the quantifier index, from an instrumentation build that counted every quantifier,
 set filter or action-level `\E` whose body starts with `m.f = e` on the bound name:
@@ -589,6 +716,14 @@ action only in MCabs (`ccf/tla/consensus/abs.tla`). Every other `x' \in [S -> T]
 `*_proof.tla` or a TLC test model. The 18 `\E f \in [S -> T]` outside proofs are in Init, in
 invariants or ASSUMEs, or constrain the whole function. Build it only if axiomatic actions
 (`x' \in TypeSet /\ constraints`) turn out to matter beyond the suite.
+
+**Reach, measured.** An instrumentation build counted each element an action's `x' \in S`
+enumerates (S of more than one element, outside Init), over the whole-corpus differential (664
+models within its 20 s cap) and the suite. MCabs enumerates 137,472,000 functions for 5,819
+successors. No other model enumerates more than 13,824 (TLC's `coverage/M`, then
+`RandomSubsetNextTuples` with 8,186 and `Github648` with 1,512), all of them already fast. Built,
+it would take MCabs from 10.2 s toward start-up, and so the suite's geomean by about 1.3×, from one
+spec's idiom.
 
 Tests to write if it is built: an error at the first, a middle and the last block of the odometer,
 compared with TLC.
