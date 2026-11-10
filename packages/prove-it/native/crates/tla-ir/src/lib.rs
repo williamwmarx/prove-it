@@ -331,6 +331,10 @@ pub struct Model {
     /// The seed TLC seeds its generator with before it starts, and reseeds it with for each state
     /// it expands, xored with the state's fingerprint (`RandomEnumerableValues`).
     pub random_seed: u64,
+    /// The index in FP64.Polys of the polynomial TLC fingerprints with, which `-fp` picks. The
+    /// IR's encoding doesn't hold it: an IR decodes with 0, which JavaScript checks with, and the
+    /// command line sets it.
+    pub fingerprint_index: usize,
     pub atoms: Vec<Atom>,
     /// The fairness and the negated properties as the liveness checker joins them, or no terms.
     pub live_formula: Vec<LiveTerm>,

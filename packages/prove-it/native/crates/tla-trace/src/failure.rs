@@ -4,7 +4,7 @@
 //! TypeScript print them.
 
 use tla_ir::{AtomKind, NodeId, NodeKind, SourceRange, TextId};
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::{Id, Store};
 
 use crate::eval::{CallStack, Context, Demand, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
@@ -1206,7 +1206,7 @@ fn replay_expansion(
         return unsupported("the next-state relation doesn't split");
     };
     let width = ir.variables.len();
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(ir.model.fingerprint_index));
     let mut found: Vec<u64> = Vec::new();
     let mut replay = Replay::default();
     for (expression, context) in actions {

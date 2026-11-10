@@ -16,7 +16,9 @@ use crate::clock::Instant;
 
 use tla_ir::{Ir, LiveTerm, Model, PredicateForm};
 use tla_live::{Event, Liveness, Term, Verdict};
-use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
+use tla_values::fingerprint::{
+    Dense, Entries, Fingerprints, Overlaid, Parent, Polynomial, SharedFingerprints,
+};
 use tla_values::random::JavaRandom;
 use tla_values::store::{KIND_SET, Outcome, ShapeJoin, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
@@ -1040,6 +1042,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         reporter: &'r mut dyn Reporter,
         is_distinct_read: bool,
         is_pipelined: bool,
+        polynomial: &'static Polynomial,
     ) -> Search<'r, T, E> {
         let width = states.order().len().max(1);
         Search {
@@ -1061,7 +1064,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             expansion_epoch: 0,
             level_id: 0,
             next_level_id: 0,
-            fingerprints: Fingerprints::default(),
+            fingerprints: Fingerprints::with_entries(polynomial),
             parent: Parent::default(),
             canonicalizer: None,
             graph: None,
@@ -2008,7 +2011,13 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
         collisions: 0,
     };
     let mut quiet = Quiet;
-    let mut search = Search::new(candidates, &mut quiet, false, level.is_pipelined);
+    let mut search = Search::new(
+        candidates,
+        &mut quiet,
+        false,
+        level.is_pipelined,
+        worker.machine.program.polynomial(),
+    );
     search.level = level.number;
     search.graph = shared.recording.map(|recording| Graph {
         edge_offsets: vec![0],
@@ -2016,7 +2025,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
         reals: recording.is_real.then(Vec::new),
         ..Graph::default()
     });
-    search.fingerprints = std::mem::take(&mut worker.fingerprints);
+    std::mem::swap(&mut search.fingerprints, &mut worker.fingerprints);
     search.canonicalizer = worker.canonicalizer.take();
     let (mut claimed, mut successors) = (Vec::new(), Vec::new());
     let width = before.width;
@@ -2063,7 +2072,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
             }
         }
     }
-    worker.fingerprints = std::mem::take(&mut search.fingerprints);
+    std::mem::swap(&mut worker.fingerprints, &mut search.fingerprints);
     worker.canonicalizer = search.canonicalizer.take();
     let found = search.states;
     Expanded {
@@ -2834,7 +2843,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         is_verified: settings.is_fingerprint_verified,
         collisions: 0,
     };
-    let mut search = Search::new(states, reporter, is_distinct_read, is_pipelined);
+    let mut search = Search::new(
+        states,
+        reporter,
+        is_distinct_read,
+        is_pipelined,
+        program.polynomial(),
+    );
     search.is_continued = settings.is_continued;
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
@@ -3217,7 +3232,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                         });
                                     worker
                                 },
-                                fingerprints: Fingerprints::default(),
+                                fingerprints: Fingerprints::with_entries(program.polynomial()),
                                 canonicalizer: search
                                     .canonicalizer
                                     .as_ref()

@@ -1,0 +1,13 @@
+theory tlapm_2b7ffe
+const isReal :: c = PredicateLogic.c
+const isa_slas_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_bksl_diva :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_perc_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_peri_peri_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isInfinity :: c = PredicateLogic.c
+const isa_lbrk_rbrk_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+const isa_less_more_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+shows (\\<forall>a_CONSTANTunde_Sunde_a : (\\<exists>a_CONSTANTunde_xunde_a : (((a_CONSTANTunde_xunde_a) \\<notin> (a_CONSTANTunde_Sunde_a)))))
+  = ('PredicateLogic.Trueprop ('PredicateLogic.All (%a_CONSTANTunde_Sunde_a. ('PredicateLogic.Ex (%a_CONSTANTunde_xunde_a. (('SetTheory.notin a_CONSTANTunde_xunde_a) a_CONSTANTunde_Sunde_a))))))
+using assms false
+method symbol:( word:auto word:intro symbol:: word:inIrrefl symbol:)

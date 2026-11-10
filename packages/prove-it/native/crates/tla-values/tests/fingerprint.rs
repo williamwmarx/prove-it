@@ -2,9 +2,7 @@
 //! src/tlc/fingerprint.ts (DESIGN.md 10.3), and the engine's ways of fingerprinting a state against
 //! each other.
 
-use tla_values::fingerprint::{
-    Fingerprints, INITIAL, Overlaid, Parent, UNFINGERPRINTABLE, extend_byte, extend_int,
-};
+use tla_values::fingerprint::{Fingerprints, Overlaid, Parent, Polynomial, UNFINGERPRINTABLE};
 use tla_values::store::{Id, NAT, Store, TRUE};
 
 fn utf16(text: &str) -> Vec<u16> {
@@ -32,7 +30,7 @@ fn match_tlc_on_a_sample_of_each_kind() {
         tuple,
     ];
     let order: Vec<usize> = (0..state.len()).collect();
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     let expected = -2179341659381351120i64 as u64;
     assert_eq!(
         fingerprints.get_state(&store, &state, &order).unwrap(),
@@ -61,7 +59,7 @@ fn match_tlc_on_model_values_by_their_rank() {
     let model = store.model(&utf16("m1"));
     let seven = store.int(7).unwrap();
     let set = store.set_of(&[seven, model]).unwrap();
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     assert_eq!(
         fingerprints.get_state(&store, &[model], &[0]).unwrap(),
         5068397444161466873
@@ -82,7 +80,8 @@ fn match_tlc_on_a_million_states_of_five_integers() {
         .map(|value| store.int(value).unwrap())
         .collect();
     let order: Vec<usize> = (0..5).collect();
-    let mut fingerprints = Fingerprints::new();
+    let polynomial = Polynomial::get(0);
+    let mut fingerprints = Fingerprints::new(polynomial);
     let xor = |fingerprints: Vec<u64>| {
         fingerprints
             .into_iter()
@@ -97,15 +96,85 @@ fn match_tlc_on_a_million_states_of_five_integers() {
     // The states from scratch, extending FP64 byte by byte as TLC does.
     let bytes = (0..1_000_000i32)
         .map(|state| {
-            (1..=5).fold(INITIAL, |fingerprint, variable| {
-                extend_int(
-                    extend_byte(fingerprint, 1),
+            (1..=5).fold(polynomial.value(), |fingerprint, variable| {
+                polynomial.extend_int(
+                    polynomial.extend_byte(fingerprint, 1),
                     state.wrapping_mul(variable) & 1023,
                 )
             })
         })
         .collect();
     assert_eq!(xor(bytes), 8882444436892305134);
+}
+
+// TLC's polynomials, its fingerprint of a sample state and the xor of its fingerprints of the
+// million states of five integers above, with `FP64.Init(index)`, from the jar built at d8fb231.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn match_tlc_with_the_polynomial_fp_picks() {
+    let mut store = Store::new();
+    let int = |store: &mut Store, value: i64| store.int(value).unwrap();
+    let (one, two, three) = (int(&mut store, 1), int(&mut store, 2), int(&mut store, 3));
+    let (p, q) = (store.str(&utf16("p")), store.str(&utf16("q")));
+    let sample = [
+        int(&mut store, 7),
+        int(&mut store, -(1 << 31)),
+        store.str(&utf16("hello")),
+        TRUE,
+        store.set_of(&[three, one, two]).unwrap(),
+        store.tuple_of(&[p, q]),
+    ];
+    let sample_order: Vec<usize> = (0..sample.len()).collect();
+    let states: Vec<Id> = (0..1_000_000i64)
+        .flat_map(|state| (1..=5).map(move |variable| (state * variable) & 1023))
+        .map(|value| store.int(value).unwrap())
+        .collect();
+    let order: Vec<usize> = (0..5).collect();
+    for (index, value, state, xor) in [
+        (
+            0,
+            -7992595565342442794i64,
+            7997129281042526233i64,
+            8882444436892305134i64,
+        ),
+        (
+            1,
+            -2699332217222594175,
+            447837717691624263,
+            -2575118853582858345,
+        ),
+        (
+            10,
+            -4882326079550032221,
+            2336550034007579969,
+            4174933107436095217,
+        ),
+        (
+            130,
+            -7929249073132661339,
+            6467790060251973786,
+            -6048093437904763996,
+        ),
+    ] {
+        let polynomial = Polynomial::get(index);
+        assert_eq!(polynomial.value() as i64, value);
+        let mut fingerprints = Fingerprints::new(polynomial);
+        assert_eq!(
+            fingerprints
+                .get_state(&store, &sample, &sample_order)
+                .unwrap() as i64,
+            state
+        );
+        let fingerprints = fingerprints
+            .get_states(&store, &states, 5, &order, None)
+            .unwrap();
+        assert_eq!(
+            fingerprints
+                .into_iter()
+                .fold(0, |sum, fingerprint| sum ^ fingerprint) as i64,
+            xor
+        );
+    }
 }
 
 // A deterministic generator, so that a failure names its seed.
@@ -174,7 +243,7 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
         parents.push(parent);
     }
     let order = [3, 0, 5, 4, 1, 2];
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     let scratch: Vec<u64> = states
         .chunks_exact(width)
         .map(|row| fingerprints.get_state(&store, row, &order).unwrap())
@@ -192,14 +261,14 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
         scratch
     );
     assert_eq!(
-        Fingerprints::new()
+        Fingerprints::new(Polynomial::get(0))
             .get_states_reference(&store, &states, width, &order)
             .unwrap(),
         scratch
     );
     // As the search fingerprints a successor, from the parent being expanded, whether or not the
     // values that changed keep their lengths, on fingerprints that start out knowing no value.
-    let mut from_parents = Fingerprints::new();
+    let mut from_parents = Fingerprints::new(Polynomial::get(0));
     let mut parent = Parent::default();
     for (state, row) in states.chunks_exact(width).enumerate() {
         let Ok(index) = usize::try_from(parents[state]) else {
@@ -218,7 +287,7 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
     }
     // A tuple's keys are fingerprinted, not interned.
     let count = store.value_count();
-    let mut fresh = Fingerprints::new();
+    let mut fresh = Fingerprints::new(Polynomial::get(0));
     fresh.get_value(&store, values[13]).unwrap();
     assert_eq!(store.value_count(), count);
 }
@@ -226,7 +295,7 @@ fn are_the_same_from_a_parent_from_the_state_before_and_from_scratch() {
 #[test]
 fn forget_the_values_of_a_store_that_was_reset() {
     let mut store = Store::new();
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     let first = store.str(&utf16("first"));
     let before = fingerprints.get_value(&store, first).unwrap();
     store.reset(std::iter::empty::<&[u16]>());
@@ -235,7 +304,9 @@ fn forget_the_values_of_a_store_that_was_reset() {
     assert_ne!(fingerprints.get_value(&store, second).unwrap(), before);
     assert_eq!(
         fingerprints.get_value(&store, second).unwrap(),
-        Fingerprints::new().get_value(&store, second).unwrap()
+        Fingerprints::new(Polynomial::get(0))
+            .get_value(&store, second)
+            .unwrap()
     );
 }
 
@@ -246,12 +317,12 @@ fn are_the_same_from_a_parent_past_the_tables_for_tails() {
     let mut store = Store::new();
     let (one, two) = (store.int(1).unwrap(), store.int(2).unwrap());
     let order = [0, 1];
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     let mut parent = Parent::default();
     for length in 1..if cfg!(miri) { 20 } else { 700 } {
         let text = store.str(&utf16(&"x".repeat(length)));
         let (parent_row, row) = ([one, text], [two, text]);
-        let expected = Fingerprints::new()
+        let expected = Fingerprints::new(Polynomial::get(0))
             .get_state(&store, &parent_row, &order)
             .unwrap();
         fingerprints
@@ -261,7 +332,9 @@ fn are_the_same_from_a_parent_past_the_tables_for_tails() {
             fingerprints
                 .get_child(&store, &mut parent, &parent_row, &row, &order)
                 .unwrap(),
-            Fingerprints::new().get_state(&store, &row, &order).unwrap()
+            Fingerprints::new(Polynomial::get(0))
+                .get_state(&store, &row, &order)
+                .unwrap()
         );
     }
 }
@@ -273,13 +346,13 @@ fn absorb_what_an_overlay_computed_by_the_ids_its_values_were_imported_as() {
     let one = store.int(1).unwrap();
     let unseen = store.set_of(&[one]).unwrap();
     // The search fingerprints some of the store's values, and lends them to a thread's cache.
-    let mut search = Fingerprints::new();
+    let mut search = Fingerprints::new(Polynomial::get(0));
     search.get_value(&store, one).unwrap();
     let base = std::sync::Arc::new(store);
     let bound = base.value_count() as Id;
     let shared = search.share();
     let mut overlay = Store::overlay(base.clone());
-    let mut worker: Fingerprints<Overlaid> = Fingerprints::default();
+    let mut worker: Fingerprints<Overlaid> = Fingerprints::with_entries(Polynomial::get(0));
     worker.attach(&shared, bound);
     // The thread makes values the store doesn't hold, and fingerprints them and a value of the
     // store the search hadn't.
@@ -303,7 +376,11 @@ fn absorb_what_an_overlay_computed_by_the_ids_its_values_were_imported_as() {
     let mut imported = Vec::new();
     let ids = [made[2], made[0]].map(|id| store.import(&overlay, id, &mut imported));
     search.absorb(&worker, &imported);
-    let fresh = |id: Id| Fingerprints::new().get_value(&store, id).unwrap();
+    let fresh = |id: Id| {
+        Fingerprints::new(Polynomial::get(0))
+            .get_value(&store, id)
+            .unwrap()
+    };
     assert_eq!(search.get_value(&store, ids[0]).unwrap(), computed[2]);
     assert_eq!(search.get_value(&store, ids[1]).unwrap(), computed[0]);
     assert_eq!(search.get_value(&store, unseen).unwrap(), unseen_value);
@@ -322,7 +399,7 @@ fn refuse_a_value_holding_one_tlc_cannot_fingerprint() {
     let set = store.set_of(&[nat]).unwrap();
     let tuple = store.tuple_of(&[one, lazy]);
     let outer = store.set_of(&[tuple]).unwrap();
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     for value in [nat, lazy, set, tuple, outer] {
         assert_eq!(
             fingerprints.get_state(&store, &[one, value], &[0, 1]),

@@ -1,0 +1,15 @@
+theory tlapm_4c2fd3
+const isReal :: c = PredicateLogic.c
+const isa_slas_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_bksl_diva :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_perc_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_peri_peri_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isInfinity :: c = PredicateLogic.c
+const isa_lbrk_rbrk_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+const isa_less_more_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+assumes v'5: ((([ a_CONSTANTunde_iunde_a \\<in> (Nat)  \\<mapsto> (a_CONSTANTunde_iunde_a)]) = ([([ a_CONSTANTunde_iunde_a \\<in> (Nat)  \\<mapsto> (a_CONSTANTunde_iunde_a)]) EXCEPT ![((0))] = (<<((0))>>)])))
+  = ('PredicateLogic.Trueprop (('PredicateLogic.eq (('Functions.Fcn Nat) (%a_CONSTANTunde_iunde_a. a_CONSTANTunde_iunde_a))) ((('Functions.except (('Functions.Fcn Nat) (%a_CONSTANTunde_iunde_a. a_CONSTANTunde_iunde_a))) 'Integers.zero) (('Tuples.Append 'Tuples.emptySeq) 'Integers.zero))))
+shows (FALSE)
+  = ('PredicateLogic.Trueprop FALSE)
+using assms true
+method word:auto
