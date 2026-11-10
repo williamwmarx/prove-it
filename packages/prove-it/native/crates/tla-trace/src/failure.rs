@@ -288,8 +288,19 @@ impl<'ir> Rebuilder<'ir> {
         evaluator.current = vec![None; width];
         evaluator.next = vec![None; width];
         evaluator.level = 0;
-        // The startup printed its definitions and the assumptions before this one already.
+        // The startup printed its definitions and the assumptions before this one already, and
+        // those set what the registers hold when TLC evaluates this one.
         run(evaluator.compute_startup())?;
+        for &(earlier, _) in &ir.model.startup.assumptions[..position as usize] {
+            if !matches!(
+                evaluator.evaluate(earlier, &Context::default()),
+                Ok(Value::Bool(true))
+            ) {
+                return Err(Unsupported(
+                    "an assumption the engine found to hold that doesn't again".into(),
+                ));
+            }
+        }
         evaluator.printed.clear();
         clear_unnormalized();
         evaluator.call_stack = Some(CallStack::default());

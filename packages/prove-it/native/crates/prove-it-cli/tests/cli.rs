@@ -1623,6 +1623,20 @@ fn keeps_a_definitions_value_as_tlc_does() {
 }
 
 #[test]
+fn reports_an_assumption_after_the_registers_the_ones_before_set() {
+    // The assumption the engine leaves to the trace evaluator reads the register the first one
+    // set, and fails as TLC reports.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME TLCSet(1, 5)\nASSUME LET a == TLCGet(1) IN a \\div (a - 5) = a\nInit == x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_lowered("assumed-register", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert!(
+        text.contains("failed.\nThe second argument of \\div is 0.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn binds_several_bounds_in_tlcs_order() {
     // TLC evaluates each bound's set once, in the order written, then binds the first bound
     // fastest (`Tool.contexts`, `ContextEnumerator`): Inv is FALSE at <<2, 1>> before it fails to
