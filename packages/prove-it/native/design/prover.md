@@ -937,10 +937,9 @@ is next.
   fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches in
   verdict, steps, every statistic and the proof's digest. Malformed input is declined. Next: the
   decider differential on the corpus's `.znn` inputs, then the flip commit.
-- P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported except `nra-solver.ts`,
-  which is ported on top of the nlsat port and lands after it. Until then `NraSolver::check` and
-  `check_assignment` decline with `SmtError::Unsupported`, so a check that reaches nlsat is
-  declined, never answered. The architecture, written at the top of `lar_solver.rs` and
+- P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
+  included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
+  TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
   `nla_core.rs`, is as follows.
   - **Owners:** the theory owns `LarSolver` (which owns `CoreSolver`, which owns `LpSettings`),
     `IntSolver` and `NlaCore`.
@@ -965,9 +964,9 @@ is next.
     values come from running the TypeScript on the same setups: lemma texts, LIA move sequences,
     statistics counters, and counts of `is_canceled` calls.
   - **The LP call trace:** `tests/lp_trace.rs` replays the TypeScript's traces (`lp-trace.ts`,
-    `scripts/lp-trace.ts`) against the Rust lp. On the 45 `tests/fixtures/smt` inputs and 7
-    nonlinear ones it gives 47 same and 0 differs. The other 5 are declined at `NlaCore`,
-    whose replay is next.
-  - **Next:** run the trace on every SMT input of the decider corpus once its record is on
-    `main`. Then nra-solver, after nlsat. Then P3c's theory-lra glue, which calls lp exactly as
-    the trace does.
+    `scripts/lp-trace.ts`) against the Rust lp, `LarSolver`, `BoundPropagator`, `IntSolver`,
+    `NlaCore` and `nra` included. nlsat's `inc` calls are checked by count per call. On the
+    45 `tests/fixtures/smt` inputs and 27 nonlinear ones, all 72 traces are the same, with none
+    declined.
+  - **Next:** the trace over every SMT input of the decider corpus (running), then P3c's
+    theory-lra glue, which calls lp exactly as the trace does.
