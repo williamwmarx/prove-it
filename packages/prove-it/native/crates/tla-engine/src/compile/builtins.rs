@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use tla_ir::{Builtin, Index, NodeKind};
+use tla_ir::{Builtin, Index, NodeId, NodeKind, Resolution};
 use tla_values::fingerprint::INITIAL;
 use tla_values::json;
 use tla_values::print::{is_printable, write_value};
@@ -15,6 +15,7 @@ use tla_values::store::{
 use tla_values::transfer::UNENCODABLE;
 use tla_values::{Bail, Id, Store};
 
+use super::bridged;
 use super::fused;
 use super::lazy::{Lazy, Operator, Reference};
 use super::lazy_function;
@@ -1042,6 +1043,90 @@ impl Compiler<'_> {
         })
     }
 
+    // The arguments of SubSeq applied in place, rather than through a parameter.
+    fn sub_seq_arguments(&self, operand: &Operand) -> Option<Vec<NodeId>> {
+        if operand.is_param || operand.slot.is_some() {
+            return None;
+        }
+        let NodeKind::Apply { name, args } = &self.node(operand.node).1 else {
+            return None;
+        };
+        let Resolution::Builtin(index) = name.resolution else {
+            return None;
+        };
+        (self.builtin_name(index) == "SubSeq" && args.len() == 3).then(|| args.clone())
+    }
+
+    // `SubSeq(s, m, n) = SubSeq(t, k, l)`, as IsPrefix asks it, compared in place: each SubSeq's
+    // arguments are evaluated and checked as SubSeq checks them, the left's first, and the parts
+    // compared as the equality of the two tuples compares them, without building either.
+    fn compile_sub_seqs_equal(
+        &mut self,
+        left: &Operand,
+        right: &Operand,
+        is_equal: bool,
+    ) -> Compiling<Option<Compiled>> {
+        let (Some(left_arguments), Some(right_arguments)) =
+            (self.sub_seq_arguments(left), self.sub_seq_arguments(right))
+        else {
+            return Ok(None);
+        };
+        let mut footprint = Footprint::default();
+        let mut arguments = Vec::new();
+        for (nodes, context) in [
+            (left_arguments, &left.context),
+            (right_arguments, &right.context),
+        ] {
+            for node in nodes {
+                let compiled = self.compile(node, context)?;
+                footprint = footprint.merge(&compiled.footprint);
+                arguments.push(compiled.eval);
+            }
+        }
+        let compare = eval(move |machine| {
+            let mut slices = [(0, 0, 0); 2];
+            for (slice, evaluators) in slices.iter_mut().zip(arguments.chunks(3)) {
+                let sequence = evaluators[0](machine)?;
+                let start = evaluators[1](machine)?;
+                let end = evaluators[2](machine)?;
+                let (from, to) = bridged::sub_seq_bounds(machine, sequence, start, end)?;
+                *slice = (sequence, from, to);
+            }
+            let [(left, left_from, left_to), (right, right_from, right_to)] = slices;
+            let store = &mut machine.store;
+            let is_plain = |store: &Store, sequence: Id| {
+                store.kind_of(sequence) == KIND_TUPLE && !store.is_kept_lazy(sequence)
+            };
+            let equals = if is_plain(store, left) && is_plain(store, right) {
+                // Tuples of other lengths differ; of one length, they equal where their first
+                // elements to differ do, or are one tuple.
+                left_to - left_from == right_to - right_from && {
+                    let length = left_to - left_from;
+                    let differing = (0..length).find(|&at| {
+                        store.get_range_value(left, left_from + at)
+                            != store.get_range_value(right, right_from + at)
+                    });
+                    match differing {
+                        Some(at) => store.equals(
+                            store.get_range_value(left, left_from + at),
+                            store.get_range_value(right, right_from + at),
+                        )?,
+                        None => true,
+                    }
+                }
+            } else {
+                let left = bridged::sub_seq_of(machine, left, left_from, left_to);
+                let right = bridged::sub_seq_of(machine, right, right_from, right_to);
+                machine.store.equals_asked(left, right)?
+            };
+            Ok(bool_id(equals == is_equal))
+        });
+        Ok(Some(Compiled {
+            is_boolean: true,
+            ..leaf(compare, footprint)
+        }))
+    }
+
     fn compile_native_builtin(
         &mut self,
         name: &str,
@@ -1058,6 +1143,11 @@ impl Compiler<'_> {
         Ok(Some(match name {
             "=" | "#" => {
                 arity(2)?;
+                if let Some(compared) =
+                    self.compile_sub_seqs_equal(&operands[0], &operands[1], name == "=")?
+                {
+                    return Ok(Some(compared));
+                }
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
                 predicate_node(
