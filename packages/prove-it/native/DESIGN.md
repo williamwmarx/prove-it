@@ -2449,10 +2449,9 @@ front door that falls back to a JS process: nothing it meets is handed to JavaSc
 - **Front end.** The binary calls one function, `front(spec, config, options) -> Front`, which
   returns the IR (1.3) and what TLC prints before the search, as events: SANY's lines, the
   warnings, the liveness preamble (2212), or SANY's diagnostics and exit code. `tla-front`
-  implements it. Until it lands, the binary reads a recorded front instead: the IR that
-  `PROVE_IT_IR_DUMP` writes and the stdout the TS CLI printed after its banner and before the
-  search, from the directory `PROVE_IT_FRONT` names (13.5 makes them). This is a test seam, not a
-  shipped path: with neither, the binary says which spec it can't parse yet and exits.
+  implements it, and is the binary's only front end. Before it landed the binary read a recorded
+  front (13.5), which is gone; the CLI tests name a golden IR with `PROVE_IT_TEST_IR` in place of
+  the lowered one (design/cli.md).
 - **Values.** The binary prints values only through a trait, `ValuePrinter`, with one method that
   formats a value of the engine's store as TLC's `Value.toString` does (records, functions built
   as `:>`/`@@`, tuples, sets in TLC's order, strings and models). The engine-gaps session builds
@@ -2493,7 +2492,10 @@ normalised transcript with TLC's recording. The count of runs where the two are 
 binary's coverage; §13.7 records it as it grows. A run the binary can't do yet differs, so the
 count measures exactly what users would see.
 
-### 13.5 The recorded front (until `tla-front` lands)
+### 13.5 The recorded front (retired)
+
+Retired once `tla-front` was the whole front end: the binary and Parity now run it alone
+(`differential --native-only`). As it was:
 
 For each run, the differential first runs the TS CLI with `PROVE_IT_ENGINE_BACKEND=rust`,
 `PROVE_IT_ENGINE=debug` and `PROVE_IT_IR_DUMP`, and keeps the IR and the TS stdout between the
