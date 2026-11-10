@@ -474,6 +474,7 @@ const TLC_FAILURES: &[&str] = &[
     "the left side of => isn't a boolean",
     "values TLC can't compare",
     "variable not assigned",
+    "zero to the power of zero",
     crate::compile::lazy::SUBSET_OVERFLOW,
 ];
 
