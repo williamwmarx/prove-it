@@ -364,7 +364,7 @@ impl Context {
     pub fn new(mut m: AstManager, params: SmtParams) -> Result<Context, SmtError> {
         let is_relevancy_enabled = params.relevancy_level > 0;
         let is_delaying_new_case_splits = params.relevancy_level > 0;
-        let rewriter = Rewriter::new(&mut m, KERNEL_REWRITER_OPTIONS, false);
+        let rewriter = Rewriter::new(&m, KERNEL_REWRITER_OPTIONS, false);
         // The TypeScript makes the quantifier manager after the internalizer's constructor made
         // the variable and the nodes of true and false, which only count references, so it is the
         // same to make it first.
