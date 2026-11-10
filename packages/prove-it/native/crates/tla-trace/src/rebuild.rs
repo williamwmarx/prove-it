@@ -6,7 +6,7 @@
 //! one the search didn't keep, and TLC fingerprinted it only if it satisfies the constraints.
 
 use tla_ir::{AtomKind, Ir, NodeId};
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
 
@@ -256,6 +256,37 @@ impl<'ir> Rebuilder<'ir> {
         Ok(compose(first, again, ending))
     }
 
+    /// The trace of an invariant violation as TLC's counterexample holds it once the trace is
+    /// printed (`Worker.doPostCondition`), for the values a dump of it shares: the states before
+    /// the last rebuilt again (`getTraceInfo`), and the last found again among the successors of
+    /// the state the search held (`Tool.getState(succState, curState)`), which shares no value
+    /// with the rebuilt states but the ones TLC computed once, as a string literal's. The search's
+    /// own states are rebuilt again for that, and the equality TLC finds the last state by sorts
+    /// it. What the spec prints meanwhile is dropped, and the registers are kept as they were.
+    pub fn rebuild_counter_example(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+    ) -> Result<Trace, Unsupported> {
+        let registers = self.evaluator.registers.clone();
+        let rebuilt = self.rebuild_pass(store, states, actions, Ending::Violation, false, false);
+        let held = self.rebuild_pass(store, states, actions, Ending::Violation, false, false);
+        self.evaluator.registers = registers;
+        self.evaluator.printed.clear();
+        let (Some(mut rebuilt), Some(mut held)) = (rebuilt?, held?) else {
+            return Ok(Trace {
+                states: Vec::new(),
+                trace_output: Vec::new(),
+            });
+        };
+        if let (Some(last), Some(found)) = (rebuilt.rebuilt.last_mut(), held.rebuilt.pop()) {
+            found.iter().for_each(settle_deep);
+            *last = found;
+        }
+        Ok(compose(rebuilt, None, Ending::Violation))
+    }
+
     // One rebuild of the path, with what the spec printed finding the first state and each step.
     fn rebuild_pass(
         &mut self,
@@ -296,7 +327,7 @@ impl<'ir> Rebuilder<'ir> {
         // TLC's worker seeds the draws of each expansion with the fingerprint of the state it
         // expands, which is of the state itself where TLC fingerprints no other key.
         let order: Vec<usize> = ir.tlc_order.iter().map(|&index| index as usize).collect();
-        let mut fingerprints = Fingerprints::new();
+        let mut fingerprints = Fingerprints::new(Polynomial::get(ir.model.fingerprint_index));
         let mut seeded = |state: &[Id]| -> Result<Option<JavaRandom>, Unsupported> {
             if !is_drawing || !matches!(self.key, Key::State) {
                 return Ok(None);

@@ -6,6 +6,7 @@
 //! The TypeScript's `collect` recurses on the body; here it counts its depth, and stops past
 //! `MAX_RECURSION_DEPTH` (design/smt-core.md, recursion).
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -22,7 +23,9 @@ use crate::util::ordered_map::OrderedSet;
 struct CandidateInfo {
     free_vars: OrderedSet<i32>,
     bound_vars: OrderedSet<i32>,
-    size: usize,
+    /// A JavaScript number: the unfolded size of a shared DAG grows exponentially, past any
+    /// integer, and the TypeScript adds it as a float.
+    size: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -131,7 +134,7 @@ impl PatternInference {
             info = Some(Rc::new(CandidateInfo {
                 free_vars,
                 bound_vars,
-                size: 1,
+                size: 1.0,
             }));
         } else if kind == KIND_APP {
             let mut child_infos = Vec::with_capacity(m.get_num_args(expr));
@@ -145,12 +148,12 @@ impl PatternInference {
                 info = Some(Rc::new(CandidateInfo {
                     free_vars: OrderedSet::new(),
                     bound_vars: OrderedSet::new(),
-                    size: 1,
+                    size: 1.0,
                 }));
             } else if child_infos.iter().all(Option::is_some) {
                 let mut free_vars = OrderedSet::new();
                 let mut bound_vars = OrderedSet::new();
-                let mut size = 1;
+                let mut size = 1.0;
                 for child_info in child_infos.iter().flatten() {
                     for element in child_info.free_vars.iter() {
                         free_vars.insert(*element);
@@ -192,7 +195,7 @@ impl PatternInference {
                 info = Some(Rc::new(CandidateInfo {
                     free_vars: body_info.free_vars.clone(),
                     bound_vars,
-                    size: body_info.size + 1,
+                    size: body_info.size + 1.0,
                 }));
             }
         }
@@ -205,7 +208,7 @@ impl PatternInference {
         m: &mut AstManager,
         expr: Expr,
         free_vars: OrderedSet<i32>,
-        size: usize,
+        size: f64,
     ) {
         if self.candidate_infos.contains_key(&expr) {
             return;
@@ -453,7 +456,10 @@ impl PatternInference {
                         return right_info.free_vars.len().cmp(&left_info.free_vars.len());
                     }
                     if left_info.size != right_info.size {
-                        return left_info.size.cmp(&right_info.size);
+                        return left_info
+                            .size
+                            .partial_cmp(&right_info.size)
+                            .unwrap_or(Ordering::Equal);
                     }
                     left.1.cmp(&right.1)
                 });

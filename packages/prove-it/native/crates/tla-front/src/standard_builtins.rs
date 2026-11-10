@@ -3,7 +3,8 @@
 //! parameters and their ranges from `src/standard-definitions.ts`. `scripts/front-modules.ts`
 //! writes this file; don't edit it by hand.
 
-/// A builtin's flags: state-level, level-constant, lazy, Naturals' >=, as the IR writes them.
+/// A builtin's flags: state-level, level-constant, lazy, Naturals' >=, a method of Naturals, as
+/// the IR writes them.
 pub struct StandardOperator {
     pub name: &'static str,
     pub arity: usize,
@@ -117,13 +118,13 @@ pub const MASTER: &[StandardModule] = &[
         extends: &[],
         operators: &[
             StandardOperator { name: "Nat", arity: 0, flags: 0, params: Some(&[]), range: Some([14, 1, 14, 16]) },
-            StandardOperator { name: "+", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([15, 1, 15, 19]) },
-            StandardOperator { name: "-", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([17, 1, 17, 33]) },
-            StandardOperator { name: "*", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([18, 1, 18, 17]) },
-            StandardOperator { name: "^", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([19, 1, 19, 19]) },
-            StandardOperator { name: "\\div", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([34, 1, 34, 20]) },
-            StandardOperator { name: "%", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([33, 1, 33, 20]) },
-            StandardOperator { name: "..", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([35, 1, 35, 20]) },
+            StandardOperator { name: "+", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([15, 1, 15, 19]) },
+            StandardOperator { name: "-", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([17, 1, 17, 33]) },
+            StandardOperator { name: "*", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([18, 1, 18, 17]) },
+            StandardOperator { name: "^", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([19, 1, 19, 19]) },
+            StandardOperator { name: "\\div", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([34, 1, 34, 20]) },
+            StandardOperator { name: "%", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([33, 1, 33, 20]) },
+            StandardOperator { name: "..", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([35, 1, 35, 20]) },
             StandardOperator { name: "<", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([20, 1, 20, 19]) },
             StandardOperator { name: ">", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([21, 1, 21, 19]) },
             StandardOperator { name: "<=", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([22, 1, 22, 19]) },
@@ -267,13 +268,13 @@ pub const TLC_174: &[StandardModule] = &[
         extends: &[],
         operators: &[
             StandardOperator { name: "Nat", arity: 0, flags: 0, params: Some(&[]), range: Some([14, 1, 14, 16]) },
-            StandardOperator { name: "+", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([15, 1, 15, 19]) },
-            StandardOperator { name: "-", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([17, 1, 17, 33]) },
-            StandardOperator { name: "*", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([18, 1, 18, 17]) },
-            StandardOperator { name: "^", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([19, 1, 19, 19]) },
-            StandardOperator { name: "\\div", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([34, 1, 34, 20]) },
-            StandardOperator { name: "%", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([33, 1, 33, 20]) },
-            StandardOperator { name: "..", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([35, 1, 35, 20]) },
+            StandardOperator { name: "+", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([15, 1, 15, 19]) },
+            StandardOperator { name: "-", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([17, 1, 17, 33]) },
+            StandardOperator { name: "*", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([18, 1, 18, 17]) },
+            StandardOperator { name: "^", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([19, 1, 19, 19]) },
+            StandardOperator { name: "\\div", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([34, 1, 34, 20]) },
+            StandardOperator { name: "%", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([33, 1, 33, 20]) },
+            StandardOperator { name: "..", arity: 2, flags: 32, params: Some(&[0, 0]), range: Some([35, 1, 35, 20]) },
             StandardOperator { name: "<", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([20, 1, 20, 19]) },
             StandardOperator { name: ">", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([21, 1, 21, 19]) },
             StandardOperator { name: "<=", arity: 2, flags: 0, params: Some(&[0, 0]), range: Some([22, 1, 22, 19]) },

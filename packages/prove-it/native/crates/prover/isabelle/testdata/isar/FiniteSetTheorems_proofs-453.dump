@@ -1,0 +1,20 @@
+theory tlapm_a4ff3d
+const isReal :: c = PredicateLogic.c
+const isa_slas_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_bksl_diva :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_perc_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_peri_peri_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isInfinity :: c = PredicateLogic.c
+const isa_lbrk_rbrk_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+const isa_less_more_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+fixes a_CONSTANTunde_Sunde_a
+assumes v'189: (\\<forall> a_CONSTANTunde_Tunde_a \\<in> ((a_CONSTANTunde_FiniteSubsetsOfunde_a ((a_CONSTANTunde_Sunde_a)))) : ((((a_CONSTANTunde_Cardinalityunde_a ((a_CONSTANTunde_Tunde_a)))) \\<in> (Nat))))
+  = ('PredicateLogic.Trueprop (('SetTheory.bAll (a_CONSTANTunde_FiniteSubsetsOfunde_a a_CONSTANTunde_Sunde_a)) (%a_CONSTANTunde_Tunde_a. (('SetTheory.in (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Tunde_a)) Nat))))
+assumes v'190: ((\\<And> a_CONSTANTunde_Sunde_a_1 :: c. (\\<And> a_CONSTANTunde_Tunde_a :: c. (\\<And> a_CONSTANTunde_Runde_a :: c. (\\<And> a_CONSTANTunde_funde_a :: c => c. ((\\<forall> a_CONSTANTunde_sunde_a \\<in> (a_CONSTANTunde_Sunde_a_1) : ((((a_CONSTANTunde_funde_a ((a_CONSTANTunde_sunde_a)))) \\<in> (a_CONSTANTunde_Tunde_a)))) \\<Longrightarrow> (((a_CONSTANTunde_IsWellFoundedOnunde_a ((a_CONSTANTunde_Runde_a), (a_CONSTANTunde_Tunde_a)))) \\<Longrightarrow> ((a_CONSTANTunde_IsWellFoundedOnunde_a (((a_CONSTANTunde_PreImageunde_a ((a_CONSTANTunde_funde_a), (a_CONSTANTunde_Sunde_a_1), (a_CONSTANTunde_Runde_a)))), (a_CONSTANTunde_Sunde_a_1)))))))))))
+  = ('Pure.all (%a_CONSTANTunde_Sunde_a_1::PredicateLogic.c. ('Pure.all (%a_CONSTANTunde_Tunde_a::PredicateLogic.c. ('Pure.all (%a_CONSTANTunde_Runde_a::PredicateLogic.c. ('Pure.all (%a_CONSTANTunde_funde_a::(PredicateLogic.c => PredicateLogic.c). (('Pure.imp ('PredicateLogic.Trueprop (('SetTheory.bAll a_CONSTANTunde_Sunde_a_1) (%a_CONSTANTunde_sunde_a. (('SetTheory.in (a_CONSTANTunde_funde_a a_CONSTANTunde_sunde_a)) a_CONSTANTunde_Tunde_a))))) (('Pure.imp ('PredicateLogic.Trueprop ((a_CONSTANTunde_IsWellFoundedOnunde_a a_CONSTANTunde_Runde_a) a_CONSTANTunde_Tunde_a))) ('PredicateLogic.Trueprop ((a_CONSTANTunde_IsWellFoundedOnunde_a (((a_CONSTANTunde_PreImageunde_a a_CONSTANTunde_funde_a) a_CONSTANTunde_Sunde_a_1) a_CONSTANTunde_Runde_a)) a_CONSTANTunde_Sunde_a_1))))))))))))
+assumes v'191: ((a_CONSTANTunde_IsWellFoundedOnunde_a (((a_CONSTANTunde_OpToRelunde_a ((\\<lambda> a_Unknownunde_x1unde_a a_Unknownunde_x2unde_a . ((less ((a_Unknownunde_x1unde_a), (a_Unknownunde_x2unde_a))))), (Nat)))), (Nat))))
+  = ('PredicateLogic.Trueprop ((a_CONSTANTunde_IsWellFoundedOnunde_a ((a_CONSTANTunde_OpToRelunde_a (%a_Unknownunde_x1unde_a. (%a_Unknownunde_x2unde_a. ((less a_Unknownunde_x1unde_a) a_Unknownunde_x2unde_a)))) Nat)) Nat))
+shows ((a_CONSTANTunde_IsWellFoundedOnunde_a (((a_CONSTANTunde_PreImageunde_a ((a_CONSTANTunde_Cardinalityunde_a), ((a_CONSTANTunde_FiniteSubsetsOfunde_a ((a_CONSTANTunde_Sunde_a)))), ((a_CONSTANTunde_OpToRelunde_a ((\\<lambda> a_Unknownunde_x1unde_a a_Unknownunde_x2unde_a . ((less ((a_Unknownunde_x1unde_a), (a_Unknownunde_x2unde_a))))), (Nat))))))), ((a_CONSTANTunde_FiniteSubsetsOfunde_a ((a_CONSTANTunde_Sunde_a)))))))
+  = ('PredicateLogic.Trueprop ((a_CONSTANTunde_IsWellFoundedOnunde_a (((a_CONSTANTunde_PreImageunde_a a_CONSTANTunde_Cardinalityunde_a) (a_CONSTANTunde_FiniteSubsetsOfunde_a a_CONSTANTunde_Sunde_a)) ((a_CONSTANTunde_OpToRelunde_a (%a_Unknownunde_x1unde_a. (%a_Unknownunde_x2unde_a. ((less a_Unknownunde_x1unde_a) a_Unknownunde_x2unde_a)))) Nat))) (a_CONSTANTunde_FiniteSubsetsOfunde_a a_CONSTANTunde_Sunde_a)))
+using assms true
+method word:blast
