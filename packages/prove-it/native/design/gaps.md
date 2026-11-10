@@ -753,6 +753,18 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
 - `0 ^ 0` stops as a failure of TLC's ("0^0 is undefined.", `Integers.Expt`), where both
   compiled engines gave 1.
 
+## TLCCache in the liveness checker's atoms
+
+TLC keeps one TLCCache for the run, shared by its workers and filled in the order it first
+evaluates each expression. The engine answered the atoms on helper machines where it searched on
+several threads, each with a cache of its own, so `Prop == <>[](\E i \in {x} : TLCCache(i, 0) =
+x)` with `Init == x = 0` and `Next == x' = 1` held on two threads, where TLC (on any number of
+workers) and one thread find the lasso. Where anything applies TLCCache the atoms are answered on
+the machine that searched, which holds the cache (`is_tlc_cache_used`). The other state a machine
+keeps is safe there: atoms that set or read TLC's registers are answered on that machine as the
+search goes, those that print or draw in TLC's order on it, a lazy function's atoms on it, and
+reading a JSON file gives the same value on any machine.
+
 ## Test2, liveness atoms answered as the search goes (as built)
 
 Built by the liveness session: see "Atoms that use TLC's registers" in `liveness.md`.

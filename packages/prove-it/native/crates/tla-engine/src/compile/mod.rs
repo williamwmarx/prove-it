@@ -726,6 +726,9 @@ pub struct Compiler<'a> {
     pub is_lambda_built: bool,
     /// Whether TLCCache caches anything compiled whose value depends on what TLC evaluates first.
     pub is_cached: bool,
+    /// Whether anything compiled applies TLCCache, whose cache is the machine's own, where TLC
+    /// keeps one for every worker.
+    pub is_tlc_cache_used: bool,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
 }
@@ -800,6 +803,7 @@ impl<'a> Compiler<'a> {
             workers: 1,
             is_lambda_built: false,
             is_cached: false,
+            is_tlc_cache_used: false,
             scope_contexts: HashMap::new(),
         }
     }

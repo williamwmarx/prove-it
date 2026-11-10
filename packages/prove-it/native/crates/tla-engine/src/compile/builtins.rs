@@ -922,6 +922,7 @@ impl Compiler<'_> {
             return unsupported("TLCCache of an argument");
         }
         let node = expression.node;
+        self.is_tlc_cache_used = true;
         let key = self.compile(key.node, &key.context.without_print())?;
         let is_key_constant = key.footprint.width() == 0;
         let value = self.compile(

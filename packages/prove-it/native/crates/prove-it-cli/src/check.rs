@@ -1790,4 +1790,63 @@ mod tests {
     fn knows_the_package_version() {
         assert!(package_version().split('.').count() == 3);
     }
+
+    struct Quiet;
+
+    impl Reporter for Quiet {
+        fn initial_states_started(&mut self) {}
+        fn initial_states_progress(&mut self, _count: u64) {}
+        fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
+        fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
+        fn print(&mut self, _store: &tla_values::Store, _values: &[tla_values::Id]) {}
+    }
+
+    #[test]
+    fn answers_atoms_that_cache_on_the_machine_that_searched() {
+        // TLC keeps one TLCCache for the run, filled as it first evaluates the expression: the
+        // key 0 caches x of the initial state, 0, so the atom is FALSE where x is 1, and the
+        // lasso that stutters there violates Prop, on any number of threads.
+        let directory =
+            std::env::temp_dir().join(format!("prove-it-cached-atoms-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        let spec = directory.join("Cached.tla");
+        std::fs::write(
+            &spec,
+            "---- MODULE Cached ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = 1\nSpec == Init /\\ [][Next]_x\nProp == <>[](\\E i \\in {x} : TLCCache(i, 0) = x)\n====\n",
+        )
+        .expect("a spec");
+        let options = tla_front::model::ModelOptions {
+            libraries: &[],
+            version: None,
+            is_warning_enabled: true,
+            is_spec_described: true,
+            random_seed: 0,
+        };
+        let bytes =
+            tla_front::model::lower_model(&spec, "SPECIFICATION Spec\nPROPERTY Prop\n", &options)
+                .expect("a model");
+        std::fs::remove_dir_all(&directory).expect("removed");
+        let ir = tla_ir::decode(&bytes).expect("an IR");
+        for threads in [1, 2, 4] {
+            let settings = Settings {
+                is_violation_reported: true,
+                threads,
+                ..Settings::default()
+            };
+            let outcome = tla_engine::on_nesting_stack(|| search(&ir, &settings, &mut Quiet));
+            assert!(
+                matches!(
+                    &outcome,
+                    SearchOutcome::Complete {
+                        liveness: Some(tla_live::Liveness {
+                            verdict: tla_live::Verdict::Lasso { .. },
+                            ..
+                        }),
+                        ..
+                    }
+                ),
+                "{threads} threads"
+            );
+        }
+    }
 }

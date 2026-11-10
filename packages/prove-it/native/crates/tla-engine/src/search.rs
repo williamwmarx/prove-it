@@ -2213,8 +2213,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !model.is_recording_graph
         && !settings.is_live_checked
         && context.possible.is_empty();
-    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings.
-    let atom_threads = if compiler.is_ranking || is_lambda_built {
+    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings
+    // or TLCCache caches: TLC keeps one cache for the run, which the search's machine holds, and
+    // fills it in the order it first evaluates each expression.
+    let atom_threads = if compiler.is_ranking || is_lambda_built || compiler.is_tlc_cache_used {
         1
     } else {
         thread_count
