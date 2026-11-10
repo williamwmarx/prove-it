@@ -631,6 +631,23 @@ MCabs spends a similar share in `find_in_block`, but on functions of a few model
 the store already scans by id: its cost is the misses of reading their values, which this doesn't
 change.
 
+### Liveness (`perf-liveness`)
+
+The track ends with StarkMutex at about 4.7 s on one worker, from 9.49 s at the baseline. The last
+step answers ENABLED of TLC's actions from the steps the search took (#203): 5.37 → 4.72 s on one
+worker and 3.83 → 2.87 s on four. Where the 4.7 s goes, at main d89e559 (instrumented, 3 runs):
+answering the atoms 1.53 s, the checker 2.20 s (adding states about 1.7 s of it), and the search
+and start-up about 0.95 s.
+
+Two further steps were bounded and not built, since neither clears 1.1× by a safe margin:
+
+| Idea | Bound on StarkMutex, one worker | Why it stops there |
+|---|---|---|
+| Label the steps in the walk of the next-state relation, not by walking TLC's 65 actions one by one | at most 0.5 s: 4.70 → 4.20 s, 1.12×; about 1.08–1.10× once the labels cost anything | The unlabelled search took 0.45 s before #203 and the labelled one takes about 0.95 s. Each label must be the action TLC's split gives the step, through `\E` over constant sets and operator bodies, for every (action, successor) pair. |
+| A flat form of the 60 action checks the checker evaluates as it adds states | 0.3–0.5 s of `add_states`' 1.7 s: 1.07–1.12× | Most of `add_states` is reading the answer tables and building the behavior graphs, which the flat form leaves. |
+
+Together they bound StarkMutex at about 1.25×.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
