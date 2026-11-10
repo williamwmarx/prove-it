@@ -561,28 +561,33 @@ pub fn atom_order(formula: &[Term]) -> Result<Vec<u32>, Declined> {
 /// Checks the formula, the fairness and the negated properties as `createLivenessChecker` joins
 /// them, on a search's graph, from the engine's answers to each atom (`None` for an atom
 /// it doesn't answer), and finds which of the properties a counterexample violates. Where the
-/// atoms' evaluations have effects, it logs each evaluation of an atom TLC makes.
+/// atoms' evaluations have effects, it logs each evaluation of an atom TLC makes. Otherwise it
+/// builds the behavior graphs on up to `threads` threads.
 pub fn check(
     formula: &[Term],
     properties: &[&[Term]],
     graph: &Graph<'_>,
     tables: &[Option<&[u8]>],
     is_effectful: bool,
+    threads: usize,
 ) -> Liveness {
     let mut branches = None;
     let mut events = Vec::new();
     let mut unanswered = None;
-    let mut run = || {
-        if graph.edge_offsets.is_empty() {
-            return Err(Declined::from("a graph without its steps"));
-        }
+    let build = || -> Result<(checker::Checker, Vec<TermId>), Declined> {
         let mut terms = Terms::default();
         let root = read_formula(&mut terms, formula)?;
         let properties = properties
             .iter()
             .map(|property| read_formula(&mut terms, property))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut checker = checker::Checker::new(terms, root)?;
+        Ok((checker::Checker::new(terms, root)?, properties))
+    };
+    let mut run = || {
+        if graph.edge_offsets.is_empty() {
+            return Err(Declined::from("a graph without its steps"));
+        }
+        let (mut checker, properties) = build()?;
         branches = Some(checker.branches());
         if is_effectful {
             checker.log_effects();
@@ -592,7 +597,24 @@ pub fn check(
             graph,
             answers: &answers,
         };
-        let verdict = checker::check(&mut checker, &source, &properties, &mut events);
+        // Where nothing has effects or reads TLC's diameter, which grows as the states are
+        // added, each behavior's graph may be built on a thread of its own.
+        let verdict = if !is_effectful
+            && graph.diameters.is_none()
+            && threads > 1
+            && checker.branches() > 1
+        {
+            checker::check_shared(
+                &mut checker,
+                &|| build().map(|built| built.0),
+                graph,
+                &answers,
+                &properties,
+                threads,
+            )
+        } else {
+            checker::check(&mut checker, &source, &properties, &mut events)
+        };
         unanswered = verdict.is_err().then(|| checker.unanswered.get()).flatten();
         verdict
     };
