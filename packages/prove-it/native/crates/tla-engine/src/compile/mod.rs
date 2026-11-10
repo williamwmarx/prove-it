@@ -1290,6 +1290,65 @@ impl<'a> Compiler<'a> {
                 .any(|child| self.may_have_effect(child, seen))
     }
 
+    /// Whether TLC's predicate evaluation of an action is the walk of it as TLC generates its
+    /// steps, but for the comparisons of the primed variables: no ENABLED, action composition,
+    /// `[A]_v`, `<<A>>_v` or temporal operator inside, through the definitions it names but those
+    /// TLC computes as it starts, and no builtin whose value depends on when or how often TLC
+    /// evaluates it.
+    pub(crate) fn is_walk_repeatable(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        let (node, kind) = self.node(node);
+        if !seen.insert(node) {
+            return true;
+        }
+        let is_repeatable = match kind {
+            NodeKind::Enabled(_)
+            | NodeKind::BoxAction { .. }
+            | NodeKind::AngleAction { .. }
+            | NodeKind::Always(_)
+            | NodeKind::Eventually(_)
+            | NodeKind::WeakFairness { .. }
+            | NodeKind::StrongFairness { .. }
+            | NodeKind::Subexpression(_) => false,
+            NodeKind::Identifier(name) | NodeKind::Apply { name, .. } if !name.is_local => {
+                match name.resolution {
+                    Resolution::Builtin(index) => !matches!(
+                        self.builtin_name(index),
+                        "\\cdot"
+                            | "Print"
+                            | "PrintT"
+                            | "RandomElement"
+                            | "RandomSubset"
+                            | "TLCSet"
+                            | "TLCGet"
+                            | "TLCGetAndSet"
+                            | "TLCCache"
+                            | "TLCDefer"
+                            | "TLCModelValue"
+                            | "JavaTime"
+                            | "Trace"
+                            | "JsonSerialize"
+                            | "ndJsonSerialize"
+                            | "JsonDeserialize"
+                            | "ndJsonDeserialize"
+                    ),
+                    // TLC computes a constant definition once, as it starts.
+                    Resolution::Definition(index) => {
+                        let definition = self.definition(self.ir.definitions[index as usize]);
+                        definition.flags & Definition::NORMALIZED != 0
+                            || self.is_walk_repeatable(definition.body, seen)
+                    }
+                    _ => true,
+                }
+            }
+            _ => true,
+        };
+        is_repeatable
+            && kind
+                .children()
+                .into_iter()
+                .all(|child| self.is_walk_repeatable(child, seen))
+    }
+
     // Whether TLC may keep the value of an expression lazy, a set it enumerates in its own order
     // or a function it applies anew each time, rather than normalize it as the engine's value is:
     // through the branches and bodies that give the value, any set or function it builds lazily.
