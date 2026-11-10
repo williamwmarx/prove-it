@@ -416,14 +416,52 @@ In WebAssembly, one thread.
 
 ### 3.8 Licences and notices
 
-The Rust files carry the same port headers the TS files do (Z3 MIT; Zenon INRIA's licence;
-Isabelle's BSD-style licence; Isabelle/TLA+ BSD; tlapm's BSD; OCaml's LGPL-2.1 with the linking
-exception for `Format`, `Hashtbl.hash`, `List.sort` and Marshal). The crates that contain the
-LGPL ports (`prove-obligations`, `prove-zenon`) declare `license = "MIT AND LGPL-2.1-only WITH
-OCaml-LGPL-linking-exception"`; the linking exception is what allows linking them statically into
-the addon and the binary. `THIRD_PARTY_NOTICES.md` gains the Rust paths next to each TS path in
-the PR that ports it, and loses the TS path in the PR that deletes it. The source of the LGPL
-ports keeps shipping (npm ships `src/`; the Rust sources ship in the crate and the repository).
+A port is a derived work, so each Rust file keeps the licence and the port header of the TS file
+it ports, and each section of `THIRD_PARTY_NOTICES.md` names the Rust paths beside the TS ones
+from the PR that ports them, and drops the TS paths in the PR that deletes them.
+
+| Crate | Derived from | Licence | `THIRD_PARTY_NOTICES.md` once it is Rust |
+|---|---|---|---|
+| `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`) | MIT | the Z3 section names `native/crates/prove-smt/`; `z3-license.txt` moves with the code |
+| `prove-num` | Z3's `rational`/`mpz` semantics, written fresh on JS `bigint`'s rules | MIT (Z3's where it follows `rational.ts`) | under the Z3 section |
+| `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps the `LICENSE` beside the code, as `src/prover/zenon/LICENSE` |
+| `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
+| `prove-isabelle` | Isabelle2025's Pure, Isar, Provers (BSD-style, Cambridge/TUM), and Isabelle/TLA+'s theories and ML setup as tlapm ships them (BSD, tlapm's licence) | BSD-3-Clause-style | the Isabelle section, and the tlapm section for the logic data and `tla/`; `LICENSE` and `LICENSE-tlapm` move with the code |
+| `prove-ptl` | tlapm's PTL backend input; the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` ports | tlapm section |
+| `prove-obligations` | tlapm (obligations, Prep, encoders, `.tlacache`, TLAPS.tla verbatim) | BSD-2-Clause-style (INRIA, Microsoft, Linux Foundation) | tlapm section |
+| `prove-obligations` (`format`, `marshal`, the `getHash` of `action`) | OCaml's `Format` (`stdlib/format.ml`), Marshal (`runtime/intern.c`, `extern.c`), `runtime/hash.c` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust files |
+
+The package's `"license": "MIT AND LGPL-2.1-only WITH OCaml-LGPL-linking-exception"` comes from
+the four OCaml ports alone (`tlapm/ocaml-marshal.ts`, `zenon/ocaml.ts`, `obligations/format.ts`,
+`action.ts`'s `getHash`). Their Rust ports inherit it: they are translations of the same code. So
+`prove-zenon` and `prove-obligations` declare `license = "MIT AND BSD-3-Clause AND
+LGPL-2.1-only WITH OCaml-LGPL-linking-exception"` (the exact SPDX list fixed when the crate lands),
+and the LGPL code stays in its own modules. The linking exception is what lets those modules be
+linked statically into the addon, the WebAssembly module and the binary without the relinking
+obligation of LGPL section 6; the condition left is to ship their source, which the repository and
+the npm package do (the `.node`, `.wasm` and binary ship from this repository, and the crate
+sources are public). The package's licence string does not change. The BSD-style licences require
+the notices in binary distributions: the main package ships `THIRD_PARTY_NOTICES.md` (its
+`files` and `prepack`), but the platform packages (`native/npm/<platform>`) and the release
+archives of the binary do not yet; the first stage that links a ported back end into them adds it.
+
+### 3.9 Size
+
+Each stage reports what its crate adds to the three artefacts, measured from release builds on
+the PR: `prove-it-engine.node` (linux-x64-gnu), `dist/prove-it-engine.wasm`, and the `prove-it`
+binary, before and after, in bytes. The table lives in the Handoff section and grows by a row
+per stage. SIZE-NOW
+
+The Isabelle/TLA+ logic (509 KB of JSON in `tla/logic-data.ts`, parsed once per process today)
+is embedded in `prove-isabelle` with `include_bytes!` as a compact binary: `scripts/isabelle-
+logic.ts` gains a second output, a string table plus the theorems as length-prefixed `u32`
+records, written to `native/crates/prove-isabelle/data/logic.bin` and checked in beside a digest
+the crate's test compares with the JSON, so the two cannot drift. Expected well under the JSON's
+size (most of it is repeated names and JSON punctuation); it is decoded lazily once per process
+into the term arena (`std::sync::OnceLock`). Decoding instead of `const` data keeps compile time
+and the crate's source small. If the WebAssembly module's growth matters for browsers, the data
+can also be fetched beside the module, as the module itself is; that is decided when P4b
+measures it.
 
 ---
 
@@ -450,6 +488,25 @@ Sizes are TypeScript lines ported.
 | **P6** Driver and CLI | `prove-it-prover` (`prove.ts`, ordering, reuse, CASE sessions, threads), `.tlacache` (OCaml Marshal), `prove-it tlapm` in the native binary, `prove` in the library through the binding | ≈2,000 | end-to-end differential (layer 5), with 1 and 4 threads, with and without `.tlacache`; `prove.test.ts`, `prove-workers.test.ts`, `tlapm-cache.test.ts`; `conformance:tlapm` | medium | P1–P5 |
 | **P7** Delete | the TypeScript prover and obligations, `PROVE_IT_PROVER*`, the TS-only tests the Rust tests replaced; `THIRD_PARTY_NOTICES.md` | −86,000 | the whole gate, `conformance:prove` unchanged | low | P6 and every flip |
 
+**P0 leaves the oracle as it is.** The step counters and `stepLimit` change TypeScript that is the
+oracle, so P0 lands them inert: with no budget set, no counter is compared and no verdict can
+change. P0's PR shows `prove` on all 304 corpus modules before and after, identical per
+obligation (33,137 obligations; tlapm's counts are 20,502 trivial, 12,523 proved, 112 failed, and
+the TypeScript's own counts are in 2.4), and the `rlimit` counts and Zenon statistics identical
+on the decider corpus.
+
+**P5a and the shared crates.** P5a is the only stage inside a crate another session owns. It is
+announced to the coordinator before it starts. It builds on what the front session lands for
+linking `tla-front` into the addon and WebAssembly (SANY's retirement, stage a), and the `decide`
+binding of P0 follows the loader and ABI conventions the existing `check` and the coming
+`check_sources` entry use (one call, encoded arguments, a result or a typed error), so the host has
+one way to call Rust.
+
+**What the interpreter's retirement means here.** The prover uses three helpers from
+`src/worker.ts` (`spawnWorker`, `getParentPort`, `isWorkerSupported`) and nothing else of the
+interpreter. Until P6 it keeps using them; at P6 the pool is std threads, and `prove` needs
+nothing from `worker.ts`.
+
 **Parallelism.** After P0, five tracks are independent and can go to separate sessions: PTL
 (P1, then whoever finishes first), Zenon (P2), the SMT foundation then arithmetic (P3a → P3b), the
 SMT core (P3c, after P3a's few days), Isabelle (P4a → P4b), and the front end and obligations
@@ -465,6 +522,59 @@ differential, the deterministic budgets) and P1 proves it on the smallest back e
 enough to land in one PR each. If the coordinator starts other sessions, they can begin on P2,
 P3a and P4a against P0's `decide` interface as specified here before P0 merges, since the decider
 crates are pure functions from text to verdict.
+
+---
+
+## 4a. How to port a back end
+
+For the session that takes a track. Read this document, DESIGN.md §12 and AGENTS.md first.
+
+**Naming and layout.** One crate per track (`native/crates/prove-<name>`), modules named after
+the TS files in snake case (`lp/lar-solver.ts` → `lp/lar_solver.rs`), one Rust module per TS
+file unless two are trivially small, so a reader can put the two side by side. Keep the port
+header comment of each TS file (what it ports, from where, under which licence) and the
+explanatory comments; keep TS names in snake case, so `getTermKey` is `get_term_key`. Errors
+are `enum`s named after `src/errors.ts`'s classes (`SmtCanceledError` → `SmtError::Canceled`).
+The entry point is `pub fn decide(text: &str, limits: &Limits) -> Result<Decision, ProverError>`
+with `Decision { verdict, statistics }`, called by `prove-it-host`.
+
+**Porting literally.** The goal is the same search, step for step, not the same answer by
+another route. So:
+- a `Map` or `Set` that is ever iterated, spread, or turned into an array becomes an
+  insertion-ordered map or a `Vec`, deletions included (JS keeps the order of the remaining
+  entries; `Vec::remove`, not `swap_remove`); a `Map` used only with `get`/`has`/`set` may be a
+  `HashMap`. The crate's `clippy.toml` disallows iterating `std` hash maps; an exception needs an
+  `#[expect(clippy::disallowed_methods, reason = "…")]` that says why the order cannot matter;
+- `array.sort(cmp)` is `slice.sort_by(cmp)` (stable, as JS), with the comparator ported
+  literally, including a comparator that returns 0 for distinct items; `array.sort()` with no
+  comparator compares the items' strings by UTF-16 code units, which is byte order only for
+  ASCII, so port it as a sort of the strings and assert ASCII; an OCaml `List.sort` keeps its
+  own merge;
+- `| 0`, `>>> 0` and `Math.imul` are `i32`/`u32` wrapping operations; any other number used as
+  an integer is `i64` or `usize`; a number used as a float stays `f64` in the same order of
+  operations;
+- `bigint` is `prove_num::Int`, whose `/`, `%` and `>>` follow JS;
+- a JS exception used for control flow (`SmtCanceledError`, `TlaIsabelleError("Interrupt")`)
+  becomes a `Result` propagated with `?`; never a panic;
+- recursion that the TS relies on catching as a stack overflow gets a depth counter (3.6).
+
+**Statistics.** Each decider reports the deterministic counters 2.1 names, under the same names
+in both languages: the TS side returns them from the decider (P0 adds the missing ones), the
+binding returns them from Rust, and `prover-differential.ts` compares them field by field. A
+track that finds another cheap counter that pins the search (for example conflicts or decisions
+in the SMT kernel) adds it to both sides in its own commit, inert in TS as P0's are.
+
+**Tests.** Port the TS unit tests of the code you port to `#[test]`s in the crate, case for case,
+with the same inputs and expected results; the TS tests stay until P7 deletes the TS code. Add a
+test for every difference the differential found, with the smallest input that shows it.
+
+**The gate before a flip commit.** On the whole decider corpus for the back end, under the
+deterministic budget: zero `differs` and zero `crash`, every `faster-only` listed with why; the
+ported unit tests pass; the TS unit tests pass with `PROVE_IT_PROVER_<NAME>=rust`;
+`conformance:prove` gives the same counts as on `main`; the wasm build passes the differential on
+a sample (`--filter tlapm/library`); the size row is recorded (3.9); and the full local gate of
+AGENTS.md passes. The flip itself is a separate commit that changes only the default, so it can
+be reverted alone.
 
 ---
 
