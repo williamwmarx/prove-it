@@ -7,6 +7,8 @@ mod failure;
 mod files;
 mod front;
 mod messages;
+#[cfg(target_os = "linux")]
+mod pages;
 mod summary;
 mod time;
 mod trace;
@@ -16,6 +18,10 @@ mod zone;
 /// formula does before it reports TLC's stack overflow, which a main thread's stack, 1 MiB on
 /// Windows, doesn't hold.
 const RUN_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+#[cfg(target_os = "linux")]
+#[global_allocator]
+static ALLOCATOR: pages::HugePages = pages::HugePages;
 
 fn main() {
     let args: Vec<String> = std::env::args_os()
