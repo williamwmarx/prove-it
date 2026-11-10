@@ -66,6 +66,7 @@ describe("a malformed input", () => {
 });
 
 // Until a backend's port lands, the native engine declines its inputs and TypeScript decides them.
+// Where it decides, it must answer as TypeScript does.
 describe("the Rust ports", () => {
   const getAddon = () => {
     const addon = getNativeAddon();
@@ -73,8 +74,21 @@ describe("the Rust ports", () => {
     return addon;
   };
 
-  it.each(INPUTS)("%s declines while it isn't ported", (prover, text) => {
-    expect(getAddon().decide(prover, text, 1000, undefined, undefined).kind).toBe("declined");
+  it.each(INPUTS)("%s declines, or decides as TypeScript does", (prover, text) => {
+    const native = getAddon().decide(prover, text, Infinity, undefined, undefined);
+    if (native.kind === "declined") return;
+    const typescript = decide(prover, text, OPTIONS);
+    expect(native).toEqual({
+      kind: "decided",
+      verdict: typescript.verdict,
+      statistics: typescript.statistics,
+    });
+  });
+
+  it("decides Zenon", () => {
+    expect(getAddon().decide("zenon", INPUTS[1][1], Infinity, undefined, undefined).kind).toBe(
+      "decided",
+    );
   });
 
   it("declines a prover without a backend", () => {

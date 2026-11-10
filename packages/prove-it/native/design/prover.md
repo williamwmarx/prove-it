@@ -772,6 +772,14 @@ session:
 - Last: `nra-solver.ts`, the one file that imports `nlsat` (its solver, algebraic numbers and
   types), which needs P3b-nlsat.
 - First gate: `tests/unit/smt-intervals.test.ts` (16) and `smt-pdd.test.ts` (17).
+- Oracle: `PROVE_IT_LP_TRACE=<dir>` makes each SMT decision write `<dir>/<digest>.lptrace`, the
+  JSON lines of every call `theory-lra-*` makes into lp, with its arguments and result, every
+  callback lp makes into the theory with its answer, and the theory's field reads of lp objects
+  (`src/prover/smt/solver/lp-trace.ts` documents the format). `bun scripts/run.ts lp-trace`
+  records them for the SMT inputs of the decider corpus in `tests/conformance/.lp-traces/<prover>`, and
+  checks that each traced answer, statistics included, is the recorded one. A Rust replayer
+  drives the Rust lp with the same calls, answers its callbacks from the trace and compares the
+  rest.
 
 **P3b-nlsat** (`prove-smt`, module `nlsat`):
 - In scope: `smt/solver/nlsat/` (7,875 lines).
@@ -914,3 +922,9 @@ Kept current by whoever holds the next stage: what is built, what the differenti
 is next.
 
 - Phase 1: this document.
+- P2 Zenon: `prove-zenon` ports all of `zenon/` but `encode.ts`, one module per TS file, behind
+  `PROVE_IT_PROVER`. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's tests
+  are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on each
+  fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches in
+  verdict, steps, every statistic and the proof's digest. Malformed input is declined. Next: the
+  decider differential on the corpus's `.znn` inputs, then the flip commit.
