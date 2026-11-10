@@ -578,23 +578,73 @@ impl<'a> LevelAnalyzer<'a> {
         bound: &[Name],
     ) -> Result<LevelData> {
         let is_bound = |name: &Name| bound.contains(name);
+        let has_condition = |operand: usize, other: usize, argument: usize| {
+            operator.conditions.contains(&(operand, other, argument))
+        };
+        // `checkArguments`, operand by operand: an argument above the operator's level, an
+        // operator argument whose arguments it allows below what the operator needs, and an
+        // argument above what an operator argument allows it.
+        let mut errors = Vec::new();
         for (index, operand) in operands.iter().enumerate() {
-            if operand.operator.is_some() || operand.declared.is_some() {
-                continue;
-            }
-            if operand.data().level > get_max_level(operator, index) {
-                return Err(plain_error(format!(
+            if operand.operator.is_none()
+                && operand.declared.is_none()
+                && operand.data().level > get_max_level(operator, index)
+            {
+                errors.push(format!(
                     "Level error in applying operator {}:\nThe level of argument {} exceeds the maximum level allowed by the operator",
                     operator.name,
                     index + 1
-                )));
+                ));
+            }
+            let Some(argument) = &operand.operator else {
+                continue;
+            };
+            let arity = argument.formals.len();
+            for position in 0..arity {
+                let minimum = operator
+                    .min_max_levels
+                    .get(index)
+                    .and_then(|levels| levels.get(position))
+                    .copied()
+                    .unwrap_or(CONSTANT_LEVEL);
+                if get_max_level(argument, position) < minimum {
+                    errors.push(format!(
+                        "Level error in applying operator {}:\nThe permitted level of argument {} of the operator argument {} \nmust be at least {minimum}",
+                        operator.name,
+                        position + 1,
+                        index + 1
+                    ));
+                }
+            }
+            for (other_index, other) in operands.iter().enumerate() {
+                for position in 0..arity {
+                    if has_condition(index, other_index, position)
+                        && other.data().level > get_max_level(argument, position)
+                    {
+                        errors.push(format!(
+                            "Level error in applying operator {}:\nThe level of argument {} exceeds the maximum level allowed by the operator",
+                            operator.name,
+                            other_index + 1
+                        ));
+                    }
+                }
             }
         }
+        match errors.len() {
+            0 => {}
+            1 => return Err(plain_error(errors.remove(0))),
+            _ => {
+                return Err(FrontError::NotYet(
+                    "level errors of several arguments of an application".to_owned(),
+                ));
+            }
+        }
+        // SANY names the operator, as `$BoundedChoose` or `$SetOfAll`, and the variable, which
+        // the quantifiers above do.
         if ranges.iter().any(|range| range.level > ACTION_LEVEL) {
-            return Err(plain_error(format!(
-                "Level error in applying operator {}:\nThe level of the range for a bounded variable exceeds the maximum level allowed by the operator",
-                operator.name
-            )));
+            return Err(FrontError::NotYet(
+                "a bound above action level outside a quantifier".to_owned(),
+            ));
         }
         let get_operand = |formal: &Name| {
             operator
@@ -602,9 +652,6 @@ impl<'a> LevelAnalyzer<'a> {
                 .iter()
                 .position(|param| param.name == *formal)
                 .and_then(|index| operands.get(index))
-        };
-        let has_condition = |operand: usize, other: usize, argument: usize| {
-            operator.conditions.contains(&(operand, other, argument))
         };
         let level = operands
             .iter()
@@ -791,7 +838,13 @@ impl<'a> LevelAnalyzer<'a> {
     }
 
     fn to_operand(&self, expression: &Expr, scope: &Scope) -> Result<Operand> {
-        if let ExpressionKind::Lambda { params, body, .. } = &expression.kind {
+        if let ExpressionKind::Lambda {
+            params,
+            body,
+            operator,
+            ..
+        } = &expression.kind
+        {
             let formals: Vec<Formal> = params
                 .iter()
                 .map(|name| Formal {
@@ -799,8 +852,9 @@ impl<'a> LevelAnalyzer<'a> {
                     arity: 0,
                 })
                 .collect();
-            let operator =
-                Rc::new(self.analyze_operator(&Rc::from("LAMBDA"), formals, body, scope)?);
+            // SANY names a builtin operator passed as an argument by its symbol.
+            let name = operator.clone().unwrap_or_else(|| Rc::from("LAMBDA"));
+            let operator = Rc::new(self.analyze_operator(&name, formals, body, scope)?);
             return Ok(Operand {
                 own: LevelData::default(),
                 operator: Some(operator),
@@ -866,18 +920,57 @@ impl<'a> LevelAnalyzer<'a> {
         }
     }
 
+    /// `OpApplNode.levelCheck`'s check of a logical operator, which SANY names: `\land`, `\lor`,
+    /// `=>`, `\equiv`, or a conjunction or disjunction list. SANY nests an infix chain of more than
+    /// two operands, so reports at one of its prefixes, which stays `NotYet`.
     fn check_junction(operands: &[Operand], expression: &Expression) -> Result<()> {
         let levels: Vec<u8> = operands
             .iter()
             .map(|operand| operand.data().level)
             .collect();
-        if levels.contains(&ACTION_LEVEL) && levels.contains(&TEMPORAL_LEVEL) {
-            return Err(create_level_error(
-                "Formula has both temporal formula and action as arguments",
-                expression,
-            ));
+        if !(levels.contains(&ACTION_LEVEL) && levels.contains(&TEMPORAL_LEVEL)) {
+            return Ok(());
         }
-        Ok(())
+        let name = match &expression.kind {
+            ExpressionKind::Junction {
+                is_and,
+                is_bulleted: true,
+                ..
+            } => {
+                if *is_and {
+                    "Conjunction list"
+                } else {
+                    "Disjunction list"
+                }
+            }
+            ExpressionKind::Junction { is_and, .. } if operands.len() == 2 => {
+                if *is_and {
+                    "\\land"
+                } else {
+                    "\\lor"
+                }
+            }
+            ExpressionKind::Apply { operator, .. } => match &**operator {
+                "/\\" => "\\land",
+                "\\/" => "\\lor",
+                "=>" => "=>",
+                "<=>" => "\\equiv",
+                _ => {
+                    return Err(FrontError::NotYet(
+                        "a logical operator's level error".to_owned(),
+                    ));
+                }
+            },
+            _ => {
+                return Err(FrontError::NotYet(
+                    "a level error in an infix chain of more than two operands".to_owned(),
+                ));
+            }
+        };
+        Err(create_level_error(
+            &format!("{name} has both temporal formula and action as arguments"),
+            expression,
+        ))
     }
 
     fn analyze_let(
@@ -1015,7 +1108,45 @@ impl<'a> LevelAnalyzer<'a> {
             ExpressionKind::Let {
                 definitions, body, ..
             } => self.analyze_let(definitions, body, scope),
-            ExpressionKind::Quantified { bounds, body, .. } => {
+            ExpressionKind::Quantified {
+                quantifier,
+                bounds,
+                body,
+            } => {
+                // `checkArguments`: SANY names the first variable of each bound whose range is
+                // above action level.
+                let mut errors = Vec::new();
+                for bound in bounds {
+                    if self.analyze(&bound.set, scope)?.level <= ACTION_LEVEL {
+                        continue;
+                    }
+                    let ranges = match &bound.pattern {
+                        BoundPattern::Name { ranges, .. } | BoundPattern::Tuple { ranges, .. } => {
+                            ranges
+                        }
+                    };
+                    let Some(range) = ranges.first() else {
+                        return Err(FrontError::NotYet("a bound without a range".to_owned()));
+                    };
+                    errors.push(format!(
+                        "Level error in applying operator {}:\nThe level of the range for the bounded variable {} \nexceeds the maximum level allowed by the operator",
+                        if *quantifier == Quantifier::Exists {
+                            "$BoundedExists"
+                        } else {
+                            "$BoundedForall"
+                        },
+                        format_range(range)
+                    ));
+                }
+                match errors.len() {
+                    0 => {}
+                    1 => return Err(create_level_error(&errors[0], expression)),
+                    _ => {
+                        return Err(FrontError::NotYet(
+                            "level errors of several bounds of a quantifier".to_owned(),
+                        ));
+                    }
+                }
                 let sets: Vec<Expr> = bounds.iter().map(|bound| bound.set.clone()).collect();
                 let data = self.apply_builtin(
                     &signature(&JUNCTION_LEVELS),
