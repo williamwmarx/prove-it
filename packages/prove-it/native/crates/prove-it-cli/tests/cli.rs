@@ -3483,8 +3483,8 @@ fn passes_the_elements_a_leading_field_test_rejects_where_tlc_does() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
-// Fairness whose ENABLED the search's steps answer, or don't, against what TLC 1.8.0 prints for each
-// spec, on one thread and with every level shared between four.
+// Fairness whose ENABLED the search's steps answer, or don't, against what TLC built at d8fb231
+// prints for each spec, on one thread and with every level shared between four.
 #[test]
 fn answers_enabled_from_the_steps_as_tlc_does() {
     let specs = [
@@ -3519,6 +3519,15 @@ fn answers_enabled_from_the_steps_as_tlc_does() {
                 "State 4: <Inc(1) line 5, col 11 to line 5, col 53 of module Counters>\nx = <<2, 1>>\n\n",
                 "State 5: Stuttering\n",
             ),
+            "14 states generated, 9 distinct states found, 0 states left on queue.\n",
+        ),
+        (
+            // The labelled search counts and orders the states as the next-state relation's walk
+            // does, which the POSTCONDITION reads.
+            "Stats",
+            "---- MODULE Stats ----\nEXTENDS Naturals, TLC\nCONSTANT P\nVARIABLE x\nInc(p) == x[p] < 2 /\\ x' = [x EXCEPT ![p] = x[p] + 1]\nReset == (\\A p \\in P : x[p] = 2) /\\ x' = [p \\in P |-> 0]\nNext == (\\E p \\in P : Inc(p)) \\/ Reset\nSpec == x = [p \\in P |-> 0] /\\ [][Next]_x /\\ \\A p \\in P : WF_x(Inc(p))\nDone == \\A p \\in P : []<>(x[p] = 2)\nPost == PrintT(<<TLCGet(\"stats\"), TLCGet(\"distinct\"), TLCGet(\"queue\"), TLCGet(\"level\")>>)\n====\n",
+            "CONSTANT P = {1, 2}\nSPECIFICATION Spec\nPROPERTY Done\nPOSTCONDITION Post\n",
+            "<< [ distinct |-> 9,\n     queue |-> 0,\n     worker |-> 0,\n     duration |-> 0,\n     generated |-> 14,\n     diameter |-> 5,\n     initial |-> 1 ],\n   9,\n   0,\n   0 >>\nModel checking completed. No error has been found.\n",
             "14 states generated, 9 distinct states found, 0 states left on queue.\n",
         ),
     ];
