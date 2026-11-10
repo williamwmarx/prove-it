@@ -14,38 +14,25 @@ use crate::error::{Error, Exception, Res, isabelle_error};
 thread_local! {
     /// The limits of the decision running on this thread, while `with_limits` runs it.
     static LIMITS: Cell<Option<*mut Limits<'static>>> = const { Cell::new(None) };
-    /// The address of the stack where the decision started, for `check_stack`.
-    static STACK_BASE: Cell<usize> = const { Cell::new(0) };
+    /// How deep the recursions that call `check_stack` are nested.
+    static DEPTH: Cell<usize> = const { Cell::new(0) };
 }
-
-/// How much stack a decision may use before it gives up as JavaScript does on a stack overflow.
-/// Decisions run on a thread with a 256 MB stack (design/prover.md 3.2), so this leaves ample room.
-const STACK_BUDGET: usize = 64 << 20;
 
 struct Installed {
     limits: Option<*mut Limits<'static>>,
-    base: usize,
 }
 
 impl Drop for Installed {
     fn drop(&mut self) {
         LIMITS.with(|cell| cell.set(self.limits));
-        STACK_BASE.with(|cell| cell.set(self.base));
     }
 }
 
-fn stack_address() -> usize {
-    let marker = 0u8;
-    std::hint::black_box(&marker) as *const u8 as usize
-}
-
-/// Runs a decision with `limits` installed for `check_interrupt`, and the current stack depth as
-/// the base of `check_stack`.
+/// Runs a decision with `limits` installed for `check_interrupt`.
 pub fn with_limits<T>(limits: &mut Limits<'_>, run: impl FnOnce() -> T) -> T {
     let pointer = (limits as *mut Limits<'_>).cast::<Limits<'static>>();
     let _restore = Installed {
         limits: LIMITS.with(|cell| cell.replace(Some(pointer))),
-        base: STACK_BASE.with(|cell| cell.replace(stack_address())),
     };
     run()
 }
@@ -66,13 +53,34 @@ pub fn check_interrupt() -> Res<()> {
     Ok(())
 }
 
-/// Gives up with `Error::Stack` once the recursion has used more stack than a decision may, where
-/// the TypeScript would overflow JavaScript's stack and answer unknown. Rust can't catch an
-/// overflow, so the deep recursions call this instead.
-pub fn check_stack() -> Res<()> {
-    let base = STACK_BASE.with(Cell::get);
-    if base != 0 && base.abs_diff(stack_address()) > STACK_BUDGET {
-        return Err(Error::Stack);
+/// How deep the recursions that call `check_stack` may nest. A decision runs natively on a thread
+/// with a stack sized for this; WebAssembly runs on the host's JavaScript stack, which is far
+/// shallower, so its bound is lower (design/fallback.md, "WebAssembly's stack").
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAXIMUM_DEPTH: usize = 20_000;
+#[cfg(target_arch = "wasm32")]
+pub const MAXIMUM_DEPTH: usize = 1_000;
+
+/// One level of a recursion that `check_stack` admitted; dropping it leaves the level.
+#[must_use = "the depth counts while the guard lives: bind it with `let _depth = check_stack()?;`"]
+pub struct Depth(());
+
+impl Drop for Depth {
+    fn drop(&mut self) {
+        DEPTH.with(|depth| depth.set(depth.get() - 1));
     }
-    Ok(())
+}
+
+/// Enters one level of a deep recursion, or gives up with `Error::Stack` past `MAXIMUM_DEPTH`,
+/// where the TypeScript would overflow JavaScript's stack and answer unknown. Rust can't catch an
+/// overflow, so the deep recursions call this on entry and keep the guard until they return:
+/// `let _depth = check_stack()?;`.
+pub fn check_stack() -> Res<Depth> {
+    DEPTH.with(|depth| {
+        if depth.get() >= MAXIMUM_DEPTH {
+            return Err(Error::Stack);
+        }
+        depth.set(depth.get() + 1);
+        Ok(Depth(()))
+    })
 }

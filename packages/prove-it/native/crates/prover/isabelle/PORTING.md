@@ -45,7 +45,8 @@ modules ported separately fit together.
 - **Stack.** The TypeScript relies on JavaScript's stack overflow ending a hopeless proof
   (decide answers unknown). Rust can't catch an overflow, so each recursive function that returns
   `Res` and can recurse as deep as a term or a proof search (the rewriter, the unifier, pattern
-  unification, the simplifier, blast's search) calls `check_stack()?` on entry.
+  unification, the simplifier, blast's search) enters a level with `let _depth = check_stack()?;` on entry and keeps the guard until it returns
+  (a depth count: 20,000 natively, 1,000 in WebAssembly; the guard is `#[must_use]`).
 - **Lazy sequences** are `Seq<T>` (`pure/seq.rs`): `make_seq`, `defer_seq` (whose closure may hand
   over to another sequence, `Step::Seq`, where the TypeScript's `deferSeq` returns a `Seq`),
   `pull()` returning `Res<Cell<T>>`, and the combinators with fallible callbacks. A TypeScript
