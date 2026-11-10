@@ -5,6 +5,8 @@
 
 pub mod algebraic;
 pub mod atoms;
+#[cfg(test)]
+mod differential_tests;
 pub mod evaluator;
 pub mod explain;
 pub mod interval_set;
