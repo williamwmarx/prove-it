@@ -598,6 +598,31 @@ impl<'ir> Evaluator<'ir> {
     }
 
     /// A text with TLC's rank of it, or -1 for one the IR doesn't rank.
+    /// A field name of the records TLC builds of its counterexample (`RecordValue`'s statics):
+    /// interned as its class loads, after the spec's strings, in the order declared, unless the
+    /// spec has the string.
+    pub(crate) fn counterexample_field(&self, name: &str) -> Rc<Text> {
+        const FIELDS: [&str; 9] = [
+            "beginLine",
+            "beginColumn",
+            "endLine",
+            "endColumn",
+            "module",
+            "name",
+            "location",
+            "context",
+            "parameters",
+        ];
+        let units: Box<[u16]> = name.encode_utf16().collect();
+        if let Some(&rank) = self.ranks.get(&units) {
+            return Rc::new(Text { units, rank });
+        }
+        let last = self.ranks.values().copied().max().unwrap_or(-1);
+        let position = FIELDS.iter().position(|field| *field == name);
+        let rank = position.map_or(-1, |position| last + 1 + position as i32);
+        Rc::new(Text { units, rank })
+    }
+
     pub fn text_of(&self, units: Box<[u16]>) -> Rc<Text> {
         let rank = self.ranks.get(&units).copied().unwrap_or(-1);
         Rc::new(Text { units, rank })

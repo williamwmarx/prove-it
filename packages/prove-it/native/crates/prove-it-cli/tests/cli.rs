@@ -1394,6 +1394,38 @@ fn keeps_the_registers_as_tlc_rebuilds_a_violations_trace() {
 }
 
 #[test]
+fn prints_the_counterexample_records_in_tlcs_order() {
+    // TLC interns the field names of its counterexample's records as RecordValue loads, after the
+    // spec's strings and in the order declared, so a name the spec has comes first.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLES x\nInit == x = 0\nA(n) == x' = x + n\nDummy == <<\"parameters\", \"context\", \"endLine\">>\nNext == \\E n \\in {1} : A(n)\nInv == x < 1\nPost == PrintT(CounterExample.action) /\\ TRUE\n====\n";
+    let (output, directory) = run_lowered(
+        "counterexample",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post\n",
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("[ parameters |-> <<\"n\">>,\n       context |-> [n |-> 1],\n       name |-> \"A\",\n       location |->\n           [ endLine |-> 5,\n             beginLine |-> 5,\n             beginColumn |-> 9,\n             endColumn |-> 18,\n             module |-> \"Stop\" ] ]"),
+        "{text}"
+    );
+    // TLC builds the counterexample's states from an ALIAS, which the binary doesn't follow.
+    let aliased = spec.replace("Inv ==", "Al == [x |-> x, z |-> 0]\nInv ==");
+    let (output, aliased_directory) = run_lowered(
+        "counterexample-alias",
+        &aliased,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post\nALIAS Al\n",
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("reads the counterexample of a model with an ALIAS"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    std::fs::remove_dir_all(aliased_directory).expect("removed");
+}
+
+#[test]
 fn prints_what_the_expansion_printed_before_its_violation() {
     // TLC checks each successor as it finds it, so it prints what finding the violating one
     // printed before it reports the violation, as TLC 1.8 prints this spec's 1.
