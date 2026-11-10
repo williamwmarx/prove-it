@@ -541,6 +541,35 @@ fn prints_an_assumption_that_fails_to_evaluate() {
     }
 }
 
+#[test]
+fn prints_what_an_assumption_printed_before_it_failed_once() {
+    let spec = "---- MODULE Printed ----\nEXTENDS TLC, Integers\nVARIABLE x\nASSUME PrintT(1)\nASSUME PrintT(3) /\\ PrintT(2) /\\ 1 \\div 0 = 1\nInit == x = 0\nNext == x' = x\n====\n";
+    let expected = "\n1\n3\n2\nError: Evaluating assumption line 5, col 8 to line 5, col 45 of module Printed failed.\nThe second argument of \\div is 0.\nFinished in ";
+    // tla-front as the whole front end, where the search prints the assumptions as it evaluates
+    // them.
+    let (output, directory) = run_front("printed-native", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(text.contains(expected), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A recorded front, which holds what TLC printed before the error.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-printed-front-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (extension, contents) in [
+        ("tla", spec),
+        ("cfg", "INIT Init\nNEXT Next\n"),
+        ("front", "Starting... (2026-11-10 00:00:00)\n1\n3\n2\n"),
+    ] {
+        std::fs::write(directory.join(format!("Printed.{extension}")), contents).expect("a file");
+    }
+    let output = run(&directory, &["-noTE", "Printed"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(text.contains(&format!("00:00:00){expected}")), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 const CDOT_IR: &[u8] = include_bytes!(
     "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/cdot/CdotWithContextA.ir"
 );
@@ -919,6 +948,40 @@ fn reports_a_constraint_that_fails_in_a_values_method_on_an_initial_state() {
         text.contains("in Stop\n\n\nReason:\nAttempted to enumerate a set of the form [D -> R],but the domain D:\nSTRING\ncannot be enumerated.\n1 states generated, 0 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\n"),
         "{text}"
     );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_a_bound_that_filters_a_set_tlc_cant_enumerate() {
+    // The shape of MCEWD687a's TreeWithRoot: the bound is an operator whose definition filters
+    // Seq(S), which TLC keeps as it is until the quantifier enumerates it. The state that fails
+    // is one TLC has seen as it replays the expansion, which then ends quietly.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nP(S) == {p \\in Seq(S) : p # <<>>}\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == x < 1 \\/ \\E p \\in P({1, 2}) : p[1] = 1\n====\n";
+    let (output, directory) = run_lowered(
+        "filter-bound",
+        spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(76), "{text}");
+    assert!(
+        text.contains("Error: Evaluating invariant Inv failed.\nAttempted to enumerate { x \\in S : p(x) } when S:\nSeq({1, 2})\nis not enumerable\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 6, col 9 to line 6, col 24 of module Stop>\nx = 1\n\n2 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\nThe average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A function over the filter is one TLC keeps lazy and applies by the filter's membership,
+    // which holds: TLC finds no error, and the binary doesn't report one.
+    let spec = spec.replace(
+        "\\E p \\in P({1, 2}) : p[1] = 1",
+        "[p \\in P({1}) |-> 1][<<1>>] = 1",
+    );
+    let (output, directory) = run_lowered(
+        "filter-function",
+        &spec,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    );
+    let text = stdout(&output);
+    assert!(!text.contains("Error:"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -1587,6 +1650,57 @@ fn checks_the_postconditions_after_a_failure_as_tlcs_deadlock_check_does() {
         "{text}"
     );
     assert!(!text.contains("Postcondition"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn compares_the_message_of_a_lazy_function_applied_outside_its_domain() {
+    // TLC applies a LET's function constructor keeping it lazy, and `FcnLambdaValue.apply` words
+    // a key outside its domain with the function as its `FcnRcdValue` prints (TLC's Github696).
+    let spec = "---- MODULE AE ----\nEXTENDS TLC, TLCExt, Naturals\nVARIABLE x\nASSUME LET f == [n \\in {1, 3} |-> n + 1] IN AssertError(\"In applying the function\\n(1 :> 2 @@ 3 :> 4),\\nthe first argument is:\\n5\\nwhich is not in its domain.\\n\", f[5])\nInit == x = 1\nNext == UNCHANGED x\n====\n";
+    let (output, directory) = run_front("assert-error-lazy", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("1 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // A LET that names the function elsewhere may have built it first, which words the failure
+    // otherwise: the replay doesn't follow which, so the run isn't native.
+    let twice = spec.replace("IN AssertError(", "IN DOMAIN f = {1, 3} /\\ AssertError(");
+    let (output, directory) =
+        run_front("assert-error-built", &twice, "INIT Init\nNEXT Next\n", &[]);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn searches_a_functions_keys_as_tlc_does_where_one_cant_compare() {
+    // `FcnRcdValue.select` asks each key of a short function whether it equals the argument, in
+    // the order of a function a state holds, which TLC has sorted.
+    let spec = "---- MODULE Keys ----\nEXTENDS Integers, TLC\nCONSTANTS M1, M2, K\nVARIABLE v\nInit == v = [m \\in {M1, M2} |-> 1]\nNext == UNCHANGED v\nInv == v[K] = 1\n====\n";
+    let config = "CONSTANTS M1 = A_1\nM2 = A_2\nK = B_1\nINIT Init\nNEXT Next\nINVARIANT Inv\n";
+    let (output, directory) = run_front("keys-state", spec, config, &[]);
+    let text = stdout(&output);
+    assert!(
+        text.contains("Error: Attempted to check equality of the differently-typed model values A_1 and B_1\nWhile working on the initial state:\nv = (A_1 :> 1 @@ A_2 :> 1)\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // TLC searches a function it hasn't sorted in the order it built it, which the replay
+    // doesn't keep.
+    let built = spec.replace("Inv == v[K] = 1", "Inv == (M2 :> v @@ M1 :> 2)[K] = 1");
+    let (output, directory) = run_front("keys-built", &built, config, &[]);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+        "{}",
+        stdout(&output)
+    );
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
