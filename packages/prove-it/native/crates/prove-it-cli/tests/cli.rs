@@ -3454,3 +3454,91 @@ fn passes_the_elements_a_leading_field_test_rejects_where_tlc_does() {
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn unites_a_set_with_one_element_in_tlcs_order() {
+    // S \cup {x} and {x} \cup S where no comparison can fail, which the store answers by a
+    // binary search for x's place: an element before, between and after the set's, one already
+    // in it, the empty set, tuples of other lengths, typed and untyped model values, and strings
+    // in the order TLC ranks them. Each set is what TLC at d8fb231 prints.
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-union-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let module = "---- MODULE Union ----\n\
+         EXTENDS Integers, Sequences\n\
+         CONSTANTS M1, M2, S1, S2, T1\n\
+         VARIABLE y\n\
+         Base(c) == CASE c = 1 -> {[t |-> \"a\", v |-> 1], [t |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 2 -> {[t |-> \"a\", v |-> 1], [t |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 3 -> {[t |-> \"a\", v |-> 1], [t |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 4 -> {}\n\
+         \x20            [] c = 5 -> {<<1>>, <<1, 2, 3>>}\n\
+         \x20            [] c = 6 -> {S1}\n\
+         \x20            [] c = 7 -> {S1}\n\
+         \x20            [] c = 8 -> {M1, 2}\n\
+         \x20            [] c = 9 -> {1, 2}\n\
+         \x20            [] c = 10 -> {[t |-> \"a\"]}\n\
+         \x20            [] c = 11 -> {<<\"a\", 1>>, <<\"b\", 2>>}\n\
+         \x20            [] OTHER -> {\"a\", \"c\"}\n\
+         Elem(c) == CASE c = 1 -> [t |-> \"b\", v |-> 2]\n\
+         \x20            [] c = 2 -> [t |-> \"a\", v |-> 1]\n\
+         \x20            [] c = 3 -> [t |-> \"z\", v |-> 9]\n\
+         \x20            [] c = 4 -> 7\n\
+         \x20            [] c = 5 -> <<1, 2>>\n\
+         \x20            [] c = 6 -> S2\n\
+         \x20            [] c = 7 -> T1\n\
+         \x20            [] c = 8 -> M2\n\
+         \x20            [] c = 9 -> \"a\"\n\
+         \x20            [] c = 10 -> <<1>>\n\
+         \x20            [] c = 11 -> <<\"a\", 0>>\n\
+         \x20            [] OTHER -> \"b\"\n\
+         Init == y = Base(C) \\cup {Elem(C)}\n\
+         Next == UNCHANGED y\n\
+         Inv == y = {}\n\
+         Rev == {Elem(C)} \\cup Base(C) = {}\n\
+         ====\n\
+         ";
+    let cases: [(u32, &str); 9] = [
+        (
+            1,
+            "y = {[t |-> \"c\", v |-> 3], [t |-> \"a\", v |-> 1], [t |-> \"b\", v |-> 2]}\n",
+        ),
+        (2, "y = {[t |-> \"c\", v |-> 3], [t |-> \"a\", v |-> 1]}\n"),
+        (
+            3,
+            "y = {[t |-> \"c\", v |-> 3], [t |-> \"a\", v |-> 1], [t |-> \"z\", v |-> 9]}\n",
+        ),
+        (4, "y = {7}\n"),
+        (5, "y = {<<1>>, <<1, 2>>, <<1, 2, 3>>}\n"),
+        (6, "y = {s_one, s_two}\n"),
+        (8, "y = {M1, M2, 2}\n"),
+        (11, "y = {<<\"a\", 0>>, <<\"a\", 1>>, <<\"b\", 2>>}\n"),
+        (12, "y = {\"c\", \"a\", \"b\"}\n"),
+    ];
+    for (case, expected) in cases {
+        std::fs::write(
+            directory.join("Union.tla"),
+            module.replace("Init ==", &format!("C == {case}\nInit ==")),
+        )
+        .expect("a file");
+        for (invariant, line) in [
+            ("Inv", expected),
+            ("Rev", "Error: The invariant of Rev is equal to FALSE\n"),
+        ] {
+            std::fs::write(
+                directory.join("Union.cfg"),
+                format!("CONSTANTS M1 = M1 M2 = M2 S1 = s_one S2 = s_two T1 = t_one\nINIT Init\nNEXT Next\nINVARIANT {invariant}\n"),
+            )
+            .expect("a file");
+            let output = run(
+                &directory,
+                &["-nowarning", "-fp", "0", "-noGenerateSpecTE", "Union"],
+            );
+            let text = stdout(&output);
+            assert!(
+                text.contains(line),
+                "case {case}, {invariant}: {line}\n{text}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}

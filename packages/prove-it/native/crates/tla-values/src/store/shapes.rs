@@ -287,13 +287,30 @@ impl Store {
     /// Whether TLC's test of `element`'s membership in `set`, a set of the store's own, compares
     /// values that may fail: if not, its answer is whether the set holds the element's id.
     pub(super) fn is_member_by_id(&mut self, element: Id, set: Id) -> bool {
+        self.joined_element_shape(element, set).is_some()
+    }
+
+    /// The class of the element and the set's elements, where there is one.
+    pub(super) fn joined_element_shape(&mut self, element: Id, set: Id) -> Option<Shape> {
         let set_shape = self.shape_of(set);
         let Some(&Term::Set(elements)) = self.shapes.term(set_shape) else {
-            // The empty set, or a set of values that may fail to compare.
-            return false;
+            // A set of values that may fail to compare.
+            return None;
         };
         let element = self.shape_of(element);
-        self.shapes.join(element, elements) != NONE
+        Some(self.shapes.join(element, elements)).filter(|&joined| joined != NONE)
+    }
+
+    /// Notes the shape of a set whose elements are of a class, which the store would otherwise find
+    /// from each of them.
+    pub(super) fn note_set_shape(&mut self, set: Id, elements: Shape) {
+        let index = set as usize;
+        if self.shapes.of_value.len() <= index {
+            self.shapes.of_value.resize(index + 1, UNKNOWN);
+        }
+        if self.shapes.of_value[index] == UNKNOWN {
+            self.shapes.of_value[index] = self.shapes.name(Term::Set(elements));
+        }
     }
 
     fn shape_of(&mut self, id: Id) -> Shape {
