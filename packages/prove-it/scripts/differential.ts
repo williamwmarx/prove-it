@@ -251,8 +251,7 @@ const comparisons: Comparison[] = [];
 // fail nothing yet: why it couldn't do a run, if it said.
 // The last line of a --native-only run: how many native runs differ unlisted and how many aborted.
 const nativeSummary: { text?: string } = {};
-const nativeComparisons: (Comparison & { reason: string | undefined; isAborted: boolean })[] =
-  [];
+const nativeComparisons: (Comparison & { reason: string | undefined; isAborted: boolean })[] = [];
 const missing: string[] = [];
 // The runs --stop-at couldn't stop, since the engine handed over before the first state it could.
 const unforced: string[] = [];
@@ -457,8 +456,7 @@ if (nativeBinary) {
   // A run that aborted fails even where its model is a listed difference.
   const aborted = nativeComparisons.filter((comparison) => comparison.isAborted);
   const differing = nativeComparisons.filter(
-    (comparison) =>
-      !comparison.isAborted && comparison.reason === undefined && !comparison.isKnown,
+    (comparison) => !comparison.isAborted && comparison.reason === undefined && !comparison.isKnown,
   );
   if (isNativeOnly) {
     for (const [failed, heading] of [
