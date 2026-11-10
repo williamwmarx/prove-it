@@ -11,10 +11,11 @@ use tla_values::random::JavaRandom;
 
 use tla_ir::{Bound, Definition, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
 
-use crate::eval::{Context, Evaluator, PRIMED_UNASSIGNED, StackFrame, bound_expression};
+use crate::eval::{Context, Demand, Evaluator, PRIMED_UNASSIGNED, StackFrame, bound_expression};
+use crate::print::format_value;
 use crate::sets::is_member;
 use crate::value::{
-    Evaluated, Lazy, TlcMessage, Value, elements, equals, fail, fail_with, is_same,
+    Evaluated, Lazy, TlcMessage, Value, elements, equals, fail, fail_runtime, fail_with, is_same,
 };
 
 /// What a walk calls for each state it completes; it returns false to stop the walk.
@@ -35,6 +36,15 @@ impl<'ir> Evaluator<'ir> {
         self.targets(is_init).iter().all(Option::is_some)
     }
 
+    // Whether TLC evaluates what is left of a conjunction as guards, every variable having a
+    // value: in the initial predicate (`getInitStates`), and in an action with warnings on
+    // (`getNextStatesAllAssigned`), but not in ENABLED, whose `enabled` walks on.
+    fn is_assigned_shortcut(&mut self, is_init: bool) -> bool {
+        !self.is_enabling
+            && (is_init || self.ir.model.is_warning_enabled)
+            && self.is_complete(is_init)
+    }
+
     /// Walks an action (or, `is_init`, the initial predicate), calling `visit` with each state it
     /// completes, until `visit` returns false; returns whether the walk ran to its end.
     pub fn walk_action(
@@ -46,6 +56,15 @@ impl<'ir> Evaluator<'ir> {
     ) -> Evaluated<bool> {
         self.walk(node, context, is_init, &mut |evaluator| {
             if !evaluator.is_complete(is_init) {
+                if is_init && let Some(stack) = &mut evaluator.call_stack {
+                    stack.incomplete = Some(
+                        evaluator
+                            .current
+                            .iter()
+                            .map(|value| value.as_ref().map_or("null".into(), format_value))
+                            .collect(),
+                    );
+                }
                 return fail(if is_init {
                     "an initial state that isn't complete"
                 } else {
@@ -117,13 +136,35 @@ impl<'ir> Evaluator<'ir> {
         &mut self,
         node: NodeId,
         context: &Context,
+        is_init: bool,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        if self.boolean(node, context)? {
+        self.guard_as(node, context, Demand::Guard { is_init }, then)
+    }
+
+    fn guard_as(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        demand: Demand,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if self.boolean_as(node, context, demand)? {
             then(self)
         } else {
             Ok(true)
         }
+    }
+
+    // A function's value the walk tests, which `OPCODE_fa` words apart from a guard's.
+    fn applied(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        self.guard_as(node, context, Demand::Applied { is_init }, then)
     }
 
     /// Whether TLC computes a definition as it starts (`processConstantDefns`), which it does to
@@ -389,22 +430,30 @@ impl<'ir> Evaluator<'ir> {
                 consequent,
                 alternative,
             } => {
-                let branch = if self.boolean(*condition, context)? {
-                    *consequent
-                } else {
-                    *alternative
-                };
+                let branch =
+                    if self.boolean_as(*condition, context, Demand::WalkedIf { node, is_init })? {
+                        *consequent
+                    } else {
+                        *alternative
+                    };
                 self.walk(branch, context, is_init, then)
             }
             NodeKind::Case { arms, other } => {
                 for &(condition, body) in arms {
-                    if self.boolean(condition, context)? {
+                    if self.boolean_as(condition, context, Demand::WalkedCase { body, is_init })? {
                         return self.walk(body, context, is_init, then);
                     }
                 }
                 match other {
                     Some(other) => self.walk(*other, context, is_init, then),
-                    None => fail("no CASE arm holds"),
+                    None => fail_runtime(
+                        "no CASE arm holds",
+                        format!(
+                            "In computing {}, TLC encountered a CASE with no conditions true.\n{}",
+                            self.computing(is_init),
+                            self.describe_range(node)
+                        ),
+                    ),
                 }
             }
             NodeKind::Let {
@@ -466,8 +515,21 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Label { body, .. } => self.walk(*body, context, is_init, then),
             NodeKind::FunctionApplication { function, args } if args.len() == 1 => {
                 let Some((bound, body, base)) = self.walked_function(*function, context)? else {
-                    return self.guard(node, context, then);
+                    return self.applied(node, context, is_init, then);
                 };
+                // `getInitStates` evaluates the function, which TLC builds unless it keeps it lazy
+                // (`EvalControl.Init`), and applies it; it walks the body of a lazy one only.
+                if is_init && !self.is_enabling {
+                    let value = self.evaluate(*function, context)?;
+                    if !matches!(value, Value::Lambda(_)) {
+                        let argument = self.evaluate(args[0], context)?;
+                        return match self.apply_checked(&value, &argument)? {
+                            Value::Bool(true) => then(self),
+                            Value::Bool(false) => Ok(true),
+                            other => self.non_boolean(node, &other, Demand::Applied { is_init }),
+                        };
+                    }
+                }
                 // The function first, its domain in its frame, as TLC builds the FcnLambdaValue;
                 // then the argument once, and the body walked at it.
                 let frame = StackFrame::Node(self.resolved(*function));
@@ -486,14 +548,15 @@ impl<'ir> Evaluator<'ir> {
                 let set = set?;
                 let argument = self.evaluate(args[0], context)?;
                 if !is_member(&argument, &set)? {
-                    return fail("applied a function outside its domain");
+                    return self.walked_outside(*function, bound, body, &base, &set, &argument);
                 }
                 let inner = self.bind_pattern(&bound.pattern, &argument, &base)?;
                 self.walk(body, &inner, is_init, then)
             }
+            NodeKind::FunctionApplication { .. } => self.applied(node, context, is_init, then),
             NodeKind::Identifier(_) => match self.resolve_action(node, context)? {
                 Some((body, inner)) => self.walk(body, &inner, is_init, then),
-                None => self.guard(node, context, then),
+                None => self.guard(node, context, is_init, then),
             },
             NodeKind::Apply { name, args } => {
                 let operator = if name.is_local {
@@ -511,7 +574,7 @@ impl<'ir> Evaluator<'ir> {
                     // A variable assigned already is tested: against the value of x' = e, as
                     // `proceedWithValue` does, and otherwise as the conjunct's value.
                     if operator != "=" && self.targets(is_init)[variable as usize].is_some() {
-                        return self.guard(node, context, then);
+                        return self.guard(node, context, is_init, then);
                     }
                     return match operator {
                         "=" => {
@@ -520,6 +583,25 @@ impl<'ir> Evaluator<'ir> {
                         }
                         "\\in" => {
                             let set = self.evaluate(args[1], context)?;
+                            // TLC enumerates a set that is `Enumerable` alone.
+                            if let Value::Lazy(lazy) = &set
+                                && lazy.is_overridden()
+                            {
+                                let range = self.describe_range(node);
+                                return fail_runtime(
+                                    "enumerated an infinite set",
+                                    if self.is_enabling {
+                                        format!(
+                                            "The right side of \\IN is not enumerable.\n{range}"
+                                        )
+                                    } else {
+                                        format!(
+                                            "In computing {}, the right side of \\IN is not enumerable.\n{range}",
+                                            self.computing(is_init)
+                                        )
+                                    },
+                                );
+                            }
                             let is_in_order = self.is_in_normalized_order(args[1], context, 0)?;
                             let effects = self.effects();
                             for (position, element) in elements(&set)?.iter().enumerate() {
@@ -567,11 +649,11 @@ impl<'ir> Evaluator<'ir> {
                     "\\/" => self.disjunction(args, context, is_init, then),
                     _ => match self.resolve_action(node, context)? {
                         Some((body, inner)) => self.walk(body, &inner, is_init, then),
-                        None => self.guard(node, context, then),
+                        None => self.guard(node, context, is_init, then),
                     },
                 }
             }
-            _ => self.guard(node, context, then),
+            _ => self.guard(node, context, is_init, then),
         }
     }
 
@@ -608,12 +690,9 @@ impl<'ir> Evaluator<'ir> {
         self.walk(body, first, is_init, &mut |evaluator| {
             // TLC puts the other bindings at the front of the conjuncts left, so the shortcut past
             // assigned conjuncts applies to them as it does to a conjunction's.
-            if (is_init || evaluator.ir.model.is_warning_enabled)
-                && !rest.is_empty()
-                && evaluator.is_complete(is_init)
-            {
+            if !rest.is_empty() && evaluator.is_assigned_shortcut(is_init) {
                 for context in rest {
-                    if !evaluator.boolean(body, context)? {
+                    if !evaluator.boolean_as(body, context, Demand::Remaining { is_init })? {
                         return Ok(true);
                     }
                 }
@@ -724,11 +803,10 @@ impl<'ir> Evaluator<'ir> {
         let Some((&first, rest)) = operands.split_first() else {
             return then(self);
         };
-        // Once every variable has a value, TLC evaluates the rest of the conjunction as guards:
-        // in the initial predicate, and in an action with warnings on (`isAssignedShortcut`).
-        if !is_first && (is_init || self.ir.model.is_warning_enabled) && self.is_complete(is_init) {
+        // Once every variable has a value, TLC evaluates the rest of the conjunction as guards.
+        if !is_first && self.is_assigned_shortcut(is_init) {
             for &operand in operands {
-                if !self.boolean(operand, context)? {
+                if !self.boolean_as(operand, context, Demand::Remaining { is_init })? {
                     return Ok(true);
                 }
             }

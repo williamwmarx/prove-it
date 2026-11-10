@@ -7,7 +7,7 @@ use tla_ir::{AtomKind, NodeId, NodeKind, SourceRange, TextId};
 use tla_values::fingerprint::Fingerprints;
 use tla_values::{Id, Store};
 
-use crate::eval::{CallStack, Context, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
+use crate::eval::{CallStack, Context, Demand, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
 use crate::fingerprint::{fingerprint_failure, state_fingerprint};
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_in_model, is_same, run};
@@ -589,7 +589,11 @@ impl<'ir> Rebuilder<'ir> {
                                 evaluator.current.iter().flatten().for_each(settle);
                             }
                             evaluator.call_stack = call_stack;
-                            return evaluator.boolean(*failed, &Context::default());
+                            return evaluator.boolean_as(
+                                *failed,
+                                &Context::default(),
+                                Demand::Invariant,
+                            );
                         }
                         // TLC's replay of the initial states evaluates the constraint with its
                         // `CallStackTool`, so a failure as it evaluates the constraint has the
@@ -752,7 +756,7 @@ impl<'ir> Rebuilder<'ir> {
                 evaluator.call_stack = call_stack;
                 evaluator
                     .scope_context(scope)
-                    .and_then(|context| evaluator.boolean(failed, &context))
+                    .and_then(|context| evaluator.boolean_as(failed, &context, Demand::Invariant))
             }
         };
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
@@ -805,6 +809,24 @@ impl<'ir> Rebuilder<'ir> {
             return Err(Unsupported(format!(
                 "evaluating the failure again: {reason}"
             )));
+        }
+        // `DoInitFunctor` reports an initial state that isn't a legal state, one some variable
+        // lacks a value in, outside any evaluation.
+        if site == Site::Init
+            && let Some(state) = call_stack.incomplete
+        {
+            let message = "current state is not a legal state".to_string();
+            return Ok(Failure {
+                code: INITIAL_STATE,
+                message: message.clone(),
+                tool_message: message,
+                call_stack: Vec::new(),
+                exit_code: FAILURE_ERROR,
+                printed,
+                fingerprint: None,
+                state: Some(state),
+                replay: Replay::default(),
+            });
         }
         if let Some((sources, state)) = call_stack.fingerprint {
             let Some(message) = error.message else {
@@ -1241,7 +1263,7 @@ fn replay_expansion(
                 let Ok(context) = evaluator.scope_context(scope) else {
                     return unsupported("an invariant's scope");
                 };
-                match evaluator.boolean(invariant, &context) {
+                match evaluator.boolean_as(invariant, &context, Demand::Invariant) {
                     Ok(true) => {}
                     Ok(false) => {
                         return Ok(Replayed {
