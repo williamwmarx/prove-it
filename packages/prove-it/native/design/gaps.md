@@ -471,6 +471,14 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   reading the last k missed. A domain the engine only tests, such as a filter of Nat, `Seq(S)` or
   `Nat \cup {-1}`, is tested by its membership test (`Lazy::Tested`); it was taken as Nat, which
   dropped the filter.
+- TLC evaluates the operands of such a domain as it builds the function and keeps their values:
+  `[i \in Seq(TLCGet(0)) |-> 1]` is over `Seq({0})` whatever the register holds when it is
+  applied, and so is `Nat \ {TLCGet(0)}`. It evaluates a filter's predicate and the body as it
+  applies the function (`SetPredValue.member`, `FcnLambdaValue.apply`), reading the register
+  then. The membership test evaluates the operands as it applies the function, so a domain kept
+  as one that reads a register, TLC's search or the generator is not native. A function stored in
+  a register or cached and applied in a later state stays not native ("applied in another
+  state").
 - TLC compares the elements of two sets, functions or records up to the first that differ, and
   fails at one that holds a lazy function, even where both are the same. The store skipped
   elements with equal ids, so `[a |-> f, b |-> 1] = [a |-> f, b |-> 2]` was FALSE; it now

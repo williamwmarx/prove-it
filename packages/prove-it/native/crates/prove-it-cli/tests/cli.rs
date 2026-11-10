@@ -1675,6 +1675,41 @@ fn applies_the_functions_tlc_keeps_lazy() {
 }
 
 #[test]
+fn keeps_the_domain_a_lazy_function_was_built_over() {
+    // TLC evaluates the operands of a domain it keeps lazy as it builds the function, so the
+    // domains are Seq({0}) and Nat \ {0}, which the register written after doesn't change; the
+    // engine stops rather than test them against the register as it is then.
+    for (test, function, key) in [
+        ("domain-seq", "[i \\in Seq(TLCGet(0)) |-> 1]", "<<1>>"),
+        (
+            "domain-difference",
+            "[i \\in Nat \\ {TLCGet(0) + 0} |-> 1]",
+            "0",
+        ),
+    ] {
+        let set = if test == "domain-seq" { "{0}" } else { "0" };
+        let written = if test == "domain-seq" { "{1}" } else { "5" };
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE x\nInit == TLCSet(0, {set}) /\\ x = (\\E f \\in {{{function}}} : TLCSet(0, {written}) /\\ f[{key}] = 1)\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_lowered(test, &spec, "INIT Init\nNEXT Next\n");
+        assert!(
+            !stdout(&output).contains("No error has been found"),
+            "{}",
+            stdout(&output)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+    // The body is evaluated as the function is applied, and reads the register then.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == TLCSet(0, 0) /\\ x = (\\E f \\in {[i \\in Nat |-> TLCGet(0)]} : TLCSet(0, 5) /\\ f[0] = 5)\nNext == x' = x\nInv == x\n====\n";
+    let (output, directory) =
+        run_lowered("domain-body", spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn keeps_a_definitions_value_as_tlc_does() {
     // TLC evaluates a LET definition or an argument once, at its first use, and keeps the value
     // (`LazyValue`), so `a` is 0 both times though TLCSet writes the register between its uses.
