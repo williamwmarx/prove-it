@@ -1,5 +1,6 @@
 import { TlaEvaluationError } from "./errors";
 import { prettyPrint } from "./pretty-print";
+import { isEvalException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
 
 export interface ModelValue {
@@ -1028,8 +1029,10 @@ const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: V
 };
 
 const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
-  // UserValue.equals compares, which fails on any value but a set or a model value.
-  if (isOverriddenSet(left) && !isSetValue(right) && !isModelValue(right)) {
+  // UserValue.equals compares, which puts any model value first and fails on any other value but
+  // a set.
+  if (isOverriddenSet(left) && isModelValue(right)) return false;
+  if (isOverriddenSet(left) && !isSetValue(right)) {
     return compareOverriddenSets(left, right, "check equality of") === 0;
   }
   if (isComparedByClass(left, right)) return valuesEqual(left, right);
@@ -1967,6 +1970,12 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
 
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
+  // FcnLambdaValue.toTuple enumerates its domain, which a set a Java class overrides can't.
+  if (value.kind === "LazyFunction" && isOverriddenSet(value.domain)) {
+    throw new TlaEvaluationError(
+      "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
+    );
+  }
   const functionValue = toFiniteFunction(value);
   return functionValue.domain.every((key, index) => key === index + 1)
     ? functionValue.range
@@ -2053,6 +2062,20 @@ const isModelValueMember = (element: ModelValue, set: Value) => {
   throw new TlaEvaluationError(
     `Attempted to check if the typed model value ${prettyPrint(formatValue(element))} is an element of\n${prettyPrint(formatValue(set))}`,
   );
+};
+
+// SetPredValue.member words an EvalException of its predicate as its own failure.
+const testFilteredElement = (element: Value, set: FilteredSetValue) => {
+  try {
+    return set.test(element);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError) || !isEvalException(error) || !set.source) {
+      throw error;
+    }
+    throw new TlaEvaluationError(
+      `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source.predicate}`,
+    );
+  }
 };
 
 const isElementOfSet = (element: Value, set: Value): boolean => {
@@ -2146,7 +2169,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       );
     }
     case "FilteredSet":
-      return isElementOf(element, set.base) && set.test(element);
+      return isElementOf(element, set.base) && testFilteredElement(element, set);
     case "Union":
       if (!isTlcEnumerable(set.base)) {
         throw new TlaEvaluationError(

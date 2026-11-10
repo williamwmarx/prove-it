@@ -747,6 +747,88 @@ fn tests_membership_in_a_filter_of_a_finite_set_as_tlc_keeps_it_lazy() {
     }
 }
 
+// Runs an invariant that fails to evaluate on the second state, after definitions of its own, and
+// gives TLC's message for it.
+fn get_invariant_failure(test: &str, definitions: &str, invariant: &str) -> String {
+    let spec = format!(
+        "---- MODULE Inv ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE v\n{definitions}Init == v = 0\nNext == v' = v + 1 /\\ v < 3\nInv == v < 1 \\/ {invariant}\n====\n"
+    );
+    let (output, directory) = run_front(test, &spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(76), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    let start = text
+        .find("Error: Evaluating invariant Inv failed.\n")
+        .expect("the failure");
+    let end = text
+        .find("Error: The behavior up to this point is:")
+        .expect("the trace");
+    text[start..end].to_string()
+}
+
+#[test]
+fn unites_and_compares_sets_and_functions_by_tlc_classes() {
+    // `IntervalValue.cup` tests each element of the other set with its own member.
+    assert_eq!(
+        get_invariant_failure("cup", "", "3 \\in ((1..2) \\cup {\"a\"})"),
+        "Error: Evaluating invariant Inv failed.\nAttempted to check if the value:\n\"a\"\nis in the integer interval 1..2\n"
+    );
+    // `RecordValue.compareTo` fails on a value it can't take as a record, whatever its size.
+    assert!(
+        get_invariant_failure(
+            "record",
+            "f == [r \\in {[a |-> i] : i \\in 1..40} |-> 0]\n",
+            "f[<<1>>] = 0"
+        )
+        .contains("Attempted to compare record:\n[a |-> 20]\nwith non-record\n<<1>>")
+    );
+    // `FcnRcdValue.compareTo` takes the keys of one over an interval as integers.
+    assert_eq!(
+        get_invariant_failure(
+            "interval",
+            "g == [r \\in {(\"a\" :> i @@ \"b\" :> 1) : i \\in 1..40} |-> 0]\n",
+            "g[<<1, 2>>] = 0"
+        ),
+        "Error: Evaluating invariant Inv failed.\nAttempted to compare integer with non-integer\n\"a\".\n"
+    );
+    // A function TLC keeps lazy is the record or the tuple it builds, which it can't over Nat.
+    assert_eq!(
+        get_invariant_failure("lambda-record", "", "[n \\in Nat |-> n].a = 1"),
+        "Error: Evaluating invariant Inv failed.\nAttempted to compute the number of elements in the overridden value Nat.\n"
+    );
+    assert_eq!(
+        get_invariant_failure("lambda-tuple", "", "[n \\in Nat |-> n] \\in Seq(Nat)"),
+        "Error: Evaluating invariant Inv failed.\nTo convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.\n"
+    );
+}
+
+#[test]
+fn compares_model_values_with_lazy_sets_as_tlc() {
+    for (model, assumption, expected) in [
+        // `SubsetValue.member` fails on any value it can't enumerate, an untyped model value too.
+        (
+            "m",
+            "m \\in SUBSET {1}",
+            "of module Lazy failed.\nAttempted to check if the non-enumerable value\nm\nis element of\n{{}, {1}}\n",
+        ),
+        // `UserValue.equals` compares, which puts any model value first, a typed one too.
+        ("A_b", "Nat = m", ")\nFALSE\n"),
+    ] {
+        let spec = format!(
+            "---- MODULE Lazy ----\nEXTENDS TLC, Naturals\nCONSTANT m\nVARIABLE x\nASSUME PrintT({assumption})\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front(
+            "model-lazy",
+            &spec,
+            &format!("CONSTANT m = {model}\nINIT Init\nNEXT Next\n"),
+            &[],
+        );
+        let text = stdout(&output);
+        assert!(text.contains(expected), "{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 #[test]
 fn fails_to_print_a_lazy_set_whose_expansion_fails() {
     // PrintT prints with `toStringUnchecked`, which fails where TLC can't expand a lazy set.

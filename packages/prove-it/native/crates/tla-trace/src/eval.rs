@@ -1010,6 +1010,10 @@ impl<'ir> Evaluator<'ir> {
             return fail("a field that isn't a string");
         };
         let name = String::from_utf16_lossy(&name.units);
+        // `Tool`'s OPCODE_rs takes a function TLC keeps lazy as the value it builds (`toFcnRcd`).
+        if let Value::Lambda(lambda) = record {
+            return crate::value::lambda_as_function(lambda);
+        }
         let Value::Function(inner) = record else {
             return fail_runtime(
                 "selected a field of a non-record",
@@ -1250,29 +1254,7 @@ impl<'ir> Evaluator<'ir> {
                     .iter()
                     .map(|&item| self.evaluate(item, context))
                     .collect::<Evaluated<Vec<_>>>()?;
-                // TLC builds a set enumeration as written and normalizes it only as it uses it,
-                // which the replay follows as far as fingerprinting and printing the state, and
-                // counting it.
-                match set_of(values.clone()) {
-                    Err(error)
-                        if error
-                            .message
-                            .as_ref()
-                            .is_some_and(|message| !message.is_eval_exception) =>
-                    {
-                        if let Some(stack) = &mut self.call_stack {
-                            stack.is_unsorted = true;
-                        }
-                        Ok(Value::Unsorted(Rc::new(values)))
-                    }
-                    // A replay keeps track of the set TLC holds unnormalized still, which it
-                    // tests for membership element by element.
-                    Ok(set) if self.call_stack.is_some() => {
-                        mark_unnormalized(&set, values);
-                        Ok(set)
-                    }
-                    set => set,
-                }
+                self.held_set(values)
             }
             NodeKind::SetFilter { bound, predicate } => {
                 let set = self.evaluate(bound.set, context)?;
@@ -1327,7 +1309,8 @@ impl<'ir> Evaluator<'ir> {
                     values.push(evaluator.evaluate(*expression, inner)?);
                     Ok(true)
                 })?;
-                set_of(values)
+                // `Tool`'s OPCODE_soa holds the values unnormalized too.
+                self.held_set(values)
             }
             NodeKind::Tuple(items) => Ok(Value::tuple(
                 items
@@ -2909,6 +2892,31 @@ impl<'ir> Evaluator<'ir> {
             }
         }
         Ok(Combined::Set(self.operand(set)?))
+    }
+
+    // A set enumeration as TLC builds it, of the values as written, which it normalizes only as it
+    // uses it: the replay follows that as far as fingerprinting and printing the state, and
+    // counting it, and keeps track of the set TLC still holds unnormalized, which it tests for
+    // membership element by element.
+    fn held_set(&mut self, values: Vec<Value>) -> Evaluated<Value> {
+        match set_of(values.clone()) {
+            Err(error)
+                if error
+                    .message
+                    .as_ref()
+                    .is_some_and(|message| !message.is_eval_exception) =>
+            {
+                if let Some(stack) = &mut self.call_stack {
+                    stack.is_unsorted = true;
+                }
+                Ok(Value::Unsorted(Rc::new(values)))
+            }
+            Ok(set) if self.call_stack.is_some() => {
+                mark_unnormalized(&set, values);
+                Ok(set)
+            }
+            set => set,
+        }
     }
 
     // A value whose filters TLC keeps lazy are enumerated, at its top or in the tuples and records
