@@ -56,11 +56,34 @@ pub(crate) enum Lazy {
     Filtered(Box<Lazy>, Test),
     Operation(Operator, Box<Lazy>, Box<Lazy>),
     /// `UNION S`, with S's elements the sets the engine holds, each enumerated as its normalized
-    /// set.
+    /// set, or S an [`Lazy::Enumeration`].
     Union(Box<Lazy>),
+    /// `{e1, …, en}` as written, some of whose elements are sets TLC keeps lazy: TLC sorts it as
+    /// it first enumerates it, which caches each element it compares as the receiver.
+    Enumeration(Vec<Lazy>),
 }
 
 impl Lazy {
+    /// Whether the set is or is built of a [`Lazy::Enumeration`].
+    pub(crate) fn holds_enumeration(&self) -> bool {
+        match self {
+            Lazy::Enumeration(_) => true,
+            Lazy::Set(_) | Lazy::Infinite(_) | Lazy::Tested(_) => false,
+            Lazy::Subset(base) | Lazy::Filtered(base, _) | Lazy::Union(base) => {
+                base.holds_enumeration()
+            }
+            Lazy::FunctionSet(domain, range) => {
+                domain.holds_enumeration() || range.holds_enumeration()
+            }
+            Lazy::RecordSet(_, sets) | Lazy::Product(sets) => {
+                sets.iter().any(Lazy::holds_enumeration)
+            }
+            Lazy::Operation(_, left, right) => {
+                left.holds_enumeration() || right.holds_enumeration()
+            }
+        }
+    }
+
     fn is_enumerable(&self) -> bool {
         !matches!(self, Lazy::Infinite(_) | Lazy::Tested(_))
     }
@@ -71,6 +94,7 @@ impl Lazy {
             Lazy::Set(_) => false,
             Lazy::Infinite(_) | Lazy::Tested(_) => true,
             Lazy::Subset(base) | Lazy::Filtered(base, _) | Lazy::Union(base) => base.is_infinite(),
+            Lazy::Enumeration(elements) => elements.iter().any(Lazy::is_infinite),
             Lazy::FunctionSet(domain, range) => domain.is_infinite() || range.is_infinite(),
             Lazy::RecordSet(_, sets) | Lazy::Product(sets) => sets.iter().any(Lazy::is_infinite),
             Lazy::Operation(_, left, right) => left.is_infinite() || right.is_infinite(),
@@ -156,6 +180,55 @@ impl Lazy {
             }
         }
         Ok(Lazy::Set(machine.store.set_of_sorted(&kept)))
+    }
+
+    /// The elements of a set enumeration as TLC holds them once it has sorted them
+    /// (`SetEnumValue.normalize`): `ValueVec.sort` inserts each element after the first into
+    /// those before it, comparing it as the receiver, which caches a set TLC keeps lazy as its
+    /// normalized set, and drops it where it equals one before it. The first is compared only as
+    /// the argument, and stays as built.
+    fn sort_enumeration(machine: &mut Machine<'_>, elements: &[Lazy]) -> Outcome<Vec<Lazy>> {
+        if elements.len() < 2 {
+            return Ok(elements.to_vec());
+        }
+        let mut values = Vec::with_capacity(elements.len());
+        for element in elements {
+            values.push(match element {
+                Lazy::Set(value) => *value,
+                _ => {
+                    let set = element.enumerate(machine)?;
+                    machine.store.set_of(&set)?
+                }
+            });
+        }
+        let mut sorted = vec![0];
+        for index in 1..values.len() {
+            let (mut low, mut high, mut position, mut order) = (0, sorted.len(), 0, 0);
+            while low < high {
+                position = low + ((high - low) >> 1);
+                order = machine
+                    .store
+                    .compare(values[index], values[sorted[position]])?;
+                if order == 0 {
+                    break;
+                }
+                if order < 0 {
+                    high = position;
+                } else {
+                    low = position + 1;
+                }
+            }
+            if order != 0 {
+                sorted.insert(if order < 0 { position } else { position + 1 }, index);
+            }
+        }
+        Ok(sorted
+            .into_iter()
+            .map(|index| match index {
+                0 => elements[0].clone(),
+                _ => Lazy::Set(values[index]),
+            })
+            .collect())
     }
 
     /// The elements in `toFiniteSet`'s order, which a quantifier binds.
@@ -257,13 +330,22 @@ impl Lazy {
                 if !base.is_enumerable() {
                     return Err(Bail("enumerated UNION of an infinite set"));
                 }
+                let sets = match &**base {
+                    Lazy::Enumeration(sets) => Self::sort_enumeration(machine, sets)?,
+                    _ => base
+                        .elements(machine, is_streamed)?
+                        .into_iter()
+                        .map(Lazy::Set)
+                        .collect(),
+                };
                 let mut elements = Vec::new();
                 let mut union = EMPTY_SET;
-                for set in base.elements(machine, is_streamed)? {
-                    let set = Self::set(machine, set)?;
+                for set in sets {
+                    let streamed = set.elements(machine, is_streamed)?;
                     if is_streamed {
-                        elements.extend_from_slice(machine.store.set_elements(set));
+                        elements.extend(streamed);
                     } else {
+                        let set = machine.store.set_of(&streamed)?;
                         union = machine.store.union(union, set)?;
                     }
                 }
@@ -272,6 +354,20 @@ impl Lazy {
                 } else {
                     machine.store.set_elements(union).to_vec()
                 })
+            }
+            Lazy::Enumeration(elements) => {
+                let sorted = Self::sort_enumeration(machine, elements)?;
+                let mut values = Vec::with_capacity(sorted.len());
+                for element in sorted {
+                    values.push(match element {
+                        Lazy::Set(value) => value,
+                        _ => {
+                            let set = element.enumerate(machine)?;
+                            machine.store.set_of(&set)?
+                        }
+                    });
+                }
+                Ok(values)
             }
             Lazy::Operation(Operator::Union, left, right) => {
                 if !left.is_enumerable() || !right.is_enumerable() {
@@ -336,6 +432,7 @@ impl Lazy {
         Ok(match self {
             Lazy::Set(set) => machine.store.size_of(Self::set(machine, *set)?) == 0,
             Lazy::Infinite(_) | Lazy::Subset(_) => false,
+            Lazy::Enumeration(elements) => elements.is_empty(),
             Lazy::FunctionSet(domain, range) => {
                 !domain.is_empty(machine)? && range.is_empty(machine)?
             }
@@ -409,7 +506,7 @@ impl Lazy {
                 sets.iter()
                     .try_fold(1u64, |size, set| bounded(size * set.size(machine)?))
             }
-            Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
+            Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) | Lazy::Enumeration(_) => {
                 let elements = self.enumerate(machine)?;
                 let set = machine.store.set_of(&elements)?;
                 Ok(u64::from(machine.store.size_of(set)))
@@ -527,6 +624,11 @@ impl Lazy {
             }
             Lazy::Filtered(base, test) => {
                 Ok(base.contains(machine, element)? && test(machine, element)?)
+            }
+            Lazy::Enumeration(_) => {
+                let elements = self.enumerate(machine)?;
+                let set = machine.store.set_of(&elements)?;
+                machine.store.is_member(element, set)
             }
             Lazy::Union(base) => {
                 if !base.is_enumerable() {

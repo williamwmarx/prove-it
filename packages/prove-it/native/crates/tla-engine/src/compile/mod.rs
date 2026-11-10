@@ -199,9 +199,11 @@ pub struct Compiled {
     pub(crate) are_elements_enumerated: bool,
     /// For a set: whether TLC's value is known to stream its elements as its normalized set does,
     /// which a UNION or `\cup` TLC keeps lazy doesn't (`isStreamedApart`), and a value of unknown
-    /// provenance, such as a bound name's, may not; and whether each of its elements is.
+    /// provenance, such as a bound name's, may not; whether each of its elements is; and whether
+    /// each element of those is, which a UNION's elements are.
     pub(crate) is_in_order: bool,
     pub(crate) are_elements_in_order: bool,
+    pub(crate) are_elements_of_elements_in_order: bool,
     /// Whether the value is always TRUE or FALSE.
     pub(crate) is_boolean: bool,
     pub(crate) is_constant: bool,
@@ -226,6 +228,18 @@ pub struct Compiled {
     /// For a set TLC keeps lazy: the interpreter's value of it, which says the order TLC
     /// enumerates it in.
     pub(crate) reference: Option<lazy::Reference>,
+    /// For a set enumeration some of whose elements TLC keeps lazy: each element's reference, in
+    /// the order written, which a UNION of the set streams (`Lazy::Enumeration`).
+    pub(crate) element_references: Option<Vec<lazy::Reference>>,
+    /// For a set TLC keeps lazy that may stream apart: whether its reference is TLC's value as
+    /// built, each set it is built of streaming in order or so referenced, where the reference of
+    /// a set the engine holds as an id, such as a variable's the initial predicate assigned, is
+    /// its normalized set.
+    pub(crate) is_reference_exact: bool,
+    /// Whether TLC keeps the value it evaluates for later uses (`LazyValue`), as it keeps an
+    /// operator's argument's or a LET definition's, so that the uses before may have sorted a
+    /// set enumeration it holds, which [`Compiled::element_references`] doesn't follow.
+    pub(crate) is_kept: bool,
     /// For `SUBSET S`: S, which `\subseteq` of two power sets compares in their place.
     pub(crate) subset_base: Option<Box<Compiled>>,
 }
@@ -298,6 +312,7 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         are_elements_enumerated: false,
         is_in_order: false,
         are_elements_in_order: false,
+        are_elements_of_elements_in_order: false,
         is_boolean: false,
         is_constant: false,
         infinite: None,
@@ -310,6 +325,9 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         filter: None,
         predicate: None,
         reference: None,
+        element_references: None,
+        is_reference_exact: false,
+        is_kept: false,
         subset_base: None,
     }
 }
@@ -1027,6 +1045,29 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    // A value TLC keeps for later uses, which the uses before may have sorted a set enumeration
+    // of: the engine streams none it holds as written.
+    fn kept(compiled: Compiled) -> Compiled {
+        let reference = compiled.reference.clone().map(|reference| {
+            Arc::new(move |machine: &mut Machine<'_>| {
+                let lazy = reference(machine)?;
+                if lazy.holds_enumeration() {
+                    return Err(Bail(
+                        "unsupported: streaming a set enumeration TLC may have sorted at an earlier use",
+                    ));
+                }
+                Ok(lazy)
+            }) as lazy::Reference
+        });
+        Compiled {
+            reference,
+            element_references: None,
+            is_reference_exact: false,
+            is_kept: true,
+            ..compiled
+        }
+    }
+
     fn mark_costly(compiled: Compiled) -> Compiled {
         Compiled {
             is_costly: true,
@@ -1461,6 +1502,7 @@ impl<'a> Compiler<'a> {
             shape: Shape::Current(index),
             is_in_order: !context.is_init,
             are_elements_in_order: !context.is_init,
+            are_elements_of_elements_in_order: !context.is_init,
             ..leaf(
                 eval(move |machine| machine.read_current(index)),
                 Footprint::var(index),
@@ -1517,14 +1559,14 @@ impl<'a> Compiler<'a> {
                         "a definition or an argument that reads a register, evaluated more than once",
                     );
                 }
-                Ok(compiled)
+                Ok(Self::kept(compiled))
             }
             Binding::Value { compiled, lazy } => {
                 let Some(lazy) = lazy
                     .as_ref()
                     .filter(|lazy| context.is_primed && !lazy.context.is_primed)
                 else {
-                    return Ok((**compiled).clone());
+                    return Ok(Self::kept((**compiled).clone()));
                 };
                 if let Some(primed) = &*lazy.primed.borrow() {
                     return Ok(primed.clone());
@@ -1667,6 +1709,7 @@ impl<'a> Compiler<'a> {
                     Some(value) => Ok(Compiled {
                         is_in_order: true,
                         are_elements_in_order: true,
+                        are_elements_of_elements_in_order: true,
                         ..constant(self.intern_value(value)?)
                     }),
                     None => decline(format!(

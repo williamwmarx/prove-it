@@ -191,6 +191,8 @@ impl Compiler<'_> {
                     is_in_order: consequent.is_in_order && alternative.is_in_order,
                     are_elements_in_order: consequent.are_elements_in_order
                         && alternative.are_elements_in_order,
+                    are_elements_of_elements_in_order: consequent.are_elements_of_elements_in_order
+                        && alternative.are_elements_of_elements_in_order,
                     is_boolean: consequent.is_boolean && alternative.is_boolean,
                     has_infinite_part: consequent.may_be_infinite()
                         || alternative.may_be_infinite(),
@@ -814,6 +816,7 @@ impl Compiler<'_> {
             are_elements_enumerated: set.are_elements_enumerated,
             is_in_order: set.is_in_order,
             are_elements_in_order: set.are_elements_in_order,
+            are_elements_of_elements_in_order: set.are_elements_of_elements_in_order,
             filter: Some(filter),
             ..leaf(
                 eval(move |machine| {
@@ -862,6 +865,7 @@ impl Compiler<'_> {
             .merge(&body.footprint.without_slots(&bound));
         let are_elements_enumerated = body.is_enumerated;
         let are_elements_in_order = body.is_in_order;
+        let are_elements_of_elements_in_order = body.are_elements_in_order;
         let levels = Arc::new(levels);
         let body = body.eval;
         Ok(Compiled {
@@ -870,6 +874,7 @@ impl Compiler<'_> {
             are_elements_enumerated,
             is_in_order: true,
             are_elements_in_order,
+            are_elements_of_elements_in_order,
             ..leaf(
                 eval(move |machine| {
                     let at = machine.stack.len();
@@ -1257,6 +1262,9 @@ impl Compiler<'_> {
             return Compiled {
                 is_enumerated: true,
                 are_elements_enumerated: true,
+                is_in_order: true,
+                are_elements_in_order: true,
+                are_elements_of_elements_in_order: true,
                 ..constant(EMPTY_SET)
             };
         }
@@ -1268,12 +1276,41 @@ impl Compiler<'_> {
                 None => element.eval.clone(),
             })
             .collect();
+        let are_elements_in_order = elements.iter().all(|element| element.is_in_order);
+        // TLC holds an element it keeps lazy as built, which a UNION of the set streams, unless
+        // it kept the element from an earlier use.
+        let element_references = (!are_elements_in_order
+            && !elements
+                .iter()
+                .any(|element| element.may_be_infinite() || element.is_kept))
+        .then(|| {
+            // An element not known to stream in order streams as its reference says where that is
+            // exact, which a variable's the initial predicate assigned isn't.
+            elements
+                .iter()
+                .map(|element| {
+                    if element.is_in_order {
+                        reference_of(element)
+                    } else {
+                        element
+                            .reference
+                            .clone()
+                            .filter(|_| element.is_reference_exact)
+                    }
+                })
+                .collect::<Option<Vec<_>>>()
+        })
+        .flatten();
         Compiled {
             is_costly: true,
             is_enumerated: true,
             are_elements_enumerated: elements.iter().all(|element| element.is_enumerated),
             is_in_order: true,
-            are_elements_in_order: elements.iter().all(|element| element.is_in_order),
+            are_elements_in_order,
+            are_elements_of_elements_in_order: elements
+                .iter()
+                .all(|element| element.are_elements_in_order),
+            element_references,
             ..leaf(
                 eval(move |machine| {
                     let at = push_all(machine, &evaluators)?;
