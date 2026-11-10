@@ -30,8 +30,32 @@ fn declined(reason: &str) -> HostValue {
     ])
 }
 
-/// `sanyText(root, source, fileName, known)`.
+/// The stack of the thread the report is written on: the front end recurses as deep as TLC's
+/// translation of a formula does, which the stack of the thread JavaScript calls on doesn't hold,
+/// as `prove-it-cli`'s run thread doesn't.
+#[cfg(not(target_arch = "wasm32"))]
+const REPORT_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// `sanyText(root, source, fileName, known)`, on this thread: wasm's stack is the one it links.
+#[cfg(target_arch = "wasm32")]
 pub fn sany_text(arguments: &[HostValue]) -> HookResult {
+    write_sany_text(arguments)
+}
+
+/// `sanyText(root, source, fileName, known)`, on a thread with a deep stack.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn sany_text(arguments: &[HostValue]) -> HookResult {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(REPORT_STACK_BYTES)
+            .spawn_scoped(scope, || write_sany_text(arguments))
+            .expect("a thread for SANY's report")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
+fn write_sany_text(arguments: &[HostValue]) -> HookResult {
     let [root, source, file_name, known] = arguments else {
         return Err(
             "sanyText takes a module's name, its text, a file name and what is known".into(),

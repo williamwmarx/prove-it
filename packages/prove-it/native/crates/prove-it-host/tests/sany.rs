@@ -86,3 +86,25 @@ fn declines_what_tla_front_does_not_write() {
     );
     assert_eq!(text(&get(&result, "kind")), "declined");
 }
+
+#[test]
+fn writes_the_report_of_a_deep_formula_from_a_shallow_stack() {
+    let source = format!(
+        "---- MODULE Main ----\nX == {}TRUE{}\n====\n",
+        "(".repeat(400),
+        ")".repeat(400)
+    );
+    let result = std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(move || {
+            write(&source, |key| {
+                (key == "file:root file:Main").then(|| "Main.tla".to_owned())
+            })
+            .0
+        })
+        .expect("a thread")
+        .join()
+        .expect("the report");
+    assert_eq!(text(&get(&result, "kind")), "text");
+    assert_eq!(get(&result, "isFailed"), HostValue::Bool(false));
+}
