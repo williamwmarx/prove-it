@@ -295,6 +295,9 @@ pub struct Violation {
     pub startup: Vec<Id>,
     /// The state of the generator the startup left (`JavaRandom::state`).
     pub startup_random: u64,
+    /// The state of the generator where an invariant of the last state stopped the search, which
+    /// TLC's worker goes on drawing from as it finds that state again.
+    pub random: Option<u64>,
     /// The symmetry group the search reduced by, if any.
     pub symmetry: Option<NamedGroup>,
     /// TLC's registers as the search left them, ids of `store`.
@@ -502,6 +505,8 @@ struct Found {
     last: Option<Vec<Id>>,
     // TLC's fingerprint of the last state, where TLC added it to its set before the stop.
     fingerprint: Option<u64>,
+    // The state of the generator where a successor's invariant stopped the search.
+    random: Option<u64>,
     counts: StopCounts,
 }
 
@@ -1031,6 +1036,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                     parent: None,
                     last: Some(machine.current().to_vec()),
                     fingerprint: None,
+                    random: None,
                     counts: StopCounts::default(),
                 });
                 return Err(Bail("an invariant violated in an initial state"));
@@ -1044,6 +1050,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             parent: None,
                             last: Some(machine.current().to_vec()),
                             fingerprint: None,
+                            random: None,
                             counts: StopCounts::default(),
                         });
                         return Err(Bail("a property violated in an initial state"));
@@ -1238,6 +1245,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                         parent: Some(self.expanding),
                         last: Some(self.successor.clone()),
                         fingerprint: None,
+                        random: Some(machine.random.state()),
                         counts: StopCounts {
                             generated: self.generated,
                             distinct: count + u64::from(is_new),
@@ -1264,6 +1272,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             parent: Some(self.expanding),
                             last: Some(self.successor.clone()),
                             fingerprint: fingerprint.filter(|_| is_new),
+                            random: None,
                             counts: StopCounts {
                                 generated: self.generated,
                                 distinct: count + u64::from(is_new),
@@ -1406,6 +1415,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 parent: Some(self.expanding),
                 last: None,
                 fingerprint: None,
+                random: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct: count,
@@ -1438,6 +1448,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 parent: None,
                 last: Some(machine.current().to_vec()),
                 fingerprint: None,
+                random: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct,
@@ -1460,6 +1471,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 parent: Some(self.expanding),
                 last: None,
                 fingerprint: None,
+                random: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct: count,
@@ -2501,6 +2513,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     parent: None,
                     last: Some(search.states.state(unanswered.state).to_vec()),
                     fingerprint: None,
+                    random: None,
                     counts: StopCounts {
                         generated: 1,
                         distinct: 1,
@@ -2541,6 +2554,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 parent: None,
                 last: None,
                 fingerprint: None,
+                random: None,
                 counts: StopCounts::default(),
             });
             return Err(Bail(NO_NEXT_STATE));
@@ -3212,6 +3226,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     parent: None,
                     last: None,
                     fingerprint: None,
+                    random: None,
                     counts: StopCounts {
                         generated: search.generated,
                         distinct: count,
@@ -3827,6 +3842,7 @@ fn to_violation(
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
             startup_random: machine.startup_random,
+            random: found.random,
             symmetry,
             registers: std::mem::take(&mut machine.registers),
             possible: search.possible.clone(),
@@ -4105,6 +4121,7 @@ fn to_atom_failure(
         parent: Some(state),
         last: extra.map(|extra| search.states.state(extra as u32).to_vec()),
         fingerprint: None,
+        random: None,
         counts: StopCounts {
             generated: initial_states.0 + sum(&graph.successor_counts),
             distinct,
@@ -4160,6 +4177,7 @@ fn to_accepted(
         store: std::mem::replace(&mut machine.store, Store::new()),
         startup,
         startup_random: machine.startup_random,
+        random: None,
         symmetry: None,
         registers: std::mem::take(&mut machine.registers),
         possible: search.possible.clone(),
@@ -4219,6 +4237,7 @@ fn to_lasso(
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
             startup_random: machine.startup_random,
+            random: None,
             symmetry,
             registers: std::mem::take(&mut machine.registers),
             possible: search.possible.clone(),

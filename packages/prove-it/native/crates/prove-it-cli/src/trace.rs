@@ -138,6 +138,9 @@ fn rebuild(
                         &violation.startup,
                         violation.startup_random,
                     );
+                    if let Some(random) = violation.random {
+                        rebuilder.set_violation_random(random);
+                    }
                     if let Some(group) = &violation.symmetry {
                         rebuilder.set_symmetry(group);
                     }

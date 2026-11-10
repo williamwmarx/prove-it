@@ -25,6 +25,9 @@ pub struct Rebuilder<'ir> {
     key: Key,
     /// The state of the generator TLC's startup left, which the initial predicate draws from.
     startup_random: u64,
+    /// The state of the generator where an invariant of the trace's last state stopped the
+    /// search, where the caller gave it.
+    violation_random: Option<u64>,
     /// TLC's set of fingerprints when the search stopped, sorted, where the caller gave it.
     pub(crate) fingerprints: Option<Vec<u64>>,
 }
@@ -75,6 +78,7 @@ impl<'ir> Rebuilder<'ir> {
             evaluator,
             key,
             startup_random: JavaRandom::seeded(ir.model.random_seed).state(),
+            violation_random: None,
             fingerprints: None,
         })
     }
@@ -96,6 +100,12 @@ impl<'ir> Rebuilder<'ir> {
     pub fn set_startup(&mut self, store: &Store, values: &[Id], random: u64) {
         self.evaluator.set_startup(store, values);
         self.startup_random = random;
+    }
+
+    /// Takes the state of the generator where an invariant of the trace's last state stopped the
+    /// search (`Violation::random`), which TLC goes on drawing from as it finds that state again.
+    pub fn set_violation_random(&mut self, random: u64) {
+        self.violation_random = Some(random);
     }
 
     /// Takes TLC's registers as the search left them, which TLC's trace reads and sets again as
@@ -324,6 +334,9 @@ impl<'ir> Rebuilder<'ir> {
                 JavaRandom::from_state(self.startup_random)
             }
         });
+        let violation_random = self
+            .violation_random
+            .filter(|_| matches!(self.key, Key::State));
         let registers = evaluator.registers.clone();
         let initial = find(
             evaluator,
@@ -375,7 +388,15 @@ impl<'ir> Rebuilder<'ir> {
             }
             evaluator.current = previous.into_iter().map(Some).collect();
             evaluator.level = position as i32 + 1;
-            evaluator.random = seeded(pair[0]);
+            // TLC finds the successor of an initial state it holds by its worker's generator as
+            // the search left it, still seeded for that state (`TLCTrace.printTrace`,
+            // `Tool.getState`, `TLCStateRandom.initialize`): where the search drew, the walk may
+            // find no such successor, and TLC fails.
+            evaluator.random = if is_initial_held {
+                violation_random.map(JavaRandom::from_state)
+            } else {
+                seeded(pair[0])
+            };
             let candidates = match actions.get(position).copied().flatten() {
                 Some(index) if !is_printing => match ir.model.actions.get(index as usize) {
                     Some(action) => vec![(action.expression, action.scope, Some(index))],
@@ -402,6 +423,11 @@ impl<'ir> Rebuilder<'ir> {
                 }
             }
             let Some(state) = found else {
+                if is_initial_held && is_drawing && violation_random.is_some() {
+                    return unsupported(
+                        "a violating successor TLC fails to find again from its generator",
+                    );
+                }
                 return unsupported(format!(
                     "no step from state {} is the trace's next",
                     position + 1

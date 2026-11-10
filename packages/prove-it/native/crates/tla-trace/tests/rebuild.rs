@@ -64,15 +64,26 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
             .map_err(|Unsupported(reason)| format!("state {index}: {reason}"))?;
         assert_eq!(trace.states.len(), states.len());
         // A violation's last state is found by its value, even where VIEW or SYMMETRY would take
-        // another state for it, so it rebuilds only as the search's own.
-        rebuilder
-            .rebuild(
-                &stopped.store,
-                &states,
-                &vec![None; states.len() - 1],
-                Ending::Violation,
-            )
-            .map_err(|Unsupported(reason)| format!("state {index} as a violation: {reason}"))?;
+        // another state for it, so it rebuilds only as the search's own. TLC draws the step to
+        // a violating successor of an initial state from the generator its search left, which a
+        // path the search didn't stop at gives none of.
+        match rebuilder.rebuild(
+            &stopped.store,
+            &states,
+            &vec![None; states.len() - 1],
+            Ending::Violation,
+        ) {
+            Err(Unsupported(reason))
+                if states.len() == 2
+                    && reason.ends_with(
+                        "a random draw where the evaluator doesn't follow TLC's generator",
+                    ) => {}
+            violation => {
+                violation.map_err(|Unsupported(reason)| {
+                    format!("state {index} as a violation: {reason}")
+                })?;
+            }
+        }
         let last = &trace.states[states.len() - 1];
         let text: Vec<String> = last.values.iter().map(format_value).collect();
         assert!(!text.is_empty() || ir.variables.is_empty());

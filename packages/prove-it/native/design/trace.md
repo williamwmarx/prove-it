@@ -392,13 +392,18 @@ value. Any other set draws from its normalized elements. TLC's thread-local gene
 (`RandomEnumerableValues`) is never reseeded in the initial predicate, so the rebuild draws there
 from the state startup left (`Model.startup_random`). It walks the whole initial predicate, so it
 draws as the search drew. Each step draws from a generator seeded with the predecessor's
-fingerprint XOR `Model.random_seed`, as the worker does. A model that draws walks each step
+fingerprint XOR `Model.random_seed`, as the worker does, but the step to a violating successor
+of an initial state, which TLC holds: its worker finds that successor again drawing on from its
+generator as the search left it, still seeded for the state (`TLCTrace.printTrace`,
+`Tool.getState`), from the search's `Violation::random`. Where that walk finds no such successor,
+TLC fails, and the rebuild is `Unsupported`. A model that draws walks each step
 through all of TLC's actions in order, as one that prints does. An operator's argument or a LET
 definition that drew keeps its value for the uses that follow, as TLC's `LazyValue` keeps it, so
 `T` in `Same(RandomSubset(1, S))` is one subset. A negative count of a set enumeration or an
 interval fails as the Java method does making room for the subset. `Unsupported` covers:
 - draws under a VIEW or SYMMETRY, whose key the seed is the fingerprint of;
 - draws in the checks after the last step;
+- the step to a violating successor of an initial state, where the caller gives no generator;
 - RandomSubset in TLC 1.7.4, which draws a subset's indices another way.
 
 The test rebuilds the invariant traces of TLC's RandomElement, RandomElementXandY, RandomSubset

@@ -2554,3 +2554,30 @@ fn enumerates_a_set_tlceval_made_in_its_normalized_order() {
     assert!(text.contains("\n/\\ x = 1\n/\\ y = {}\n"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn declines_a_violating_successor_tlc_fails_to_draw_again() {
+    // TLC finds the violating successor of an initial state it holds by drawing on from its
+    // worker's generator as the search left it (`TLCTrace.printTrace`, `Tool.getState`): where
+    // the draw differs it finds none, and throws a NullPointerException.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, Integers, Sequences, FiniteSets, TLC, Randomization\nVARIABLE x, y\nInit == x = 0 /\\ y = 0\nNext == x < 4 /\\ x' = x + 1 /\\ y' = RandomElement(1..1000)\nInv == y < 400\n====\n";
+    let config = "INIT Init\nNEXT Next\nINVARIANT Inv\n";
+    let (output, directory) = run_lowered("held-draw", spec, config);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "prove-it: not native yet: a violating successor TLC fails to find again from its generator"
+        ),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x, y\nInit == x = 1 /\\ y = 0\nNext == x < 9 /\\ x' = x + 1 /\\ y' = RandomElement(1..2)\nInv == y < 2\n====\n";
+    let (output, directory) = run_lowered("held-draw-found", spec, config);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains("Error: Invariant Inv is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ x = 1\n/\\ y = 0\n\nState 2: <Next line 5, col 9 to line 5, col 55 of module Stop>\n/\\ x = 2\n/\\ y = 2\n\n2 states generated, 2 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
