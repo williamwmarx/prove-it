@@ -287,6 +287,21 @@ fn reports_def_entries_that_name_no_defined_operator() {
         ),
         "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 13\n\nline 5, col 9 to line 5, col 15 of module Main\n\nUnknown operator: `Missing'.\n\n\nline 5, col 9 to line 5, col 15 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 5, col 1 to line 5, col 15 of module Main\n\nEmpty USE or HIDE statement.\n\n\nline 6, col 9 to line 6, col 9 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 6, col 12 to line 6, col 12 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 6, col 1 to line 6, col 12 of module Main\n\nEmpty USE or HIDE statement.\n\n\nline 7, col 13 to line 7, col 16 of module Main\n\nUnknown operator: `Nope'.\n\n\nline 7, col 13 to line 7, col 16 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 9, col 15 to line 9, col 15 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 9, col 6 to line 9, col 15 of module Main\n\nEmpty USE or HIDE statement.\n\n\nline 10, col 16 to line 10, col 19 of module Main\n\nUnknown operator: `Gone'.\n\n\nline 10, col 16 to line 10, col 19 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 10, col 9 to line 10, col 19 of module Main\n\nEmpty BY\n\n\n"
     );
+    // An operator symbol is kept where a module defines it, and otherwise not followed.
+    assert_eq!(
+        get_text(
+            "defs-symbol",
+            "---- MODULE Main ----\nEXTENDS Naturals\nUSE DEF +\n====\n"
+        ),
+        "Parsing file Main File\nParsing file Naturals Standard\nSemantic processing of module Naturals\nSemantic processing of module Main\nLinting of module Main\n"
+    );
+    assert!(matches!(
+        get_report(
+            "defs-unknown-symbol",
+            "---- MODULE Main ----\nUSE DEF Missing, +\n====\n",
+        ),
+        Err(FrontError::NotYet(_))
+    ));
 }
 
 // E4223: a nested module named like a module SANY has already read.

@@ -2367,9 +2367,26 @@ fn check_defs(defs: &[Fact], scope: &Scope, unit: &Unit) -> Result<bool> {
             is_kept = true;
             continue;
         };
-        let ExpressionKind::Identifier { name, .. } = &def.kind else {
-            is_kept = true;
-            continue;
+        let name = match &def.kind {
+            ExpressionKind::Identifier { name, .. } => name,
+            // An operator symbol a module defines, such as Naturals' +, is kept; SANY's report of
+            // any other is not followed.
+            ExpressionKind::OperatorReference { operator, .. } => {
+                let kind = find_current(scope, operator, unit, def.location.range.as_ref())
+                    .map(|local| local.binding().kind);
+                if kind != Some(SymbolKind::Definition) {
+                    return Err(FrontError::NotYet(format!(
+                        "a DEF clause entry {operator} that names no operator a module defines"
+                    )));
+                }
+                is_kept = true;
+                continue;
+            }
+            _ => {
+                return Err(FrontError::NotYet(
+                    "a DEF clause entry that is neither a name nor an operator symbol".to_owned(),
+                ));
+            }
         };
         // A step's name, which SANY takes when the step defines, and a selection.
         if name.contains('!') || name.starts_with('<') {
