@@ -31,7 +31,9 @@ const SIGN_PRECISION: u32 = 2;
 const X: Var = 0;
 const Y: Var = 1;
 
-const STILL_IRRATIONAL: &str = "a successful refinement leaves the number irrational";
+fn get_still_irrational() -> SmtError {
+    SmtError::Invariant("a successful refinement leaves the number irrational".to_string())
+}
 
 #[derive(Clone, Debug)]
 pub struct AlgebraicCell {
@@ -481,27 +483,27 @@ impl AlgebraicManager {
     }
 
     // is_int: refines the interval until it holds at most one integer, then tests it.
-    pub fn is_int(&mut self, anum: &Anum) -> bool {
+    pub fn is_int(&mut self, anum: &Anum) -> Result<bool, SmtError> {
         match &*anum.value() {
-            AnumValue::Rational(value) => return value.is_int(),
-            AnumValue::Cell(cell) if cell.is_not_rational => return false,
+            AnumValue::Rational(value) => return Ok(value.is_int()),
+            AnumValue::Cell(cell) if cell.is_not_rational => return Ok(false),
             AnumValue::Cell(_) => {}
         }
-        if !self.refine_until_precision(anum, 1) {
+        if !self.refine_until_precision(anum, 1)? {
             return self.is_int(anum);
         }
         let candidate = {
-            let cell = anum.cell().expect(STILL_IRRATIONAL);
+            let cell = anum.cell().ok_or_else(get_still_irrational)?;
             let candidate = Rational::from_int(cell.upper.floor());
             (cell.lower.compare_rational(&candidate) < 0
                 && self.um.eval_sign_at_q(&cell.p, &candidate) == 0)
                 .then_some(candidate)
         };
         let Some(candidate) = candidate else {
-            return false;
+            return Ok(false);
         };
         anum.set(AnumValue::Rational(candidate));
-        true
+        Ok(true)
     }
 
     // is_rational: by the rational root theorem, the only candidate in an interval narrower than
@@ -514,14 +516,14 @@ impl AlgebraicManager {
         }
         let mut saved = self.save_interval(anum)?;
         let abs_leading = {
-            let cell = anum.cell().expect(STILL_IRRATIONAL);
+            let cell = anum.cell().ok_or_else(get_still_irrational)?;
             cell.p[cell.p.len() - 1].abs()
         };
-        if !self.refine_until_precision(anum, (get_log2(&abs_leading) + 1) as u32) {
+        if !self.refine_until_precision(anum, (get_log2(&abs_leading) + 1) as u32)? {
             return Ok(true);
         }
         let (candidate, is_root) = {
-            let cell = anum.cell().expect(STILL_IRRATIONAL);
+            let cell = anum.cell().ok_or_else(get_still_irrational)?;
             let candidate = Rational::of(
                 cell.upper.mul(&Mpbq::of(abs_leading.clone(), 0)).floor(),
                 abs_leading,
@@ -534,7 +536,9 @@ impl AlgebraicManager {
         if is_root {
             anum.set(AnumValue::Rational(candidate));
         } else {
-            anum.cell_mut().expect(STILL_IRRATIONAL).is_not_rational = true;
+            anum.cell_mut()
+                .ok_or_else(get_still_irrational)?
+                .is_not_rational = true;
         }
         Ok(is_root)
     }
@@ -598,70 +602,71 @@ impl AlgebraicManager {
     }
 
     // normalize: an interval around zero shrunk to the side of zero holding the root.
-    fn normalize(&mut self, anum: &Anum) {
+    fn normalize(&mut self, anum: &Anum) -> Result<(), SmtError> {
         let interval = {
             let Some(cell) = anum.cell() else {
-                return;
+                return Ok(());
             };
             self.um
                 .normalize_interval(&cell.p, &cell.lower, &cell.upper, cell.sign_lower())
         };
         let Some((lower, upper)) = interval else {
             anum.set(AnumValue::Rational(Rational::zero()));
-            return;
+            return Ok(());
         };
-        let mut cell = anum.cell_mut().expect(STILL_IRRATIONAL);
+        let mut cell = anum.cell_mut().ok_or_else(get_still_irrational)?;
         cell.lower = lower;
         cell.upper = upper;
+        Ok(())
     }
 
     // Refinement.
 
     // refine: halves the interval, or finds the number rational and returns false.
-    fn refine(&mut self, anum: &Anum) -> bool {
+    fn refine(&mut self, anum: &Anum) -> Result<bool, SmtError> {
         let refined = {
             let Some(cell) = anum.cell() else {
-                return false;
+                return Ok(false);
             };
             self.um
                 .refine_core(&cell.p, cell.sign_lower(), &cell.lower, &cell.upper)
         };
         if !refined.is_interval {
             anum.set(AnumValue::Rational(refined.lower.to_rational()));
-            return false;
+            return Ok(false);
         }
-        let mut cell = anum.cell_mut().expect(STILL_IRRATIONAL);
+        let mut cell = anum.cell_mut().ok_or_else(get_still_irrational)?;
         cell.lower = refined.lower;
         cell.upper = refined.upper;
-        true
+        Ok(true)
     }
 
-    fn refine_times(&mut self, anum: &Anum, count: i64) -> bool {
+    fn refine_times(&mut self, anum: &Anum, count: i64) -> Result<bool, SmtError> {
         for _ in 0..count {
-            if !self.refine(anum) {
-                return false;
+            if !self.refine(anum)? {
+                return Ok(false);
             }
         }
-        true
+        Ok(true)
     }
 
     // refine_until_prec: refines until the interval is narrower than 1/2^precision.
-    fn refine_until_precision(&mut self, anum: &Anum, precision: u32) -> bool {
+    fn refine_until_precision(&mut self, anum: &Anum, precision: u32) -> Result<bool, SmtError> {
         let refined = {
             let Some(cell) = anum.cell() else {
-                return true;
+                return Ok(true);
             };
             self.um
                 .refine_to_precision(&cell.p, &cell.lower, &cell.upper, precision)
         };
         if !refined.is_interval {
             anum.set(AnumValue::Rational(refined.lower.to_rational()));
-            return false;
+            return Ok(false);
         }
-        let mut cell = anum.cell_mut().expect(STILL_IRRATIONAL);
+        let mut cell = anum.cell_mut().ok_or_else(get_still_irrational)?;
         cell.lower = refined.lower;
         cell.upper = refined.upper;
-        true
+        Ok(true)
     }
 
     fn get_cell_magnitude(&self, cell: &AlgebraicCell) -> i64 {
@@ -1218,15 +1223,15 @@ impl AlgebraicManager {
             });
         }
         for root in &roots {
-            self.refine_until_precision(root, SIGN_PRECISION);
+            self.refine_until_precision(root, SIGN_PRECISION)?;
         }
-        let below = self.int_lt(&roots[0]);
+        let below = self.int_lt(&roots[0])?;
         let mut signs = vec![self.get_sign_at_sample(pm, polynomial, values, &below)?];
         for index in 1..roots.len() {
-            let between = self.select(&roots[index - 1], &roots[index]);
+            let between = self.select(&roots[index - 1], &roots[index])?;
             signs.push(self.get_sign_at_sample(pm, polynomial, values, &between)?);
         }
-        let above = self.int_gt(&roots[roots.len() - 1]);
+        let above = self.int_gt(&roots[roots.len() - 1])?;
         signs.push(self.get_sign_at_sample(pm, polynomial, values, &above)?);
         Ok(SignedRoots { roots, signs })
     }
@@ -1305,7 +1310,7 @@ impl AlgebraicManager {
                     if magnitude <= MIN_MAGNITUDE {
                         continue;
                     }
-                    if !self.refine(&value) {
+                    if !self.refine(&value)? {
                         is_restarted = true;
                         break;
                     }
@@ -1376,7 +1381,7 @@ impl AlgebraicManager {
             } else {
                 let mut is_every_refined = true;
                 for &variable in &sorted {
-                    if !self.refine(&get_assigned(values, variable)?) {
+                    if !self.refine(&get_assigned(values, variable)?)? {
                         is_every_refined = false;
                         break;
                     }
@@ -1409,10 +1414,10 @@ impl AlgebraicManager {
                     return Ok(Anum::new(first.add(second)));
                 }
                 (AnumValue::Rational(first), AnumValue::Cell(second)) => {
-                    return Ok(self.add_rational(second, first));
+                    return self.add_rational(second, first);
                 }
                 (AnumValue::Cell(first), AnumValue::Rational(second)) => {
-                    return Ok(self.add_rational(first, second));
+                    return self.add_rational(first, second);
                 }
                 (AnumValue::Cell(_), AnumValue::Cell(_)) => {}
             }
@@ -1421,7 +1426,7 @@ impl AlgebraicManager {
     }
 
     // add(cell, basic): p(x - b), with the interval shifted by b.
-    fn add_rational(&mut self, cell: &AlgebraicCell, value: &Rational) -> Anum {
+    fn add_rational(&mut self, cell: &AlgebraicCell, value: &Rational) -> Result<Anum, SmtError> {
         let p = self.um.translate_q(&cell.p, &value.neg());
         let (shift, is_exact) = Mpbq::from_rational(value);
         let (lower, upper) = if is_exact {
@@ -1435,8 +1440,8 @@ impl AlgebraicManager {
             (interval.lower, interval.upper)
         };
         let result = self.mk_anum(p, lower, upper, cell.is_minimal);
-        self.normalize(&result);
-        result
+        self.normalize(&result)?;
+        Ok(result)
     }
 
     pub fn mul(&mut self, first: &Anum, second: &Anum) -> Result<Anum, SmtError> {
@@ -1451,10 +1456,10 @@ impl AlgebraicManager {
                     return Ok(Anum::new(first.mul(second)));
                 }
                 (AnumValue::Rational(first), AnumValue::Cell(second)) => {
-                    return Ok(self.mul_rational(second, first));
+                    return self.mul_rational(second, first);
                 }
                 (AnumValue::Cell(first), AnumValue::Rational(second)) => {
-                    return Ok(self.mul_rational(first, second));
+                    return self.mul_rational(first, second);
                 }
                 (AnumValue::Cell(_), AnumValue::Cell(_)) => {}
             }
@@ -1463,7 +1468,7 @@ impl AlgebraicManager {
     }
 
     // mul(cell, basic): b^n * p(x/b), with the interval scaled by b.
-    fn mul_rational(&mut self, cell: &AlgebraicCell, value: &Rational) -> Anum {
+    fn mul_rational(&mut self, cell: &AlgebraicCell, value: &Rational) -> Result<Anum, SmtError> {
         let p = self.um.compose_p_q_x(&cell.p, &Rational::one().div(value));
         let (scale, is_exact) = Mpbq::from_rational(value);
         let is_negative = value.is_negative();
@@ -1489,8 +1494,8 @@ impl AlgebraicManager {
             (interval.lower, interval.upper)
         };
         let result = self.mk_anum(p, lower, upper, cell.is_minimal);
-        self.normalize(&result);
-        result
+        self.normalize(&result)?;
+        Ok(result)
     }
 
     // neg: p(-x) with the interval mirrored, in place.
@@ -1705,7 +1710,7 @@ impl AlgebraicManager {
                 self.restore_if_too_small(&mut saved_b);
                 return Ok(self.set_core(&found, &interval, is_complete));
             }
-            if !self.refine(first) || !self.refine(second) {
+            if !self.refine(first)? || !self.refine(second)? {
                 // Z3 restores a twice here, and b only once the operation is done.
                 self.restore_if_too_small(&mut saved_a);
                 self.restore_if_too_small(&mut saved_a);
@@ -1753,7 +1758,7 @@ impl AlgebraicManager {
                 self.restore_if_too_small(&mut saved);
                 return Ok(self.set_core(&found, &interval, is_complete));
             }
-            if !self.refine(anum) {
+            if !self.refine(anum)? {
                 self.restore_if_too_small(&mut saved);
                 return self.power(anum, exponent);
             }
@@ -1855,9 +1860,9 @@ impl AlgebraicManager {
         debug_assert!(!Anum::ptr_eq(first, second));
         if cell_a.is_minimal && cell_b.is_minimal {
             loop {
-                self.refine(first);
+                self.refine(first)?;
                 update_detached_cell(first, &mut cell_a);
-                self.refine(second);
+                self.refine(second)?;
                 update_detached_cell(second, &mut cell_b);
                 sign = compare_intervals(&cell_a, &cell_b);
                 if sign != 0 {
@@ -1869,7 +1874,7 @@ impl AlgebraicManager {
         let magnitude_b = self.get_cell_magnitude(&cell_b);
         let target = MIN_MAGNITUDE.max(magnitude_a.min(magnitude_b));
         if magnitude_b > target {
-            if !self.refine_times(second, magnitude_b - target) {
+            if !self.refine_times(second, magnitude_b - target)? {
                 return self.compare(first, second);
             }
             update_detached_cell(second, &mut cell_b);
@@ -1879,7 +1884,7 @@ impl AlgebraicManager {
             }
         }
         if magnitude_a > target {
-            if !self.refine_times(first, magnitude_a - target) {
+            if !self.refine_times(first, magnitude_a - target)? {
                 return self.compare(first, second);
             }
             update_detached_cell(first, &mut cell_a);
@@ -1889,7 +1894,7 @@ impl AlgebraicManager {
             }
         }
         for _ in 0..target - MIN_MAGNITUDE {
-            if !self.refine(first) || !self.refine(second) {
+            if !self.refine(first)? || !self.refine(second)? {
                 return self.compare(first, second);
             }
             update_detached_cell(first, &mut cell_a);
@@ -1942,27 +1947,27 @@ impl AlgebraicManager {
     // Sample points.
 
     // int_lt: an integer below a.
-    pub fn int_lt(&mut self, anum: &Anum) -> Anum {
-        self.refine_until_precision(anum, 1);
+    pub fn int_lt(&mut self, anum: &Anum) -> Result<Anum, SmtError> {
+        self.refine_until_precision(anum, 1)?;
         let integer = match &*anum.value() {
             AnumValue::Rational(value) => value.floor().num() - &Int::one(),
             AnumValue::Cell(cell) => cell.lower.floor(),
         };
-        Anum::new(Rational::from_int(integer))
+        Ok(Anum::new(Rational::from_int(integer)))
     }
 
     // int_gt: an integer above a.
-    pub fn int_gt(&mut self, anum: &Anum) -> Anum {
-        self.refine_until_precision(anum, 1);
+    pub fn int_gt(&mut self, anum: &Anum) -> Result<Anum, SmtError> {
+        self.refine_until_precision(anum, 1)?;
         let integer = match &*anum.value() {
             AnumValue::Rational(value) => value.ceil().num() + &Int::one(),
             AnumValue::Cell(cell) => cell.upper.ceil(),
         };
-        Anum::new(Rational::from_int(integer))
+        Ok(Anum::new(Rational::from_int(integer)))
     }
 
     // separate: refines until the intervals of prev and curr do not touch.
-    fn separate(&mut self, previous: &Anum, current: &Anum) {
+    fn separate(&mut self, previous: &Anum, current: &Anum) -> Result<(), SmtError> {
         // prev < curr: the same number would never separate from itself.
         debug_assert!(!Anum::ptr_eq(previous, current));
         if let Some(value) = previous.rational() {
@@ -1970,18 +1975,18 @@ impl AlgebraicManager {
                 .cell()
                 .is_some_and(|cell| cell.lower.compare_rational(&value) <= 0)
             {
-                self.refine(current);
+                self.refine(current)?;
             }
-            return;
+            return Ok(());
         }
         if let Some(value) = current.rational() {
             while previous
                 .cell()
                 .is_some_and(|cell| cell.upper.compare_rational(&value) >= 0)
             {
-                self.refine(previous);
+                self.refine(previous)?;
             }
-            return;
+            return Ok(());
         }
         while match (&*previous.value(), &*current.value()) {
             (AnumValue::Cell(previous), AnumValue::Cell(current)) => {
@@ -1989,14 +1994,15 @@ impl AlgebraicManager {
             }
             _ => false,
         } {
-            self.refine(previous);
-            self.refine(current);
+            self.refine(previous)?;
+            self.refine(current)?;
         }
+        Ok(())
     }
 
     // select: a binary rational between prev < curr with the smallest denominator.
-    pub fn select(&mut self, previous: &Anum, current: &Anum) -> Anum {
-        self.separate(previous, current);
+    pub fn select(&mut self, previous: &Anum, current: &Anum) -> Result<Anum, SmtError> {
+        self.separate(previous, current)?;
         let lower = match &*previous.value() {
             AnumValue::Rational(value) => SelectEnd {
                 value: value.clone(),
@@ -2017,7 +2023,7 @@ impl AlgebraicManager {
                 is_open: false,
             },
         };
-        Anum::new(select_small(&lower, &upper).to_rational())
+        Ok(Anum::new(select_small(&lower, &upper).to_rational()))
     }
 }
 
@@ -2045,10 +2051,12 @@ mod tests {
         let words: Vec<&str> = input.split(' ').collect();
         let mut am = AlgebraicManager::new();
         if words[0] == "select" {
-            let selected = am.select(
-                &Anum::new(parse_rational(words[1])),
-                &Anum::new(parse_rational(words[2])),
-            );
+            let selected = am
+                .select(
+                    &Anum::new(parse_rational(words[1])),
+                    &Anum::new(parse_rational(words[2])),
+                )
+                .expect("select");
             return format!("select {}", show_value(&selected));
         }
         let variable: usize = words[1].parse().expect("a variable");
@@ -2146,7 +2154,7 @@ mod tests {
                     "add" => am.add(&first, &second).expect("add"),
                     "mul" => am.mul(&first, &second).expect("mul"),
                     "div" => am.div(&first, &second).expect("div"),
-                    _ => am.select(&first, &second),
+                    _ => am.select(&first, &second).expect("select"),
                 };
                 get_register(registers, number(0));
                 set_register(registers, number(0), am.copy(&result));
@@ -2159,8 +2167,8 @@ mod tests {
                     "pow" => am
                         .power(&anum, u32::try_from(number(2)).expect("an exponent"))
                         .expect("power"),
-                    "intlt" => am.int_lt(&anum),
-                    _ => am.int_gt(&anum),
+                    "intlt" => am.int_lt(&anum).expect("int_lt"),
+                    _ => am.int_gt(&anum).expect("int_gt"),
                 };
                 get_register(registers, number(0));
                 set_register(registers, number(0), am.copy(&result));
@@ -2189,7 +2197,7 @@ mod tests {
             "isint" | "israt" => {
                 let anum = get_register(registers, number(0));
                 let flag = if words[0] == "isint" {
-                    am.is_int(&anum)
+                    am.is_int(&anum).expect("is_int")
                 } else {
                     am.is_rational(&anum).expect("is_rational")
                 };

@@ -514,7 +514,7 @@ impl IntervalSetManager {
         let mut picked: Option<Anum> = None;
         if let Some(upper) = &last.upper {
             count += 1;
-            let value = am.int_gt(upper);
+            let value = am.int_gt(upper)?;
             if !is_randomized {
                 return Ok(value);
             }
@@ -522,7 +522,7 @@ impl IntervalSetManager {
         }
         if let Some(lower) = &intervals[0].lower {
             count += 1;
-            let value = am.int_lt(lower);
+            let value = am.int_lt(lower)?;
             if !is_randomized {
                 return Ok(value);
             }
@@ -535,7 +535,7 @@ impl IntervalSetManager {
                 count += 1;
                 // Without randomizing, this is the first pick (count 1), returned at once.
                 if count == 1 || self.rand.next().is_multiple_of(count) {
-                    let value = am.select(previous_upper, lower);
+                    let value = am.select(previous_upper, lower)?;
                     if !is_randomized {
                         return Ok(value);
                     }
@@ -576,12 +576,12 @@ impl IntervalSetManager {
             return Ok(Some(am.copy(get_bound(&current.lower)?)));
         }
         if index == 0 {
-            return Ok(Some(am.int_lt(get_bound(&current.lower)?)));
+            return Ok(Some(am.int_lt(get_bound(&current.lower)?)?));
         }
         Ok(Some(am.select(
             get_bound(&set.intervals[index - 1].upper)?,
             get_bound(&current.lower)?,
-        )))
+        )?))
     }
 
     // query_max_in_complement: the supremum of the complement, and whether it belongs to it.

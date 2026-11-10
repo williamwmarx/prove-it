@@ -177,9 +177,9 @@ struct BerlekampMatrix {
 }
 
 impl BerlekampMatrix {
-    fn new(zp: &UpolynomialManager, f: &[Int]) -> BerlekampMatrix {
+    fn new(zp: &UpolynomialManager, f: &[Int]) -> Result<BerlekampMatrix, SmtError> {
         let size = f.len() - 1;
-        let prime = zp_number(zp);
+        let prime = zp_number(zp)?;
         let mut matrix = vec![Int::one()];
         matrix.extend((0..size).map(|_unused| Int::zero()));
         let mut this = BerlekampMatrix {
@@ -216,7 +216,7 @@ impl BerlekampMatrix {
         for index in 0..size {
             this.put(index, index, this.get(index, index) - Int::one());
         }
-        this
+        Ok(this)
     }
 
     fn get(&self, row: usize, column: usize) -> &Int {
@@ -289,11 +289,11 @@ impl BerlekampMatrix {
 }
 
 // Number(zp.zp): the modulus of Z_p, which the callers set.
-fn zp_number(zp: &UpolynomialManager) -> u64 {
+fn zp_number(zp: &UpolynomialManager) -> Result<u64, SmtError> {
     zp.zp()
         .and_then(Int::to_i64)
         .and_then(|prime| u64::try_from(prime).ok())
-        .expect("a small prime modulus")
+        .ok_or_else(|| SmtError::Invariant("a small prime modulus".to_string()))
 }
 
 // zp_factor_square_free_berlekamp, deterministic: splits the monic square-free f in Z_p with
@@ -303,8 +303,8 @@ fn factor_square_free_in_zp(
     f: &[Int],
     fs: &mut UpolynomialFactors,
 ) -> Result<bool, SmtError> {
-    let prime = zp_number(zp);
-    let mut matrix = BerlekampMatrix::new(zp, f);
+    let prime = zp_number(zp)?;
+    let mut matrix = BerlekampMatrix::new(zp, f)?;
     let first_factor = fs.factors.len();
     push_factor(zp, fs, f, 1);
     let null_rank = matrix.diagonalize()?;
@@ -392,7 +392,10 @@ fn hensel_lift_quadratic(
     let mut current_b = b.to_vec();
     let mut k = 1u32;
     while k < e {
-        let modulus = zpe.zp().cloned().expect("Z_(p^e)");
+        let modulus = zpe
+            .zp()
+            .cloned()
+            .ok_or_else(|| SmtError::Invariant("Z_(p^e)".to_string()))?;
         let lifted = hensel_lift_once(
             z,
             &modulus,
@@ -439,7 +442,10 @@ fn hensel_lift_factors(
     e: u32,
     zpe: &mut UpolynomialManager,
 ) -> Result<UpolynomialFactors, SmtError> {
-    let prime = zp.zp().cloned().expect("Z_p");
+    let prime = zp
+        .zp()
+        .cloned()
+        .ok_or_else(|| SmtError::Invariant("Z_p".to_string()))?;
     let mut zpe_fs = mk_factors();
     zpe.set_zp(prime.clone());
     let mut parts = z.set(f);
@@ -860,6 +866,10 @@ fn flip_factor_sign_if_lm_neg(p: &[Int], fs: &mut UpolynomialFactors, k: u32) ->
     p.iter().map(|coeff| -coeff).collect()
 }
 
+fn get_gcd_error() -> SmtError {
+    SmtError::Invariant("the gcd divides the polynomial".to_string())
+}
+
 /// manager::factor: the content and the irreducible factors of p with their multiplicities, by
 /// Yun's square-free decomposition. The flag is false when a limit in params left a factor that
 /// may be reducible (TS `{ isComplete, factors }`).
@@ -883,15 +893,11 @@ pub fn factor_upolynomial(
         return Ok((is_complete, fs));
     }
     let mut is_complete = true;
-    let mut product = z
-        .exact_div(&primitive, &square)
-        .expect("the gcd divides the polynomial");
+    let mut product = z.exact_div(&primitive, &square).ok_or_else(get_gcd_error)?;
     let mut multiplicity = 1;
     while product.len() > 1 {
         let next = z.gcd(&product, &square);
-        let factor = z
-            .exact_div(&product, &next)
-            .expect("the gcd divides the polynomial");
+        let factor = z.exact_div(&product, &next).ok_or_else(get_gcd_error)?;
         if factor.len() > 1 {
             let flipped = flip_factor_sign_if_lm_neg(&factor, &mut fs, multiplicity);
             if !factor_sqf_pp(z, &flipped, &mut fs, multiplicity, params)? {
@@ -900,9 +906,7 @@ pub fn factor_upolynomial(
         } else if factor.first() == Some(&Int::from(-1)) && multiplicity % 2 == 1 {
             fs.constant = -&fs.constant;
         }
-        square = z
-            .exact_div(&square, &next)
-            .expect("the gcd divides the polynomial");
+        square = z.exact_div(&square, &next).ok_or_else(get_gcd_error)?;
         product = next;
         multiplicity += 1;
     }

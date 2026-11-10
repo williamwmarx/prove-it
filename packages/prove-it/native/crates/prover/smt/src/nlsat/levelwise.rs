@@ -793,7 +793,7 @@ impl Levelwise<'_> {
         if lower.is_some_and(|lower| self.pm.total_degree(&lower) > 1) {
             let lower_rf = get_set_rf(self.lower_rf)?;
             let bound = self.root_functions[lower_rf].value.clone();
-            let between = self.am.select(&bound, value);
+            let between = self.am.select(&bound, value)?;
             let polynomial = self.add_linear_poly_from_root(&between, true)?;
             let root_function = self.mk_linear_root_function(polynomial, &between);
             self.root_functions.insert(lower_rf + 1, root_function);
@@ -806,7 +806,7 @@ impl Levelwise<'_> {
         if upper.is_some_and(|upper| self.pm.total_degree(&upper) > 1) {
             let upper_rf = get_set_rf(self.upper_rf)?;
             let bound = self.root_functions[upper_rf].value.clone();
-            let between = self.am.select(value, &bound);
+            let between = self.am.select(value, &bound)?;
             let polynomial = self.add_linear_poly_from_root(&between, false)?;
             let root_function = self.mk_linear_root_function(polynomial, &between);
             self.root_functions.insert(upper_rf, root_function);

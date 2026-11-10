@@ -874,10 +874,10 @@ impl NlsatSolver {
                 let Some(value) = self.assignment.get(variable).cloned().flatten() else {
                     continue;
                 };
-                if self.am.is_int(&value) {
+                if self.am.is_int(&value)? {
                     continue;
                 }
-                let below = match &*self.am.int_lt(&value).value() {
+                let below = match &*self.am.int_lt(&value)?.value() {
                     AnumValue::Rational(below) => below.clone(),
                     AnumValue::Cell(_) => continue,
                 };
