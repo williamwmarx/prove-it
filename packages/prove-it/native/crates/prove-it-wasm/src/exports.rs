@@ -147,6 +147,20 @@ pub unsafe extern "C" fn prove_it_sany_text(pointer: *mut u8, length: usize) -> 
     }
 }
 
+/// `checkSources(args, known, machine)`, as prove-it-host's `check` describes it.
+///
+/// # Safety
+///
+/// As for `prove_it_check`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prove_it_check_sources(pointer: *mut u8, length: usize) -> *mut u8 {
+    unsafe {
+        call(pointer, length, |arguments| {
+            prove_it_host::check::check_sources(&get::<3>(arguments))
+        })
+    }
+}
+
 /// `decide(prover, text, timeLimitMs, stepLimit)`, as prove-it-host's `prover` describes it. There
 /// is no cancel cell: the decision runs on the thread that would set it.
 ///
