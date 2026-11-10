@@ -8,11 +8,10 @@
 //!   TypeScript one does.
 //!
 //! `cancel`, an `Int32Array` over shared memory whose first element another thread sets to cancel
-//! the decision, reaches the backend only through the N-API binding: a WebAssembly decision runs on
-//! the thread that would set it.
+//! the decision, reaches the backend only through the N-API binding, as a `Cancel` that reads it: a
+//! WebAssembly decision runs on the thread that would set it.
 
-use std::sync::atomic::AtomicI32;
-
+pub use prove_it_prover::Cancel;
 use prove_it_prover::{DecideError, Limits, Statistic};
 
 use crate::hooks::HookResult;
@@ -27,13 +26,13 @@ const DECIDE_STACK_BYTES: usize = 256 * 1024 * 1024;
 /// `decide(prover, text, timeLimitMs, stepLimit)`, on this thread: wasm's stack is the one it
 /// links.
 #[cfg(target_arch = "wasm32")]
-pub fn decide(arguments: &[HostValue], cancel: Option<&AtomicI32>) -> HookResult {
+pub fn decide(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
     decide_here(arguments, cancel)
 }
 
 /// `decide(prover, text, timeLimitMs, stepLimit)`, on a thread with a deep stack.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn decide(arguments: &[HostValue], cancel: Option<&AtomicI32>) -> HookResult {
+pub fn decide(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(DECIDE_STACK_BYTES)
@@ -44,7 +43,7 @@ pub fn decide(arguments: &[HostValue], cancel: Option<&AtomicI32>) -> HookResult
     })
 }
 
-fn decide_here(arguments: &[HostValue], cancel: Option<&AtomicI32>) -> HookResult {
+fn decide_here(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
     let [prover, text, time_limit, step_limit, ..] = arguments else {
         return Err("decide takes a prover, a text, a time limit and a step limit".into());
     };
@@ -58,8 +57,8 @@ fn decide_here(arguments: &[HostValue], cancel: Option<&AtomicI32>) -> HookResul
         HostValue::Number(steps) if steps >= 0.0 && steps.fract() == 0.0 => Some(steps as u64),
         _ => return Err("the step limit must be a whole number or undefined".into()),
     };
-    let mut limits = Limits::new(time_limit, step_limit, cancel);
-    Ok(match prove_it_prover::decide(&prover, &text, &mut limits) {
+    let limits = Limits::new(time_limit, step_limit, cancel);
+    Ok(match prove_it_prover::decide(&prover, &text, &limits) {
         Ok(decision) => HostValue::Object(vec![
             ("kind", HostValue::text("decided")),
             ("verdict", HostValue::text(decision.verdict.name())),

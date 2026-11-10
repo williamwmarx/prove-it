@@ -259,6 +259,26 @@ unsafe extern "C" fn check_sources(env: napi_env, info: napi_callback_info) -> n
     }
 }
 
+/// The first element of a cancel cell, read in place.
+struct CancelCell(*const AtomicI32);
+
+// SAFETY: the cell is an `Int32Array` over a `SharedArrayBuffer`, which other threads set
+// atomically, and the decision reads it with an atomic load only while `decide` runs, during which
+// JavaScript keeps the array alive: the backend drops its `Limits`, and with them the `Cancel`,
+// before `decide` returns.
+unsafe impl Send for CancelCell {}
+unsafe impl Sync for CancelCell {}
+
+fn get_cancel(first: &mut i32) -> prove_it_host::prover::Cancel {
+    // SAFETY: an i32 and an AtomicI32 have the same layout.
+    let cell = CancelCell(unsafe { AtomicI32::from_ptr(first) });
+    std::sync::Arc::new(move || {
+        let cell = &cell;
+        // SAFETY: as for CancelCell, the array outlives every read.
+        unsafe { &*cell.0 }.load(std::sync::atomic::Ordering::Relaxed) != 0
+    })
+}
+
 // decide(prover: string, text: string, timeLimitMs: number, stepLimit: number | undefined,
 // cancel: Int32Array | undefined): { kind, ... }, as prove-it-host's `prover` describes it. The
 // first element of `cancel`, over a SharedArrayBuffer, is read in place while the backend runs, so
@@ -273,9 +293,7 @@ unsafe extern "C" fn decide(env: napi_env, info: napi_callback_info) -> napi_val
                 .map(|argument| store::get_host(env, argument))
                 .collect::<Result<Vec<_>, _>>()?;
             let cancel = match store::get_typed::<i32>(env, cancel, store::NAPI_INT32_ARRAY)? {
-                // SAFETY: an i32 and an AtomicI32 have the same layout, and JavaScript keeps the
-                // array alive while this call runs.
-                Some([first, ..]) => Some(AtomicI32::from_ptr(first)),
+                Some([first, ..]) => Some(get_cancel(first)),
                 _ => None,
             };
             store::create_result(env, prove_it_host::prover::decide(&arguments, cancel))
