@@ -983,14 +983,126 @@ walker-hook shape guard and the fallbacks below.
 - SYMMETRY and VIEW need no fallback: the graph's steps are then the real successors (`Reals`),
   which the walk generated, and expanding the states past the stored ones walks Next too.
 
-**Plan (ii): cf1s-shaped atoms.**
-- Record per step the path of disjuncts and `\E` values the walker took, through conjunctions too.
-- Split each atom's action by the walker's own split, not TLC's. Match by node and bound values.
-- Answer from the labels.
+**Plan (ii): the soundness argument.** Write Next's walk from a state s as a tree, in TLC's
+order: a node chooses a disjunct, a value of an `\E` or of `x' \in S`, or goes on to the next
+conjunct. A path π assigns the primed variables, σ(π), and ends in t(π) where it assigns them all.
+A *piece* is a node n of that tree reached under bound values ρ; its *context* C(n, ρ) is everything
+on the path from the root to n, and after it to the end of every conjunction n is inside: the
+conjuncts before n's ancestors, those after them (a later guard can reject t), and the choices of
+disjuncts and values that lead there.
 
-The argument to write down: the walker's split refines the predicate. Each path is a conjunction of
-the walk's guards and assignments, so A is the disjunction of its paths. This goes beyond TLC's
-`getActions` granularity, so it must be argued on its own.
+*Matching.* An atom's action A matches a set P of pieces when A ≡ ∨_{(n,ρ)∈P} (C(n, ρ) ∧ n[ρ]),
+read off the two trees side by side:
+- through a disjunction or an `\E`, A may take a subset of Next's disjuncts, or of the values of a
+  bound whose set has the same value in both (the same constant, such as cf1s's `Proc`);
+- through a conjunction only where it is the same node in both, or a list of one item, which is
+  that item (cf1s's `Next == /\ \E self \in Proc : ...`);
+- through an operator application only where both apply the same global definition to argument
+  values that are equal under ρ (the same bound name, or the same constant), so that the bodies
+  are the same expression in equal contexts. A LET-bound operator, an operator argument (a
+  higher-order parameter), an INSTANCE with substitutions or a definition of another module falls
+  back unless it is the same node under the same bindings.
+Everything else, a piece whose context A lacks above all, does not match, and the atom is
+evaluated as today.
+
+*Why the context is needed.* With `Next == (G /\ A) \/ B`, G false at s and A(s, t) true for a t
+that B generates, TLC evaluates `<<A>>_v` standalone and gets TRUE, but no path through A generated
+t. Splitting through conjunctions without the context, as this section first planned, is wrong.
+
+*Labels.* Each step the graph keeps (in the model: past CONSTRAINT and ACTION_CONSTRAINT, as TLC
+evaluates atoms only there) carries one bit per matched atom: whether a path that generated it
+passed through a piece of P. The bits of every path that generates the same s→t are ORed, a path
+that finds t already seen included.
+
+*Claim.* For a step s→t the graph keeps, `A(s, t)` is TRUE in TLC's predicate evaluation, without
+failing, iff the step's bit is set, where plan (i)'s guard holds.
+
+(⇐) A path through (n, ρ) ∈ P is a conjunction of every guard and assignment on it, which includes
+C(n, ρ) ∧ n[ρ]; it holds of (s, t(π)), so A does, and by (⇒)'s induction its evaluation can't fail.
+
+(⇒) By induction over TLC's predicate evaluation of A on (s, t), stated for any expression e that
+A's evaluation reaches under bindings ρ: *when the evaluation reaches e, every conjunct before it
+held of (s, t), and there is a path of the walk from s that reaches e's node under ρ with
+σ ⊆ t: it assigned every primed variable it assigned so far as t has it.* At the root, the empty
+path. Then by the form of e:
+- `x' = e1` with x unassigned in σ: the walk evaluates e1 under the same s, ρ and σ, so to the
+  same value, without failing (the search completed), and assigns it; the predicate compares
+  t[x] with it. Where they are equal, σ ∪ {x ↦ t[x]} ⊆ t extends the path. With x assigned, both
+  compare the same two values.
+- `x' \in S`: the walk enumerates S, every element (it is exhaustive), so where t[x] ∈ S a branch
+  assigns t[x]. Where S is a set TLC keeps lazy, the predicate's membership test runs only what
+  the enumeration ran (a filter's predicate on an element of S, which the enumeration evaluated
+  on every element).
+- `UNCHANGED x`: as `x' = x`.
+- a guard: every primed variable it reads is in σ (the walk would fail reading one that isn't,
+  and the search completed), so it has the same value as on the path.
+- `e1 /\ e2`: in order; e2 is reached only where e1 held, and the path through e1 extends σ.
+- `e1 \/ e2`: the predicate stops at the first TRUE disjunct; the walk takes both. The walk
+  evaluates a superset, so each disjunct the predicate reaches is reached by a path with the same σ.
+- `\E y \in S : e1`: S has the same value; the predicate stops at the first TRUE value, the walk
+  takes every value, again a superset.
+- `IF`, `CASE`, `LET` and an operator application: the walk evaluates the condition, the arms in
+  order, the definitions and the body as the predicate does, with the same values.
+So every expression the predicate evaluates the walk evaluated with the same values, except the
+three comparisons, which plan (i)'s guard covers: the predicate can't fail where the walk didn't.
+And where A(s, t) is TRUE it is TRUE through some (n, ρ) ∈ P: the path the induction carries to
+the end of C(n, ρ) ∧ n[ρ] has σ = t, so it generated t, and its bit is set.
+
+The induction needs the walk not to shortcut (`is_enabled_exact`), and fails, so the atom falls
+back, where a piece holds: a primed variable read before the walk assigns it in a form the
+predicate evaluates but the walk can't (a primed operator application `(A)'`, ENABLED, `\cdot`,
+`[B]_w`, `<<B>>_w`), a value the walk keeps lazy and the predicate reads otherwise, or anything
+plan (i) falls back on.
+
+*Stuttering.* A path that generates t = s sets the bit of that step, but the subscript test
+comes first and answers it: `<<A>>_v` is FALSE of a step that leaves v unchanged. The stuttering
+slot each state has for the checker is evaluated as today.
+
+*Where it falls back:* every case plan (i) falls back on; a piece whose context A lacks; `\E` sets
+that aren't the same constant; operator arguments not shown equal; VIEW and SYMMETRY to begin with,
+where the steps are rebuilt as real successors and the bits would have to follow them.
+
+*Layout.* One bit per matched atom per step, in a `Vec` pushed next to `labels` in
+`check_complete_successor` and copied in `expand_level`'s merge over the same `steps` range (the
+liveness climber's layout after #184), kept only where an atom is matched.
+
+*Tests against TLC at d8fb231:* cf1s's shape (a one-item conjunction around `\E` and disjuncts);
+WF over a subset of the disjuncts under each bound value; a later guard in Next's conjunction that
+rejects a successor the atom's piece alone allows (must fall back, and print what TLC prints);
+`Next == (G /\ A) \/ B` with WF_v(A) (falls back); an operator applied to equal and to different
+arguments; a successor two pieces generate, one inside A and one outside, and one already seen;
+a type-mixed piece where TLC's predicate fails; WF over an action with a stuttering path; a
+CONSTRAINT that discards a target; at one and four workers.
+
+*What the walk joins.* The membership enumeration joins the shape of every element it tries,
+including those a later conjunct rejects, and `t[x]` was itself assigned by some walk, so its shape
+is in the join too. TLC's structural memberships (`[A -> B]`, `SUBSET S`, record sets) compare
+`t[x]` with values of that join; Nat, Int and `Seq(S)` the walk can't enumerate at all.
+
+*"The search completed."* The tables answer only steps from states whose expansion finished
+without error: every step the graph records, also where the liveness checker runs before the
+search ends. That is what the induction leans on when it says the walk evaluated an expression
+without failing.
+
+**Plan (ii), as built.**
+- `Compiler::match_pieces` (`compile/pieces.rs`) reads the atom's action and Next side by side as
+  above. Two expressions are the same where they are the same node outside any bound name, the
+  same number or string, or the same global operator, builtin, constant or variable applied to
+  arguments that are the same, a bound name standing for the one of Next's it was paired with.
+  An `\E` pairs its names only over the same constant (a declared one, or one TLC computes as it
+  starts). The matcher asks for no other conjunct beside a piece, though a conjunct at the top of
+  Next holds of every step the search keeps, so it couldn't change an answer; context inside a
+  disjunct or under a bound value can, which `(G /\ A) \/ B` tests.
+- `EngineContext::build` matches each action atom before it compiles Next (at most eight, a bit
+  each), and the walker wraps the walk of each matched node so that it sets the atom's bit on
+  `Machine::piece_bits` while it runs. The pipelined search checks a successor one step later,
+  so the bits wait with it (`pending_pieces`).
+- `Graph::pieces` keeps a byte per step, next to `labels`, and the threads' merge copies it over
+  the same steps, only where an atom is matched and there is no VIEW or SYMMETRY.
+- `answer_atoms` answers such an atom on a step whose subscript changed with whether any step from
+  the same state to the same successor has the bit, under plan (i)'s guard, on both paths.
+- StarkMutex's fairness, `\A self \in ProcSet : WF_vars(p(self))`, matches nothing yet: each atom
+  is the action under one value of `self`, which no `\E` of Next pairs with.
 
 **Fallbacks** (evaluate as today). Fall back where:
 - the atom's action does not map exactly onto the split;

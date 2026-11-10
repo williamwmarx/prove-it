@@ -108,6 +108,9 @@ pub enum Atom {
         /// Whether the action is the next-state relation itself, which holds of every step the
         /// search took where TLC's predicate evaluation of it can't fail.
         is_next: bool,
+        /// The bit the walk sets on a step it takes through the pieces of Next the action is made
+        /// of, which then answers it (`pieces.rs`).
+        piece: Option<u8>,
     },
     /// ENABLED, run, or answered from the steps the search took when the action is made of TLC's
     /// actions of the next-state relation.
@@ -636,6 +639,35 @@ impl EngineContext {
                 "a model without a next-state relation".into(),
             ));
         }
+        // The action atoms made of pieces of Next, each with a bit of its own, which the walk sets
+        // on the steps it takes through them; the steps' answers are then the bits. Recorded only
+        // where the steps aren't labelled by TLC's actions.
+        let pieces: Vec<Option<u8>> = match model.next {
+            Some(next) if model.is_recording_graph && !model.is_labelled => {
+                let mut count = 0;
+                model
+                    .atoms
+                    .iter()
+                    .map(|atom| {
+                        let is_candidate = matches!(atom.kind, AtomKind::Action { .. })
+                            && count < u8::BITS
+                            && atom.scope == model.scope
+                            && !is_next(compiler, ir, atom)
+                            && compiler.is_walk_repeatable(atom.expression, &mut HashSet::new());
+                        let found = is_candidate
+                            .then(|| compiler.match_pieces(atom.expression, next))
+                            .flatten()?;
+                        let bit = 1 << count;
+                        count += 1;
+                        compiler
+                            .pieces
+                            .extend(found.into_iter().map(|piece| (piece, bit)));
+                        Some(bit)
+                    })
+                    .collect()
+            }
+            _ => vec![None; model.atoms.len()],
+        };
         let next = model
             .next
             .map(|next| {
@@ -685,7 +717,8 @@ impl EngineContext {
             model
                 .atoms
                 .iter()
-                .map(|atom| compile_atom(compiler, ir, atom))
+                .zip(&pieces)
+                .map(|(atom, &piece)| compile_atom(compiler, ir, atom, piece))
                 .collect()
         } else {
             Vec::new()
@@ -826,7 +859,12 @@ fn is_next(compiler: &Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> bool {
         && compiler.is_walk_repeatable(next, &mut HashSet::new())
 }
 
-fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> CompiledAtom {
+fn compile_atom(
+    compiler: &mut Compiler<'_>,
+    ir: &Ir,
+    atom: &tla_ir::Atom,
+    piece: Option<u8>,
+) -> CompiledAtom {
     let scope = atom.scope;
     let mut is_printing = false;
     let mut reads_diameter = false;
@@ -854,6 +892,7 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
                 action.uses_registers() || subscript.as_ref().is_some_and(Compiled::uses_registers);
             Ok(Atom::Action {
                 is_next: !action.reads_search() && is_next(compiler, ir, atom),
+                piece: piece.filter(|_| !action.reads_search()),
                 action: action.eval,
                 subscript: subscript.map(|subscript| subscript.eval),
                 enabled: enabled.map(|position| position as usize),

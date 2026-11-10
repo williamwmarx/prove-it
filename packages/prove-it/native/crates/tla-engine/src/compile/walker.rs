@@ -1548,7 +1548,36 @@ impl<'a> Compiler<'a> {
             .walk_depth()
             .and_then(|()| self.walk_kind(node, context, options, known, then));
         self.depth -= 1;
-        result
+        let bits = self
+            .pieces
+            .iter()
+            .filter(|piece| piece.0 == node)
+            .fold(0, |bits, piece| bits | piece.1);
+        if bits == 0 {
+            return result;
+        }
+        // A walk through a piece of an action atom marks the steps it takes as the action's.
+        let rest = result?;
+        let address = rest.as_ref().map(step_address);
+        let wrapped = step(move |machine, on_complete| {
+            let outer = machine.piece_bits;
+            machine.piece_bits |= bits;
+            let result = run_rest(&rest, machine, on_complete);
+            machine.piece_bits = outer;
+            result
+        });
+        // The guard the walk starts with still leads it.
+        if let Some(address) = address {
+            if let Some(leading) = self.leading_guards.get(&address).map(|found| found.1) {
+                self.leading_guards
+                    .insert(step_address(&wrapped), (wrapped.clone(), leading));
+            }
+            if let Some(first) = self.first_guards.get(&address).map(|found| found.1.clone()) {
+                self.first_guards
+                    .insert(step_address(&wrapped), (wrapped.clone(), first));
+            }
+        }
+        Ok(Some(wrapped))
     }
 
     fn guard_step(

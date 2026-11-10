@@ -2822,6 +2822,95 @@ fn reports_failures_in_the_temporal_properties_as_tlc() {
     }
 }
 
+#[test]
+fn answers_fairness_of_pieces_of_the_next_state_relation_as_tlc() {
+    // TLC's output on each, at d8fb231, with the recordings' options. Where the action under
+    // fairness is made of disjuncts of Next under each value of its `\E`, as cf1s's is, the engine
+    // answers each step from whether a walk through them took it: under WF and SF, with a successor
+    // a disjunct outside the action also takes, steps to states seen before, a stuttering path and
+    // a CONSTRAINT. It evaluates the action where it is under a guard or other context in Next, or
+    // applies an operator to other arguments. Where TLC fails comparing values the walk assigned,
+    // the engine evaluates and declines, as it does without the shortcut.
+    let cases = [
+        (
+            include_str!("pieces/PieceFair.tla"),
+            include_str!("pieces/PieceFair.cfg"),
+            include_str!("pieces/PieceFair.txt"),
+        ),
+        (
+            include_str!("pieces/PieceStrong.tla"),
+            include_str!("pieces/PieceStrong.cfg"),
+            include_str!("pieces/PieceStrong.txt"),
+        ),
+        (
+            include_str!("pieces/PieceGuarded.tla"),
+            include_str!("pieces/PieceGuarded.cfg"),
+            include_str!("pieces/PieceGuarded.txt"),
+        ),
+        (
+            include_str!("pieces/PieceContext.tla"),
+            include_str!("pieces/PieceContext.cfg"),
+            include_str!("pieces/PieceContext.txt"),
+        ),
+        (
+            include_str!("pieces/PieceArgs.tla"),
+            include_str!("pieces/PieceArgs.cfg"),
+            include_str!("pieces/PieceArgs.txt"),
+        ),
+        (
+            include_str!("pieces/PieceMixed.tla"),
+            include_str!("pieces/PieceMixed.cfg"),
+            include_str!("pieces/PieceMixed.txt"),
+        ),
+        (
+            include_str!("pieces/PieceMember.tla"),
+            include_str!("pieces/PieceMember.cfg"),
+            include_str!("pieces/PieceMember.txt"),
+        ),
+        (
+            include_str!("pieces/PieceStutter.tla"),
+            include_str!("pieces/PieceStutter.cfg"),
+            include_str!("pieces/PieceStutter.txt"),
+        ),
+        (
+            include_str!("pieces/PieceConstrained.tla"),
+            include_str!("pieces/PieceConstrained.cfg"),
+            include_str!("pieces/PieceConstrained.txt"),
+        ),
+    ];
+    for (spec, config, expected) in cases {
+        for workers in ["1", "4"] {
+            let name = spec.split_whitespace().nth(2).expect("the module's name");
+            // Where TLC fails comparing values a walk assigned, the engine evaluates the action
+            // and declines the failure, as it does without the shortcut.
+            let is_declined_by_tlc = ["PieceMixed", "PieceMember"].contains(&name);
+            let test = format!("pieces-{name}-{workers}");
+            let args = [
+                "-workers",
+                workers,
+                "-nowarning",
+                "-seed",
+                "4",
+                "-fp",
+                "0",
+                "-lncheck",
+                "final",
+            ];
+            let (output, directory) = run_front(&test, spec, config, &args);
+            let text = stdout(&output);
+            if is_declined_by_tlc {
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: "),
+                    "{text}"
+                );
+            } else {
+                assert_eq!(get_untimed(&text), expected, "{name} at {workers} workers");
+            }
+            std::fs::remove_dir_all(directory).expect("removed");
+        }
+    }
+}
+
 // What a run printed from `Starting...` to `Finished in`, but the lines that tell the time.
 fn get_untimed(text: &str) -> String {
     let start = text.find("Starting... (").expect("the start");

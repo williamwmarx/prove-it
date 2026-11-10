@@ -120,6 +120,8 @@ pub struct Machine<'p> {
     /// `[a : {}]`, which still tests the value's kind, or one that drops elements, as a filter
     /// does. Then the shapes the walks joined don't cover TLC's predicate evaluation.
     pub is_membership_unsafe: bool,
+    /// The bits of the action atoms whose pieces of Next the walk is in (`pieces.rs`).
+    pub(crate) piece_bits: u8,
     // The next states ENABLED runs its actions into, kept for the next test.
     pub(crate) spare_states: Vec<Vec<Id>>,
     /// What was printed since the search last handed it on (`tlc.output`).
@@ -185,6 +187,7 @@ impl<'p> Machine<'p> {
             is_past_walk: false,
             assigned_shapes: None,
             is_membership_unsafe: false,
+            piece_bits: 0,
             spare_states: Vec::new(),
             output: Vec::new(),
             random: JavaRandom::seeded(program.random_seed),
