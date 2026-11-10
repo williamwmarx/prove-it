@@ -186,6 +186,17 @@ pub struct OpDef {
     pub step: Option<NodeId>,
 }
 
+impl OpDef {
+    /// The arity SANY gives the definition: -1 for a builtin that takes any number of arguments,
+    /// such as `$Tuple`, which `createBuiltins` makes without parameters.
+    pub fn get_sany_arity(&self) -> i64 {
+        if self.def_kind == DefKind::BuiltIn && self.params.is_none() {
+            return -1;
+        }
+        self.arity as i64
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ThmOrAssumpDef {
     pub name: Name,
@@ -690,7 +701,54 @@ impl Context {
 mod tests {
     use std::rc::Rc;
 
-    use super::{Context, NodeId, get_java_hash};
+    use super::{Context, DefKind, NodeId, OpDef, OrderedMap, SanyLocation, get_java_hash};
+
+    fn create_op_def(def_kind: DefKind, params: Option<Vec<NodeId>>) -> OpDef {
+        OpDef {
+            def_kind,
+            name: Rc::from("$Tuple"),
+            arity: params.as_ref().map_or(0, Vec::len),
+            params,
+            body: None,
+            is_local: false,
+            location: SanyLocation {
+                file: Rc::from("--TLA+ BUILTINS--"),
+                begin_line: 0,
+                begin_column: 0,
+                end_line: 0,
+                end_column: 0,
+            },
+            module: None,
+            source: None,
+            pre_comments: Vec::new(),
+            is_defined: true,
+            in_recursive: false,
+            in_recursive_section: false,
+            recursive_section: -1,
+            let_in_level: 0,
+            weights: Vec::new(),
+            is_leibniz_arg: None,
+            is_leibniz: true,
+            op_level_cond: None,
+            max_levels: Vec::new(),
+            min_max_level: None,
+            labels: OrderedMap::default(),
+            step: None,
+        }
+    }
+
+    #[test]
+    fn a_variadic_builtin_has_sany_arity_minus_one() {
+        assert_eq!(create_op_def(DefKind::BuiltIn, None).get_sany_arity(), -1);
+        assert_eq!(
+            create_op_def(DefKind::BuiltIn, Some(vec![NodeId(1), NodeId(2)])).get_sany_arity(),
+            2
+        );
+        assert_eq!(
+            create_op_def(DefKind::UserDefined, None).get_sany_arity(),
+            0
+        );
+    }
 
     #[test]
     fn java_hash_matches_string_hash_code() {

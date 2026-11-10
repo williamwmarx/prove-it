@@ -526,7 +526,7 @@ impl<'a> Exporter<'a> {
                 DefKind::BuiltIn => {
                     let mut children = vec![
                         create_text("uniquename", &node.name),
-                        create_text("arity", node.arity),
+                        create_text("arity", node.get_sany_arity()),
                     ];
                     if let Some(params) = &node.params {
                         children
@@ -545,7 +545,7 @@ impl<'a> Exporter<'a> {
                     };
                     let mut children = vec![
                         create_text("uniquename", &node.name),
-                        create_text("arity", node.arity),
+                        create_text("arity", node.get_sany_arity()),
                         create_element(
                             "originalOperator",
                             vec![self.get_reference(node.source.unwrap_or(id))?],
