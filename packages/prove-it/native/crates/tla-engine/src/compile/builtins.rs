@@ -693,6 +693,10 @@ impl Compiler<'_> {
                         }
                         json::write_json(store, value, &mut text)?;
                     }
+                    // TLC makes the file's directories first, whether or not it then can.
+                    if let Some(parent) = std::path::Path::new(&path).parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
                     std::fs::write(&path, String::from_utf16_lossy(&text))
                         .map_err(|_| Bail("a Json operator's file that can't be written"))?;
                     Ok(TRUE)
