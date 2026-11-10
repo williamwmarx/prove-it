@@ -1094,6 +1094,64 @@ fn checks_assumptions_that_draw_in_an_argument_and_add_bags() {
 }
 
 #[test]
+fn declines_what_the_replay_doesnt_follow_of_a_state_tlc_cant_fingerprint() {
+    let declines = |test: &str, spec: &str, config: &str, reason: &str| {
+        let (output, directory) = run_lowered(test, spec, config);
+        let error = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(error.contains(reason), "{}{error}", stdout(&output));
+        std::fs::remove_dir_all(directory).expect("removed");
+    };
+    // TLC fingerprints an initial state only where the constraints hold of it, and finds no
+    // error here.
+    declines(
+        "constrained-fingerprint",
+        "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLES x, y\nInit == \\/ (x = SUBSET (1..31) /\\ y = 0) \\/ (x = 0 /\\ y = 1)\nNext == UNCHANGED <<x, y>>\nC == y = 1\n====\n",
+        "INIT Init\nNEXT Next\nCONSTRAINT C\n",
+        "a state TLC fingerprints only where its constraints hold",
+    );
+    // TLC's replay takes all of the action's successors before it fingerprints one, so it
+    // reports the assertion that fails after the successor it can't fingerprint.
+    declines(
+        "fingerprint-then-failure",
+        "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, \"boom\")\n====\n",
+        "INIT Init\nNEXT Next\n",
+        "an action that fails or prints after a successor TLC can't fingerprint",
+    );
+}
+
+#[test]
+fn declines_a_trace_through_a_set_tlc_streams_in_an_order_of_its_own() {
+    let declines = |test: &str, spec: &str, config: &str, reason: &str| {
+        let (output, directory) = run_lowered(test, spec, config);
+        let error = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(error.contains(reason), "{}{error}", stdout(&output));
+        std::fs::remove_dir_all(directory).expect("removed");
+    };
+    // TLC prints 33 first: it streams the union in the union's order, not the normalized one.
+    declines(
+        "streamed-print",
+        "---- MODULE Stop ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLES x, n\nInit == x = {} /\\ n = 0\nNext == n < 2 /\\ x' \\in ((SUBSET {1, 2}) \\cup {{n + 3}}) /\\ PrintT(IF n + 3 \\in x' THEN 33 ELSE Cardinality(x')) /\\ Cardinality(x') = 1 /\\ n' = n + 1\nInv == n < 1\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        "an effect under an assignment from a set TLC streams",
+    );
+    // Under the VIEW TLC keeps the first state it streams, x = {3}, whether a definition or a
+    // variable holds the union.
+    let reason = "several states TLC may take for the search's under VIEW or SYMMETRY";
+    declines(
+        "streamed-definition",
+        "---- MODULE Stop ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n\nS == (SUBSET {1, 2}) \\cup {{3}}\nInit == x = {} /\\ n = 0\nNext == n < 3 /\\ x' \\in S /\\ Cardinality(x') = 1 /\\ n' = n + 1\nInv == n < 2\nV == <<n>>\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V\n",
+        reason,
+    );
+    declines(
+        "streamed-variable",
+        "---- MODULE Stop ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n, s\nInit == x = {} /\\ n = 0 /\\ s = (SUBSET {1, 2}) \\cup {{3}}\nNext == n < 3 /\\ x' \\in s /\\ Cardinality(x') = 1 /\\ n' = n + 1 /\\ s' = s\nInv == n < 2\nV == <<n>>\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V\n",
+        reason,
+    );
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

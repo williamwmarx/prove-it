@@ -7,11 +7,15 @@
 
 use std::collections::HashSet;
 
+use tla_values::random::JavaRandom;
+
 use tla_ir::{Bound, Definition, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
 
 use crate::eval::{Context, Evaluator, PRIMED_UNASSIGNED, StackFrame, bound_expression};
 use crate::sets::is_member;
-use crate::value::{Evaluated, TlcMessage, Value, elements, equals, fail, fail_with, is_same};
+use crate::value::{
+    Evaluated, Lazy, TlcMessage, Value, elements, equals, fail, fail_with, is_same,
+};
 
 /// What a walk calls for each state it completes; it returns false to stop the walk.
 pub type Visit<'v, 'ir> = dyn FnMut(&mut Evaluator<'ir>) -> Evaluated<bool> + 'v;
@@ -120,83 +124,6 @@ impl<'ir> Evaluator<'ir> {
         } else {
             Ok(true)
         }
-    }
-
-    /// TLC's actions of a next-state relation, as `Tool.getActions` splits it: each disjunct, the
-    /// body of an operator whose arguments are constant, a LET's or a label's body, and `\\E` at each of its
-    /// bindings; anything else, and an `\\E` of no bindings or one TLC fails to enumerate, is an
-    /// action.
-    pub fn split_actions(
-        &mut self,
-        node: NodeId,
-        context: &Context,
-        actions: &mut Vec<(NodeId, Context)>,
-    ) -> Evaluated<()> {
-        match self.kind(node) {
-            NodeKind::Or(operands) => {
-                for &operand in operands {
-                    self.split_actions(operand, context, actions)?;
-                }
-                return Ok(());
-            }
-            NodeKind::Let {
-                definitions, body, ..
-            } => {
-                let inner = self.bind_let(definitions, context)?;
-                return self.split_actions(*body, &inner, actions);
-            }
-            NodeKind::Label { body, .. } => return self.split_actions(*body, context, actions),
-            NodeKind::Exists { bounds, body } => {
-                let mut contexts = Vec::new();
-                let enumerated = self.for_each_binding(bounds, context, &mut |_, inner| {
-                    contexts.push(inner.clone());
-                    Ok(true)
-                });
-                if enumerated.is_err() || contexts.is_empty() {
-                    actions.push((node, context.clone()));
-                    return Ok(());
-                }
-                for inner in contexts {
-                    self.split_actions(*body, &inner, actions)?;
-                }
-                return Ok(());
-            }
-            NodeKind::Identifier(_) | NodeKind::Apply { .. }
-                if self.has_constant_arguments(node, context) =>
-            {
-                if let Some((body, inner)) = self.resolve_action(node, context)? {
-                    return self.split_actions(body, &inner, actions);
-                }
-            }
-            _ => {}
-        }
-        actions.push((node, context.clone()));
-        Ok(())
-    }
-
-    // Whether the arguments of an operator application are constant, as `getActionsAppl` asks of
-    // them before it splits the operator's body: here, whether none can read the state, and each
-    // evaluates without it.
-    fn has_constant_arguments(&mut self, node: NodeId, context: &Context) -> bool {
-        let NodeKind::Apply { args, .. } = self.kind(node) else {
-            return true;
-        };
-        let mut visited = HashSet::new();
-        if args
-            .iter()
-            .any(|&argument| self.can_read_state(argument, context, &mut visited))
-        {
-            return false;
-        }
-        let width = self.current.len();
-        let current = std::mem::replace(&mut self.current, vec![None; width]);
-        let next = std::mem::replace(&mut self.next, vec![None; width]);
-        let is_constant = args
-            .iter()
-            .all(|&argument| self.evaluate(argument, context).is_ok());
-        self.current = current;
-        self.next = next;
-        is_constant
     }
 
     /// Whether an expression may read the state, as `getLevel` finds it above constant level.
@@ -572,11 +499,23 @@ impl<'ir> Evaluator<'ir> {
                         "\\in" => {
                             let set = self.evaluate(args[1], context)?;
                             let is_in_order = self.is_in_normalized_order(args[1], context, 0)?;
+                            let effects = self.effects();
                             for (position, element) in elements(&set)?.iter().enumerate() {
                                 let chosen =
                                     self.choose(position as u32, is_in_order, &mut |evaluator| {
                                         evaluator.assign(variable, element.clone(), is_init, then)
                                     });
+                                // What the walk prints, draws or does to a register comes in
+                                // the order TLC streams the set in, which is its own for a set
+                                // it keeps lazy.
+                                if !is_in_order
+                                    && matches!(set, Value::Lazy(_))
+                                    && self.effects() != effects
+                                {
+                                    return fail(
+                                        "an effect under an assignment from a set TLC streams",
+                                    );
+                                }
                                 if chosen.is_err()
                                     && !is_in_order
                                     && let Some(stack) = &mut self.call_stack
@@ -662,6 +601,16 @@ impl<'ir> Evaluator<'ir> {
         })
     }
 
+    // What tells whether the walk printed, drew or read or set a register.
+    fn effects(&self) -> (usize, usize, usize, Option<u64>) {
+        (
+            self.printed.len(),
+            self.register_reads,
+            self.register_writes,
+            self.random.as_ref().map(JavaRandom::state),
+        )
+    }
+
     // Walks on with a choice made, at a position in TLC's order or, `!is_in_order`, in this
     // evaluator's.
     fn choose(
@@ -714,16 +663,19 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(!context.is_primed);
                 }
             }
+            // What holds a set TLC keeps lazy streams it in that set's own order.
             NodeKind::Identifier(name) if !name.is_local => match name.resolution {
-                Resolution::Variable(_) => return Ok(!context.is_primed),
-                Resolution::Constant(_) => return Ok(true),
+                Resolution::Variable(_) => {
+                    return Ok(!context.is_primed && self.is_held_normalized(node, context)?);
+                }
+                Resolution::Constant(_) => return self.is_held_normalized(node, context),
                 Resolution::Definition(index)
                     if self.ir.model.startup.definitions.contains(&index)
                         || self.definition(self.ir.definitions[index as usize]).flags
                             & Definition::NORMALIZED
                             != 0 =>
                 {
-                    return Ok(true);
+                    return self.is_held_normalized(node, context);
                 }
                 _ => {}
             },
@@ -733,6 +685,10 @@ impl<'ir> Evaluator<'ir> {
             Some((body, inner)) => self.is_in_normalized_order(body, &inner, depth + 1),
             None => Ok(false),
         }
+    }
+
+    fn is_held_normalized(&mut self, node: NodeId, context: &Context) -> Evaluated<bool> {
+        is_streamed_normalized(&self.evaluate(node, context)?)
     }
 
     fn conjunction(
@@ -826,4 +782,39 @@ impl<'ir> Evaluator<'ir> {
             Ok(true)
         }
     }
+}
+
+// Whether TLC enumerates a set a name holds in normalized order: a set it normalized, a set of
+// functions, records or tuples of such sets, which it enumerates part by part, or a union of
+// such sets whose elements, the first operand's then the second's own, come in that order. Any
+// other set TLC keeps lazy it streams in an order of its own.
+fn is_streamed_normalized(set: &Value) -> Evaluated<bool> {
+    let Value::Lazy(lazy) = set else {
+        return Ok(!matches!(set, Value::Unsorted(_)));
+    };
+    let is_normalized = |part: &Value| !matches!(part, Value::Lazy(_) | Value::Unsorted(_));
+    Ok(match &**lazy {
+        Lazy::FunctionSet(domain, range) => is_normalized(domain) && is_normalized(range),
+        Lazy::RecordSet(fields, _) => fields.iter().all(|(_, part)| is_normalized(part)),
+        Lazy::Product(parts) => parts.iter().all(is_normalized),
+        Lazy::Cup(left, right)
+            if is_streamed_normalized(left)? && is_streamed_normalized(right)? =>
+        {
+            let mut streamed = elements(left)?.to_vec();
+            for element in elements(right)?.iter() {
+                if !is_member(element, left)? {
+                    streamed.push(element.clone());
+                }
+            }
+            let normalized = elements(set)?;
+            streamed.len() == normalized.len()
+                && streamed.iter().zip(normalized.iter()).try_fold(
+                    true,
+                    |is_same_order, (streamed, normalized)| {
+                        Ok(is_same_order && equals(streamed, normalized)?)
+                    },
+                )?
+        }
+        _ => false,
+    })
 }
