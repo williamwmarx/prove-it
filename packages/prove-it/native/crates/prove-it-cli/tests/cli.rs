@@ -661,6 +661,22 @@ fn words_failed_memberships_and_sequence_arguments_as_tlc() {
             "Len(Nat) = 1",
             "The argument of Len should be a sequence, but instead it is:\nNat",
         ),
+        (
+            "1 \\in <<1, 2>>",
+            "Attempted to check set membership in a tuple value.",
+        ),
+        (
+            "{1} \\subseteq 1",
+            "Attempted to check if the value:\n1\nis an element of the integer 1",
+        ),
+        (
+            "DOMAIN [a : Nat] = {}",
+            "Attempted to apply the operator DOMAIN to a non-function\n(a set of the form [d1 : S1, ... , dN : SN])\nline 5, col 8 to line 5, col 23 of module Member",
+        ),
+        (
+            "Seq(Nat)[1] = 1",
+            "A non-function (a special set constant) was applied as a function.\nline 5, col 8 to line 5, col 18 of module Member",
+        ),
     ] {
         let spec = format!(
             "---- MODULE Member ----\nEXTENDS Naturals, Sequences\nCONSTANT m\nVARIABLE x\nASSUME {assumption}\nInit == x = 0\nNext == x' = x\n====\n"
@@ -1305,6 +1321,27 @@ fn stops_where_an_invariant_sets_exit_as_tlc_does() {
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_postcondition_or_alias_tlc_computes_as_it_starts() {
+    // TLC computes a definition of constant level as it starts, then rejects it as a
+    // POSTCONDITION ("The post condition Post cannot be a constant.") or an ALIAS.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nPost == FALSE\nAl == [y |-> 1]\n====\n";
+    for config in ["POSTCONDITION Post\n", "ALIAS Al\n"] {
+        let (output, directory) = run_lowered(
+            "precomputed",
+            spec,
+            &format!("INIT Init\nNEXT Next\n{config}"),
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("prove-it: not native yet: a POSTCONDITION or an ALIAS"),
+            "{}",
+            stdout(&output)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
 }
 
 #[test]
