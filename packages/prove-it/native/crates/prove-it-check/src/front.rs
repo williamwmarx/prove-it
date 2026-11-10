@@ -6,12 +6,14 @@ use std::path::Path;
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::model::{LoweredModel, ModelOptions, StartupMessage, lower_front_ranking};
-use tla_front::report::{ReportOptions, SanyText, get_sany_text};
+use tla_front::model::{
+    LoweredModel, ModelOptions, ModelSources, StartupMessage, lower_front_ranking_of,
+};
+use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text_of};
 use tla_front::tlc_messages::CodedError;
 
 use crate::check::SEARCH_STACK_BYTES;
-use crate::files::FileDescriber;
+use crate::host::{Files, Host};
 
 /// What the front end gives a run: the model to check, or where TLC stops before it searches.
 pub enum Read {
@@ -48,15 +50,29 @@ pub fn read_front(
     spec_path: &str,
     config_text: &str,
     is_warning_enabled: bool,
-    describer: &FileDescriber,
-    libraries: &[String],
+    files: &Files,
+    host: &dyn Host,
     is_tool: bool,
     seed: i64,
 ) -> Result<Read, String> {
+    let spec = Path::new(spec_path);
+    let directory = spec.parent().unwrap_or(Path::new("."));
+    let directories: Vec<&Path> = std::iter::once(directory)
+        .chain(files.libraries.iter().map(Path::new))
+        .collect();
+    let load_module = |name: &str| host.load_module(&directories, name);
+    let load_class = |name: &str| host.load_class(directory, name);
+    let source = host.read_text(spec);
+    let sources = source.as_deref().map(|source| ModelSources {
+        source,
+        directory,
+        load_module: &load_module,
+        load_class: &load_class,
+    });
     // The tests check engine IRs of models whose sources they don't hold: PROVE_IT_TEST_IR names
     // the IR to check in place of the one tla-front lowers, with nothing printed before the search
     // but what the engine's startup prints.
-    if let Some(path) = std::env::var_os("PROVE_IT_TEST_IR") {
+    if let Some(path) = host.get_variable("PROVE_IT_TEST_IR") {
         let ir = std::fs::read(&path)
             .map_err(|error| format!("the IR PROVE_IT_TEST_IR names: {error}"))?;
         return Ok(Read::Model(Front {
@@ -66,10 +82,12 @@ pub fn read_front(
             startup_messages: Vec::new(),
         }));
     }
-    let sany = native_sany(spec_path, describer, libraries).map_err(|error| match error {
-        FrontError::NotYet(reason) => format!("SANY's report of {reason}"),
-        _ => "SANY's report, which tla-front doesn't write".to_owned(),
-    })?;
+    let describe = host.get_file_describer(files);
+    let sany =
+        native_sany(spec_path, sources.as_ref(), &*describe).map_err(|error| match error {
+            FrontError::NotYet(reason) => format!("SANY's report of {reason}"),
+            _ => "SANY's report, which tla-front doesn't write".to_owned(),
+        })?;
     if sany.is_failed {
         return Ok(Read::Failed(Failure {
             sany: sany.text,
@@ -79,10 +97,10 @@ pub fn read_front(
     }
     // TLC's seed as the generator's 64 bits.
     let error = match lower(
-        spec_path,
+        sources.as_ref(),
         config_text,
         is_warning_enabled,
-        libraries,
+        files.libraries,
         seed as u64,
     ) {
         Ok(lowered) => {
@@ -108,17 +126,13 @@ pub fn read_front(
 
 // The model as tla-front lowers it.
 fn lower(
-    spec_path: &str,
+    sources: Option<&ModelSources>,
     config_text: &str,
     is_warning_enabled: bool,
     libraries: &[String],
     random_seed: u64,
 ) -> Result<LoweredModel, FrontError> {
-    let path = if spec_path.ends_with(".tla") {
-        spec_path.to_string()
-    } else {
-        format!("{spec_path}.tla")
-    };
+    let sources = sources.ok_or_else(|| FrontError::Config("the spec can't be read".into()))?;
     let libraries: Vec<&Path> = libraries.iter().map(Path::new).collect();
     let options = ModelOptions {
         libraries: &libraries,
@@ -138,34 +152,31 @@ fn lower(
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
         })
     };
-    lower_front_ranking(Path::new(&path), config_text, &options, &get_startup_texts)
+    lower_front_ranking_of(sources, config_text, &options, &get_startup_texts)
 }
 
 fn native_sany(
     spec_path: &str,
-    describer: &FileDescriber,
-    libraries: &[String],
+    sources: Option<&ModelSources>,
+    describe_file: &dyn Fn(&str, ModuleOrigin) -> String,
 ) -> Result<SanyText, FrontError> {
     let spec = Path::new(spec_path);
-    let directory = spec.parent().unwrap_or(Path::new("."));
-    let load_module = |name: &str| {
-        std::iter::once(directory)
-            .chain(libraries.iter().map(Path::new))
-            .find_map(|directory| {
-                std::fs::read_to_string(directory.join(format!("{name}.tla"))).ok()
-            })
-    };
     // TLC gives SANY the spec as the command line names it, without .tla, unless it's absolute.
     let file_name = if spec.is_absolute() {
         spec.file_stem().and_then(|stem| stem.to_str())
     } else {
         Some(spec_path.strip_suffix(".tla").unwrap_or(spec_path))
     };
+    let root = spec
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    let sources = sources.ok_or_else(|| FrontError::NotYet("a spec without a file".to_owned()))?;
     let options = ReportOptions {
         version: TlcVersion::Master,
         file_name,
-        load_module: &load_module,
-        describe_file: &|name, origin| describer.describe(name, origin),
+        load_module: sources.load_module,
+        describe_file,
     };
-    get_sany_text(spec, &options)
+    get_sany_text_of(root, sources.source, &options)
 }

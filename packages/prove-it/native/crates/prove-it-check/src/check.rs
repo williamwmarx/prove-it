@@ -3,7 +3,7 @@
 
 use std::path::Path;
 use std::sync::mpsc;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 use tla_engine::search::{
     Delegated, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome, Settings, Violation,
@@ -15,14 +15,14 @@ use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
-use crate::files::FileDescriber;
 use crate::front::{Failure, Read, read_front};
+use crate::host::{Files, Host};
 use crate::messages::{self as code, Level, Output, Printer};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
     optimistic_probability, out_degree_summary,
 };
-use crate::time::{format_date, format_duration};
+use crate::time::format_duration;
 use crate::trace::{
     PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
     rebuild_accepted, rebuild_trace,
@@ -87,10 +87,6 @@ fn not_native(output: &mut Output<'_>, what: &str) -> i32 {
     NOT_NATIVE
 }
 
-fn exists(path: &str) -> bool {
-    Path::new(path).exists()
-}
-
 fn file_name(path: &str) -> String {
     Path::new(path).file_name().map_or_else(
         || path.to_string(),
@@ -146,13 +142,13 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
     // TLC also looks for the spec itself in the library directories.
     let mut paths: Vec<String> = Vec::new();
     for path in spec_paths {
-        let found = if exists(&path) || Path::new(&path).is_absolute() {
+        let found = if output.host.is_file(Path::new(&path)) || Path::new(&path).is_absolute() {
             path
         } else {
             java.libraries
                 .iter()
                 .map(|directory| Path::new(directory).join(&path))
-                .find(|candidate| candidate.exists())
+                .find(|candidate| output.host.is_file(candidate))
                 .map(|candidate| candidate.to_string_lossy().into_owned())
                 .unwrap_or(path)
         };
@@ -208,60 +204,24 @@ fn print_command_line_error(printer: &mut Printer, message: &str) -> i32 {
     1
 }
 
-fn read_trimmed(path: &str) -> Option<String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|text| text.trim().to_string())
-}
-
-/// The memory the banner reports as the heap: the machine's, since the native search has no limit
-/// of its own.
-fn memory_megabytes() -> u64 {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|info| {
-            let line = info.lines().find(|line| line.starts_with("MemTotal:"))?;
-            line.split_whitespace().nth(1)?.parse::<u64>().ok()
-        })
-        .map_or(0, |kilobytes| kilobytes / 1024)
-}
-
-fn cores() -> usize {
-    std::thread::available_parallelism().map_or(1, usize::from)
-}
-
 // A whole number an environment variable sets.
-fn env_number(name: &str) -> Option<usize> {
-    std::env::var(name).ok()?.parse().ok()
+fn get_number(host: &dyn Host, name: &str) -> Option<usize> {
+    host.get_variable(name)?.parse().ok()
 }
 
 /// TLC.printStartupBanner, with what runs Prove It in place of the JVM.
 fn print_startup_banner(printer: &mut Printer, seed: i64, workers: usize) {
-    // Node's os.type(): the kernel's name.
-    let system = read_trimmed("/proc/sys/kernel/ostype").unwrap_or_else(|| {
-        match std::env::consts::OS {
-            "macos" => "Darwin",
-            "windows" => "Windows_NT",
-            "linux" => "Linux",
-            other => other,
-        }
-        .into()
-    });
-    let release = read_trimmed("/proc/sys/kernel/osrelease").unwrap_or_default();
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        other => other,
-    };
+    let machine = printer.host.machine();
+    let (system, release, arch) = (&machine.system, &machine.release, &machine.arch);
     printer.print(
         code::MODEL_CHECKING,
         Level::None,
         &format!(
             "Running breadth-first search Model-Checking with fp 0 and seed {seed} with {workers} worker{} on {} cores with {}MB heap and 0MB offheap memory [pid: {}] ({system} {release} {arch}, prove-it native {}bit, MemFPSet, MemStateQueue).",
             if workers == 1 { "" } else { "s" },
-            cores(),
-            memory_megabytes(),
-            std::process::id(),
+            machine.cores,
+            machine.memory_megabytes,
+            machine.pid,
             usize::BITS,
         ),
     );
@@ -535,7 +495,7 @@ fn print_progress(printer: &mut Printer, statistics: &Statistics, start: Option<
         &format!(
             "Progress({}) at {}: {} states generated{}, {} distinct states found{}, {} states left on queue.",
             statistics.depth.max(1),
-            format_date(SystemTime::now()),
+            printer.date(),
             format_count(statistics.generated),
             rate(statistics.generated, "s"),
             format_count(statistics.distinct),
@@ -546,7 +506,7 @@ fn print_progress(printer: &mut Printer, statistics: &Statistics, start: Option<
 }
 
 fn print_initial_states(printer: &mut Printer, generated: u64, distinct: u64) {
-    let date = format_date(SystemTime::now());
+    let date = printer.date();
     if generated == distinct {
         printer.print(
             code::INIT_GENERATED_1,
@@ -575,7 +535,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         .unwrap_or(0);
     let dump = args.get("-dump");
     let workers = match args.first("-workers") {
-        Some(workers) if is_auto(workers) => cores(),
+        Some(workers) if is_auto(workers) => printer.host.machine().cores,
         Some(workers) => workers.parse().unwrap_or(1),
         None => 1,
     };
@@ -588,7 +548,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             None => spec_path.to_string(),
         }),
     };
-    if !config_path.as_deref().is_some_and(exists) {
+    if !config_path
+        .as_deref()
+        .is_some_and(|path| printer.host.is_file(Path::new(path)))
+    {
         printer.print(
             code::CONFIG_FILE_ERROR,
             Level::Error,
@@ -602,7 +565,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let start = Instant::now();
     // TLC reads the configuration file before it parses the spec, and reports one it can't parse
     // as it reports a TlaConfigError (`printFailure`).
-    let config_text = config_path.and_then(|path| std::fs::read_to_string(path).ok());
+    let config_text = config_path.and_then(|path| printer.host.read_text(Path::new(&path)));
     let parsed = config_text
         .as_deref()
         .map(|text| parse_config(text, TlcVersion::Master));
@@ -626,14 +589,14 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         spec_path,
         config_text.as_deref().unwrap_or_default(),
         !args.has("-nowarning"),
-        &FileDescriber::new(
-            Path::new(spec_path),
-            &java.libraries,
-            java.temporary_directory.as_deref(),
-            args.first("-metadir"),
-            false,
-        ),
-        &java.libraries,
+        &Files {
+            spec: Path::new(spec_path),
+            libraries: &java.libraries,
+            temporary: java.temporary_directory.as_deref(),
+            metadir: args.first("-metadir"),
+            is_174: false,
+        },
+        printer.host,
         printer.is_tool,
         seed,
     ) {
@@ -735,13 +698,15 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         // as TLC has workers, and finds what one thread finds. PROVE_IT_WORKERS asks for another
         // number, such as to check that under -workers 1; PROVE_IT_SHARED_LEVEL sets the fewest
         // states a level shares.
-        threads: env_number("PROVE_IT_WORKERS")
+        threads: get_number(printer.host, "PROVE_IT_WORKERS")
             .unwrap_or(workers)
-            .clamp(1, cores()),
-        minimum_shared_level: env_number("PROVE_IT_SHARED_LEVEL").unwrap_or(MINIMUM_SHARED_LEVEL),
+            .clamp(1, printer.host.machine().cores),
+        minimum_shared_level: get_number(printer.host, "PROVE_IT_SHARED_LEVEL")
+            .unwrap_or(MINIMUM_SHARED_LEVEL),
         is_liveness_periodic,
-        test_live_check_at: std::env::var("PROVE_IT_TEST_LIVE_CHECK_AT")
-            .ok()
+        test_live_check_at: printer
+            .host
+            .get_variable("PROVE_IT_TEST_LIVE_CHECK_AT")
             .and_then(|at| at.parse().ok()),
         ..Settings::default()
     };
@@ -1185,7 +1150,7 @@ fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space
         &format!(
             "Checking {branch_text}temporal properties for the {space} state space with {} total distinct states at ({})",
             branches * states,
-            format_date(SystemTime::now())
+            printer.date()
         ),
     );
     checking
@@ -1199,7 +1164,7 @@ fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
         &format!(
             "Finished checking temporal properties in {} at {}",
             format_duration(checking.elapsed().as_millis()),
-            format_date(SystemTime::now())
+            printer.date()
         ),
     );
 }
@@ -1722,7 +1687,7 @@ fn print_sany(printer: &mut Printer, sany: &str) {
     printer.print(
         code::STARTING,
         Level::None,
-        &format!("Starting... ({})", format_date(SystemTime::now())),
+        &format!("Starting... ({})", printer.date()),
     );
 }
 
@@ -1817,10 +1782,7 @@ pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
     printer.print(
         code::FINISHED,
         Level::None,
-        &format!(
-            "Finished in {duration} at ({})",
-            format_date(SystemTime::now())
-        ),
+        &format!("Finished in {duration} at ({})", printer.date()),
     );
 }
 
