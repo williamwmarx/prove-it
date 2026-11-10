@@ -748,6 +748,122 @@ successor"), as `visit_initial` does for a VIEW that fails on an initial state, 
 native. The search also evaluates the VIEW of a successor only where the action constraints hold,
 as TLC fingerprints it only then.
 
+## What the pre-PR engine review found (2026-11-10)
+
+Four readers went through the diff against main (tla-live, tla-engine, tla-values, tla-ir) and ran
+about 1,900 small specs through a TLC built from the clone at d8fb231, the native binary and the
+TypeScript CLI on the Rust backend. Fixed, each with a test in `prove-it-cli/tests/cli.rs` or
+`tests/unit/native-search.test.ts`:
+
+- the section above (a check of a successor that fails, the VIEW after the action constraints);
+- the progress TLC reports again as it computes the initial states for the call stack of a
+  failure among them (`DoInitFunctor.addElement` counts from zero in the replay);
+- a deadlock past a state whose tableau node accepts every behavior, where TLC had stopped;
+- a SYMMETRY definition that is no operator application: TLC takes the arguments of whatever
+  node SANY made of the body and drops the symmetry where they are as many as the permutations,
+  and fails on a LET (`Tool.getSymmetryPerms`). Not native;
+- `JsonSerialize` of a record of several fields, which TLC writes in the order it holds them.
+  Not native;
+- `TLCEval`, which makes its set an enumerated one: `RandomElement` then draws once from the
+  elements, and TLC enumerates them in their normalized order;
+- `[f EXCEPT ![k] = v]` of a function TLC keeps lazy, which reads `f[k]` first
+  (`FcnLambdaValue.select`): nothing changes outside the domain, and the value there may fail;
+- a value that holds a function TLC keeps lazy compared with itself or looked for in a set: the
+  store's equal ids say nothing of what TLC builds to compare. Not native (`HOLDS_LAZY`);
+- a later bound's set, which TLC evaluates though an earlier bound is empty (`Tool.contexts`).
+
+### Open: the depth TLC's stack allows
+
+`machine.rs` allows 20,000 nested calls of a recursive function or operator
+(`MAXIMUM_RECURSION`). TLC's JVM overflows its stack far sooner and reports the
+StackOverflowError: with the default 1 MB thread stack of the JVM the probes ran on,
+`f[n \in Nat] == IF n = 0 THEN 0 ELSE f[n - 1] + 1` evaluates at `f[300]` and overflows at
+`f[400]`; a `RECURSIVE F(_)` of the same shape evaluates at 500 and overflows by 1,500; an
+operator the walker walks (`R(n) == IF n = 0 THEN x' = 1 ELSE R(n - 1)`) evaluates at 500 and
+overflows at 1,000. Between TLC's depth and 20,000 the engine prints the value. The depth
+depends on the JVM and its `-Xss`, as the listed `function_syntax` difference does. A limit of
+about 250 would decline every depth TLC may overflow at, and with it the corpus models that
+recurse deeper and match today. The owner decides.
+
+### Open: differences in the TypeScript checker alone
+
+The native binary declines or is right in each; the interpreter, or the TypeScript front end,
+prints what TLC doesn't. They predate this branch. Each module extends Naturals, TLC, Sequences
+and FiniteSets and has `VARIABLE x`, `Init == x = 0` unless shown.
+
+- **The VIEW before the action constraints.** `Next == x < 3 /\ x' = x + 1`,
+  `V == IF x = 2 THEN Assert(FALSE, "view") ELSE x`, `AC == x' # 2`, VIEW V, ACTION_CONSTRAINT AC,
+  CHECK_DEADLOCK FALSE. TLC finds no error; the interpreter reports the assertion and exits 14.
+- **The SYMMETRY shape rule** above is missing from `symmetry.ts` `getPermutedSets`:
+  `Sym == IF TRUE THEN Permutations(P) ELSE {}` with two model values is checked under symmetry
+  (77 distinct states where TLC finds 153).
+- **A lasso that ends in its cycle's first state** prints `Back to state N` where TLC prints
+  `State N+1: Stuttering` (`LiveWorker.java:998`): `Next == (x = 0 /\ x' = 1) \/ (x = 1 /\ x' \in
+  {0, 1})`, `Spec == Init /\ [][Next]_x /\ WF_x(Next)`, `Prop == <>(x = 1 /\ [](x = 1))`.
+- **A lasso under a VIEW that TLC fails to recover.** VARIABLES x, y; `Init == x = 0 /\ y = 0`;
+  `A0 == x = 0 /\ x' = 0 /\ y' = (y + 1) % 3`; `A1 == x = 0 /\ x' = 1 /\ y' \in {0, 1}`;
+  `A2 == x = 1 /\ x' = 1 /\ y' \in {0, 0}`; `A3 == x = 0 /\ y = 2 /\ x' = 0 /\ y' \in {0, 1}`;
+  `A4 == x = 1 /\ y = 2 /\ x' = 0 /\ y' \in {0, 0}`; Next their disjunction;
+  `Spec == Init /\ [][Next]_vars /\ WF_vars(A2) /\ WF_vars(A3) /\ WF_vars(Next)`;
+  `P0 == []((ENABLED A4) => <>[](x < y))`; `P1 == <>((y = 1) /\ [](ENABLED A2))`; VIEW `x + y`.
+  TLC prints the five-line "TLC threw an unexpected exception ... Failed to recover the next
+  state from its fingerprint." and exits 1; the CLI prints the one line and exits 75.
+- **The count of the final temporal check under a VIEW.** VARIABLES x, y;
+  `Init == x \in {0, 1} /\ y = 0`; `A0 == x = 1 /\ x' = 0 /\ y' = (y + 1) % 3`;
+  `A1 == x = 0 /\ x' = 0 /\ y' = (y + 1) % 3`; `Spec == Init /\ [][A0 \/ A1]_vars /\
+  SF_vars(A0)`; `P0 == []((x < y) => [](x # 0))`; VIEW `x + y`; `-deadlock`. TLC says 3 total
+  distinct states, the CLI 2.
+- **`<<A>>_v` with effects on a stuttering step.** `Next == x' = (x + 1) % 4`,
+  `Prop == []<><<PrintT(<<"a", x, x'>>) /\ x' = 7>>_x`: `LNAction.eval` returns before the body
+  where the subscript is unchanged; the interpreter prints an extra line a state.
+- **The order of what a late tableau node's expansion prints.** `A == x' = 1 - x`,
+  `B == x' = (x + 2) % 3 /\ PrintT(<<"b", x>>)`, `Spec == Init /\ [][A \/ B]_x /\ WF_x(A \/ B)`,
+  `Prop == [](x # 1 => [](x # 7 /\ PrintT(<<"p", x>>)))`, `-deadlock`: one `<<"p", 1>>` comes a
+  line late.
+- **TLCEval in the interpreter** keeps the lazy set: `Next == x < 3 /\ x' = x + 1 /\ y' =
+  RandomElement(TLCEval([{2, 1} -> 1..100]))` draws other values than TLC's.
+- **EXCEPT of a function TLC keeps lazy but the checker builds.** `LET f == [i \in 1..3 |-> 10
+  \div (i - 2)] g == [f EXCEPT ![1] = 7] IN PrintT(g[1])` prints 7 in TLC and fails on the
+  division in the interpreter.
+- **Json.** `ToJsonObject(<<1, 2>>)` is `{"0":1,"1":2}` in TLC and `[1,2]` in the checker;
+  `JsonDeserialize` orders an object's keys as JavaScript does, index-like keys first, where TLC
+  keeps the file's order; a nested `{}` prints `[]` in TLC and `<<>>` in the checker.
+- **The queue after an invariant that fails to evaluate.** VARIABLES x, y; `Init == x \in 0..5
+  /\ y = 0`; `Next == \/ y < 4 /\ y' = y + 1 /\ x' \in {x, (x + 1) % 6} \/ y < 4 /\ y' = y + 2
+  /\ x' = (x * 2) % 6`; `Inv == IF x = 3 /\ y = 3 THEN Assert(FALSE, "i") ELSE TRUE`: TLC
+  reports 12 states left on the queue, the CLI 11.
+- **The action of an incomplete successor.** VARIABLES x, y; `Next == \/ x < 2 /\ x' = x + 1 /\
+  y' = y \/ x = 1 /\ x' = 7`: the CLI names the first disjunct's line where TLC names the
+  second's.
+- **Wording.** RandomElement of `{}` ("Index 0 out of bounds for length 0"), of `1..0` and of a
+  value that is no finite set (exit 255); `ENABLED <<x' = x + 1>>_<<x, y>>` ("The action formula
+  A appearing in a WF_v(A) or SF_v(A) ... does not specify the primed value"); a primed variable
+  in Init ("identifier x is either undefined"). `RandomSubset(2, (-2000000000)..2000000000)`
+  hangs the CLI where TLC reports the interval's size.
+
+### Open: suspicions the review did not reproduce
+
+- The periodic temporal check's count is the states the search expanded (`search.rs`
+  `is_periodic`, `check.rs` `print_liveness_started`); TLC sums its graphs' sizes, which for a
+  tableau graph counts the nodes recorded but not yet expanded (`LiveCheck.check0`). It needs a
+  run of more than a minute.
+- `tla-ir` `decode.rs` checks no bounds on the positions of `EnabledActions::Some`, of the atoms
+  in the live terms, or of `tlc_spec`, which a malformed blob could set past the model's.
+- `fingerprint.rs` fingerprints a lazy function or an infinite set, which it should never
+  meet, as an empty function; twenty probes all declined before a state held one.
+- `json.rs` reads an object's keys as JavaScript orders them, as the interpreter does (above);
+  every native probe that could show it declined.
+- `TLCSet("exit", TRUE)` in an invariant: TLC's main thread races its worker for one Progress
+  line, and the binary prints the run without it.
+- The search skips an invariant's conjunct that is also the initial predicate's on the initial
+  states (`context.rs` `init_conjuncts`); six probes with levels, registers, draws and prints
+  were the same as TLC's.
+- A LET definition TLC caches across paths (`LazyValue.getCachedValue`) that prints or draws:
+  every probe declined at compile.
+
+The search now stops as at a graph too large to keep before its 32-bit numbering of states and
+steps could wrap.
+
 ## Handoff (gaps session, 2026-11-09)
 
 Done since by the engine-gaps session (each in a section above): the run-time walk of a
@@ -769,7 +885,7 @@ definition gives (coverage/I); `\A` that assigns in Init (AssignmentInit); UNCHA
 element (Github702); Len and Tail of a string (test60); INSTANCE in LET (test59,
 CyclicRedefineInstance, EWD998Chan).
 
-Open, with what is known:
+Open, with what is known (and the three Open lists of the review above):
 
 - **A failure with a POSTCONDITION past the first state expanded.** The CLI declines it: TLC
   checks the postconditions only where the failed expansion had generated no successor, so the
