@@ -36,7 +36,7 @@ use crate::lp::pdd_interval::get_pdd_interval;
 use crate::lp::pdd_solver::{PddSolver, get_default_pdd_solver_config};
 use crate::util::error::SmtError;
 
-const UINT_MAX: usize = 0xffffffff;
+const UINT_MAX: u64 = 0xffffffff;
 const ADAPTIVE_UNIT: usize = 16;
 const ADAPTIVE_MAX: usize = 4 * 16;
 const ADAPTIVE_BUMP_AFTER: u64 = 2;
@@ -799,7 +799,11 @@ impl Grobner {
         config.expr_degree_growth = NLA_PARAMS.grobner_expr_degree_growth as usize;
         if NLA_PARAMS.grobner_adaptive && grobner.growth_boost != ADAPTIVE_UNIT {
             let growth_boost = grobner.growth_boost;
-            let scale = |value: usize| (value * growth_boost / ADAPTIVE_UNIT).min(UINT_MAX);
+            // In u64, as the TS numbers are: on 32-bit targets usize would overflow before the cap.
+            let scale = |value: usize| {
+                let scaled = value as u64 * growth_boost as u64 / ADAPTIVE_UNIT as u64;
+                scaled.min(UINT_MAX) as usize
+            };
             config.eqs_growth = scale(config.eqs_growth);
             config.expr_size_growth = scale(config.expr_size_growth);
             config.expr_degree_growth = scale(config.expr_degree_growth);
