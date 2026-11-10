@@ -2320,7 +2320,7 @@ fn ranks_the_startup_of_a_recursive_function_of_two_arguments_without_a_recorded
     // tla-rs function_syntax: building add again for each of its arguments recursed until the
     // stack overflowed, which aborted the binary as it ranked the startup's strings.
     let (output, directory) = run_front(
-        "recursive-function",
+        "two-argument-function",
         "---- MODULE Add ----\nEXTENDS Naturals\nVARIABLE x\nadd[a \\in 0..3, b \\in 0..3] == IF b = 0 THEN a ELSE add[a, b - 1] + 1\nInit == x = 0\nNext == x' = x\nInv == add[2, 3] = 5\n====\n",
         "INIT Init\nNEXT Next\nINVARIANT Inv\n",
         &["-nowarning"],
