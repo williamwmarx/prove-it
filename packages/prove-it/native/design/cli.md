@@ -251,6 +251,45 @@ Still to do:
     the search left them, `Violation::possible`, which a witnessed one checks with);
   - what `Rebuilder::postcondition` declines, such as CounterExample's actions with parameters.
 
+## -dumpTrace
+
+TLC dumps a violation's counterexample with postconditions of its trace modules, which it parses
+with the spec: `_TLCTrace` for `-dumpTrace tlc` and the trace exploration spec's
+`<Spec>_TTrace_<epoch>.bin`, `_JsonTrace` for `-dumpTrace json`. Each writes
+`[counterexample |-> CounterExample, vars |-> vars]`. `tla-trace` writes both files; the binary
+doesn't call it yet (its arguments, SANY's report of the extra modules, and the postconditions'
+order are the binary's).
+
+- `Rebuilder::dump_trace(&CounterExample) -> Result<TraceDump, Unsupported>` builds the value, with
+  `Rebuilder::rebuild_counter_example(store, states, labels)` giving an invariant violation's trace
+  as TLC holds it then (`Worker.doPostCondition`): the states rebuilt, and the last found again
+  among the successors of the state the search held, so the two share no value but those TLC made
+  once, such as a string literal's.
+- `TraceDump::to_tlc(model_values: &[&str]) -> Result<Vec<u8>, Unsupported>` is the gzipped file
+  (`_TLCTrace.ioSerialize`): the value fingerprinted, which sorts it in place, then written by
+  `ValueOutputStream`'s grammar, back-references to the values written before included. A value
+  written twice is one `Rc` of the evaluator, as it is one Java object to TLC: a string literal is
+  one object per node, a state's unchanged variable is its predecessor's. `model_values` are the
+  configuration's in the order `ModelConfig.parse` makes them, whose positions TLC writes. The gzip
+  member has `GZIPOutputStream`'s header and stored deflate blocks.
+- `TraceDump::to_json() -> Result<String, Unsupported>` is `Json.serialize`'s text, Gson's
+  escaping included: records and functions in the order written until TLC sorts them, so a JSON
+  dump after `to_tlc` writes them sorted, as TLC's does when `-dumpTrace tlc` comes first.
+- The payload equals TLC's but for the tokens of its strings (`design/gaps.md`), which the dump
+  numbers in the order it first writes each text. `tests/dump.rs` compares the dumps of four specs
+  with what the jar (tlaplus d8fb231) wrote, in both orders of the two flags: an invariant
+  violation, a deadlock, a lasso, and nested values.
+- Round trip: the jar read each of the eight `.bin` files `tla-trace` wrote and its own with
+  `java -jar tla2tools.jar -tool -modelcheck -config <Spec>.cfg -loadtrace tlc trace.bin <Spec>`,
+  and printed the same, but for times, pids, the seed and the fingerprint index: the trace
+  replayed, exit 12, 11, 13 and 12.
+- Not dumped (`Unsupported`): a safety violation of a model with an ALIAS; a set or function TLC
+  keeps lazy, whose cached enumeration is a Java object of its own; an action's parameter bound to
+  a string, set or function, the object its set holds, which a state may hold too; a model value
+  the configuration doesn't make. The sharing follows the evaluator's, which these specs check; where
+  TLC's state queue spilled the held state to disk and read it back, TLC's literals are new
+  objects, which the dump doesn't follow.
+
 ## Specs TLC stops at before the search
 
 - tla-front finds whether TLC stops before it searches, and the binary prints what TLC prints
@@ -361,6 +400,33 @@ platform's separators and `user.dir`, and fails as unsupported on another of the
 `prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
 form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.
 
+## -dump
+
+`-dump <file>` writes each state the search found to `<file>.dump` (TLC adds the suffix where the
+name lacks it), as TLC's `StateWriter` does: `State N:` from 1, the state as TLC prints it
+(`TLCStateMut.toString`), and a blank line. TLC writes a state as it adds it to its set of
+fingerprints, before it checks the invariants, so on a stop the dump holds the states the
+stopping expansion found and the state that stopped it where TLC counted it. The engine hands the
+states over once, as the search ends (`Reporter::dumped`, `Settings::is_dumped`), and the binary
+opens the file where TLC does, before it reads the configuration, so a run that stops before the
+search leaves it empty. Each run was compared with TLC's dump at d8fb231 over the corpus.
+
+With N workers TLC writes the states in the order its workers happen to add them, which differs
+from run to run. The binary's shared levels find what one thread finds, so its dump on any number
+of workers is TLC's dump on one worker.
+
+Not native, where TLC writes what the binary doesn't model:
+
+- `-dump dot ...` (`DotStateWriter`), `-dump class,...` and a file under `${metadir}`;
+- temporal properties: TLC writes each state again as it adds its stuttering step to the behavior
+  graph (`Worker.doNextCheckLiveness`);
+- SYMMETRY or a VIEW;
+- a search stopped computing its initial states: TLC returns without closing the dump (no
+  `cleanup`), which then holds only what Java's buffers flushed;
+- an invariant that fails to evaluate past the initial states: TLC expands the state again to
+  print the call stack and writes the new states it finds then (`keepCallStack`);
+- a spec with no variables, and a state holding a value whose text depends on how TLC built it.
+
 ## -simulate
 
 `-simulate [num=N]` runs TLC's random simulation (`Simulator`, `SimulationWorker`) in the engine
@@ -409,7 +475,10 @@ Declined, each with its reason:
   `_PERIODIC` (evaluated with each progress report), a model without a next-state relation or
   whose relation the engine doesn't split into TLC's actions;
 - a violation before the last trace, or without `num=`: TLC's worker goes on generating traces
-  as the main thread prints the trace, and is stopped at no particular one, so the counts race;
+  as the main thread prints the trace, and is stopped at no particular one, so the counts race.
+  On the jar, repeated runs of one MCConsensus model print different counts, and within one run
+  the summary said 23 states generated where the progress line said 24. The sweep declines 60
+  runs for this; the tests pin `num=1`, where the violation is in the last trace;
 - a failure evaluating the model, an incomplete state, an action property violated, an initial
   state outside a constraint or none;
 - a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS, or

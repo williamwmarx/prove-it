@@ -778,3 +778,12 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, SyntaxError> {
     });
     Ok(lexer.tokens)
 }
+
+/// `readAtAsIdentifier`: SANY's lexer reads @ as an identifier, which stands for the value an
+/// EXCEPT changes only alone.
+pub fn read_at_as_identifier(mut token: Token) -> Token {
+    if token.kind == TokenKind::Operator && &*token.text == "@" {
+        token.kind = TokenKind::Identifier;
+    }
+    token
+}

@@ -6,6 +6,7 @@ import { FC_CONTINUE, FC_DONE, FC_GIVEUP } from "./context";
 import { TheoryJustification } from "./enode";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { getVar, Literal, negate } from "./literal";
+import { traceLp } from "./lp-trace";
 import { KIND_EQ, KIND_GE, KIND_GT, KIND_LT, KIND_NE } from "./lp/constraints";
 import { Explanation } from "./lp/explanation";
 import { IntSolver } from "./lp/int-solver";
@@ -16,7 +17,7 @@ import { getGcd, getLcm, Rational } from "./rational";
 import { TheoryLraModel } from "./theory-lra-model";
 
 export abstract class TheoryLraFinalCheck extends TheoryLraModel {
-  private lia = new IntSolver(this.solver);
+  private lia = traceLp("lia", IntSolver, this.solver);
 
   finalCheckEh(level: number) {
     const context = this.context;

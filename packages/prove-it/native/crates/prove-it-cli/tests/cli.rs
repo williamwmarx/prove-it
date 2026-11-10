@@ -1,7 +1,7 @@
 //! Runs the binary as a user would: on specs of the tests' own, which tla-front reads, and on
 //! golden engine IRs, such as TCommit's, which PROVE_IT_TEST_IR names in place of a spec's.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const COMMIT_IR: &[u8] = include_bytes!(
@@ -686,6 +686,144 @@ fn reports_an_assumption_that_is_no_boolean() {
     }
 }
 
+// SANY's `NumeralNode.toString` is the numeral as written, so TLC names an assumption that is a
+// numeral by its text, not by where it is written (`Tool.checkAssumptions`, `Tool.isValid`). And
+// `TLCGetSet.TLCGetEval` is an `EvaluatingValue`, whose `eval` reports any failure within it, its
+// argument's included, as the failure of the Java method. TLC's output for each at d8fb231.
+#[test]
+fn names_assumptions_and_fails_tlcget_as_tlc() {
+    const TLC_GET: &str = "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\n";
+    let module = |name: &str, assumption: &str, invariant: &str| {
+        format!(
+            "---- MODULE {name} ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME {assumption}\nInv == {invariant}\nInit == x = 0\nNext == x' = 1 - x\n====\n"
+        )
+    };
+    for (name, assumption, invariant, expected) in [
+        ("Parenthesized", "((2))", "x < 2", "Error: Evaluating assumption 2 failed.\nTLC expected a boolean value, but did not find one. 2\nFinished in ".to_string()),
+        ("Binary", "\\b101", "x < 2", "Error: Evaluating assumption \\b101 failed.\nTLC expected a boolean value, but did not find one. \\b101\nFinished in ".to_string()),
+        ("Padded", "007", "x < 2", "Error: Evaluating assumption 007 failed.\nTLC expected a boolean value, but did not find one. 007\nFinished in ".to_string()),
+        ("Negated", "-1", "x < 2", "Error: Evaluating assumption line 4, col 8 to line 4, col 9 of module Negated failed.\nTLC expected a boolean value, but did not find one. line 4, col 8 to line 4, col 9 of module Negated\nFinished in ".to_string()),
+        ("Unset", "TLCGet(3) = 0", "x < 2", format!("Error: Evaluating assumption line 4, col 8 to line 4, col 20 of module Unset failed.\n{TLC_GET}TLCGet(3) was undefined.\nFinished in ")),
+        ("Divided", "TRUE", "TLCGet(1 \\div 0) = 0", format!("Computing initial states...\nError: {TLC_GET}The second argument of \\div is 0.\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 13 in Divided\n1. Line 5, column 8 to line 5, column 27 in Divided\n2. Line 5, column 8 to line 5, column 23 in Divided\n3. Line 5, column 15 to line 5, column 22 in Divided\n\n\n1 states generated, 1 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 1.\nFinished in ")),
+    ] {
+        let (output, directory) = run_front(
+            name,
+            &module(name, assumption, invariant),
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &["-workers", "1"],
+        );
+        let text = stdout(&output);
+        let untimed = text
+            .split_once("Starting... (")
+            .and_then(|(_, rest)| rest.split_once('\n'))
+            .map_or(text.as_str(), |(_, rest)| rest);
+        assert!(untimed.starts_with(&expected), "{name}:\n{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+// `Tool.eval` gives a literal the value its tool object holds, which `processModelConstraints`
+// replaced with the constraint's `OpDefNode`, so TLC fails a constraint that is a numeral or a
+// string with a ClassCastException, whose message names the JVM's classes: the engine declines it.
+// A constraint that isn't a boolean otherwise fails as `Tool.isInModel` says. TLC's output at
+// d8fb231.
+#[test]
+fn declines_a_constraint_that_is_a_literal() {
+    let module = |name: &str, constraint: &str| {
+        format!(
+            "---- MODULE {name} ----\nEXTENDS Naturals\nVARIABLE x\nQ == {constraint}\nInit == x = 0\nNext == x' = 1 - x\n====\n"
+        )
+    };
+    for (name, constraint) in [("Numeral", "7"), ("Text", "\"yes\"")] {
+        let (output, directory) = run_front(
+            name,
+            &module(name, constraint),
+            "INIT Init\nNEXT Next\nCONSTRAINT Q\n",
+            &[],
+        );
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("not native yet") && error.contains("a constraint that is a literal"),
+            "{name}:\n{}{error}",
+            stdout(&output)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+    let (output, directory) = run_front(
+        "Summed",
+        &module("Summed", "x + 7"),
+        "INIT Init\nNEXT Next\nCONSTRAINT Q\n",
+        &["-workers", "1"],
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("Computing initial states...\nError: TLC expected a boolean value, but did not find one. line 4, col 6 to line 4, col 10 of module Summed\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 13 in Summed\n\n\n1 states generated, 0 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\nFinished in "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn follows_tlc_through_a_set_operation_on_a_value_that_isnt_a_set() {
+    // `Tool` builds `\\cup`, `\\cap` and `\\` through a set enumeration or interval operand, a
+    // union with an empty one being the other operand, and keeps any other union lazy, testing
+    // that operand first. An empty interval holds nothing (`IntervalValue.member`).
+    let holding = [
+        "({} \\cup 0) = 0",
+        "({} \\cap 0) = {}",
+        "({} \\ 0) = {}",
+        "1 \\in ({1} \\cup 0)",
+        "1 \\in (0 \\cup {1})",
+        "1 \\in ((1..2) \\cup \"a\")",
+        "~(\"a\" \\in 3..1)",
+    ];
+    let assumptions: String = holding
+        .iter()
+        .map(|assumption| format!("ASSUME {assumption}\n"))
+        .collect();
+    let spec = format!(
+        "---- MODULE Lazy ----\nEXTENDS Integers\nVARIABLE x\n{assumptions}Init == x = 0\nNext == x' = x\n====\n"
+    );
+    let (output, directory) = run_front("lazy-sets", &spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    // The replay checks the assumptions before one that fails again, testing an element of a lazy
+    // filter inside an intersection or a difference through the evaluator.
+    let spec = "---- MODULE Lazy ----\nEXTENDS Integers\nVARIABLE x\nASSUME 2 \\in ({2} \\cap {n \\in Int : n % 2 = 0})\nASSUME 3 \\notin ({3} \\ {n \\in Int : n % 2 = 1})\nASSUME 1 \\in 0\nInit == x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_front("lazy-filters", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(
+        text.contains(
+            "failed.\nAttempted to check if the value:\n1\nis an element of the integer 0\n"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // An intersection or a difference with a set enumeration tests each of its elements at once,
+    // so it fails on one the membership never asks about.
+    for (test, assumption, element) in [
+        ("lazy-cap", "3 \\in (0 \\cap {1})", 1),
+        ("lazy-diff", "3 \\in ({1} \\ 0)", 1),
+        ("lazy-cup", "2 \\in (0 \\cup {1})", 2),
+    ] {
+        let spec = format!(
+            "---- MODULE Lazy ----\nEXTENDS Integers\nVARIABLE x\nASSUME {assumption}\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front(test, &spec, "INIT Init\nNEXT Next\n", &[]);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(
+            text.contains(&format!(
+                "failed.\nAttempted to check if the value:\n{element}\nis an element of the integer 0\n"
+            )),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 #[test]
 fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
     // The search prints the first print, then leaves the assumption to the trace evaluator, which
@@ -999,12 +1137,19 @@ fn rebuilds_a_trace_through_an_operator_the_configuration_defines() {
 
 // Runs the binary on a spec of the test's own, where TLC stops before the search.
 fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
+    run_spec_with(test, spec, config, &[])
+}
+
+fn run_spec_with(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
     std::fs::write(directory.join("Stop.cfg"), config).expect("a configuration");
-    (run(&directory, &["-noTE", "Stop"]), directory)
+    (
+        run(&directory, &[args, &["-noTE", "Stop"]].concat()),
+        directory,
+    )
 }
 
 // A counter with a `_PERIODIC` expression, as TLC's ran at d8fb231 with `-workers 1`: TLC
@@ -1626,14 +1771,6 @@ fn declines_what_it_doesnt_follow_of_the_behavior_graphs() {
         &["-deadlock"],
         "prints it doesn't place in TLC's order",
     );
-    // TLC ends this lasso, whose last state is its cycle's first, with "State 3: Stuttering".
-    declines(
-        "lasso-end",
-        "VARIABLES x, y\nvars == <<x, y>>\nInit == x \\in {0, 1} /\\ y = 0\nA0 == x = 1 /\\ y = 0 /\\ x' = 1 /\\ y' \\in {0, 1}\nA1 == x = 1 /\\ x' = 0 /\\ y' = 1\nA2 == x = 1 /\\ y = 0 /\\ x' = 0 /\\ y' = y\nA3 == x = 0 /\\ x' = 1 /\\ y' \\in {0, 0}\nNext == A0 \\/ A1 \\/ A2 \\/ A3\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\nP0 == []<>(x # 0)\nP1 == []((x = 0) => <>[](y = 1))",
-        "SPECIFICATION Spec\nPROPERTY P0\nPROPERTY P1\n",
-        &[],
-        "a lasso that ends in the first state of its cycle",
-    );
 }
 
 #[test]
@@ -1726,7 +1863,7 @@ fn caches_tlccache_by_its_key_alone_as_tlc() {
 #[test]
 fn declines_what_tlc_fails_to_enumerate_where_it_writes_or_reads_a_value() {
     // TLC fails on a function it keeps lazy, or on Nat, where it writes JSON, tests a bag, or
-    // reads a register; and on a tuple as a quantifier's bound.
+    // reads a register. A tuple as a quantifier's bound is `words_a_value_that_isnt_a_set_as_tlc`'s.
     for (test, definitions, config) in [
         (
             "json-lazy",
@@ -1747,11 +1884,6 @@ fn declines_what_tlc_fails_to_enumerate_where_it_writes_or_reads_a_value() {
             "register-lazy",
             "Init == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ TLCSet(1, [i \\in Nat |-> i])\nPost == 3 \\in DOMAIN TLCGet(1)",
             "POSTCONDITION Post\n",
-        ),
-        (
-            "tuple-bound",
-            "Init == \\A i \\in <<1>> : x = i\nNext == x' = x",
-            "",
         ),
     ] {
         let spec = format!(
@@ -4117,4 +4249,1147 @@ fn unites_a_set_with_one_element_in_tlcs_order() {
         }
     }
     std::fs::remove_dir_all(directory).expect("removed");
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn read_dump(directory: &Path, name: &str) -> String {
+    std::fs::read_to_string(directory.join(name)).expect("a dump")
+}
+
+#[test]
+fn dumps_every_state_found_as_tlc_writes_them() {
+    let directory = commit_directory("dump");
+    // TLC's own `-dump` of TCommit, at d8fb231 with `-workers 1`.
+    let expected = include_str!("tcommit.dump");
+    let output = run_ir(
+        &directory,
+        "TCommit",
+        &["-workers", "1", "-noTE", "-dump", "states", "TCommit"],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert_eq!(read_dump(&directory, "states.dump"), expected);
+    // A name that ends in .dump keeps it, and with several workers the binary writes the states in
+    // the order one finds them.
+    let shared = run_ir_with(
+        &directory,
+        "TCommit",
+        &["-workers", "4", "-noTE", "-dump", "shared.dump", "TCommit"],
+        &[("PROVE_IT_SHARED_LEVEL", "1")],
+    );
+    assert_eq!(shared.status.code(), Some(0), "{}", stdout(&shared));
+    assert_eq!(read_dump(&directory, "shared.dump"), expected);
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// Specs and dumps as TLC ran and wrote them at d8fb231 with `-workers 1`.
+#[test]
+fn dumps_the_state_that_stops_the_search_as_tlc() {
+    let counted = "State 1:\nx = 0\n\nState 2:\nx = 1\n\nState 3:\nx = 2\n\nState 4:\nx = 3\n\n";
+    for (test, next, config, code) in [
+        (
+            "dump-invariant",
+            "x' = x + 1",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            12,
+        ),
+        (
+            "dump-deadlock",
+            "x < 3 /\\ x' = x + 1",
+            "INIT Init\nNEXT Next\n",
+            11,
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == {next}\nInv == x < 3\n====\n"
+        );
+        let (output, directory) = run_spec_with(test, &spec, config, &["-dump", "states"]);
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{test}: {}",
+            stdout(&output)
+        );
+        assert_eq!(read_dump(&directory, "states.dump"), counted, "{test}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn dumps_a_state_of_several_variables_as_tlc() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x, r\nInit == x \\in {0, 1} /\\ r = [b |-> x, a |-> \"s\"]\nNext == x < 2 /\\ x' = x + 1 /\\ r' = [r EXCEPT !.b = x']\n====\n";
+    let (output, directory) = run_spec_with(
+        "dump-record",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
+        &["-dump", "states"],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert_eq!(
+        read_dump(&directory, "states.dump"),
+        "State 1:\n/\\ r = [b |-> 0, a |-> \"s\"]\n/\\ x = 0\n\nState 2:\n/\\ r = [b |-> 1, a |-> \"s\"]\n/\\ x = 1\n\nState 3:\n/\\ r = [b |-> 2, a |-> \"s\"]\n/\\ x = 2\n\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// TLC opens the dump before it reads the configuration, so a configuration it rejects leaves the
+// dump empty.
+#[test]
+fn opens_the_dump_before_it_reads_the_configuration() {
+    let spec = "---- MODULE Stop ----\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n====\n";
+    let (output, directory) = run_spec_with(
+        "dump-configuration",
+        spec,
+        "INIT Init\n\"unterminated\n",
+        &["-dump", "states"],
+    );
+    assert_eq!(output.status.code(), Some(151), "{}", stdout(&output));
+    assert_eq!(read_dump(&directory, "states.dump"), "");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_dump_whose_contents_tlc_writes_otherwise() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nLive == <>(x = 2)\nInv == x > 0\n====\n";
+    for (test, config, args, reason) in [
+        (
+            "dump-dot",
+            "INIT Init\nNEXT Next\n",
+            &["-dump", "dot", "states"][..],
+            "-dump dot",
+        ),
+        (
+            "dump-metadir",
+            "INIT Init\nNEXT Next\n",
+            &["-dump", "${metadir}/states"],
+            "-dump into the meta directory",
+        ),
+        // TLC writes each state again as it adds its stuttering step to the behavior graph.
+        (
+            "dump-temporal",
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            &["-dump", "states"],
+            "-dump with temporal properties",
+        ),
+        // TLC returns without closing the dump, which holds what Java's buffers flushed.
+        (
+            "dump-initial",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &["-dump", "states"],
+            "-dump of a search stopped computing its initial states",
+        ),
+    ] {
+        let spec = spec.replace("====", "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)\n====");
+        let (output, directory) = run_spec_with(test, &spec, config, args);
+        assert_eq!(output.status.code(), Some(1), "{test}: {}", stdout(&output));
+        assert_eq!(
+            stderr(&output),
+            format!("prove-it: not native yet: {reason}\n"),
+            "{test}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+// TLC's FingerprintExceptionHang: TypeOK fails to evaluate on the second state, and TLC expands the
+// first state again to print the call stack, writing the third state it finds then.
+#[test]
+fn declines_a_dump_where_tlc_replays_the_step_that_failed() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nCONSTANTS Nodes\nVARIABLES node_state\nvars == <<node_state>>\nLegalSets == {{}}\nTypeOK == node_state \\in [Nodes -> [set: LegalSets]]\nInit == \\E initial_members \\in LegalSets: node_state = [n \\in Nodes |-> [set |-> initial_members]]\nNext == \\E n \\in Nodes, new_members \\in {1}: node_state' = [node_state EXCEPT ![n].set = new_members]\nSpec == Init /\\ [][Next]_vars\n====\n";
+    let (output, directory) = run_spec_with(
+        "dump-replay",
+        spec,
+        "SPECIFICATION Spec\nCONSTANT Nodes = {A, B}\nCHECK_DEADLOCK FALSE\nINVARIANT TypeOK\n",
+        &["-dump", "states"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        stderr(&output),
+        "prove-it: not native yet: -dump of states TLC finds as it replays a step\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn words_a_value_that_isnt_a_boolean_as_tlc() {
+    // Where TLC demands a boolean of a value that isn't one, each place words it apart: the walk
+    // of the initial predicate, of an action and of ENABLED, which each test a guard, a conjunct
+    // left once every variable has a value, a literal, a function's value, an IF and a CASE, and
+    // `Tool#eval`, its junctions, IF and CASE, and an invariant. Each text is what TLC at d8fb231
+    // prints, and with -tool.
+    // Its name, definitions, configuration, arguments, and what TLC prints, and with -tool.
+    type Case<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a str, &'a str);
+    let cases: [Case; 38] = [
+        (
+            "a conjunct left once the initial state is complete",
+            "Init == x = 0 /\\ x + 3\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, TLC expected a boolean expression,\nbut instead found 3.\nline 4, col 18 to line 4, col 22 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 9 to line 4, column 13 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2247:0 @!@!@\nIn computing initial states, TLC expected a boolean expression,\nbut instead found 3.\nline 4, col 18 to line 4, col 22 of module M\n@!@!@ENDMSG 2247 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 9 to line 4, column 13 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a numeral left once the initial state is complete",
+            "Init == x = 0 /\\ 3\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, TLC expected a boolean expression,\nbut instead found 3.\n3\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 18 in M\n1. Line 4, column 9 to line 4, column 13 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2247:0 @!@!@\nIn computing initial states, TLC expected a boolean expression,\nbut instead found 3.\n3\n@!@!@ENDMSG 2247 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 18 in M\n1. Line 4, column 9 to line 4, column 13 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a numeral the initial predicate walks",
+            "Init == 3 /\\ x = 0\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: The init state relation is not a boolean expression.\n3\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 18 in M\n1. Line 4, column 9 to line 4, column 9 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nThe init state relation is not a boolean expression.\n3\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 18 in M\n1. Line 4, column 9 to line 4, column 9 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a string the initial predicate walks",
+            "Init == \"a\" /\\ x = 0\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: The init state relation is not a boolean expression.\nline 4, col 9 to line 4, col 11 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 20 in M\n1. Line 4, column 9 to line 4, column 11 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nThe init state relation is not a boolean expression.\nline 4, col 9 to line 4, col 11 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 20 in M\n1. Line 4, column 9 to line 4, column 11 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a function the initial predicate applies",
+            "Init == [p \\in {1} |-> 5][1] /\\ x = 0\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, TLC expected a boolean expression,\nbut didn't find one.\nline 4, col 9 to line 4, col 28 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 37 in M\n1. Line 4, column 9 to line 4, column 28 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2248:0 @!@!@\nIn computing initial states, TLC expected a boolean expression,\nbut didn't find one.\nline 4, col 9 to line 4, col 28 of module M\n@!@!@ENDMSG 2248 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 37 in M\n1. Line 4, column 9 to line 4, column 28 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a record the initial predicate applies",
+            "Init == [a |-> 1][\"a\"] /\\ x = 0\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, TLC expected a boolean expression,\nbut didn't find one.\nline 4, col 9 to line 4, col 22 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 31 in M\n1. Line 4, column 9 to line 4, column 22 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2248:0 @!@!@\nIn computing initial states, TLC expected a boolean expression,\nbut didn't find one.\nline 4, col 9 to line 4, col 22 of module M\n@!@!@ENDMSG 2248 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 31 in M\n1. Line 4, column 9 to line 4, column 22 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a tuple an action applies",
+            "Init == x = 0\nNext == <<1>>[1] /\\ UNCHANGED x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC expected a boolean expression,\nbut didn't find one.\nline 5, col 9 to line 5, col 16 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 31 in M\n1. Line 5, column 9 to line 5, column 16 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2248:0 @!@!@\nIn computing next states, TLC expected a boolean expression,\nbut didn't find one.\nline 5, col 9 to line 5, col 16 of module M\n@!@!@ENDMSG 2248 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 31 in M\n1. Line 5, column 9 to line 5, column 16 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a function ENABLED applies",
+            "Init == x = 0\nA == x' = x /\\ (\"a\" :> 2)[\"a\"]\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            &[],
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 30 in M\n2. Line 5, column 6 to line 5, column 11 in M\n3. Line 5, column 16 to line 5, column 30 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, TLC expected a boolean expression,\nbut didn't find one.\nline 5, col 16 to line 5, col 30 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 30 in M\n2. Line 5, column 6 to line 5, column 11 in M\n3. Line 5, column 16 to line 5, column 30 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2248:0 @!@!@\nIn computing ENABLED, TLC expected a boolean expression,\nbut didn't find one.\nline 5, col 16 to line 5, col 30 of module M\n@!@!@ENDMSG 2248 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "an IF the initial predicate walks",
+            "Init == IF 1 THEN x = 0 ELSE x = 1\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, a non-boolean expression (an integer) was used as the condition of an IF.\nline 4, col 9 to line 4, col 34 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nIn computing initial states, a non-boolean expression (an integer) was used as the condition of an IF.\nline 4, col 9 to line 4, col 34 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a CASE the initial predicate walks",
+            "Init == CASE 1 -> x = 0\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, a non-boolean expression (an integer) was used as a guard condition of a CASE.\nline 4, col 19 to line 4, col 23 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 23 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nIn computing initial states, a non-boolean expression (an integer) was used as a guard condition of a CASE.\nline 4, col 19 to line 4, col 23 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 23 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a numeral an action walks",
+            "Init == x = 0\nNext == 3 /\\ x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The next state relation is not a boolean expression.\n3\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 19 in M\n1. Line 5, column 9 to line 5, column 9 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The next state relation is not a boolean expression.\n3\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 19 in M\n1. Line 5, column 9 to line 5, column 9 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a conjunct left once the successor is complete",
+            "Init == x = 0\nNext == x' = 1 /\\ x + 2",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC expected a boolean expression,\nbut instead found 2.\nline 5, col 19 to line 5, col 23 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 23 in M\n1. Line 5, column 9 to line 5, column 14 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2247:0 @!@!@\nIn computing next states, TLC expected a boolean expression,\nbut instead found 2.\nline 5, col 19 to line 5, col 23 of module M\n@!@!@ENDMSG 2247 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 23 in M\n1. Line 5, column 9 to line 5, column 14 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a numeral an action walks without warnings",
+            "Init == x = 0\nNext == x' = x /\\ 3",
+            "INIT Init\nNEXT Next\n",
+            &["-nowarning"],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The next state relation is not a boolean expression.\n3\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 19 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 19 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The next state relation is not a boolean expression.\n3\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 19 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 19 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an expression an action walks without warnings",
+            "Init == x = 0\nNext == x' = x /\\ x + 3",
+            "INIT Init\nNEXT Next\n",
+            &["-nowarning"],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC expected a boolean expression,\nbut instead found 3.\nline 5, col 19 to line 5, col 23 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 23 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 23 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2247:0 @!@!@\nIn computing next states, TLC expected a boolean expression,\nbut instead found 3.\nline 5, col 19 to line 5, col 23 of module M\n@!@!@ENDMSG 2247 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 23 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 23 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "the body of a function an action applies",
+            "Init == x = 0\nNext == [p \\in {1} |-> 0][1] /\\ x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The next state relation is not a boolean expression.\n0\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 38 in M\n1. Line 5, column 9 to line 5, column 28 in M\n2. Line 5, column 24 to line 5, column 24 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The next state relation is not a boolean expression.\n0\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 38 in M\n1. Line 5, column 9 to line 5, column 28 in M\n2. Line 5, column 24 to line 5, column 24 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a definition TLC computes as it starts",
+            "Three == 3\nInit == x = 0\nNext == Three /\\ x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC expected a boolean expression,\nbut instead found 3.\nline 6, col 9 to line 6, col 13 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 23 in M\n1. Line 6, column 9 to line 6, column 13 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2247:0 @!@!@\nIn computing next states, TLC expected a boolean expression,\nbut instead found 3.\nline 6, col 9 to line 6, col 13 of module M\n@!@!@ENDMSG 2247 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 23 in M\n1. Line 6, column 9 to line 6, column 13 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "the body of an operator an action applies",
+            "Op(a) == a + 1\nInit == x = 0\nNext == Op(x) /\\ x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC expected a boolean expression,\nbut instead found 1.\nline 4, col 10 to line 4, col 14 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 23 in M\n1. Line 6, column 9 to line 6, column 13 in M\n2. Line 4, column 10 to line 4, column 14 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2247:0 @!@!@\nIn computing next states, TLC expected a boolean expression,\nbut instead found 1.\nline 4, col 10 to line 4, col 14 of module M\n@!@!@ENDMSG 2247 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 23 in M\n1. Line 6, column 9 to line 6, column 13 in M\n2. Line 4, column 10 to line 4, column 14 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an IF an action walks",
+            "Init == x = 0\nNext == IF 1 THEN x' = 0 ELSE x' = 1",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, a non-boolean expression (an integer) was used as the condition of an IF.line 5, col 9 to line 5, col 36 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 36 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, a non-boolean expression (an integer) was used as the condition of an IF.line 5, col 9 to line 5, col 36 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 36 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a CASE an action walks",
+            "Init == x = 0\nNext == CASE 1 -> x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, a non-boolean expression (an integer) was used as a guard condition of a CASE.\nline 5, col 19 to line 5, col 24 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 24 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, a non-boolean expression (an integer) was used as a guard condition of a CASE.\nline 5, col 19 to line 5, col 24 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 24 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an expression ENABLED walks",
+            "Init == x = 0\nA == x' = x /\\ (IF x = 0 THEN x + 3 ELSE TRUE)\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            &[],
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 46 in M\n2. Line 5, column 6 to line 5, column 11 in M\n3. Line 5, column 17 to line 5, column 45 in M\n4. Line 5, column 31 to line 5, column 35 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, TLC expected a boolean expression,\nbut instead found 3.\nline 5, col 31 to line 5, col 35 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 46 in M\n2. Line 5, column 6 to line 5, column 11 in M\n3. Line 5, column 17 to line 5, column 45 in M\n4. Line 5, column 31 to line 5, column 35 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2247:0 @!@!@\nIn computing ENABLED, TLC expected a boolean expression,\nbut instead found 3.\nline 5, col 31 to line 5, col 35 of module M\n@!@!@ENDMSG 2247 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "a numeral ENABLED walks",
+            "Init == x = 0\nA == x' = x /\\ (IF x = 0 THEN 3 ELSE TRUE)\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            &[],
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 42 in M\n2. Line 5, column 6 to line 5, column 11 in M\n3. Line 5, column 17 to line 5, column 41 in M\n4. Line 5, column 31 to line 5, column 31 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compute ENABLED on a non-boolean expression.\n3\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 42 in M\n2. Line 5, column 6 to line 5, column 11 in M\n3. Line 5, column 17 to line 5, column 41 in M\n4. Line 5, column 31 to line 5, column 31 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compute ENABLED on a non-boolean expression.\n3\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "an IF ENABLED walks",
+            "Init == x = 0\nA == IF x THEN x' = x ELSE x' = 1\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            &[],
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 33 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, a non-boolean expression(an integer) was used as the guard condition of an IF.\nline 5, col 6 to line 5, col 33 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 33 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, a non-boolean expression(an integer) was used as the guard condition of an IF.\nline 5, col 6 to line 5, col 33 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "a CASE ENABLED walks",
+            "Init == x = 0\nA == CASE x -> x' = x\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            &[],
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 21 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, a non-boolean expression(an integer) was used as a guard condition of a CASE.\nline 5, col 16 to line 5, col 21 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 21 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, a non-boolean expression(an integer) was used as a guard condition of a CASE.\nline 5, col 16 to line 5, col 21 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "an IF of a tuple",
+            "Init == x = 0\nNext == x' = x /\\ (IF <<1, 2>> THEN 1 ELSE 2) = TRUE",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-boolean expression (a tuple) was used as the condition of an IF.\nline 5, col 20 to line 5, col 44 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 52 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 52 in M\n3. Line 5, column 20 to line 5, column 44 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-boolean expression (a tuple) was used as the condition of an IF.\nline 5, col 20 to line 5, col 44 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 52 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 52 in M\n3. Line 5, column 20 to line 5, column 44 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an IF of a record",
+            "Init == x = 0\nNext == x' = x /\\ (IF [a |-> 1] THEN 1 ELSE 2) = TRUE",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-boolean expression (a record) was used as the condition of an IF.\nline 5, col 20 to line 5, col 45 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 53 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 53 in M\n3. Line 5, column 20 to line 5, column 45 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-boolean expression (a record) was used as the condition of an IF.\nline 5, col 20 to line 5, col 45 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 53 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 53 in M\n3. Line 5, column 20 to line 5, column 45 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an IF of a function",
+            "Init == x = 0\nNext == x' = x /\\ (IF \"a\" :> 1 THEN 1 ELSE 2) = TRUE",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-boolean expression (a function  of the form (d1 :> e1 @@ ... @@ dN :> eN)) was used as the condition of an IF.\nline 5, col 20 to line 5, col 44 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 52 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 52 in M\n3. Line 5, column 20 to line 5, column 44 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-boolean expression (a function  of the form (d1 :> e1 @@ ... @@ dN :> eN)) was used as the condition of an IF.\nline 5, col 20 to line 5, col 44 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 52 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 52 in M\n3. Line 5, column 20 to line 5, column 44 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an IF of a string",
+            "Init == x = 0\nNext == x' = x /\\ (IF \"s\" THEN 1 ELSE 2) = 1",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-boolean expression (a string) was used as the condition of an IF.\nline 5, col 20 to line 5, col 39 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 44 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 44 in M\n3. Line 5, column 20 to line 5, column 39 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-boolean expression (a string) was used as the condition of an IF.\nline 5, col 20 to line 5, col 39 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 44 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 44 in M\n3. Line 5, column 20 to line 5, column 39 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an invariant of a numeral",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == 1",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: TLC expected a boolean value, but did not find one. 1\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n\n\n",
+            "@!@!@STARTMSG 2215:0 @!@!@\nTLC expected a boolean value, but did not find one. 1\n@!@!@ENDMSG 2215 @!@!@\nWhile working on the initial state:\nx = 0\n\n@!@!@ENDMSG 2102 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an invariant of an expression",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x + 1",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: TLC expected a boolean value, but did not find one. line 6, col 8 to line 6, col 12 of module M\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n\n\n",
+            "@!@!@STARTMSG 2215:0 @!@!@\nTLC expected a boolean value, but did not find one. line 6, col 8 to line 6, col 12 of module M\n@!@!@ENDMSG 2215 @!@!@\nWhile working on the initial state:\nx = 0\n\n@!@!@ENDMSG 2102 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an invariant of a successor",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == IF x = 1 THEN 2 ELSE TRUE",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: Evaluating invariant Inv failed.\nTLC expected a boolean value, but did not find one. line 6, col 8 to line 6, col 32 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n",
+            "@!@!@STARTMSG 2111:1 @!@!@\nEvaluating invariant Inv failed.\n@!@!@STARTMSG 2215:0 @!@!@\nTLC expected a boolean value, but did not find one. line 6, col 8 to line 6, col 32 of module M\n@!@!@ENDMSG 2215 @!@!@\n@!@!@ENDMSG 2111 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "a bulleted conjunction",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == /\\ x < 3\n       /\\ IF x = 1 THEN 1 ELSE TRUE",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: Evaluating invariant Inv failed.\nA non-boolean expression (an integer) was used as a formula in a conjunction.\nline 7, col 11 to line 7, col 35 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n",
+            "@!@!@STARTMSG 2111:1 @!@!@\nEvaluating invariant Inv failed.\nA non-boolean expression (an integer) was used as a formula in a conjunction.\nline 7, col 11 to line 7, col 35 of module M\n@!@!@ENDMSG 2111 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "a bulleted disjunction",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == \\/ x = 0\n       \\/ IF x = 1 THEN 2 ELSE TRUE",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: Evaluating invariant Inv failed.\nA non-boolean expression (an integer) was used as a formula in a disjunction.\nline 7, col 11 to line 7, col 35 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n",
+            "@!@!@STARTMSG 2111:1 @!@!@\nEvaluating invariant Inv failed.\nA non-boolean expression (an integer) was used as a formula in a disjunction.\nline 7, col 11 to line 7, col 35 of module M\n@!@!@ENDMSG 2111 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "the left of an infix conjunction",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == (IF x = 1 THEN 2 ELSE TRUE) /\\ x < 3",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: Evaluating invariant Inv failed.\nAttempted to evaluate an expression of form P /\\ Q when P was\nan integer.\nline 6, col 8 to line 6, col 43 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n",
+            "@!@!@STARTMSG 2111:1 @!@!@\nEvaluating invariant Inv failed.\nAttempted to evaluate an expression of form P /\\ Q when P was\nan integer.\nline 6, col 8 to line 6, col 43 of module M\n@!@!@ENDMSG 2111 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "the right of an infix conjunction",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 3 /\\ (IF x = 1 THEN 2 ELSE TRUE)",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: Evaluating invariant Inv failed.\nAttempted to evaluate an expression of form P /\\ Q when Q was\nan integer.\nline 6, col 8 to line 6, col 43 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n",
+            "@!@!@STARTMSG 2111:1 @!@!@\nEvaluating invariant Inv failed.\nAttempted to evaluate an expression of form P /\\ Q when Q was\nan integer.\nline 6, col 8 to line 6, col 43 of module M\n@!@!@ENDMSG 2111 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "the last of an infix chain",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 3 /\\ TRUE /\\ (IF x = 1 THEN 2 ELSE TRUE)",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: Evaluating invariant Inv failed.\nAttempted to evaluate an expression of form P /\\ Q when Q was\nan integer.\nline 6, col 8 to line 6, col 51 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n",
+            "@!@!@STARTMSG 2111:1 @!@!@\nEvaluating invariant Inv failed.\nAttempted to evaluate an expression of form P /\\ Q when Q was\nan integer.\nline 6, col 8 to line 6, col 51 of module M\n@!@!@ENDMSG 2111 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "the right of an infix disjunction",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x = 0 \\/ (IF x = 1 THEN 2 ELSE TRUE)",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: Evaluating invariant Inv failed.\nAttempted to evaluate an expression of form P \\/ Q when Q was\nan integer.\nline 6, col 8 to line 6, col 43 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n",
+            "@!@!@STARTMSG 2111:1 @!@!@\nEvaluating invariant Inv failed.\nAttempted to evaluate an expression of form P \\/ Q when Q was\nan integer.\nline 6, col 8 to line 6, col 43 of module M\n@!@!@ENDMSG 2111 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "a CASE condition",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == CASE x + 0 -> TRUE [] OTHER -> FALSE",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: A non-boolean expression (an integer) was used as a condition of a CASE. line 6, col 13 to line 6, col 17 of module M\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 43 in M\n\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 43 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an IF condition",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == IF x THEN TRUE ELSE FALSE",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: A non-boolean expression (an integer) was used as the condition of an IF.\nline 6, col 8 to line 6, col 32 of module M\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 32 in M\n\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 32 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+    ];
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-non-boolean-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (name, definitions, config, args, printed, tool) in cases {
+        std::fs::write(
+            directory.join("M.tla"),
+            format!(
+                "---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+{definitions}
+====
+"
+            ),
+        )
+        .expect("a spec");
+        std::fs::write(directory.join("M.cfg"), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            for (flags, expected) in [(&[][..], printed), (&["-tool"][..], tool)] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .arg("-noGenerateSpecTE")
+                    .args(args)
+                    .args(flags)
+                    .arg("M")
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let text = stdout(&output);
+                assert!(
+                    text.contains(expected),
+                    "{name} on {threads} {flags:?}:
+{text}"
+                );
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn applies_a_function_tlc_keeps_lazy_in_the_initial_predicate() {
+    // F's domain is infinite, so TLC keeps F lazy and applies it in the initial predicate without
+    // building it. The replay of the initial state prints what TLC at d8fb231 prints.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-lazy-applied-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("M.tla"),
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nF == [p \\in Nat |-> p = 0]\nInit == F[0] /\\ x = 0\nNext == x' = x\nInv == x = 1\n====\n",
+    )
+    .expect("a spec");
+    std::fs::write(
+        directory.join("M.cfg"),
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    )
+    .expect("a configuration");
+    for threads in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noGenerateSpecTE", "M"])
+            .current_dir(&directory)
+            .env("PROVE_IT_WORKERS", threads)
+            .env("PROVE_IT_SHARED_LEVEL", "1")
+            .output()
+            .expect("the binary runs");
+        let text = stdout(&output);
+        assert!(
+            text.contains(
+                "Error: Invariant Inv is violated by the initial state:\nx = 0\n\nFinished in "
+            ),
+            "on {threads}: {text}"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn words_a_value_that_isnt_a_set_as_tlc() {
+    // Where TLC demands a set of a value that isn't one, each place words it apart: Permutations
+    // (`EC.TLC_MODULE_APPLYING_TO_WRONG_VALUE`), and the bound of a quantifier or a set of all
+    // (`Value.getNonEnumerableErrorMsg`) in an invariant, an action and the initial predicate.
+    // Each text is what TLC at d8fb231 prints, and with -tool.
+    // Its name, definitions, configuration, arguments, and what TLC prints, and with -tool.
+    type Case<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a str, &'a str);
+    let cases: [Case; 9] = [
+        (
+            "Permutations of an integer",
+            "Init == x = Permutations(3)\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: Applying Permutations to the following value,\nwhich is not a finite set:\n3\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 27 in M\n1. Line 4, column 13 to line 4, column 27 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2176:0 @!@!@\nApplying Permutations to the following value,\nwhich is not a finite set:\n3\n@!@!@ENDMSG 2176 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 27 in M\n1. Line 4, column 13 to line 4, column 27 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Permutations of a tuple",
+            "Init == x = Permutations(<<1, 2>>)\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: Applying Permutations to the following value,\nwhich is not a finite set:\n<<1, 2>>\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2176:0 @!@!@\nApplying Permutations to the following value,\nwhich is not a finite set:\n<<1, 2>>\n@!@!@ENDMSG 2176 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Permutations of a string in an invariant",
+            "Init == x = 0\nNext == x' = x\nInv == x = 0 /\\ Permutations(\"ab\") = {}",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: Applying Permutations to the following value,\nwhich is not a finite set:\n\"ab\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 39 in M\n2. Line 6, column 17 to line 6, column 39 in M\n3. Line 6, column 17 to line 6, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2176:0 @!@!@\nApplying Permutations to the following value,\nwhich is not a finite set:\n\"ab\"\n@!@!@ENDMSG 2176 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 39 in M\n2. Line 6, column 17 to line 6, column 39 in M\n3. Line 6, column 17 to line 6, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a bound a variable gives",
+            "Init == x = 0\nNext == x < 1 /\\ x' = x + 1\nInv == \\A i \\in {}, j \\in x : FALSE",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n0.\nline 6, col 27 to line 6, col 27 of module M\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 35 in M\n\n\n",
+            "@!@!@STARTMSG 2102:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n0.\nline 6, col 27 to line 6, col 27 of module M\nWhile working on the initial state:\nx = 0\n\n@!@!@ENDMSG 2102 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 35 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a bound written as a numeral",
+            "Init == x = 0\nNext == x' = x\nInv == x = 0 /\\ \\E j \\in 3 : TRUE",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n3.\n3\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 33 in M\n2. Line 6, column 17 to line 6, column 33 in M\n\n\n",
+            "@!@!@STARTMSG 2102:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n3.\n3\nWhile working on the initial state:\nx = 0\n\n@!@!@ENDMSG 2102 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 33 in M\n2. Line 6, column 17 to line 6, column 33 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a record the bound of a set of all",
+            "Init == x = 0\nNext == x' = x\nInv == x = 0 /\\ {j : j \\in [a |-> 1]} = {}",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n[a |-> 1].\nline 6, col 28 to line 6, col 36 of module M\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 42 in M\n2. Line 6, column 17 to line 6, column 42 in M\n3. Line 6, column 17 to line 6, column 37 in M\n\n\n",
+            "@!@!@STARTMSG 2102:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n[a |-> 1].\nline 6, col 28 to line 6, col 36 of module M\nWhile working on the initial state:\nx = 0\n\n@!@!@ENDMSG 2102 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 13 in M\n1. Line 6, column 8 to line 6, column 42 in M\n2. Line 6, column 17 to line 6, column 42 in M\n3. Line 6, column 17 to line 6, column 37 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a bound in an action",
+            "Init == x = 0\nNext == \\E j \\in x : x' = j",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: TLC encountered a non-enumerable quantifier bound\n0.\nline 5, col 18 to line 5, col 18 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 27 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: TLC encountered a non-enumerable quantifier bound\n0.\nline 5, col 18 to line 5, col 18 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 27 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a string bound in the initial predicate",
+            "Init == \\E j \\in \"a\" : x = j\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n\"a\".\nline 4, col 18 to line 4, col 20 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 28 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n\"a\".\nline 4, col 18 to line 4, col 20 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 28 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a tuple bound in the initial predicate",
+            "Init == \\A i \\in <<1>> : x = i\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC encountered a non-enumerable quantifier bound\n<<1>>.\nline 4, col 18 to line 4, col 22 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 30 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC encountered a non-enumerable quantifier bound\n<<1>>.\nline 4, col 18 to line 4, col 22 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 30 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+    ];
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-non-set-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (name, definitions, config, args, printed, tool) in cases {
+        std::fs::write(
+            directory.join("M.tla"),
+            format!(
+                "---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+{definitions}
+====
+"
+            ),
+        )
+        .expect("a spec");
+        std::fs::write(directory.join("M.cfg"), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            for (flags, expected) in [(&[][..], printed), (&["-tool"][..], tool)] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .arg("-noGenerateSpecTE")
+                    .args(args)
+                    .args(flags)
+                    .arg("M")
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let text = stdout(&output);
+                assert!(
+                    text.contains(expected),
+                    "{name} on {threads} {flags:?}:
+{text}"
+                );
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn words_the_sequence_operators_as_tlc() {
+    // Where SubSeq, SelectSeq, SortSeq, Head or Tail fails, TLC words each failure apart: an
+    // argument that isn't a sequence or an integer, a bound outside the sequence's domain, a test
+    // or a comparison that isn't a boolean, what fails in an operator argument as the failure of
+    // the Java method, and the empty sequence. SortSeq sorts as TLC's insertion does. Each text is
+    // what TLC at d8fb231 prints, and with -tool.
+    // Its name, definitions, and what TLC prints, and with -tool.
+    let cases: [(&str, &str, &str, &str); 15] = [
+        (
+            "SubSeq from below the sequence's domain",
+            "Init == x = SubSeq(<<1, 2>>, 0, 1)\nNext == x' = x",
+            "Error: The second argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n0\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2183:0 @!@!@\nThe second argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n0\n@!@!@ENDMSG 2183 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SubSeq to past the sequence's domain",
+            "Init == x = SubSeq(<<1, 2>>, 1, 3)\nNext == x' = x",
+            "Error: The third argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n3\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2183:0 @!@!@\nThe third argument of SubSeq must be in the domain of its first argument:\n<<1, 2>>\n, but instead it is\n3\n@!@!@ENDMSG 2183 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 34 in M\n1. Line 4, column 13 to line 4, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SubSeq past a string's domain",
+            "Init == x = SubSeq(\"ab\", 2, 3)\nNext == x' = x",
+            "Error: The third argument of SubSeq must be in the domain of its first argument:\n\"ab\"\n, but instead it is\n3\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 30 in M\n1. Line 4, column 13 to line 4, column 30 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2183:0 @!@!@\nThe third argument of SubSeq must be in the domain of its first argument:\n\"ab\"\n, but instead it is\n3\n@!@!@ENDMSG 2183 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 30 in M\n1. Line 4, column 13 to line 4, column 30 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SubSeq of a set",
+            "Init == x = SubSeq({1}, 1, 1)\nNext == x' = x",
+            "Error: The first argument of SubSeq should be a sequence, but instead it is:\n{1}\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 29 in M\n1. Line 4, column 13 to line 4, column 29 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe first argument of SubSeq should be a sequence, but instead it is:\n{1}\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 29 in M\n1. Line 4, column 13 to line 4, column 29 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SubSeq from a string",
+            "Init == x = SubSeq(<<1, 2>>, \"a\", 1)\nNext == x' = x",
+            "Error: The second argument of SubSeq should be a natural number, but instead it is:\n\"a\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 36 in M\n1. Line 4, column 13 to line 4, column 36 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe second argument of SubSeq should be a natural number, but instead it is:\n\"a\"\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 36 in M\n1. Line 4, column 13 to line 4, column 36 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SelectSeq of a string",
+            "Init == x = SelectSeq(\"ab\", LAMBDA e : TRUE)\nNext == x' = x",
+            "Error: The first argument of SelectSeq should be a sequence, but instead it is:\n\"ab\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 44 in M\n1. Line 4, column 13 to line 4, column 44 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe first argument of SelectSeq should be a sequence, but instead it is:\n\"ab\"\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 44 in M\n1. Line 4, column 13 to line 4, column 44 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SelectSeq of a test that isn't a boolean",
+            "Init == x = SelectSeq(<<1, 2>>, LAMBDA e : e)\nNext == x' = x",
+            "Error: The second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator LAMBDA>\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 45 in M\n1. Line 4, column 13 to line 4, column 45 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe second argument of SelectSeq should be a boolean-valued operator, but instead it is:\n<Operator LAMBDA>\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 45 in M\n1. Line 4, column 13 to line 4, column 45 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SelectSeq of a test that fails",
+            "Init == x = SelectSeq(<<1, 2>>, LAMBDA e : CHOOSE y \\in {} : TRUE)\nNext == x' = x",
+            "Error: Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 44 to line 4, col 65 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 66 in M\n1. Line 4, column 13 to line 4, column 66 in M\n2. Line 4, column 44 to line 4, column 65 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 44 to line 4, col 65 of module M\n@!@!@ENDMSG 2154 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 66 in M\n1. Line 4, column 13 to line 4, column 66 in M\n2. Line 4, column 44 to line 4, column 65 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SortSeq of a set",
+            "Init == x = SortSeq({1}, LAMBDA u, v : TRUE)\nNext == x' = x",
+            "Error: The first argument of SortSeq should be a natural number, but instead it is:\n{1}\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 44 in M\n1. Line 4, column 13 to line 4, column 44 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2169:0 @!@!@\nThe first argument of SortSeq should be a natural number, but instead it is:\n{1}\n@!@!@ENDMSG 2169 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 44 in M\n1. Line 4, column 13 to line 4, column 44 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SortSeq of a comparison of a string",
+            "Init == x = SortSeq(<<1, \"a\">>, LAMBDA u, v : u < v)\nNext == x' = x",
+            "Error: The first argument of < should be an integer, but instead it is:\n\"a\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 52 in M\n1. Line 4, column 13 to line 4, column 52 in M\n2. Line 4, column 47 to line 4, column 51 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2266:0 @!@!@\nThe first argument of < should be an integer, but instead it is:\n\"a\"\n@!@!@ENDMSG 2266 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 52 in M\n1. Line 4, column 13 to line 4, column 52 in M\n2. Line 4, column 47 to line 4, column 51 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SortSeq of a comparison that fails",
+            "Init == x = SortSeq(<<1, 2>>, LAMBDA u, v : CHOOSE y \\in {} : TRUE)\nNext == x' = x",
+            "Error: Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 45 to line 4, col 66 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 67 in M\n1. Line 4, column 13 to line 4, column 67 in M\n2. Line 4, column 45 to line 4, column 66 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 45 to line 4, col 66 of module M\n@!@!@ENDMSG 2154 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 67 in M\n1. Line 4, column 13 to line 4, column 67 in M\n2. Line 4, column 45 to line 4, column 66 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "SortSeq in TLC's order",
+            "Init == x = 0 /\\ Assert(FALSE, SortSeq(<<x + 1, 2, x + 1, 3>>, LAMBDA u, v : u = v))\nNext == x' = x",
+            "Error: The first argument of Assert evaluated to FALSE; the second argument was:\n<<1, 2, 1, 3>>\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 84 in M\n1. Line 4, column 9 to line 4, column 13 in M\n2. Line 4, column 18 to line 4, column 84 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2132:0 @!@!@\nThe first argument of Assert evaluated to FALSE; the second argument was:\n<<1, 2, 1, 3>>\n@!@!@ENDMSG 2132 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 84 in M\n1. Line 4, column 9 to line 4, column 13 in M\n2. Line 4, column 18 to line 4, column 84 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Head of the empty sequence",
+            "Init == x = Head(<<>>)\nNext == x' = x",
+            "Error: Attempted to apply Head to the empty sequence.\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 13 to line 4, column 22 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2184:0 @!@!@\nAttempted to apply Head to the empty sequence.\n@!@!@ENDMSG 2184 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 13 to line 4, column 22 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Tail of the empty sequence",
+            "Init == x = Tail(<<>>)\nNext == x' = x",
+            "Error: Attempted to apply Tail to the empty sequence.\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 13 to line 4, column 22 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2184:0 @!@!@\nAttempted to apply Tail to the empty sequence.\n@!@!@ENDMSG 2184 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 22 in M\n1. Line 4, column 13 to line 4, column 22 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Tail of the empty string",
+            "Init == x = Tail(\"\")\nNext == x' = x",
+            "Error: Attempted to apply Tail to the empty sequence.\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 20 in M\n1. Line 4, column 13 to line 4, column 20 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2184:0 @!@!@\nAttempted to apply Tail to the empty sequence.\n@!@!@ENDMSG 2184 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 20 in M\n1. Line 4, column 13 to line 4, column 20 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+    ];
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-sequences-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (name, definitions, printed, tool) in cases {
+        std::fs::write(
+            directory.join("M.tla"),
+            format!(
+                "---- MODULE M ----
+EXTENDS Integers, Sequences, TLC
+VARIABLE x
+{definitions}
+====
+"
+            ),
+        )
+        .expect("a spec");
+        std::fs::write(directory.join("M.cfg"), "INIT Init\nNEXT Next\n").expect("a configuration");
+        for threads in ["1", "4"] {
+            for (flags, expected) in [(&[][..], printed), (&["-tool"][..], tool)] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .arg("-noGenerateSpecTE")
+                    .args(flags)
+                    .arg("M")
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let text = stdout(&output);
+                assert!(
+                    text.contains(expected),
+                    "{name} on {threads} {flags:?}:
+{text}"
+                );
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn words_failures_of_the_evaluator_as_tlc() {
+    // A CASE no arm of holds, in `Tool#eval` and in the walks of the initial predicate, an action
+    // and ENABLED; a set TLC can't enumerate a walk assigns from; a tuple pattern a quantifier
+    // binds to a value it doesn't match; TLCModelValue of a number; EXCEPT past a value that isn't a
+    // function, where TLC fails as it is and where its replay fingerprints the value, and the path's
+    // keys evaluated first; and an initial state some variable lacks a value in. Each text is what
+    // TLC at d8fb231 prints, and with -tool.
+    // Its name, definitions, configuration, arguments, and what TLC prints, and with -tool.
+    type Case<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a str, &'a str);
+    let cases: [Case; 14] = [
+        (
+            "a CASE Tool#eval evaluates",
+            "Init == x = (CASE FALSE -> 2)\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: Attempted to evaluate a CASE with no conditions true.\nline 4, col 14 to line 4, col 28 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 29 in M\n1. Line 4, column 14 to line 4, column 28 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nAttempted to evaluate a CASE with no conditions true.\nline 4, col 14 to line 4, col 28 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 29 in M\n1. Line 4, column 14 to line 4, column 28 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a CASE the initial predicate walks",
+            "Init == CASE FALSE -> x = 0\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, TLC encountered a CASE with no conditions true.\nline 4, col 9 to line 4, col 27 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 27 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nIn computing initial states, TLC encountered a CASE with no conditions true.\nline 4, col 9 to line 4, col 27 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 27 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a CASE an action walks",
+            "Init == x = 0\nNext == CASE x = 5 -> x' = 0\n  [] x = 6 -> x' = 1",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC encountered a CASE with no conditions true.\nline 5, col 9 to line 6, col 20 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 6, column 20 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC encountered a CASE with no conditions true.\nline 5, col 9 to line 6, col 20 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 6, column 20 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a CASE ENABLED walks",
+            "Init == x = 0\nA == CASE x = 5 -> x' = 0\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            &[],
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 25 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, TLC encountered a CASE with no conditions true.\nline 5, col 6 to line 5, col 25 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 25 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, TLC encountered a CASE with no conditions true.\nline 5, col 6 to line 5, col 25 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "Nat the initial predicate enumerates",
+            "Init == x \\in Nat\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, the right side of \\IN is not enumerable.\nline 4, col 9 to line 4, col 17 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 17 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nIn computing initial states, the right side of \\IN is not enumerable.\nline 4, col 9 to line 4, col 17 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 17 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Int an action enumerates",
+            "Init == x = 0\nNext == x' \\in Int",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, the right side of \\IN is not enumerable.\nline 5, col 9 to line 5, col 18 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 18 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, the right side of \\IN is not enumerable.\nline 5, col 9 to line 5, col 18 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 18 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Nat ENABLED enumerates",
+            "Init == x = 0\nA == x' \\in Nat\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            &[],
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 15 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The right side of \\IN is not enumerable.\nline 5, col 6 to line 5, col 15 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 15 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The right side of \\IN is not enumerable.\nline 5, col 6 to line 5, col 15 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "a tuple pattern of another length an action binds",
+            "Init == x = 0\nNext == \\E <<i, j>> \\in {<<1>>} : x' = i",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Argument mismatch in operator application.%1\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 40 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2170:0 @!@!@\nArgument mismatch in operator application.%1\n@!@!@ENDMSG 2170 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 40 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a tuple pattern Tool#eval binds to a number",
+            "Init == x = 0\nNext == x' = x /\\ \\A <<i, j>> \\in {1} : i = j",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Argument mismatch in operator application.%1\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 45 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 45 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2170:0 @!@!@\nArgument mismatch in operator application.%1\n@!@!@ENDMSG 2170 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 45 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 45 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "TLCModelValue of a number",
+            "Init == x = TLCModelValue(1)\nNext == UNCHANGED x",
+            "INIT Init\nNEXT Next\n",
+            &["-nowarning"],
+            "Error: The argument of ModelValue should be a string, but instead it is:\n1\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 28 in M\n1. Line 4, column 13 to line 4, column 28 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2283:0 @!@!@\nThe argument of ModelValue should be a string, but instead it is:\n1\n@!@!@ENDMSG 2283 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 28 in M\n1. Line 4, column 13 to line 4, column 28 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "EXCEPT past a number",
+            "Init == x = <<1, 2>>\nNext == x' = [x EXCEPT ![1][1] = 2]",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply EXCEPT construct to the value 1.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = <<1, 2>>\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 35 in M\n1. Line 5, column 14 to line 5, column 35 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply EXCEPT construct to the value 1.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = <<1, 2>>\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 35 in M\n1. Line 5, column 14 to line 5, column 35 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "EXCEPT past a number TLC fingerprints",
+            "Init == x = 0\nNext == x' = [<<1, 2>> EXCEPT ![1][1] = 2]",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply EXCEPT construct to the value 1.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 5, column 9 to line 5, column 42 in M\n1. Line 5, column 14 to line 5, column 42 in M\n2. Line 5, column 15 to line 5, column 22 in M\n\n\nReason:\nAttempted to apply EXCEPT construct to the value 1.\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply EXCEPT construct to the value 1.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2147:1 @!@!@\nTLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 5, column 9 to line 5, column 42 in M\n1. Line 5, column 14 to line 5, column 42 in M\n2. Line 5, column 15 to line 5, column 22 in M\n\n\nReason:\nAttempted to apply EXCEPT construct to the value 1.\n@!@!@ENDMSG 2147 @!@!@\n",
+        ),
+        (
+            "EXCEPT past a string, its keys evaluated first",
+            "Init == x = <<\"a\">>\nNext == x' = [x EXCEPT ![1][Assert(FALSE, \"key\")] = 2]",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: The first argument of Assert evaluated to FALSE; the second argument was:\n\"key\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = <<\"a\">>\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 54 in M\n1. Line 5, column 14 to line 5, column 54 in M\n2. Line 5, column 29 to line 5, column 48 in M\n\n\n",
+            "@!@!@STARTMSG 2132:1 @!@!@\nThe first argument of Assert evaluated to FALSE; the second argument was:\n\"key\"\n@!@!@ENDMSG 2132 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = <<\"a\">>\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 54 in M\n1. Line 5, column 14 to line 5, column 54 in M\n2. Line 5, column 29 to line 5, column 48 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an initial state a variable lacks a value in",
+            "VARIABLE y\nInit == x = 0\nNext == x' = x /\\ y' = y",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: current state is not a legal state\nWhile working on the initial state:\n/\\ x = 0\n/\\ y = null\n\n",
+            "@!@!@STARTMSG 2102:1 @!@!@\ncurrent state is not a legal state\nWhile working on the initial state:\n/\\ x = 0\n/\\ y = null\n\n@!@!@ENDMSG 2102 @!@!@\n",
+        ),
+    ];
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-evaluator-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (name, definitions, config, args, printed, tool) in cases {
+        std::fs::write(
+            directory.join("M.tla"),
+            format!("---- MODULE M ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\n{definitions}\n====\n"),
+        )
+        .expect("a spec");
+        std::fs::write(directory.join("M.cfg"), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            for (flags, expected) in [(&[][..], printed), (&["-tool"][..], tool)] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .arg("-noGenerateSpecTE")
+                    .args(args)
+                    .args(flags)
+                    .arg("M")
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let text = stdout(&output);
+                assert!(
+                    text.contains(expected),
+                    "{name} on {threads} {flags:?}:\n{text}"
+                );
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn words_a_function_or_an_operators_table_applied_outside_its_domain_as_tlc() {
+    // An operator the configuration defines by a table, applied outside its rows or to the wrong
+    // number of arguments (`OpRcdValue.eval`), and a function the walk keeps lazy applied outside
+    // its domain (`Tool.getFcnContext`), which TLC prints built, or as written where it can't
+    // count its domain or its body fails, with that failure's frames left on the call stack.
+    // Each text is what TLC at d8fb231 prints, and with -tool.
+    // Its name, definitions, configuration, and what TLC prints, and with -tool.
+    type Case<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str);
+    let cases: [Case; 7] = [
+        (
+            "an operator's table applied outside its rows",
+            "CONSTANT F(_)\nInit == x = 0\nNext == x' = F(x)",
+            "INIT Init\nNEXT Next\nCONSTANT F(0) = 1\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply operator:\n{ <0, 1>}\nto arguments (1), which is undefined.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 6, col 9 to line 6, col 17 of module M>\nx = 1\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 17 in M\n1. Line 6, column 14 to line 6, column 17 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply operator:\n{ <0, 1>}\nto arguments (1), which is undefined.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 6, col 9 to line 6, col 17 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 17 in M\n1. Line 6, column 14 to line 6, column 17 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a table of several arguments and rows",
+            "CONSTANT F(_, _)\nInit == x = 0\nNext == x' = F(x, x + 1)",
+            "INIT Init\nNEXT Next\nCONSTANT\nF(0, 1) = 1\nF(a, 3) = {1}\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply operator:\n{ <0, 1, 1>, <a, 3, {1}>}\nto arguments (1, 2), which is undefined.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 6, col 9 to line 6, col 24 of module M>\nx = 1\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 24 in M\n1. Line 6, column 14 to line 6, column 24 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply operator:\n{ <0, 1, 1>, <a, 3, {1}>}\nto arguments (1, 2), which is undefined.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n2: <Next line 6, col 9 to line 6, col 24 of module M>\nx = 1\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 24 in M\n1. Line 6, column 14 to line 6, column 24 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a table applied to the wrong number of arguments",
+            "CONSTANT F(_)\nInit == x = 0\nNext == x' = F(x)",
+            "INIT Init\nNEXT Next\nCONSTANT F(0, 0) = 1\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply the operator { <0, 0, 1>}\nwith wrong number of arguments.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 17 in M\n1. Line 6, column 14 to line 6, column 17 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply the operator { <0, 0, 1>}\nwith wrong number of arguments.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 9 to line 6, column 17 in M\n1. Line 6, column 14 to line 6, column 17 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a lazy function whose body fails as TLC prints it",
+            "Init == x = 0\nNext == [k \\in {1, 2} |-> x' = k][3]",
+            "INIT Init\nNEXT Next\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in {1, 2} |-> <expression line 5, col 27 to line 5, col 32 of module M>],\nthe first argument is:\n3which is not in its domain.\nline 5, col 9 to line 5, col 33 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 36 in M\n1. Line 5, column 27 to line 5, column 32 in M\n2. Line 5, column 27 to line 5, column 28 in M\n3. Line 5, column 27 to line 5, column 27 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in {1, 2} |-> <expression line 5, col 27 to line 5, col 32 of module M>],\nthe first argument is:\n3which is not in its domain.\nline 5, col 9 to line 5, col 33 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 36 in M\n1. Line 5, column 27 to line 5, column 32 in M\n2. Line 5, column 27 to line 5, column 28 in M\n3. Line 5, column 27 to line 5, column 27 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a lazy function TLC builds to print it",
+            "Init == x = 0\nNext == [k \\in 1..2 |-> x = k][3]",
+            "INIT Init\nNEXT Next\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n<<FALSE, FALSE>>,\nthe first argument is:\n3which is not in its domain.\nline 5, col 9 to line 5, col 30 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 33 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n<<FALSE, FALSE>>,\nthe first argument is:\n3which is not in its domain.\nline 5, col 9 to line 5, col 30 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 33 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a lazy function over Nat in an action",
+            "Init == x = 0\nNext == [k \\in Nat |-> x' = k][-1]",
+            "INIT Init\nNEXT Next\n",
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in Nat |-> <expression line 5, col 24 to line 5, col 29 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 5, col 9 to line 5, col 30 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 34 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in Nat |-> <expression line 5, col 24 to line 5, col 29 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 5, col 9 to line 5, col 30 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 34 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a lazy function over Nat in the initial predicate",
+            "Init == [k \\in Nat |-> x = k][-1]\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            "Error: In applying the function\n[k \\in Nat |-> <expression line 4, col 24 to line 4, col 28 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 4, col 9 to line 4, col 29 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 33 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nIn applying the function\n[k \\in Nat |-> <expression line 4, col 24 to line 4, col 28 of module M>],\nthe first argument is:\n-1which is not in its domain.\nline 4, col 9 to line 4, col 29 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 33 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+    ];
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-outside-domain-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (name, definitions, config, printed, tool) in cases {
+        std::fs::write(
+            directory.join("M.tla"),
+            format!("---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\n{definitions}\n====\n"),
+        )
+        .expect("a spec");
+        std::fs::write(directory.join("M.cfg"), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            for (flags, expected) in [(&[][..], printed), (&["-tool"][..], tool)] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .arg("-noGenerateSpecTE")
+                    .args(flags)
+                    .arg("M")
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let text = stdout(&output);
+                assert!(
+                    text.contains(expected),
+                    "{name} on {threads} {flags:?}:\n{text}"
+                );
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_temporal_property_tlc_rejects_after_it_warns_about_the_symmetry() {
+    // tests/fixtures/cli-output/EventualAction: TLC starts the liveness checker, warns that a
+    // symmetry is dangerous for liveness, then rejects the property:
+    //   Warning: Declaring symmetry during liveness checking is dangerous. ...
+    //   Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.
+    // The front end's failure doesn't print the warning, so the model isn't native yet.
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/cli-output");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noGenerateSpecTE", "EventualAction.tla"])
+        .current_dir(&fixtures)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: a temporal property TLC rejects after it warns about the symmetry\n"
+    );
+    // With -nowarning TLC prints no warning, and the binary prints TLC's error natively.
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noGenerateSpecTE", "-nowarning", "EventualAction.tla"])
+        .current_dir(&fixtures)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(255), "{}", stdout(&output));
+    assert!(
+        stdout(&output).contains(
+            "Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.\n"
+        ),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn exports_xml_as_sanys_xml_exporter_does() {
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-xml-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("Small.tla"),
+        "---- MODULE Small ----\nVARIABLE x\nInit == x = 0\n====\n",
+    )
+    .expect("a file");
+    let exported = run(
+        &directory,
+        &["tla2sany.xml.XMLExporter", "-o", "-t", "Small.tla"],
+    );
+    assert_eq!(exported.status.code(), Some(0));
+    assert!(stdout(&exported).starts_with(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?><modules><RootModule>Small</RootModule>"
+    ));
+    let several = run(&directory, &["tla2sany.xml.XMLExporter", "-q", "Small.tla"]);
+    assert_eq!(several.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&several.stderr)
+            .starts_with("ERROR: Only one TLA file to check allowed!\n")
+    );
+    // TLC 1.7.4's XMLExporter is retired: the binary declines it rather than write master's XML.
+    let retired = run(
+        &directory,
+        &[
+            "-Dtla-ts.tlc=1.7.4",
+            "tla2sany.xml.XMLExporter",
+            "-o",
+            "Small.tla",
+        ],
+    );
+    assert!(stdout(&retired).is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&retired.stderr),
+        "prove-it: not native yet: TLC 1.7.4\n"
+    );
+    std::fs::remove_dir_all(&directory).expect("removed");
 }

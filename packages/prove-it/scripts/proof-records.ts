@@ -66,6 +66,8 @@ export interface ModuleProofRecord {
   ls4: BackendRecord[];
 }
 
+export const getObligationCount = (record: ModuleProofRecord) => record.obligations.length;
+
 export const PROOFS_PATH = join(CONFORMANCE_DIRECTORY, "proofs.json");
 
 // The backend inputs themselves take hundreds of megabytes, so only their digests are committed.
@@ -141,7 +143,7 @@ const libraryModules = getLibraryModules();
 
 // Reads a module the corpus module at path uses, where tlapm finds it: in the module's directory,
 // then the -I library, then tlapm's own standard library.
-const readModule = (path: string, name: string) => {
+export const readModule = (path: string, name: string) => {
   const file = [
     join(dirname(path), `${name}.tla`),
     libraryModules.get(name),

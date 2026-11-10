@@ -458,3 +458,62 @@ fn stops_on_any_number_of_threads_where_one_thread_stops() {
         }
     }
 }
+
+// What a search hands its reporter for -dump: how often, and each state it found as printed.
+#[derive(Default)]
+struct Dumped {
+    calls: usize,
+    states: Vec<String>,
+}
+
+impl Reporter for Dumped {
+    fn initial_states_started(&mut self) {}
+    fn initial_states_progress(&mut self, _count: u64) {}
+    fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
+    fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
+    fn print(&mut self, _store: &tla_values::Store, _values: &[tla_values::Id]) {}
+    fn dumped(&mut self, store: &tla_values::Store, states: &[tla_values::Id], width: usize) {
+        self.calls += 1;
+        self.states = states
+            .chunks(width)
+            .map(|state| format_values(store, state))
+            .collect();
+    }
+}
+
+fn dump(path: &str, threads: usize) -> (String, Dumped) {
+    let bytes = std::fs::read(format!(
+        "{}/../../../tests/conformance/ir/{path}.ir",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let settings = Settings {
+        threads,
+        minimum_shared_level: 1,
+        is_dumped: true,
+        // As the binary does, which reports the violation itself.
+        is_violation_reported: true,
+        ..Settings::default()
+    };
+    let mut dumped = Dumped::default();
+    let outcome = tla_engine::on_nesting_stack(|| search(&ir, &settings, &mut dumped));
+    (describe(&outcome), dumped)
+}
+
+#[test]
+fn hands_the_dump_every_state_found_in_order_on_any_number_of_threads() {
+    // TLC's distinct states, which -dump writes: all of TCommit's, and those ACP_NB_WRONG_TLC
+    // found up to the state that violates AC1, that one included.
+    for (path, distinct) in [
+        ("examples/specifications/transaction_commit/TCommit", 34),
+        ("examples/specifications/acp/ACP_NB_WRONG_TLC", 11852),
+    ] {
+        let (outcome, one) = dump(path, 1);
+        assert_eq!(one.calls, 1, "{path}: {outcome}");
+        assert_eq!(one.states.len(), distinct, "{path}: {outcome}");
+        let (_, four) = dump(path, 4);
+        assert_eq!(four.calls, 1, "{path}");
+        assert_eq!(four.states, one.states, "{path}");
+    }
+}

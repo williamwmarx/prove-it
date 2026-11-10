@@ -1,0 +1,10 @@
+exit 0
+Semantic processing of module Naturals
+Semantic processing of module Grid043
+Linting of module Grid043
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Model checking completed. No error has been found.
+4 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 1 and the 95th percentile is 1).

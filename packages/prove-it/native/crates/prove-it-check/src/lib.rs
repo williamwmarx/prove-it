@@ -14,6 +14,7 @@ mod stack;
 mod summary;
 mod time;
 mod trace;
+mod xml_exporter;
 pub mod zone;
 
 pub use check::run;

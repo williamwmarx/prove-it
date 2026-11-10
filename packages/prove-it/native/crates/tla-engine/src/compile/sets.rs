@@ -142,7 +142,11 @@ impl Compiler<'_> {
             return member(move |machine, element| {
                 let (low, high) = (low(machine)?, high(machine)?);
                 let (low, high) = (expect_int(machine, low)?, expect_int(machine, high)?);
+                // An empty interval holds nothing, whatever TLC asks it of.
                 if machine.store.kind_of(element) != KIND_INT {
+                    if low > high {
+                        return Ok(false);
+                    }
                     return not_in(machine, element, "values TLC can't compare");
                 }
                 let value = i64::from(machine.store.int_of(element));

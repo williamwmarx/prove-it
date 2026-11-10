@@ -68,6 +68,17 @@ const PURE_BUILTINS: [&str; 19] = [
 
 const MAXIMUM_POWER_SET: u32 = 20;
 
+/// A union, an intersection or a difference with an operand that isn't a set, which TLC keeps
+/// lazy or builds element by element, failing only where it tests that operand for an element.
+pub(crate) const NON_SET_OPERAND: &str = "a set operation on a value that isn't a set";
+
+fn expect_sets(machine: &Machine<'_>, left: Id, right: Id) -> Outcome<(Id, Id)> {
+    if machine.store.kind_of(left) != KIND_SET || machine.store.kind_of(right) != KIND_SET {
+        return Err(Bail(NON_SET_OPERAND));
+    }
+    Ok((left, right))
+}
+
 pub(crate) fn expect_int(machine: &Machine<'_>, id: Id) -> Outcome<i64> {
     if machine.store.kind_of(id) == KIND_INT {
         Ok(i64::from(machine.store.int_of(id)))
@@ -1900,20 +1911,20 @@ impl Compiler<'_> {
                 )
             }));
         }
+        // TLC builds a union, an intersection or a difference with an operand that isn't a set
+        // lazily or element by element (OPCODE_cup, OPCODE_cap, OPCODE_setdiff), and fails only
+        // where it tests that operand for an element.
         let operation: Binary = match name {
             "\\cup" => |machine, left, right| {
-                let left = expect_set(machine, left, "expected a set")?;
-                let right = expect_set(machine, right, "expected a set")?;
+                let (left, right) = expect_sets(machine, left, right)?;
                 machine.store.union(left, right)
             },
             "\\cap" => |machine, left, right| {
-                let left = expect_set(machine, left, "expected a set")?;
-                let right = expect_set(machine, right, "expected a set")?;
+                let (left, right) = expect_sets(machine, left, right)?;
                 machine.store.intersection(left, right)
             },
             _ => |machine, left, right| {
-                let left = expect_set(machine, left, "expected a set")?;
-                let right = expect_set(machine, right, "expected a set")?;
+                let (left, right) = expect_sets(machine, left, right)?;
                 machine.store.difference(left, right)
             },
         };
