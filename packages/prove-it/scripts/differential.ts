@@ -15,7 +15,8 @@
 // That pair fails nothing yet: the run reports how many runs it matches and why the others differ.
 // With --native-front, the binary runs with no recorded front, as tla-front is its whole front end.
 // --native-only runs the native binary alone that way, without the TypeScript runs, so a pass over
-// the whole corpus takes minutes.
+// the whole corpus takes minutes, and fails if it prints something TLC doesn't that
+// known-differences.json doesn't list for tlc/native; a run it declines as not native fails nothing.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
@@ -443,6 +444,17 @@ if (nativeBinary) {
   }
   for (const [reason, count] of [...reasons].sort((left, right) => right[1] - left[1])) {
     console.log(`  ${String(count).padStart(5)}  ${reason}`);
+  }
+  const differing = nativeComparisons.filter(
+    (comparison) => comparison.reason === undefined && !comparison.isKnown,
+  );
+  if (isNativeOnly && differing.length > 0) {
+    console.log(`\n${differing.length} native runs print what TLC doesn't:`);
+    for (const comparison of differing) {
+      console.log(`  ${comparison.mode} ${comparison.id}`);
+      for (const line of comparison.diff.slice(0, 10)) console.log(`    ${line}`);
+    }
+    process.exitCode = 1;
   }
 }
 if (missing.length > 0) {

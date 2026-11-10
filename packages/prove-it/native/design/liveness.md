@@ -370,8 +370,9 @@ Open, with what is known:
   TLC names it as the configuration's property refers to it (`A!Safe`, `opNode.getName()` in
   `SpecProcessor#processConfigProps`), in both front ends, scoped or not. No corpus model
   reports such an invariant violated. Reported to the coordinator for the front's owner.
-- MCEWD687a gets past the scoped properties and stops on "enumerated a filter of an infinite
-  set": the infinite-sets session's.
+- MCEWD687a (both copies) is the infinite-sets session's: see `gaps.md`. The scoped properties
+  it needed are in; what is left is TLC's failure enumerating the filter of Seq(S), the
+  property invariant's failure site and its replay.
 - Where the atoms use TLC's registers, the cases the search declines (the section above): the
   next would be an atom TLC evaluates on an initial state, which needs the checker called from
   `visit_initial` with the machine's state kept around the atom, and a late node, where Next's
