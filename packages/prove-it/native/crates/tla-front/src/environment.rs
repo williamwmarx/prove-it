@@ -429,9 +429,7 @@ impl Linker<'_> {
     /// The text of a standard module SANY reads, as the parser reads it, where no module of the
     /// user's has its name.
     fn get_standard_source(&self, name: &str) -> Option<Rc<Module>> {
-        if self.standard_exports.borrow().get(name).is_none() {
-            return None;
-        }
+        self.standard_exports.borrow().get(name)?;
         let texts = match self.options.version {
             TlcVersion::Master => standard_modules::MASTER,
             TlcVersion::V1_7_4 => standard_modules::TLC_174,

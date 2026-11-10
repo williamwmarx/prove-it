@@ -602,8 +602,9 @@ E4355) are now written, from `Generator.java` and `SymbolTable.java` at d8fb231:
   name, which stays `NotYet`. A theorem whose statement is an ASSUME/PROVE, and a step whose name
   `Local::unselectable` marks: "ASSUME/PROVE used where an expression is required." for an
   ASSUME/PROVE step, and "HAVE", "CASE", "TAKE", "PICK", "WITNESS", "QED step" or "SUFFICES"
-  "proof step selected instead of expression." A theorem or an assumption whose statement is an
-  expression, which SANY takes as one, stays `NotYet` (ProofsTest's `DefineStepProof`).
+  "proof step selected instead of expression." A theorem whose statement is an expression, which
+  SANY takes as one, is linked as a definition; named in its own proof, where the front end hasn't
+  bound it yet, it stays `NotYet` (ProofsTest's `DefineStepProof`).
 - `processLetIn` and `checkForUndefinedRecursiveOps`: a LET's RECURSIVE declarations are in the AST
   (`ExpressionKind::Let::recursive`). Those it doesn't define are bound as pending operators of
   their declaration's place, so a definition of one at a deeper LET is "defined at wrong LET/IN
@@ -634,7 +635,7 @@ Declines left, each for a reason:
   TLC prints of that exception is to be recorded from TLC before it is written; the TypeScript
   report's "A MODULE may not appear within a recursive definition section." is not what TLC does.
 - AssumeProveTest's labeled ASSUME/PROVE, which the front end's parser rejects.
-- ProofsTest: a theorem whose statement is an expression, named as an expression.
+- ProofsTest: a theorem whose statement is an expression, named as an expression in its own proof.
 - Four corpus specs whose failing assumptions the engine declines to replay (AssumeTest,
   BasicTest, InnerModuleTest, Semantics).
 
@@ -658,8 +659,8 @@ gate, with the directories in `corpora.json` and TLC's output recorded, is still
   `src/sany`; the generator's errors the corpus doesn't reach are the next to port.
 - A RECURSIVE operator that applies another of its section (mutual recursion): SANY's first pass
   reads the section's operators with action-level arguments, which `levels.rs` declines.
-- Labeled ASSUME/PROVE (AssumeProveTest) and a theorem named as an expression (ProofsTest), which
-  the native front declines.
+- Labeled ASSUME/PROVE (AssumeProveTest) and a theorem named as an expression in its own proof
+  (ProofsTest), which the native front declines.
 - The TypeScript front end's differences from TLC, below.
 
 ### Where the TypeScript front end differs from TLC
@@ -675,7 +676,8 @@ declines:
   which it rejects as parse errors.
 - NumbersTest: a decimal or a number TLC can't hold, which it reports with code 1000 and exit 75
   for TLC's 2244 (exit 151) and 2265 (exit 255).
-- ProofsTest (a theorem named as an expression), which the native front declines too.
+- ProofsTest (a theorem named as an expression in its own proof), which the native front declines
+  too.
 - LetInTest, and an INSTANCE named as a fact, which it reports as unknown operators.
 
 ## The strings TLC interns as it starts

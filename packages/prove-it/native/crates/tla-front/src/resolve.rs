@@ -204,6 +204,9 @@ impl Tables {
     }
 }
 
+/// The operators a module's LETs declare RECURSIVE and leave undefined, each with its LET's level.
+type LetRecursive = Rc<RefCell<Vec<(usize, Rc<Declaration>)>>>;
+
 /// What SANY reports while it goes on analyzing a unit of a module, and the scope it analyzes it
 /// in (`Unit`).
 #[derive(Clone)]
@@ -243,7 +246,7 @@ struct Unit<'a> {
     let_level: usize,
     /// The operators the module's LETs declare RECURSIVE and don't define, each with its LET's
     /// level, in the order SANY reads them (`recursiveDecls`).
-    let_recursive: Rc<RefCell<Vec<(usize, Rc<Declaration>)>>>,
+    let_recursive: LetRecursive,
 }
 
 impl Unit<'_> {
@@ -3242,7 +3245,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
     ));
     let recursive: Rc<RefCell<Vec<Rc<Local>>>> = Rc::default();
     let declarations: Rc<RefCell<Vec<RecursiveDeclaration>>> = Rc::default();
-    let let_recursive: Rc<RefCell<Vec<(usize, Rc<Declaration>)>>> = Rc::default();
+    let let_recursive: LetRecursive = Rc::default();
     let declared = get_declared(module);
     let create_unit = |location: Position,
                        self_definition: Option<Rc<Definition>>,
