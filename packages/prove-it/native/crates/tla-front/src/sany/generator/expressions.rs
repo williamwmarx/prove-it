@@ -1141,7 +1141,6 @@ impl ModuleGenerator<'_> {
 
     /// `getParams` (generator.ts 1785–1805): the parameters of a definition's or instance's
     /// left-hand side, located as SANY locates them.
-    #[expect(dead_code, reason = "the definitions in definitions.rs are stubs")]
     pub(super) fn get_params(
         &mut self,
         params: &[OperatorParam],

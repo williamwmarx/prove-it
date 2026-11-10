@@ -263,7 +263,6 @@ fn get_symbol_kind(symbol: &Node) -> SymbolKind {
 }
 
 /// `getKindName`: Context.kindOfNode.
-#[expect(dead_code, reason = "process_extends_list in definitions.rs is a stub")]
 fn get_kind_name(symbol: &Node) -> &'static str {
     match &symbol.kind {
         NodeKind::OpDef(_) | NodeKind::FormalParam(_) => "definition",
@@ -998,7 +997,6 @@ struct RecursionState {
 /// (keyed by Label nodes) and `assume_prove_state.goal` share.
 struct ModuleGenerator<'a> {
     spec: &'a mut SpecGenerator,
-    #[expect(dead_code, reason = "the units in definitions.rs are stubs")]
     ast: Rc<Module>,
     file: Rc<SourceFile>,
     module: NodeId,
@@ -1012,7 +1010,6 @@ struct ModuleGenerator<'a> {
     scopes: Vec<AssumeProveScope>,
     assume_prove_scopes: FastMap<NodeId, ScopeId>,
     label_goals: FastMap<NodeId, LabelGoal>,
-    #[expect(dead_code, reason = "RECURSIVE in definitions.rs is a stub")]
     recursive_declarations: Vec<NodeId>,
 }
 
@@ -1088,7 +1085,6 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// The `generateModule` of an inner module, whose symbol table extends this one's.
-    #[expect(dead_code, reason = "process_units in definitions.rs is a stub")]
     fn generate_inner_module(&mut self, ast: &Rc<Module>) -> Result<NodeId> {
         let file = self.file.clone();
         let contexts = self.symbol_table.contexts.clone();
@@ -1176,7 +1172,6 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// `getModule`.
-    #[expect(dead_code, reason = "the instances in definitions.rs are stubs")]
     fn get_module(&self, name: &str) -> Result<NodeId> {
         match self.resolve_module(name) {
             Some(module) => Ok(module),
@@ -1330,7 +1325,6 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// `setRecursionFields`.
-    #[expect(dead_code, reason = "the definitions in definitions.rs are stubs")]
     fn set_recursion_fields(&mut self, definition: NodeId) {
         let state = &self.state;
         let is_in_section = state.unresolved_sum > 0;
@@ -1697,10 +1691,6 @@ impl<'a> ModuleGenerator<'a> {
 
     /// `generateOperatorArgument`: Generator.generateOpArg, after an error SANY gives its
     /// nullOpArg.
-    #[expect(
-        dead_code,
-        reason = "process_substitutions in definitions.rs is a stub"
-    )]
     fn generate_operator_argument(&mut self, argument: &Expr, target: NodeId) -> Result<NodeId> {
         let location = self.get_location(argument);
         if let ExpressionKind::Lambda { operator, .. } = &argument.kind {
