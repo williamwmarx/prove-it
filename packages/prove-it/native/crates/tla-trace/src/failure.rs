@@ -44,6 +44,11 @@ pub enum Site {
     /// the path holds first to the behavior graphs, before it checks the state. `replayed` is the
     /// atom that fails as TLC's replay of the initial states adds the path's second state.
     InitialAtom { atom: u32, replayed: Option<u32> },
+    /// Computing the successors of the path's last state, after which TLC fails evaluating the
+    /// atom at this position of the model's atoms as it adds the state to the behavior graphs,
+    /// on the states `Atom` says: TLC reports the next-state relation's error and the trace, then
+    /// the atom's call stack.
+    NextAtom { atom: u32, is_extra: bool },
 }
 
 /// Where TLC fails to fingerprint a state: the ranges of the expressions that built the values it
@@ -374,11 +379,63 @@ impl<'ir> Rebuilder<'ir> {
         actions: &[Option<u32>],
         site: Site,
     ) -> Result<Failure, Unsupported> {
+        if let Site::NextAtom { atom, is_extra } = site {
+            return self.evaluate_next_atom(store, states, actions, atom, is_extra);
+        }
         let mut is_successor_generated = false;
         let mut failure =
             self.evaluate_failure_at(store, states, actions, site, &mut is_successor_generated)?;
         failure.replay.is_successor_generated = is_successor_generated;
         Ok(failure)
+    }
+
+    // TLC's worker reports the failure of the next-state relation, then adds the state to the
+    // behavior graphs, where the atom fails: TLC prints the call stack of its rerun with its
+    // `CallStackTool` and no longer replays the expansion for Next's (`keepCallStack`), so it
+    // exits by the error's code (`Worker#doNextCheckLiveness`). Where the rerun has no call
+    // stack, TLC replays the expansion as for any failure of Next.
+    fn evaluate_next_atom(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        atom: u32,
+        is_extra: bool,
+    ) -> Result<Failure, Unsupported> {
+        let path = &states[..states.len().saturating_sub(usize::from(is_extra))];
+        let next = self.evaluate_failure(
+            store,
+            path,
+            actions
+                .get(..path.len().saturating_sub(1))
+                .unwrap_or(actions),
+            Site::Next,
+        )?;
+        let failed =
+            self.evaluate_failure(store, states, actions, Site::Atom { atom, is_extra })?;
+        if next.fingerprint.is_some() || failed.fingerprint.is_some() {
+            return Err(Unsupported(
+                "evaluating the failure again: a state TLC fails to fingerprint before an atom fails"
+                    .into(),
+            ));
+        }
+        if !next.printed.is_empty() || !failed.printed.is_empty() {
+            return Err(Unsupported(
+                "evaluating the failure again: an atom that fails after a failure that prints"
+                    .into(),
+            ));
+        }
+        if failed.call_stack.is_empty() {
+            return Ok(next);
+        }
+        Ok(Failure {
+            call_stack: failed.call_stack,
+            exit_code: match next.exit_code {
+                FAILURE_SPEC_EVAL => FAILURE_ERROR,
+                exit_code => exit_code,
+            },
+            ..next
+        })
     }
 
     fn evaluate_failure_at(
@@ -477,6 +534,11 @@ impl<'ir> Rebuilder<'ir> {
         // The initial state TLC failed to check, as the replay found it.
         let mut checked: Option<Vec<Value>> = None;
         let result = match site {
+            Site::NextAtom { .. } => {
+                return Err(Unsupported(
+                    "evaluating the failure again: Next's and an atom's at once".into(),
+                ));
+            }
             Site::InitialConstraint(position)
             | Site::InitialInvariant(position)
             | Site::InitialPredicate(position) => {

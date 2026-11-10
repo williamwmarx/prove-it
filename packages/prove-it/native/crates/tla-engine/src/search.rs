@@ -420,6 +420,12 @@ pub enum ErrorSite {
     /// `replayed` is the atom that may fail as it adds the first of them that has one, the
     /// violation's second state.
     InitialAtom { atom: u32, replayed: Option<u32> },
+    /// Computing the successors of the trace's last state, after which TLC adds the state with
+    /// the successors it had to the behavior graphs and fails evaluating the atom at this
+    /// position of the IR's `model.atoms`, on the state or, `is_extra`, on the violation's state
+    /// after it, as for `Atom`: TLC reports Next's failure and the trace, then the atom's call
+    /// stack.
+    NextAtom { atom: u32, is_extra: bool },
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -428,6 +434,9 @@ pub enum ErrorSite {
 const SUCCESSOR_CHECK_FAILED: &str =
     "a constraint, a VIEW or an action property that fails on a successor";
 const INITIAL_VIEW_FAILED: &str = "a VIEW that fails on an initial state";
+
+// A successor the next-state relation leaves a variable of unassigned in, which TLC reports.
+const INCOMPLETE_SUCCESSOR: &str = "a successor that isn't complete";
 
 fn is_engine_limit(reason: &str) -> bool {
     !TLC_FAILURES.contains(&reason)
@@ -478,7 +487,7 @@ const TLC_FAILURES: &[&str] = &[
     "a product of a non-set",
     "a record set of a non-set",
     "a set with too many elements for TLC 1.7.4",
-    "a successor that isn't complete",
+    INCOMPLETE_SUCCESSOR,
     "a symmetry function of values that aren't model values",
     "a symmetry that isn't a set of functions",
     "a symmetry value that isn't a function",
@@ -594,6 +603,9 @@ struct Graph {
     /// The search's depth once it expanded each state, TLC's diameter as it adds the state to the
     /// behavior graphs.
     diameters: Vec<u32>,
+    /// The last state the graph expands where Next failed on it: its steps are those Next took
+    /// before it failed.
+    partial: Option<usize>,
 }
 
 /// The fingerprints found, each with the index of its state: open addressing with linear probing,
@@ -1262,7 +1274,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         }
         // The search checks the successor waiting to be checked before it stops.
         if machine.next().contains(&UNASSIGNED) {
-            return Err(Bail("a successor that isn't complete"));
+            return Err(Bail(INCOMPLETE_SUCCESSOR));
         }
         let fingerprint = self.fingerprints.get_child(
             &machine.store,
@@ -1309,7 +1321,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         known: Option<u64>,
     ) -> Outcome<()> {
         if machine.next().contains(&UNASSIGNED) {
-            return Err(Bail("a successor that isn't complete"));
+            return Err(Bail(INCOMPLETE_SUCCESSOR));
         }
         // TLC reports a constraint, a VIEW or an action property that fails to evaluate with the
         // successor in its trace (Worker.addElement), which no site here stands for: the failure
@@ -2795,8 +2807,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // Where no walk took the shortcut or enumerated an empty set for an assignment, no
         // comparison of an assigned value can fail, and no string was ranked since (which may take
         // a string out of its class), TLC's predicate evaluation of the next-state relation holds
-        // of every step the walks took.
+        // of every step the walks took. A state whose next states failed TLC checks each step of
+        // anew.
         let is_next_taken = is_enabled_exact
+            && graph.partial.is_none()
             && !machine.is_membership_unsafe
             && !machine.store.has_unordered_strings()
             && machine
@@ -2822,6 +2836,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: reals.labels.as_deref(),
                 is_enabled_exact,
                 is_next_taken,
+                partial: None,
                 levels: None,
             },
             None => LiveGraph {
@@ -2834,6 +2849,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
                 is_enabled_exact,
                 is_next_taken,
+                partial: graph.partial,
                 levels: levels.as_deref(),
             },
         };
@@ -3880,6 +3896,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // its violation where TLC wouldn't, and a deadlock with the path to the node the
             // deadlocked state reaches, as on TLC's Github710d.
             let found = match found {
+                // TLC adds a state whose next states failed to the behavior graphs, with what its
+                // atoms set, which the engine doesn't follow, and an incomplete successor is
+                // reported otherwise (`Worker#addElement`), which isn't followed here.
+                Some(Found {
+                    kind:
+                        ViolationKind::Error {
+                            site: ErrorSite::Next,
+                        },
+                    ..
+                }) if online.is_some() || bail.0 == INCOMPLETE_SUCCESSOR => None,
                 // TLC adds a deadlocked state to the behavior graphs once it has reported the
                 // deadlock, with what its atoms set, which the engine doesn't follow.
                 Some(found) if online.is_some() => {
@@ -3897,27 +3923,44 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 }
                 Some(mut found) if search.graph.is_some() => {
                     let mut expanded = search.expanding;
+                    let mut count = count;
                     let is_deadlock = matches!(found.kind, ViolationKind::Deadlock { .. });
-                    if is_deadlock {
+                    // TLC's worker adds a state whose next states failed to the behavior graphs
+                    // too, with the successors Next gave before it failed and the stuttering step
+                    // (`Worker#doNextCheckLiveness`), and prints the call stack of the first check
+                    // that fails there in place of Next's.
+                    let is_next_failure = matches!(
+                        found.kind,
+                        ViolationKind::Error {
+                            site: ErrorSite::Next
+                        }
+                    );
+                    if is_deadlock || is_next_failure {
                         let graph = search.graph.as_mut().expect("a graph");
                         graph.edge_offsets.push(graph.edges.len() as u32);
                         expanded += 1;
+                        if is_next_failure {
+                            graph.partial = Some(search.expanding);
+                            count = search.states.count();
+                        }
                     }
                     let tables =
                         graph_tables(&mut machine, &search, expanded, count, None, None).ok();
+                    let is_followed = search.states.key_width.is_none()
+                        && !is_symmetric
+                        && !context.diameter_atoms.contains(&true)
+                        && search
+                            .held
+                            .as_ref()
+                            .is_none_or(|held| held.iter().all(|printed| printed.is_empty()))
+                        && tables.as_ref().is_some_and(|tables| {
+                            tables.iter().all(|table| table.prints.is_empty())
+                        });
                     // TLC had added the initial states and each state before the one it was
                     // expanding, and stopped at the first whose atom failed to evaluate.
                     let unanswered = tables
                         .as_ref()
-                        .filter(|tables| {
-                            search.states.key_width.is_none()
-                                && !is_symmetric
-                                && !context.diameter_atoms.contains(&true)
-                                && search.held.as_ref().is_none_or(|held| {
-                                    held.iter().all(|printed| printed.is_empty())
-                                })
-                                && tables.iter().all(|table| table.prints.is_empty())
-                        })
+                        .filter(|_| is_followed)
                         .and_then(|tables| {
                             unanswered_at(
                                 model,
@@ -3932,16 +3975,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             )
                         })
                         .filter(|unanswered| {
-                            unanswered.is_initial || (unanswered.state as usize) < search.expanding
+                            unanswered.is_initial
+                                || (unanswered.state as usize)
+                                    < search.expanding + usize::from(is_next_failure)
                         });
                     // The tables leave unanswered what the checker asks of no finished search,
                     // such as ENABLED of a state not yet expanded, as well as what fails: TLC
-                    // stopped at the atom only where evaluating it fails as TLC fails.
+                    // stopped at the atom only where evaluating it fails as TLC fails. After a
+                    // failure in Next, an atom that holds may come before one that fails.
                     let unanswered = unanswered.and_then(|unanswered| {
                         let failure = atom_failure(&mut machine, &context, &search, unanswered);
                         machine.output.clear();
                         match failure {
-                            Some(Ok(_)) => None,
+                            Some(Ok(_)) if !is_next_failure => None,
                             Some(Err(bail)) if !is_engine_limit(bail.0) => Some(Some(unanswered)),
                             _ => Some(None),
                         }
@@ -3950,8 +3996,26 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         accepted_at(model, &context, &search, &tables, expanded, count)
                     });
                     match verdict {
+                        _ if is_next_failure && !is_followed => None,
                         _ if unanswered.is_some() => unanswered.flatten().and_then(|unanswered| {
-                            to_atom_failure(&context, &search, initial_states, unanswered)
+                            if !is_next_failure || unanswered.state as usize != search.expanding {
+                                return to_atom_failure(
+                                    &context,
+                                    &search,
+                                    initial_states,
+                                    unanswered,
+                                );
+                            }
+                            let extra = atom_extra(&context, &search, unanswered)?;
+                            found.kind = ViolationKind::Error {
+                                site: ErrorSite::NextAtom {
+                                    atom: unanswered.atom,
+                                    is_extra: extra.is_some(),
+                                },
+                            };
+                            found.last =
+                                extra.map(|extra| search.states.state(extra as u32).to_vec());
+                            Some(found)
                         }),
                         Some(None) => Some(found),
                         // TLC stops at the first state whose tableau node accepts every
@@ -4642,6 +4706,39 @@ fn replayed_unanswered(
     )
 }
 
+// The state besides the one TLC adds to the behavior graphs that an atom it evaluates then reads:
+// a successor's state predicate, or the next state of one of the added state's steps. `None`
+// where the search doesn't follow the atom there.
+fn atom_extra(
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    unanswered: tla_live::Unanswered,
+) -> Option<Option<usize>> {
+    let graph = search.graph.as_ref()?;
+    let state = unanswered.state as usize;
+    let slot = unanswered.slot as usize;
+    // TLC fails adding an initial state before it reports the initial states, where the search
+    // looks for it.
+    if unanswered.is_initial {
+        return None;
+    }
+    match context.atoms.get(unanswered.atom as usize)? {
+        Atom::State(_) => Some((slot != state).then_some(slot)),
+        Atom::Enabled { .. } => (slot == state).then_some(None),
+        Atom::Action { .. } => {
+            let edges = graph.edges.len();
+            if slot >= edges {
+                return (slot - edges == state).then_some(Some(state));
+            }
+            let range = graph.edge_offsets[state] as usize..graph.edge_offsets[state + 1] as usize;
+            range
+                .contains(&slot)
+                .then(|| Some(graph.edges[slot] as usize))
+        }
+        Atom::LevelState(_) | Atom::LevelAction { .. } | Atom::Unknown(_) => None,
+    }
+}
+
 // Where TLC evaluates an atom the engine didn't answer as it adds a state to the behavior graphs,
 // the failure the caller evaluates again, with the counts of TLC's search then: what it generated
 // and found up to that state, and the out-degrees of the states it expanded.
@@ -4653,40 +4750,7 @@ fn to_atom_failure(
 ) -> Option<Found> {
     let graph = search.graph.as_ref()?;
     let state = unanswered.state as usize;
-    let slot = unanswered.slot as usize;
-    // TLC fails adding an initial state before it reports the initial states, where the search
-    // looks for it.
-    if unanswered.is_initial {
-        return None;
-    }
-    // The state the atom reads besides the one TLC adds: a successor's state predicate, or the
-    // next state of one of the added state's steps.
-    let extra = match context.atoms.get(unanswered.atom as usize)? {
-        Atom::State(_) => (slot != state).then_some(slot),
-        Atom::Enabled { .. } => {
-            if slot != state {
-                return None;
-            }
-            None
-        }
-        Atom::Action { .. } => {
-            let edges = graph.edges.len();
-            let next = if slot < edges {
-                let range =
-                    graph.edge_offsets[state] as usize..graph.edge_offsets[state + 1] as usize;
-                if !range.contains(&slot) {
-                    return None;
-                }
-                graph.edges[slot] as usize
-            } else if slot - edges == state {
-                state
-            } else {
-                return None;
-            };
-            Some(next)
-        }
-        Atom::LevelState(_) | Atom::LevelAction { .. } | Atom::Unknown(_) => return None,
-    };
+    let extra = atom_extra(context, search, unanswered)?;
     let sum = |counts: &[u32]| {
         counts[..=state]
             .iter()
@@ -5063,7 +5127,7 @@ fn expand_reals(
             machine.reset_assigned();
             walk(machine, &mut |machine: &mut Machine<'_>| {
                 if machine.next().contains(&UNASSIGNED) {
-                    return Err(Bail("a successor that isn't complete"));
+                    return Err(Bail(INCOMPLETE_SUCCESSOR));
                 }
                 successors.push((machine.next().to_vec(), label as u32));
                 Ok(())
