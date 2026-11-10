@@ -632,6 +632,14 @@ action only in MCabs (`ccf/tla/consensus/abs.tla`). Every other `x' \in [S -> T]
 invariants or ASSUMEs, or constrain the whole function. Build it only if axiomatic actions
 (`x' \in TypeSet /\ constraints`) turn out to matter beyond the suite.
 
+**Reach, measured.** An instrumentation build counted each element an action's `x' \in S`
+enumerates (S of more than one element, outside Init), over the whole-corpus differential (664
+models within its 20 s cap) and the suite. MCabs enumerates 137,472,000 functions for 5,819
+successors. No other model enumerates more than 13,824 (TLC's `coverage/M`, then
+`RandomSubsetNextTuples` with 8,186 and `Github648` with 1,512), all of them already fast. Built,
+it would take MCabs from 10.2 s toward start-up, and so the suite's geomean by about 1.3×, from one
+spec's idiom.
+
 Tests to write if it is built: an error at the first, a middle and the last block of the odometer,
 compared with TLC.
 
