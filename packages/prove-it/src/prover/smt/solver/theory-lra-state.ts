@@ -5,6 +5,7 @@
 import { AstManager } from "./ast";
 import type { Context } from "./context";
 import { Enode } from "./enode";
+import { traceLp } from "./lp-trace";
 import { LarSolver } from "./lp/lar-solver";
 
 export abstract class TheoryLraState {
@@ -12,7 +13,7 @@ export abstract class TheoryLraState {
   protected solver: LarSolver;
 
   constructor(protected context: Context) {
-    this.solver = new LarSolver(() => context.checkCanceled());
+    this.solver = traceLp("lar", LarSolver, () => context.checkCanceled());
   }
 
   protected get manager(): AstManager {

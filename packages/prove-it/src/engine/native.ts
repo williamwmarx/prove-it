@@ -5,6 +5,7 @@
 
 import type { CheckProgress } from "../check";
 import { EngineInvariantError } from "../errors";
+import type { Statistics, Verdict } from "../prover/verdict";
 import type { LiveEnabled, LiveExpression } from "../tableau";
 import {
   createStateDecoder,
@@ -80,11 +81,12 @@ export type NativeSanyText =
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
-// What the native binary prints for a TLC command line, and its exit code, or the keys of what the
-// check still reads (prove-it-host's check.rs).
+// What the native binary prints for a TLC command line, and its exit code, the keys of what the
+// check still reads, or why the binary declines the model (prove-it-host's check.rs).
 export type NativeCheckSources =
   | { kind: "checked"; exitCode: number; out: string; err: string }
-  | { kind: "needed"; keys: string[] };
+  | { kind: "needed"; keys: string[] }
+  | { kind: "declined"; reason: string };
 
 // What the check prints of the machine it runs on and of the time: `now` in milliseconds since the
 // epoch, `zone` a POSIX TZ rule, and the environment variables it reads. A tuple, since neither
@@ -101,8 +103,22 @@ export type NativeMachine = [
   variables: [string, string][],
 ];
 
+// A prover backend's answer, malformed input, or why the Rust backend doesn't decide the input
+// (prove-it-host's prover.rs).
+export type NativeDecision =
+  | { kind: "decided"; verdict: Verdict; statistics: Statistics }
+  | { kind: "error"; message: string }
+  | { kind: "declined"; reason: string };
+
 export interface NativeAddon extends NativeStoreHooks {
   abiVersion: () => number;
+  decide: (
+    prover: string,
+    text: string,
+    timeLimitMs: number,
+    stepLimit: number | undefined,
+    cancel: Int32Array | undefined,
+  ) => NativeDecision;
   checkSources: (
     args: string[],
     known: [string, string | Uint8Array | undefined][],
@@ -276,7 +292,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 12;
+const ABI_VERSION = 13;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

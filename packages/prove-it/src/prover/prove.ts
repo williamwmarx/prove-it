@@ -371,6 +371,8 @@ interface ObligationsOptions {
   isFingerprinted?: (obligation: PrintedObligation) => boolean;
   // --noproving.
   isProving?: boolean;
+  // Decides in place of the backends, for scripts that record or replay what they decide.
+  decide?: DecidePool["decide"];
 }
 
 export const proveObligations = async (
@@ -379,7 +381,9 @@ export const proveObligations = async (
 ) => {
   const workerCount = options.workers ?? 1;
   const pool =
-    workerCount > 1 && isWorkerSupported() ? await createDecidePool(workerCount) : undefined;
+    workerCount > 1 && isWorkerSupported() && options.decide === undefined
+      ? await createDecidePool(workerCount)
+      : undefined;
   const onAbort = () => pool?.terminate(options.signal?.reason);
   options.signal?.addEventListener("abort", onAbort);
   const run: ProveRun = {
@@ -389,7 +393,9 @@ export const proveObligations = async (
     isProving: options.isProving ?? true,
     lastByFingerprint: new Map(),
     decide:
-      pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions)),
+      options.decide ??
+      pool?.decide ??
+      (async (prover, text, decideOptions) => decide(prover, text, decideOptions)),
   };
   // A few obligations per worker prove at once, and each reports once every earlier one has.
   const limit = pool ? workerCount * 4 : 1;

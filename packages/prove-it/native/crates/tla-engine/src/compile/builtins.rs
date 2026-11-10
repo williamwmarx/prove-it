@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeId, NodeKind, Resolution};
-use tla_values::fingerprint::INITIAL;
 use tla_values::json;
 use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
@@ -67,6 +66,30 @@ const PURE_BUILTINS: [&str; 19] = [
 ];
 
 const MAXIMUM_POWER_SET: u32 = 20;
+
+/// `tlc2.module.Naturals#Divide`: Java's quotient of two ints, less one only where it is below 0
+/// and inexact, so -1 \div 2 is 0, and -2147483648 \div -1 wraps to -2147483648. None for a
+/// division by zero. The operands are TLC's ints, as the store holds them.
+pub(crate) fn naturals_divide(left: i64, right: i64) -> Option<i64> {
+    let (left, right) = (left as i32, right as i32);
+    if right == 0 {
+        return None;
+    }
+    let quotient = left.wrapping_div(right);
+    let is_floored = quotient < 0 && quotient.wrapping_mul(right) != left;
+    Some(i64::from(quotient - i32::from(is_floored)))
+}
+
+/// A union, an intersection or a difference with an operand that isn't a set, which TLC keeps
+/// lazy or builds element by element, failing only where it tests that operand for an element.
+pub(crate) const NON_SET_OPERAND: &str = "a set operation on a value that isn't a set";
+
+fn expect_sets(machine: &Machine<'_>, left: Id, right: Id) -> Outcome<(Id, Id)> {
+    if machine.store.kind_of(left) != KIND_SET || machine.store.kind_of(right) != KIND_SET {
+        return Err(Bail(NON_SET_OPERAND));
+    }
+    Ok((left, right))
+}
 
 pub(crate) fn expect_int(machine: &Machine<'_>, id: Id) -> Outcome<i64> {
     if machine.store.kind_of(id) == KIND_INT {
@@ -371,7 +394,7 @@ impl Compiler<'_> {
             }
             return unsupported(name);
         }
-        if let Some(native) = self.compile_native_builtin(name, operands, context)? {
+        if let Some(native) = self.compile_native_builtin(name, builtin.flags, operands, context)? {
             return Ok(native);
         }
         if !PURE_BUILTINS.contains(&name) {
@@ -818,7 +841,10 @@ impl Compiler<'_> {
             ("deadlock", Field::Bool(model.check_deadlock)),
             ("worker", Field::Int(self.workers as i64)),
             ("seed", Field::Text((model.random_seed as i64).to_string())),
-            ("fingerprint", Field::Text((INITIAL as i64).to_string())),
+            (
+                "fingerprint",
+                Field::Text((self.program.polynomial().value() as i64).to_string()),
+            ),
             ("install", Field::Text("unknown".into())),
         ];
         let mut keys = Vec::with_capacity(fields.len());
@@ -1130,6 +1156,7 @@ impl Compiler<'_> {
     fn compile_native_builtin(
         &mut self,
         name: &str,
+        flags: i32,
         operands: &[Operand],
         context: &Context,
     ) -> Compiling<Option<Compiled>> {
@@ -1374,6 +1401,11 @@ impl Compiler<'_> {
                         "+" => |left, right| Ok(left + right),
                         "-" => |left, right| Ok(left - right),
                         "*" => |left, right| Ok(left * right),
+                        "\\div" if flags & Builtin::NATURALS_METHOD != 0 => {
+                            |left: i64, right: i64| {
+                                naturals_divide(left, right).ok_or(Bail("division by zero"))
+                            }
+                        }
                         "\\div" => {
                             |left: i64, right: i64| {
                                 if right == 0 {
@@ -1853,20 +1885,20 @@ impl Compiler<'_> {
                 )
             }));
         }
+        // TLC builds a union, an intersection or a difference with an operand that isn't a set
+        // lazily or element by element (OPCODE_cup, OPCODE_cap, OPCODE_setdiff), and fails only
+        // where it tests that operand for an element.
         let operation: Binary = match name {
             "\\cup" => |machine, left, right| {
-                let left = expect_set(machine, left, "expected a set")?;
-                let right = expect_set(machine, right, "expected a set")?;
+                let (left, right) = expect_sets(machine, left, right)?;
                 machine.store.union(left, right)
             },
             "\\cap" => |machine, left, right| {
-                let left = expect_set(machine, left, "expected a set")?;
-                let right = expect_set(machine, right, "expected a set")?;
+                let (left, right) = expect_sets(machine, left, right)?;
                 machine.store.intersection(left, right)
             },
             _ => |machine, left, right| {
-                let left = expect_set(machine, left, "expected a set")?;
-                let right = expect_set(machine, right, "expected a set")?;
+                let (left, right) = expect_sets(machine, left, right)?;
                 machine.store.difference(left, right)
             },
         };

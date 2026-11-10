@@ -33,7 +33,7 @@ mod owner {
     use std::sync::mpsc::{Sender, channel};
     use std::sync::{Mutex, PoisonError};
 
-    use tla_values::fingerprint::Fingerprints;
+    use tla_values::fingerprint::{Fingerprints, Polynomial};
     use tla_values::{Store, on_nesting_stack};
 
     type Job = Box<dyn FnOnce(&mut Store, &mut Fingerprints) + Send>;
@@ -46,7 +46,8 @@ mod owner {
         let (sender, jobs) = channel::<Job>();
         std::thread::spawn(move || {
             on_nesting_stack(move || {
-                let (mut store, mut fingerprints) = (Store::new(), Fingerprints::new());
+                let (mut store, mut fingerprints) =
+                    (Store::new(), Fingerprints::new(Polynomial::get(0)));
                 for job in jobs {
                     job(&mut store, &mut fingerprints);
                 }
@@ -81,11 +82,11 @@ mod owner {
     use std::cell::RefCell;
 
     use tla_values::Store;
-    use tla_values::fingerprint::Fingerprints;
+    use tla_values::fingerprint::{Fingerprints, Polynomial};
 
     thread_local! {
         static STORE: RefCell<(Store, Fingerprints)> =
-            RefCell::new((Store::new(), Fingerprints::new()));
+            RefCell::new((Store::new(), Fingerprints::new(Polynomial::get(0))));
     }
 
     /// Runs work on the store and its fingerprints, in place: WebAssembly has one thread.

@@ -1101,3 +1101,13 @@ prints the stack at each intern gives the order before TLC checks the model, at 
 - **Left out:** createConfig also interns the seed, the fingerprint polynomial and the install
   location as strings, which only a spec making the same text would see. The TypeScript
   interpreter ranks 3 after 4 and 5.
+
+## The tokens of a dumped trace
+
+- A `.bin` trace dump (`tla-trace`'s `TraceDump::to_tlc`, cli.md's "-dumpTrace") equals TLC's but
+  for the token each `UniqueString` carries, TLC's intern number of the text in that run, which no
+  other run reproduces. TLC's reader skips it and interns the characters again:
+  `_TLCTrace.ioDeserialize` reads with `ValueInputStream.read(Map)`, which calls `readExternal`
+  (ValueInputStream.java 110-111, 118), whose strings and record names go through
+  `UniqueString.readExternal` (UniqueString.java 336-342: the token and the slot skipped as
+  "invalid for the given internTbl"). The dump numbers each text in the order it first writes it.

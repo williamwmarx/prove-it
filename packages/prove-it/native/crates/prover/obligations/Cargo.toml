@@ -1,0 +1,11 @@
+[package]
+name = "prove-obligations"
+description = "Prove It's port of tlapm's obligations, Prep and encoders"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT AND BSD-2-Clause AND LGPL-2.1-only WITH OCaml-LGPL-linking-exception"
+publish.workspace = true
+
+[dependencies]
+tla-front = { path = "../../tla-front" }

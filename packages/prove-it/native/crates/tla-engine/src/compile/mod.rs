@@ -27,6 +27,7 @@ pub(crate) mod random;
 mod sets;
 mod walker;
 
+pub(crate) use builtins::NON_SET_OPERAND;
 pub use walker::ActionOptions;
 pub(crate) use walker::INFINITE_BOUND;
 
@@ -770,6 +771,7 @@ impl<'a> Compiler<'a> {
                 slot_count: SEARCH_SLOTS.len(),
                 is_epoch_checked: options.is_epoch_checked,
                 random_seed: ir.model.random_seed,
+                fingerprint_index: ir.model.fingerprint_index,
                 ..Program::default()
             },
             texts: vec![None; ir.texts.len()],

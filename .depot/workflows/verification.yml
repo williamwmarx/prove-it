@@ -71,7 +71,7 @@ jobs:
               cd packages/prove-it
               bun scripts/platform-packages.ts build
               bun run build
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts tests/unit/deciders.test.ts
           # The engine as WebAssembly: its code for wasm32 linted, then the native tests with it
           # standing in for the addon, as where there is no process.dlopen (DESIGN.md 7.4).
           - task: WebAssembly
@@ -81,7 +81,7 @@ jobs:
               bun scripts/platform-packages.ts build
               bun run build
               bun scripts/platform-packages.ts build --target wasm32-unknown-unknown
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/dist/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/dist/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts tests/unit/deciders.test.ts
           # Every unit test, with the native engine that bun run test builds searching
           # (tests/setup.ts).
           - task: Test
@@ -89,7 +89,8 @@ jobs:
           # The Rust front end against the TypeScript one, on every module of the corpora and the
           # fixtures (native/DESIGN.md section 14). resolve and ir link each module as a spec's root
           # and lower it; model, order and model-ir link, order and lower each corpus model. The
-          # binary prints what TLC printed, as recorded, on SANY's corpus and the RECURSIVE grid.
+          # binary prints what TLC printed, as recorded, on SANY's corpus and the RECURSIVE grid, and
+          # what SANY's XMLExporter printed on SANY's corpus and the XML fixtures, with each flag set.
           - task: Front End
             command: |
               cd packages/prove-it
@@ -101,6 +102,16 @@ jobs:
               done
               bun scripts/sany-corpus.ts --recorded tests/conformance/sany-stdout/corpus.json
               bun scripts/sany-corpus.ts --specs native/crates/tla-front/tests/recursive-shapes --recorded tests/conformance/sany-stdout/grid.json
+              bun scripts/front-differential.ts sany-xml --rust native/target/release/front-dump
+              xml=tests/conformance/sany-stdout/xml
+              for flags in "-o" "-o -t" "-o -r" "-o -u" "-o -t -r -u"; do
+                bun scripts/sany-corpus.ts --recorded "$xml$(echo "$flags" | tr -d ' ').json" --main tla2sany.xml.XMLExporter --arguments "$flags"
+              done
+              fixtures="--specs tests/fixtures/xml-export --main tla2sany.xml.XMLExporter"
+              names=Commented,Counted,DefineStep,FormFeed,LevelError,Nesting,Numbered,Renamed,Twice
+              bun scripts/sany-corpus.ts $fixtures --recorded "$xml-fixtures-o.json" --arguments "-o" --names "$names"
+              bun scripts/sany-corpus.ts $fixtures --recorded "$xml-fixtures-o-t-r-u.json" --arguments "-o -t -r -u" --names "$names"
+              bun scripts/sany-corpus.ts $fixtures --recorded "$xml-fixtures-include.json" --arguments "-o -I nested" --names Missing,Root
           # Every corpus model lowered to the engine IR, which round-trips through Rust, and the
           # golden models' IR, which must match tests/conformance/ir: a change to the lowering
           # updates them (`bun scripts/run.ts engine-ir --update`).

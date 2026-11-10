@@ -1,7 +1,7 @@
 //! A function TLC keeps lazy, and Nat, Int or STRING, which the store holds as scalars: what
 //! doesn't model them refuses them at any depth rather than reading them as empty.
 
-use tla_values::fingerprint::{Fingerprints, UNFINGERPRINTABLE};
+use tla_values::fingerprint::{Fingerprints, Polynomial, UNFINGERPRINTABLE};
 use tla_values::json::write_json;
 use tla_values::print::{format_value, is_printable};
 use tla_values::store::{Id, NAT, Store};
@@ -33,7 +33,7 @@ fn refuse_a_function_tlc_keeps_lazy_at_any_depth() {
             Err(UNENCODABLE)
         );
         assert_eq!(
-            Fingerprints::new().get_state(&store, &[value], &[0]),
+            Fingerprints::new(Polynomial::get(0)).get_state(&store, &[value], &[0]),
             Err(UNFINGERPRINTABLE)
         );
     }
@@ -54,7 +54,7 @@ fn print_nat_as_tlc_does_and_refuse_it_where_tlc_fails() {
             Err(UNENCODABLE)
         );
         assert_eq!(
-            Fingerprints::new().get_state(&store, &[value], &[0]),
+            Fingerprints::new(Polynomial::get(0)).get_state(&store, &[value], &[0]),
             Err(UNFINGERPRINTABLE)
         );
     }

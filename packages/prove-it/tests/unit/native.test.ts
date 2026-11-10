@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -52,6 +52,52 @@ describe("the native engine", () => {
       });
       expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 0, stderr: "" });
       expect(run.stdout).toContain("251 distinct states found");
+    },
+    SPAWN_LIMIT_MS,
+  );
+
+  it(
+    "leaves a run that dumps the IR or logs the states to the TypeScript check, which writes them",
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), "prove-it-native-debug-"));
+      try {
+        const ir = join(directory, "Commit.ir");
+        const stateLog = join(directory, "Commit.jsonl");
+        const run = spawnSync("bun", [SOURCE_CLI, "-noGenerateSpecTE", "Commit.cfg"], {
+          cwd: COMMIT,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PROVE_IT_ENGINE: "debug",
+            PROVE_IT_IR_DUMP: ir,
+            PROVE_IT_STATE_LOG: stateLog,
+          },
+        });
+        expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
+        expect(run.stderr).not.toContain("native: checkSources");
+        expect([existsSync(ir), existsSync(stateLog)]).toEqual([true, true]);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    SPAWN_LIMIT_MS,
+  );
+
+  it.each([
+    ["PROVE_IT_MEMO", "off"],
+    ["PROVE_IT_EPOCH_CHECK", "1"],
+    ["PROVE_IT_FP_VERIFY", "1"],
+    ["PROVE_IT_LIVE_CHECK", "1"],
+  ])(
+    "leaves a run with the engine's self-check %s to the TypeScript check",
+    (name, value) => {
+      const run = spawnSync("bun", [SOURCE_CLI, "-noGenerateSpecTE", "Commit.cfg"], {
+        cwd: COMMIT,
+        encoding: "utf8",
+        env: { ...process.env, PROVE_IT_ENGINE: "debug", [name]: value },
+      });
+      expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
+      expect(run.stderr).not.toContain("native: checkSources");
     },
     SPAWN_LIMIT_MS,
   );
@@ -123,7 +169,10 @@ describe("the native engine", () => {
       const lines = getEngineLines(runtime, cli, {
         PROVE_IT_ENGINE_ADDON: ADDON,
       });
+      // The binary's check, which the CLI runs first, doesn't yet write SANY's report of the trace
+      // exploration spec TLC generates without -noGenerateSpecTE, so the CLI checks it as before.
       expect(lines).toEqual([
+        "[engine] native: checkSources declined: SANY's report of the trace exploration spec TLC parses with the spec",
         expect.stringMatching(/^\[engine\] native: ir: \d+ bytes in \d+\.\d\d ms$/),
         expect.stringMatching(/^\[engine\] native: complete: {2}\(\d+\.\d\d ms\)$/),
         expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
@@ -168,7 +217,7 @@ describe("the native engine", () => {
   // A recursion as deep as this exhausts the stack the engine has as WebAssembly, and the
   // interpreter searches again from the start, after the search had printed.
   it.if(WASM !== undefined)(
-    "prints once what it printed before WebAssembly ran out of stack",
+    "prints once what it printed before the engine as WebAssembly stopped recursing",
     () => {
       const directory = mkdtempSync(join(tmpdir(), "prove-it-wasm-stack-"));
       try {
@@ -195,7 +244,9 @@ describe("the native engine", () => {
         const printed = (stdout: string) =>
           stdout.split("\n").filter((line) => /^("init"|\d+)$/.test(line));
         const native = runDeep({ PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_WASM: WASM ?? "" });
-        expect(native.stderr).toContain("native: stopped: WebAssembly ran out of stack");
+        // WebAssembly's frames are on the host's stack, so its engine stops recursing at 1,000
+        // calls and hands the search over, where the addon would go on.
+        expect(native.stderr).toContain("native: stopped: recursion too deep");
         const interpreter = runDeep({ PROVE_IT_ENGINE: "0" });
         expect(printed(native.stdout)).toEqual(['"init"', "0", "1"]);
         expect(printed(native.stdout)).toEqual(printed(interpreter.stdout));
