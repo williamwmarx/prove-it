@@ -535,6 +535,53 @@ Over the 14 models past 2PCwithBTM, whose 10–17 ms is start-up, in geomean: on
 the baseline, 4 threads are 2.15× one thread, one worker is 11.2× TLC on one worker (9.2× at the
 baseline), and 4 threads are 8.6× TLC on every core (3.5×).
 
+### 16 cores at de3a9f8
+
+`main` at de3a9f8 on `depot-ubuntu-24.04-16` (AMD EPYC 9R45), the Benchmark workflow, medians of
+3 runs: one thread, then 16, with the CPU seconds at 16 and the peak RSS.
+
+| Model | 1 thread, s | 16 threads, s | Speedup | CPU at 16, s | RSS MB, 1 → 16 |
+|---|---:|---:|---:|---:|---|
+| MCExactInitialSync | 12.22 | 1.95 | 6.3× | 19.6 | 901 → 1,446 |
+| PaxosCommit | 14.93 | 2.61 | 5.7× | 36.0 | 719 → 2,660 |
+| MCMultiNode | 4.41 | 0.86 | 5.1× | 9.2 | 522 → 1,690 |
+| MCLamportMutex | 1.80 | 0.48 | 3.8× | 4.9 | 136 → 378 |
+| MCbtree | 0.66 | 0.17 | 3.9× | 1.16 | |
+| Detlefs | 1.73 | 0.44 | 3.9× | 2.86 | |
+| FastPaxos | 1.36 | 0.27 | 5.0× | 3.11 | |
+| TLCSailfish1 | 2.98 | 0.40 | 7.5× | 4.87 | |
+| MCabs | 9.12 | 1.14 | 8.0× | | |
+| GameOfLife | 1.31 | 0.16 | 8.2× | | |
+| BufferedRandomAccessFile | 1.53 | 0.17 | 9.0× | | |
+| StarkMutex, N = 4 | 3.29 | 2.13 | 1.5× | 7.5 | |
+| cf1s_folklore | 12.48 | 5.51 | 2.3× | 47.7 | 559 → 2,251 |
+| SpanTreeRandom | 1.69 | 1.66 | 1.0× | | |
+
+Geomean 4.3×. Against d7c8b5d, MCExactInitialSync rose from 3.5× to 6.3×, cf1s_folklore from 1.45×
+to 2.3× and StarkMutex from 1.08× to 1.5×. Detlefs (4.6× → 3.9×) and TLCSailfish1 (9.8× → 7.5×)
+fell because one thread got faster.
+
+Two limits show. PaxosCommit takes 36 CPU seconds at 16 threads for 14.9 s of one thread's work,
+and cf1s_folklore 47.7 for 12.5: the cores contend for memory. MCbtree, Detlefs and MCLamportMutex
+stop near 3.9× with CPU only 1.6–2.7× one thread's: a serial part limits them. An instrumentation
+build timed the parts at 4 threads on the 4-core container:
+
+| Model | Wall, ms | Threads expanding | Merge after the threads | Levels on one thread |
+|---|---:|---:|---:|---:|
+| MCbtree | 342 | 257 | 53 (15%) | 28 (13 levels, 7,581 states) |
+| Detlefs | 1,121 | 758 | 295 (26%) | 53 (33 levels, 15,623 states) |
+| MCLamportMutex | 1,259 | 1,069 | 157 (12%) | 26 (18 levels, 2,104 states) |
+| PaxosCommit | 8,468 | 7,867 | 553 (6.5%) | 15 |
+| MCExactInitialSync | 6,747 | 5,263 | 1,439 (21%) | 10 |
+
+The merge doesn't shrink with the threads, so at 16 it is most of what is left: on Detlefs about
+300 ms against about 190 ms of expansion. Its time on the search thread, profiled on Detlefs:
+`Store::import` 18%, the merge's own loop 18%, the kernel 25% (page faults and the page-table locks
+of the vectors and table that grow, the states' arrays and the state table), copying 5% and the
+table's growth 4%. Keeping freed memory in the allocator (`glibc.malloc.mmap_threshold`,
+`trim_threshold`) changed nothing, so the faults are memory that is new, which huge pages for the
+state table (PR 199) address.
+
 ### Membership by id (plan item 3)
 
 The store gives each value a shape (`tla-values/src/store/shapes.rs`): a class of values any two
