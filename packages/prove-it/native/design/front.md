@@ -681,8 +681,7 @@ binary over both directories and counts them (TLC runs on the coordinator's side
 container can't build it). Before the port 138 of 153 printed what TLC prints (116 of the 125
 errors, 22 of the 28 accepted specs), 15 declined and none differed; after it, before E4294_Module
 was written, 146 printed, 7 declined and none differed: all 125 errors but E4294_Module, and the
-six accepted specs above. `front-differential.ts sany-text` stays at 2,367 of 2,367. The recorded
-gate, with the directories in `corpora.json` and TLC's output recorded, is still to come.
+six accepted specs above. `front-differential.ts sany-text` stays at 2,367 of 2,367.
 
 ### Open
 
@@ -724,3 +723,70 @@ gate computes no startup.
 No-recording mode on the whole corpus after it and after the split of a LET's operator
 (test-model/CyclicRedefineInstance): 1,460 of 1,466 runs print what TLC prints, and the 6 others
 are listed known differences.
+
+## Retiring the TypeScript SANY front end (`src/sany`)
+
+`src/sany` (about 12,000 lines) wrote SANY's report for the CLI of `dist/`, which never ran the
+native binary, and the addon and the WebAssembly engine linked no tla-front. Nothing in the
+prover, the obligations or the public API imports it. Its parts:
+
+- The report itself (`report`, `generator`, `levels`, `linter`, `selectors`, `nodes`, `snapshot`):
+  tla-front writes it byte-identically for TLC master, except where it declines.
+- `xml` and the `generator`, `nodes`, `selectors`, `builtins` and `levels` it needs: SANY's
+  XMLExporter, which tla-front doesn't write.
+- What the TypeScript front end, and so the interpreter, reads besides: `parse-error` and `lexer`
+  (its syntax errors and the configuration's), `modules` (the standard modules' texts, from which
+  `scripts/front-modules.ts` writes tla-front's), and `source` (the readings `src/tlc/order.ts`
+  takes). These move out of `src/sany` and stay until the interpreter is retired.
+
+In three stages, each with TLC's recorded output as the gate in place of `sany-text`'s TypeScript
+side:
+
+1. tla-front in the addon and the WebAssembly engine (`prove-it-host`'s `sany`, `sanyText`), which
+   the CLI calls (`src/cli/sany-text.ts`), keeping the TypeScript report where it declines.
+   `scripts/sany-corpus.ts --recorded` holds the binary and the CLI to TLC's recorded output on
+   SANY's corpus and on `tests/recursive-shapes`.
+2. SANY's XMLExporter in tla-front, held to recordings of TLC's.
+3. `src/sany` deleted, with what the interpreter reads moved beside the TypeScript front end.
+   `PROVE_IT_ENGINE=0` then needs the addon or the WebAssembly engine for SANY's report
+   (fallback.md).
+
+Before stage 3, tla-front also writes what the CLI still takes from the TypeScript report:
+TLC 1.7.4's report, the trace exploration spec TLC parses with the spec where it writes one (TLC's
+default without `-noGenerateSpecTE`, `-tool` or `-continue`; the binary declines it too), and the
+exception of SANY's generator (E4294_Module), which the CLI's printer doesn't word yet.
+
+`sanyText` reads nothing itself. It names what the report reads that it hasn't been given, a
+module's text by its name or the file TLC prints that it parses a module from, and the CLI calls
+it again with those, so the WebAssembly engine needs no file system and no call back into
+JavaScript. The report is written again from the start each time, which costs a few milliseconds
+for a few rounds. This is how every export of the host reads what JavaScript holds
+(`prove-it-host`'s `sources`, which lists the keys): the in-process check and the prover's
+exports read their sources this way too.
+
+The report grows the WebAssembly engine from 1.39 MB to 2.98 MB, and the addon on x86_64 Linux
+from 2.22 MB to 4.23 MB. One module carries it, as the in-process check will need tla-front's
+parser, resolver and lowering there anyway. Of the addon's 2.0 MB, about 0.74 MB is the report's
+alone (an addon with the report and the lowering is 5.35 MB, one with the lowering alone 4.61 MB),
+and 1.27 MB the parser, resolver and level checks the lowering shares; in proportion, about
+0.6 MB of the WebAssembly engine's 1.6 MB. That part could go behind a feature of the host crates
+for a build without the CLI, which nothing builds yet.
+
+On SANY's corpus (153 specs), the CLI with the addon prints what the binary prints on 144 specs,
+up from 135. The 3 that differ are E4294_Module, which the CLI leaves to the TypeScript report,
+and FairnessTest and NumbersTest, whose model the TypeScript front end rejects after SANY's
+report. The other 6 decline in both.
+
+Against TLC's output on d8fb231, recorded in `tests/conformance/sany-stdout`, the binary prints
+what TLC prints on 152 of the corpus's 153 specs and declines AssumeProveTest, and on 57 of the
+grid's 183, declining the other 126; none differ. Verification's Front End task holds it to that.
+The CLI, with the addon, differs on 9 of the corpus's specs and 5 of the grid's, none of them in a
+report tla-front writes: E4294_Module and the 5 grid specs are the generator's exception, which the
+CLI leaves to the TypeScript report; FairnessTest, NumbersTest and ProofsTest are specs tla-front
+accepts and the TypeScript front end rejects after the report, and AssumeProveTest one the binary
+declines and the TypeScript parser rejects; AssumeTest, BasicTest, InnerModuleTest and Semantics
+are an assumption the TypeScript checker words otherwise than TLC. So
+`--cli` stays out of the gate until stage 3 retires those.
+
+The addon writes the report on a 64 MiB thread, as the binary's run does: a formula nested a few
+hundred parentheses deep overflows the stack of the thread JavaScript calls on.

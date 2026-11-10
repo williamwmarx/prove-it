@@ -12,6 +12,13 @@
     "paths": ["tlatools/org.lamport.tlatools/test-model"]
   },
   {
+    "name": "sany",
+    "repository": "https://github.com/tlaplus/tlaplus.git",
+    "commit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+    "paths": ["tlatools/org.lamport.tlatools/test/tla2sany/semantic"],
+    "isReportOnly": true
+  },
+  {
     "name": "spectacle",
     "repository": "https://github.com/will62794/tla-web.git",
     "commit": "8193eb02717a90a64cfe5b03f40d90c2b4bc18a2",

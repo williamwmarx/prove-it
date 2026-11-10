@@ -10,11 +10,13 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 
+/** `isReportOnly` marks TLC's tests of SANY, which only `sany-corpus.ts` runs. */
 export interface Corpus {
   name: string;
   repository: string;
   commit: string;
   paths: string[];
+  isReportOnly?: boolean;
 }
 
 export interface CorpusModel {
@@ -32,8 +34,10 @@ export const EXPECTED_PATH = join(CONFORMANCE_DIRECTORY, "expected.json");
 
 export const TLC_SEED = 4n;
 
-export const getCorpora = (): Corpus[] =>
+export const getAllCorpora = (): Corpus[] =>
   JSON.parse(readFileSync(join(CONFORMANCE_DIRECTORY, "corpora.json"), "utf8"));
+
+export const getCorpora = () => getAllCorpora().filter((corpus) => !corpus.isReportOnly);
 
 export const listFiles = (directory: string): string[] =>
   readdirSync(directory).flatMap((entry) => {

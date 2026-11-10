@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use tla_ir::{
     AtomKind, ConfigName, Definition, DefinitionForm, EnabledActions, Index, Ir, NodeId, NodeKind,
-    PredicateForm, Resolution,
+    PredicateForm, Resolution, ScopeBinding,
 };
 use tla_values::Bail;
 use tla_values::store::{FALSE, Outcome, TRUE};
@@ -119,8 +119,49 @@ pub enum Atom {
 /// takes changes v.
 pub struct EnabledSteps {
     pub subscript: Eval,
+    /// What the subscript's value depends on besides the state, which the atoms whose subscripts
+    /// have the same share their values of.
+    pub key: SubscriptKey,
     /// The positions of TLC's actions A splits into, or `None` for all of them.
     pub actions: Option<Vec<bool>>,
+}
+
+/// A subscript's expression and the scope it is read in.
+pub type SubscriptKey = (NodeId, Option<Index>);
+
+// What a subscript's value depends on besides the state: the expression in its scope, or, for a
+// definition of a module without parameters read where the scopes bind only values, which none of
+// its names can be bound to, the definition alone.
+fn get_subscript_key(ir: &Ir, node: NodeId, scope: Option<Index>) -> SubscriptKey {
+    let mut id = node;
+    while let NodeKind::Reference(target) = &ir.nodes.arena[id as usize].kind {
+        id = *target;
+    }
+    let definition = match &ir.nodes.arena[id as usize].kind {
+        NodeKind::Identifier(name) if !name.is_local => match name.resolution {
+            Resolution::Definition(index) => Some(ir.definitions[index as usize]),
+            _ => None,
+        },
+        _ => None,
+    };
+    let is_parameterless = definition.is_some_and(|definition| {
+        matches!(
+            &ir.nodes.arena[definition as usize].kind,
+            NodeKind::Definition(definition)
+                if matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+        )
+    });
+    let mut bound = scope;
+    let mut binds_values = true;
+    while let Some(index) = bound {
+        let entry = &ir.scopes[index as usize];
+        binds_values &= matches!(entry.binding, ScopeBinding::Value(_));
+        bound = entry.parent;
+    }
+    match definition {
+        Some(definition) if is_parameterless && binds_values => (definition, None),
+        _ => (id, scope),
+    }
 }
 
 /// Whether a compiled predicate holds, failing on a value that isn't a boolean.
@@ -613,6 +654,8 @@ impl EngineContext {
             Some(actions) => {
                 let mut steps = Vec::with_capacity(actions.len());
                 for action in actions {
+                    // Where one doesn't compile, the search walks the next-state relation
+                    // unlabelled, and ENABLED runs.
                     match compiler.compile_action(
                         action.expression,
                         action.scope,
@@ -624,11 +667,6 @@ impl EngineContext {
                         "an action",
                     ) {
                         Ok(step) => steps.push(step),
-                        Err(decline)
-                            if model.is_labelled && !matches!(decline, CompileError::Bail(_)) =>
-                        {
-                            return Err(decline);
-                        }
                         Err(_) => break,
                     }
                 }
@@ -815,8 +853,9 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
                     compile_subscript(compiler, *subscript, scope)
                         .ok()
                         .filter(|subscript| !subscript.reads_diameter())
-                        .map(|subscript| EnabledSteps {
-                            subscript: subscript.eval,
+                        .map(|compiled| EnabledSteps {
+                            subscript: compiled.eval,
+                            key: get_subscript_key(ir, *subscript, scope),
                             actions: match actions {
                                 EnabledActions::Some(positions) => {
                                     let length =

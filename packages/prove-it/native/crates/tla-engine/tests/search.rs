@@ -244,6 +244,57 @@ fn records_the_graph_and_answers_the_atoms() {
     assert!(graph.tables.iter().any(|table| table.is_from_steps));
 }
 
+// Where one of TLC's actions doesn't compile, the search walks the next-state relation unlabelled
+// and runs ENABLED, finding what the labelled search finds.
+#[test]
+fn walks_the_next_state_relation_where_an_action_doesnt_compile() {
+    let bytes = std::fs::read(format!(
+        "{}/../../../tests/conformance/ir/examples/specifications/ReadersWriters/MC.ir",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR");
+    assert!(ir.model.is_labelled);
+    let mut broken = ir.clone();
+    // A scope whose value the IR can't hold, which the TypeScript engine reads and this one
+    // declines.
+    let name = broken.scopes.first().map_or(0, |scope| scope.name);
+    broken.scopes.push(tla_ir::Scope {
+        parent: None,
+        name,
+        binding: tla_ir::ScopeBinding::Value(None),
+    });
+    let scope = Some((broken.scopes.len() - 1) as tla_ir::Index);
+    broken.model.actions.last_mut().expect("an action").scope = scope;
+    let settings = Settings {
+        is_live_checked: true,
+        ..Settings::default()
+    };
+    let graphs = [&ir, &broken].map(|ir| {
+        let outcome = tla_engine::on_nesting_stack(|| search(ir, &settings, &mut Quiet));
+        let SearchOutcome::Complete {
+            counts,
+            checkpoint: Some(checkpoint),
+            ..
+        } = outcome
+        else {
+            panic!("ReadersWriters didn't complete with a graph");
+        };
+        (counts, checkpoint.graph.expect("a graph"))
+    });
+    let [(counts, labelled), (broken_counts, unlabelled)] = graphs;
+    assert!(labelled.labels.is_some());
+    assert!(unlabelled.labels.is_none());
+    assert_eq!(
+        (broken_counts.generated, broken_counts.distinct),
+        (counts.generated, counts.distinct)
+    );
+    assert_eq!(unlabelled.edges, labelled.edges);
+    for (table, broken_table) in labelled.tables.iter().zip(&unlabelled.tables) {
+        assert_eq!(broken_table.answers, table.answers);
+    }
+}
+
 #[test]
 fn stops_where_asked_with_the_states_before() {
     let settings = Settings {

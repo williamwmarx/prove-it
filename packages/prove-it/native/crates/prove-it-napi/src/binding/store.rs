@@ -250,7 +250,7 @@ pub(super) unsafe fn create_int32s(env: napi_env, words: &[i32]) -> Result<napi_
 }
 
 // A value for `storePerform`'s arguments: a number, a string, an Int32Array or an array of them.
-unsafe fn get_host(env: napi_env, value: napi_value) -> Result<HostValue, Thrown> {
+pub(super) unsafe fn get_host(env: napi_env, value: napi_value) -> Result<HostValue, Thrown> {
     match unsafe { type_of(env, value) }? {
         NAPI_NUMBER => return Ok(HostValue::Number(unsafe { get_number(env, value) }?)),
         NAPI_STRING => return Ok(HostValue::Text(unsafe { get_text(env, value) }?)),
@@ -321,7 +321,10 @@ pub(super) unsafe fn create_host(env: napi_env, value: &HostValue) -> Result<nap
     Ok(result)
 }
 
-unsafe fn create_result(env: napi_env, result: HookResult) -> Result<napi_value, Thrown> {
+pub(super) unsafe fn create_result(
+    env: napi_env,
+    result: HookResult,
+) -> Result<napi_value, Thrown> {
     unsafe { create_host(env, &result.map_err(wrong)?) }
 }
 
