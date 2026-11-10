@@ -633,6 +633,14 @@ walker-hook shape guard and the fallbacks below.
   the membership enumeration, in Init and Next. Each search thread joins in its own overlay, and the
   level's merge imports the values that widened a thread's joins into the store and joins them
   there. Unmarked runs pay one branch on a `None` per assignment.
+- A membership `x' \in S` joins only the elements the walk enumerates, but TLC's predicate
+  evaluation tests `t[x]` against S itself. That is covered where S is a set of values, an
+  interval, a declared constant, or the functions, records, tuples, subsets or unions of such sets
+  (`is_membership_covered`): TLC then compares `t[x]` only with values a walk assigned, or tests its
+  kind against a non-empty set of that kind. An empty S (`[a : {}]` still tests the kind, with no
+  element to join; a Codex finding on #197), a filter, an intersection or a difference (whose
+  dropped elements TLC still compares with) set `Machine::is_membership_unsafe`, which turns the
+  shortcut off.
 - `LiveGraph::is_next_taken` holds where no walk took the shortcut (`is_enabled_exact`), no string
   was ranked since the order froze (which can take a string out of its class after its shape was
   joined), and every variable's join is comparable. TLC's `equals` fails only where `compareTo`

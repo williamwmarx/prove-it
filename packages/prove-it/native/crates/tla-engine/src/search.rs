@@ -1679,6 +1679,7 @@ struct Expanded {
     deferred: Vec<(u32, u64)>,
     collisions: u64,
     is_past_walk: bool,
+    is_membership_unsafe: bool,
 }
 
 // A level the threads share: the states `[start, end)`, the next run to claim, and the first
@@ -1813,6 +1814,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
         deferred: found.deferred,
         collisions: found.collisions,
         is_past_walk: worker.machine.is_past_walk,
+        is_membership_unsafe: worker.machine.is_membership_unsafe,
     }
 }
 
@@ -2024,6 +2026,7 @@ impl Search<'_, States> {
         for found in &expanded {
             self.states.collisions += found.collisions;
             machine.is_past_walk |= found.is_past_walk;
+            machine.is_membership_unsafe |= found.is_membership_unsafe;
         }
         // The shapes each thread's walks assigned, joined into the store's from the values that
         // widened them, which the thread's overlay forgets at the next level.
@@ -2575,10 +2578,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // Read as the tables are answered, since taking the steps from the states the search
         // didn't store may take a shortcut past a walk too.
         let is_enabled_exact = !machine.is_past_walk;
-        // Where no walk took the shortcut, no comparison of an assigned value can fail, and no
-        // string was ranked since (which may take a string out of its class), TLC's predicate
-        // evaluation of the next-state relation holds of every step the walks took.
+        // Where no walk took the shortcut or enumerated an empty set for an assignment, no
+        // comparison of an assigned value can fail, and no string was ranked since (which may take
+        // a string out of its class), TLC's predicate evaluation of the next-state relation holds
+        // of every step the walks took.
         let is_next_taken = is_enabled_exact
+            && !machine.is_membership_unsafe
             && !machine.store.has_unordered_strings()
             && machine
                 .assigned_shapes

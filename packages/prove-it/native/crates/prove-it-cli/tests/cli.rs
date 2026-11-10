@@ -2634,6 +2634,28 @@ fn answers_fairness_of_the_next_state_relation_as_tlc() {
     }
 }
 
+#[test]
+fn evaluates_the_next_state_relation_where_a_walk_found_an_empty_set_to_assign_from() {
+    // TLC fails testing x' \in [a : {}] of an integer as it evaluates WF_x(Next) on the step 0 -> 1,
+    // though the walk enumerated no record whose shape the guard could join: so the engine
+    // evaluates the action, and leaves TLC's failure to the interpreter.
+    let spec = "---- MODULE EmptyRecords ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' \\in [a : {}] \\/ x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == []<>(x = 2)\n====\n";
+    for workers in ["1", "4"] {
+        let test = format!("next-fair-empty-{workers}");
+        let args = ["-workers", workers];
+        let (output, directory) =
+            run_front(&test, spec, "SPECIFICATION Spec\nPROPERTY Live\n", &args);
+        let text = stdout(&output);
+        let is_declined =
+            String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
+        assert!(
+            is_declined || get_untimed(&text) == include_str!("next-fair-empty.txt"),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 // What a run printed from `Starting...` to computing the initial states.
 fn get_startup(text: &str) -> &str {
     let start = text.find("Starting... (").expect("the start");

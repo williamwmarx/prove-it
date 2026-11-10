@@ -2317,6 +2317,51 @@ impl<'a> Compiler<'a> {
         Ok(guards)
     }
 
+    // Whether TLC's membership of a value in a set, which it tests as it evaluates `x' \in S` as a
+    // predicate, compares the value only with values a walk that enumerates the set assigns, or
+    // tests its kind: a set of values, an interval, a declared constant, and the sets of
+    // functions, records, tuples and subsets and the unions built of such sets. Not a filter, an
+    // intersection or a difference, whose dropped elements TLC still compares the value with.
+    fn is_membership_covered(&self, set: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if !seen.insert(set) {
+            return false;
+        }
+        let is_covered = |compiler: &Self, nodes: &[NodeId], seen: &mut HashSet<NodeId>| {
+            nodes
+                .iter()
+                .all(|&node| compiler.is_membership_covered(node, seen))
+        };
+        match self.node(set).1 {
+            NodeKind::SetEnumeration(_) => true,
+            NodeKind::FunctionSet { domain, range } => is_covered(self, &[*domain, *range], seen),
+            NodeKind::RecordSet(fields) => {
+                let sets: Vec<NodeId> = fields.iter().map(|field| field.1).collect();
+                is_covered(self, &sets, seen)
+            }
+            NodeKind::Product(sets) => is_covered(self, sets, seen),
+            NodeKind::Identifier(name) if !name.is_local => match name.resolution {
+                Resolution::Constant(_) => true,
+                Resolution::Definition(index) => {
+                    let definition = self.definition(self.ir.definitions[index as usize]);
+                    matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+                        && self.is_membership_covered(definition.body, seen)
+                }
+                _ => false,
+            },
+            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => {
+                    matches!(self.text(self.ir.builtins[index as usize].name), "..")
+                        || matches!(
+                            self.text(self.ir.builtins[index as usize].name),
+                            "SUBSET" | "\\cup" | "UNION"
+                        ) && is_covered(self, args, seen)
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     // `x \in S`, or, where `is_power_set`, `x \subseteq S`, which assigns x each subset of S.
     fn walk_membership(
@@ -2345,6 +2390,7 @@ impl<'a> Compiler<'a> {
                 },
             )));
         }
+        let is_covered = self.is_membership_covered(set, &mut HashSet::new());
         let set = if is_power_set {
             let base = self.compile(set, context)?;
             let subsets = self.compile_subset(&base);
@@ -2371,6 +2417,9 @@ impl<'a> Compiler<'a> {
             }
             let id = (set.eval)(machine)?;
             let size = set.size(machine, id)?;
+            if size == 0 || !is_covered {
+                machine.note_unsafe_membership();
+            }
             machine.assigned += 1;
             for position in 0..size {
                 let element = machine.store.element_at(id, position);

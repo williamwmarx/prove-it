@@ -115,6 +115,11 @@ pub struct Machine<'p> {
     /// an action atom is answered from the steps (`live.rs`): no comparison of TLC's predicate
     /// evaluation of the next-state relation fails where every variable's join is comparable.
     pub assigned_shapes: Option<Vec<ShapeJoin>>,
+    /// Whether a walk, where the machine keeps the shapes, enumerated for `x' \in S` a set whose
+    /// membership TLC may test against values the walk never assigned: an empty one, as
+    /// `[a : {}]`, which still tests the value's kind, or one that drops elements, as a filter
+    /// does. Then the shapes the walks joined don't cover TLC's predicate evaluation.
+    pub is_membership_unsafe: bool,
     // The next states ENABLED runs its actions into, kept for the next test.
     pub(crate) spare_states: Vec<Vec<Id>>,
     /// What was printed since the search last handed it on (`tlc.output`).
@@ -179,6 +184,7 @@ impl<'p> Machine<'p> {
             assigned: 0,
             is_past_walk: false,
             assigned_shapes: None,
+            is_membership_unsafe: false,
             spare_states: Vec::new(),
             output: Vec::new(),
             random: JavaRandom::seeded(program.random_seed),
@@ -196,6 +202,12 @@ impl<'p> Machine<'p> {
         if let Some(joins) = &mut self.assigned_shapes {
             self.store.join_shape(&mut joins[variable], value);
         }
+    }
+
+    /// Notes that a walk enumerated such a set for an assignment, where the machine keeps the
+    /// shapes.
+    pub(crate) fn note_unsafe_membership(&mut self) {
+        self.is_membership_unsafe |= self.assigned_shapes.is_some();
     }
 
     /// Seeds the draws of a state's expansion with its fingerprint, as TLC's workers do.
