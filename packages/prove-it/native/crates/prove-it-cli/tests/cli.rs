@@ -3938,7 +3938,9 @@ fn words_a_value_that_isnt_a_boolean_as_tlc() {
     // left once every variable has a value, a literal, a function's value, an IF and a CASE, and
     // `Tool#eval`, its junctions, IF and CASE, and an invariant. Each text is what TLC at d8fb231
     // prints, and with -tool.
-    let cases: [(&str, &str, &str, &[&str], &str, &str); 38] = [
+    // Its name, definitions, configuration, arguments, and what TLC prints, and with -tool.
+    type Case<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a str, &'a str);
+    let cases: [Case; 38] = [
         (
             "a conjunct left once the initial state is complete",
             "Init == x = 0 /\\ x + 3\nNext == x' = x",
