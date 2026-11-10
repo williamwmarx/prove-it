@@ -34,6 +34,13 @@ pub fn with_limits<T>(limits: &Limits, run: impl FnOnce() -> T) -> T {
     run()
 }
 
+/// Runs a computation as the TypeScript runs one with `limits` undefined: the unifier checks no
+/// interrupt (here, it checks limits that never interrupt, and counts its steps apart). The
+/// computation must force every sequence it pulls before it returns.
+pub fn without_limits<T>(run: impl FnOnce() -> T) -> T {
+    with_limits(&Limits::new(f64::INFINITY, None, None), run)
+}
+
 /// checkInterrupt: raises Interrupt past the step limit, past the deadline, or once the decision
 /// is canceled. Each check is a step. Without installed limits (a unit test of the kernel), it
 /// never interrupts.

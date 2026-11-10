@@ -41,7 +41,8 @@ modules ported separately fit together.
   `checkInterrupt(limits)`. Here the decision's limits are installed for the thread
   (`interrupt::with_limits`), so `checkInterrupt(limits)` is `check_interrupt()?` with no argument,
   and the `limits` parameters and fields disappear. Call it at exactly the TypeScript's places: each
-  call is a counted step.
+  call is a counted step. Where the TypeScript passes `limits` as `undefined` (the unifier then
+  checks nothing), wrap the call in `without_limits(|| …)` and force every sequence inside it.
 - **Stack.** The TypeScript relies on JavaScript's stack overflow ending a hopeless proof
   (decide answers unknown). Rust can't catch an overflow, so each recursive function that returns
   `Res` and can recurse as deep as a term or a proof search (the rewriter, the unifier, pattern
