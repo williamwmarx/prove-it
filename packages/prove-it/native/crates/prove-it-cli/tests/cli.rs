@@ -656,6 +656,36 @@ fn prints_what_an_assumption_printed_before_it_failed_once() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// SANY's corpus Semantics: `Tool.isValid` fails on an assumption that is no boolean, naming its
+// place, and `checkAssumptions` reports it (EC 2215 within 2105).
+#[test]
+fn reports_an_assumption_that_is_no_boolean() {
+    let spec = "---- MODULE NotBool ----\nVARIABLE x\nASSUME \"text\"\nInit == x = 0\nNext == x' = x\n====\n";
+    let place = "line 3, col 8 to line 3, col 13 of module NotBool";
+    for (test, args, expected) in [
+        (
+            "not-bool",
+            &[][..],
+            format!(
+                "Error: Evaluating assumption {place} failed.\nTLC expected a boolean value, but did not find one. {place}\nFinished in "
+            ),
+        ),
+        (
+            "not-bool-tool",
+            &["-tool"][..],
+            format!(
+                "@!@!@STARTMSG 2105:1 @!@!@\nEvaluating assumption {place} failed.\n@!@!@STARTMSG 2215:0 @!@!@\nTLC expected a boolean value, but did not find one. {place}\n@!@!@ENDMSG 2215 @!@!@\n@!@!@ENDMSG 2105 @!@!@\n"
+            ),
+        ),
+    ] {
+        let (output, directory) = run_front(test, spec, "INIT Init\nNEXT Next\n", args);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(text.contains(&expected), "{text}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 #[test]
 fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
     // The search prints the first print, then leaves the assumption to the trace evaluator, which
@@ -2640,6 +2670,79 @@ fn run_front(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, Pa
     (output, directory)
 }
 
+// tests/liveness-failures: x' \in S or x' \subseteq S beside x' = a \/ x' = b, where TLC fails
+// evaluating WF_x(Next) or WF_x(Alias), Alias == Next, as it adds a state to the behavior graphs.
+// Where the subscript's two values fail to compare (`LNAction.eval` compares them outside any
+// evaluation), TLC prints no nested expressions; where an element of x' fails S's own `member` in
+// `isSubsetEq` and S has a source, TLC throws a FingerprintException, whose message it doesn't
+// print, which the engine declines as it does other FingerprintExceptions. TLC's output for each
+// at d8fb231 is beside it.
+#[test]
+fn reports_failures_in_the_temporal_properties_as_tlc() {
+    let declined = [
+        "MFunctionsSubseteqEmptyWrap",
+        "MFunctionsSubseteqWrap",
+        "MProductSubseteqEmptyWrap",
+        "MRecordsSubseteqEmptyWrap",
+    ];
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/liveness-failures");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .expect("the specs")
+        .filter_map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.extension()? == "tla").then(|| path.file_stem()?.to_str().map(String::from))?
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 9);
+    for name in names {
+        let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
+        let constant = if name.contains("Empty") {
+            "{}"
+        } else {
+            "{1, 3}"
+        };
+        for (specification, suffix) in [("Weak", ""), ("AliasWeak", ".alias")] {
+            let tlc = std::fs::read_to_string(directory.join(format!("{name}{suffix}.txt")))
+                .expect("TLC's output");
+            for workers in ["1", "4"] {
+                let config = format!(
+                    "CONSTANT C = {constant}\nSPECIFICATION {specification}\nPROPERTY Live\n"
+                );
+                let test = format!("failures-{name}-{specification}-{workers}");
+                let args = [
+                    "-workers",
+                    workers,
+                    "-nowarning",
+                    "-seed",
+                    "4",
+                    "-fp",
+                    "0",
+                    "-lncheck",
+                    "final",
+                ];
+                let (output, run) = run_front(&test, &spec, &config, &args);
+                let text = stdout(&output);
+                let error = String::from_utf8_lossy(&output.stderr).into_owned();
+                if declined.contains(&name.as_str()) {
+                    assert!(
+                        error.contains("prove-it: not native yet: "),
+                        "{name} {specification} {workers}: {text}{error}"
+                    );
+                } else {
+                    assert_eq!(
+                        get_untimed(&text),
+                        tlc,
+                        "{name} {specification} {workers}: {error}"
+                    );
+                }
+                std::fs::remove_dir_all(run).expect("removed");
+            }
+        }
+    }
+}
+
 // What a run printed from `Starting...` to `Finished in`, but the lines that tell the time.
 fn get_untimed(text: &str) -> String {
     let start = text.find("Starting... (").expect("the start");
@@ -2769,61 +2872,10 @@ fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_co
             let text = stdout(&output);
             let is_declined =
                 String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
-            // Where TLC leaves the failure's message out (x' \subseteq [a : {}]), the engine
-            // prints it before the behavior TLC prints, as it does without this shortcut.
-            let behavior = &expected[expected.find("Error: The behavior").expect("a failure")..];
-            let is_tlcs = || {
-                let untimed = get_untimed(&text);
-                untimed == expected
-                    || untimed.contains("\nError: TLC threw an unexpected exception.\n")
-                        && untimed.ends_with(behavior)
-            };
-            assert!(is_declined || is_tlcs(), "{text}");
+            assert!(is_declined || get_untimed(&text) == expected, "{text}");
             std::fs::remove_dir_all(directory).expect("removed");
         }
     }
-}
-
-// A run's output without the positions TLC names where an evaluation failed, which differ between
-// WF_x(Next) and WF_x(Alias) by the line `Alias == Next`.
-fn without_positions(text: &str) -> String {
-    let mut lines = Vec::new();
-    let mut is_skipping = false;
-    for line in text.lines() {
-        if line.starts_with("Error: The error occurred when TLC was evaluating the nested") {
-            is_skipping = true;
-            continue;
-        }
-        if is_skipping && line.starts_with("Error: ") {
-            is_skipping = false;
-        }
-        if !is_skipping {
-            lines.push(line);
-        }
-    }
-    lines.join("\n")
-}
-
-// A run's output without the failure's message, which TLC leaves out of a failure in
-// x' \subseteq S where the engine, with or without the shortcut, prints it.
-fn without_message(text: &str) -> String {
-    let mut lines = Vec::new();
-    let mut is_skipping = false;
-    for line in text.lines() {
-        if line.starts_with("Error: The error occurred when TLC was evaluating the nested")
-            || line.starts_with("Error: TLC threw an unexpected exception.")
-        {
-            is_skipping = true;
-            continue;
-        }
-        if is_skipping && line.starts_with("Error: The behavior") {
-            is_skipping = false;
-        }
-        if !is_skipping {
-            lines.push(line);
-        }
-    }
-    lines.join("\n")
 }
 
 // tests/membership-grid: x' \in S beside x' = a \/ x' = b, under WF_x(Next), which the engine
@@ -2832,8 +2884,8 @@ fn without_message(text: &str) -> String {
 // a product, SUBSET, a filter, a map, a union, a constant and a definition, with a part empty and
 // not, nested in x' \in S, x' \in S \cup {7}, x' \subseteq S, [{1} -> S], [a : S], S \X {1} and a
 // filter; a and b are 0 and 1, values of S's elements' kind, or integers in the nesting's shape.
-// TLC's output on each under WF_x(Next) at d8fb231 is beside it. The two formulations must print
-// the same but for the positions of a failure, and that must be TLC's output, or a decline.
+// TLC's output on each formulation at d8fb231 is beside it: each run prints it exactly, or both
+// formulations decline.
 #[test]
 fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/membership-grid");
@@ -2848,15 +2900,16 @@ fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
     assert_eq!(names.len(), 396);
     for name in names {
         let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
-        let tlc = std::fs::read_to_string(directory.join(format!("{name}.txt"))).expect("TLC's");
         let constant = if name.contains("Empty") {
             "{}"
         } else {
             "{1, 3}"
         };
         for workers in ["1", "4"] {
-            let mut outputs = Vec::new();
-            for specification in ["Weak", "AliasWeak"] {
+            let mut declines = Vec::new();
+            for (specification, suffix) in [("Weak", ""), ("AliasWeak", ".alias")] {
+                let tlc = std::fs::read_to_string(directory.join(format!("{name}{suffix}.txt")))
+                    .expect("TLC's output");
                 let config = format!(
                     "CONSTANT C = {constant}\nSPECIFICATION {specification}\nPROPERTY Live\n"
                 );
@@ -2875,25 +2928,17 @@ fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
                 let (output, run) = run_front(&test, &spec, &config, &args);
                 let is_declined =
                     String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
-                outputs.push((!is_declined).then(|| get_untimed(&stdout(&output))));
+                if !is_declined {
+                    assert_eq!(
+                        get_untimed(&stdout(&output)),
+                        tlc,
+                        "{name} {specification} {workers}"
+                    );
+                }
+                declines.push(is_declined);
                 std::fs::remove_dir_all(run).expect("removed");
             }
-            let context = format!("{name} at {workers} workers: {outputs:?}");
-            match (&outputs[0], &outputs[1]) {
-                (None, None) => {}
-                (Some(next), Some(alias)) => {
-                    assert_eq!(
-                        without_positions(next),
-                        without_positions(alias),
-                        "{context}"
-                    );
-                    let is_tlcs = without_positions(next) == without_positions(&tlc)
-                        || !tlc.contains("Error: TLC threw")
-                            && without_message(next) == tlc.trim_end_matches('\n');
-                    assert!(is_tlcs, "{context}");
-                }
-                _ => panic!("one formulation declined: {context}"),
-            }
+            assert_eq!(declines[0], declines[1], "{name} at {workers} workers");
         }
     }
 }
@@ -3795,6 +3840,94 @@ fn passes_the_elements_a_leading_field_test_rejects_where_tlc_does() {
         let text = stdout(&output);
         for line in expected {
             assert!(text.contains(line), "{clause}: {line}\n{text}");
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn unites_a_set_with_one_element_in_tlcs_order() {
+    // S \cup {x} and {x} \cup S where no comparison can fail, which the store answers by a
+    // binary search for x's place: an element before, between and after the set's, one already
+    // in it, the empty set, tuples of other lengths, typed and untyped model values, and strings
+    // in the order TLC ranks them. Each set is what TLC at d8fb231 prints.
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-union-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let module = "---- MODULE Union ----\n\
+         EXTENDS Integers, Sequences\n\
+         CONSTANTS M1, M2, S1, S2, T1\n\
+         VARIABLE y\n\
+         Base(c) == CASE c = 1 -> {[t |-> \"a\", v |-> 1], [t |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 2 -> {[t |-> \"a\", v |-> 1], [t |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 3 -> {[t |-> \"a\", v |-> 1], [t |-> \"c\", v |-> 3]}\n\
+         \x20            [] c = 4 -> {}\n\
+         \x20            [] c = 5 -> {<<1>>, <<1, 2, 3>>}\n\
+         \x20            [] c = 6 -> {S1}\n\
+         \x20            [] c = 7 -> {S1}\n\
+         \x20            [] c = 8 -> {M1, 2}\n\
+         \x20            [] c = 9 -> {1, 2}\n\
+         \x20            [] c = 10 -> {[t |-> \"a\"]}\n\
+         \x20            [] c = 11 -> {<<\"a\", 1>>, <<\"b\", 2>>}\n\
+         \x20            [] OTHER -> {\"a\", \"c\"}\n\
+         Elem(c) == CASE c = 1 -> [t |-> \"b\", v |-> 2]\n\
+         \x20            [] c = 2 -> [t |-> \"a\", v |-> 1]\n\
+         \x20            [] c = 3 -> [t |-> \"z\", v |-> 9]\n\
+         \x20            [] c = 4 -> 7\n\
+         \x20            [] c = 5 -> <<1, 2>>\n\
+         \x20            [] c = 6 -> S2\n\
+         \x20            [] c = 7 -> T1\n\
+         \x20            [] c = 8 -> M2\n\
+         \x20            [] c = 9 -> \"a\"\n\
+         \x20            [] c = 10 -> <<1>>\n\
+         \x20            [] c = 11 -> <<\"a\", 0>>\n\
+         \x20            [] OTHER -> \"b\"\n\
+         Init == y = Base(C) \\cup {Elem(C)}\n\
+         Next == UNCHANGED y\n\
+         Inv == y = {}\n\
+         Rev == {Elem(C)} \\cup Base(C) = {}\n\
+         ====\n\
+         ";
+    let cases: [(u32, &str); 9] = [
+        (
+            1,
+            "y = {[t |-> \"c\", v |-> 3], [t |-> \"a\", v |-> 1], [t |-> \"b\", v |-> 2]}\n",
+        ),
+        (2, "y = {[t |-> \"c\", v |-> 3], [t |-> \"a\", v |-> 1]}\n"),
+        (
+            3,
+            "y = {[t |-> \"c\", v |-> 3], [t |-> \"a\", v |-> 1], [t |-> \"z\", v |-> 9]}\n",
+        ),
+        (4, "y = {7}\n"),
+        (5, "y = {<<1>>, <<1, 2>>, <<1, 2, 3>>}\n"),
+        (6, "y = {s_one, s_two}\n"),
+        (8, "y = {M1, M2, 2}\n"),
+        (11, "y = {<<\"a\", 0>>, <<\"a\", 1>>, <<\"b\", 2>>}\n"),
+        (12, "y = {\"c\", \"a\", \"b\"}\n"),
+    ];
+    for (case, expected) in cases {
+        std::fs::write(
+            directory.join("Union.tla"),
+            module.replace("Init ==", &format!("C == {case}\nInit ==")),
+        )
+        .expect("a file");
+        for (invariant, line) in [
+            ("Inv", expected),
+            ("Rev", "Error: The invariant of Rev is equal to FALSE\n"),
+        ] {
+            std::fs::write(
+                directory.join("Union.cfg"),
+                format!("CONSTANTS M1 = M1 M2 = M2 S1 = s_one S2 = s_two T1 = t_one\nINIT Init\nNEXT Next\nINVARIANT {invariant}\n"),
+            )
+            .expect("a file");
+            let output = run(
+                &directory,
+                &["-nowarning", "-fp", "0", "-noGenerateSpecTE", "Union"],
+            );
+            let text = stdout(&output);
+            assert!(
+                text.contains(line),
+                "case {case}, {invariant}: {line}\n{text}"
+            );
         }
     }
     std::fs::remove_dir_all(directory).expect("removed");

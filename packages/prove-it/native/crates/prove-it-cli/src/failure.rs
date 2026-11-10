@@ -119,8 +119,9 @@ pub fn print_failure(
         return Err("a state TLC fails to fingerprint as it adds it to the behavior graphs".into());
     }
     // TLC prints the call stack of an error adding a state to the behavior graphs before the
-    // error (`Worker#doNextCheckLiveness`).
-    if is_atom {
+    // error (`Worker#doNextCheckLiveness`), where its rerun has one (`hasCallStack`): a failing
+    // comparison of a subscript's two values (`LNAction.eval`) is in no evaluation.
+    if is_atom && !failure.call_stack.is_empty() {
         print_call_stack(printer, ir, &failure.call_stack);
     }
     let message = if printer.is_tool {

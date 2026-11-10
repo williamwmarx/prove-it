@@ -251,6 +251,19 @@ fn reports_an_instance_named_as_an_expression() {
     ));
 }
 
+// SANY's corpus ProofsTest: `processTheorem` adds a theorem whose statement is an expression to the
+// symbol table before its proof, which may name it as one.
+#[test]
+fn reads_a_theorem_named_as_an_expression_in_its_own_proof() {
+    assert_eq!(
+        get_text(
+            "own-proof",
+            "---- MODULE Main ----\nOp(x) == x\nTHEOREM T == TRUE\n<1> QED BY Op(T)\n====\n"
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nLinting of module Main\n"
+    );
+}
+
 // E4351 and E4355: an ASSUME/PROVE, or a step that asserts no expression, used as an expression.
 #[test]
 fn reports_a_theorem_or_step_that_asserts_no_expression_named_as_one() {

@@ -1256,11 +1256,7 @@ impl Store {
         // Where no comparison can fail, the set holds the element if it holds its id: a short set
         // is scanned, and a run of integers or a long set searched.
         if self.is_member_by_id(element, set) {
-            if self.size_of(set) as usize <= SCANNED_SIZE && self.meta(set).flags & IS_INT_RUN == 0
-            {
-                return Ok(self.set_elements(set).contains(&element));
-            }
-            return Ok(self.find_in_block(set, element)? != -1);
+            return self.holds_id(set, element);
         }
         if self.find_in_block(set, element)? != -1 {
             return Ok(true);
@@ -1304,6 +1300,15 @@ impl Store {
             }
         }
         Ok(false)
+    }
+
+    // Whether a set holds an element's id, where no comparison of the two can fail: a short set
+    // is scanned, and a run of integers or a long set searched.
+    fn holds_id(&mut self, set: Id, element: Id) -> Outcome<bool> {
+        if self.size_of(set) as usize <= SCANNED_SIZE && self.meta(set).flags & IS_INT_RUN == 0 {
+            return Ok(self.set_elements(set).contains(&element));
+        }
+        Ok(self.find_in_block(set, element)? != -1)
     }
 
     fn check_comparable(&self, left: Id, right: Id) -> Outcome<()> {
@@ -1411,9 +1416,57 @@ impl Store {
         if right_size == 0 || left == right && !self.is_kept_lazy(left) {
             return Ok(left);
         }
+        let single = match (left_size, right_size) {
+            (_, 1) => Some((left, self.word(self.offset_of(right) as usize))),
+            (1, _) => Some((right, self.word(self.offset_of(left) as usize))),
+            _ => None,
+        };
+        if let Some((set, element)) = single
+            && let Some(union) = self.with_comparable_element(set, element)?
+        {
+            return Ok(union);
+        }
         let capacity = (left_size + right_size) as usize;
         let (merged, length) = self.merge(left, right, capacity, Merge::Union)?;
         Ok(self.finish_merge(merged, length, &[left, right]))
+    }
+
+    // The set with one more element, where no comparison of the element with the set's can fail:
+    // the set itself if a binary search finds the element there, and otherwise the element put in
+    // its place, as a merge would put it. Elsewhere, none. Values of a class that compare equal
+    // are equal and have one id.
+    fn with_comparable_element(&mut self, set: Id, element: Id) -> Outcome<Option<Id>> {
+        let Some(joined) = self.joined_element_shape(element, set) else {
+            return Ok(None);
+        };
+        let size = self.size_of(set) as usize;
+        let offset = self.offset_of(set) as usize;
+        let (mut low, mut high) = (0, size);
+        while low < high {
+            let middle = low + ((high - low) >> 1);
+            let current = self.word(offset + middle);
+            let comparison = if current == element {
+                0
+            } else {
+                self.compare(element, current)?
+            };
+            if comparison == 0 {
+                return Ok(Some(set));
+            }
+            if comparison < 0 {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        let mut words = self.take_scratch(size + 1);
+        words[..low].copy_from_slice(&self.heap[offset..offset + low]);
+        words[low] = element;
+        words[low + 1..=size].copy_from_slice(&self.heap[offset + low..offset + size]);
+        self.scratch = words;
+        let union = self.intern_scratch(KIND_SET, size + 1, size as u32 + 1);
+        self.note_set_shape(union, joined);
+        Ok(Some(union))
     }
 
     pub fn intersection(&mut self, left: Id, right: Id) -> Outcome<Id> {
@@ -1734,7 +1787,9 @@ impl Store {
                 -1
             });
         }
-        if size <= LINEAR_SIZE {
+        // A short block, or one of keys no comparison with which can fail, holds the key where it
+        // holds its id: TLC's search, by compareTo or equals, would find it there.
+        if size <= LINEAR_SIZE || size <= SCANNED_SIZE && self.is_key_comparable(block, key) {
             let words = self.words(offset, size);
             return Ok(words
                 .iter()
