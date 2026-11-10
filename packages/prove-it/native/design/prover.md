@@ -247,7 +247,56 @@ tlapm's results on them: 20,502 trivial, 12,523 proved, 112 failed. Proved by ba
 unknown, 14 sat), Zenon 921 (792 unsat), Isabelle 477 (389 unsat). tlapm's provers report 1,124 s
 in total.
 
-BASELINE-TS
+The TypeScript prover on the same modules (*measured*, Node 22, `proveObligations` on one thread
+per module, three modules at once, 4.5 GB heap; 34 min wall, 6,793 s CPU in all):
+
+| Status | tlapm | TypeScript |
+|---|---|---|
+| trivial | 20,502 | 20,502 |
+| proved | 12,523 | 12,490 (SMT 10,862, Zenon 820, Isabelle 392, LS4 358, `z3` 58) |
+| failed | 112 | 143 |
+| unsupported | — | 2 |
+| modules that fail before any obligation (`TlaProofError`) | 9 | 9 |
+
+Decisions the TypeScript made, by back end (attempts, not obligations; reuse not counted):
+
+| Back end | Decisions | unsat | unknown | sat | Time | Mean |
+|---|---|---|---|---|---|---|
+| SMT (`smt`) | 10,599 | 10,269 | 316 | 14 | 2,201 s | 0.21 s |
+| SMT (`z3` method) | 61 | 55 | 5 | 1 | 202 s | 3.3 s |
+| Zenon | 960 | 803 | 157 | — | 1,387 s | 1.4 s |
+| Isabelle | 482 | 372 | 110 | — | 1,763 s | 3.7 s |
+| LS4 (PTL) | 346 | 345 | — | 1 | 3 s | 0.01 s |
+
+Where the 6,102 s of per-module wall time went: deciding 5,555 s (91%), Prep and encoding 520 s
+(8.5%; `tcp_proof` alone 140 s, the two `BPConProof`s 67 s each), generating obligations 27 s
+(0.5%). The slowest modules are dominated by Isabelle and Zenon: `LamportMutex_proofs` 1,270 s
+(Isabelle 543 s, Zenon 391 s, SMT 326 s), `Boulanger` 653 s, `tcp_proof` 406 s, `Bakery` 303 s.
+
+With Node's default heap (about 2 GB per worker), `bench:prove` with `--jobs 4` lost two
+modules to "JavaScript heap out of memory": `rlimit.ts`'s heap check stops Z3 work, but the
+heap filled elsewhere (in `EWD998PCal_proof` and one of the next three largest), which kills the
+whole process. The run above raised the heap to avoid that. This is a TypeScript defect the Rust
+port removes; it is noted here so that P0's comparison runs use the same raised heap.
+
+Under Bun (*measured*, the same three modules of 5.1 run as one process each, three at once,
+against the Node run above):
+
+| Module | Node | Bun | Ratio | Bun's results |
+|---|---|---|---|---|
+| `EWD998PCal_proof` | 18.0 s | 45.6 s | 2.5× | the same |
+| `FiniteSetTheorems_proofs` | 19.3 s | 36.8 s | 1.9× | one Zenon proof fewer: it reached the 10 s limit |
+| `AtomicBakeryWithoutSMT` | 33.1 s | 46.7 s | 1.4× | the same |
+
+The whole corpus was not run under Bun: at these ratios it takes one to two hours on this
+machine, and the three modules show what matters, that the runtime already changes verdicts at
+the limits.
+
+What the baseline does not yet separate is time spent on decisions that end `unknown` at the
+limit (SMT 5 s, Zenon 10 s, Isabelle 30 s, LS4 10 s) from time on decisions that succeed; the
+upper bounds (316 × 5 s, 157 × 10 s, 110 × 30 s) say that a large share of the Zenon and
+Isabelle time, and a smaller one of the SMT time, is spent waiting for limits. P0's decider
+corpus records each decision's time, which settles it.
 
 ---
 
@@ -587,7 +636,73 @@ be reverted alone.
 
 ## 5. Expected speed
 
-SPEED-TS
+Correctness of verdicts comes first; speed is measured, not targeted, until P6.
+
+### 5.1 Where the TypeScript's time goes
+
+The split of 2.4: deciding 91%, Prep and encoding 8.5%, generating obligations 0.5%. CPU
+profiles under Node (`--cpu-prof`, self time by source file through the bundle's module
+markers), on three modules chosen for their mix of back ends, *measured*:
+
+| Module (Node wall time) | Profile |
+|---|---|
+| `EWD998PCal_proof` (18 s; 468 SMT proofs) | Z3 core 42% (`ast.ts` hash-consing 6%, `rewriter-tpl` 5%, `internalizer` 4%, `context` 3%, `rewriter` 2%, `var-subst` 2%, the SMT-LIB parser 2%); obligations 20% (`expression.ts` maps and visitors 11%, `substitution.ts` 4%); the SMT encoder 7%; Prep 2.5%; garbage collection 15%; idle 7% |
+| `FiniteSetTheorems_proofs` (19 s; SMT 141, Zenon 54, Isabelle 12) | Zenon 30% (`expr.ts` interning 8%, equality rules 5%, the index 3%); Isabelle Pure 16% (`term.ts` 4.5%, `thm.ts` 2%); Z3 core 13%; obligations 9%; garbage collection 22% |
+| `AtomicBakeryWithoutSMT` (33 s; Zenon 115, Isabelle 14) | Zenon 54% (`expr.ts` 18%, equality rules 7%, `index-table` 6%, TLA rewrites 4%, OCaml's `Hashtbl.hash` 4%); Isabelle 12%; garbage collection 24% |
+
+Three things stand out. Building and hashing hash-consed terms (Zenon's `expr.ts`, Z3's
+`ast.ts`, Isabelle's `term.ts`) is the largest single cost in every back end. Garbage collection
+takes 15–24% of all time, since every term, literal and clause is a heap object. And 7% of an
+SMT-heavy module is idle: `proveObligations` yields to the event loop with `setTimeout` after
+every report (the `// HACK` in `prove.ts`, so an abort can land), which costs at least a
+millisecond per obligation; about 30 s over the corpus. That last one is a TypeScript fix
+(`setImmediate`, or yielding only when a signal is set) that P0 can make without changing any
+result.
+
+Under Bun the prover is slower than under Node: 1.4–2.5× on the three modules (2.4), the most on
+the SMT-heavy one. `scripts/run.ts` cites about 85 times on the SMT solver; that is not what these
+modules show, and is worth re-measuring on the inputs it came from, since it is why the conformance
+scripts run under Node. This matters for users, because a library user on Bun runs the prover on
+JavaScriptCore, and there it loses proofs at the limits that Node finds.
+
+### 5.2 What Rust changes
+
+- **The same algorithms, about 2× on CPU-bound code.** DESIGN's measurements of the engine's
+  ports (interning, hash-table probes) gave 1.7–2× over Bun for the same algorithm, and the
+  prover's hot paths are the same kind of code: interning terms, probing hash tables, walking
+  trees. Against Node the factor is smaller on tight loops V8 compiles well, and larger where
+  the profile shows allocation.
+- **No garbage collector.** Per-check arenas (3.3) free a whole decision at once; the 15–24%
+  goes, and with it the heap ceiling that kills processes today (2.4).
+- **No runtime dependence.** The same code under Node, Bun and the native binary, and the same
+  results; the browser runs it as WebAssembly, whose cost against native code nobody has measured
+  here yet (P1 measures it on PTL and P2 on Zenon). The Node–Bun gap of 2.4, and the proofs it
+  loses at the limits, disappear.
+- **Threads.** Today the decide pool parallelises decisions, but Prep and encoding (520 s, 8.5%)
+  run on the main thread, one obligation after another. In Rust they run on the pool too,
+  ordered only where the CASE-error numbering and fingerprint reuse require (3.7).
+- **What it cannot change: the limits.** A decision that ends `unknown` at tlapm's limit takes
+  the limit, in any language. Only proving it first saves time, and that changes the result:
+  once Rust is the default, it may prove obligations TypeScript did not within the limit. That
+  is allowed (tlapm's limits are wall clock and machines differ) but it is a visible change, so
+  each flip reports how many obligations a run on the corpus proves that the TypeScript run did
+  not, and `conformance:prove` counts them as it counts `late` today.
+
+### 5.3 Projection
+
+Per-module wall time on one thread, the corpus as above, *projected*:
+
+| Part | TypeScript (Node) | Rust | Basis |
+|---|---|---|---|
+| Generating obligations | 27 s | 10–15 s | 2× on tree code |
+| Prep and encoding | 520 s | 150–250 s | 2× plus no GC |
+| Successful decisions | at most ≈2,000 s (2.4's upper bounds) | 700–1,000 s | 2× plus no GC |
+| Decisions ending at a limit | at least ≈3,500 s | the same, less those Rust proves in time | fixed by tlapm's limits |
+| **Total** | 6,102 s | ≈4,400–4,800 s | |
+
+So about 1.3× end to end on one thread on this corpus, 2–3× on the part that is not waiting for
+limits, more with threads for Prep, and 1.4–2.5× more again for users on Bun. The P0 decider corpus replaces the bounds with measured times per decision before
+the first flip; the projection is redone then.
 
 ---
 
