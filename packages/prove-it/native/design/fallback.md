@@ -114,3 +114,119 @@ Every check needs an engine, so `bun run test` builds the addon for this system
 (`platform-packages.ts build`) before it runs, and `tests/setup.ts`, which `bunfig.toml` preloads,
 points `PROVE_IT_ENGINE_ADDON` at it unless it or `PROVE_IT_ENGINE_WASM` is set. Running the tests
 needs the pinned Rust toolchain; Verification's Test task and Release's test step bootstrap it.
+
+## Retiring the interpreter
+
+The owner asked on 2026-11-10 for the interpreter to go too, after the TypeScript SANY front end
+and alongside the prover's port to Rust. This is the plan. Nothing is deleted until its stages
+are green.
+
+### Measured on main
+
+- **The library declines 15 models** of the 733 Conformance models TLC checks in 20 s or less, each
+  under a second:
+  - TLCSet (8): ConstantContextTLCCache, DieHardTLA, EWD998Chan, TLCGetNonDeterminism, TLCSetInit,
+    Test2, ChainedCdots and NQSpec/MC;
+  - TLCGet (2): MCDieHardest and test220;
+  - printing a value whose text depends on how TLC built it (2): FastMutex2 and FastMutex3;
+  - JsonSerialize (1): EWD840_json;
+  - AssertError (1): Github696;
+  - a definition TLC computes at startup that fails there (1): test23.
+- **The binary prints what TLC prints for all 15.** The native-only differential runs 1466 runs
+  (733 models in two modes). 1460 print what TLC prints and the other 6 are known differences. None
+  says `not native yet`.
+- **The engine already covers the corpus.** The interpreter survives because the library doesn't run
+  the binary's pipeline. The library lowers the engine IR from the interpreter's `Environment`
+  (`src/engine/ir.ts` imports `evaluate`, `liveness` and `values`), and prints through the
+  interpreter. The binary goes from `tla-front` to the IR, the engine, and `tla-trace` and
+  `tla-live`, and prints TLC's output itself.
+
+### What the interpreter still does
+
+Besides the 15 declines, it does the following in the library:
+
+- **Stops.** 131 of those models stop: a deadlock (54), an invariant (33), an initial state (7) or
+  a run-time error (about 37). The interpreter re-derives the expanding state and prints TLC's trace
+  (`resumeFromEngine`, `tlc/replay.ts`). The binary prints these natively (`tla-trace`).
+- **Temporal properties.** The interpreter prints the lasso or accepting counterexample from the
+  native graph. Under SYMMETRY or a VIEW, or where `tla-live` declines, it checks the properties
+  again. The binary prints lassos and accepting counterexamples. It declines a lasso under SYMMETRY
+  or a VIEW, an accepting cycle without a violation, an unexpanded graph and uncounted branches.
+  None of these occurs in the corpus.
+- **Models without a search.** 44 models have only constants and ASSUMEs. The interpreter also
+  checks every model's assumptions, and computes the initial states of a spec without a next-state
+  relation. The binary does all three.
+- **What `getEngineIneligibility` keeps from the engine:** `PROVE_IT_ENGINE=0`, `-dump`, `-continue`,
+  a periodic config and TLC 1.7.4. The binary says `not native yet` to `-dump`, `-continue` and
+  TLC 1.7.4. The engine doesn't support a periodic config either.
+- **A WebAssembly stack overflow.** The interpreter searches from the start.
+- **`PROVE_IT_LIVE_CHECK=1`.** It cross-checks the native liveness verdict.
+
+Neither side implements `-simulate`, `-generate`, `-debug`, `-dumpTrace` or `-loadTrace`.
+`src/pcal` only validates for SANY, `src/obligations` imports nothing from the interpreter, and
+`src/prover` imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
+`getParentPort`). Those move to the prover. `tlc/version.ts`, `tlc/jar-data.ts` and
+`tlc/messages.ts` are shared with the front end and the CLI, so they move too.
+
+### What uses it as the reference, and what replaces it
+
+| User | Replacement |
+|---|---|
+| Unit tests of the interpreter's internals (about 30 cases) | Deleted with the code; `enumeration-oracle` keeps native against TLC's frozen answers; `engine-store` and `engine-fingerprints` check the native store against `ValueOracle` |
+| Unit tests that compare the engine with the interpreter (about 200 cases: `native-search`, `native-sets`, `native-builtins`, `engine*`, the `PROVE_IT_ENGINE=0` runs in `check` and `cli`) | Golden output recorded once from TLC at d8fb231, as the existing fixture `.out` files are; `compareStateLogs` becomes 1 thread against 4 plus TLC's counts |
+| `differential.ts` pairs `rust/interpreter` and `rust/stopped` | Gone with the hand-over they test; `tlc/rust` and `tlc/native` against `tlc-stdout` stay |
+| `engine-coverage.ts`'s run with the engine off | Dropped; `expected.json` judges the outcome |
+| `value-oracle.ts`'s interpreter fingerprints and TypeScript store | Dropped; TLC's classes stay the oracle |
+| `front-differential.ts`'s TypeScript side | Goes with the TypeScript front end |
+| Verification's Packages and Binary checks with `PROVE_IT_ENGINE=0` | Checks of the WebAssembly engine in `dist` |
+
+The 39 passing models TLC takes more than 20 s on have outcome recordings in `expected.json` but
+no full `tlc-stdout`. Recording them is deferred.
+
+### Stages
+
+- **S0. The front end.** `tla-front` replaces the TypeScript SANY front end and `ir.ts` in the
+  library, and the addon and the WebAssembly module take module sources through a loader callback.
+  This is the front end's workstream.
+- **S1. The binary's check as a host entry.** First, as a pure refactor, `prove-it-cli`'s check
+  driver moves into a crate the binary and `prove-it-host` share. `tla-trace` and `tla-live` print
+  through a sink, not stdout, and the driver returns a structured outcome (status, counts,
+  violation, trace states) beside the lines. The binary must stay byte-identical. Then
+  `check_sources` takes sources through S0's loader. `native.ts` and `wasm.ts` call it, and the
+  library flips once `tlc/rust` equals `tlc/native` on all 1466 runs. That removes the 15 declines
+  and the 131 hand-overs together.
+- **S2. The interpreter-only features, built natively:** `-dump` (which `state-graph`'s tests also
+  need), `-continue`, periodic configs and TLC 1.7.4's output, each after measuring how often the
+  tests and the corpus use it; and `tla-live`'s declines, where a test or a model meets one. For
+  WebAssembly's stack, measure how many corpus models trap now, then choose a larger stack or
+  iterative recursion.
+- **S3. Tests on TLC's recordings,** recorded once with a recorder script.
+- **S4. Flip and delete.**
+  - `check` loses the interpreter tier, `PROVE_IT_ENGINE=0` and `PROVE_IT_LIVE_CHECK`.
+  - About 24,000 lines go: `evaluate`, `values`, `environment`, `successors`, `search`, the
+    interpreter's part of `check`, `liveness*`, `tableau`, `state-graph`, `builtins`, `bags`,
+    `java-overrides`, `parallel*`, `worker`, `fingerprints`, `symmetry`, `randomization`,
+    `transfer`, `dependencies`, `codegen`, `runtime`, `instances`, `subexpressions`,
+    `spec-description`, the rest of `tlc/`, and `engine/store`, `convert`, `fingerprint`,
+    `native-store` and `ir`.
+
+### The public API afterwards
+
+`check` and its option, progress, result and status types, `prove` and its types, `parseConfig`,
+and the errors stay. `parseModule` and `Module` are the front end's to decide.
+
+`Value`, `formatValue` and the values in `TraceStep` and `Violation` are the interpreter's classes.
+The proposal: a trace step carries each variable as TLC prints it, from the native printer, and as
+plain decoded data with no classes. `formatValue` is dropped, or becomes a thin native printer if a
+caller needs one. This breaks callers that hold `Value`s, so it waits for the owner. The exports
+don't change until then.
+
+### What changes for users
+
+- `PROVE_IT_ENGINE=0` goes. Where no engine loads, `EngineUnavailableError` has no escape hatch:
+  - WebAssembly fails to compile;
+  - or `dist` lacks the engine.
+  A browser keeps the WebAssembly engine.
+- A WebAssembly stack overflow becomes an error unless S2 lifts it first.
+- `-dump`, `-continue`, periodic configs and TLC 1.7.4 are checked natively.
+- The library prints what the binary prints. Today they differ only where the library hands over.
