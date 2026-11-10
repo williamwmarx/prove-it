@@ -10,6 +10,7 @@ pub mod isar;
 pub mod provers;
 pub mod pure;
 pub mod tla;
+pub mod tools;
 
 use prove_decide::{DecideError, Decision, Limits};
 
