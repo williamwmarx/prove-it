@@ -115,18 +115,53 @@ pub fn actual_probability(distance: u64) -> f64 {
 }
 
 /// TLC splits its fingerprints into two sets by their top bit and reports the smallest distance
-/// between two fingerprints in the same set, when the optimistic estimate is high enough.
-pub fn fingerprint_distance(distinct: u64, generated: u64, fingerprints: &[u64]) -> Option<u64> {
+/// between two fingerprints in the same set, when the optimistic estimate is high enough. The
+/// fingerprints are sorted on threads, each taking those whose top bits, in the order of the signed
+/// fingerprints, are its own, so that their runs follow one another in the order.
+pub fn fingerprint_distance(
+    distinct: u64,
+    generated: u64,
+    fingerprints: &[u64],
+    threads: usize,
+) -> Option<u64> {
     if optimistic_probability(distinct, generated) < ACTUAL_PROBABILITY_THRESHOLD {
         return None;
     }
-    let mut sorted: Vec<i64> = fingerprints.iter().map(|&fp| fp as i64).collect();
-    sorted.sort_unstable();
+    let ranges = threads.next_power_of_two();
+    let shift = u64::BITS - ranges.trailing_zeros();
+    let sorted: Vec<Vec<i64>> = std::thread::scope(|scope| {
+        let sorting: Vec<_> = (0..ranges)
+            .map(|range| {
+                scope.spawn(move || {
+                    let mut sorted: Vec<i64> = fingerprints
+                        .iter()
+                        .filter(|&&fingerprint| {
+                            (fingerprint ^ 1 << 63).checked_shr(shift).unwrap_or(0) as usize
+                                == range
+                        })
+                        .map(|&fingerprint| fingerprint as i64)
+                        .collect();
+                    sorted.sort_unstable();
+                    sorted
+                })
+            })
+            .collect();
+        sorting
+            .into_iter()
+            .map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    let sorted = sorted.iter().flatten();
     Some(
         sorted
-            .windows(2)
-            .filter(|pair| (pair[0] < 0) == (pair[1] < 0))
-            .map(|pair| (pair[1] - pair[0]) as u64)
+            .clone()
+            .zip(sorted.skip(1))
+            .filter(|(low, high)| (**low < 0) == (**high < 0))
+            .map(|(low, high)| (high - low) as u64)
             .fold(i64::MAX as u64, u64::min),
     )
 }
@@ -203,12 +238,25 @@ mod tests {
     #[test]
     fn measures_the_distance_within_each_half() {
         let fingerprints = [10, 30, 25, 1 << 63, (1 << 63) + 2];
-        assert_eq!(fingerprint_distance(5, 1 << 40, &fingerprints), Some(2));
-        assert_eq!(fingerprint_distance(5, 10, &fingerprints), None);
-        assert_eq!(
-            fingerprint_distance(1, 1 << 40, &[7]),
-            Some(i64::MAX as u64)
-        );
+        for threads in [1, 3, 4] {
+            assert_eq!(
+                fingerprint_distance(5, 1 << 40, &fingerprints, threads),
+                Some(2)
+            );
+            assert_eq!(fingerprint_distance(5, 10, &fingerprints, threads), None);
+            assert_eq!(
+                fingerprint_distance(1, 1 << 40, &[7], threads),
+                Some(i64::MAX as u64)
+            );
+        }
+        // Next to one another in the order, sorted by different threads.
+        let fingerprints = [u64::MAX - 1, (1 << 62) - 1, 1 << 62, 0, 5];
+        for threads in [1, 2, 4, 16] {
+            assert_eq!(
+                fingerprint_distance(5, 1 << 40, &fingerprints, threads),
+                Some(1)
+            );
+        }
     }
 
     #[test]
