@@ -79,7 +79,7 @@ export const writeDebugBytes = (name: string, bytes: Uint8Array) => {
 
 // PROVE_IT_CHECK_LOG names a file each check appends lines of JSON to, which
 // scripts/check-log.ts reads: the check's source, configuration, options and caller, then each
-// module and class it loads.
+// module, class and file it reads.
 export const getCheckLog = () => {
   const path = getEnvironment()?.PROVE_IT_CHECK_LOG;
   const fileSystem = path ? getMainThreadFileSystem() : undefined;

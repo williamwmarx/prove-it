@@ -75,8 +75,8 @@ export type CoordinatorMessage =
 
 export const check = (options: CheckOptions): Promise<CheckResult> => checkParsed(options);
 
-// The options with the check written to PROVE_IT_CHECK_LOG, and each module and class it loads as
-// it loads it, where the configuration is text.
+// The options with the check written to PROVE_IT_CHECK_LOG, and each module, class and file it
+// reads as it reads it, where the configuration is text.
 const logCheck = (options: CheckOptions): CheckOptions => {
   const append = getCheckLog();
   if (!append || typeof options.config !== "string") return options;
@@ -88,7 +88,9 @@ const logCheck = (options: CheckOptions): CheckOptions => {
     seed: options.seed?.toString(),
     livenessCheck: options.livenessCheck,
     isTool: options.isTool === true,
-    isDumped: options.dump !== undefined,
+    workers: options.workers,
+    systemProperties: options.systemProperties && [...options.systemProperties],
+    dump: options.dump,
     isContinued: options.isContinued === true,
     isWarningEnabled: options.isWarningEnabled !== false,
     version: options.version,
@@ -97,6 +99,7 @@ const logCheck = (options: CheckOptions): CheckOptions => {
   });
   const loadModule = options.loadModule;
   const loadClass = options.loadClass;
+  const readFile = options.readFile;
   return {
     ...options,
     loadModule:
@@ -117,6 +120,13 @@ const logCheck = (options: CheckOptions): CheckOptions => {
             bytes: btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join("")),
           });
         return bytes;
+      }),
+    readFile:
+      readFile &&
+      ((path) => {
+        const text = readFile(path);
+        if (text !== undefined) append({ id, file: path, text });
+        return text;
       }),
   };
 };
