@@ -1470,6 +1470,104 @@ fn reads_and_sets_tlcs_registers() {
 }
 
 #[test]
+fn caches_tlccache_by_its_key_alone_as_tlc() {
+    // TLC caches a constant expression by its node and its key for the whole run, so bindings the
+    // key doesn't tell apart share the value first cached.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nInit == x = [i \\in {0, 1} |-> TLCCache(i, 0)]\nNext == x' = [i \\in {0, 1} |-> TLCCache(i + 1, i)]\nInv == x \\in {(0 :> 0 @@ 1 :> 0), (0 :> 1 @@ 1 :> 2)}\n====\n";
+    let (output, directory) =
+        run_lowered("cache-key", spec, "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("3 states generated, 2 distinct states found, 0 states left on queue."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // TLC evaluates the key each time, where it fails; and caches nothing of an expression that
+    // reads a variable, which the engine can't tell from a constant one that reads it through an
+    // operator's argument.
+    for (test, definitions) in [
+        (
+            "cache-violated",
+            "Init == x = [i \\in {0, 1} |-> TLCCache(i, 0)]\nNext == x' = x\nInv == x[1] = 1",
+        ),
+        (
+            "cache-key-fails",
+            "Init == x = 0\nNext == x' = x\nInv == TLCCache(TRUE, 1 \\div 0)",
+        ),
+        (
+            "cache-argument",
+            "F(p) == TLCCache(p + 1, 0)\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == F(x) = x + 1",
+        ),
+        (
+            "cache-variable",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == \\A i \\in {0, 1}: TLCCache(IF FALSE THEN x ELSE i, 0) = i",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\n{definitions}\n====\n"
+        );
+        let (output, directory) = run_lowered(
+            test,
+            &spec,
+            "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n",
+        );
+        let text = stdout(&output);
+        assert!(!text.contains("Model checking completed"), "{text}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("not native yet"),
+            "{test}: {text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn declines_to_fingerprint_what_tlc_fails_to() {
+    // TLC fails to fingerprint a function over Nat or Int it keeps lazy, and Nat, Int or STRING,
+    // at any depth: TLCFP of one fails, and so does a state or a VIEW that holds one.
+    for (test, definitions, config) in [
+        (
+            "fp-lazy",
+            "Init == x = TLCFP([i \\in Nat |-> i])\nNext == x' = x\nInv == x = TLCFP(<<>>)",
+            "INVARIANT Inv\n",
+        ),
+        (
+            "fp-nested",
+            "Init == x = 0\nNext == x' = x\nInv == TLCFP(<<1, [r |-> [i \\in Int |-> i]]>>) = 0",
+            "INVARIANT Inv\n",
+        ),
+        (
+            "fp-set",
+            "Init == x = 0\nNext == x' = x\nInv == TLCFP({Nat}) = 0",
+            "INVARIANT Inv\n",
+        ),
+        (
+            "fp-view",
+            "Init == x \\in 0..1\nNext == x' = x\nV == [i \\in Int |-> x]",
+            "VIEW V\n",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\n{definitions}\n====\n"
+        );
+        let (output, directory) =
+            run_lowered(test, &spec, &format!("INIT Init\nNEXT Next\n{config}"));
+        let text = stdout(&output);
+        assert!(!text.contains("Model checking completed"), "{text}");
+        assert!(!text.contains("is equal to FALSE"), "{text}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(
+                "unsupported: fingerprinting a function TLC keeps lazy, or Nat, Int or STRING"
+            ),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn applies_the_functions_tlc_keeps_lazy() {
     // TLC keeps a function over Nat or Int lazy (`FcnLambdaValue`): applying one evaluates its
     // body, EXCEPT records the key, and a state can't hold one, as TLC can't fingerprint it.

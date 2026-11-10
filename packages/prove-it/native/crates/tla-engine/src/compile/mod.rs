@@ -718,6 +718,8 @@ pub struct Compiler<'a> {
     /// Whether anything compiled may build a function TLC keeps lazy, which only the machine that
     /// built it can apply.
     pub is_lambda_built: bool,
+    /// Whether TLCCache caches anything compiled whose value depends on what TLC evaluates first.
+    pub is_cached: bool,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
 }
@@ -791,6 +793,7 @@ impl<'a> Compiler<'a> {
             is_native: false,
             workers: 1,
             is_lambda_built: false,
+            is_cached: false,
             scope_contexts: HashMap::new(),
         }
     }

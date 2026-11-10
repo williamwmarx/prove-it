@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeKind};
-use tla_values::fingerprint::{Fingerprints, INITIAL};
+use tla_values::fingerprint::INITIAL;
 use tla_values::json;
 use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
@@ -865,18 +865,23 @@ impl Compiler<'_> {
         Ok(leaf(
             eval(move |machine| {
                 let value = evaluate(machine)?;
-                let fingerprint = Fingerprints::new().get_state(&machine.store, &[value], &[0]);
+                let fingerprint = machine
+                    .fingerprints
+                    .get_state(&machine.store, &[value], &[0])?;
                 machine.store.int(i64::from(fingerprint as i32))
             }),
             value.footprint,
         ))
     }
 
-    // TLCCache(e, key) (`TLCExt.tlcEval2`): e evaluated once for each key where e reads no
-    // variable, and otherwise each time, as TLC caches it by the state, which only an e that sets
-    // or reads a register could tell. TLC caches by e's node, wherever it is reached from. Where the key is
-    // constant, e's effects happen once, where TLCCache is first evaluated, so they may wherever
-    // TLCCache is.
+    // TLCCache(e, key) (`TLCExt.tlcEval2`), by SANY's level of e. Where e is constant, TLC
+    // evaluates the key each time and caches e's value by e's node and the key's hash, a
+    // fingerprint, for the rest of the run: the bindings of bound identifiers that the key doesn't
+    // tell apart share the value first cached, and e's effects happen once, where e is first
+    // evaluated, so they may wherever TLCCache is. Where e reads a variable TLC caches nothing,
+    // evaluates the key in the current state alone and e twice, and where e reads a primed
+    // variable, e alone. A constant e can read a variable through an operator's argument, which
+    // the engine can't tell from one that reads it itself, so it declines e that reads one.
     fn compile_tlc_cache(
         &mut self,
         operands: &[Operand],
@@ -898,12 +903,12 @@ impl Compiler<'_> {
                 ..expression.context.clone()
             },
         )?;
-        if !value.is_printing() && !value.uses_registers() {
-            return Ok(value);
-        }
         if !value.footprint.vars.is_empty() || !value.footprint.primes.is_empty() {
-            return unsupported("TLCCache of an expression with registers that reads variables");
+            return unsupported("TLCCache of an expression that reads variables");
         }
+        // What the cache holds then depends on the order in which TLC first evaluates e, with one
+        // cache for every worker.
+        self.is_cached |= value.footprint.width() > 0;
         let footprint = key.footprint.merge(&if is_key_constant {
             value.footprint.without_slots(&[super::PRINT_SLOT])
         } else {
@@ -913,17 +918,14 @@ impl Compiler<'_> {
         Ok(leaf(
             eval(move |machine| {
                 let key = evaluate_key(machine)?;
-                for &(cached, value) in machine.tlc_caches.get(&node).into_iter().flatten() {
-                    if machine.store.equals(cached, key)? {
-                        return Ok(value);
-                    }
+                let hash = machine
+                    .fingerprints
+                    .get_state(&machine.store, &[key], &[0])?;
+                if let Some(&value) = machine.tlc_caches.get(&(node, hash)) {
+                    return Ok(value);
                 }
                 let value = evaluate_value(machine)?;
-                machine
-                    .tlc_caches
-                    .entry(node)
-                    .or_default()
-                    .push((key, value));
+                machine.tlc_caches.insert((node, hash), value);
                 Ok(value)
             }),
             footprint,
