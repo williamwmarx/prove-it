@@ -7,6 +7,7 @@
 //! never reused, so a handle never aliases a newer object.
 
 use super::literal::Literal;
+use crate::core::ast::{Decl, Expr};
 use crate::util::error::SmtError;
 
 /// A node: its index in `Enodes`.
@@ -192,8 +193,8 @@ const NUM_ARGS_SHIFT: u32 = 7;
 
 #[derive(Clone, Debug)]
 pub struct Enode {
-    pub owner: u32,
-    pub decl: u32,
+    pub owner: Expr,
+    pub decl: Decl,
     pub root: EnodeId,
     pub next: EnodeId,
     pub cg: EnodeId,
@@ -313,8 +314,8 @@ impl Enodes {
     )]
     pub fn mk(
         &mut self,
-        owner: u32,
-        decl: u32,
+        owner: Expr,
+        decl: Decl,
         num_args: u32,
         arg0: Option<EnodeId>,
         arg1: Option<EnodeId>,
@@ -396,7 +397,7 @@ impl Enodes {
 mod tests {
     use super::*;
 
-    fn mk_leaf(enodes: &mut Enodes, owner: u32) -> EnodeId {
+    fn mk_leaf(enodes: &mut Enodes, owner: Expr) -> EnodeId {
         enodes.mk(
             owner,
             owner,

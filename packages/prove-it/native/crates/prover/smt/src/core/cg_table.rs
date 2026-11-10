@@ -4,29 +4,29 @@
 //! are commutative.
 
 use super::enode::{CONGRUENCE_JUSTIFICATIONS, EnodeId, Enodes, EqJustification};
+use crate::core::ast::{Decl, Expr};
 
 const GOLDEN: i32 = 0x9e37_79b1_u32 as i32;
 const MIX: i32 = 0x85eb_ca6b_u32 as i32;
 
 /// The hash of an equality between the classes of first and second, in either order.
-fn get_eq_hash(decl: u32, first: u32, second: u32) -> i32 {
+fn get_eq_hash(decl: Decl, first: Expr, second: Expr) -> i32 {
     let (lower, upper) = if first < second {
         (first, second)
     } else {
         (second, first)
     };
-    (decl as i32)
-        .wrapping_mul(GOLDEN)
-        .wrapping_add(lower as i32)
+    decl.wrapping_mul(GOLDEN)
+        .wrapping_add(lower)
         .wrapping_mul(MIX)
-        .wrapping_add(upper as i32)
+        .wrapping_add(upper)
 }
 
-fn get_root_owner(enodes: &Enodes, node: EnodeId) -> u32 {
+fn get_root_owner(enodes: &Enodes, node: EnodeId) -> Expr {
     enodes.get(enodes.get(node).root).owner
 }
 
-fn get_hash(enodes: &Enodes, decl: u32, args: &[EnodeId], is_eq: bool) -> i32 {
+fn get_hash(enodes: &Enodes, decl: Decl, args: &[EnodeId], is_eq: bool) -> i32 {
     if is_eq {
         return get_eq_hash(
             decl,
@@ -34,11 +34,11 @@ fn get_hash(enodes: &Enodes, decl: u32, args: &[EnodeId], is_eq: bool) -> i32 {
             get_root_owner(enodes, args[1]),
         );
     }
-    let mut hash = decl as i32;
+    let mut hash = decl;
     for arg in args {
         hash = hash
             .wrapping_mul(GOLDEN)
-            .wrapping_add(get_root_owner(enodes, *arg) as i32);
+            .wrapping_add(get_root_owner(enodes, *arg));
     }
     hash
 }
@@ -52,11 +52,11 @@ fn get_node_hash(enodes: &Enodes, node: EnodeId) -> i32 {
             get_root_owner(enodes, enode.get_arg(1)),
         );
     }
-    let mut hash = enode.decl as i32;
+    let mut hash = enode.decl;
     for index in 0..enode.num_args() {
         hash = hash
             .wrapping_mul(GOLDEN)
-            .wrapping_add(get_root_owner(enodes, enode.get_arg(index)) as i32);
+            .wrapping_add(get_root_owner(enodes, enode.get_arg(index)));
     }
     hash
 }
@@ -81,7 +81,7 @@ fn is_pair_congruent_to(
 fn is_congruent_to(
     enodes: &Enodes,
     node: EnodeId,
-    decl: u32,
+    decl: Decl,
     args: &[EnodeId],
     is_eq: bool,
 ) -> bool {
@@ -175,7 +175,7 @@ impl CgTable {
     fn find(
         &self,
         enodes: &Enodes,
-        decl: u32,
+        decl: Decl,
         args: &[EnodeId],
         is_eq: bool,
         hash: i32,
@@ -269,7 +269,7 @@ impl CgTable {
     pub fn find_for(
         &self,
         enodes: &Enodes,
-        decl: u32,
+        decl: Decl,
         args: &[EnodeId],
         is_eq: bool,
     ) -> Option<EnodeId> {
@@ -318,10 +318,10 @@ impl CgTable {
 mod tests {
     use super::*;
 
-    const F: u32 = 1000;
-    const EQ: u32 = 1001;
+    const F: Decl = 1000;
+    const EQ: Decl = 1001;
 
-    fn mk_leaf(enodes: &mut Enodes, owner: u32) -> EnodeId {
+    fn mk_leaf(enodes: &mut Enodes, owner: Expr) -> EnodeId {
         enodes.mk(
             owner,
             owner,
@@ -338,7 +338,7 @@ mod tests {
         )
     }
 
-    fn mk_app(enodes: &mut Enodes, owner: u32, decl: u32, args: &[EnodeId]) -> EnodeId {
+    fn mk_app(enodes: &mut Enodes, owner: Expr, decl: Decl, args: &[EnodeId]) -> EnodeId {
         enodes.mk(
             owner,
             decl,
@@ -415,7 +415,7 @@ mod tests {
         let apps: Vec<EnodeId> = leaves
             .iter()
             .enumerate()
-            .map(|(index, leaf)| mk_app(&mut enodes, 2000 + index as u32, F, &[*leaf]))
+            .map(|(index, leaf)| mk_app(&mut enodes, 2000 + index as i32, F, &[*leaf]))
             .collect();
         let mut table = CgTable::new();
         for app in &apps {

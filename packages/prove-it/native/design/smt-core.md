@@ -18,6 +18,8 @@ track: keep it current.
 | `util::error::SmtError` | the `Smt*Error` classes of `src/errors.ts` | done |
 | `util::ordered_map::{OrderedMap, OrderedSet}` | an iterated JS `Map`/`Set` | done |
 | `lp::dependency` | `lp/dependency.ts` | done |
+| `core::{ast, flat_literals, ref_vector, expr_ref}` | the AST manager | done; a 3000-step trace of the TS manager (ids, hashes, small ids, ref counts, recycling) in `smt/tests/tables/ast.txt`, written by `scripts/smt-core-tables.ts` |
+| `core::{literal, sort, enode, cg_table, case_split_queue, sticky_generations, clause}` | the e-graph's and the clauses' types | done; `smt-clause-store` ported |
 | `core::*` | the rest of `smt/solver/*.ts` | §3 |
 
 The tables are written by `scripts/smt-foundation-tables.ts` (`bun scripts/smt-foundation-tables.ts`)
@@ -36,8 +38,9 @@ order its sorts and the matcher hashes small ids. So `inc_ref`, `dec_ref`, `rele
 `begin_temporaries`/`end_temporaries` and `RefVector` are ported literally, every call kept at the
 same place. (This corrects §3.3 of prover.md, which assumed the arena made them unnecessary.)
 
-**Handles.** Expressions, sorts, declarations, Boolean variables, literals, clauses, theory
-variables: `u32` where the TS never stores -1 in them, `i32` where it does (a TS `Int32Array` slot
+**Handles.** `ast::{Expr, Decl, Sort}` are `i32` (the TS stores -1 in each); `literal::{BoolVar,
+Literal}`, `clause::Clause`, `enode::{EnodeId, JustificationId}` are `u32`. Other handles (theory
+variables and the like): `u32` where the TS never stores -1 in them, `i32` where it does (a TS `Int32Array` slot
 that holds -1 stays an `i32`). Type aliases from the module that owns them (`ast::Expr`,
 `literal::Literal`, `literal::BoolVar`, `clause::Clause`), no newtypes, so the arithmetic on them
 (`literal ^ 1`, `literal >> 1`) ports as it reads. A TS `Uint32Array` is `Vec<u32>`, an
@@ -56,6 +59,14 @@ so a handle never aliases a newer object. A class hierarchy with an abstract met
 class that keeps `private manager: AstManager` keeps no manager in Rust: its methods
 take `m: &mut AstManager` (or `&AstManager` when they only read) as their first argument after
 `self`. `Context` owns its manager as the field `m`.
+
+**What `ast` settled** (follow it in callers): `mk_app(decl, args: &[Expr], sort)` takes a slice
+(the TS `start` argument is `&stack[start..]`); the `mk_*` that can throw return `Result`;
+`with_temporaries(body)` keeps the result and `with_temporaries_keeping(body, get_kept)` takes the
+TS's `getKept`; `map_args`/`some_arg`/`every_arg` only read, so a caller that builds per argument
+loops over `get_arg`; `FlatLiterals.add` is the manager's `flat_literals_add`. `RefVector` and
+`ExprRef` take `&mut AstManager` and release nothing on drop: the owner calls `reset` where the TS
+object would be released (end of scope of a Z3 `expr_ref_vector`).
 
 **The context.** `Context extends Internalizer`: one `struct Context` in `core/context.rs`,
 with the fields of both classes. `internalizer.rs` holds `impl Context` with the internalizer's
@@ -127,4 +138,4 @@ group, integrated and tested before the next:
 ## 4. Handoff
 
 - P3a: done on branch `smt-foundation`.
-- P3c: conventions fixed (this note). Wave 1: `literal`, `sort`, `enode` (arenas `Enodes`, `Justifications`), `cg_table`, `case_split_queue`, `sticky_generations`, `clause` with `smt-clause-store` ported, on branch `smt-core`; `ast` in progress.
+- P3c: wave 1 done on branch `smt-core` (the table in §1). Waves 2–4 next, in parallel.

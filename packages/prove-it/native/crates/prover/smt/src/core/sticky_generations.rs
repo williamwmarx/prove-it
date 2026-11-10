@@ -5,6 +5,7 @@
 //! does, in arrays that iterate without allocating. A deleted update leaves a hole until holes are
 //! half of its group.
 
+use crate::core::ast::Decl;
 use std::collections::HashMap;
 
 use super::enode::{EnodeId, Enodes};
@@ -22,7 +23,7 @@ pub struct Group {
 #[derive(Clone, Debug, Default)]
 pub struct StickyGenerations {
     /// Only looked up, never iterated.
-    groups: HashMap<u32, Group>,
+    groups: HashMap<Decl, Group>,
 }
 
 impl StickyGenerations {
@@ -68,7 +69,7 @@ impl StickyGenerations {
     }
 
     /// The updates of the declaration in the order of insertion, where a deleted one is `None`.
-    pub fn get_group(&self, decl: u32) -> Option<&Group> {
+    pub fn get_group(&self, decl: Decl) -> Option<&Group> {
         self.groups.get(&decl)
     }
 }
