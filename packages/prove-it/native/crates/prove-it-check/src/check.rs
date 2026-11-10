@@ -3,7 +3,7 @@
 
 use std::path::Path;
 use std::sync::mpsc;
-use std::time::Instant;
+use tla_engine::clock::Instant;
 
 use tla_engine::search::{
     Delegated, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome, Settings, Violation,
@@ -18,6 +18,7 @@ use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
 use crate::messages::{self as code, Level, Output, Printer};
+use crate::stack::{alongside, on_search_stack};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
     optimistic_probability, out_degree_summary,
@@ -49,10 +50,6 @@ const CONFIG_PARSE_ERROR: i32 = 151;
 const NOT_NATIVE: i32 = 1;
 
 const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
-
-/// How deep the search thread's stack may grow: compiled closures recurse with the expressions
-/// and the values they evaluate. It is reserved, not committed.
-pub(crate) const SEARCH_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 /// Runs the command line `args` as TLC (or SANY's XMLExporter) would, writing to `output`, and
 /// returns the exit code.
@@ -684,14 +681,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // trace evaluator finds as check.ts does. A model it can't split keeps none, and its traces
     // name no actions natively. The evaluator recurses, so it runs with the search's stack.
     if ir.model.actions.is_empty() {
-        let split = std::thread::scope(|scope| {
-            std::thread::Builder::new()
-                .stack_size(SEARCH_STACK_BYTES)
-                .spawn_scoped(scope, || tla_trace::add_actions(&ir).ok())
-                .expect("a thread to split the next-state relation")
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        });
+        let split = on_search_stack(|| tla_trace::add_actions(&ir).ok());
         if let Some(split) = split {
             ir = split;
         }
@@ -729,78 +719,76 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // counterexample started.
     let mut checking = None;
     let mut is_misprinted = false;
-    let (outcome, assumed_printed) = std::thread::scope(|scope| {
-        let ir = &ir;
-        let searching = std::thread::Builder::new()
-            .stack_size(SEARCH_STACK_BYTES)
-            .spawn_scoped(scope, move || {
-                let mut relay = Relay {
-                    sender,
-                    is_misprinted: false,
-                    ir,
-                    is_tool,
-                    workers,
-                    startup_messages: front.startup_messages,
-                    startup_worded: Some(Vec::new()),
-                    assumed_worded: Vec::new(),
-                    assumed_printed: Vec::new(),
-                    assumed_texts: None,
-                    startup_texts: None,
-                };
-                let outcome = search(ir, &settings, &mut relay);
-                (outcome, relay.assumed_printed)
-            })
-            .expect("a thread for the search");
-        for event in receiver.iter() {
-            match event {
-                Event::InitialStatesStarted => printer.print(
-                    code::COMPUTING_INIT,
-                    Level::None,
-                    "Computing initial states...",
-                ),
-                Event::InitialStatesProgress(count) => printer.print(
-                    code::COMPUTING_INIT_PROGRESS,
-                    Level::None,
-                    &format!("Computed {count} initial states..."),
-                ),
-                Event::InitialStates(generated, distinct) => {
-                    initial_generated = generated;
-                    print_initial_states(printer, generated, distinct)
-                }
-                Event::Progress(generated, distinct, queued, depth) => {
-                    let statistics = Statistics {
-                        generated,
-                        distinct,
-                        queued,
-                        depth,
-                    };
-                    print_progress(printer, &statistics, Some(start));
-                    printer.flush();
-                }
-                Event::LivenessStarted(branches, expanded) => {
-                    checking = Some(print_liveness_check(printer, branches, expanded, "current"));
-                }
-                Event::LivenessFinished => {
-                    if let Some(checking) = checking.take() {
-                        print_liveness_finished(printer, checking);
+    let ir_ref = &ir;
+    let (outcome, assumed_printed) = alongside(
+        move || {
+            let ir = ir_ref;
+            let mut relay = Relay {
+                sender,
+                is_misprinted: false,
+                ir,
+                is_tool,
+                workers,
+                startup_messages: front.startup_messages,
+                startup_worded: Some(Vec::new()),
+                assumed_worded: Vec::new(),
+                assumed_printed: Vec::new(),
+                assumed_texts: None,
+                startup_texts: None,
+            };
+            let outcome = search(ir, &settings, &mut relay);
+            (outcome, relay.assumed_printed)
+        },
+        || {
+            for event in receiver.iter() {
+                match event {
+                    Event::InitialStatesStarted => printer.print(
+                        code::COMPUTING_INIT,
+                        Level::None,
+                        "Computing initial states...",
+                    ),
+                    Event::InitialStatesProgress(count) => printer.print(
+                        code::COMPUTING_INIT_PROGRESS,
+                        Level::None,
+                        &format!("Computed {count} initial states..."),
+                    ),
+                    Event::InitialStates(generated, distinct) => {
+                        initial_generated = generated;
+                        print_initial_states(printer, generated, distinct)
+                    }
+                    Event::Progress(generated, distinct, queued, depth) => {
+                        let statistics = Statistics {
+                            generated,
+                            distinct,
+                            queued,
+                            depth,
+                        };
+                        print_progress(printer, &statistics, Some(start));
+                        printer.flush();
+                    }
+                    Event::LivenessStarted(branches, expanded) => {
+                        checking =
+                            Some(print_liveness_check(printer, branches, expanded, "current"));
+                    }
+                    Event::LivenessFinished => {
+                        if let Some(checking) = checking.take() {
+                            print_liveness_finished(printer, checking);
+                        }
+                    }
+                    Event::Print(Some(text)) => printer.line(&text),
+                    Event::StartupMessage(message) => print_startup_message(printer, &message),
+                    Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
+                    // Nothing more this run prints can be right, so it prints nothing more, and the
+                    // search, which the relay cancels, ends with the events it sends unread.
+                    Event::Print(None) => {
+                        is_misprinted = true;
+                        break;
                     }
                 }
-                Event::Print(Some(text)) => printer.line(&text),
-                Event::StartupMessage(message) => print_startup_message(printer, &message),
-                Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
-                // Nothing more this run prints can be right, so it prints nothing more, and the
-                // search, which the relay cancels, ends with the events it sends unread.
-                Event::Print(None) => {
-                    is_misprinted = true;
-                    break;
-                }
             }
-        }
-        drop(receiver);
-        searching
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    });
+            drop(receiver);
+        },
+    );
     if is_misprinted {
         return report_not_native(
             printer,

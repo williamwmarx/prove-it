@@ -12,8 +12,8 @@ use tla_front::model::{
 use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text_of};
 use tla_front::tlc_messages::CodedError;
 
-use crate::check::SEARCH_STACK_BYTES;
 use crate::host::{Files, Host};
+use crate::stack::on_search_stack;
 
 /// What the front end gives a run: the model to check, or where TLC stops before it searches.
 pub enum Read {
@@ -143,14 +143,7 @@ fn lower(
     };
     // The evaluator recurses, so it runs with the search's stack.
     let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index]| {
-        std::thread::scope(|scope| {
-            std::thread::Builder::new()
-                .stack_size(SEARCH_STACK_BYTES)
-                .spawn_scoped(scope, || tla_trace::get_startup_texts(ir, definitions))
-                .expect("a thread to compute the startup")
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        })
+        on_search_stack(|| tla_trace::get_startup_texts(ir, definitions))
     };
     lower_front_ranking_of(sources, config_text, &options, &get_startup_texts)
 }

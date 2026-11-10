@@ -9,6 +9,7 @@ mod files;
 mod front;
 mod host;
 mod messages;
+mod stack;
 mod summary;
 mod time;
 mod trace;

@@ -359,9 +359,16 @@ fn get_override_messages(
         .java_overrides
         .iter()
         .map(|java_override| {
-            let path =
-                std::path::absolute(directory.join(format!("{}.class", java_override.module)))
-                    .map_err(|error| error.to_string())?;
+            let class = directory.join(format!("{}.class", java_override.module));
+            // WebAssembly has no working directory, and `is_absolute` is false there for any path,
+            // so a path from the root stays as it is.
+            let is_absolute =
+                class.is_absolute() || cfg!(target_arch = "wasm32") && class.has_root();
+            let path = if is_absolute {
+                class
+            } else {
+                std::path::absolute(class).map_err(|error| error.to_string())?
+            };
             let path = path.to_str().unwrap_or_default();
             // `pathToFileURL` escapes what a URL can't hold, which the front end doesn't follow.
             let is_plain = !path.is_empty()
