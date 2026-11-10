@@ -69,6 +69,9 @@ const IS_RECORD: u8 = 1;
 // A block whose first words are a run of consecutive integers, such as 0..n, by its first and
 // last: a set's elements, a function's domain or a tuple's elements.
 const IS_INT_RUN: u8 = 2;
+// Whether a set, tuple or function holds, at any depth, a function TLC keeps lazy, which TLC
+// builds to compare: the store's equal ids say nothing of it.
+const HOLDS_LAZY: u8 = 4;
 
 /// What the store keeps of each id: one 16-byte read finds its kind, size and payload.
 #[derive(Clone, Copy)]
@@ -545,6 +548,11 @@ impl Store {
         id
     }
 
+    fn is_kept_lazy(&self, id: Id) -> bool {
+        let meta = self.meta(id);
+        meta.kind == KIND_LAZY_FUNCTION || meta.flags & HOLDS_LAZY != 0
+    }
+
     fn get_flags(&self, kind: u8, offset: usize, size: usize) -> u8 {
         let keys = self.words(offset, size);
         let is_record =
@@ -558,7 +566,18 @@ impl Store {
             }
             _ => false,
         };
-        (if is_record { IS_RECORD } else { 0 }) | if is_run { IS_INT_RUN } else { 0 }
+        let length = if kind == KIND_FUNCTION {
+            2 * size
+        } else {
+            size
+        };
+        let holds_lazy = self
+            .words(offset, length)
+            .iter()
+            .any(|&word| self.is_kept_lazy(word));
+        (if is_record { IS_RECORD } else { 0 })
+            | (if is_run { IS_INT_RUN } else { 0 })
+            | if holds_lazy { HOLDS_LAZY } else { 0 }
     }
 
     // The id of the value with this hash that `is_match` accepts: an overlay looks in its base's
@@ -887,6 +906,10 @@ impl Store {
     #[inline(always)]
     pub fn equals(&mut self, left: Id, right: Id) -> Outcome<bool> {
         if left == right {
+            // TLC builds a function it kept lazy to compare it, with itself too.
+            if self.is_kept_lazy(left) {
+                return Err(LAZY_FUNCTION);
+            }
             return Ok(true);
         }
         let (left_meta, right_meta) = (self.meta(left), self.meta(right));
@@ -1136,6 +1159,10 @@ impl Store {
         if self.kind_of(set) == KIND_INFINITE_SET {
             return self.is_member_of_infinite(element, set);
         }
+        // TLC compares the element with the set's, which builds a function it kept lazy.
+        if self.size_of(set) > 0 && (self.is_kept_lazy(element) || self.is_kept_lazy(set)) {
+            return Err(LAZY_FUNCTION);
+        }
         if self.find_in_block(set, element)? != -1 {
             return Ok(true);
         }
@@ -1316,6 +1343,9 @@ impl Store {
 
     pub fn is_subset(&mut self, left: Id, right: Id) -> Outcome<bool> {
         if left == right {
+            if self.is_kept_lazy(left) {
+                return Err(LAZY_FUNCTION);
+            }
             return Ok(true);
         }
         let left_size = self.size_of(left);

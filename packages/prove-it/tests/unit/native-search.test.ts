@@ -467,6 +467,51 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     );
   });
 
+  it("fails where TLC's evaluation of a lazy function or a later bound fails", async () => {
+    const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
+    for (const [invariant, reason] of [
+      // TLC reads a function it keeps lazy at the key of an EXCEPT (FcnLambdaValue.select): the
+      // EXCEPT changes nothing outside the domain, and the value there may fail.
+      [
+        "LET f == [i \\in Nat |-> i + x] g == [f EXCEPT ![-1] = 5] IN g[-1] = 5",
+        "applied a function outside its domain",
+      ],
+      [
+        "LET f == [i \\in Nat |-> 10 \\div (i + x)] IN [f EXCEPT ![0] = 7][3] = 3",
+        "division by zero",
+      ],
+      // TLC builds a lazy function to compare it, with itself too.
+      [
+        "LET f == [i \\in Nat |-> i + x] IN f = f",
+        "unsupported: comparing a function TLC keeps lazy",
+      ],
+      [
+        "LET f == [i \\in Nat |-> i + x] IN {f} = {f}",
+        "unsupported: comparing a function TLC keeps lazy",
+      ],
+      [
+        "LET f == [i \\in Nat |-> i + x] IN f \\in {f}",
+        "unsupported: comparing a function TLC keeps lazy",
+      ],
+      // TLC evaluates every bound's set before it binds any (Tool.contexts).
+      ["~(\\E i \\in {}, j \\in (1 \\div x) .. 2 : TRUE)", "division by zero"],
+      ["\\A i \\in {}, j \\in x : FALSE", "quantified over a non-set"],
+      ["{<<i, j>> : i \\in {}, j \\in (1 \\div x) .. 2} = {}", "division by zero"],
+    ]) {
+      const body = [
+        "EXTENDS Integers",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x < 1 /\\ x' = x + 1",
+        `Inv == ${invariant}`,
+      ];
+      expect([invariant, await compareWithInterpreter(body, config)]).toEqual([
+        invariant,
+        expect.arrayContaining([expect.stringMatching(stopped(reason))]),
+      ]);
+    }
+  });
+
   it("checks invariants, constraints, action constraints and action properties", async () => {
     const body = [
       "EXTENDS Naturals, TLC",

@@ -2315,6 +2315,30 @@ fn ranks_the_strings_the_startup_makes_without_a_recorded_front() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+#[test]
+fn ranks_the_startup_of_a_recursive_function_of_two_arguments_without_a_recorded_front() {
+    // tla-rs function_syntax: building add again for each of its arguments recursed until the
+    // stack overflowed, which aborted the binary as it ranked the startup's strings.
+    let (output, directory) = run_front(
+        "two-argument-function",
+        "---- MODULE Add ----\nEXTENDS Naturals\nVARIABLE x\nadd[a \\in 0..3, b \\in 0..3] == IF b = 0 THEN a ELSE add[a, b - 1] + 1\nInit == x = 0\nNext == x' = x\nInv == add[2, 3] = 5\n====\n",
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        &["-nowarning"],
+    );
+    let text = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{text}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        text.contains("Model checking completed. No error has been found.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 // Each output is what TLC at d8fb231 prints for the spec.
 #[test]
 fn checks_a_successor_in_tlc_s_order() {
@@ -2516,5 +2540,17 @@ fn rebuilds_the_trace_again_only_where_tlc_checks_the_postconditions_after_a_fai
         text.contains("State 3: <Next line 5, col 9 to line 5, col 74 of module Stop>\nx = 5\n\n<<\"n\", 2>>\n10 states generated, 6 distinct states found, 2 states left on queue.\n"),
         "{text}"
     );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// TLCEval makes the set an enumerated one (`TLCEval.convert`), which TLC enumerates in its
+// normalized order whatever the union it was.
+#[test]
+fn enumerates_a_set_tlceval_made_in_its_normalized_order() {
+    let spec = "---- MODULE Evaluated ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x < 1 /\\ x' = x + 1 /\\ y' \\in TLCEval((SUBSET {1, 2}) \\cup {{3}})\n====\n";
+    let (output, directory) = run_front("tlceval-order", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(text.contains("\n/\\ x = 1\n/\\ y = {}\n"), "{text}");
     std::fs::remove_dir_all(directory).expect("removed");
 }

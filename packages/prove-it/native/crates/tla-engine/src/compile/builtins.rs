@@ -337,8 +337,35 @@ impl Compiler<'_> {
             ));
         }
         if builtin.flags & Builtin::STATE_LEVEL != 0 || IMPURE_BUILTINS.contains(&name) {
+            // TLCEval makes a set an enumerated one and a function a built one (`convert`), so
+            // what TLC kept lazy of the operand is forgotten: a set of functions is then drawn
+            // from and enumerated as its elements.
             if name == "TLCEval" && operands.len() == 1 {
-                return self.operand(&operands[0]);
+                let operand = self.operand(&operands[0])?;
+                if operand.infinite.is_some() || operand.has_infinite_part {
+                    return unsupported("TLCEval of a set TLC may not enumerate");
+                }
+                let evaluate = operand.eval;
+                return Ok(Compiled {
+                    is_costly: operand.is_costly,
+                    is_boolean: operand.is_boolean,
+                    is_constant: operand.is_constant,
+                    is_enumerated: true,
+                    is_in_order: true,
+                    ..leaf(
+                        eval(move |machine| {
+                            let value = evaluate(machine)?;
+                            if machine.store.kind_of(value) == tla_values::store::KIND_LAZY_FUNCTION
+                            {
+                                return Err(Bail(
+                                    "unsupported: TLCEval of a function TLC keeps lazy",
+                                ));
+                            }
+                            Ok(value)
+                        }),
+                        operand.footprint,
+                    )
+                });
             }
             return unsupported(name);
         }
