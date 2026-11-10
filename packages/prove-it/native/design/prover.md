@@ -722,6 +722,96 @@ a sample (`--filter tlapm/library`); the size row is recorded (3.9); and the ful
 AGENTS.md passes. The flip itself is a separate commit that changes only the default, so it can
 be reverted alone.
 
+### 4b. The tracks
+
+What each session starting a track needs, beyond 4a. Paths are under `packages/prove-it/src/prover`
+unless they say otherwise; the crate is under `native/crates/prover/`. "First" lists the modules in
+dependency order (computed from the imports), so each can be tested before the next. The first gate
+is the TS unit tests named, ported to `#[test]`s; the corpus differential (4a) is the gate before
+the flip. Every track must not touch:
+- another track's crate;
+- `tla-engine`, `tla-values`, `tla-live`, `tla-ir` or `tla-front`;
+- the TypeScript prover, except to add a statistic to both sides (4a, with a re-recording in the
+  same PR);
+- `prove-decide`, the binding and `deciders.ts`, except through the lead (this document's owner).
+
+**P2 Zenon** (`prove-zenon`, `zenon/`):
+- In scope: `zenon/` (11,594 lines) but `encode.ts`, and `ocaml.ts`'s `Hashtbl.hash` and
+  `List.sort`, which are LGPL (3.8).
+- First: `limits.ts`, `ocaml.ts`, `expr.ts`, then `parse.ts`, `phrase.ts`, `proof.ts`. Then the
+  search (`index-table`, `node`, `rules`, the rule files, `search.ts`), `mltoll`, `llproof`,
+  `isar*`, and last `check/` (`terms` first). `check/` imports only `expr`, `parse`, `proof` and
+  `limits`, so a second session could port it in parallel once those exist.
+- First gate: `tests/unit/zenon.test.ts` (18 tests), whose inputs are under `tests/fixtures/zenon`.
+- Statistics: 4a.
+
+**P3a SMT foundation** (`prove-num` and the `util` module of `prove-smt`), taken first by the P3c
+session:
+- In scope: the JS-`bigint` integer of 3.4; `smt/solver/rational.ts`, `hash.ts`,
+  `hashtable.ts`, `lbool.ts`, `random-gen.ts`, `rlimit.ts` (the step counting of 2.3, not V8's heap
+  check), `array.ts`, and `lp/dependency.ts`, which `nlsat` uses.
+- That is all `lp` and `nlsat` take from the core. Land it first so that P3b-lp and P3b-nlsat
+  start from it.
+- First gate: generated tables against JS `bigint` for `+ - * / % >> gcd` and printing, on
+  operands of 1 to 8 limbs and the edge cases; Z3's hash of a few hundred keys and the slot order
+  of `hashtable.ts`, recorded from TypeScript.
+
+**P3b-lp** (`prove-smt`, module `lp`):
+- In scope: `smt/solver/lp/` (14,502 lines) but `dependency.ts` (P3a).
+- First: `numeric-pair`, `union-find`, `containers`, `lp-settings`, `nex`, `pdd`, then
+  `lar-term`, `constraints`, `explanation`, `nex-creator`, `dep-intervals`, `pdd-solver`. Then the
+  simplex core, `lar-solver`, `int-solver` with `hnf*` and `dioph-eq`, and the `nla-*` files.
+- Last: `nra-solver.ts`, the one file that imports `nlsat` (its solver, algebraic numbers and
+  types), which needs P3b-nlsat.
+- First gate: `tests/unit/smt-intervals.test.ts` (16) and `smt-pdd.test.ts` (17).
+
+**P3b-nlsat** (`prove-smt`, module `nlsat`):
+- In scope: `smt/solver/nlsat/` (7,875 lines).
+- First: `mpbq`, `upolynomial`, `upolynomial-factorization`, then `polynomial`, `algebraic`,
+  `types`, then `atoms`, `interval-set`, `levelwise`, `evaluator`, `explain`, `solver`.
+- It needs only P3a: from `lp` it takes `dependency.ts` alone.
+- First gate: `tests/unit/smt-nlsat.test.ts`, all but the `nra …` groups (those wait for
+  `nra-solver`, P3b-lp's last file).
+
+**P3c SMT core** (`prove-smt`, modules `util` from P3a and `core`):
+- In scope: `smt/solver/*.ts` (23,254 lines) but P3a's files; the `theory-lra-*` files (2,141)
+  last, as they call `lp`.
+- First, after P3a: `literal`, `sort`, `enode`, `case-split-queue`, `flat-literals`, then
+  `ast.ts` (1,316: the hash-consed DAG), `clause`, `cg-table`, `sticky-generations`. Then the
+  rewriters (`rewriter-tpl` and the files under it), `smtlib-parser`, `asserted-formulas`, the
+  tactics, `relevancy`, `conflict-resolution`, the MAM and `e-matching`, the model files,
+  `internalizer`, `context` and `solver`.
+- First gate: `tests/unit/smt-clause-store.test.ts` (4) and `smt.test.ts` (24, inputs under
+  `tests/fixtures/smt`). The decider differential on inputs without arithmetic atoms can run
+  before P3b lands; the rest, once `theory-lra-*` can call `lp`.
+- `decide` declines what the port does not reach yet, never guesses.
+
+**P4 Isabelle** (`prove-isabelle`):
+- In scope: `isabelle/` (11,713 lines) but `encode.ts`, plus the logic data (3.9: a binary second
+  output of `scripts/isabelle-logic.ts`, `include_bytes!`, decoded once).
+- P4a is `pure/` (6,628). First: `term`, `name`, `seq`, `table`, `list`, `interrupt`, then
+  `type`, `logic`, `net`, `term-ord`, `consts`, then `envir`, `pattern`, `unify` and `thm` (the
+  kernel).
+- P4b is `provers/`, `tools/`, `isar/`, `tla/`, then `decide.ts`.
+- First gate: `tests/unit/isabelle.test.ts` (5, theories under `tests/fixtures/isabelle`). The
+  kernel has no TS unit tests of its own, so P4a adds Rust tests of `term`, `pattern`, `unify` and
+  `thm` from Isabelle's behaviour on the fixture theories.
+
+**P5b/c obligations** (`prove-obligations`), after P5a lands in `tla-front`:
+- In scope: `src/obligations/` (8,873 lines; `format.ts` and `action.ts`'s `getHash` are LGPL)
+  with `regroup.ts`, then `prep/` (2,202), the encoders (`smt/*.ts` 2,676, `zenon/encode.ts`,
+  `isabelle/encode.ts`, `ptl/encode.ts`), `first-order.ts`, `ocaml.ts` and `tlaps-module.ts`.
+- First: `format`, `pragma`, `expression`, then `equality`, `levels`, `operators`, `proof`,
+  `substitution`, `temporal`, `tuples`, then `module`, `printer`, `regroup`, `subexpression`, then
+  `source` (from `tla-front`'s AST), `anonymize`, `generate`, `normalize`, `simplify`, `action`,
+  `index`.
+- First gate: `tests/unit/obligations.test.ts`, `obligation-zenon.test.ts`,
+  `obligation-isabelle.test.ts`.
+- Then the encoder differential (2.2, layer 4), which the track builds: every corpus obligation's
+  printed text, location, kind, fingerprint and every encoder's text, byte for byte against
+  TypeScript.
+- It needs no decider; it must not change what `decide` receives.
+
 ---
 
 ## 5. Expected speed
