@@ -1432,6 +1432,46 @@ fn is_referenced(expression: &Expression, name: &str) -> bool {
             .any(|child| is_referenced(child, name))
 }
 
+/// Whether the definition takes a parameter of the name.
+fn has_parameter(definition: &Definition, name: &str) -> bool {
+    match &definition.kind {
+        DefinitionKind::Operator { params, .. } => params.iter().any(|param| &*param.name == name),
+        DefinitionKind::Function { bounds } => bounds.iter().any(|bound| {
+            bound
+                .pattern
+                .names()
+                .iter()
+                .any(|bound_name| &**bound_name == name)
+        }),
+    }
+}
+
+/// Whether the expression, or one within it, binds the name: a bound variable, or a parameter of a
+/// LAMBDA or of a LET's definition.
+fn binds_name(expression: &Expression, name: &str) -> bool {
+    let is_named = |names: &[Name]| names.iter().any(|bound_name| &**bound_name == name);
+    let is_bound = match &expression.kind {
+        ExpressionKind::Quantified { bounds, .. }
+        | ExpressionKind::FunctionConstruction { bounds, .. }
+        | ExpressionKind::SetMap { bounds, .. } => {
+            bounds.iter().any(|bound| is_named(bound.pattern.names()))
+        }
+        ExpressionKind::SetFilter { bound, .. } => is_named(bound.pattern.names()),
+        ExpressionKind::UnboundedQuantifier { names, .. }
+        | ExpressionKind::Lambda { params: names, .. } => is_named(names),
+        ExpressionKind::Choose { pattern, .. } => is_named(&get_pattern_names(pattern)),
+        ExpressionKind::Let { definitions, .. } => definitions
+            .iter()
+            .any(|definition| has_parameter(definition, name)),
+        _ => false,
+    };
+    is_bound
+        || expression
+            .children()
+            .iter()
+            .any(|child| binds_name(child, name))
+}
+
 /// Whether the expression, or one within it, is written with the name, or a selection from it.
 fn is_named_in(expression: &Expression, name: &str) -> bool {
     expression.reference().is_some_and(|written| {
@@ -1588,6 +1628,7 @@ fn resolve_definition(
 fn bind_let_recursive(
     recursive: &[Rc<Declaration>],
     definitions: &[Rc<Definition>],
+    body: &Expression,
     scope: &Scope,
     unit: &Unit,
 ) -> Result<(Scope, Vec<Rc<Local>>)> {
@@ -1595,6 +1636,28 @@ fn bind_let_recursive(
     let mut locals = Vec::new();
     if recursive.is_empty() {
         return Ok((declared, locals));
+    }
+    // `SymbolTable.addSymbol` rejects a parameter or a bound variable of a declared operator's
+    // name, which leaves the declaration's binding as SANY has it, and the front end doesn't follow.
+    let is_rebound = recursive.iter().any(|declaration| {
+        let name = &*declaration.name;
+        binds_name(body, name)
+            || definitions.iter().any(|definition| {
+                has_parameter(definition, name)
+                    || binds_name(&definition.body, name)
+                    || match &definition.kind {
+                        DefinitionKind::Function { bounds } => {
+                            bounds.iter().any(|bound| binds_name(&bound.set, name))
+                        }
+                        DefinitionKind::Operator { .. } => false,
+                    }
+            })
+    });
+    if is_rebound {
+        return Err(FrontError::NotYet(
+            "a parameter or a bound variable named like an operator a LET declares RECURSIVE"
+                .to_owned(),
+        ));
     }
     // SANY reads the declaration where it appears, which a definition before it neither sees nor
     // satisfies.
@@ -2218,7 +2281,8 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
                 let_level: unit.let_level + 1,
                 ..unit.clone()
             };
-            let (declared, locals) = bind_let_recursive(recursive, definitions, scope, &level)?;
+            let (declared, locals) =
+                bind_let_recursive(recursive, definitions, body, scope, &level)?;
             let inner = resolve_definitions(
                 definitions,
                 &declared,

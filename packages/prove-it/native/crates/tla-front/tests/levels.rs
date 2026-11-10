@@ -337,3 +337,11 @@ fn leaves_a_let_definition_before_a_recursive_declaration_it_names_not_native() 
         "---- MODULE Main ----\nA == LET F == 1\n         RECURSIVE F, K\n     IN 0\n===="
     ));
 }
+
+#[test]
+fn leaves_a_parameter_named_like_a_let_recursive_operator_not_native() {
+    // `SymbolTable.addSymbol` rejects the parameter, which the front end doesn't follow.
+    assert!(is_not_yet(
+        "---- MODULE Main ----\nA == LET RECURSIVE F, K\n         F(F) == 0\n     IN 0\n===="
+    ));
+}

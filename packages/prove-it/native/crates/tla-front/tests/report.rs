@@ -263,3 +263,15 @@ fn leaves_a_recursive_function_with_operator_arguments_after_a_module_not_native
         Err(FrontError::NotYet(_))
     ));
 }
+
+#[test]
+fn leaves_a_recursive_section_after_a_module_whose_declaration_sany_rejects_not_native() {
+    // SANY rejects the declaration of the constant's name, so F == 0 doesn't count down.
+    assert!(matches!(
+        get_report(
+            "exception-constant",
+            "---- MODULE Main ----\nCONSTANT F\nRECURSIVE F\n---- MODULE Inner ----\n====\nF == 0\n====\n",
+        ),
+        Err(FrontError::NotYet(_))
+    ));
+}

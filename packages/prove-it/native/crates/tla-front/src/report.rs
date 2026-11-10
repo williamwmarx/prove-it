@@ -750,6 +750,7 @@ pub fn get_sany_text(
 /// the count is off in a way that throws nothing, or elsewhere.
 fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
     let mut pending: Vec<Rc<Declaration>> = Vec::new();
+    let mut declared: Vec<Rc<Declaration>> = Vec::new();
     let mut is_cleared = false;
     for unit in &module.units {
         match unit {
@@ -759,7 +760,10 @@ fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
                     declared.first().map_or("", |declaration| &declaration.name)
                 )));
             }
-            ModuleUnit::Recursive(declared) => pending.extend(declared.iter().cloned()),
+            ModuleUnit::Recursive(recursive) => {
+                pending.extend(recursive.iter().cloned());
+                declared.extend(recursive.iter().cloned());
+            }
             ModuleUnit::Definition(definition) => {
                 let Some(index) = pending
                     .iter()
@@ -774,6 +778,37 @@ fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
                 {
                     return Err(not_yet(
                         "a function declared RECURSIVE with operator arguments in a recursive section",
+                    ));
+                }
+                // `SymbolTable.addSymbol` rejects a declaration of a name the module binds otherwise,
+                // which leaves the definition another symbol's.
+                let is_conflicting = !module.extends.is_empty()
+                    || !module.instances.is_empty()
+                    || declared.iter().any(|declaration| {
+                        let name = &declaration.name;
+                        module
+                            .constants
+                            .iter()
+                            .chain(&module.variables)
+                            .any(|other| other.name == *name)
+                            || module
+                                .definitions
+                                .iter()
+                                .filter(|other| other.name == *name)
+                                .count()
+                                > 1
+                            || module
+                                .theorems
+                                .iter()
+                                .any(|other| other.name.as_ref() == Some(name))
+                            || module
+                                .assumptions
+                                .iter()
+                                .any(|other| other.name.as_ref() == Some(name))
+                    });
+                if is_cleared && is_conflicting {
+                    return Err(not_yet(
+                        "a recursive section after a module, whose declarations SANY may reject",
                     ));
                 }
                 if is_cleared {
