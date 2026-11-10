@@ -1,7 +1,7 @@
 //! Runs the binary as a user would: on specs of the tests' own, which tla-front reads, and on
 //! golden engine IRs, such as TCommit's, which PROVE_IT_TEST_IR names in place of a spec's.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const COMMIT_IR: &[u8] = include_bytes!(
@@ -687,6 +687,67 @@ fn reports_an_assumption_that_is_no_boolean() {
 }
 
 #[test]
+fn follows_tlc_through_a_set_operation_on_a_value_that_isnt_a_set() {
+    // `Tool` builds `\\cup`, `\\cap` and `\\` through a set enumeration or interval operand, a
+    // union with an empty one being the other operand, and keeps any other union lazy, testing
+    // that operand first. An empty interval holds nothing (`IntervalValue.member`).
+    let holding = [
+        "({} \\cup 0) = 0",
+        "({} \\cap 0) = {}",
+        "({} \\ 0) = {}",
+        "1 \\in ({1} \\cup 0)",
+        "1 \\in (0 \\cup {1})",
+        "1 \\in ((1..2) \\cup \"a\")",
+        "~(\"a\" \\in 3..1)",
+    ];
+    let assumptions: String = holding
+        .iter()
+        .map(|assumption| format!("ASSUME {assumption}\n"))
+        .collect();
+    let spec = format!(
+        "---- MODULE Lazy ----\nEXTENDS Integers\nVARIABLE x\n{assumptions}Init == x = 0\nNext == x' = x\n====\n"
+    );
+    let (output, directory) = run_front("lazy-sets", &spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    // The replay checks the assumptions before one that fails again, testing an element of a lazy
+    // filter inside an intersection or a difference through the evaluator.
+    let spec = "---- MODULE Lazy ----\nEXTENDS Integers\nVARIABLE x\nASSUME 2 \\in ({2} \\cap {n \\in Int : n % 2 = 0})\nASSUME 3 \\notin ({3} \\ {n \\in Int : n % 2 = 1})\nASSUME 1 \\in 0\nInit == x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_front("lazy-filters", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    assert!(
+        text.contains(
+            "failed.\nAttempted to check if the value:\n1\nis an element of the integer 0\n"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // An intersection or a difference with a set enumeration tests each of its elements at once,
+    // so it fails on one the membership never asks about.
+    for (test, assumption, element) in [
+        ("lazy-cap", "3 \\in (0 \\cap {1})", 1),
+        ("lazy-diff", "3 \\in ({1} \\ 0)", 1),
+        ("lazy-cup", "2 \\in (0 \\cup {1})", 2),
+    ] {
+        let spec = format!(
+            "---- MODULE Lazy ----\nEXTENDS Integers\nVARIABLE x\nASSUME {assumption}\nInit == x = 0\nNext == x' = x\n====\n"
+        );
+        let (output, directory) = run_front(test, &spec, "INIT Init\nNEXT Next\n", &[]);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(10), "{text}");
+        assert!(
+            text.contains(&format!(
+                "failed.\nAttempted to check if the value:\n{element}\nis an element of the integer 0\n"
+            )),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
     // The search prints the first print, then leaves the assumption to the trace evaluator, which
     // prints it again as it evaluates the assumption whole.
@@ -999,12 +1060,19 @@ fn rebuilds_a_trace_through_an_operator_the_configuration_defines() {
 
 // Runs the binary on a spec of the test's own, where TLC stops before the search.
 fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
+    run_spec_with(test, spec, config, &[])
+}
+
+fn run_spec_with(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
     std::fs::write(directory.join("Stop.cfg"), config).expect("a configuration");
-    (run(&directory, &["-noTE", "Stop"]), directory)
+    (
+        run(&directory, &[args, &["-noTE", "Stop"]].concat()),
+        directory,
+    )
 }
 
 // A counter with a `_PERIODIC` expression, as TLC's ran at d8fb231 with `-workers 1`: TLC
@@ -2843,6 +2911,194 @@ fn get_untimed(text: &str) -> String {
         .collect()
 }
 
+const NEXT_FAIR: &str = "---- MODULE NextFair ----\nEXTENDS Naturals\nVARIABLE x\nInc == x < 2 /\\ x' = x + 1\nTwice == x = 0 /\\ x' = 1\nBack == x > 0 /\\ x' = 0\nNext == Inc \\/ Twice \\/ Back\nWeak == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nStrong == x = 0 /\\ [][Next]_x /\\ SF_x(Next)\nReach == <>(x = 2)\nLive == []<>(x = 0)\nStable == <>[](x = 2)\n====\n";
+
+const NEXT_MIXED: &str = "---- MODULE Mixed ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == x' = \"a\" /\\ FALSE\nB == x' = (x + 1) % 3\nNext == A \\/ B\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == []<>(x = 2)\n====\n";
+
+const NEXT_PIECES: &str = "---- MODULE Pieces ----\nEXTENDS Naturals\nVARIABLES x, y\nvars == <<x, y>>\nInit == x = 0 /\\ y = 0\nA == x' = (x + 1) % 3 /\\ y' = y\nB == x' = (x + 1) % 3 /\\ UNCHANGED y\nC == y' = 1 - y /\\ UNCHANGED x\nD == x' = 2 /\\ y' = y\nNext == A \\/ B \\/ C\nSubSpec == Init /\\ [][Next]_vars /\\ WF_vars(B)\nOtherSpec == Init /\\ [][Next]_vars /\\ WF_vars(D)\nLive == []<>(x = 2)\n====\n";
+
+#[test]
+fn answers_fairness_of_the_next_state_relation_as_tlc() {
+    // TLC's output on each, at d8fb231. The engine answers <<Next>>_x of each step from the
+    // search's steps, which hold of Next, where no comparison of TLC's predicate evaluation can
+    // fail: under WF and SF, with a successor two disjuncts take and a step to a state seen
+    // before. Where x' = "a" may be compared with an integer, as TLC does and fails, it evaluates;
+    // and an action that is part of Next, or not of it, is evaluated as before.
+    let same = NEXT_MIXED
+        .replace("MODULE Mixed", "MODULE Same")
+        .replace("\"a\"", "7");
+    let other = NEXT_PIECES.replace("MODULE Pieces", "MODULE Other");
+    let cases = [
+        (
+            NEXT_FAIR.to_string(),
+            "SPECIFICATION Weak\nPROPERTY Live Reach\n",
+            include_str!("next-fair-weak.txt"),
+        ),
+        (
+            NEXT_FAIR.replace("MODULE NextFair", "MODULE NextStrong"),
+            "SPECIFICATION Strong\nPROPERTY Live Stable\n",
+            include_str!("next-fair-strong.txt"),
+        ),
+        (
+            NEXT_MIXED.to_string(),
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            include_str!("next-fair-mixed.txt"),
+        ),
+        (
+            same,
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            include_str!("next-fair-same.txt"),
+        ),
+        (
+            NEXT_PIECES.to_string(),
+            "SPECIFICATION SubSpec\nPROPERTY Live\n",
+            include_str!("next-fair-part.txt"),
+        ),
+        (
+            other,
+            "SPECIFICATION OtherSpec\nPROPERTY Live\n",
+            include_str!("next-fair-other.txt"),
+        ),
+        // Init assigns from sets the guard doesn't cover, which TLC's predicate evaluation of
+        // Next never tests: the steps still answer.
+        (
+            "---- MODULE InitUncovered ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in ([a : {}] \\cup {0}) \\cup {y \\in {1, 2} : y > 1}\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nReach == <>(x = 5)\n====\n".to_string(),
+            "SPECIFICATION Spec\nPROPERTY Reach\n",
+            include_str!("next-fair-init.txt"),
+        ),
+    ];
+    for (position, (spec, config, expected)) in cases.iter().enumerate() {
+        for workers in ["1", "4"] {
+            let test = format!("next-fair-{position}-{workers}");
+            let (output, directory) = run_front(&test, spec, config, &["-workers", workers]);
+            let text = stdout(&output);
+            assert_eq!(get_untimed(&text), *expected, "{text}");
+            std::fs::remove_dir_all(directory).expect("removed");
+        }
+    }
+}
+
+#[test]
+fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_cover() {
+    // TLC fails testing x' \in S of a value as it evaluates WF_x(Next) on a step another disjunct
+    // took, where S is empty, as [a : {}] is, or holds an empty part, as [a : {}] \cup {1} and
+    // SUBSET [a : {}] do, or is the base of x' \subseteq S: the walk joined no shape TLC tests the
+    // value against. So the engine
+    // evaluates the action, and leaves TLC's failure to the interpreter. TLC's output at d8fb231.
+    let cases = [
+        (
+            include_str!("empty/EmptyRecords.tla"),
+            include_str!("empty/EmptyRecords.cfg"),
+            include_str!("empty/EmptyRecords.txt"),
+        ),
+        (
+            include_str!("empty/UnionEmpty.tla"),
+            include_str!("empty/UnionEmpty.cfg"),
+            include_str!("empty/UnionEmpty.txt"),
+        ),
+        (
+            include_str!("empty/SubsetEmpty.tla"),
+            include_str!("empty/SubsetEmpty.cfg"),
+            include_str!("empty/SubsetEmpty.txt"),
+        ),
+        (
+            include_str!("empty/SubseteqEmpty.tla"),
+            include_str!("empty/SubseteqEmpty.cfg"),
+            include_str!("empty/SubseteqEmpty.txt"),
+        ),
+    ];
+    for (spec, config, expected) in cases {
+        for workers in ["1", "4"] {
+            let name = spec.split_whitespace().nth(2).expect("the module's name");
+            let test = format!("empty-{name}-{workers}");
+            let args = [
+                "-workers",
+                workers,
+                "-nowarning",
+                "-seed",
+                "4",
+                "-fp",
+                "0",
+                "-lncheck",
+                "final",
+            ];
+            let (output, directory) = run_front(&test, spec, config, &args);
+            let text = stdout(&output);
+            let is_declined =
+                String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
+            assert!(is_declined || get_untimed(&text) == expected, "{text}");
+            std::fs::remove_dir_all(directory).expect("removed");
+        }
+    }
+}
+
+// tests/membership-grid: x' \in S beside x' = a \/ x' = b, under WF_x(Next), which the engine
+// answers from the steps the search took where the guard lets it, and WF_x(Alias) with
+// Alias == Next, which it evaluates. S is each of an enumeration, an interval, records, functions,
+// a product, SUBSET, a filter, a map, a union, a constant and a definition, with a part empty and
+// not, nested in x' \in S, x' \in S \cup {7}, x' \subseteq S, [{1} -> S], [a : S], S \X {1} and a
+// filter; a and b are 0 and 1, values of S's elements' kind, or integers in the nesting's shape.
+// And Init x \in S \cup {a} for each S, with Next x' = a \/ x' = b: TLC's predicate evaluation of
+// Next never tests the sets Init assigns from, so those leave the shortcut on. TLC's output on
+// each formulation at d8fb231 is beside it: each run prints it exactly, or both formulations
+// decline.
+#[test]
+fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/membership-grid");
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .expect("the grid")
+        .filter_map(|entry| {
+            let path = entry.expect("an entry").path();
+            (path.extension()? == "tla").then(|| path.file_stem()?.to_str().map(String::from))?
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 418);
+    for name in names {
+        let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
+        let constant = if name.contains("Empty") {
+            "{}"
+        } else {
+            "{1, 3}"
+        };
+        for workers in ["1", "4"] {
+            let mut declines = Vec::new();
+            for (specification, suffix) in [("Weak", ""), ("AliasWeak", ".alias")] {
+                let tlc = std::fs::read_to_string(directory.join(format!("{name}{suffix}.txt")))
+                    .expect("TLC's output");
+                let config = format!(
+                    "CONSTANT C = {constant}\nSPECIFICATION {specification}\nPROPERTY Live\n"
+                );
+                let test = format!("grid-{name}-{specification}-{workers}");
+                let args = [
+                    "-workers",
+                    workers,
+                    "-nowarning",
+                    "-seed",
+                    "4",
+                    "-fp",
+                    "0",
+                    "-lncheck",
+                    "final",
+                ];
+                let (output, run) = run_front(&test, &spec, &config, &args);
+                let is_declined =
+                    String::from_utf8_lossy(&output.stderr).contains("prove-it: not native yet: ");
+                if !is_declined {
+                    assert_eq!(
+                        get_untimed(&stdout(&output)),
+                        tlc,
+                        "{name} {specification} {workers}"
+                    );
+                }
+                declines.push(is_declined);
+                std::fs::remove_dir_all(run).expect("removed");
+            }
+            assert_eq!(declines[0], declines[1], "{name} at {workers} workers");
+        }
+    }
+}
+
 // What a run printed from `Starting...` to computing the initial states.
 fn get_startup(text: &str) -> &str {
     let start = text.find("Starting... (").expect("the start");
@@ -3929,4 +4185,200 @@ fn unites_a_set_with_one_element_in_tlcs_order() {
         }
     }
     std::fs::remove_dir_all(directory).expect("removed");
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn read_dump(directory: &Path, name: &str) -> String {
+    std::fs::read_to_string(directory.join(name)).expect("a dump")
+}
+
+#[test]
+fn dumps_every_state_found_as_tlc_writes_them() {
+    let directory = commit_directory("dump");
+    // TLC's own `-dump` of TCommit, at d8fb231 with `-workers 1`.
+    let expected = include_str!("tcommit.dump");
+    let output = run_ir(
+        &directory,
+        "TCommit",
+        &["-workers", "1", "-noTE", "-dump", "states", "TCommit"],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert_eq!(read_dump(&directory, "states.dump"), expected);
+    // A name that ends in .dump keeps it, and with several workers the binary writes the states in
+    // the order one finds them.
+    let shared = run_ir_with(
+        &directory,
+        "TCommit",
+        &["-workers", "4", "-noTE", "-dump", "shared.dump", "TCommit"],
+        &[("PROVE_IT_SHARED_LEVEL", "1")],
+    );
+    assert_eq!(shared.status.code(), Some(0), "{}", stdout(&shared));
+    assert_eq!(read_dump(&directory, "shared.dump"), expected);
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// Specs and dumps as TLC ran and wrote them at d8fb231 with `-workers 1`.
+#[test]
+fn dumps_the_state_that_stops_the_search_as_tlc() {
+    let counted = "State 1:\nx = 0\n\nState 2:\nx = 1\n\nState 3:\nx = 2\n\nState 4:\nx = 3\n\n";
+    for (test, next, config, code) in [
+        (
+            "dump-invariant",
+            "x' = x + 1",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            12,
+        ),
+        (
+            "dump-deadlock",
+            "x < 3 /\\ x' = x + 1",
+            "INIT Init\nNEXT Next\n",
+            11,
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == {next}\nInv == x < 3\n====\n"
+        );
+        let (output, directory) = run_spec_with(test, &spec, config, &["-dump", "states"]);
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{test}: {}",
+            stdout(&output)
+        );
+        assert_eq!(read_dump(&directory, "states.dump"), counted, "{test}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn dumps_a_state_of_several_variables_as_tlc() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x, r\nInit == x \\in {0, 1} /\\ r = [b |-> x, a |-> \"s\"]\nNext == x < 2 /\\ x' = x + 1 /\\ r' = [r EXCEPT !.b = x']\n====\n";
+    let (output, directory) = run_spec_with(
+        "dump-record",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
+        &["-dump", "states"],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert_eq!(
+        read_dump(&directory, "states.dump"),
+        "State 1:\n/\\ r = [b |-> 0, a |-> \"s\"]\n/\\ x = 0\n\nState 2:\n/\\ r = [b |-> 1, a |-> \"s\"]\n/\\ x = 1\n\nState 3:\n/\\ r = [b |-> 2, a |-> \"s\"]\n/\\ x = 2\n\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// TLC opens the dump before it reads the configuration, so a configuration it rejects leaves the
+// dump empty.
+#[test]
+fn opens_the_dump_before_it_reads_the_configuration() {
+    let spec = "---- MODULE Stop ----\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n====\n";
+    let (output, directory) = run_spec_with(
+        "dump-configuration",
+        spec,
+        "INIT Init\n\"unterminated\n",
+        &["-dump", "states"],
+    );
+    assert_eq!(output.status.code(), Some(151), "{}", stdout(&output));
+    assert_eq!(read_dump(&directory, "states.dump"), "");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_dump_whose_contents_tlc_writes_otherwise() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nLive == <>(x = 2)\nInv == x > 0\n====\n";
+    for (test, config, args, reason) in [
+        (
+            "dump-dot",
+            "INIT Init\nNEXT Next\n",
+            &["-dump", "dot", "states"][..],
+            "-dump dot",
+        ),
+        (
+            "dump-metadir",
+            "INIT Init\nNEXT Next\n",
+            &["-dump", "${metadir}/states"],
+            "-dump into the meta directory",
+        ),
+        // TLC writes each state again as it adds its stuttering step to the behavior graph.
+        (
+            "dump-temporal",
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            &["-dump", "states"],
+            "-dump with temporal properties",
+        ),
+        // TLC returns without closing the dump, which holds what Java's buffers flushed.
+        (
+            "dump-initial",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            &["-dump", "states"],
+            "-dump of a search stopped computing its initial states",
+        ),
+    ] {
+        let spec = spec.replace("====", "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)\n====");
+        let (output, directory) = run_spec_with(test, &spec, config, args);
+        assert_eq!(output.status.code(), Some(1), "{test}: {}", stdout(&output));
+        assert_eq!(
+            stderr(&output),
+            format!("prove-it: not native yet: {reason}\n"),
+            "{test}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+// TLC's FingerprintExceptionHang: TypeOK fails to evaluate on the second state, and TLC expands the
+// first state again to print the call stack, writing the third state it finds then.
+#[test]
+fn declines_a_dump_where_tlc_replays_the_step_that_failed() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nCONSTANTS Nodes\nVARIABLES node_state\nvars == <<node_state>>\nLegalSets == {{}}\nTypeOK == node_state \\in [Nodes -> [set: LegalSets]]\nInit == \\E initial_members \\in LegalSets: node_state = [n \\in Nodes |-> [set |-> initial_members]]\nNext == \\E n \\in Nodes, new_members \\in {1}: node_state' = [node_state EXCEPT ![n].set = new_members]\nSpec == Init /\\ [][Next]_vars\n====\n";
+    let (output, directory) = run_spec_with(
+        "dump-replay",
+        spec,
+        "SPECIFICATION Spec\nCONSTANT Nodes = {A, B}\nCHECK_DEADLOCK FALSE\nINVARIANT TypeOK\n",
+        &["-dump", "states"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        stderr(&output),
+        "prove-it: not native yet: -dump of states TLC finds as it replays a step\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn declines_a_temporal_property_tlc_rejects_after_it_warns_about_the_symmetry() {
+    // tests/fixtures/cli-output/EventualAction: TLC starts the liveness checker, warns that a
+    // symmetry is dangerous for liveness, then rejects the property:
+    //   Warning: Declaring symmetry during liveness checking is dangerous. ...
+    //   Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.
+    // The front end's failure doesn't print the warning, so the model isn't native yet.
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/cli-output");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noGenerateSpecTE", "EventualAction.tla"])
+        .current_dir(&fixtures)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: a temporal property TLC rejects after it warns about the symmetry\n"
+    );
+    // With -nowarning TLC prints no warning, and the binary prints TLC's error natively.
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noGenerateSpecTE", "-nowarning", "EventualAction.tla"])
+        .current_dir(&fixtures)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(255), "{}", stdout(&output));
+    assert!(
+        stdout(&output).contains(
+            "Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.\n"
+        ),
+        "{}",
+        stdout(&output)
+    );
 }

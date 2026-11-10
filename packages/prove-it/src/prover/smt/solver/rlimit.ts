@@ -5,33 +5,47 @@
 import type { GCProfiler } from "node:v8";
 
 import { SmtCanceledError } from "../../../errors";
+import { createSteps, isStepLimitReached, type Steps } from "../../verdict";
 
 export class ResourceLimit {
-  // m_count: the steps taken, which MBQI also uses as a random seed.
-  count = 0;
-  private isCanceled = false;
+  // Why the work was canceled, once it is.
+  stopReason: "steps" | "time" | "signal" | "heap" | undefined = undefined;
   // Watches for a full collection while the used size is past the threshold.
   private profiler: GCProfiler | null = null;
 
+  // steps.count is m_count, the steps taken, which MBQI also uses as a random seed, and
+  // steps.limit is m_limit, Z3's own rlimit, checked on every step.
   constructor(
     private deadline: number,
     private signal?: AbortSignal,
+    private steps: Steps = createSteps(),
   ) {}
+
+  get count() {
+    return this.steps.count;
+  }
 
   // inc: counts a step and returns whether the work may go on. The clock and the heap are read on
   // every 256th step, since a step costs less than reading them. A step can allocate kilobytes, so
   // reading the heap less often lets it fill between two readings.
   inc() {
-    this.count++;
-    if (
-      !this.isCanceled &&
-      (this.count & CLOCK_CHECK_MASK) === 0 &&
-      (Date.now() > this.deadline || this.signal?.aborted === true || this.isHeapNearlyFull())
-    ) {
-      this.isCanceled = true;
-      this.release();
-    }
-    return !this.isCanceled;
+    const isOverStepLimit = isStepLimitReached(this.steps);
+    if (this.stopReason !== undefined) return false;
+    const stopReason = isOverStepLimit
+      ? "steps"
+      : (this.steps.count & CLOCK_CHECK_MASK) !== 0
+        ? undefined
+        : Date.now() > this.deadline
+          ? "time"
+          : this.signal?.aborted === true
+            ? "signal"
+            : this.isHeapNearlyFull()
+              ? "heap"
+              : undefined;
+    if (stopReason === undefined) return true;
+    this.stopReason = stopReason;
+    this.release();
+    return false;
   }
 
   // tactic::checkpoint: counts a step, and throws once the work is canceled.

@@ -1,0 +1,11 @@
+[package]
+name = "prove-ptl"
+description = "Prove It's decider for the propositional temporal logic tlapm sends LS4"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT AND BSD-2-Clause"
+publish.workspace = true
+
+[dependencies]
+prove-decide = { path = "../decide" }

@@ -10,7 +10,7 @@ use tla_engine::search::{
     ViolationKind, search,
 };
 use tla_live::{Liveness, Verdict};
-use tla_values::print::{is_printable, write_value};
+use tla_values::print::{is_printable, is_printable_normalized, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
@@ -26,7 +26,7 @@ use crate::summary::{
 use crate::time::format_duration;
 use crate::trace::{
     PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
-    rebuild_accepted, rebuild_trace,
+    format_texts, rebuild_accepted, rebuild_trace,
 };
 use crate::xml_exporter::run_xml_exporter;
 use tla_front::TlcVersion;
@@ -49,6 +49,8 @@ const CONFIG_PARSE_ERROR: i32 = 151;
 
 /// The exit code of a run that needs something the binary doesn't do natively yet.
 const NOT_NATIVE: i32 = 1;
+// How much of the -dump file's text the relay holds before it sends it to be written.
+const DUMP_PART_BYTES: usize = 1 << 20;
 
 const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
 
@@ -257,6 +259,8 @@ enum Event {
     /// TLC would evaluate the `_PERIODIC` expression now, as it prints its progress, which the
     /// engine doesn't: the search ends as not native.
     Periodic,
+    /// A part of the `-dump` file's text, in order, for the host to append.
+    Dumped(String),
 }
 
 struct Relay<'ir> {
@@ -267,6 +271,11 @@ struct Relay<'ir> {
     /// its progress; the search ends there, if it gets that far.
     is_periodic: bool,
     is_periodic_reached: bool,
+    /// Whether `-dump` writes each state the search found, as TLC's `StateWriter` does: the relay
+    /// sends the text in parts (`Event::Dumped`) for the host to write.
+    is_dumped: bool,
+    /// Whether the dump holds every state, or why it doesn't, once the search handed them over.
+    dumped: Option<Result<(), &'static str>>,
     ir: &'ir tla_ir::Ir,
     is_tool: bool,
     workers: usize,
@@ -472,6 +481,50 @@ impl Reporter for Relay<'_> {
             .sender
             .send(Event::SymmetrySetsTooSmall(names.to_vec()));
     }
+
+    // TLC writes "State N:", from 1, then the state as it prints it (`TLCStateMut.toString`) and
+    // a blank line.
+    fn dumped(&mut self, store: &Store, states: &[Id], width: usize) {
+        if !self.is_dumped {
+            return;
+        }
+        let ir = self.ir;
+        if width == 0 || width != ir.variables.len() {
+            self.dumped = Some(Err("-dump of states other than the variables' values"));
+            return;
+        }
+        let mut text = String::new();
+        let written = states
+            .chunks(width)
+            .enumerate()
+            .try_for_each(|(index, state)| {
+                let texts = state
+                    .iter()
+                    .map(|&id| {
+                        let mut text = Vec::new();
+                        // TLC fingerprints a state, which normalizes it, before it writes it.
+                        is_printable_normalized(store, id)
+                            .then(|| write_value(store, id, &mut text).ok())
+                            .flatten()
+                            .and_then(|()| String::from_utf16(&text).ok())
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or("dumping a value whose text depends on how TLC built it")?;
+                text.push_str(&format!(
+                    "State {}:\n{}\n",
+                    index + 1,
+                    format_texts(ir, &texts)
+                ));
+                if text.len() >= DUMP_PART_BYTES {
+                    let _ = self.sender.send(Event::Dumped(std::mem::take(&mut text)));
+                }
+                Ok(())
+            });
+        if !text.is_empty() {
+            let _ = self.sender.send(Event::Dumped(text));
+        }
+        self.dumped = Some(written);
+    }
 }
 
 // What Print or PrintT prints of the values, unless the store has forgotten how TLC built one.
@@ -563,6 +616,24 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     };
     print_welcome(printer);
     print_startup_banner(printer, seed, workers);
+    // TLC opens the file before it reads the configuration, and names it with a suffix of .dump
+    // unless it has one.
+    let dump = match dump {
+        None => None,
+        Some([file]) if !file.starts_with("${metadir}") => {
+            let path = if file.ends_with(".dump") {
+                file.clone()
+            } else {
+                format!("{file}.dump")
+            };
+            if !printer.host.write_file(Path::new(&path), "", false) {
+                return report_not_native(printer, "-dump into a file it can't create");
+            }
+            Some(path)
+        }
+        Some([_]) => return report_not_native(printer, "-dump into the meta directory"),
+        Some(_) => return report_not_native(printer, "-dump dot"),
+    };
     let config_path = match args.first("-config") {
         Some(path) => Some(path.to_string()),
         None => Some(match spec_path.strip_suffix(".tla") {
@@ -601,9 +672,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         None => return report_not_native(printer, "a configuration file the front end rejects"),
     };
-    if dump.is_some() {
-        return report_not_native(printer, "-dump");
-    }
     if args.has("-continue") {
         return report_not_native(printer, "-continue");
     }
@@ -710,6 +778,15 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let is_liveness_periodic = !args
         .first("-lncheck")
         .is_some_and(|check| ["final", "seqfinal"].contains(&check.to_lowercase().as_str()));
+    let is_dumped = dump.is_some();
+    if is_dumped && (ir.model.view.is_some() || ir.model.startup.symmetry.is_some()) {
+        return report_not_native(printer, "-dump under SYMMETRY or a VIEW");
+    }
+    // TLC writes each state again as it adds the state's stuttering step to the behavior graph
+    // (`Worker.doNextCheckLiveness`).
+    if is_dumped && !ir.model.live_formula.is_empty() {
+        return report_not_native(printer, "-dump with temporal properties");
+    }
     let settings = Settings {
         is_violation_reported: true,
         workers,
@@ -727,6 +804,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .host
             .get_variable("PROVE_IT_TEST_LIVE_CHECK_AT")
             .and_then(|at| at.parse().ok()),
+        is_dumped,
         large_region_advice: printer.host.large_region_advice(),
         ..Settings::default()
     };
@@ -740,9 +818,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let mut checking = None;
     let mut is_misprinted = false;
     let mut is_periodic_reached = false;
+    let mut is_dump_unwritten = false;
     let is_periodic = config.periodic.is_some();
     let ir_ref = &ir;
-    let (outcome, assumed_printed) = alongside(
+    let (outcome, assumed_printed, dumped) = alongside(
         move || {
             let ir = ir_ref;
             let mut relay = Relay {
@@ -750,6 +829,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 is_misprinted: false,
                 is_periodic,
                 is_periodic_reached: false,
+                is_dumped,
+                dumped: None,
                 ir,
                 is_tool,
                 workers,
@@ -761,7 +842,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 startup_texts: None,
             };
             let outcome = search(ir, &settings, &mut relay);
-            (outcome, relay.assumed_printed)
+            (outcome, relay.assumed_printed, relay.dumped)
         },
         || {
             for event in receiver.iter() {
@@ -812,11 +893,18 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         is_periodic_reached = true;
                         break;
                     }
+                    Event::Dumped(text) => {
+                        let path = Path::new(dump.as_deref().unwrap_or_default());
+                        is_dump_unwritten |= !printer.host.write_file(path, &text, true);
+                    }
                 }
             }
             drop(receiver);
         },
     );
+    if is_dump_unwritten {
+        return report_not_native(printer, "-dump into a file it can't write");
+    }
     if is_periodic_reached {
         return report_not_native(
             printer,
@@ -828,6 +916,37 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             printer,
             "printing a value whose text depends on how TLC built it",
         );
+    }
+    // A search that found no state hands none over, and one that stopped computing its initial
+    // states hands over none of those it found.
+    let is_stateless = matches!(
+        outcome,
+        SearchOutcome::Declined(_)
+            | SearchOutcome::AssumptionViolated { .. }
+            | SearchOutcome::ConfigError { .. }
+            | SearchOutcome::AssumptionFailed { .. }
+    );
+    // Where an invariant fails to evaluate, TLC expands the state again to print the call stack,
+    // and writes the new states it finds then too.
+    let is_replayed = matches!(
+        &outcome,
+        SearchOutcome::Stopped {
+            violation: Some(violation),
+            ..
+        } if !violation.fingerprints.is_empty()
+    );
+    match dumped {
+        Some(Err(reason)) => return report_not_native(printer, reason),
+        Some(Ok(())) if is_replayed => {
+            return report_not_native(printer, "-dump of states TLC finds as it replays a step");
+        }
+        None if is_dumped && !is_stateless => {
+            return report_not_native(
+                printer,
+                "-dump of a search stopped computing its initial states",
+            );
+        }
+        _ => {}
     }
     let (counts, fingerprints) = match outcome {
         SearchOutcome::Complete {

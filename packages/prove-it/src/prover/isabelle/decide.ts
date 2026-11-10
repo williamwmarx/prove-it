@@ -2,19 +2,23 @@
 // heap of Isabelle/TLA+ succeeds or fails.
 
 import { isStackOverflow, TlaIsabelleError } from "../../errors";
-import type { DecideOptions, Verdict } from "../verdict";
+import { createSteps, type DecideOptions, type Statistics, type Verdict } from "../verdict";
 import { parseProofText, terminalProof } from "./isar/method";
 import { getFacts, initGoal } from "./isar/proof";
 import { readStatement } from "./isar/statement";
 import { parseTheory } from "./isar/theory";
+import type { Limits } from "./pure/interrupt";
 import { protect } from "./pure/logic";
 import { seqHead } from "./pure/seq";
 import { aconv } from "./pure/term";
 import { getProofContext } from "./tla/context";
 import { loadLogic } from "./tla/logic";
 
-export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Verdict, "sat"> => {
-  const limits = { deadline: Date.now() + options.timeLimitMs, signal: options.signal };
+const getVerdict = (
+  text: string,
+  limits: Limits,
+  statistics: Statistics,
+): Exclude<Verdict, "sat"> => {
   try {
     const theory = parseTheory(text);
     const logic = loadLogic();
@@ -38,7 +42,22 @@ export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Ve
   } catch (error) {
     // Poly/ML grows its stack instead, until Isabelle runs out of memory, which tlapm counts as a
     // failure.
-    if (error instanceof TlaIsabelleError || isStackOverflow(error)) return "unknown";
-    throw error;
+    if (error instanceof TlaIsabelleError) statistics.stop = error.exception;
+    if (isStackOverflow(error)) statistics.stop = "stack";
+    if (statistics.stop === undefined) throw error;
+    return "unknown";
   }
+};
+
+// The statistics are the steps, and what stopped a proof that gave up.
+export const decideIsabelle = (text: string, options: DecideOptions): Exclude<Verdict, "sat"> => {
+  const limits = {
+    deadline: Date.now() + options.timeLimitMs,
+    signal: options.signal,
+    steps: options.steps ?? createSteps(),
+  };
+  const statistics = options.statistics ?? {};
+  const verdict = getVerdict(text, limits, statistics);
+  statistics.steps = limits.steps.count;
+  return verdict;
 };
