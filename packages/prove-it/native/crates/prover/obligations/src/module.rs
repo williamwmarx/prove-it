@@ -8,9 +8,10 @@ use std::rc::Rc;
 
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
-    Bound, BoundDomain, Builtin, Defn, DefnCore, ExceptPoint, Expr, ExprCore, ExprNode, Hyp,
+    Bound, BoundDomain, Builtin, Defn, DefnCore, ExceptPoint, Expr, ExprCore, ExprProps, Hyp,
     HypCore, HypNode, InstanceDefinition, Level, Locus, Param, Selector, Sequent, Shape, Time,
-    Visibility, WhereDefined, expr, get_fact, get_fresh, located, map_accumulate,
+    Visibility, WhereDefined, at_expr, expr, exprify_sequent, get_fact, get_fresh, located,
+    map_accumulate,
 };
 use crate::proof::{Omission, Proof, ProofCore, ProofProps, Usable, UseDef, UseDefCore};
 use crate::substitution::{
@@ -233,26 +234,6 @@ fn locate_hyp(core: HypCore, location: &Option<Locus>) -> Hyp {
     })
 }
 
-/// `at(exprifySequent(sequent), {location})`: the active expression keeps its own properties when
-/// the context is empty, apart from a location that `location` replaces.
-fn exprify_at(sequent: &Sequent, location: &Option<Locus>) -> Expr {
-    let exprified = if sequent.context.is_empty() {
-        sequent.active.clone()
-    } else {
-        expr(ExprCore::Sequent {
-            sequent: sequent.clone(),
-        })
-    };
-    match location {
-        Some(location) => Rc::new(ExprNode {
-            core: exprified.core.clone(),
-            location: Some(location.clone()),
-            is_atomic: exprified.is_atomic,
-        }),
-        None => exprified,
-    }
-}
-
 pub fn get_unit_hyps(unit: &ModuleUnit) -> Result<Vec<Hyp>> {
     let location = &unit.location;
     Ok(match &unit.core {
@@ -322,7 +303,17 @@ pub fn get_unit_hyps(unit: &ModuleUnit) -> Result<Vec<Hyp>> {
                     active: sequent.active.clone(),
                 },
             )?;
-            get_fact_hyps(name.as_deref(), exprify_at(&shifted, location), location)
+            get_fact_hyps(
+                name.as_deref(),
+                at_expr(
+                    &exprify_sequent(&shifted),
+                    &ExprProps {
+                        location: location.clone(),
+                        is_atomic: false,
+                    },
+                ),
+                location,
+            )
         }
         ModuleUnitCore::Mutate { mode, usable } => match mode {
             MutateMode::Use => usable
@@ -912,7 +903,13 @@ pub fn bind_theorem_name(
                 definition: Defn {
                     core: DefnCore::Operator {
                         name: name.to_owned(),
-                        body: exprify_at(sequent, location),
+                        body: at_expr(
+                            &exprify_sequent(sequent),
+                            &ExprProps {
+                                location: location.clone(),
+                                is_atomic: false,
+                            },
+                        ),
                     },
                     location: location.clone(),
                 },
@@ -930,6 +927,7 @@ pub fn bind_theorem_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expression::ExprNode;
     use crate::expression::{Substitution as Entry, hyp};
     use crate::substitution::cons_substitution;
 

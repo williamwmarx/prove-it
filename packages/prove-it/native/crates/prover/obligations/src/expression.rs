@@ -619,7 +619,24 @@ pub struct Sequent {
     pub active: Expr,
 }
 
-/// tlapm's `core @@ from`, which takes the properties of from.
+/// `at` given a whole node, as the TypeScript calls it on an existing expression: the node keeps
+/// its own location and atomicity unless `from` has them.
+pub fn at_expr(expression: &Expr, from: &ExprProps) -> Expr {
+    if from.location.is_none() && (!from.is_atomic || expression.is_atomic) {
+        return expression.clone();
+    }
+    Rc::new(ExprNode {
+        core: expression.core.clone(),
+        location: from
+            .location
+            .clone()
+            .or_else(|| expression.location.clone()),
+        is_atomic: from.is_atomic || expression.is_atomic,
+    })
+}
+
+/// tlapm's `core @@ from`, which takes the properties of from. For a fresh core only: where the
+/// TypeScript passes an existing node, whose own properties survive, use `at_expr`.
 pub fn at(core: ExprCore, from: &ExprNode) -> Expr {
     from.with_core(core)
 }
@@ -662,16 +679,14 @@ pub fn apply_builtin(builtin: Builtin, args: Vec<Expr>, from: &ExprProps) -> Exp
     )
 }
 
-/// `exprifySequent`: the active expression alone when there is no context. The result is a core
-/// in the TypeScript; here it is a whole node, the active expression itself when the context is
-/// empty, so callers that take its properties should use `exprify_sequent_core`.
-pub fn exprify_sequent_core(sequent: &Sequent) -> ExprCore {
+/// `exprifySequent`: the active expression itself, with its properties, when there is no context.
+pub fn exprify_sequent(sequent: &Sequent) -> Expr {
     if sequent.context.is_empty() {
-        sequent.active.core.clone()
+        sequent.active.clone()
     } else {
-        ExprCore::Sequent {
+        expr(ExprCore::Sequent {
             sequent: sequent.clone(),
-        }
+        })
     }
 }
 
