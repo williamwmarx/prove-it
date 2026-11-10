@@ -161,6 +161,65 @@ across atoms, on the helpers, and only for the states asked about.
   only expected difference from the recording is the banner's worker count (normalized), or the
   coordinator runs Parity with `PROVE_IT_WORKERS=4`.
 - **Depends on:** nothing. Everything below then measures at 1 and 4 workers.
+- **As built.** `-workers N` sets the threads (`auto` is every core); `PROVE_IT_WORKERS`
+  overrides it, so Parity also runs the native differential on four threads under the recordings'
+  `-workers 1`. The atoms' helpers evaluate a step's subscript only for the states asked about.
+  Turning threads on found three faults on the threaded paths, fixed first (#171): helpers that
+  computed the startup's definitions again (SpanTreeRandom's `Edges`, drawn), atoms on helpers
+  where something draws or uses TLC's registers, and a shared level that stopped and kept no trace.
+  On the suite, `-workers 4` against `main` on one worker, medians of 5 runs on the 4-core
+  container:
+
+  | Model | `main`, 1 | 4 threads | Speedup | RSS MB |
+  |---|---:|---:|---:|---|
+  | MCExactInitialSync | 17.19 | 8.76 | 1.96× | 1,093 → 1,328 |
+  | PaxosCommit | 26.81 | 10.43 | 2.57× | 744 → 2,120 |
+  | MCMultiNode | 7.39 | 3.14 | 2.36× | 539 → 1,117 |
+  | MCLamportMutex | 2.83 | 1.41 | 2.01× | 143 → 194 |
+  | MCbtree | 0.91 | 0.45 | 2.05× | 50 → 73 |
+  | Detlefs | 4.05 | 1.65 | 2.46× | 278 → 322 |
+  | FastPaxos | 3.08 | 1.39 | 2.22× | 175 → 360 |
+  | TLCSailfish1 | 11.14 | 3.55 | 3.14× | 146 → 205 |
+  | MCabs | 11.44 | 4.20 | 2.72× | 35 → 73 |
+  | GameOfLife | 1.16 | 0.40 | 2.86× | 47 → 87 |
+  | BufferedRandomAccessFile | 1.56 | 0.48 | 3.25× | 35 → 35 |
+  | StarkMutex, N = 4 | 8.08 | 8.18 | 0.99× | 588 → 678 |
+  | cf1s_folklore | 16.01 | 13.21 | 1.21× | 547 → 943 |
+  | SpanTreeRandom | 2.00 | 2.01 | 1.00× | 71 → 71 |
+  | 2PCwithBTM | 0.012 | 0.011 | — | 35 → 35 |
+
+  Geomean 1.98× over the suite and 2.4× over the eleven models without a recorded graph. Every
+  run agrees with TLC. On one worker the branch is `main`'s speed (1.00×). The liveness models
+  stay near one thread: their search records a graph and runs on one thread, and SpanTreeRandom's
+  atoms draw. That is track 2's and track 6's work, as is the memory four threads take.
+
+  On 16 cores (`depot-ubuntu-24.04-16`, AMD EPYC 9R45), the Benchmark workflow on this branch at
+  419c7eb, medians of 3 runs, with TLC at d8fb231 on the same machine. MCExactInitialSync didn't
+  run: the workflow didn't fetch its corpus (#180).
+
+  | Model | 1 thread | 16 threads | Speedup | TLC, 16 workers | Over TLC, 16 | RSS MB, 1 → 16 |
+  |---|---:|---:|---:|---:|---:|---|
+  | PaxosCommit | 22.70 | 3.28 | 6.9× | 10.33 | 3.1× | 744 → 3,227 |
+  | MCMultiNode | 6.14 | 1.07 | 5.7× | 6.82 | 6.4× | 538 → 1,851 |
+  | MCLamportMutex | 2.26 | 0.58 | 3.9× | 3.44 | 5.9× | 141 → 385 |
+  | MCbtree | 0.71 | 0.21 | 3.4× | 3.94 | 18.8× | 50 → 123 |
+  | Detlefs | 3.27 | 0.71 | 4.6× | 5.07 | 7.1× | 279 → 379 |
+  | FastPaxos | 2.82 | 0.46 | 6.1× | 2.69 | 5.8× | 175 → 1,280 |
+  | TLCSailfish1 | 9.12 | 0.93 | 9.8× | 3.16 | 3.4× | 146 → 482 |
+  | MCabs | 10.64 | 1.37 | 7.8× | 3.63 | 2.6× | 35 → 205 |
+  | GameOfLife | 1.27 | 0.16 | 7.9× | 1.58 | 9.9× | 47 → 219 |
+  | BufferedRandomAccessFile | 1.53 | 0.17 | 9.0× | 3.46 | 20× | 37 → 69 |
+  | StarkMutex, N = 4 | 7.35 | 6.62 | 1.11× | 12.96 | 2.0× | 589 → 759 |
+  | cf1s_folklore | 13.81 | 11.36 | 1.22× | 15.12 | 1.3× | 545 → 2,233 |
+  | SpanTreeRandom | 1.79 | 1.77 | 1.0× | 3.32 | 1.9× | 71 → 71 |
+  | 2PCwithBTM | 0.01 | 0.01 | — | 0.48 | — | 38 → 38 |
+
+  The models with large levels and costly states scale best (TLCSailfish1, BufferedRandomAccessFile,
+  GameOfLife, MCabs: 7.8–9.8×); those with cheap states scale least (MCbtree, MCLamportMutex), as
+  the serial merge of each level takes a larger share. Memory grows with the threads, by up to
+  150 MB a thread on PaxosCommit and 70 MB on FastPaxos: each thread keeps a copy of the store in
+  its overlay, its own memo tables and, under SYMMETRY, its own canonicalizer's tables of images,
+  each sized to the store. Both are track 6's.
 
 ### 2. Liveness (`perf-liveness`), independent
 
@@ -201,6 +260,31 @@ array of the set's ids, built when a large set is first tested.
 - **Risk:** none to output. The tables are caches of pure functions, and ToString's ranking and
   TLCCache already keep their own rules.
 
+**Done (#179): clustering.** The hot tables key on one state variable and the bound names of a
+quantifier over it (PaxosCommit `[msgs, s28, s29, s31]`, MCMultiNode `[history, s72, s73]`), and
+fill the 4M-entry cap. A table of two keys or more, once it has 4,096 slots, homes an entry by a
+hash of its first key alone, so a state's entries share one run. A probe budget (32 a lookup over
+a window of 16,384 lookups) scatters a table whose first key has too few values.
+- PaxosCommit 34.4 → 28.4 s, MCMultiNode 9.3 → 7.7 s (1.21× each). The rest of the suite is within
+  noise.
+- Memo is then about 24% of MCMultiNode and 12% of PaxosCommit. 40% of what is left of the lookup
+  is still the first load of a run: the first lookup of a key never seen.
+
+Measured and dropped:
+- **A size cap without eviction** (2^12 to 2^20 entries): slower on both. The caching pays even at
+  a miss to memory.
+- **Clustering in bands** of 8 or 64 slots instead of on the first key alone: slower than both.
+- **Clustering from the start**, small tables included: TLCSailfish1 9% slower, and MCLamportMutex
+  3.4 → 4.4 s without the probe budget.
+- **Prefetching each large table's run when a state becomes current** (`set_current`):
+  MCMultiNode 5% slower.
+- **A memo keyed per action footprint** (item 3 of "What 10x would take"): not built. Its hit
+  rate's ceiling is the share of expansions whose read variables repeat. PaxosCommit's costly
+  actions (Phase1a, Phase2a, Decide) read only `msgs`, which is new in 848K of 1.2M expansions:
+  at most about 30% hits, so at most about 15% of the run, before the cost of recording and
+  replaying successors. MCMultiNode's `history` is new in 481K of 1.4M expansions, and the work
+  keyed by it is already in tables keyed on `history` (the invariants hit 92% at width 1).
+
 ### 5. Symmetry (`perf-symmetry`), independent
 
 - Keep each permutation as a dense table by id instead of a `HashMap` with SipHash: 7% on
@@ -223,6 +307,19 @@ The candidates are kept threads, a merge that imports while the next level expan
 read-only memo snapshots.
 - **Needs:** the 16-core Benchmark from the coordinator to measure scaling.
 - **Gain:** from 2.4× toward 3.5× at 4 threads, and more at 16.
+- **Measured (`perf` at 4 threads).** On MCExactInitialSync the merge runs alone for about 3.5 s
+  of the 9.7 s: 14% of all samples, of which half is `States::find`, the state table's probe
+  missing the cache on each candidate, then `insert` and `Store::import`. On PaxosCommit the
+  threads' own work dominates, and `forget_from` at each level costs 2%.
+- **Done: the merge reads the table ahead.** It touches the home slot of the candidate 16 places
+  on before it probes for the current one. MCExactInitialSync at 4 threads: 9.15 → 8.36 s
+  (medians of 9, ranges 8.66–9.58 and 8.07–9.09). Neutral where the table fits the cache
+  (MCbtree, Detlefs). One thread doesn't merge.
+- **Next: fill the table in parallel.** A serial pass numbers the level's new states in
+  (parent, step) order, deduplicating them in a small table of the level's own; then each thread
+  inserts the winners of its shard of a table split by the fingerprint's top bits. That needs the
+  layout of `perf-state-table` (the one-thread probe path, owned by that track) and its
+  `find`/`insert` at a slot.
 
 ### 7. Interning long blocks (`perf-intern`), independent
 
@@ -309,6 +406,7 @@ The design-level changes, ranked by the share they attack:
      from states differing only elsewhere.
    - Attacks the 22–42% memo share: expected 1.3–1.6× on MCMultiNode, PaxosCommit and
      MCLamportMutex.
+   - Measured after #179 and dropped: at most about 30% hits on PaxosCommit (item 4 above).
 4. **Incremental fingerprints and a compact state table**, for the fast models. A successor's
    fingerprint can be the parent's, updated for the variables its action assigned.
    - `changed-slots` (speed.md) tried skipping comparisons and lost. This instead skips the

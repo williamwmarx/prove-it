@@ -18,6 +18,19 @@ const DIRECT_SPARSITY: usize = 16;
 const DIRECT_MINIMUM: usize = 1 << 16;
 const DIRECT_MAXIMUM: usize = 1 << 23;
 
+// A table of two keys or more clusters once it grows to CLUSTER_CAPACITY slots, past which its
+// rows mostly miss the cache: an entry's home is then a hash of its first key alone, so the entries
+// that share it, such as those a state's variable and the bound names of a quantifier over it key,
+// lie in one run that a state's lookups read from one place in memory. A smaller table stays
+// scattered by all its keys, which probes less.
+// Where too many entries share a first key, the runs grow long, and the table scatters its entries
+// for good as soon as the lookups of a window of WINDOW lookups have probed more than PROBE_BUDGET
+// slots past their homes: a run's slots are read one after another, mostly from the cache, so a
+// clustered table pays for far more probes than a scattered one makes.
+const WINDOW: u64 = 1 << 14;
+const PROBE_BUDGET: u64 = 32 * WINDOW;
+const CLUSTER_CAPACITY: usize = 1 << 12;
+
 const OFFSET_BASIS: u32 = 0x811c_9dc5;
 
 #[inline(always)]
@@ -63,6 +76,9 @@ fn wide_home(keys: &[Id]) -> usize {
     (hash ^ (hash >> 15)) as usize
 }
 
+// The part of a packed key that a clustered table hashes: its first key.
+const FIRST: u64 = 0xffff_ffff;
+
 /// A table of the values of one expression, keyed by the ids it reads.
 pub struct MemoTable {
     width: usize,
@@ -77,8 +93,13 @@ pub struct MemoTable {
     size: usize,
     lookups: u64,
     hits: u64,
+    // The slots probed past the home in this window of lookups.
+    probes: u64,
     is_enabled: bool,
     is_direct: bool,
+    is_clustered: bool,
+    // Whether the table may cluster: it has two keys or more, and has never scattered.
+    can_cluster: bool,
     // The largest id stored since the table last forgot, so that it forgets only if it must.
     largest: Id,
 }
@@ -108,8 +129,11 @@ impl MemoTable {
             size: 0,
             lookups: 0,
             hits: 0,
+            probes: 0,
             is_enabled: true,
             is_direct: width == 1,
+            is_clustered: false,
+            can_cluster: width > 1,
             largest: 0,
         }
     }
@@ -140,6 +164,12 @@ impl MemoTable {
 
     fn grow(&mut self) {
         let capacity = self.capacity() * 2;
+        self.is_clustered = self.can_cluster && capacity >= CLUSTER_CAPACITY;
+        self.rehash(capacity);
+    }
+
+    fn rehash(&mut self, capacity: usize) {
+        self.probes = 0;
         self.mask = capacity - 1;
         if self.width <= 2 {
             let old = std::mem::replace(&mut self.packed, vec![EMPTY_PACKED; capacity]);
@@ -157,8 +187,36 @@ impl MemoTable {
         }
     }
 
+    #[inline(always)]
+    fn packed_home(&self, key: u64) -> usize {
+        mix(if self.is_clustered { key & FIRST } else { key }) & self.mask
+    }
+
+    #[inline(always)]
+    fn wide_home(&self, keys: &[Id]) -> usize {
+        if self.is_clustered {
+            mix(u64::from(keys[0])) & self.mask
+        } else {
+            wide_home(keys) & self.mask
+        }
+    }
+
+    // Scatters a clustered table's entries once its lookups have probed too far, and starts a new
+    // window at the end of one.
+    #[inline(always)]
+    fn review(&mut self) {
+        if self.probes > PROBE_BUDGET {
+            self.is_clustered = false;
+            self.can_cluster = false;
+            self.rehash(self.capacity());
+        }
+        if self.lookups.is_multiple_of(WINDOW) {
+            self.probes = 0;
+        }
+    }
+
     fn free_packed(&self, key: u64) -> usize {
-        let mut slot = mix(key) & self.mask;
+        let mut slot = self.packed_home(key);
         while self.packed[slot].value != EMPTY {
             slot = (slot + 1) & self.mask;
         }
@@ -167,7 +225,7 @@ impl MemoTable {
 
     fn free_wide(&self, keys: &[Id]) -> usize {
         let stride = self.width + 1;
-        let mut slot = wide_home(keys) & self.mask;
+        let mut slot = self.wide_home(keys);
         while self.wide[slot * stride] != EMPTY {
             slot = (slot + 1) & self.mask;
         }
@@ -272,26 +330,31 @@ impl MemoTable {
             self.direct.get(keys[0] as usize).copied().unwrap_or(EMPTY)
         } else if self.width <= 2 {
             let key = pack(keys);
-            let mut slot = mix(key) & self.mask;
+            let mut slot = self.packed_home(key);
             loop {
                 let entry = self.packed[slot];
                 if entry.value == EMPTY || entry.key == key {
                     break entry.value;
                 }
+                self.probes += 1;
                 slot = (slot + 1) & self.mask;
             }
         } else {
             let stride = self.width + 1;
-            let mut slot = wide_home(keys) & self.mask;
+            let mut slot = self.wide_home(keys);
             loop {
                 let row = &self.wide[slot * stride..(slot + 1) * stride];
                 // Compared key by key, which beats a call to memcmp for six keys or fewer.
                 if row[0] == EMPTY || row[1..].iter().zip(keys).all(|(stored, key)| stored == key) {
                     break row[0];
                 }
+                self.probes += 1;
                 slot = (slot + 1) & self.mask;
             }
         };
+        if self.is_clustered {
+            self.review();
+        }
         if value != EMPTY {
             self.hits += 1;
         }
@@ -458,6 +521,59 @@ mod tests {
             assert_eq!(table.get(&[key * 1_000_003]), key);
         }
         assert_eq!(table.size(), 102);
+    }
+
+    #[test]
+    fn a_table_whose_entries_share_a_first_key_scatters_them() {
+        for width in 2..=6 {
+            let mut table = MemoTable::new(width);
+            let keys = |key: u32| {
+                let mut keys = vec![7; width];
+                keys[width - 1] = key;
+                keys
+            };
+            for key in 0..2000u32 {
+                table.set(&keys(key), key);
+            }
+            assert!(table.is_clustered);
+            for key in 0..2000u32 {
+                assert_eq!(table.get(&keys(key)), key, "width {width}, key {key}");
+            }
+            assert!(!table.is_clustered);
+            for key in 0..2000u32 {
+                assert_eq!(table.get(&keys(key)), key, "width {width}, key {key}");
+            }
+            assert_eq!(table.get(&keys(2000)), EMPTY);
+            assert_eq!(table.size(), 2000);
+        }
+    }
+
+    #[test]
+    fn a_table_clusters_only_once_it_is_large() {
+        let mut table = MemoTable::new(2);
+        for key in 0..1000u32 {
+            table.set(&[key, 1], key);
+        }
+        assert!(!table.is_clustered);
+        for key in 1000..3000u32 {
+            table.set(&[key, 1], key);
+        }
+        assert!(table.is_clustered);
+        for key in 0..3000u32 {
+            assert_eq!(table.get(&[key, 1]), key);
+        }
+    }
+
+    #[test]
+    fn a_table_whose_first_keys_differ_stays_clustered() {
+        let mut table = MemoTable::new(3);
+        for key in 0..WINDOW as u32 {
+            table.set(&[key, key % 5, 1], key);
+        }
+        for key in 0..WINDOW as u32 {
+            assert_eq!(table.get(&[key, key % 5, 1]), key);
+        }
+        assert!(table.is_clustered);
     }
 
     #[test]
