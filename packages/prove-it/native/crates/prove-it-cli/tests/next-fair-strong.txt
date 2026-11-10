@@ -1,0 +1,16 @@
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: Temporal property Stable was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Inc line 4, col 8 to line 4, col 26 of module NextStrong>
+x = 1
+
+Back to state 1: <Back line 6, col 9 to line 6, col 23 of module NextStrong>
+
+6 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
