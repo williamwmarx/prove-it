@@ -694,6 +694,28 @@ set filter or action-level `\E` whose body starts with `m.f = e` on the bound na
 | Fingerprint a successor whose values change length by independent terms: the parent's prefix before the first changed value shifted by the successor's length from there, each value's F shifted by its tail up to the last changed value, and the parent's terms after it, with each value caching its last term (the same 64-bit value) | MCbtree, MCExactInitialSync | Cachegrind against main: MCbtree 12.17B → 11.90B instructions and 152M → 46M L1 data misses; MCExactInitialSync 163.7B → 169.7B instructions and 3.98B → 2.99B L1 data misses. Wall at 1 worker: MCbtree 1.77 → 1.52 s (11 runs), MCExactInitialSync 31.2 → 34.0 s (5 runs) | 88% of MCbtree's and 65% of MCExactInitialSync's successors change a value's length, and the old path re-extends from the first changed value. On MCExactInitialSync the changed span is nearly as long (6.8 of 9 values), so the terms' table lookups and cache writes cost what the shorter chain saves. 59% of its terms hit the cache. Not kept. |
 | Shift fingerprints by 4-bit tables (2 KB a length) instead of 8-bit ones (16 KB), the same values | MCbtree, MCExactInitialSync | Cachegrind on MCbtree: 12.41B → 13.37B instructions, 144M → 106M L1 data misses. Wall: MCbtree 1.61 → 1.53 s (11 runs), MCExactInitialSync 25.88 → 27.21 s (5 runs), both within noise | The tables' misses are served from L2 and the last level, not memory, so halving the misses buys less than the 16 loads a shift then takes cost. A carry-less multiply (speed.md) trades the same way: its dependent chain is about as long as an L2 hit. |
 
+**State storage, designed and not built.** A compact store would code each variable's ids by a
+dictionary per variable. It gains no time and saves memory only on models whose state store
+dominates their memory. Measured on main 9bf3b18, one worker:
+
+| Model | States, variables | Stored ids | Parents, fingerprints, seen-set | Peak RSS | Distinct ids per variable |
+|---|---|---:|---:|---:|---|
+| MCExactInitialSync | 9,610,407, 12 | 461 MB (48 B a state) | 38, 77, 268 MB | 901 MB | 27, 2935, 6993, 4, 12, 4, 5, 4, 11, 27, 1, 160 (61 bits a state) |
+| PaxosCommit | 1,321,761, 3 | 16 MB | 5, 11, 34 MB | 719 MB | 12, 55696, 888713 (40 bits) |
+
+- **Time:** what a compact store removes is about 4.5% of MCExactInitialSync's self time and 2%
+  of PaxosCommit's, at most 1.05× and 1.02× before encoding and decoding. That covers copies, the
+  states' pushes, `realloc` and page faults.
+- **Memory:** a 16-bit code per variable takes MCExactInitialSync's stored ids from 461 to
+  231 MB, about 25% of its peak. Packed codes (8 B a state) take them to 77 MB, about 43%.
+  PaxosCommit's memory is its value store, so it saves 2–3%.
+- **Design:** each variable keeps an id → code map to encode and a code → id array to decode.
+  The expanded state is decoded once per parent. Traces, liveness, state logs, checkpoints and the
+  threads' merge read states through `States::state`, which would decode.
+  - A variable whose dictionary outgrows its width needs the store re-packed, or a 16- or 32-bit
+    code chosen per variable as it grows (the −25% figure).
+  - Output is unaffected.
+
 ### Memo tables and the memory layout (`perf-memo`)
 
 What the memo track built, measured and dropped, and why the store's memory layout stays as it is.
