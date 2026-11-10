@@ -484,6 +484,12 @@ enum Binding {
 struct Argument {
     expression: NodeId,
     context: Context,
+    /// Whether evaluating it at each use gives the value TLC keeps: TLC evaluates a LET
+    /// definition or an argument once, at its first use, and keeps the value (`LazyValue`),
+    /// where the engine evaluates it at each use. That differs only for one that reads a
+    /// register something writes between its uses, so this holds where it is used once or
+    /// nothing where it is used may write one.
+    is_each_use_alike: bool,
     compiled: RefCell<[Option<Compiled>; 2]>,
     /// For a binding of an instance's scope whose expression closes over that scope: the scope
     /// that binds it, which its context reaches.
@@ -1181,8 +1187,8 @@ impl<'a> Compiler<'a> {
             | NodeKind::Record(_)
             | NodeKind::FieldAccess { .. } => true,
             // TLC evaluates the body once for each element of the set, in the set's order, which
-            // is the engine's where TLC normalizes the set. The engine evaluates the set of an
-            // inner bound once for each element of the outer one, where TLC evaluates it once.
+            // is the engine's where TLC normalizes the set. Prints under several bounds stay
+            // TLC's to check.
             NodeKind::SetMap { bounds, .. } => {
                 matches!(&bounds[..], [bound] if !self.may_be_lazy(bound.set, &mut HashSet::new()))
             }
@@ -1417,14 +1423,23 @@ impl<'a> Compiler<'a> {
             Binding::Argument(argument) => {
                 let is_primed = context.is_primed || argument.context.is_primed;
                 let index = usize::from(is_primed);
-                if let Some(known) = &argument.compiled.borrow()[index] {
-                    return Ok(known.clone());
+                let known = argument.compiled.borrow()[index].clone();
+                let compiled = match known {
+                    Some(known) => known,
+                    None => {
+                        let compiled = self.compile(
+                            argument.expression,
+                            &argument_context(argument).primed(is_primed),
+                        )?;
+                        argument.compiled.borrow_mut()[index] = Some(compiled.clone());
+                        compiled
+                    }
+                };
+                if !argument.is_each_use_alike && compiled.uses_registers() {
+                    return unsupported(
+                        "a definition or an argument that reads a register, evaluated more than once",
+                    );
                 }
-                let compiled = self.compile(
-                    argument.expression,
-                    &argument_context(argument).primed(is_primed),
-                )?;
-                argument.compiled.borrow_mut()[index] = Some(compiled.clone());
                 Ok(compiled)
             }
             Binding::Value { compiled, lazy } => {
@@ -1602,7 +1617,8 @@ impl<'a> Compiler<'a> {
 
     // How many times an expression names a local name, or `None` where it may evaluate a name
     // more than once each time it is evaluated, under a binder, or where it isn't known.
-    fn count_uses(&self, node: NodeId, name: TextId) -> Option<u32> {
+    // `users` names the operators that may use the name in their bodies.
+    fn count_uses(&self, node: NodeId, name: TextId, users: &[TextId]) -> Option<u32> {
         match self.node(node).1 {
             NodeKind::Number(_)
             | NodeKind::WideNumber(_)
@@ -1615,26 +1631,35 @@ impl<'a> Compiler<'a> {
                 name: applied,
                 args,
             } => {
+                // A later definition of the LET may use the name, as often as it is applied.
+                if applied.is_local && users.contains(&applied.text) {
+                    return None;
+                }
                 let own = u32::from(applied.is_local && applied.text == name);
-                Some(own + self.sum_uses(name, args.iter().copied())?)
+                Some(own + self.sum_uses(name, users, args.iter().copied())?)
             }
             NodeKind::And(operands)
             | NodeKind::Or(operands)
             | NodeKind::SetEnumeration(operands)
             | NodeKind::Tuple(operands)
-            | NodeKind::Product(operands) => self.sum_uses(name, operands.iter().copied()),
-            NodeKind::Record(fields) => self.sum_uses(name, fields.iter().map(|&(_, field)| field)),
-            NodeKind::FieldAccess { record, .. } => self.count_uses(*record, name),
-            NodeKind::FunctionApplication { function, args } => {
-                self.sum_uses(name, std::iter::once(*function).chain(args.iter().copied()))
+            | NodeKind::Product(operands) => self.sum_uses(name, users, operands.iter().copied()),
+            NodeKind::Record(fields) => {
+                self.sum_uses(name, users, fields.iter().map(|&(_, field)| field))
             }
+            NodeKind::FieldAccess { record, .. } => self.count_uses(*record, name, users),
+            NodeKind::FunctionApplication { function, args } => self.sum_uses(
+                name,
+                users,
+                std::iter::once(*function).chain(args.iter().copied()),
+            ),
             NodeKind::If {
                 condition,
                 consequent,
                 alternative,
-            } => self.sum_uses(name, [*condition, *consequent, *alternative]),
+            } => self.sum_uses(name, users, [*condition, *consequent, *alternative]),
             NodeKind::Case { arms, other } => self.sum_uses(
                 name,
+                users,
                 arms.iter()
                     .flat_map(|&(guard, arm)| [guard, arm])
                     .chain(*other),
@@ -1643,10 +1668,68 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn sum_uses(&self, name: TextId, nodes: impl IntoIterator<Item = NodeId>) -> Option<u32> {
-        nodes
-            .into_iter()
-            .try_fold(0, |count, node| Some(count + self.count_uses(node, name)?))
+    fn sum_uses(
+        &self,
+        name: TextId,
+        users: &[TextId],
+        nodes: impl IntoIterator<Item = NodeId>,
+    ) -> Option<u32> {
+        nodes.into_iter().try_fold(0, |count, node| {
+            Some(count + self.count_uses(node, name, users)?)
+        })
+    }
+
+    // Whether evaluating an expression may write a TLC register: it applies TLCSet or
+    // TLCGetAndSet, a definition or a name of `scope` that may, or an operator it can't see the
+    // body of.
+    fn may_write_register(
+        &self,
+        node: NodeId,
+        scope: &Option<Rc<Scope>>,
+        seen: &mut HashSet<NodeId>,
+    ) -> bool {
+        let (id, kind) = self.node(node);
+        if !seen.insert(id) {
+            return false;
+        }
+        let resolution = match kind {
+            NodeKind::Apply { name, .. } | NodeKind::Identifier(name) if !name.is_local => {
+                Some(name.resolution)
+            }
+            // A name the scope doesn't bind is a definition of the LET being bound, which is
+            // scanned itself.
+            NodeKind::Identifier(name) => {
+                return lookup(scope, name.text)
+                    .map(|found| match &found.binding {
+                        Binding::Slot(_) => false,
+                        Binding::Argument(argument) => self.may_write_register(
+                            argument.expression,
+                            &argument.context.scope,
+                            seen,
+                        ),
+                        _ => true,
+                    })
+                    .unwrap_or_default();
+            }
+            NodeKind::Apply { .. } | NodeKind::OperatorReference(_) => return true,
+            _ => None,
+        };
+        let is_writing = match resolution {
+            Some(Resolution::Builtin(index)) => {
+                matches!(self.builtin_name(index), "TLCSet" | "TLCGetAndSet")
+            }
+            Some(Resolution::Definition(index)) => self.may_write_register(
+                self.definition(self.ir.definitions[index as usize]).body,
+                &None,
+                seen,
+            ),
+            _ => false,
+        };
+        is_writing
+            || kind
+                .children()
+                .into_iter()
+                .any(|child| self.may_write_register(child, scope, seen))
     }
 
     // A LET's definitions, those an INSTANCE in it copies in among them.
@@ -1661,12 +1744,17 @@ impl<'a> Compiler<'a> {
             let definition = self.definition(node);
             // A definition the rest of the LET names once is evaluated once, as TLC evaluates
             // it, so it may print.
-            let uses = definitions[position + 1..]
+            let later = &definitions[position + 1..];
+            let users: Vec<TextId> = later
+                .iter()
+                .map(|&later| self.definition(later).name)
+                .collect();
+            let uses = later
                 .iter()
                 .map(|&later| self.definition(later).body)
                 .chain([body])
                 .try_fold(0, |count, root| {
-                    Some(count + self.count_uses(root, definition.name)?)
+                    Some(count + self.count_uses(root, definition.name, &users)?)
                 });
             let definition_context = Context {
                 scope: scope.clone(),
@@ -1713,6 +1801,10 @@ impl<'a> Compiler<'a> {
                         definition.name,
                         Binding::Argument(Rc::new(Argument {
                             expression: definition.body,
+                            is_each_use_alike: uses.is_some_and(|count| count <= 1)
+                                || !definitions.iter().chain([&body]).any(|&root| {
+                                    self.may_write_register(root, &scope, &mut HashSet::new())
+                                }),
                             context: definition_context,
                             compiled: RefCell::new([None, None]),
                             own_scope: RefCell::new(Weak::new()),
@@ -1745,10 +1837,12 @@ impl<'a> Compiler<'a> {
     // --- operator application ---
 
     // Binds the parameters of an operator to its arguments.
+    // `body` is the operator's body, which says how often it uses each parameter.
     fn bind_arguments(
         &mut self,
         params: &[Param],
         args: &[NodeId],
+        body: Option<NodeId>,
         caller: &Context,
         callee: Context,
     ) -> Compiling<Context> {
@@ -1763,6 +1857,11 @@ impl<'a> Compiler<'a> {
             } else {
                 Binding::Argument(Rc::new(Argument {
                     expression: argument,
+                    is_each_use_alike: body.is_some_and(|body| {
+                        self.count_uses(body, param.name, &[])
+                            .is_some_and(|count| count <= 1)
+                            || !self.may_write_register(body, &callee.scope, &mut HashSet::new())
+                    }),
                     context: argument_context.clone(),
                     compiled: RefCell::new([None, None]),
                     own_scope: RefCell::new(Weak::new()),
@@ -1863,7 +1962,8 @@ impl<'a> Compiler<'a> {
                     expanding: context.expanding_with(node),
                     ..context.global(context.can_print)
                 };
-                let callee = self.bind_arguments(params, args, context, base)?;
+                let callee =
+                    self.bind_arguments(params, args, Some(definition.body), context, base)?;
                 let compiled = self.compile(definition.body, &callee)?;
                 return Ok(self.cached(compiled));
             }
@@ -1919,7 +2019,11 @@ impl<'a> Compiler<'a> {
         }
         let base =
             operator_context(operator).primed(context.is_primed || operator.context.is_primed);
-        let callee = self.bind_arguments(&operator.params, args, context, base)?;
+        let body = match operator.body {
+            OperatorBody::Node(body) => Some(body),
+            OperatorBody::Builtin(_) => None,
+        };
+        let callee = self.bind_arguments(&operator.params, args, body, context, base)?;
         let compiled = match operator.body {
             OperatorBody::Node(body) => self.compile(body, &callee)?,
             OperatorBody::Builtin(index) => {

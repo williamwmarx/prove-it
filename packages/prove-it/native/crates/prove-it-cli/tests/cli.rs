@@ -1675,6 +1675,47 @@ fn applies_the_functions_tlc_keeps_lazy() {
 }
 
 #[test]
+fn keeps_a_definitions_value_as_tlc_does() {
+    // TLC evaluates a LET definition or an argument once, at its first use, and keeps the value
+    // (`LazyValue`), so `a` is 0 both times though TLCSet writes the register between its uses.
+    // The engine evaluates it at each use: it stops there, and must not print <<0, TRUE, 7>>.
+    let spec = "---- MODULE Stop ----\nEXTENDS TLC\nVARIABLE x\nInit == TLCSet(1, 0) /\\ x = (LET a == TLCGet(1) IN <<a, TLCSet(1, 7), a>>) /\\ PrintT(x)\nNext == x' = x\n====\n";
+    let (output, directory) = run_lowered("kept-value", spec, "INIT Init\nNEXT Next\n");
+    assert!(
+        !stdout(&output).contains("<<0, TRUE, 7>>"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("reads a register"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    // Where nothing writes a register between the uses, each gives TLC's value: Max reads S twice.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nMax(S) == CHOOSE m \\in S : \\A y \\in S : m >= y\nInit == TLCSet(1, 3) /\\ x = Max({1, TLCGet(1)}) /\\ PrintT(x)\nNext == x' = x\n====\n";
+    let (output, directory) = run_lowered("kept-alike", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(text.contains("\n3\n"), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
+fn reports_an_assumption_after_the_registers_the_ones_before_set() {
+    // The assumption the engine leaves to the trace evaluator reads the register the first one
+    // set, and fails as TLC reports.
+    let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME TLCSet(1, 5)\nASSUME LET a == TLCGet(1) IN a \\div (a - 5) = a\nInit == x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_lowered("assumed-register", spec, "INIT Init\nNEXT Next\n");
+    let text = stdout(&output);
+    assert!(
+        text.contains("failed.\nThe second argument of \\div is 0.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn binds_several_bounds_in_tlcs_order() {
     // TLC evaluates each bound's set once, in the order written, then binds the first bound
     // fastest (`Tool.contexts`, `ContextEnumerator`): Inv is FALSE at <<2, 1>> before it fails to

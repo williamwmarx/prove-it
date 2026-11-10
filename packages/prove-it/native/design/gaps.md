@@ -791,6 +791,40 @@ TypeScript CLI on the Rust backend. Fixed, each with a test in `prove-it-cli/tes
   bound the last fastest, so a body FALSE at `<<2, 1>>` and failing at `<<1, 2>>` failed. A
   function TLC builds at once is built over the sets its lazy form evaluated, not over sets
   evaluated again.
+- a LET definition or an operator's argument, which TLC evaluates once, at its first use, and
+  keeps (`LazyValue`, in every context: the initial predicate, actions, invariants and
+  constraints), where the engine evaluates it at each use. With `Init == TLCSet(1, 0) /\ x =
+  (LET a == TLCGet(1) IN <<a, TLCSet(1, 7), a>>)` TLC has `<<0, TRUE, 0>>` and the engine had
+  `<<0, TRUE, 7>>`; the same held for an argument (`W(a) == <<a, TLCSet(1, 7), a>>`) and for a
+  write through `TLCCache`. A definition or an argument that reads a register is now not native
+  where it is used more than once and its scope may write a register (`is_each_use_alike`,
+  `may_write_register`: TLCSet, TLCGetAndSet, an operator whose body may, or a local operator).
+  `Max(S) == CHOOSE m \in S : \A y \in S : m >= y` applied to `{1, TLCGet(1)}` stays native.
+  Uses inside a local operator the LET defines later count as many.
+- an assumption the engine leaves to the trace evaluator and that fails there: the replay
+  evaluated it without the assumptions before it, so a register they set read as undefined
+  ("TLCGet(1) was undefined" where TLC reports the assumption's own failure). It now evaluates
+  them first.
+
+An order sweep (2026-11-10) checked the engine's evaluation against TLC's, with `TLCCache(IF
+TLCSet(1, Append(TLCGet(1), t)) THEN t ELSE t, t)` logging the first evaluation of each tag:
+the operands of `+`, `=`, `\in`, `\cup`, `<`, `#`, `\o`, `:>` and `@@`, IF and CASE (guards in
+order, OTHER last, an arm only where its guard holds), `/\`, `\/` and `=>` short-circuits, `<=>`,
+`~`, EXCEPT paths and values, records, tuples, sets, `..`, `\X`, `[S -> T]`, record sets,
+SUBSET, UNION, function application and field access, SubSeq, Len, Head, Cardinality, a
+recursive function a LET defines, an operator's arguments in the order its body uses them,
+quantifiers, CHOOSE, filters and set maps. Each matches TLC or declines (an effect under a bound
+name, or a printed set whose text depends on how TLC built it). The LET and argument item above
+is what it found.
+
+### Open: a function construction applied in place
+
+TLC applies `[a \in S, b \in T |-> e][k]` without building the function, evaluating e for k
+alone. The engine builds the function, so it evaluates e at every argument and stops at a failure
+TLC never reaches: with `Inv == [a \in {1, 2}, b \in {1, 2 + x} |-> IF a = 2 /\ b = 1 THEN
+CHOOSE y \in {} : TRUE ELSE IF a = 1 /\ b = 2 THEN 1 \div 0 ELSE 0][1, 1] = 0` TLC finds no error.
+The engine's failure is evaluated again by the trace evaluator, which applies it as TLC does and
+doesn't fail, so the run is not native.
 
 ### Open: the depth TLC's stack allows
 
@@ -852,6 +886,13 @@ and FiniteSets and has `VARIABLE x`, `Init == x = 0` unless shown.
   `<expression line 4, col 65 to line 4, col 65 of module P14>`; with
   `F == [k \in {0, 1} |-> [i \in Nat \ {k} |-> i]]` and `Init == x = F[0][0]`, TLC prints the
   domain `Nat \ ({0})`, the interpreter `Nat \ {0}`. The native binary declines both.
+- **The heap of the interpreter's run.** mongodb's MCTxnsMoveRange, run as the differential
+  runs it (`PROVE_IT_ENGINE=0 node dist/cli.js -workers 1 -nowarning -seed 0 -fp 0 -lncheck final
+  -noGenerateSpecTE -metadir <dir> -config MCTxnsMoveRange.cfg MCTxnsMoveRange.tla`), stops after
+  about 100 s and 380,000 states with "FATAL ERROR: Ineffective mark-compacts near heap limit
+  Allocation failed - JavaScript heap out of memory" at Node's default heap of about 2 GB and
+  SIGABRT, which the differential records as exit null. TLC, the engine and the native binary
+  complete it.
 - **TLCEval in the interpreter** keeps the lazy set: `Next == x < 3 /\ x' = x + 1 /\ y' =
   RandomElement(TLCEval([{2, 1} -> 1..100]))` draws other values than TLC's.
 - **EXCEPT of a function TLC keeps lazy but the checker builds.** `LET f == [i \in 1..3 |-> 10
