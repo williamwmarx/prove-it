@@ -1921,9 +1921,11 @@ pub fn get_sany_messages(
         else {
             return Err(error);
         };
+        // SANY places the arity of a substitution in the builtins' module.
         let is_in_root = |location: &str| {
             location.ends_with(&format!(" of module {}", root.name))
                 || location == format!("In module {}", root.name)
+                || location == "In module --TLA+ BUILTINS--"
         };
         if report.is_fatal || !report.errors.iter().all(|item| is_in_root(&item.location)) {
             return Err(error);
