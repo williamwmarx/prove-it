@@ -1685,18 +1685,20 @@ impl<'a> Compiler<'a> {
             NodeKind::Apply { name, .. } | NodeKind::Identifier(name) if !name.is_local => {
                 Some(name.resolution)
             }
+            // A name the scope doesn't bind is a definition of the LET being bound, which is
+            // scanned itself.
             NodeKind::Identifier(name) => {
-                return match lookup(scope, name.text).map(|found| match &found.binding {
-                    Binding::Slot(_) => false,
-                    Binding::Argument(argument) => {
-                        self.may_write_register(argument.expression, &argument.context.scope, seen)
-                    }
-                    _ => true,
-                }) {
-                    Some(is_writing) => is_writing,
-                    // A definition of the LET being bound, which is scanned itself.
-                    None => false,
-                };
+                return lookup(scope, name.text)
+                    .map(|found| match &found.binding {
+                        Binding::Slot(_) => false,
+                        Binding::Argument(argument) => self.may_write_register(
+                            argument.expression,
+                            &argument.context.scope,
+                            seen,
+                        ),
+                        _ => true,
+                    })
+                    .unwrap_or_default();
             }
             NodeKind::Apply { .. } | NodeKind::OperatorReference(_) => return true,
             _ => None,
