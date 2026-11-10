@@ -27,7 +27,14 @@ import type {
 } from "../check";
 import { parseConfig } from "../config";
 import { getNativeAddon, loadWasmEngine, type NativeCheckSources } from "../engine/native";
-import { getEngineSetting, getStopAt, reportEngine } from "../engine/settings";
+import {
+  getEngineSetting,
+  getFingerprintSetting,
+  getStopAt,
+  isIrDumped,
+  isStateLogged,
+  reportEngine,
+} from "../engine/settings";
 import {
   getErrorExitCode,
   getUnexpectedException,
@@ -965,8 +972,17 @@ export const checkNatively = async (
   args: string[],
   java: JavaProperties,
 ) => {
-  // PROVE_IT_STOP_AT tests the TypeScript check's hand-over from the engine.
-  if (getEngineSetting() === "0" || getStopAt() !== -1) return undefined;
+  // The debug settings only the TypeScript check honours: PROVE_IT_STOP_AT tests its hand-over from
+  // the engine, and the IR dump, the state log and the fingerprint check are written there.
+  if (
+    getEngineSetting() === "0" ||
+    getStopAt() !== -1 ||
+    isIrDumped() ||
+    isStateLogged() ||
+    getFingerprintSetting() !== undefined
+  ) {
+    return undefined;
+  }
   const startedAt = performance.now();
   await loadWasmEngine();
   const addon = getNativeAddon();

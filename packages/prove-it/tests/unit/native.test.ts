@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -52,6 +52,33 @@ describe("the native engine", () => {
       });
       expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 0, stderr: "" });
       expect(run.stdout).toContain("251 distinct states found");
+    },
+    SPAWN_LIMIT_MS,
+  );
+
+  it(
+    "leaves a run that dumps the IR or logs the states to the TypeScript check, which writes them",
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), "prove-it-native-debug-"));
+      try {
+        const ir = join(directory, "Commit.ir");
+        const stateLog = join(directory, "Commit.jsonl");
+        const run = spawnSync("bun", [SOURCE_CLI, "-noGenerateSpecTE", "Commit.cfg"], {
+          cwd: COMMIT,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PROVE_IT_ENGINE: "debug",
+            PROVE_IT_IR_DUMP: ir,
+            PROVE_IT_STATE_LOG: stateLog,
+          },
+        });
+        expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
+        expect(run.stderr).not.toContain("native: checkSources");
+        expect([existsSync(ir), existsSync(stateLog)]).toEqual([true, true]);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     },
     SPAWN_LIMIT_MS,
   );
