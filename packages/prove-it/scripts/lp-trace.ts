@@ -1,5 +1,6 @@
 // Records the lp calls of the arithmetic theory on the SMT inputs of the decider corpus, one
-// .lptrace file per input in .lp-traces, named by its digest (src/prover/smt/solver/lp-trace.ts),
+// .lptrace file per input in .lp-traces/<prover>/<digest>.lptrace, keyed as the record is, so an
+// smt and a z3 record of one text keep their own traces (src/prover/smt/solver/lp-trace.ts),
 // for the Rust port of lp to replay. Each input is decided with its recorded step limit and no time
 // limit, as prover-differential.ts does, and the answer, statistics included, must be the recorded
 // one, which shows that tracing left the search as it was.
@@ -11,7 +12,7 @@
 // Usage: bun scripts/run.ts lp-trace [--inputs directory [--time-limit ms]] [--filter text] [--jobs n] [--verbose]
 
 import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { TlaProverError } from "../src/errors";
@@ -74,10 +75,16 @@ const getAnswer = (
 };
 
 const getInputs = (): TraceInput[] => {
-  if (inputsDirectory !== undefined)
-    return readdirSync(inputsDirectory)
-      .filter((name) => name.endsWith(".smt"))
-      .map((name) => ({ id: name, prover: "smt", path: resolve(inputsDirectory, name) }));
+  if (inputsDirectory !== undefined) {
+    // Files with the same text share a trace, so only the first of them is traced.
+    const paths = new Map<string, string>();
+    for (const name of readdirSync(inputsDirectory).filter((entry) => entry.endsWith(".smt"))) {
+      const path = resolve(inputsDirectory, name);
+      const digest = getDigest(readFileSync(path, "utf8"));
+      if (!paths.has(digest)) paths.set(digest, path);
+    }
+    return [...paths.values()].map((path) => ({ id: basename(path), prover: "smt", path }));
+  }
   const records = readInputRecords();
   return Object.keys(records)
     .filter((key) => SMT_PROVERS.has(records[key].prover))
@@ -100,11 +107,12 @@ const trace = async (input: TraceInput): Promise<Result> => {
     input.stepLimit ??
     Number(getAnswer(input.prover, text, undefined, timeLimitMs).statistics.steps);
   const expected = input.expected ?? getAnswer(input.prover, text, stepLimit);
-  process.env.PROVE_IT_LP_TRACE = TRACES_DIRECTORY;
+  const directory = join(TRACES_DIRECTORY, input.prover);
+  process.env.PROVE_IT_LP_TRACE = directory;
   const actual = getAnswer(input.prover, text, stepLimit);
   delete process.env.PROVE_IT_LP_TRACE;
   const digest = getDigest(text);
-  const tracePath = join(TRACES_DIRECTORY, `${digest}.lptrace`);
+  const tracePath = join(directory, `${digest}.lptrace`);
   const isSame = isDeepStrictEqual(actual, expected);
   return {
     verdict: isSame ? "same" : "differs",
