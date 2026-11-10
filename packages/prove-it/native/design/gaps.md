@@ -678,7 +678,7 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   `>` there, which the IR flags on the builtin (`Builtin::NATURALS_GEQ`, IR 13).
 - DoInitFunctorMinimalErrorStack now prints what TLC prints.
 
-## Open: what the infinite-sets session left (2026-11-09)
+## The assumption models, MCEWD687a and what stays declined (infinite-sets session)
 
 - **EmptySetEqAssume** and **ValueSemanticsAssume** now print what TLC prints. The engine took
   three stops for failures of TLC's that aren't in an assumption: "EXCEPT outside the domain",
@@ -714,9 +714,7 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   otherwise than the sorted search does. `evaluate_failure` declines an invariant's failure
   whose membership passes through such a set (`CallStack::is_member_followed`); the replay of the
   expansion after it is done.
-- **ccf TraceMultiNodeReads** ("enumerated STRING"): TLC fails as it enumerates
-  `[STRING -> STRING]` (IOUtils' IOEnv) checking an implied init of a liveness model, with a
-  FingerprintException whose call stack runs through Json and IOUtils. Not attempted.
+- **ccf TraceMultiNodeReads** was done by the liveness session: see `liveness.md`.
 
 ## Test2, liveness atoms answered as the search goes (as built)
 
