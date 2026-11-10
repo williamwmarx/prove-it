@@ -351,6 +351,7 @@ fn undefined_register<T>(key: &Value) -> Evaluated<T> {
 }
 
 const LAZY_FILTER: &str = "a filter TLC keeps lazy";
+const INFINITE_FILTER: &str = "a filter of a set TLC can't enumerate";
 /// The reasons the replay can't follow TLC's frames to a failure, which change no message: TLC
 /// prints no frames where an assumption fails to evaluate.
 pub(crate) const UNFOLLOWED_FRAMES: [&str; 2] = [LAZY_DOMAIN, BUILT_FUNCTION];
@@ -1042,6 +1043,22 @@ impl<'ir> Evaluator<'ir> {
             }
             NodeKind::SetFilter { bound, predicate } => {
                 let set = self.evaluate(bound.set, context)?;
+                // TLC keeps a filter of a set it can't enumerate as it is (`SetPredValue`), and
+                // fails where it enumerates the filter, which the replay follows only into a
+                // bound.
+                if let (Value::Lazy(lazy), Some(stack)) = (&set, &mut self.call_stack)
+                    && lazy.is_overridden()
+                    && stack.unfollowed.is_none()
+                {
+                    stack.unfollowed = Some(INFINITE_FILTER);
+                    return fail_runtime(
+                        "enumerated a filter of an infinite set",
+                        format!(
+                            "Attempted to enumerate {{ x \\in S : p(x) }} when S:\n{}\nis not enumerable",
+                            format_pretty(&set)
+                        ),
+                    );
+                }
                 let mut kept = Vec::new();
                 for element in elements(&set)?.iter() {
                     let inner = self.bind_pattern(&bound.pattern, element, context)?;
@@ -1828,7 +1845,12 @@ impl<'ir> Evaluator<'ir> {
     ) -> Evaluated<bool> {
         let mut sets = Vec::with_capacity(bounds.len());
         for bound in bounds {
-            let set = self.evaluate(bound.set, context)?;
+            let frame = self.call_stack.as_ref().map(|stack| stack.frames.len());
+            let set = self.evaluate(bound.set, context);
+            if set.is_err() {
+                self.follow_infinite_filter(frame);
+            }
+            let set = set?;
             self.check_enumerable(&set, bound.set)?;
             sets.push(elements(&set)?);
         }
@@ -2299,6 +2321,48 @@ impl<'ir> Evaluator<'ir> {
             }
         }
         Ok(Combined::Set(self.operand(set)?))
+    }
+
+    // A filter of a set TLC can't enumerate that a bound, whose frames end at `frame`, enumerates:
+    // TLC fails in the bound's own frame where the bound is the filter, or the operators whose
+    // definitions are, one after the other.
+    fn follow_infinite_filter(&mut self, frame: Option<usize>) {
+        let (Some(stack), Some(frame)) = (&self.call_stack, frame) else {
+            return;
+        };
+        if stack.unfollowed != Some(INFINITE_FILTER) {
+            return;
+        }
+        let nodes: Vec<Option<NodeId>> = stack.frames[frame..]
+            .iter()
+            .map(|inner_frame| match inner_frame {
+                StackFrame::Node(node) => Some(self.node(*node).0),
+                StackFrame::Prefix(..) => None,
+            })
+            .collect();
+        let is_written = nodes.iter().enumerate().all(|(index, node)| {
+            let Some(node) = *node else {
+                return false;
+            };
+            match (self.kind(node), nodes.get(index + 1)) {
+                (NodeKind::SetFilter { .. }, None) => true,
+                (NodeKind::Apply { name, .. }, Some(&Some(body))) => match name.resolution {
+                    Resolution::Definition(index) if !name.is_local => {
+                        let definition = self.definition(self.ir.definitions[index as usize]);
+                        self.node(definition.body).0 == body
+                    }
+                    _ => false,
+                },
+                _ => false,
+            }
+        });
+        if is_written
+            && !nodes.is_empty()
+            && let Some(stack) = &mut self.call_stack
+        {
+            stack.frames.truncate(frame);
+            stack.unfollowed = None;
+        }
     }
 
     // A failure in the predicate of a filter TLC keeps lazy, where what uses the filter, whose
