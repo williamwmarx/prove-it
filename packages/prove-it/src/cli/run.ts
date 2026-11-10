@@ -1,5 +1,7 @@
 import { delimiter } from "node:path";
 
+import { EngineUnavailableError } from "../errors";
+import { EXIT_STATUS } from "../exit-codes";
 import { getTlcVersion } from "../tlc/version";
 import { getToolsJar, type JavaProperties, reportErrors } from "./shared";
 import { checkSpecs } from "./tlc";
@@ -68,6 +70,11 @@ const run = async (args: string[]) => {
   return 1;
 };
 
+// Without a native engine, the CLI exits as TLC does on an internal error.
 export const runCli = async () => {
-  process.exitCode = await run(process.argv.slice(2));
+  process.exitCode = await run(process.argv.slice(2)).catch((error: unknown) => {
+    if (!(error instanceof EngineUnavailableError)) throw error;
+    console.error(error.message);
+    return EXIT_STATUS.error;
+  });
 };

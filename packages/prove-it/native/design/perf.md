@@ -342,6 +342,7 @@ MCbtree) it needs more cores. These items are independent of each other and of t
 - A JIT or native code: the backend is shelved (native-backend.md), and the workspace stays std
   only.
 - Hashing ids with a cheaper hash in the state table: it is already a multiply-shift.
+<<<<<<< HEAD
 
 ## Results
 
@@ -363,3 +364,5 @@ no failure of TLC's that the store misses.
 | TLCSailfish1 | 16.64 (16.33–17.02) | 5.13 (5.11–5.40) | 3.24× |
 | PaxosCommit | 35.45 (34.35–36.91) | 33.30 (32.76–33.53) | 1.06× |
 | MCabs | 18.34 (17.77–18.71) | 17.48 (16.92–17.64) | 1.05× |
+=======
+>>>>>>> origin/main

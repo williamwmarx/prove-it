@@ -16,7 +16,7 @@ The repository is a Bun 1.4.4 workspace. Use Bun for everything:
 
 - `bun install` installs; commit `bun.lock`.
 - `bun run build` bundles `dist/` with `bun build` and emits type declarations with `tsc`.
-- `bun run test` builds `dist/` and then runs `bun test`, since some tests run `dist/cli.js` and the workers. Import test APIs from `bun:test`.
+- `bun run test` builds `dist/` and the native addon, then runs `bun test`, since some tests run `dist/cli.js` and the workers, and every check needs the engine (`tests/setup.ts` points the tests at the addon). Import test APIs from `bun:test`.
 - `bun run typecheck` runs `bun check`.
 - `bun run lint` runs `bun lint` from a pinned Bun canary, because stable Bun 1.4.4 has no `bun lint` yet. `bun run format` runs `bun fmt`. Both read their settings from `bunfig.toml`.
 - The Rust workspace in `packages/prove-it/native` pins its toolchain in `rust-toolchain.toml`. `bun scripts/platform-packages.ts build` builds the addon and the binary into `native/npm/<platform>`.

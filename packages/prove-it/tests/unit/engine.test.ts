@@ -5,50 +5,17 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
 import { check, formatValue } from "../../src";
-import { getMemoStatistics, nextEpoch } from "../../src/engine/compile";
-import { EpochCache, MemoTable } from "../../src/engine/memo";
 import { getEngineThreads } from "../../src/engine/settings";
 
-const settings = [
-  "PROVE_IT_ENGINE",
-  "PROVE_IT_WORKERS",
-  "PROVE_IT_LIVE_CHECK",
-  "PROVE_IT_ENGINE_BACKEND",
-].map((name) => [name, process.env[name]] as const);
+const settings = ["PROVE_IT_ENGINE", "PROVE_IT_WORKERS", "PROVE_IT_LIVE_CHECK"].map(
+  (name) => [name, process.env[name]] as const,
+);
 
 afterEach(() => {
   for (const [name, value] of settings) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
   }
-});
-
-describe("the engine between checks", () => {
-  // It reads the TypeScript engine's memo tables, so it pins that backend; native/ts-only-tests.json
-  // names its Rust counterpart.
-  it("keeps only the current check's memo tables", async () => {
-    process.env.PROVE_IT_ENGINE_BACKEND = "ts";
-    const options = {
-      source: [
-        "---- MODULE M ----",
-        "EXTENDS Naturals, FiniteSets",
-        "VARIABLE x",
-        "RECURSIVE Sum(_)",
-        "Sum(n) == IF n = 0 THEN 0 ELSE n + Sum(n - 1)",
-        "Init == x = 0",
-        "Next == x' = (x + 1) % 20",
-        "Inv == Sum(x) >= 0 /\\ Cardinality({y \\in 0..x : y % 2 = 0}) >= 0",
-        "====",
-      ].join("\n"),
-      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
-      onPrint: () => {},
-    };
-    await check(options);
-    const tables = getMemoStatistics().length;
-    expect(tables).toBeGreaterThan(0);
-    await check(options);
-    expect(getMemoStatistics().length).toBe(tables);
-  });
 });
 
 describe("the engine's threads", () => {
@@ -62,7 +29,7 @@ describe("the engine's threads", () => {
   });
 });
 
-// The TypeScript engine's lines. The native engine's, with PROVE_IT_ENGINE_BACKEND=rust, come first.
+// The engine's lines, but the native engine's own.
 const checkInEngine = async (body: string, config: string) => {
   process.env.PROVE_IT_ENGINE = "debug";
   const lines: string[] = [];
@@ -601,37 +568,6 @@ describe("the engine", () => {
       "[status |-> 0, row |-> 0]",
       "[status |-> 0, row |-> 0]",
     ]);
-  });
-
-  it("never issues an epoch again, so a cached value can't outlive its state", () => {
-    // A search holds the epoch of the state it expands while its successors take new ones.
-    let previous = nextEpoch();
-    for (let count = 0; count < 0x40000000; count++) {
-      const epoch = nextEpoch();
-      if (epoch <= previous) throw new Error(`epoch ${epoch} after ${previous}`);
-      previous = epoch;
-    }
-    // Nor does a cache take an epoch past 2^32 for another.
-    const cache = new EpochCache();
-    const entry = EpochCache.entry(7, 0, 0, 0);
-    cache.set(2 ** 32 + 5, entry, 7, 0, 0, 0, 111);
-    expect(cache.get(2 ** 32 + 5, entry, 7, 0, 0, 0)).toBe(111);
-    expect(cache.get(5, entry, 7, 0, 0, 0)).toBe(-1);
-  });
-
-  it("keeps every entry of a memo table of one key, its keys dense or sparse", () => {
-    // Ids 0 to 1999 fit the table's array; ids a million apart make it a hash table.
-    for (const stride of [1, 1_000_000]) {
-      const table = new MemoTable(1);
-      for (let key = 0; key < 1999; key++) table.set1(key * stride, key + 7);
-      table.setN(Int32Array.of(1999 * stride), 0, 99);
-      for (let key = 0; key < 2000; key++) {
-        expect(table.getN(Int32Array.of(key * stride), 0)).toBe(key === 1999 ? 99 : key + 7);
-      }
-      expect(table.get1(2000 * stride)).toBe(-1);
-      expect(table.get1(-1)).toBe(-1);
-      expect(table.size).toBe(2000);
-    }
   });
 
   it("compiles what an initial state's shortcut evaluates while generated code runs", async () => {
