@@ -291,12 +291,14 @@ impl<'ir> Rebuilder<'ir> {
         // expands, which is of the state itself where TLC fingerprints no other key.
         let order: Vec<usize> = ir.tlc_order.iter().map(|&index| index as usize).collect();
         let mut fingerprints = Fingerprints::new();
-        let mut seeded = |state: &[Id]| {
-            (is_drawing && matches!(self.key, Key::State)).then(|| {
-                JavaRandom::seeded(
-                    fingerprints.get_state(store, state, &order) ^ ir.model.random_seed,
-                )
-            })
+        let mut seeded = |state: &[Id]| -> Result<Option<JavaRandom>, Unsupported> {
+            if !is_drawing || !matches!(self.key, Key::State) {
+                return Ok(None);
+            }
+            match fingerprints.get_state(store, state, &order) {
+                Ok(fingerprint) => Ok(Some(JavaRandom::seeded(fingerprint ^ ir.model.random_seed))),
+                Err(bail) => unsupported(bail.0),
+            }
         };
         evaluator.printed.clear();
         let mut rebuilt: Vec<Vec<Value>> = Vec::with_capacity(states.len());
@@ -395,7 +397,7 @@ impl<'ir> Rebuilder<'ir> {
             evaluator.random = if is_initial_held {
                 violation_random.map(JavaRandom::from_state)
             } else {
-                seeded(pair[0])
+                seeded(pair[0])?
             };
             let candidates = match actions.get(position).copied().flatten() {
                 Some(index) if !is_printing => match ir.model.actions.get(index as usize) {

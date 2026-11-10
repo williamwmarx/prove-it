@@ -926,9 +926,10 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                     &self.current,
                     &self.successor,
                     order,
-                )
+                )?
             } else {
-                self.fingerprints.get_state(store, machine.current(), order)
+                self.fingerprints
+                    .get_state(store, machine.current(), order)?
             });
         }
         self.key.clear();
@@ -950,9 +951,8 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             self.key.clear();
             self.key.push(value);
         }
-        Ok(self
-            .fingerprints
-            .get_state(&machine.store, &self.key, self.states.order()))
+        self.fingerprints
+            .get_state(&machine.store, &self.key, self.states.order())
     }
 
     fn visit_initial(&mut self, machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<()> {
@@ -1109,7 +1109,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             &self.current,
             machine.next(),
             self.states.order(),
-        );
+        )?;
         self.states.touch(fingerprint);
         self.check_pending(machine, context)?;
         self.pending.clear();
@@ -1372,7 +1372,7 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
                 self.states.order(),
                 fingerprint,
                 &mut self.parent,
-            );
+            )?;
         }
         match actions {
             None => {

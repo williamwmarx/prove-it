@@ -1470,6 +1470,51 @@ fn reads_and_sets_tlcs_registers() {
 }
 
 #[test]
+fn declines_to_fingerprint_what_tlc_fails_to() {
+    // TLC fails to fingerprint a function over Nat or Int it keeps lazy, and Nat, Int or STRING,
+    // at any depth: TLCFP of one fails, and so does a state or a VIEW that holds one.
+    for (test, definitions, config) in [
+        (
+            "fp-lazy",
+            "Init == x = TLCFP([i \\in Nat |-> i])\nNext == x' = x\nInv == x = TLCFP(<<>>)",
+            "INVARIANT Inv\n",
+        ),
+        (
+            "fp-nested",
+            "Init == x = 0\nNext == x' = x\nInv == TLCFP(<<1, [r |-> [i \\in Int |-> i]]>>) = 0",
+            "INVARIANT Inv\n",
+        ),
+        (
+            "fp-set",
+            "Init == x = 0\nNext == x' = x\nInv == TLCFP({Nat}) = 0",
+            "INVARIANT Inv\n",
+        ),
+        (
+            "fp-view",
+            "Init == x \\in 0..1\nNext == x' = x\nV == [i \\in Int |-> x]",
+            "VIEW V\n",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Stop ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\n{definitions}\n====\n"
+        );
+        let (output, directory) =
+            run_lowered(test, &spec, &format!("INIT Init\nNEXT Next\n{config}"));
+        let text = stdout(&output);
+        assert!(!text.contains("Model checking completed"), "{text}");
+        assert!(!text.contains("is equal to FALSE"), "{text}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(
+                "unsupported: fingerprinting a function TLC keeps lazy, or Nat, Int or STRING"
+            ),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn applies_the_functions_tlc_keeps_lazy() {
     // TLC keeps a function over Nat or Int lazy (`FcnLambdaValue`): applying one evaluates its
     // body, EXCEPT records the key, and a state can't hold one, as TLC can't fingerprint it.

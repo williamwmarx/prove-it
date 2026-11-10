@@ -865,7 +865,7 @@ impl Compiler<'_> {
         Ok(leaf(
             eval(move |machine| {
                 let value = evaluate(machine)?;
-                let fingerprint = Fingerprints::new().get_state(&machine.store, &[value], &[0]);
+                let fingerprint = Fingerprints::new().get_state(&machine.store, &[value], &[0])?;
                 machine.store.int(i64::from(fingerprint as i32))
             }),
             value.footprint,

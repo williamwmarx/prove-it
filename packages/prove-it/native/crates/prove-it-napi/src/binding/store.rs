@@ -479,11 +479,12 @@ unsafe extern "C" fn store_fingerprints(env: napi_env, info: napi_callback_info)
                 }) {
                     return Err(wrong("parents must name a state or be -1".into()));
                 }
-                Ok(if is_reference_value {
+                if is_reference_value {
                     fingerprints.get_states_reference(store, &states, width, &order)
                 } else {
                     fingerprints.get_states(store, &states, width, &order, parents)
-                })
+                }
+                .map_err(|bail| wrong(bail.0.into()))
             })?;
             if out.len() < fingerprints.len() {
                 return Err(wrong("fingerprints must have room for every state".into()));
