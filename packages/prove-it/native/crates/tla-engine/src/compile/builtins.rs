@@ -68,6 +68,19 @@ const PURE_BUILTINS: [&str; 19] = [
 
 const MAXIMUM_POWER_SET: u32 = 20;
 
+/// `tlc2.module.Naturals#Divide`: Java's quotient of two ints, less one only where it is below 0
+/// and inexact, so -1 \div 2 is 0, and -2147483648 \div -1 wraps to -2147483648. None for a
+/// division by zero. The operands are TLC's ints, as the store holds them.
+pub(crate) fn naturals_divide(left: i64, right: i64) -> Option<i64> {
+    let (left, right) = (left as i32, right as i32);
+    if right == 0 {
+        return None;
+    }
+    let quotient = left.wrapping_div(right);
+    let is_floored = quotient < 0 && quotient.wrapping_mul(right) != left;
+    Some(i64::from(quotient - i32::from(is_floored)))
+}
+
 pub(crate) fn expect_int(machine: &Machine<'_>, id: Id) -> Outcome<i64> {
     if machine.store.kind_of(id) == KIND_INT {
         Ok(i64::from(machine.store.int_of(id)))
@@ -371,7 +384,7 @@ impl Compiler<'_> {
             }
             return unsupported(name);
         }
-        if let Some(native) = self.compile_native_builtin(name, operands, context)? {
+        if let Some(native) = self.compile_native_builtin(name, builtin.flags, operands, context)? {
             return Ok(native);
         }
         if !PURE_BUILTINS.contains(&name) {
@@ -1130,6 +1143,7 @@ impl Compiler<'_> {
     fn compile_native_builtin(
         &mut self,
         name: &str,
+        flags: i32,
         operands: &[Operand],
         context: &Context,
     ) -> Compiling<Option<Compiled>> {
@@ -1374,6 +1388,11 @@ impl Compiler<'_> {
                         "+" => |left, right| Ok(left + right),
                         "-" => |left, right| Ok(left - right),
                         "*" => |left, right| Ok(left * right),
+                        "\\div" if flags & Builtin::NATURALS_METHOD != 0 => {
+                            |left: i64, right: i64| {
+                                naturals_divide(left, right).ok_or(Bail("division by zero"))
+                            }
+                        }
                         "\\div" => {
                             |left: i64, right: i64| {
                                 if right == 0 {
