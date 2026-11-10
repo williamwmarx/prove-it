@@ -12,14 +12,18 @@
 //! least image of the next under the permutations that gave that, and so on. A step depends only
 //! on the value and the permutations left, and successors share their parents' values, so each
 //! step is remembered. The least image is the same whatever order the permutations are tried in;
-//! only the comparisons made differ, which matters where one fails, as one of model values of
-//! different types does, so a group that can mix them is tried permutation by permutation, in
-//! TLC's order, as the comparisons of unbuilt images above are.
+//! only the comparisons made differ, which matters where one can fail. A state is searched
+//! variable by variable only where none can: where the group keeps model values' types, and the
+//! shape of each of its values (`Shape`) shows that the images of a value compare without
+//! failing. Any other state is searched permutation by permutation, in TLC's order.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
-use tla_values::store::{Bail, KIND_FUNCTION, KIND_MODEL, KIND_SET, KIND_TUPLE, Outcome};
+use tla_values::store::{
+    Bail, KIND_BOOL, KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE,
+    Outcome,
+};
 use tla_values::{Id, Store};
 
 const NONE: Id = u32::MAX;
@@ -45,6 +49,36 @@ impl Hasher for IntegerHasher {
     fn write_u64(&mut self, value: u64) {
         self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
     }
+}
+
+// A value's shape that some comparison of its images could fail on, and one not yet known.
+const UNSAFE: u32 = u32::MAX - 1;
+const UNKNOWN: u32 = u32::MAX;
+
+/// What comparing a value with another of its shape meets, from TLC's `compareTo`, as the store
+/// follows it: two values of shapes that join compare without failing. A comparison pairs a set's
+/// elements by their order, a function's keys and its values by theirs, which a permutation moves,
+/// but a record's values by key and a tuple's by position, which it doesn't. A permutation that
+/// keeps model values' types keeps a value's shape, so the images of a value of a shape compare
+/// with each other without failing.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Shape {
+    // The parts of an empty value, and an untyped model value, which compares with any value.
+    Any,
+    Bool,
+    Int,
+    Str,
+    // A typed model value, by its type.
+    Model(u16),
+    // By the shape of the elements.
+    Set(u32),
+    // By key, sorted.
+    Record(Vec<(Id, u32)>),
+    Tuple(Vec<u32>),
+    // By the shape of the keys and of the values.
+    Function(u32, u32),
+    // An empty function or tuple, which compares with any other by its size.
+    EmptyFunction,
 }
 
 /// A symmetry group, each permutation as the model values it moves, each to its image.
@@ -79,6 +113,10 @@ pub struct Canonicalizer {
     // permutations that give it.
     steps: HashMap<u64, (Id, u32), BuildHasherDefault<IntegerHasher>>,
     kept: Vec<u32>,
+    // Each value's shape by id, or UNKNOWN, each shape interned by its index.
+    value_shapes: Vec<u32>,
+    shapes: Vec<Shape>,
+    shape_indices: HashMap<Shape, u32>,
 }
 
 fn step_key(id: Id, survivors: u32) -> u64 {
@@ -221,6 +259,9 @@ impl Canonicalizer {
             survivors: vec![group],
             steps: HashMap::default(),
             kept: Vec::new(),
+            value_shapes: Vec::new(),
+            shapes: Vec::new(),
+            shape_indices: HashMap::new(),
         }
     }
 
@@ -249,6 +290,10 @@ impl Canonicalizer {
         }
         self.steps
             .retain(|&key, &mut (image, _)| (key as Id) < bound && image < bound);
+        // A record's shape holds its keys.
+        self.value_shapes.clear();
+        self.shapes.clear();
+        self.shape_indices.clear();
     }
 
     fn remember(&mut self, store: &Store, id: Id, index: usize, image: Id) {
@@ -461,9 +506,165 @@ impl Canonicalizer {
         Ok(comparison)
     }
 
+    fn intern_shape(&mut self, shape: Shape) -> u32 {
+        if let Some(&index) = self.shape_indices.get(&shape) {
+            return index;
+        }
+        let index = self.shapes.len() as u32;
+        self.shapes.push(shape.clone());
+        self.shape_indices.insert(shape, index);
+        index
+    }
+
+    // The shape that compares as both do, or UNSAFE where a comparison of the two could fail.
+    fn join(&mut self, left: u32, right: u32) -> u32 {
+        if left == right || left == UNSAFE || right == UNSAFE {
+            return if left == UNSAFE { left } else { right };
+        }
+        let joined = match (&self.shapes[left as usize], &self.shapes[right as usize]) {
+            (Shape::Any, _) => return right,
+            (_, Shape::Any) => return left,
+            (Shape::EmptyFunction, Shape::Record(_) | Shape::Tuple(_) | Shape::Function(..)) => {
+                return right;
+            }
+            (Shape::Record(_) | Shape::Tuple(_) | Shape::Function(..), Shape::EmptyFunction) => {
+                return left;
+            }
+            (&Shape::Set(left), &Shape::Set(right)) => {
+                let element = self.join(left, right);
+                Shape::Set(element)
+            }
+            (&Shape::Function(left_key, left_value), &Shape::Function(right_key, right_value)) => {
+                let key = self.join(left_key, right_key);
+                let value = self.join(left_value, right_value);
+                Shape::Function(key, value)
+            }
+            (Shape::Tuple(left), Shape::Tuple(right)) => {
+                let (left, right) = (left.clone(), right.clone());
+                let length = left.len().max(right.len());
+                let positions = (0..length)
+                    .map(|at| match (left.get(at), right.get(at)) {
+                        (Some(&left), Some(&right)) => self.join(left, right),
+                        (Some(&only), None) | (None, Some(&only)) => only,
+                        (None, None) => unreachable!("a position of neither tuple"),
+                    })
+                    .collect();
+                Shape::Tuple(positions)
+            }
+            (Shape::Record(left), Shape::Record(right)) => {
+                let mut fields = left.clone();
+                for &(key, right) in &right.clone() {
+                    match fields.binary_search_by_key(&key, |&(key, _)| key) {
+                        Ok(at) => fields[at].1 = self.join(fields[at].1, right),
+                        Err(at) => fields.insert(at, (key, right)),
+                    }
+                }
+                Shape::Record(fields)
+            }
+            _ => return UNSAFE,
+        };
+        let is_unsafe = match &joined {
+            Shape::Set(element) => *element == UNSAFE,
+            Shape::Function(key, value) => *key == UNSAFE || *value == UNSAFE,
+            Shape::Tuple(positions) => positions.contains(&UNSAFE),
+            Shape::Record(fields) => fields.iter().any(|&(_, shape)| shape == UNSAFE),
+            _ => false,
+        };
+        if is_unsafe {
+            UNSAFE
+        } else {
+            self.intern_shape(joined)
+        }
+    }
+
+    // The shape of a value, or UNSAFE where comparisons of its images could fail.
+    fn shape_of(&mut self, store: &mut Store, id: Id) -> u32 {
+        if let Some(&known) = self.value_shapes.get(id as usize)
+            && known != UNKNOWN
+        {
+            return known;
+        }
+        let kind = store.kind_of(id);
+        let size = store.size_of(id);
+        let shape = match kind {
+            KIND_BOOL => self.intern_shape(Shape::Bool),
+            KIND_INT => self.intern_shape(Shape::Int),
+            KIND_STRING | KIND_MODEL if !store.is_text_ordered(id) => UNSAFE,
+            KIND_STRING => self.intern_shape(Shape::Str),
+            KIND_MODEL => match store.get_model_type(id) {
+                0 => self.intern_shape(Shape::Any),
+                model_type => self.intern_shape(Shape::Model(model_type)),
+            },
+            KIND_SET => {
+                let mut element = self.intern_shape(Shape::Any);
+                for position in 0..size {
+                    let part = self.shape_of(store, store.element_at(id, position));
+                    element = self.join(element, part);
+                }
+                if element == UNSAFE {
+                    UNSAFE
+                } else {
+                    self.intern_shape(Shape::Set(element))
+                }
+            }
+            KIND_FUNCTION | KIND_TUPLE if size == 0 => self.intern_shape(Shape::EmptyFunction),
+            KIND_TUPLE => {
+                let positions: Vec<u32> = (0..size)
+                    .map(|position| self.shape_of(store, store.get_range_value(id, position)))
+                    .collect();
+                if positions.contains(&UNSAFE) {
+                    UNSAFE
+                } else {
+                    self.intern_shape(Shape::Tuple(positions))
+                }
+            }
+            KIND_FUNCTION if store.is_record(id) => {
+                let fields: Vec<(Id, u32)> = (0..size)
+                    .map(|position| {
+                        let value = store.get_range_value(id, position);
+                        (store.get_key(id, position), self.shape_of(store, value))
+                    })
+                    .collect();
+                if fields.iter().any(|&(_, shape)| shape == UNSAFE) {
+                    UNSAFE
+                } else {
+                    self.intern_shape(Shape::Record(fields))
+                }
+            }
+            KIND_FUNCTION => {
+                let (mut key, mut value) =
+                    (self.intern_shape(Shape::Any), self.intern_shape(Shape::Any));
+                for position in 0..size {
+                    let key_id = store.get_key(id, position);
+                    let key_shape = self.shape_of(store, key_id);
+                    key = self.join(key, key_shape);
+                    let value_shape = self.shape_of(store, store.get_range_value(id, position));
+                    value = self.join(value, value_shape);
+                }
+                if key == UNSAFE || value == UNSAFE {
+                    UNSAFE
+                } else {
+                    self.intern_shape(Shape::Function(key, value))
+                }
+            }
+            _ => UNSAFE,
+        };
+        if id as usize >= self.value_shapes.len() {
+            let count = store.value_count();
+            self.value_shapes
+                .resize((count * 2).max(1024).max(id as usize + 1), UNKNOWN);
+        }
+        self.value_shapes[id as usize] = shape;
+        shape
+    }
+
     /// Replaces the state with its representative.
     pub fn canonicalize(&mut self, store: &mut Store, state: &mut [Id]) -> Outcome<()> {
-        if !self.is_type_preserving {
+        if !self.is_type_preserving
+            || state
+                .iter()
+                .any(|&value| self.shape_of(store, value) == UNSAFE)
+        {
             return self.canonicalize_in_order(store, state);
         }
         let mut survivors = 0;
@@ -654,6 +855,123 @@ mod tests {
         }
         // The states fall into fewer orbits than there are states.
         assert!(representatives.len() < 1000);
+    }
+
+    #[test]
+    fn fails_where_tlc_fails_comparing_images() {
+        let mut store = Store::new();
+        let [a, b, c] = ["a", "b", "c"].map(|name| model(&mut store, name));
+        // The swap of a and b first, then that of b and c.
+        let swaps = vec![
+            HashMap::from([(a, b), (b, a)]),
+            HashMap::from([(b, c), (c, b)]),
+        ];
+        let mut canonicalizer = Canonicalizer::new(&store, close_group(swaps), vec![0, 1]);
+        // The first permutation leaves x as it is, so TLC compares the images of y, which hold
+        // values at a key it can't compare: 1 and FALSE, say.
+        let text = |name: &str| name.encode_utf16().collect::<Vec<u16>>();
+        let one = store.int(1).expect("an int");
+        let one_tuple = store.tuple_of(&[one]);
+        let field = store.str(&text("f"));
+        let record = store.function_of(&[field], &[one]).expect("a record");
+        let incomparable = [
+            (one, store.bool(false)),
+            (store.str(&text("s")), one),
+            (store.tuple_of(&[]), store.set_of(&[]).expect("a set")),
+            (one_tuple, store.set_of(&[one]).expect("a set")),
+            (
+                record,
+                store.function_of(&[a, b], &[one, one]).expect("a function"),
+            ),
+            (model(&mut store, "A_1"), one),
+        ];
+        for (first, second) in incomparable {
+            let y = store
+                .function_of(&[a, b, c], &[first, second, a])
+                .expect("a function");
+            let mut in_order = [c, y];
+            assert!(
+                canonicalizer
+                    .canonicalize_in_order(&mut store, &mut in_order)
+                    .is_err()
+            );
+            let mut state = [c, y];
+            assert!(canonicalizer.canonicalize(&mut store, &mut state).is_err());
+        }
+    }
+
+    // A value of mixed kinds, built from `next`, or none where the store refuses one.
+    fn mixed_value(
+        store: &mut Store,
+        next: &mut impl FnMut(usize) -> usize,
+        depth: u32,
+    ) -> Option<Id> {
+        let models = ["a", "b", "c"].map(|name| model(store, name));
+        let text = |name: &str| name.encode_utf16().collect::<Vec<u16>>();
+        let kind = next(if depth == 0 { 4 } else { 8 });
+        let count = match kind {
+            0 => return store.int(1 + next(2) as i64).ok(),
+            1 => return Some(store.bool(next(2) == 0)),
+            2 => return Some(store.str(&text(["s", "t"][next(2)]))),
+            3 => return Some(models[next(3)]),
+            4 => next(4),
+            5 => next(3),
+            6 => 3,
+            _ => 2,
+        };
+        let parts: Vec<Id> = (0..count)
+            .map(|_| mixed_value(store, next, depth - 1))
+            .collect::<Option<_>>()?;
+        match kind {
+            4 => store.set_of(&parts).ok(),
+            5 => Some(store.tuple_of(&parts)),
+            6 => store.function_of(&models, &parts).ok(),
+            _ => {
+                let keys = ["f", "g"].map(|key| store.str(&text(key)));
+                store.function_of(&keys, &parts).ok()
+            }
+        }
+    }
+
+    #[test]
+    fn fails_or_not_as_tlc_does_on_values_of_mixed_kinds() {
+        let mut store = Store::new();
+        let [a, b, c] = ["a", "b", "c"].map(|name| model(&mut store, name));
+        let swaps = vec![
+            HashMap::from([(a, b), (b, a)]),
+            HashMap::from([(b, c), (c, b)]),
+        ];
+        let mut canonicalizer = Canonicalizer::new(&store, close_group(swaps), vec![1, 0]);
+        let mut seed = 11_u64;
+        let mut next = |bound: usize| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 33) as usize % bound
+        };
+        let (mut failures, mut successes) = (0, 0);
+        for _ in 0..5000 {
+            let (Some(first), Some(second)) = (
+                mixed_value(&mut store, &mut next, 2),
+                mixed_value(&mut store, &mut next, 2),
+            ) else {
+                continue;
+            };
+            let mut in_order = [first, second];
+            let expected = canonicalizer
+                .canonicalize_in_order(&mut store, &mut in_order)
+                .map(|()| in_order);
+            let mut state = [first, second];
+            let found = canonicalizer
+                .canonicalize(&mut store, &mut state)
+                .map(|()| state);
+            assert_eq!(found.is_ok(), expected.is_ok());
+            if let Ok(expected) = expected {
+                assert_eq!(found.ok(), Some(expected));
+                successes += 1;
+            } else {
+                failures += 1;
+            }
+        }
+        assert!(failures > 0 && successes > failures);
     }
 
     #[test]

@@ -454,6 +454,12 @@ impl Store {
         self.text(self.meta(id).payload).rank
     }
 
+    /// Whether a string or a model value compares with others without bailing: its text was
+    /// ranked before `freeze_string_order`.
+    pub fn is_text_ordered(&self, id: Id) -> bool {
+        self.text_rank_of(id) < self.unordered_rank
+    }
+
     pub fn is_model_id(&self, id: Id) -> bool {
         self.kind_of(id) == KIND_MODEL
     }
