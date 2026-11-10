@@ -50,6 +50,10 @@ const STRING: Shape = 4;
 const FIRST_TERM: Shape = 5;
 // A value whose shape the store hasn't found yet.
 const UNKNOWN: Shape = Shape::MAX;
+// The most fields a class of records holds: records of many other keys join to a class of all
+// their keys, which would take time and memory in their square, so past this they have none and
+// compare as before.
+const MAXIMUM_FIELDS: usize = 64;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Term {
@@ -270,7 +274,7 @@ impl Shapes {
                 }
                 (None, None) => unreachable!("a field past both records"),
             };
-            if field.1 == NONE {
+            if field.1 == NONE || fields.len() == MAXIMUM_FIELDS {
                 return NONE;
             }
             fields.push(field);

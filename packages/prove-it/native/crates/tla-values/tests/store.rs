@@ -617,6 +617,27 @@ fn fails_a_membership_wherever_tlcs_search_fails() {
     );
 }
 
+// Records of many other keys join to a class of all their keys only so far: past that, membership
+// in a set of them compares, and answers as it did.
+#[test]
+fn answers_a_membership_among_records_of_many_keys() {
+    let mut store = Store::new();
+    let one = store.int(1).unwrap();
+    let records: Vec<Id> = (0..if cfg!(miri) { 100 } else { 2_000 })
+        .map(|index| {
+            let key = str(&mut store, &format!("k{index}"));
+            store.function_of(&[key], &[one]).unwrap()
+        })
+        .collect();
+    let set = store.set_of(&records).unwrap();
+    for &record in records.iter().step_by(97) {
+        assert_eq!(store.is_member(record, set), Ok(true));
+    }
+    let other = str(&mut store, "other");
+    let missing = store.function_of(&[other], &[one]).unwrap();
+    assert_eq!(store.is_member(missing, set), Ok(false));
+}
+
 // A string ranked after the order is frozen, as ToString ranks one in a search, compares only
 // with itself; a reset orders all strings again.
 #[test]
