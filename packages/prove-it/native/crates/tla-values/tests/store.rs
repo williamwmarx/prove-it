@@ -645,6 +645,22 @@ fn bails_on_ordering_a_string_ranked_after_the_order_is_frozen() {
     assert!(store.compare(a, twelve).is_ok());
 }
 
+// A string the store held unranked, ranked after the order is frozen, as TLCModelValue ranks one,
+// compares with no other string: a membership that compared it before is no longer answered by id.
+#[test]
+fn bails_on_a_membership_of_a_string_ranked_after_the_order_is_frozen() {
+    let mut store = Store::new();
+    store.reset([&utf16("a")[..]]);
+    store.freeze_string_order();
+    let (a, b) = (str(&mut store, "a"), str(&mut store, "b"));
+    let (tuple_a, tuple_b) = (store.tuple_of(&[a]), store.tuple_of(&[b]));
+    let set = store.set_of(&[tuple_a]).unwrap();
+    assert_eq!(store.is_member(tuple_b, set), Ok(false));
+    store.rank_text(&utf16("b"));
+    assert!(store.compare(tuple_b, tuple_a).is_err());
+    assert!(store.is_member(tuple_b, set).is_err());
+}
+
 // Values built from a store's: some it holds, and some it doesn't, made every way the store makes
 // a block, from blocks of the store and from blocks of their own.
 fn build_on(store: &mut Store) -> Vec<Id> {

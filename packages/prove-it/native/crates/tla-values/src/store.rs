@@ -387,6 +387,8 @@ impl Store {
             let known = &mut self.texts[payload as usize];
             if known.rank < 0 {
                 known.rank = rank;
+                // The string may now be unordered, as may the values that hold it.
+                self.shapes.forget();
             }
         }
         rank
