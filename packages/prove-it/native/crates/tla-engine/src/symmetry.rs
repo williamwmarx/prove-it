@@ -72,7 +72,7 @@ enum Shape {
     Model(u16),
     // By the shape of the elements.
     Set(u32),
-    // By key, sorted.
+    // By key, sorted by id.
     Record(Vec<(Id, u32)>),
     Tuple(Vec<u32>),
     // By the shape of the keys and of the values.
@@ -619,12 +619,14 @@ impl Canonicalizer {
                 }
             }
             KIND_FUNCTION if store.is_record(id) => {
-                let fields: Vec<(Id, u32)> = (0..size)
+                let mut fields: Vec<(Id, u32)> = (0..size)
                     .map(|position| {
                         let value = store.get_range_value(id, position);
                         (store.get_key(id, position), self.shape_of(store, value))
                     })
                     .collect();
+                // By key id, which `join` searches by, not TLC's order of the keys.
+                fields.sort_unstable_by_key(|&(key, _)| key);
                 if fields.iter().any(|&(_, shape)| shape == UNSAFE) {
                     UNSAFE
                 } else {
@@ -851,6 +853,30 @@ mod tests {
                 .canonicalize(&mut store, &mut by_variable)
                 .expect("a representative");
             assert_eq!(by_variable, in_order);
+            // TLC keeps the least of the state's images, the identity's included, comparing
+            // variable by variable in its order (`TLCStateMut#fingerPrint`).
+            let order = [2, 0, 1];
+            let mut images = vec![state];
+            for index in 0..canonicalizer.permutations.len() {
+                images.push(state.map(|value| {
+                    canonicalizer
+                        .permute(&mut store, value, index)
+                        .expect("an image")
+                }));
+            }
+            assert!(images.contains(&by_variable));
+            for image in images {
+                let comparison = order
+                    .iter()
+                    .map(|&variable| {
+                        store
+                            .compare(by_variable[variable], image[variable])
+                            .expect("a comparison")
+                    })
+                    .find(|&comparison| comparison != 0)
+                    .unwrap_or(0);
+                assert!(comparison <= 0);
+            }
             representatives.insert(in_order);
         }
         // The states fall into fewer orbits than there are states.
@@ -900,6 +926,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn joins_records_by_field_whatever_order_their_keys_were_made_in() {
+        let mut store = Store::new();
+        let text = |name: &str| name.encode_utf16().collect::<Vec<u16>>();
+        // TLC's order of the keys is f, g, h, but their ids are made in the order h, f, g.
+        let names = [text("f"), text("g"), text("h")];
+        store.rank_strings(names.iter().map(Vec::as_slice));
+        let [h, f, g] = ["h", "f", "g"].map(|name| store.str(&text(name)));
+        let [a, b, c] = ["a", "b", "c"].map(|name| model(&mut store, name));
+        let swaps = vec![
+            HashMap::from([(a, b), (b, a)]),
+            HashMap::from([(b, c), (c, b)]),
+        ];
+        let mut canonicalizer = Canonicalizer::new(&store, close_group(swaps), vec![0, 1]);
+        let one = store.int(1).expect("an int");
+        let records: Vec<Id> = [a, b, c]
+            .into_iter()
+            .zip([one, store.bool(false), a])
+            .map(|(model, value)| {
+                store
+                    .function_of(&[f, g, h], &[model, value, one])
+                    .expect("a record")
+            })
+            .collect();
+        let messages = store.set_of(&records).expect("a set");
+        let mut in_order = [c, messages];
+        assert!(
+            canonicalizer
+                .canonicalize_in_order(&mut store, &mut in_order)
+                .is_err()
+        );
+        let mut state = [c, messages];
+        assert!(canonicalizer.canonicalize(&mut store, &mut state).is_err());
+    }
+
     // A value of mixed kinds, built from `next`, or none where the store refuses one.
     fn mixed_value(
         store: &mut Store,
@@ -916,8 +977,7 @@ mod tests {
             3 => return Some(models[next(3)]),
             4 => next(4),
             5 => next(3),
-            6 => 3,
-            _ => 2,
+            _ => 3,
         };
         let parts: Vec<Id> = (0..count)
             .map(|_| mixed_value(store, next, depth - 1))
@@ -927,7 +987,7 @@ mod tests {
             5 => Some(store.tuple_of(&parts)),
             6 => store.function_of(&models, &parts).ok(),
             _ => {
-                let keys = ["f", "g"].map(|key| store.str(&text(key)));
+                let keys = ["f", "g", "h"].map(|key| store.str(&text(key)));
                 store.function_of(&keys, &parts).ok()
             }
         }
@@ -936,6 +996,10 @@ mod tests {
     #[test]
     fn fails_or_not_as_tlc_does_on_values_of_mixed_kinds() {
         let mut store = Store::new();
+        // Records' keys whose ids are made against TLC's order of them.
+        let text = |name: &str| name.encode_utf16().collect::<Vec<u16>>();
+        store.rank_strings([text("f"), text("g"), text("h")].iter().map(Vec::as_slice));
+        store.str(&text("h"));
         let [a, b, c] = ["a", "b", "c"].map(|name| model(&mut store, name));
         let swaps = vec![
             HashMap::from([(a, b), (b, a)]),
