@@ -315,7 +315,7 @@ fn reports_def_entries_that_name_no_defined_operator() {
         ),
         (
             "defs-module",
-            "---- MODULE Main ----\nUSE DEF MODULE Gone\n====\n",
+            "---- MODULE Main ----\nUSE DEF Nope, MODULE Gone\n====\n",
         ),
         (
             "facts-module",
