@@ -5,9 +5,10 @@
 //! checked against the trace.
 //!
 //! The traces are read from the directory `PROVE_IT_LP_TRACES` names, by default
-//! `packages/prove-it/tests/conformance/.lp-traces`; without it the test only says so. A trace that
-//! reaches what the Rust lp does not port yet is declined there, which the test reports and
-//! allows.
+//! `packages/prove-it/tests/conformance/.lp-traces`, and its prover subdirectories (`smt/`, `z3/`);
+//! without it the test only says so. A trace that reaches what the Rust lp does not port yet (nra,
+//! whose stub returns `SmtError::Unsupported`, and the resource limit's inc, which only nlsat
+//! calls) is declined there, which the test reports and allows.
 
 #[path = "lp_trace/json.rs"]
 mod json;
@@ -21,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use json::Value;
+use prove_decide::Limits;
 use prove_num::{Int, Rational};
 use prove_smt::lp::bound_propagator::{BoundPropagator, BoundPropagatorHost, ImpliedBound};
 use prove_smt::lp::constraints::ConstraintKind;
@@ -29,9 +31,13 @@ use prove_smt::lp::explanation::Explanation;
 use prove_smt::lp::int_solver::{IntSolver, Lia, LiaMove};
 use prove_smt::lp::lar_solver::LarSolver;
 use prove_smt::lp::lar_term::LarTerm;
+use prove_smt::lp::nla_core::{Nla, NlaCore, NlaEquality, NlaFixedEquality};
+use prove_smt::lp::nla_divisions::{Division, Divisions};
+use prove_smt::lp::nla_types::{Ineq, Lemma};
 use prove_smt::lp::numeric_pair::Impq;
 use prove_smt::lp::random_updater::random_update;
 use prove_smt::util::error::SmtError;
+use prove_smt::util::rlimit::ResourceLimit;
 
 /// Why a trace stopped before its end.
 enum Stop {
@@ -273,6 +279,40 @@ fn get_lia_move(lia_move: &LiaMove) -> Value {
     })
 }
 
+fn get_ineq(ineq: &Ineq) -> Value {
+    Value::Object(vec![
+        ("cmp".into(), Value::Number(f64::from(ineq.cmp))),
+        ("term".into(), get_term(&ineq.term)),
+        ("rs".into(), get_rational(&ineq.rs)),
+    ])
+}
+
+fn get_lemma(lemma: &Lemma) -> Value {
+    Value::Object(vec![
+        (
+            "ineqs".into(),
+            Value::Array(lemma.ineqs.iter().map(get_ineq).collect()),
+        ),
+        ("expl".into(), get_explanation(&lemma.expl)),
+    ])
+}
+
+fn get_equality(equality: &NlaEquality) -> Value {
+    Value::Object(vec![
+        ("first".into(), get_number(equality.first)),
+        ("second".into(), get_number(equality.second)),
+        ("explanation".into(), get_explanation(&equality.explanation)),
+    ])
+}
+
+fn get_fixed_equality(equality: &NlaFixedEquality) -> Value {
+    Value::Object(vec![
+        ("lpVar".into(), get_number(equality.lp_var)),
+        ("value".into(), get_rational(&equality.value)),
+        ("explanation".into(), get_explanation(&equality.explanation)),
+    ])
+}
+
 /// The `Name: message` of the TypeScript error an SmtError stands for.
 fn get_error(error: &SmtError) -> String {
     match error {
@@ -421,6 +461,27 @@ impl Args<'_> {
         }
         Ok(explanation)
     }
+
+    fn division(&self, index: usize) -> Result<Division, Stop> {
+        let value = self.get(index)?;
+        let field = |name: &str| {
+            let inner = Args {
+                values: std::slice::from_ref(
+                    value
+                        .get(name)
+                        .ok_or_else(|| self.bad(index, "a division"))?,
+                ),
+                line: self.line,
+            };
+            inner.index(0)
+        };
+        Ok(Division {
+            quotient: field("quotient")?,
+            dividend: field("dividend")?,
+            divisor: field("divisor")?,
+            remainder: field("remainder")?,
+        })
+    }
 }
 
 fn parse_rational(value: &Value) -> Option<Rational> {
@@ -449,12 +510,27 @@ struct IntegerSolver {
     lar: usize,
 }
 
+/// An NlaCore with what TypeScript keeps on it: its LarSolver, its resource limit and the
+/// theory's isRelevant.
+struct NonlinearSolver {
+    core: NlaCore,
+    lar: usize,
+    // The callback name of the resource limit the theory passed.
+    limit_name: String,
+    // TypeScript's default `() => true` until the theory writes isRelevant.
+    is_relevant_written: bool,
+}
+
 /// The lp objects of a trace, by kind in order of creation, as the trace numbers them.
 struct Replay {
     callbacks: Rc<Callbacks>,
     lars: Vec<LarSolver<'static>>,
     bps: Vec<Propagator>,
     lias: Vec<IntegerSolver>,
+    nlas: Vec<NonlinearSolver>,
+    // An unlimited resource limit: in TypeScript only nlsat calls the limit's inc, and nra is not
+    // ported, so the Rust nla never asks it; see call_nla.
+    limit: ResourceLimit,
 }
 
 impl Replay {
@@ -513,6 +589,7 @@ impl Replay {
             "lar" => self.lars.len(),
             "bp" => self.bps.len(),
             "lia" => self.lias.len(),
+            "nla" => self.nlas.len(),
             _ => return Err(Replay::decline(line, owner, "new")),
         };
         if index != count {
@@ -540,11 +617,20 @@ impl Replay {
                     },
                 });
             }
-            _ => {
+            "lia" => {
                 let lar = self.get_lar_index(args.reference(0)?, line)?;
                 self.lias.push(IntegerSolver {
                     solver: IntSolver::new(&mut self.lars[lar]),
                     lar,
+                });
+            }
+            _ => {
+                let lar = self.get_lar_index(args.reference(0)?, line)?;
+                self.nlas.push(NonlinearSolver {
+                    core: NlaCore::new(&mut self.lars[lar]),
+                    lar,
+                    limit_name: args.callback(1)?.to_string(),
+                    is_relevant_written: false,
                 });
             }
         }
@@ -731,15 +817,109 @@ impl Replay {
         })
     }
 
-    // TODO(nla): NlaCore through the Nla view once it lands.
+    // NlaCore's methods, through the Nla view, with isRelevant answered from the trace once the
+    // theory wrote it.
     fn call_nla(
         &mut self,
         index: usize,
         method: &str,
-        _args: &Args<'_>,
+        args: &Args<'_>,
         line: usize,
     ) -> Result<Outcome, Stop> {
-        Err(Replay::decline(line, &format!("nla#{index}"), method))
+        let owner = format!("nla#{index}");
+        let nonlinear = self.nlas.get_mut(index).ok_or_else(|| Stop::Crash {
+            line,
+            message: format!("no {owner}"),
+        })?;
+        // HACK: ResourceLimit is a concrete type that counts prove_decide::Limits' steps, so the
+        // replayer cannot answer its inc from the trace. Only nlsat calls it, which is not ported.
+        let inc = format!("{}.inc", nonlinear.limit_name);
+        if let Some(expected) = self
+            .callbacks
+            .queue
+            .borrow()
+            .iter()
+            .find(|expected| expected.name == inc)
+        {
+            return Err(Stop::Declined {
+                line: expected.line,
+                reason: format!("callback {inc}, the resource limit's inc"),
+            });
+        }
+        let callbacks = Rc::clone(&self.callbacks);
+        let is_relevant_name = format!("{owner}.isRelevant");
+        let is_relevant_written = nonlinear.is_relevant_written;
+        let is_relevant = move |lp_var: usize| {
+            !is_relevant_written || callbacks.answer(&is_relevant_name, vec![get_number(lp_var)])
+        };
+        let mut nla = Nla {
+            core: &mut nonlinear.core,
+            lra: &mut self.lars[nonlinear.lar],
+            limit: &self.limit,
+            is_relevant: &is_relevant,
+        };
+        let result = match method {
+            "addMonic" => {
+                nla.add_monic(args.index(0)?, &args.indices(1)?);
+                Ok(None)
+            }
+            "check" => {
+                let level = u32::try_from(args.index(0)?).map_err(|_| args.bad(0, "a level"))?;
+                nla.check(level)
+                    .map(|result| Some(Value::Number(f64::from(result.to_i8()))))
+            }
+            "checkBoundedDivisions" => {
+                nla.check_bounded_divisions();
+                Ok(None)
+            }
+            "hasRelevantMonomial" => Ok(Some(Value::Bool(nla.has_relevant_monomial()))),
+            "incrementalPropagate" => Ok(Some(Value::Bool(nla.incremental_propagate()))),
+            "propagate" => Ok(Some(Value::Bool(nla.propagate()))),
+            "push" => {
+                nla.push();
+                Ok(None)
+            }
+            "pop" => {
+                nla.pop(args.index(0)?);
+                Ok(None)
+            }
+            "divisions.addIdivision" => {
+                Divisions::add_idivision(&mut nla, args.division(0)?);
+                Ok(None)
+            }
+            "divisions.addBoundedDivision" => {
+                Divisions::add_bounded_division(&mut nla, args.division(0)?);
+                Ok(None)
+            }
+            "divisions.addDivisibility" => {
+                Divisions::add_divisibility(&mut nla, args.division(0)?);
+                Ok(None)
+            }
+            _ => return Err(Replay::decline(line, &owner, method)),
+        };
+        match result {
+            Ok(result) => Ok(Outcome {
+                result,
+                ..Outcome::default()
+            }),
+            // The nra stub: nlsat is not ported. A mismatch before it still counts.
+            Err(SmtError::Unsupported(message)) => Err(self
+                .callbacks
+                .stop
+                .borrow_mut()
+                .take()
+                .unwrap_or(Stop::Declined {
+                    line,
+                    reason: format!(
+                        "{owner}.{method}: {message} ({} callbacks of the call left)",
+                        self.callbacks.queue.borrow().len()
+                    ),
+                })),
+            Err(error) => Ok(Outcome {
+                error: Some(get_error(&error)),
+                ..Outcome::default()
+            }),
+        }
     }
 
     // lp's free functions.
@@ -780,6 +960,26 @@ impl Replay {
                     _ => return Err(declined()),
                 }))
             }
+            "nla" => {
+                let core = &self.nlas.get(index).ok_or_else(declined)?.core;
+                Ok(Some(match path {
+                    "isCheckFeasible" => Value::Bool(core.is_check_feasible),
+                    "isUsingNraModel" => Value::Bool(core.is_using_nra_model),
+                    "lemmas.length" => get_number(core.lemmas.len()),
+                    "lemmas" => Value::Array(core.lemmas.iter().map(get_lemma).collect()),
+                    "literals" => Value::Array(core.literals.iter().map(get_ineq).collect()),
+                    "fixedEqualities" => Value::Array(
+                        core.fixed_equalities
+                            .iter()
+                            .map(get_fixed_equality)
+                            .collect(),
+                    ),
+                    "equalities" => {
+                        Value::Array(core.equalities.iter().map(get_equality).collect())
+                    }
+                    _ => return Err(declined()),
+                }))
+            }
             "bp" => {
                 let ibounds = &self.bps.get(index).ok_or_else(declined)?.propagator.ibounds;
                 if path == "ibounds" {
@@ -807,6 +1007,20 @@ impl Replay {
 
     // A field the theory writes.
     fn write(&mut self, owner: &str, path: &str, value: &Value, line: usize) -> Result<(), Stop> {
+        if let Some(("nla", index)) = parse_name(owner)
+            && path == "isRelevant"
+            && index < self.nlas.len()
+        {
+            let expected = format!("{owner}.isRelevant");
+            if value.get("cb").and_then(Value::as_str) != Some(expected.as_str()) {
+                return Err(Stop::Crash {
+                    line,
+                    message: format!("isRelevant is not the callback {expected}: {value}"),
+                });
+            }
+            self.nlas[index].is_relevant_written = true;
+            return Ok(());
+        }
         let lar = self.get_lar_index(owner, line);
         match (lar, path, value.as_bool()) {
             (Ok(lar), "constraints.isAuxiliaryMode", Some(value)) => {
@@ -922,6 +1136,8 @@ fn replay(path: &Path, current_line: &Cell<usize>) -> (usize, Option<Stop>) {
         lars: Vec::new(),
         bps: Vec::new(),
         lias: Vec::new(),
+        nlas: Vec::new(),
+        limit: ResourceLimit::new(&Limits::new(f64::INFINITY, None, None)),
     };
     let mut count = 0;
     while let Some((number, text)) = lines.next() {
@@ -974,30 +1190,45 @@ fn get_traces_directory() -> PathBuf {
     )
 }
 
+/// The `.lptrace` files under directory, in its prover subdirectories (`smt/`, `z3/`) or directly.
+fn collect_traces(directory: &Path, paths: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for path in entries.filter_map(|entry| entry.ok().map(|entry| entry.path())) {
+        if path.is_dir() {
+            collect_traces(&path, paths);
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "lptrace")
+        {
+            paths.push(path);
+        }
+    }
+}
+
 #[test]
 fn lp_traces() {
     let directory = get_traces_directory();
-    let Ok(entries) = fs::read_dir(&directory) else {
+    if !directory.is_dir() {
         println!(
             "no lp traces in {}: record them with `bun scripts/run.ts lp-trace`",
             directory.display()
         );
         return;
-    };
-    let mut paths: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "lptrace")
-        })
-        .collect();
+    }
+    let mut paths = Vec::new();
+    collect_traces(&directory, &mut paths);
     paths.sort();
     let mut same = 0;
     let mut differs = 0;
     let mut declined = 0;
     let mut crashes = 0;
     for path in &paths {
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let name = path
+            .strip_prefix(&directory)
+            .unwrap_or(path)
+            .to_string_lossy();
         let current_line = Cell::new(0);
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| replay(path, &current_line)))
             .unwrap_or_else(|payload| {
