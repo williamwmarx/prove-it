@@ -20,7 +20,10 @@ use crate::Unsupported;
 use crate::failure::nested;
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
-use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, union};
+use crate::sets::{
+    as_tuple, cardinality, difference, intersection, is_member, is_member_filtered, is_reducible,
+    union,
+};
 use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
     elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store,
@@ -2826,7 +2829,7 @@ impl<'ir> Evaluator<'ir> {
         // TLC's \\cup, \\cap and \\ have a source, so a failure in testing their members is a
         // FingerprintException.
         if result.is_err()
-            && matches!(combined, Combined::Operation(..))
+            && matches!(combined, Combined::Union(..))
             && let Some(stack) = &mut self.call_stack
             && !stack.is_frozen
         {
@@ -2865,7 +2868,8 @@ impl<'ir> Evaluator<'ir> {
                 }
                 Ok(false)
             }
-            _ => is_member(element, set),
+            // A set whose parts are lazy filters tests them as the evaluator does.
+            _ => is_member_filtered(element, set, &mut filter_test(self)),
         }
     }
 
@@ -2957,33 +2961,24 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
-    // A set as TLC builds it, both operands of each `\\cup`, `\\cap` or `\\` evaluated.
+    // A set as TLC builds it, both operands of each `\\cup` evaluated, which the replay tests for
+    // membership without building the union. TLC builds a union of enumerable sets at once,
+    // testing their elements, so a failure replay builds each. It builds an intersection or a
+    // difference with a set enumeration or an interval at once too, testing each of its elements
+    // in the other operand, which may fail on one the membership doesn't test, so the replay
+    // builds those as TLC does.
     fn combined_set(&mut self, set: &Operand) -> Evaluated<Combined> {
         if let Operand::Node(node, context) = set
             && let NodeKind::Apply { name, args } = self.kind(*node)
             && let [left, right] = args[..]
             && !name.is_local
             && let Resolution::Builtin(index) = name.resolution
+            && self.call_stack.is_none()
+            && self.name(self.ir.builtins[index as usize].name) == "\\cup"
         {
-            // TLC builds a union, intersection or difference of enumerable sets at once, testing
-            // their elements, so a failure replay builds each rather than test the membership
-            // lazily.
-            let operation = match self.name(self.ir.builtins[index as usize].name) {
-                _ if self.call_stack.is_some() => None,
-                "\\cup" => Some(SetOperation::Union),
-                "\\cap" => Some(SetOperation::Intersection),
-                "\\" => Some(SetOperation::Difference),
-                _ => None,
-            };
-            if let Some(operation) = operation {
-                let left = self.combined_set(&Operand::Node(left, context.clone()))?;
-                let right = self.combined_set(&Operand::Node(right, context.clone()))?;
-                return Ok(Combined::Operation(
-                    operation,
-                    Box::new(left),
-                    Box::new(right),
-                ));
-            }
+            let left = self.combined_set(&Operand::Node(left, context.clone()))?;
+            let right = self.combined_set(&Operand::Node(right, context.clone()))?;
+            return Ok(Combined::Union(Box::new(left), Box::new(right)));
         }
         Ok(Combined::Set(self.operand(set)?))
     }
@@ -3237,8 +3232,8 @@ impl<'ir> Evaluator<'ir> {
                 let right = self.operand(&operands[1])?;
                 match name {
                     "\\cup" => union(&left, &right)?,
-                    "\\cap" => intersection(&left, &right)?,
-                    _ => difference(&left, &right)?,
+                    "\\cap" => intersection(&left, &right, &mut filter_test(self))?,
+                    _ => difference(&left, &right, &mut filter_test(self))?,
                 }
             }
             "SUBSET" => {
@@ -4080,39 +4075,51 @@ fn permute(
     }
 }
 
-/// An argument of a builtin: an expression as written, or a value an operator argument is
-/// applied to.
-enum SetOperation {
-    Union,
-    Intersection,
-    Difference,
+// A lazy filter's test of an element, through its base, as the evaluator makes it
+// (`SetPredValue.member`).
+fn filter_test<'a, 'ir>(
+    evaluator: &'a mut Evaluator<'ir>,
+) -> impl FnMut(&Value, &Value, &Predicate) -> Evaluated<bool> + 'a {
+    move |element, base, predicate| {
+        Ok(evaluator.member(element, base)? && evaluator.filters(element, base, predicate)?)
+    }
 }
 
 enum Combined {
     Set(Value),
-    Operation(SetOperation, Box<Combined>, Box<Combined>),
+    Union(Box<Combined>, Box<Combined>),
 }
 
 impl Combined {
-    // Membership, testing the right operand only where the left one doesn't decide it.
+    // Membership, testing the second operand only where the first one doesn't decide it. TLC
+    // combines a union through its set enumeration or interval operand (`Tool`'s OPCODE_cup), so
+    // that one is first.
     fn has(&self, evaluator: &mut Evaluator<'_>, element: &Value) -> Evaluated<bool> {
         match self {
             Combined::Set(set) => evaluator.member(element, set),
-            Combined::Operation(operation, left, right) => Ok(match operation {
-                SetOperation::Union => {
-                    left.has(evaluator, element)? || right.has(evaluator, element)?
-                }
-                SetOperation::Intersection => {
-                    left.has(evaluator, element)? && right.has(evaluator, element)?
-                }
-                SetOperation::Difference => {
-                    left.has(evaluator, element)? && !right.has(evaluator, element)?
-                }
-            }),
+            Combined::Union(left, right) => {
+                let (first, second) = if !left.is_reducible() && right.is_reducible() {
+                    (right, left)
+                } else {
+                    (left, right)
+                };
+                Ok(first.has(evaluator, element)? || second.has(evaluator, element)?)
+            }
+        }
+    }
+
+    // Whether TLC holds the set as a set enumeration or an interval (`Reducible`), as it holds
+    // the union of two.
+    fn is_reducible(&self) -> bool {
+        match self {
+            Combined::Set(set) => is_reducible(set),
+            Combined::Union(left, right) => left.is_reducible() && right.is_reducible(),
         }
     }
 }
 
+/// An argument of a builtin: an expression as written, or a value an operator argument is
+/// applied to.
 enum Operand {
     Node(NodeId, Context),
     Value(Value),

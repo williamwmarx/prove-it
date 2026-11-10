@@ -1,0 +1,11 @@
+[package]
+name = "prove-zenon"
+description = "Prove It's port of Zenon, as tlapm ships it, with its proof checker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT AND BSD-3-Clause AND LGPL-2.1-only WITH OCaml-LGPL-linking-exception"
+publish.workspace = true
+
+[dependencies]
+prove-decide = { path = "../decide" }
