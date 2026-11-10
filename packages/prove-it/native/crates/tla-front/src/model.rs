@@ -84,7 +84,37 @@ pub fn lower_front(
     config_text: &str,
     options: &ModelOptions,
 ) -> Result<LoweredModel, FrontError> {
-    lower_ranked(spec_path, config_text, options, &[]).map(|(lowered, _)| lowered)
+    with_files(spec_path, options, |sources| {
+        lower_ranked(sources, config_text, options, &[]).map(|(lowered, _)| lowered)
+    })
+}
+
+/// What a model is lowered from: the root module's text, the text of each other module by its
+/// name, and the Java override TLC loads for a module, by its name (`loadClass`), from the spec's
+/// directory, which TLC names the override by.
+pub struct ModelSources<'a> {
+    pub source: &'a str,
+    pub directory: &'a Path,
+    pub load_module: &'a dyn Fn(&str) -> Option<String>,
+    pub load_class: &'a dyn Fn(&str) -> Option<Vec<u8>>,
+}
+
+/// The model's sources from the file system: the spec's file, the modules beside it or in the
+/// libraries, and the classes beside it.
+fn with_files<T>(
+    spec_path: &Path,
+    options: &ModelOptions,
+    lower: impl FnOnce(&ModelSources) -> Result<T, FrontError>,
+) -> Result<T, FrontError> {
+    let source = std::fs::read_to_string(spec_path)
+        .map_err(|error| FrontError::Config(format!("{}: {error}", spec_path.display())))?;
+    let directory = spec_path.parent().unwrap_or(Path::new("."));
+    lower(&ModelSources {
+        source: &source,
+        directory,
+        load_module: &|name| load_module(spec_path, options.libraries, name),
+        load_class: &|name| std::fs::read(directory.join(format!("{name}.class"))).ok(),
+    })
 }
 
 /// What finds the texts TLC interns as it computes the constant definitions an IR holds, given
@@ -101,7 +131,19 @@ pub fn lower_front_ranking(
     options: &ModelOptions,
     get_startup_texts: &StartupTexts,
 ) -> Result<LoweredModel, FrontError> {
-    let (lowered, startup) = lower_ranked(spec_path, config_text, options, &[])?;
+    with_files(spec_path, options, |sources| {
+        lower_front_ranking_of(sources, config_text, options, get_startup_texts)
+    })
+}
+
+/// `lower_front_ranking` of the model's sources as the caller holds them.
+pub fn lower_front_ranking_of(
+    sources: &ModelSources,
+    config_text: &str,
+    options: &ModelOptions,
+    get_startup_texts: &StartupTexts,
+) -> Result<LoweredModel, FrontError> {
+    let (lowered, startup) = lower_ranked(sources, config_text, options, &[])?;
     let Ok(ir) = tla_ir::decode(&lowered.ir) else {
         return Ok(lowered);
     };
@@ -113,35 +155,32 @@ pub fn lower_front_ranking(
     if startup_texts.is_empty() {
         return Ok(lowered);
     }
-    lower_ranked(spec_path, config_text, options, &startup_texts).map(|(lowered, _)| lowered)
+    lower_ranked(sources, config_text, options, &startup_texts).map(|(lowered, _)| lowered)
 }
 
 fn lower_ranked(
-    spec_path: &Path,
+    sources: &ModelSources,
     config_text: &str,
     options: &ModelOptions,
     startup_texts: &[Rc<str>],
 ) -> Result<(LoweredModel, Vec<tla_ir::Index>), FrontError> {
     let version = options.version.unwrap_or(TlcVersion::Master);
-    let source = std::fs::read_to_string(spec_path)
-        .map_err(|error| FrontError::Config(format!("{}: {error}", spec_path.display())))?;
-    let load = |name: &str| load_module(spec_path, options.libraries, name);
-    // TLC loads the class named after a module from the spec's directory (`loadClass`).
-    let directory = spec_path.parent().unwrap_or(Path::new("."));
-    let load_class = |name: &str| std::fs::read(directory.join(format!("{name}.class"))).ok();
+    let source = sources.source;
+    let load = sources.load_module;
+    let load_class = sources.load_class;
     let config =
         parse_config(config_text, version).map_err(|error| FrontError::Config(error.message))?;
     // SANY's errors come from linking, before TLC's orders parse the modules again.
     let environment = create_environment(&EnvironmentOptions {
-        source: &source,
-        load_module: &load,
+        source,
+        load_module: load,
         config: &config,
         is_unconfigured: false,
         version,
         is_level_checked: false,
-        load_class: Some(&load_class),
+        load_class: Some(load_class),
     })?;
-    let order = TlcOrder::new(&source, &load, version)?;
+    let order = TlcOrder::new(source, load, version)?;
     let texts: Vec<Rc<str>> = order
         .get_string_order(&config)?
         .iter()
@@ -272,7 +311,7 @@ fn lower_ranked(
                 options.is_warning_enabled,
             )
         });
-        let override_messages = get_override_messages(&environment, directory)
+        let override_messages = get_override_messages(&environment, sources.directory)
             .map(|messages| {
                 // -nowarning drops a method that matches no operator.
                 messages
@@ -320,9 +359,16 @@ fn get_override_messages(
         .java_overrides
         .iter()
         .map(|java_override| {
-            let path =
-                std::path::absolute(directory.join(format!("{}.class", java_override.module)))
-                    .map_err(|error| error.to_string())?;
+            let class = directory.join(format!("{}.class", java_override.module));
+            // WebAssembly has no working directory, and `is_absolute` is false there for any path,
+            // so a path from the root stays as it is.
+            let is_absolute =
+                class.is_absolute() || cfg!(target_arch = "wasm32") && class.has_root();
+            let path = if is_absolute {
+                class
+            } else {
+                std::path::absolute(class).map_err(|error| error.to_string())?
+            };
             let path = path.to_str().unwrap_or_default();
             // `pathToFileURL` escapes what a URL can't hold, which the front end doesn't follow.
             let is_plain = !path.is_empty()

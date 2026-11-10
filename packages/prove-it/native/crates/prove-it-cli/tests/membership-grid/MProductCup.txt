@@ -1,0 +1,9 @@
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+6 states generated, 5 distinct states found, 4 states left on queue.
+The depth of the complete state graph search is 2.
+The average outdegree of the complete state graph is 4 (minimum is 4, the maximum 4 and the 95th percentile is 4).
