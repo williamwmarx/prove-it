@@ -2891,8 +2891,10 @@ fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_co
 // a product, SUBSET, a filter, a map, a union, a constant and a definition, with a part empty and
 // not, nested in x' \in S, x' \in S \cup {7}, x' \subseteq S, [{1} -> S], [a : S], S \X {1} and a
 // filter; a and b are 0 and 1, values of S's elements' kind, or integers in the nesting's shape.
-// TLC's output on each formulation at d8fb231 is beside it: each run prints it exactly, or both
-// formulations decline.
+// And Init x \in S \cup {a} for each S, with Next x' = a \/ x' = b: TLC's predicate evaluation of
+// Next never tests the sets Init assigns from, so those leave the shortcut on. TLC's output on
+// each formulation at d8fb231 is beside it: each run prints it exactly, or both formulations
+// decline.
 #[test]
 fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/membership-grid");
@@ -2904,7 +2906,7 @@ fn answers_fairness_of_next_as_tlc_whatever_set_a_walk_assigns_from() {
         })
         .collect();
     names.sort();
-    assert_eq!(names.len(), 396);
+    assert_eq!(names.len(), 418);
     for name in names {
         let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
         let constant = if name.contains("Empty") {

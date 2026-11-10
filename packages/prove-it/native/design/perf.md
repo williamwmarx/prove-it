@@ -911,8 +911,14 @@ walker-hook shape guard and the fallbacks below.
   Records, functions, products, SUBSET, unions, UNION, filters, maps, constants, Nat and the rest
   go back on only with a citation of their `member`, the argument for an empty part, and the grid
   below. A walk of Next that enumerates an empty set, or assigns by `x' \subseteq S`, also turns
-  it off. Init's memberships don't: TLC's predicate evaluation of Next never tests them (cf1s's
-  `pc \in [Proc -> {"V0", "V1"}]`), though their values are joined, which UNCHANGED compares.
+  it off. Init's memberships don't (cf1s's `pc \in [Proc -> {"V0", "V1"}]`): `LNAction.eval`
+  (`LNAction.java:66-85`) evaluates the atom's action body alone, which for `WF_v(Next)` is Next,
+  so the memberships predicate mode tests are nodes of Next, reached, by the induction above, on
+  a path a walk of Next took, and that walk turns the shortcut off where it enumerates one the
+  guard doesn't cover. Init's walk is of the initial predicate, which TLC doesn't evaluate there;
+  where Next names Init, its walk of Next walks those nodes too. Init's values are still joined,
+  which UNCHANGED compares. The grid has 22 cells for it: Init assigns from each of the eleven
+  forms, with a part empty and not, and Next assigns values of that kind.
   The grid, `prove-it-cli/tests/membership-grid`, has 396 specs: x' \in S beside two other
   assignments, under WF_x(Next) (answered from the steps where the guard lets it) and
   WF_x(Alias) with Alias == Next (evaluated). S is each of eleven forms, with a part empty and not,
