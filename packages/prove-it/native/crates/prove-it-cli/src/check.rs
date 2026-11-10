@@ -457,12 +457,23 @@ impl Reporter for Relay<'_> {
                 rebuilder.check_assumption(position, self.is_tool)
             })
             .map_err(|Unsupported(reason)| format!("checking an assumption again: {reason}"))?;
+        // What the run printed of the assumption before it left it to the trace evaluator must be
+        // what TLC prints first, after what the assumptions before it print.
         if self.is_startup_printed {
-            for print in &checked.printed {
-                let text = format_print(print);
+            let expected: Vec<String> = checked
+                .printed_before
+                .iter()
+                .chain(&checked.printed)
+                .map(|print| format_print(print))
+                .collect();
+            if !expected.starts_with(&self.assumed_printed) {
+                let _ = self.sender.send(Event::Print(None));
+                return Err("printing other than TLC prints".into());
+            }
+            for text in &expected[self.assumed_printed.len()..] {
                 self.assumed_worded.push(Some(text.clone()));
                 self.assumed_printed.push(text.clone());
-                let _ = self.sender.send(Event::Print(Some(text)));
+                let _ = self.sender.send(Event::Print(Some(text.clone())));
             }
         }
         Ok(Delegated {

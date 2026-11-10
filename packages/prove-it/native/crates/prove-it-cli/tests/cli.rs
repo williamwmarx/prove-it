@@ -571,6 +571,23 @@ fn prints_what_an_assumption_printed_before_it_failed_once() {
 }
 
 #[test]
+fn prints_once_what_an_assumption_printed_before_the_engine_left_it() {
+    // The search prints the first print, then leaves the assumption to the trace evaluator, which
+    // prints it again as it evaluates the assumption whole.
+    let spec = "---- MODULE Left ----\nEXTENDS TLC, Naturals\nVARIABLE x\nASSUME PrintT(1)\nASSUME Print(SUBSET (1..10), TRUE) /\\ PrintT(ToString(SUBSET (1..10)))\nInit == x = 0\nNext == x' = x\n====\n";
+    let (output, directory) = run_front("left", spec, "INIT Init\nNEXT Next\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(
+            ")\n1\nSUBSET (1..10)  TRUE\n\"SUBSET (1..10)\"\nComputing initial states...\n"
+        ),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn fails_to_print_a_lazy_set_whose_expansion_fails() {
     // PrintT prints with `toStringUnchecked`, which fails where TLC can't expand a lazy set.
     for (set, error) in [

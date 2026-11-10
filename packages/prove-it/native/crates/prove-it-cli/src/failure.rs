@@ -302,9 +302,15 @@ pub fn print_assumption_failure(
         // What TLC prints of the assumptions before this one, which hold, and of this one.
         let mut expected = Vec::new();
         if printed.is_some() {
-            for before in 0..position {
-                let checked = new_rebuilder()?.check_assumption(before, is_tool)?;
-                expected.extend(checked.printed.iter().map(|print| format_print(print)));
+            if let Some(last) = position.checked_sub(1) {
+                let checked = new_rebuilder()?.check_assumption(last, is_tool)?;
+                expected.extend(
+                    checked
+                        .printed_before
+                        .iter()
+                        .chain(&checked.printed)
+                        .map(|print| format_print(print)),
+                );
             }
             expected.extend(failure.printed.iter().map(|print| format_print(print)));
         }
