@@ -579,7 +579,7 @@ impl FingerprintSet {
     fn new(is_indexed: bool) -> FingerprintSet {
         let capacity = Self::INITIAL_CAPACITY;
         FingerprintSet {
-            fingerprints: get_table(capacity),
+            fingerprints: vec![0; capacity],
             indices: is_indexed.then(|| vec![0; capacity]),
             shift: u64::BITS - capacity.trailing_zeros(),
             mask: capacity - 1,
@@ -647,7 +647,7 @@ impl FingerprintSet {
         // more often than a probe leaves its cache line, and 70% no faster.
         if self.len * 2 > self.fingerprints.len() {
             let capacity = self.fingerprints.len() * 2;
-            let fingerprints = std::mem::replace(&mut self.fingerprints, get_table(capacity));
+            let fingerprints = std::mem::replace(&mut self.fingerprints, vec![0; capacity]);
             let indices = self
                 .indices
                 .as_mut()
@@ -666,34 +666,6 @@ impl FingerprintSet {
                     }
                 }
             }
-        }
-    }
-}
-
-// A table of empty slots. A large one asks for huge pages, since its probes land anywhere in it,
-// each missing the TLB otherwise.
-fn get_table(capacity: usize) -> Vec<u64> {
-    let table = vec![0; capacity];
-    #[cfg(target_os = "linux")]
-    advise_huge_pages(&table);
-    table
-}
-
-#[cfg(target_os = "linux")]
-fn advise_huge_pages(table: &[u64]) {
-    const HUGE_PAGE: usize = 1 << 21;
-    const MADV_HUGEPAGE: i32 = 14;
-    unsafe extern "C" {
-        fn madvise(address: *mut std::ffi::c_void, length: usize, advice: i32) -> i32;
-    }
-    let start = (table.as_ptr() as usize).next_multiple_of(HUGE_PAGE);
-    let end = (table.as_ptr() as usize + size_of_val(table)) / HUGE_PAGE * HUGE_PAGE;
-    if start < end {
-        // SAFETY: the range lies inside the table's allocation, and the advice changes only how
-        // the kernel backs its pages, not their contents. Where the kernel refuses, nothing
-        // changes.
-        unsafe {
-            madvise(start as *mut std::ffi::c_void, end - start, MADV_HUGEPAGE);
         }
     }
 }
