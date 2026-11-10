@@ -1,6 +1,8 @@
 //! What TLC reports at the end of a search, as `src/tlc/summary.ts` computes it: the estimates of a
 //! fingerprint collision and the outdegree of the state graph.
 
+use crate::stack::map_on_threads;
+
 /// TLC's optimistic estimate of a fingerprint collision, from AbstractChecker.
 pub fn optimistic_probability(distinct: u64, generated: u64) -> f64 {
     distinct as f64 * ((generated as f64 - distinct as f64) / 2f64.powi(64))
@@ -129,31 +131,16 @@ pub fn fingerprint_distance(
     }
     let ranges = threads.next_power_of_two();
     let shift = u64::BITS - ranges.trailing_zeros();
-    let sorted: Vec<Vec<i64>> = std::thread::scope(|scope| {
-        let sorting: Vec<_> = (0..ranges)
-            .map(|range| {
-                scope.spawn(move || {
-                    let mut sorted: Vec<i64> = fingerprints
-                        .iter()
-                        .filter(|&&fingerprint| {
-                            (fingerprint ^ 1 << 63).checked_shr(shift).unwrap_or(0) as usize
-                                == range
-                        })
-                        .map(|&fingerprint| fingerprint as i64)
-                        .collect();
-                    sorted.sort_unstable();
-                    sorted
-                })
+    let sorted = map_on_threads(0..ranges, |range| {
+        let mut sorted: Vec<i64> = fingerprints
+            .iter()
+            .filter(|&&fingerprint| {
+                (fingerprint ^ 1 << 63).checked_shr(shift).unwrap_or(0) as usize == range
             })
+            .map(|&fingerprint| fingerprint as i64)
             .collect();
-        sorting
-            .into_iter()
-            .map(|thread| {
-                thread
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-            })
-            .collect()
+        sorted.sort_unstable();
+        sorted
     });
     let sorted = sorted.iter().flatten();
     Some(

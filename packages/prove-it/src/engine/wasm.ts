@@ -48,6 +48,7 @@ interface Exports {
   prove_it_abi_version: () => number;
   prove_it_check: Call;
   prove_it_sany_text: Call;
+  prove_it_check_sources: Call;
   prove_it_store_perform: Call;
   prove_it_store_decode: Call;
   prove_it_store_encode: Call;
@@ -276,6 +277,10 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
         running.check = undefined;
       }
     },
+    checkSources: (args, known, machine) =>
+      callCurrent("prove_it_check_sources", [args, known, machine]) as ReturnType<
+        NativeAddon["checkSources"]
+      >,
     sanyText: (root, source, fileName, known) =>
       callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
         NativeAddon["sanyText"]

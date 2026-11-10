@@ -1,11 +1,9 @@
 //! `prove-it <Spec>...`: `checkSpecs` and `checkSpec` in `src/cli/tlc.ts`. Each spec is checked as
 //! TLC would in a process of its own; the exit code is the first that is not success.
 
-use std::fs::File;
-use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::mpsc;
-use std::time::{Instant, SystemTime};
+use tla_engine::clock::Instant;
 
 use tla_engine::search::{
     Delegated, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome, Settings, Violation,
@@ -17,14 +15,15 @@ use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
-use crate::files::FileDescriber;
 use crate::front::{Failure, Read, read_front};
+use crate::host::{Files, Host};
 use crate::messages::{self as code, Level, Output, Printer};
+use crate::stack::{alongside, on_search_stack};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
     optimistic_probability, out_degree_summary,
 };
-use crate::time::{format_date, format_duration};
+use crate::time::format_duration;
 use crate::trace::{
     PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
     format_texts, rebuild_accepted, rebuild_trace,
@@ -49,12 +48,10 @@ const CONFIG_PARSE_ERROR: i32 = 151;
 
 /// The exit code of a run that needs something the binary doesn't do natively yet.
 const NOT_NATIVE: i32 = 1;
+// How much of the -dump file's text the relay holds before it sends it to be written.
+const DUMP_PART_BYTES: usize = 1 << 20;
 
 const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
-
-/// How deep the search thread's stack may grow: compiled closures recurse with the expressions
-/// and the values they evaluate. It is reserved, not committed.
-pub(crate) const SEARCH_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 /// Runs the command line `args` as TLC (or SANY's XMLExporter) would, writing to `output`, and
 /// returns the exit code.
@@ -87,10 +84,6 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
 fn not_native(output: &mut Output<'_>, what: &str) -> i32 {
     let _ = writeln!(output.err, "prove-it: not native yet: {what}");
     NOT_NATIVE
-}
-
-fn exists(path: &str) -> bool {
-    Path::new(path).exists()
 }
 
 fn file_name(path: &str) -> String {
@@ -148,19 +141,25 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
     // TLC also looks for the spec itself in the library directories.
     let mut paths: Vec<String> = Vec::new();
     for path in spec_paths {
-        let found = if exists(&path) || Path::new(&path).is_absolute() {
+        let found = if output.host.is_file(Path::new(&path)) || Path::new(&path).is_absolute() {
             path
         } else {
             java.libraries
                 .iter()
                 .map(|directory| Path::new(directory).join(&path))
-                .find(|candidate| candidate.exists())
+                .find(|candidate| output.host.is_file(candidate))
                 .map(|candidate| candidate.to_string_lossy().into_owned())
                 .unwrap_or(path)
         };
         if !paths.contains(&found) {
             paths.push(found);
         }
+    }
+    if paths.len() > 1 && !output.host.is_checking_several() {
+        return not_native(
+            output,
+            "several specifications in one check of a host's sources",
+        );
     }
     let mut exit_codes = Vec::new();
     for (index, path) in paths.iter().enumerate() {
@@ -210,60 +209,24 @@ fn print_command_line_error(printer: &mut Printer, message: &str) -> i32 {
     1
 }
 
-fn read_trimmed(path: &str) -> Option<String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|text| text.trim().to_string())
-}
-
-/// The memory the banner reports as the heap: the machine's, since the native search has no limit
-/// of its own.
-fn memory_megabytes() -> u64 {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|info| {
-            let line = info.lines().find(|line| line.starts_with("MemTotal:"))?;
-            line.split_whitespace().nth(1)?.parse::<u64>().ok()
-        })
-        .map_or(0, |kilobytes| kilobytes / 1024)
-}
-
-fn cores() -> usize {
-    std::thread::available_parallelism().map_or(1, usize::from)
-}
-
 // A whole number an environment variable sets.
-fn env_number(name: &str) -> Option<usize> {
-    std::env::var(name).ok()?.parse().ok()
+fn get_number(host: &dyn Host, name: &str) -> Option<usize> {
+    host.get_variable(name)?.parse().ok()
 }
 
 /// TLC.printStartupBanner, with what runs Prove It in place of the JVM.
 fn print_startup_banner(printer: &mut Printer, seed: i64, workers: usize) {
-    // Node's os.type(): the kernel's name.
-    let system = read_trimmed("/proc/sys/kernel/ostype").unwrap_or_else(|| {
-        match std::env::consts::OS {
-            "macos" => "Darwin",
-            "windows" => "Windows_NT",
-            "linux" => "Linux",
-            other => other,
-        }
-        .into()
-    });
-    let release = read_trimmed("/proc/sys/kernel/osrelease").unwrap_or_default();
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        other => other,
-    };
+    let machine = printer.host.machine();
+    let (system, release, arch) = (&machine.system, &machine.release, &machine.arch);
     printer.print(
         code::MODEL_CHECKING,
         Level::None,
         &format!(
             "Running breadth-first search Model-Checking with fp 0 and seed {seed} with {workers} worker{} on {} cores with {}MB heap and 0MB offheap memory [pid: {}] ({system} {release} {arch}, prove-it native {}bit, MemFPSet, MemStateQueue).",
             if workers == 1 { "" } else { "s" },
-            cores(),
-            memory_megabytes(),
-            std::process::id(),
+            machine.cores,
+            machine.memory_megabytes,
+            machine.pid,
             usize::BITS,
         ),
     );
@@ -291,6 +254,8 @@ enum Event {
     /// TLC would evaluate the `_PERIODIC` expression now, as it prints its progress, which the
     /// engine doesn't: the search ends as not native.
     Periodic,
+    /// A part of the `-dump` file's text, in order, for the host to append.
+    Dumped(String),
 }
 
 struct Relay<'ir> {
@@ -301,8 +266,9 @@ struct Relay<'ir> {
     /// its progress; the search ends there, if it gets that far.
     is_periodic: bool,
     is_periodic_reached: bool,
-    /// The file `-dump` writes each state the search found to, as TLC's `StateWriter` does.
-    dump: Option<BufWriter<File>>,
+    /// Whether `-dump` writes each state the search found, as TLC's `StateWriter` does: the relay
+    /// sends the text in parts (`Event::Dumped`) for the host to write.
+    is_dumped: bool,
     /// Whether the dump holds every state, or why it doesn't, once the search handed them over.
     dumped: Option<Result<(), &'static str>>,
     ir: &'ir tla_ir::Ir,
@@ -514,14 +480,15 @@ impl Reporter for Relay<'_> {
     // TLC writes "State N:", from 1, then the state as it prints it (`TLCStateMut.toString`) and
     // a blank line.
     fn dumped(&mut self, store: &Store, states: &[Id], width: usize) {
-        let Some(writer) = self.dump.as_mut() else {
+        if !self.is_dumped {
             return;
-        };
+        }
         let ir = self.ir;
         if width == 0 || width != ir.variables.len() {
             self.dumped = Some(Err("-dump of states other than the variables' values"));
             return;
         }
+        let mut text = String::new();
         let written = states
             .chunks(width)
             .enumerate()
@@ -538,19 +505,20 @@ impl Reporter for Relay<'_> {
                     })
                     .collect::<Option<Vec<_>>>()
                     .ok_or("dumping a value whose text depends on how TLC built it")?;
-                write!(
-                    writer,
+                text.push_str(&format!(
                     "State {}:\n{}\n",
                     index + 1,
                     format_texts(ir, &texts)
-                )
-                .map_err(|_| "-dump into a file it can't write")
+                ));
+                if text.len() >= DUMP_PART_BYTES {
+                    let _ = self.sender.send(Event::Dumped(std::mem::take(&mut text)));
+                }
+                Ok(())
             });
-        self.dumped = Some(written.and_then(|()| {
-            writer
-                .flush()
-                .map_err(|_| "-dump into a file it can't write")
-        }));
+        if !text.is_empty() {
+            let _ = self.sender.send(Event::Dumped(text));
+        }
+        self.dumped = Some(written);
     }
 }
 
@@ -597,7 +565,7 @@ fn print_progress(printer: &mut Printer, statistics: &Statistics, start: Option<
         &format!(
             "Progress({}) at {}: {} states generated{}, {} distinct states found{}, {} states left on queue.",
             statistics.depth.max(1),
-            format_date(SystemTime::now()),
+            printer.date(),
             format_count(statistics.generated),
             rate(statistics.generated, "s"),
             format_count(statistics.distinct),
@@ -608,7 +576,7 @@ fn print_progress(printer: &mut Printer, statistics: &Statistics, start: Option<
 }
 
 fn print_initial_states(printer: &mut Printer, generated: u64, distinct: u64) {
-    let date = format_date(SystemTime::now());
+    let date = printer.date();
     if generated == distinct {
         printer.print(
             code::INIT_GENERATED_1,
@@ -637,7 +605,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         .unwrap_or(0);
     let dump = args.get("-dump");
     let workers = match args.first("-workers") {
-        Some(workers) if is_auto(workers) => cores(),
+        Some(workers) if is_auto(workers) => printer.host.machine().cores,
         Some(workers) => workers.parse().unwrap_or(1),
         None => 1,
     };
@@ -653,10 +621,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             } else {
                 format!("{file}.dump")
             };
-            let Ok(file) = File::create(path) else {
+            if !printer.host.write_file(Path::new(&path), "", false) {
                 return report_not_native(printer, "-dump into a file it can't create");
-            };
-            Some(BufWriter::new(file))
+            }
+            Some(path)
         }
         Some([_]) => return report_not_native(printer, "-dump into the meta directory"),
         Some(_) => return report_not_native(printer, "-dump dot"),
@@ -668,7 +636,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             None => spec_path.to_string(),
         }),
     };
-    if !config_path.as_deref().is_some_and(exists) {
+    if !config_path
+        .as_deref()
+        .is_some_and(|path| printer.host.is_file(Path::new(path)))
+    {
         printer.print(
             code::CONFIG_FILE_ERROR,
             Level::Error,
@@ -682,7 +653,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let start = Instant::now();
     // TLC reads the configuration file before it parses the spec, and reports one it can't parse
     // as it reports a TlaConfigError (`printFailure`).
-    let config_text = config_path.and_then(|path| std::fs::read_to_string(path).ok());
+    let config_text = config_path.and_then(|path| printer.host.read_text(Path::new(&path)));
     let parsed = config_text
         .as_deref()
         .map(|text| parse_config(text, TlcVersion::Master));
@@ -703,14 +674,14 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         spec_path,
         config_text.as_deref().unwrap_or_default(),
         !args.has("-nowarning"),
-        &FileDescriber::new(
-            Path::new(spec_path),
-            &java.libraries,
-            java.temporary_directory.as_deref(),
-            args.first("-metadir"),
-            false,
-        ),
-        &java.libraries,
+        &Files {
+            spec: Path::new(spec_path),
+            libraries: &java.libraries,
+            temporary: java.temporary_directory.as_deref(),
+            metadir: args.first("-metadir"),
+            is_174: false,
+        },
+        printer.host,
         printer.is_tool,
         seed,
     ) {
@@ -718,6 +689,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
         Err(reason) => return report_not_native(printer, &reason),
     };
+    // Everything the check reads, it has read by now: a host still missing some answers it first.
+    if !printer.host.is_complete() {
+        return NOT_NATIVE;
+    }
     let mut ir = match tla_ir::decode(&front.ir) {
         Ok(ir) => ir,
         Err(error) => {
@@ -788,14 +763,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // trace evaluator finds as check.ts does. A model it can't split keeps none, and its traces
     // name no actions natively. The evaluator recurses, so it runs with the search's stack.
     if ir.model.actions.is_empty() {
-        let split = std::thread::scope(|scope| {
-            std::thread::Builder::new()
-                .stack_size(SEARCH_STACK_BYTES)
-                .spawn_scoped(scope, || tla_trace::add_actions(&ir).ok())
-                .expect("a thread to split the next-state relation")
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        });
+        let split = on_search_stack(|| tla_trace::add_actions(&ir).ok());
         if let Some(split) = split {
             ir = split;
         }
@@ -821,15 +789,18 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         // as TLC has workers, and finds what one thread finds. PROVE_IT_WORKERS asks for another
         // number, such as to check that under -workers 1; PROVE_IT_SHARED_LEVEL sets the fewest
         // states a level shares.
-        threads: env_number("PROVE_IT_WORKERS")
+        threads: get_number(printer.host, "PROVE_IT_WORKERS")
             .unwrap_or(workers)
-            .clamp(1, cores()),
-        minimum_shared_level: env_number("PROVE_IT_SHARED_LEVEL").unwrap_or(MINIMUM_SHARED_LEVEL),
+            .clamp(1, printer.host.machine().cores),
+        minimum_shared_level: get_number(printer.host, "PROVE_IT_SHARED_LEVEL")
+            .unwrap_or(MINIMUM_SHARED_LEVEL),
         is_liveness_periodic,
-        test_live_check_at: std::env::var("PROVE_IT_TEST_LIVE_CHECK_AT")
-            .ok()
+        test_live_check_at: printer
+            .host
+            .get_variable("PROVE_IT_TEST_LIVE_CHECK_AT")
             .and_then(|at| at.parse().ok()),
         is_dumped,
+        large_region_advice: printer.host.large_region_advice(),
         ..Settings::default()
     };
     let threads = settings.threads;
@@ -842,87 +813,93 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let mut checking = None;
     let mut is_misprinted = false;
     let mut is_periodic_reached = false;
+    let mut is_dump_unwritten = false;
     let is_periodic = config.periodic.is_some();
-    let (outcome, assumed_printed, dumped) = std::thread::scope(|scope| {
-        let ir = &ir;
-        let searching = std::thread::Builder::new()
-            .stack_size(SEARCH_STACK_BYTES)
-            .spawn_scoped(scope, move || {
-                let mut relay = Relay {
-                    sender,
-                    is_misprinted: false,
-                    is_periodic,
-                    is_periodic_reached: false,
-                    dump,
-                    dumped: None,
-                    ir,
-                    is_tool,
-                    workers,
-                    startup_messages: front.startup_messages,
-                    startup_worded: Some(Vec::new()),
-                    assumed_worded: Vec::new(),
-                    assumed_printed: Vec::new(),
-                    assumed_texts: None,
-                    startup_texts: None,
-                };
-                let outcome = search(ir, &settings, &mut relay);
-                (outcome, relay.assumed_printed, relay.dumped)
-            })
-            .expect("a thread for the search");
-        for event in receiver.iter() {
-            match event {
-                Event::InitialStatesStarted => printer.print(
-                    code::COMPUTING_INIT,
-                    Level::None,
-                    "Computing initial states...",
-                ),
-                Event::InitialStatesProgress(count) => printer.print(
-                    code::COMPUTING_INIT_PROGRESS,
-                    Level::None,
-                    &format!("Computed {count} initial states..."),
-                ),
-                Event::InitialStates(generated, distinct) => {
-                    initial_generated = generated;
-                    print_initial_states(printer, generated, distinct)
-                }
-                Event::Progress(generated, distinct, queued, depth) => {
-                    let statistics = Statistics {
-                        generated,
-                        distinct,
-                        queued,
-                        depth,
-                    };
-                    print_progress(printer, &statistics, Some(start));
-                    printer.flush();
-                }
-                Event::LivenessStarted(branches, expanded) => {
-                    checking = Some(print_liveness_check(printer, branches, expanded, "current"));
-                }
-                Event::LivenessFinished => {
-                    if let Some(checking) = checking.take() {
-                        print_liveness_finished(printer, checking);
+    let ir_ref = &ir;
+    let (outcome, assumed_printed, dumped) = alongside(
+        move || {
+            let ir = ir_ref;
+            let mut relay = Relay {
+                sender,
+                is_misprinted: false,
+                is_periodic,
+                is_periodic_reached: false,
+                is_dumped,
+                dumped: None,
+                ir,
+                is_tool,
+                workers,
+                startup_messages: front.startup_messages,
+                startup_worded: Some(Vec::new()),
+                assumed_worded: Vec::new(),
+                assumed_printed: Vec::new(),
+                assumed_texts: None,
+                startup_texts: None,
+            };
+            let outcome = search(ir, &settings, &mut relay);
+            (outcome, relay.assumed_printed, relay.dumped)
+        },
+        || {
+            for event in receiver.iter() {
+                match event {
+                    Event::InitialStatesStarted => printer.print(
+                        code::COMPUTING_INIT,
+                        Level::None,
+                        "Computing initial states...",
+                    ),
+                    Event::InitialStatesProgress(count) => printer.print(
+                        code::COMPUTING_INIT_PROGRESS,
+                        Level::None,
+                        &format!("Computed {count} initial states..."),
+                    ),
+                    Event::InitialStates(generated, distinct) => {
+                        initial_generated = generated;
+                        print_initial_states(printer, generated, distinct)
+                    }
+                    Event::Progress(generated, distinct, queued, depth) => {
+                        let statistics = Statistics {
+                            generated,
+                            distinct,
+                            queued,
+                            depth,
+                        };
+                        print_progress(printer, &statistics, Some(start));
+                        printer.flush();
+                    }
+                    Event::LivenessStarted(branches, expanded) => {
+                        checking =
+                            Some(print_liveness_check(printer, branches, expanded, "current"));
+                    }
+                    Event::LivenessFinished => {
+                        if let Some(checking) = checking.take() {
+                            print_liveness_finished(printer, checking);
+                        }
+                    }
+                    Event::Print(Some(text)) => printer.line(&text),
+                    Event::StartupMessage(message) => print_startup_message(printer, &message),
+                    Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
+                    // Nothing more this run prints can be right, so it prints nothing more, and the
+                    // search, which the relay cancels, ends with the events it sends unread.
+                    Event::Print(None) => {
+                        is_misprinted = true;
+                        break;
+                    }
+                    Event::Periodic => {
+                        is_periodic_reached = true;
+                        break;
+                    }
+                    Event::Dumped(text) => {
+                        let path = Path::new(dump.as_deref().unwrap_or_default());
+                        is_dump_unwritten |= !printer.host.write_file(path, &text, true);
                     }
                 }
-                Event::Print(Some(text)) => printer.line(&text),
-                Event::StartupMessage(message) => print_startup_message(printer, &message),
-                Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
-                // Nothing more this run prints can be right, so it prints nothing more, and the
-                // search, which the relay cancels, ends with the events it sends unread.
-                Event::Print(None) => {
-                    is_misprinted = true;
-                    break;
-                }
-                Event::Periodic => {
-                    is_periodic_reached = true;
-                    break;
-                }
             }
-        }
-        drop(receiver);
-        searching
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    });
+            drop(receiver);
+        },
+    );
+    if is_dump_unwritten {
+        return report_not_native(printer, "-dump into a file it can't write");
+    }
     if is_periodic_reached {
         return report_not_native(
             printer,
@@ -1319,7 +1296,7 @@ fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space
         &format!(
             "Checking {branch_text}temporal properties for the {space} state space with {} total distinct states at ({})",
             branches * states,
-            format_date(SystemTime::now())
+            printer.date()
         ),
     );
     checking
@@ -1333,7 +1310,7 @@ fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
         &format!(
             "Finished checking temporal properties in {} at {}",
             format_duration(checking.elapsed().as_millis()),
-            format_date(SystemTime::now())
+            printer.date()
         ),
     );
 }
@@ -1856,7 +1833,7 @@ fn print_sany(printer: &mut Printer, sany: &str) {
     printer.print(
         code::STARTING,
         Level::None,
-        &format!("Starting... ({})", format_date(SystemTime::now())),
+        &format!("Starting... ({})", printer.date()),
     );
 }
 
@@ -1951,10 +1928,7 @@ pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
     printer.print(
         code::FINISHED,
         Level::None,
-        &format!(
-            "Finished in {duration} at ({})",
-            format_date(SystemTime::now())
-        ),
+        &format!("Finished in {duration} at ({})", printer.date()),
     );
 }
 
