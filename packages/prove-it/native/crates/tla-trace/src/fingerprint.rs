@@ -1,5 +1,6 @@
 //! Where TLC fails to fingerprint a value (`fingerprint` and `size` of its values): a power set of
-//! a set of 31 elements or more, whose size overflows an int (`SubsetValue.size`).
+//! a set of 31 elements or more, whose size overflows an int (`SubsetValue.size`), and a union it
+//! can't enumerate (`SetCupValue.fingerPrint`).
 
 use tla_values::fingerprint::{Fingerprints, of_bool, of_int, of_model, of_string};
 
@@ -37,7 +38,8 @@ pub fn fingerprint_failure(value: &Value) -> Result<Option<(Vec<Value>, TlcMessa
                 // Each subset holds elements of the base, which fingerprint.
                 return Ok(None);
             }
-            // TLC enumerates it to fingerprint it, which fails.
+            // TLC enumerates it to fingerprint it. The evaluator follows only a union that fails
+            // to enumerate.
             Lazy::Cup(..) => {
                 let Err(error) = crate::sets::enumerate(lazy) else {
                     return Err(());
