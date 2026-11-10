@@ -12,9 +12,10 @@ use tla_values::random::JavaRandom;
 use tla_ir::{Bound, Definition, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
 
 use crate::eval::{Context, Demand, Evaluator, PRIMED_UNASSIGNED, StackFrame, bound_expression};
+use crate::print::format_value;
 use crate::sets::is_member;
 use crate::value::{
-    Evaluated, Lazy, TlcMessage, Value, elements, equals, fail, fail_with, is_same,
+    Evaluated, Lazy, TlcMessage, Value, elements, equals, fail, fail_runtime, fail_with, is_same,
 };
 
 /// What a walk calls for each state it completes; it returns false to stop the walk.
@@ -55,6 +56,15 @@ impl<'ir> Evaluator<'ir> {
     ) -> Evaluated<bool> {
         self.walk(node, context, is_init, &mut |evaluator| {
             if !evaluator.is_complete(is_init) {
+                if is_init && let Some(stack) = &mut evaluator.call_stack {
+                    stack.incomplete = Some(
+                        evaluator
+                            .current
+                            .iter()
+                            .map(|value| value.as_ref().map_or("null".into(), format_value))
+                            .collect(),
+                    );
+                }
                 return fail(if is_init {
                     "an initial state that isn't complete"
                 } else {
@@ -436,7 +446,14 @@ impl<'ir> Evaluator<'ir> {
                 }
                 match other {
                     Some(other) => self.walk(*other, context, is_init, then),
-                    None => fail("no CASE arm holds"),
+                    None => fail_runtime(
+                        "no CASE arm holds",
+                        format!(
+                            "In computing {}, TLC encountered a CASE with no conditions true.\n{}",
+                            self.computing(is_init),
+                            self.describe_range(node)
+                        ),
+                    ),
                 }
             }
             NodeKind::Let {
@@ -566,6 +583,25 @@ impl<'ir> Evaluator<'ir> {
                         }
                         "\\in" => {
                             let set = self.evaluate(args[1], context)?;
+                            // TLC enumerates a set that is `Enumerable` alone.
+                            if let Value::Lazy(lazy) = &set
+                                && lazy.is_overridden()
+                            {
+                                let range = self.describe_range(node);
+                                return fail_runtime(
+                                    "enumerated an infinite set",
+                                    if self.is_enabling {
+                                        format!(
+                                            "The right side of \\IN is not enumerable.\n{range}"
+                                        )
+                                    } else {
+                                        format!(
+                                            "In computing {}, the right side of \\IN is not enumerable.\n{range}",
+                                            self.computing(is_init)
+                                        )
+                                    },
+                                );
+                            }
                             let is_in_order = self.is_in_normalized_order(args[1], context, 0)?;
                             let effects = self.effects();
                             for (position, element) in elements(&set)?.iter().enumerate() {

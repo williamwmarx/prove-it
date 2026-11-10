@@ -268,6 +268,9 @@ pub struct CallStack {
     /// TLC's error as it prints an initial state it failed to fingerprint, where printing it fails
     /// too: TLC reports it as an exception it didn't expect.
     pub unprintable: Option<TlcMessage>,
+    /// An initial state the initial predicate leaves without a value for some variable, its
+    /// values as TLC prints them, `null` for those it lacks, in the IR's order of the variables.
+    pub incomplete: Option<Vec<String>>,
 }
 
 impl CallStack {
@@ -463,6 +466,9 @@ const APPLYING_TO_WRONG_VALUE: u32 = 2176;
 /// `EC.TLC_MODULE_ARGUMENT_NOT_IN_DOMAIN` and `EC.TLC_MODULE_APPLY_EMPTY_SEQ`.
 const ARGUMENT_NOT_IN_DOMAIN: u32 = 2183;
 const APPLY_EMPTY_SEQ: u32 = 2184;
+/// `EC.TLC_ARGUMENT_MISMATCH`.
+const ARGUMENT_MISMATCH: u32 = 2170;
+const TUPLE_MISMATCH: &str = "a tuple pattern that doesn't match";
 /// `EC.TLC_EXPECTED_EXPRESSION_IN_COMPUTING`, its `2` and `EC.TLC_EXPECTED_VALUE`.
 const EXPECTED_EXPRESSION_IN_COMPUTING: u32 = 2247;
 const EXPECTED_EXPRESSION_IN_COMPUTING2: u32 = 2248;
@@ -880,7 +886,7 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // What TLC computes in a walk: "initial states", "next states" or "ENABLED".
-    fn computing(&self, is_init: bool) -> &'static str {
+    pub(crate) fn computing(&self, is_init: bool) -> &'static str {
         if self.is_enabling {
             "ENABLED"
         } else if is_init {
@@ -1509,7 +1515,13 @@ impl<'ir> Evaluator<'ir> {
                 }
                 match other {
                     Some(other) => self.evaluate(*other, context),
-                    None => fail("no CASE arm holds"),
+                    None => fail_runtime(
+                        "no CASE arm holds",
+                        format!(
+                            "Attempted to evaluate a CASE with no conditions true.\n{}",
+                            self.describe_range(node)
+                        ),
+                    ),
                 }
             }
             NodeKind::Let {
@@ -2418,7 +2430,7 @@ impl<'ir> Evaluator<'ir> {
             Pattern::Name(name) => Ok(context.bind_value(*name, value.clone())),
             Pattern::Tuple(names) => {
                 let Some(tuple) = as_tuple(value).filter(|tuple| tuple.len() == names.len()) else {
-                    return fail("a tuple pattern that doesn't match");
+                    return fail(TUPLE_MISMATCH);
                 };
                 let mut inner = context.clone();
                 for (&name, element) in names.iter().zip(tuple) {
@@ -2453,8 +2465,23 @@ impl<'ir> Evaluator<'ir> {
         loop {
             let mut inner = context.clone();
             for (level, bound) in bounds.iter().enumerate() {
+                // `ContextEnumerator` binds a tuple pattern to a tuple of its length alone, and
+                // fails with `EC.TLC_ARGUMENT_MISMATCH`, whose `%1` the message keeps.
                 inner =
-                    self.bind_pattern(&bound.pattern, &sets[level][positions[level]], &inner)?;
+                    match self.bind_pattern(&bound.pattern, &sets[level][positions[level]], &inner)
+                    {
+                        Err(error) if error.reason == TUPLE_MISMATCH => {
+                            return fail_with(
+                                TUPLE_MISMATCH,
+                                TlcMessage {
+                                    text: "Argument mismatch in operator application.%1".into(),
+                                    code: Some(ARGUMENT_MISMATCH),
+                                    is_eval_exception: false,
+                                },
+                            );
+                        }
+                        bound => bound?,
+                    };
             }
             if !visit(self, &inner)? {
                 return Ok(false);
@@ -3008,6 +3035,18 @@ impl<'ir> Evaluator<'ir> {
         })
     }
 
+    fn except_key(&mut self, step: &PathStep, context: &Context) -> Evaluated<Value> {
+        Ok(match step {
+            PathStep::Field(name) => Value::Str(self.text(*name)),
+            PathStep::Index(args) if args.len() == 1 => self.evaluate(args[0], context)?,
+            PathStep::Index(args) => Value::tuple(
+                args.iter()
+                    .map(|&arg| self.evaluate(arg, context))
+                    .collect::<Evaluated<_>>()?,
+            ),
+        })
+    }
+
     fn except(
         &mut self,
         value: &Value,
@@ -3022,15 +3061,7 @@ impl<'ir> Evaluator<'ir> {
             };
             return self.evaluate(update, &inner);
         };
-        let key = match step {
-            PathStep::Field(name) => Value::Str(self.text(*name)),
-            PathStep::Index(args) if args.len() == 1 => self.evaluate(args[0], context)?,
-            PathStep::Index(args) => Value::tuple(
-                args.iter()
-                    .map(|&arg| self.evaluate(arg, context))
-                    .collect::<Evaluated<_>>()?,
-            ),
-        };
+        let key = self.except_key(step, context)?;
         // `FcnLambdaValue.takeExcept`: the EXCEPT is kept, whatever the key, and `@` is the
         // function's value at it.
         if let Value::Lambda(lambda) = value {
@@ -3053,11 +3084,22 @@ impl<'ir> Evaluator<'ir> {
                 text: lambda.text.clone(),
             })));
         }
+        // `Value.select` fails at a value that isn't a function, TLC having evaluated every key of
+        // the path.
         let Value::Function(function) = value else {
-            return fail(format!(
-                "Attempted to apply EXCEPT construct to the value {}.",
-                format_value(value)
-            ));
+            for step in rest {
+                self.except_key(step, context)?;
+            }
+            if let Value::Unsorted(_) = value {
+                return fail("EXCEPT on a non-function");
+            }
+            return fail_runtime(
+                "EXCEPT on a non-function",
+                format!(
+                    "Attempted to apply EXCEPT construct to the value {}.",
+                    format_pretty(value)
+                ),
+            );
         };
         // TLC leaves a function as it is where the key isn't in its domain.
         let Some(position) = find_key(function, &key)? else {
@@ -4259,6 +4301,22 @@ impl<'ir> Evaluator<'ir> {
                 match self.operand(&operands[0])? {
                     Value::Str(name) if name.rank >= 0 => Value::Model(name),
                     Value::Str(_) => return fail("TLCModelValue of a name TLC ranks as it runs"),
+                    name @ (Value::Int(_)
+                    | Value::Bool(_)
+                    | Value::Model(_)
+                    | Value::Set(_)
+                    | Value::Interval(..)
+                    | Value::Function(_)
+                    | Value::Lazy(_)) => {
+                        return fail_coded(
+                            "TLCModelValue of a value that isn't a string",
+                            ONE_ARGUMENT_ERROR,
+                            format!(
+                                "The argument of ModelValue should be a string, but instead it is:\n{}",
+                                format_pretty(&name)
+                            ),
+                        );
+                    }
                     _ => return fail("TLCModelValue of a value that isn't a string"),
                 }
             }

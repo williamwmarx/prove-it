@@ -4580,3 +4580,160 @@ VARIABLE x
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn words_failures_of_the_evaluator_as_tlc() {
+    // A CASE no arm of holds, in `Tool#eval` and in the walks of the initial predicate, an action
+    // and ENABLED; a set TLC can't enumerate a walk assigns from; a tuple pattern a quantifier
+    // binds to a value it doesn't match; TLCModelValue of a number; EXCEPT past a value that isn't a
+    // function, where TLC fails as it is and where its replay fingerprints the value, and the path's
+    // keys evaluated first; and an initial state some variable lacks a value in. Each text is what
+    // TLC at d8fb231 prints, and with -tool.
+    // Its name, definitions, configuration, arguments, and what TLC prints, and with -tool.
+    type Case<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a str, &'a str);
+    let cases: [Case; 14] = [
+        (
+            "a CASE Tool#eval evaluates",
+            "Init == x = (CASE FALSE -> 2)\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: Attempted to evaluate a CASE with no conditions true.\nline 4, col 14 to line 4, col 28 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 29 in M\n1. Line 4, column 14 to line 4, column 28 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nAttempted to evaluate a CASE with no conditions true.\nline 4, col 14 to line 4, col 28 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 29 in M\n1. Line 4, column 14 to line 4, column 28 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a CASE the initial predicate walks",
+            "Init == CASE FALSE -> x = 0\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, TLC encountered a CASE with no conditions true.\nline 4, col 9 to line 4, col 27 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 27 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nIn computing initial states, TLC encountered a CASE with no conditions true.\nline 4, col 9 to line 4, col 27 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 27 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a CASE an action walks",
+            "Init == x = 0\nNext == CASE x = 5 -> x' = 0\n  [] x = 6 -> x' = 1",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC encountered a CASE with no conditions true.\nline 5, col 9 to line 6, col 20 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 6, column 20 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, TLC encountered a CASE with no conditions true.\nline 5, col 9 to line 6, col 20 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 6, column 20 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a CASE ENABLED walks",
+            "Init == x = 0\nA == CASE x = 5 -> x' = 0\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            &[],
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 25 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, TLC encountered a CASE with no conditions true.\nline 5, col 6 to line 5, col 25 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 25 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing ENABLED, TLC encountered a CASE with no conditions true.\nline 5, col 6 to line 5, col 25 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "Nat the initial predicate enumerates",
+            "Init == x \\in Nat\nNext == x' = x",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: In computing initial states, the right side of \\IN is not enumerable.\nline 4, col 9 to line 4, col 17 of module M\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 17 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nIn computing initial states, the right side of \\IN is not enumerable.\nline 4, col 9 to line 4, col 17 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 17 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Int an action enumerates",
+            "Init == x = 0\nNext == x' \\in Int",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, the right side of \\IN is not enumerable.\nline 5, col 9 to line 5, col 18 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 18 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In computing next states, the right side of \\IN is not enumerable.\nline 5, col 9 to line 5, col 18 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 18 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "Nat ENABLED enumerates",
+            "Init == x = 0\nA == x' \\in Nat\nSpec == Init /\\ [][x' = x]_x /\\ WF_x(A)\nP == <>(x = 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            &[],
+            "Error: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 15 in M\n\n\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The right side of \\IN is not enumerable.\nline 5, col 6 to line 5, col 15 of module M\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n",
+            "@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 6, column 38 to line 6, column 38 in M\n1. Line 5, column 6 to line 5, column 15 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: The right side of \\IN is not enumerable.\nline 5, col 6 to line 5, col 15 of module M\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n",
+        ),
+        (
+            "a tuple pattern of another length an action binds",
+            "Init == x = 0\nNext == \\E <<i, j>> \\in {<<1>>} : x' = i",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Argument mismatch in operator application.%1\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 40 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2170:0 @!@!@\nArgument mismatch in operator application.%1\n@!@!@ENDMSG 2170 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 40 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "a tuple pattern Tool#eval binds to a number",
+            "Init == x = 0\nNext == x' = x /\\ \\A <<i, j>> \\in {1} : i = j",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Argument mismatch in operator application.%1\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 45 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 45 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: @!@!@STARTMSG 2170:0 @!@!@\nArgument mismatch in operator application.%1\n@!@!@ENDMSG 2170 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 45 in M\n1. Line 5, column 9 to line 5, column 14 in M\n2. Line 5, column 19 to line 5, column 45 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "TLCModelValue of a number",
+            "Init == x = TLCModelValue(1)\nNext == UNCHANGED x",
+            "INIT Init\nNEXT Next\n",
+            &["-nowarning"],
+            "Error: The argument of ModelValue should be a string, but instead it is:\n1\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 28 in M\n1. Line 4, column 13 to line 4, column 28 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\n@!@!@STARTMSG 2283:0 @!@!@\nThe argument of ModelValue should be a string, but instead it is:\n1\n@!@!@ENDMSG 2283 @!@!@\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 28 in M\n1. Line 4, column 13 to line 4, column 28 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "EXCEPT past a number",
+            "Init == x = <<1, 2>>\nNext == x' = [x EXCEPT ![1][1] = 2]",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply EXCEPT construct to the value 1.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = <<1, 2>>\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 35 in M\n1. Line 5, column 14 to line 5, column 35 in M\n\n\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply EXCEPT construct to the value 1.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = <<1, 2>>\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 35 in M\n1. Line 5, column 14 to line 5, column 35 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "EXCEPT past a number TLC fingerprints",
+            "Init == x = 0\nNext == x' = [<<1, 2>> EXCEPT ![1][1] = 2]",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply EXCEPT construct to the value 1.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 5, column 9 to line 5, column 42 in M\n1. Line 5, column 14 to line 5, column 42 in M\n2. Line 5, column 15 to line 5, column 22 in M\n\n\nReason:\nAttempted to apply EXCEPT construct to the value 1.\n",
+            "@!@!@STARTMSG 1000:1 @!@!@\nTLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply EXCEPT construct to the value 1.\n@!@!@ENDMSG 1000 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = 0\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2147:1 @!@!@\nTLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 5, column 9 to line 5, column 42 in M\n1. Line 5, column 14 to line 5, column 42 in M\n2. Line 5, column 15 to line 5, column 22 in M\n\n\nReason:\nAttempted to apply EXCEPT construct to the value 1.\n@!@!@ENDMSG 2147 @!@!@\n",
+        ),
+        (
+            "EXCEPT past a string, its keys evaluated first",
+            "Init == x = <<\"a\">>\nNext == x' = [x EXCEPT ![1][Assert(FALSE, \"key\")] = 2]",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: The first argument of Assert evaluated to FALSE; the second argument was:\n\"key\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = <<\"a\">>\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 54 in M\n1. Line 5, column 14 to line 5, column 54 in M\n2. Line 5, column 29 to line 5, column 48 in M\n\n\n",
+            "@!@!@STARTMSG 2132:1 @!@!@\nThe first argument of Assert evaluated to FALSE; the second argument was:\n\"key\"\n@!@!@ENDMSG 2132 @!@!@\n@!@!@STARTMSG 2121:1 @!@!@\nThe behavior up to this point is:\n@!@!@ENDMSG 2121 @!@!@\n@!@!@STARTMSG 2217:4 @!@!@\n1: <Initial predicate>\nx = <<\"a\">>\n\n@!@!@ENDMSG 2217 @!@!@\n@!@!@STARTMSG 2103:1 @!@!@\nThe error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 5, column 9 to line 5, column 54 in M\n1. Line 5, column 14 to line 5, column 54 in M\n2. Line 5, column 29 to line 5, column 48 in M\n\n\n@!@!@ENDMSG 2103 @!@!@\n",
+        ),
+        (
+            "an initial state a variable lacks a value in",
+            "VARIABLE y\nInit == x = 0\nNext == x' = x /\\ y' = y",
+            "INIT Init\nNEXT Next\n",
+            &[],
+            "Error: current state is not a legal state\nWhile working on the initial state:\n/\\ x = 0\n/\\ y = null\n\n",
+            "@!@!@STARTMSG 2102:1 @!@!@\ncurrent state is not a legal state\nWhile working on the initial state:\n/\\ x = 0\n/\\ y = null\n\n@!@!@ENDMSG 2102 @!@!@\n",
+        ),
+    ];
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-evaluator-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (name, definitions, config, args, printed, tool) in cases {
+        std::fs::write(
+            directory.join("M.tla"),
+            format!("---- MODULE M ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\n{definitions}\n====\n"),
+        )
+        .expect("a spec");
+        std::fs::write(directory.join("M.cfg"), config).expect("a configuration");
+        for threads in ["1", "4"] {
+            for (flags, expected) in [(&[][..], printed), (&["-tool"][..], tool)] {
+                let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                    .arg("-noGenerateSpecTE")
+                    .args(args)
+                    .args(flags)
+                    .arg("M")
+                    .current_dir(&directory)
+                    .env("PROVE_IT_WORKERS", threads)
+                    .env("PROVE_IT_SHARED_LEVEL", "1")
+                    .output()
+                    .expect("the binary runs");
+                let text = stdout(&output);
+                assert!(
+                    text.contains(expected),
+                    "{name} on {threads} {flags:?}:\n{text}"
+                );
+            }
+        }
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}

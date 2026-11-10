@@ -785,6 +785,24 @@ impl<'ir> Rebuilder<'ir> {
                 "evaluating the failure again: {reason}"
             )));
         }
+        // `DoInitFunctor` reports an initial state that isn't a legal state, one some variable
+        // lacks a value in, outside any evaluation.
+        if site == Site::Init
+            && let Some(state) = call_stack.incomplete
+        {
+            let message = "current state is not a legal state".to_string();
+            return Ok(Failure {
+                code: INITIAL_STATE,
+                message: message.clone(),
+                tool_message: message,
+                call_stack: Vec::new(),
+                exit_code: FAILURE_ERROR,
+                printed,
+                fingerprint: None,
+                state: Some(state),
+                replay: Replay::default(),
+            });
+        }
         if let Some((sources, state)) = call_stack.fingerprint {
             let Some(message) = error.message else {
                 return Err(Unsupported(format!(
