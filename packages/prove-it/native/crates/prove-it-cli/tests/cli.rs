@@ -840,6 +840,18 @@ fn compares_functions_over_intervals_with_functions_over_model_values_as_tlc() {
             "{[i \\in {0, 1} |-> 1], [k \\in {m, 0} |-> 1]}",
             None,
         ),
+        // A membership, which the store answers by id only where no comparison can fail, compares
+        // and stops: TLC reports these as a FingerprintException, which the evaluator declines.
+        (
+            "interval-member",
+            "([i \\in 0..1 |-> 1] \\in {[k \\in {m, 0} |-> j] : j \\in 1..40})",
+            None,
+        ),
+        (
+            "tuple-member",
+            "(<<1, 1>> \\in {[k \\in {m, 0} |-> 1]})",
+            None,
+        ),
     ] {
         let spec = format!(
             "---- MODULE Keys ----\nEXTENDS Integers\nCONSTANT m\nVARIABLE x\nInit == x = {init}\nNext == UNCHANGED x\n====\n"

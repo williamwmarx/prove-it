@@ -385,6 +385,34 @@ fn stops_comparing_a_run_of_integers_with_a_function_over_a_model_value() {
     assert!(store.compare(run, tuple).is_ok());
 }
 
+// Membership by id answers only where no comparison of TLC's search can fail: a run of integers or a
+// tuple asked of a set of functions over model values compares, short set or long, and fails.
+#[test]
+fn compares_a_membership_of_a_run_of_integers_in_functions_over_model_values() {
+    let mut store = Store::new();
+    let one = store.int(1).unwrap();
+    let [zero, two] = [0, 2].map(|value| store.int(value).unwrap());
+    let run = store.function_of(&[zero, one], &[one, one]).unwrap();
+    let tuple = store.tuple_of(&[one, one]);
+    let models: Vec<Id> = (0..40)
+        .map(|index| store.model(&utf16(&format!("m{index}"))))
+        .collect();
+    let functions: Vec<Id> = (0..40)
+        .map(|index| {
+            let keys = [models[index], models[(index + 1) % 40]];
+            store.function_of(&keys, &[one, two]).unwrap()
+        })
+        .collect();
+    for length in [1, 40] {
+        let set = store.set_of(&functions[..length]).unwrap();
+        for element in [run, tuple] {
+            assert_eq!(store.is_member(element, set), Err(INTERVAL_KEYS));
+        }
+        // Functions over model values are found by id.
+        assert_eq!(store.is_member(functions[0], set), Ok(true));
+    }
+}
+
 // RecordValue.compareTo fails on a function of its size, which, asking, compares by its keys: an
 // untyped model value among them passes, so either may happen.
 #[test]
