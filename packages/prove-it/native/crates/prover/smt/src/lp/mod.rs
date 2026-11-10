@@ -9,8 +9,13 @@ pub mod core_solver;
 pub mod cross_nested;
 pub mod dep_intervals;
 pub mod dependency;
+pub mod dioph_eq;
 pub mod explanation;
+pub mod gomory;
 pub mod hnf;
+pub mod hnf_cutter;
+pub mod int_cube;
+pub mod int_solver;
 pub mod lar_solver;
 pub mod lar_term;
 pub mod lp_settings;
@@ -44,5 +49,7 @@ pub mod random_updater;
 pub mod static_matrix;
 pub mod union_find;
 
+#[cfg(test)]
+mod tests_int_solver;
 #[cfg(test)]
 mod tests_intervals;

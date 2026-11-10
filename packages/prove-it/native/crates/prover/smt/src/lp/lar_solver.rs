@@ -29,12 +29,14 @@ use crate::lp::core_solver::{
     LP_CANCELLED, LP_FEASIBLE, LP_INFEASIBLE, LP_OPTIMAL, LP_UNKNOWN, LpStatus,
 };
 use crate::lp::dependency::{Dependency, linearize, mk_join};
+use crate::lp::dioph_eq::{FreshDefinitions, NO_VAR, ProtectedQueue, TermWithIndex, VarRegister};
 use crate::lp::explanation::Explanation;
 use crate::lp::lar_term::LarTerm;
 use crate::lp::lp_settings::LpSettings;
 use crate::lp::numeric_pair::Impq;
-use crate::lp::static_matrix::RowCell;
+use crate::lp::static_matrix::{RowCell, StaticMatrix};
 use crate::util::error::SmtError;
+use crate::util::ordered_map::OrderedSet;
 
 pub const NULL_LPVAR: usize = usize::MAX;
 
@@ -63,18 +65,68 @@ pub struct BoundInfo {
     pub is_strict: bool,
 }
 
-// The state of the Diophantine solver that lar_solver's callbacks touch.
-#[derive(Default)]
+// The state of the Diophantine solver that lar_solver's callbacks and the undo of an added term
+// touch: all of it but m_c and the gcd of a conflict.
 pub struct DioHooks {
     // m_some_terms_are_ignored: a term was not integral or had a big number, so the GCD test and
     // Gomory cuts run.
     pub has_ignored_terms: bool,
     // The columns of the terms added since the last check, and of those in the equations.
     pub added_terms: Vec<usize>,
-    pub active_terms: Vec<usize>,
+    pub active_terms: OrderedSet<usize>,
     pub changed_terms: IndexedUintSet,
     pub terms_to_tighten: IndexedUintSet,
     pub changed_fixed_columns: IndexedUintSet,
+    pub(crate) sum_of_fixed: Vec<Rational>,
+    pub(crate) var_register: VarRegister,
+    // m_e_matrix: the equations over local columns. m_l_matrix: each as a combination of the term
+    // definitions, which explains it.
+    pub(crate) e_matrix: StaticMatrix,
+    pub(crate) l_matrix: StaticMatrix,
+    pub(crate) infeas_explanation: Explanation,
+    pub(crate) lspace: TermWithIndex,
+    pub(crate) espace: TermWithIndex,
+    // m_k2s: the column each equation of S is solved for, and back. Only looked up.
+    pub(crate) key_to_row: HashMap<usize, usize>,
+    pub(crate) row_to_key: HashMap<usize, usize>,
+    pub(crate) fresh_definitions: FreshDefinitions,
+    // Only looked up.
+    pub(crate) row_to_fresh_defs: HashMap<usize, Vec<usize>>,
+    pub(crate) changed_rows: IndexedUintSet,
+    // The outer map is only looked up.
+    pub(crate) columns_to_terms: HashMap<usize, OrderedSet<usize>>,
+    pub(crate) conflict_row: usize,
+    pub(crate) undo_work: u64,
+    pub(crate) queue: ProtectedQueue,
+}
+
+impl Default for DioHooks {
+    fn default() -> DioHooks {
+        DioHooks {
+            has_ignored_terms: false,
+            added_terms: Vec::new(),
+            active_terms: OrderedSet::new(),
+            changed_terms: IndexedUintSet::new(),
+            terms_to_tighten: IndexedUintSet::new(),
+            changed_fixed_columns: IndexedUintSet::new(),
+            sum_of_fixed: Vec::new(),
+            var_register: VarRegister::default(),
+            e_matrix: StaticMatrix::new(),
+            l_matrix: StaticMatrix::new(),
+            infeas_explanation: Explanation::new(),
+            lspace: TermWithIndex::default(),
+            espace: TermWithIndex::default(),
+            key_to_row: HashMap::new(),
+            row_to_key: HashMap::new(),
+            fresh_definitions: FreshDefinitions::default(),
+            row_to_fresh_defs: HashMap::new(),
+            changed_rows: IndexedUintSet::new(),
+            columns_to_terms: HashMap::new(),
+            conflict_row: NO_VAR,
+            undo_work: 0,
+            queue: ProtectedQueue::default(),
+        }
+    }
 }
 
 // The closures of TypeScript's trail.
@@ -1133,7 +1185,8 @@ impl<'l> LarSolver<'l> {
         self.trail.push(LarUndo::DioChangedFixedColumn(column));
     }
 
-    // undoAddTerm: a term the equations do not hold yet leaves the added terms.
+    // undoAddTerm: a term the equations do not hold yet leaves the added terms; one they hold
+    // leaves the equations, or all derived state goes once undoing has cost too much.
     fn undo_add_term(&mut self, column: usize) {
         let hooks = self
             .dio_hooks
@@ -1147,9 +1200,22 @@ impl<'l> LarSolver<'l> {
             }
             return;
         }
-        // HACK: the rest of undoAddTerm needs the equations of the Diophantine solver, whose port
-        // moves that state into DioHooks with this branch; until then no term is ever active.
-        unreachable!("an active Diophantine term needs the Diophantine solver's port");
+        let columns = &self.columns;
+        let terms = &self.terms;
+        let get_term = |column: usize| {
+            &terms[columns[column]
+                .term
+                .expect("an active Diophantine term has its term")]
+        };
+        hooks.deregister_columns_of_term(get_term(column));
+        hooks.active_terms.remove(&column);
+        let settings = &mut self.core.settings;
+        hooks.undo_work += 1 + hooks.get_elimination_work_estimate();
+        if hooks.undo_work > settings.dio_undo_max_work || settings.is_canceled() {
+            hooks.reset_state(get_term, &mut settings.stats);
+            return;
+        }
+        hooks.shrink_matrices();
     }
 
     // nla_throttle's insert_new without the stats: whether the signature is new, recording it.
