@@ -150,9 +150,11 @@ Besides the 15 declines, it does the following in the library:
   (`resumeFromEngine`, `tlc/replay.ts`). The binary prints these natively (`tla-trace`).
 - **Temporal properties.** The interpreter prints the lasso or accepting counterexample from the
   native graph. Under SYMMETRY or a VIEW, or where `tla-live` declines, it checks the properties
-  again. The binary prints lassos and accepting counterexamples. It declines a lasso under SYMMETRY
-  or a VIEW, an accepting cycle without a violation, an unexpanded graph and uncounted branches.
-  None of these occurs in the corpus.
+  again. The binary prints lassos and accepting counterexamples, including a lasso under SYMMETRY or
+  a VIEW, whose states it re-creates from the previous real state's successors as TLC's
+  `LiveWorker.printTrace` does with `getState(fp, previous)`. It declines an accepting node under
+  SYMMETRY or a VIEW, an unexpanded graph and uncounted branches. None of these occurs in the
+  corpus or the library's tests ([below](#liveness-what-the-binary-declines-in-the-librarys-tests)).
 - **Models without a search.** 44 models have only constants and ASSUMEs. The interpreter also
   checks every model's assumptions, and computes the initial states of a spec without a next-state
   relation. The binary does all three.
@@ -167,6 +169,39 @@ Neither side implements `-simulate`, `-generate`, `-debug`, `-dumpTrace` or `-lo
 `src/prover` imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
 `getParentPort`). Those move to the prover. `tlc/version.ts`, `tlc/jar-data.ts` and
 `tlc/messages.ts` are shared with the front end and the CLI, so they move too.
+
+### Liveness: what the binary declines in the library's tests
+
+Measured at main d89e559. Every `check` call of `bun test` whose configuration has temporal
+properties (285 of 1,678) was run through the binary with the same seed, `-lncheck` and `-tool`, on
+one thread and with every level shared between four threads. Both gave the same answers. 206 print
+TLC's output natively, with an exit code of 0, 11, 12, 13, 77, 151 or 255. The rest are `not native
+yet` for the reasons below. The corpus has no such run (`differential --native-only`: 1,460 of
+1,466 runs match TLC, and the 6 known differences aren't about liveness).
+
+| Reason | Runs | Tests |
+|---|---:|---|
+| the engine stopped: an atom of the temporal properties that may fail to evaluate (and its variants) | 14 | `check` 2428, 2443; `tlc-replay` 150, 225; `tlc-live-level` 18, 25; `engine` 1088, 1123, 1240; `exit-codes` 104 |
+| the engine stopped: …: a failure in a model with temporal properties | 3 | `check` 2489; `tlc-replay` 138 |
+| a temporal property's counterexample: a lasso the engine doesn't hand over | 5 | `native-search` 1027; `temporal` 96; `engine-print` 272 |
+| the engine stopped: printing where the native checker doesn't check the temporal properties | 5 | `native-search` 826, 1046, 1058, 1074; `check` 2466 |
+| the engine stopped: deadlock, an invariant violated or a division by zero, with temporal properties | 5 | `check` 2508, 2521; `tlc-replay` 167, 185 |
+| a property TLC finds a tautology; a constant part of a temporal formula that isn't a boolean | 5 | `check` 5194, 5316, 5337, 5524 |
+| the liveness checker declined: an atom the engine doesn't answer | 2 | `native-search` 1106; `tlc-live-level` 18 |
+| the liveness checker declined: a late node TLC adds at another diameter | 1 | `native-search` 1103 |
+| a temporal property's counterexample: a step back into the cycle of a spec that prints | 1 | `counter-example` 38 |
+| several states TLC may take for the search's under VIEW or SYMMETRY | 1 | `native-search` 870 |
+| no step from state 3 is the trace's next (a lasso TLC fails to rebuild under a VIEW) | 1 | `check` 721 |
+
+Other declines in models with temporal properties belong to other parts of this plan:
+- the action property violated (6 runs) goes to `-continue`'s native report;
+- constant evaluation (11), a constraint or VIEW that fails on a successor (9), a power set too
+  large (3), `PrintT` (2), `Trace` (2), a `_POSSIBLE` predicate, a configuration error and an
+  assumption reading `TLCGet` (1 each) belong to the evaluator and the stops.
+
+Nothing reaches the binary's other liveness declines: an accepting node under SYMMETRY or a VIEW,
+an unexpanded graph, uncounted branches, and every decline of atoms that read or set TLC's
+registers. They stay declines until a test or a model reaches one.
 
 ### What uses it as the reference, and what replaces it
 
