@@ -177,7 +177,8 @@ Neither side implements `-simulate`, `-generate`, `-debug`, `-dumpTrace` or `-lo
 its source, configuration, options and calling test, and each module it loads. Then it runs each
 distinct check through the binary with TLC's command line for its options: the seed, `-lncheck`,
 `-tool`, `-dump`, `-continue` and TLC 1.7.4. Each check runs on one thread and with every level
-shared between four. `--json` writes each check with its answers.
+shared between four, and once more on one thread without `-noGenerateSpecTE`, as TLC runs by
+default. `--json` writes each check with its answers.
 
 Measured at main 6871cd2:
 
@@ -185,6 +186,9 @@ Measured at main 6871cd2:
   (103), 10 (96), 75 (94), 13 (80), 151 (52), 255 (28), 11 (12), 76 (9), 14 (8) and 77 (6).
 - 621 are `not native yet`, for 196 reasons, grouped below and listed in full after.
 - One thread and four gave the same answer for every check.
+- In TLC's default mode, which generates the trace exploration spec (the same checks without
+  `-noGenerateSpecTE`), 245 are native. 1,356 decline as "SANY's report of the trace exploration
+  spec TLC parses with the spec".
 - None used `-continue`.
 - Not measured: checks whose configuration is an object, and the CLI tests' own runs of
   `dist/cli.js`.

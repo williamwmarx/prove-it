@@ -2,7 +2,8 @@
 // PROVE_IT_CHECK_LOG (src/parallel.ts), and each distinct check runs as TLC's command line would
 // run it, on one thread and with every level shared between four. Prints how many the binary
 // checks natively, and each reason it gives for the rest with the tests that reach it, as
-// native/design/fallback.md records them. --log reads a log a run wrote before instead of running
+// native/design/fallback.md records them, and how many it checks natively in TLC's default mode,
+// which generates the trace exploration spec. --log reads a log a run wrote before instead of running
 // the tests; --json writes each check with its answers.
 // Usage: bun scripts/run.ts check-log [--binary path] [--log path] [--json path]
 
@@ -142,6 +143,12 @@ const answer = async (run: Run): Promise<Answer> => {
   const answers: Record<string, string> = {};
   for (const threads of THREADS)
     answers[threads] = await runBinary(directory, name, options, threads);
+  answers.default = await runBinary(
+    directory,
+    name,
+    options.filter((option) => option !== "-noGenerateSpecTE"),
+    "1",
+  );
   return {
     key: run.key,
     test: run.test,
@@ -177,6 +184,9 @@ for (const entry of declined) {
 }
 console.log(
   `${answers.length} checks: ${answers.length - declined.length} native, ${declined.length} not native yet, ${differing.length} answered differently on 1 and 4 threads.`,
+);
+console.log(
+  `In TLC's default mode, which generates the trace exploration spec: ${answers.filter((entry) => isNative(entry.answers.default)).length} native.`,
 );
 console.log(
   [...exits]
