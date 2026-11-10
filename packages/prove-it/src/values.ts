@@ -1028,6 +1028,10 @@ const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: V
 };
 
 const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
+  // UserValue.equals compares, which fails on any value but a set or a model value.
+  if (isOverriddenSet(left) && !isSetValue(right) && !isModelValue(right)) {
+    return compareOverriddenSets(left, right, "check equality of") === 0;
+  }
   if (isComparedByClass(left, right)) return valuesEqual(left, right);
   if (!isEnumeratedSet(left)) return equalsSetLikeTlc(toFiniteSet(left), right);
   if (!isSetValue(right)) {

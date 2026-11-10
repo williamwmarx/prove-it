@@ -2193,6 +2193,11 @@ describe("evaluation errors match TLC", () => {
       ],
       ["{{}} \\cup {1} = {}", "Attempted to check equality of the set {} with the value:\n1"],
       ["{1} \\ {{}} = {}", "Attempted to check equality of the set {} with the value:\n1"],
+      ["Nat = 1", "Attempted to compare overridden value Nat with non-overridden value:\n1"],
+      [
+        "Seq({1}) = <<1>>",
+        "Attempted to compare overridden value Seq({1}) with non-overridden value:\n<<1>>",
+      ],
       [
         "(1..30) = <<1>>",
         "Attempted to check equality of the set { 1,\n  2,\n  3,\n  4,\n  5,\n  6,\n  7,\n  8,\n  9,\n  10,\n  11,\n  12,\n  13,\n  14,\n  15,\n  16,\n  17,\n  18,\n  19,\n  20,\n  21,\n  22,\n  23,\n  24,\n  25,\n  26,\n  27,\n  28,\n  29,\n  30 } with the value:\n<<1>>",
