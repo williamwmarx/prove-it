@@ -730,6 +730,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .and_then(|at| at.parse().ok()),
         ..Settings::default()
     };
+    let threads = settings.threads;
     let (sender, receiver) = mpsc::channel();
     let is_tool = printer.is_tool;
     // How many initial states TLC generated, which TLCGet("stats") reports.
@@ -1103,7 +1104,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
     };
     let optimistic = optimistic_probability(counts.distinct, counts.generated);
-    let actual = fingerprint_distance(counts.distinct, counts.generated, &fingerprints)
+    let actual = fingerprint_distance(counts.distinct, counts.generated, &fingerprints, threads)
         .map(|distance| {
             format!(
                 "\n  based on the actual fingerprints:  val = {}",
