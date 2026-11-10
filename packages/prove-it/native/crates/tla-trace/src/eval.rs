@@ -403,6 +403,10 @@ pub struct Runtime {
 
 const MAXIMUM_DEPTH: u32 = 10_000;
 
+/// The stack an evaluation's nesting may use: half the stack the search's threads have, which
+/// leaves room for the frames between one nesting and the next.
+const MAXIMUM_STACK_BYTES: usize = 128 * 1024 * 1024;
+
 /// `EC.TLC_MODULE_TLCGET_UNDEFINED`, `EC.TLC_MODULE_ARGUMENT_ERROR` and
 /// `EC.TLC_MODULE_ONE_ARGUMENT_ERROR`.
 const TLCGET_UNDEFINED: u32 = 2145;
@@ -2056,9 +2060,18 @@ impl<'ir> Evaluator<'ir> {
     fn nested<T>(&mut self, work: impl FnOnce(&mut Self) -> Evaluated<T>) -> Evaluated<T> {
         thread_local! {
             static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            // Where the outermost nesting's frame is, which the stack grows from.
+            static BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         }
         let depth = DEPTH.get();
-        if depth > MAXIMUM_DEPTH {
+        // How deep the frames are depends on the build, so the stack the nesting uses is bounded
+        // too, by its distance from the outermost frame.
+        let frame = 0u8;
+        let here = std::ptr::addr_of!(frame) as usize;
+        if depth == 0 {
+            BASE.set(here);
+        }
+        if depth > MAXIMUM_DEPTH || BASE.get().abs_diff(here) > MAXIMUM_STACK_BYTES {
             return fail("recursion too deep");
         }
         DEPTH.set(depth + 1);
