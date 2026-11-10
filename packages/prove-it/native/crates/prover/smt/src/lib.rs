@@ -4,6 +4,6 @@
 use prove_decide::{DecideError, Decision, Limits};
 
 /// Declines every input until the port lands, so that the TypeScript backend decides it.
-pub fn decide(_text: &str, _limits: &mut Limits) -> Result<Decision, DecideError> {
+pub fn decide(_text: &str, _limits: &Limits) -> Result<Decision, DecideError> {
     Err(DecideError::Declined("Z3 isn't ported to Rust yet".into()))
 }

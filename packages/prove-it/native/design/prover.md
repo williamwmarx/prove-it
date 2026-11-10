@@ -648,7 +648,7 @@ file unless two are trivially small, so a reader can put the two side by side. K
 header comment of each TS file (what it ports, from where, under which licence) and the
 explanatory comments; keep TS names in snake case, so `getTermKey` is `get_term_key`. Errors
 are `enum`s named after `src/errors.ts`'s classes (`SmtCanceledError` → `SmtError::Canceled`).
-The entry point is the shell's `pub fn decide(text: &str, limits: &mut Limits) -> Result<Decision,
+The entry point is the shell's `pub fn decide(text: &str, limits: &Limits) -> Result<Decision,
 DecideError>` (`prove-decide`), which `prove-it-prover` calls by prover name: `Ok` with the
 verdict and the statistics, `DecideError::Prover(message)` where the TypeScript throws a
 `TlaProverError` (Z3's parse errors), and `DecideError::Declined(reason)` for input the port does
@@ -674,9 +674,12 @@ another route. So:
   becomes a `Result` propagated with `?`; never a panic;
 - recursion that the TS relies on catching as a stack overflow gets a depth counter (3.6).
 
-**Steps.** A step is a check of the limits, and the Rust port counts it at exactly the points the
-TypeScript does, with `Limits::is_step_limit_reached` where the TypeScript calls
-`isStepLimitReached`: in `ResourceLimit.inc` for Z3, in `getLimitFailure` for Zenon (the search,
+**Steps.** `Limits` is a cheap-clone handle with no lifetime (an `Rc`, steps in a `Cell`), so a
+backend can keep clones in its closures and lazy sequences while a decision runs; every clone
+counts the same steps, and none may outlive `decide`. A step is a check of the limits, and the
+Rust port counts it at exactly the points the TypeScript does, with
+`Limits::is_step_limit_reached` where the TypeScript calls `isStepLimitReached`, and
+`is_step_limit_passed` where it compares without counting (Zenon's `getStopReason`): in `ResourceLimit.inc` for Z3, in `getLimitFailure` for Zenon (the search,
 the checker and the Isar printer), in `checkInterrupt` for Isabelle, in `isExpired` for PTL. The
 deadline and the cancel cell are checked where the TypeScript checks `Date.now()` and the signal.
 The step count is the first statistic compared, and the cheapest witness of the same search.
