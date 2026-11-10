@@ -2266,8 +2266,17 @@ impl<'ir> Evaluator<'ir> {
         }
         // TLC evaluates every domain before it enumerates any (`Tool.evalAppl`'s
         // `OPCODE_fc`), so a later domain fails even when an earlier one is empty.
+        let mut sets = Vec::with_capacity(bounds.len());
         for bound in bounds {
-            self.evaluate(bound.set, context)?;
+            sets.push(self.evaluate(bound.set, context)?);
+        }
+        // TLC keeps such a function lazy too, and applies it without enumerating its domains,
+        // which the evaluator doesn't follow for several bounds or a tuple pattern.
+        if sets
+            .iter()
+            .any(|set| !is_enumerable(set) || !is_finite(set).unwrap_or(false))
+        {
+            return fail("a function of several bounds or a tuple pattern TLC keeps lazy");
         }
         let mut keys = Vec::new();
         let mut values = Vec::new();
