@@ -2,7 +2,7 @@
 //! for equality, fingerprint and go through the transfer encoding on `on_nesting_stack`, in any
 //! build, a debug one included.
 
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::on_nesting_stack;
 use tla_values::store::{Id, Store};
 use tla_values::transfer::{StateEncoder, decode_states};
@@ -26,7 +26,7 @@ fn hold_values_nested_past_the_typescript_stores_stack() {
         let (left, right) = (nest(&mut store, 1), nest(&mut store, 2));
         assert_eq!(store.compare(left, right), Ok(-1));
         assert_eq!(store.equals(left, right), Ok(false));
-        let mut fingerprints = Fingerprints::new();
+        let mut fingerprints = Fingerprints::new(Polynomial::get(0));
         let fingerprint = fingerprints.get_state(&store, &[left], &[0]);
         let mut encoder = StateEncoder::new();
         encoder.encode(&store, &[left]).unwrap();
@@ -34,7 +34,7 @@ fn hold_values_nested_past_the_typescript_stores_stack() {
         let mut other = Store::new();
         let read = decode_states(&mut other, &encoded, 1).unwrap();
         assert_eq!(
-            Fingerprints::new().get_state(&other, &read, &[0]),
+            Fingerprints::new(Polynomial::get(0)).get_state(&other, &read, &[0]),
             fingerprint
         );
     });

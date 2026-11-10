@@ -1,0 +1,1731 @@
+0 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.Id ?1))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.Id ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (Tuples.Id ?1)))))
+0 vars: ?0 ?1
+0 prems: 2
+0 concl: ((PredicateLogic.eq ?0) (Tuples.Id ?1))
+0 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) (Tuples.Id::dummy ?etc.0:dummy))
+0 goal: 10
+0 aconv: 010
+0 occurs: 11 11
+0 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.Id ?3))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.Id ?3)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) (Tuples.Id ?3)))))
+0 remaining: ?3 01 ?3
+0 renorm: 1
+0 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (Tuples.Id ?3))))
+0 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (Tuples.Id ?3)))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3])))
+0 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) (Tuples.Id ?1)))) 1
+0 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.Id ?1))))) 1
+0 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) (Tuples.Id ?1))))
+0 eta2: ((PredicateLogic.eq ?0) (Tuples.Id ?1)) (%e. (?4=((PredicateLogic.eq ?0) (Tuples.Id ?1)) B0))
+0 ins: 3 2
+3 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.converse ?1))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.converse ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (Tuples.converse ?1)))))
+3 vars: ?0 ?1
+3 prems: 2
+3 concl: ((PredicateLogic.eq ?0) (Tuples.converse ?1))
+3 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) (Tuples.converse::dummy ?etc.0:dummy))
+3 goal: 10
+3 aconv: 010
+3 occurs: 11 11
+3 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.converse ?3))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.converse ?3)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) (Tuples.converse ?3)))))
+3 remaining: ?3 01 ?3
+3 renorm: 1
+3 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (Tuples.converse ?3))))
+3 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (Tuples.converse ?3)))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3])))
+3 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) (Tuples.converse ?1)))) 1
+3 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Tuples.converse ?1))))) 1
+3 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) (Tuples.converse ?1))))
+3 eta2: ((PredicateLogic.eq ?0) (Tuples.converse ?1)) (%e. (?4=((PredicateLogic.eq ?0) (Tuples.converse ?1)) B0))
+3 ins: 3 2
+6 from: (PredicateLogic.Trueprop (PredicateLogic.isBool ((Tuples.irreflexive ?0) ?1)))
+6 vars: ?0 ?1
+6 prems: 0
+6 concl: (PredicateLogic.isBool ((Tuples.irreflexive ?0) ?1))
+6 toTerm: (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ((Tuples.irreflexive::dummy ?etc.0:dummy) ?etc.0:dummy))) (PredicateLogic.isBool::dummy ((Tuples.irreflexive::dummy ?etc.0:dummy) ?etc.0:dummy))
+6 goal: 10
+6 aconv: 010
+6 occurs: 11 11
+6 instantiated: (PredicateLogic.Trueprop (PredicateLogic.isBool ((Tuples.irreflexive S:S0[?2]) ?2)))
+6 remaining: ?2 01 ?2
+6 renorm: 1
+6 eta2: (PredicateLogic.isBool ((Tuples.irreflexive ?0) ?1)) (%e. (?3=(PredicateLogic.isBool ((Tuples.irreflexive ?0) ?1)) B0))
+6 ins: 1 -
+9 from: (PredicateLogic.Trueprop (PredicateLogic.isBool (Tuples.symmetric ?0)))
+9 vars: ?0
+9 prems: 0
+9 concl: (PredicateLogic.isBool (Tuples.symmetric ?0))
+9 toTerm: (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy (Tuples.symmetric::dummy ?etc.0:dummy))) (PredicateLogic.isBool::dummy (Tuples.symmetric::dummy ?etc.0:dummy))
+9 goal: 10
+9 aconv: 010
+9 occurs: 1 1
+9 instantiated: (PredicateLogic.Trueprop (PredicateLogic.isBool (Tuples.symmetric S:S0[])))
+9 remaining:  01 
+9 renorm: 1
+9 eta2: (PredicateLogic.isBool (Tuples.symmetric ?0)) (%e. (?1=(PredicateLogic.isBool (Tuples.symmetric ?0)) B0))
+9 ins: 1 -
+12 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Tuples.setOfPairs ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2)))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Tuples.setOfPairs ?0) ?1))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((Tuples.setOfPairs ?0) ?1)) ?2))))
+12 vars: ?0 ?1 ?2
+12 prems: 2
+12 concl: ((PredicateLogic.eq ((Tuples.setOfPairs ?0) ?1)) ?2)
+12 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ((Tuples.setOfPairs::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+12 goal: 10
+12 aconv: 010
+12 occurs: 111 111
+12 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Tuples.setOfPairs ?3=S:S0[?4,?5]) ?4)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?5=S:S2[])))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?5=S:S2[]))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Tuples.setOfPairs ?3=S:S0[?4,?5]) ?4))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((Tuples.setOfPairs S:S0[?4]) ?4)) S:S2[]))))
+12 remaining: ?4 01 ?4
+12 renorm: 1
+12 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((Tuples.setOfPairs S:S0[?4]) ?4)))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S2[])))
+12 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S2[]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((Tuples.setOfPairs S:S0[?4]) ?4))))
+12 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ((Tuples.setOfPairs ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ?2))) 1
+12 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Tuples.setOfPairs ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2)))) 1
+12 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ((Tuples.setOfPairs ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ?2)))
+12 eta2: ((PredicateLogic.eq ((Tuples.setOfPairs ?0) ?1)) ?2) (%e. (?6=((PredicateLogic.eq ((Tuples.setOfPairs ?0) ?1)) ?2) B0))
+12 ins: 3 2
+15 from: ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?0))) ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Tuples.Len ?0)) (Tuples.Len ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?1))) (%k. ((SetTheory.in ((Functions.fapply ?0) B0)) ((Functions.fapply ?1) B0)))))) (PredicateLogic.Trueprop ((SetTheory.in ?0) (Tuples.Product ?1)))))))
+15 vars: ?0 ?1
+15 prems: 4
+15 concl: ((SetTheory.in ?0) (Tuples.Product ?1))
+15 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Tuples.isASeq::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((SetTheory.in::dummy ?etc.0:dummy) (Tuples.Product::dummy ?etc.0:dummy))
+15 goal: 10
+15 aconv: 010
+15 occurs: 11 11
+15 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq S:S0[?2]))) ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Tuples.Len S:S0[?2])) (Tuples.Len ?2)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?2))) (%k. ((SetTheory.in ((Functions.fapply ?3=S:S0[?2]) B0)) ((Functions.fapply ?2) B0)))))) (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) (Tuples.Product ?2)))))))
+15 remaining: ?2 01 ?2
+15 renorm: 1
+15 beta: ((SetTheory.in ((Functions.fapply ?0) F:a)) ((Functions.fapply ?1) F:a)) 1
+15 eta: (%e. ((SetTheory.in ((Functions.fapply ?0) B0)) ((Functions.fapply ?1) B0))) 1
+15 nested: ((SetTheory.in ((Functions.fapply ?0) F:b)) ((Functions.fapply ?1) F:b))
+15 eta2: ((SetTheory.in ?0) (Tuples.Product ?1)) (%e. (?4=((SetTheory.in ?0) (Tuples.Product ?1)) B0))
+15 ins: 5 4
+18 from: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) ((Functions.Image ?1) (Functions.DOMAIN ?1))))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?2)) (Functions.DOMAIN ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll (Functions.DOMAIN ?1)) (%i. ((SetTheory.in ((Functions.fapply ?0) ((Functions.fapply ?1) B0))) ((Functions.fapply ?2) B0)))))) (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Tuples.EnumFuncSet ?1) ?2)))))))
+18 vars: ?0 ?1 ?2
+18 prems: 4
+18 concl: ((SetTheory.in ?0) ((Tuples.EnumFuncSet ?1) ?2))
+18 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Functions.isAFcn::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((SetTheory.in::dummy ?etc.0:dummy) ((Tuples.EnumFuncSet::dummy ?etc.0:dummy) ?etc.0:dummy))
+18 goal: 10
+18 aconv: 010
+18 occurs: 111 111
+18 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S0[?3])) ((Functions.Image ?3) (Functions.DOMAIN ?3))))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S2[])) (Functions.DOMAIN ?3)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll (Functions.DOMAIN ?3)) (%i. ((SetTheory.in ((Functions.fapply ?4=S:S0[?3,?5]) ((Functions.fapply ?3) B0))) ((Functions.fapply ?5=S:S2[]) B0)))))) (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) ((Tuples.EnumFuncSet ?3) S:S2[])))))))
+18 remaining: ?3 01 ?3
+18 renorm: 1
+18 beta: ((SetTheory.in ((Functions.fapply ?0) ((Functions.fapply ?1) F:a))) ((Functions.fapply ?2) F:a)) 1
+18 eta: (%e. ((SetTheory.in ((Functions.fapply ?0) ((Functions.fapply ?1) B0))) ((Functions.fapply ?2) B0))) 1
+18 nested: ((SetTheory.in ((Functions.fapply ?0) ((Functions.fapply ?1) F:b))) ((Functions.fapply ?2) F:b))
+18 eta2: ((SetTheory.in ?0) ((Tuples.EnumFuncSet ?1) ?2)) (%e. (?6=((SetTheory.in ?0) ((Tuples.EnumFuncSet ?1) ?2)) B0))
+18 ins: 5 4
+21 from: (PredicateLogic.Trueprop ((SetTheory.in Tuples.emptySeq) (Tuples.Seq ?0)))
+21 vars: ?0
+21 prems: 0
+21 concl: ((SetTheory.in Tuples.emptySeq) (Tuples.Seq ?0))
+21 toTerm: (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy Tuples.emptySeq::dummy) (Tuples.Seq::dummy ?etc.0:dummy))) ((SetTheory.in::dummy Tuples.emptySeq::dummy) (Tuples.Seq::dummy ?etc.0:dummy))
+21 goal: 10
+21 aconv: 010
+21 occurs: 1 1
+21 instantiated: (PredicateLogic.Trueprop ((SetTheory.in Tuples.emptySeq) (Tuples.Seq S:S0[])))
+21 remaining:  01 
+21 renorm: 1
+21 eta2: ((SetTheory.in Tuples.emptySeq) (Tuples.Seq ?0)) (%e. (?1=((SetTheory.in Tuples.emptySeq) (Tuples.Seq ?0)) B0))
+21 ins: 1 -
+24 from: (PredicateLogic.Trueprop (Tuples.isASeq Tuples.emptySeq))
+24 vars: 
+24 prems: 0
+24 concl: (Tuples.isASeq Tuples.emptySeq)
+24 toTerm: (PredicateLogic.Trueprop::dummy (Tuples.isASeq::dummy Tuples.emptySeq::dummy)) (Tuples.isASeq::dummy Tuples.emptySeq::dummy)
+24 goal: 10
+24 aconv: 111
+24 occurs:  
+24 instantiated: (PredicateLogic.Trueprop (Tuples.isASeq Tuples.emptySeq))
+24 remaining:  11 
+24 renorm: 1
+24 eta2: (Tuples.isASeq Tuples.emptySeq) (%e. (?0=(Tuples.isASeq Tuples.emptySeq) B0))
+24 ins: 1 -
+27 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ((IntegerDivision.dvd ?1) ?2)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ((IntegerDivision.dvd ?1) ?2)) ?0))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((IntegerDivision.dvd ?1) ?2)) ?0)))))
+27 vars: ?1 ?2 ?0
+27 prems: 3
+27 concl: ((PredicateLogic.eq ((IntegerDivision.dvd ?1) ?2)) ?0)
+27 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy ((IntegerDivision.dvd::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+27 goal: 10
+27 aconv: 010
+27 occurs: 111 111
+27 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ((IntegerDivision.dvd ?3) S:S2[])))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ((IntegerDivision.dvd ?3) S:S2[])) S:S0[?3]))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((IntegerDivision.dvd ?3) S:S2[])) S:S0[?3])))))
+27 remaining: ?3 01 ?3
+27 renorm: 1
+27 eta2: ((PredicateLogic.eq ((IntegerDivision.dvd ?1) ?2)) ?0) (%e. (?4=((PredicateLogic.eq ((IntegerDivision.dvd ?1) ?2)) ?0) B0))
+27 ins: 4 3
+30 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ?1))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((Functions.fapply Integers.succ) ?0)) ((Functions.fapply Integers.succ) ?1))))))
+30 vars: ?0 ?1
+30 prems: 3
+30 concl: ((IntegerArithmetic.leq ((Functions.fapply Integers.succ) ?0)) ((Functions.fapply Integers.succ) ?1))
+30 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.leq::dummy ((Functions.fapply::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Functions.fapply::dummy ?etc.0:dummy) ?etc.0:dummy))
+30 goal: 10
+30 aconv: 010
+30 occurs: 11 11
+30 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?2]) ?2))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((Functions.fapply Integers.succ) S:S0[?2])) ((Functions.fapply Integers.succ) ?2))))))
+30 remaining: ?2 01 ?2
+30 renorm: 1
+30 eta2: ((IntegerArithmetic.leq ((Functions.fapply Integers.succ) ?0)) ((Functions.fapply Integers.succ) ?1)) (%e. (?3=((IntegerArithmetic.leq ((Functions.fapply Integers.succ) ?0)) ((Functions.fapply Integers.succ) ?1)) B0))
+30 ins: 4 3
+33 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Integers.upto ?1))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Integers.upto ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (Integers.upto ?1)))))
+33 vars: ?0 ?1
+33 prems: 2
+33 concl: ((PredicateLogic.eq ?0) (Integers.upto ?1))
+33 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) (Integers.upto::dummy ?etc.0:dummy))
+33 goal: 10
+33 aconv: 010
+33 occurs: 11 11
+33 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Integers.upto ?3))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Integers.upto ?3)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) (Integers.upto ?3)))))
+33 remaining: ?3 01 ?3
+33 renorm: 1
+33 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (Integers.upto ?3))))
+33 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (Integers.upto ?3)))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3])))
+33 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) (Integers.upto ?1)))) 1
+33 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Integers.upto ?1))))) 1
+33 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) (Integers.upto ?1))))
+33 eta2: ((PredicateLogic.eq ?0) (Integers.upto ?1)) (%e. (?4=((PredicateLogic.eq ?0) (Integers.upto ?1)) B0))
+33 ins: 3 2
+36 from: (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN Integers.pred)) Integers.Int))
+36 vars: 
+36 prems: 0
+36 concl: ((PredicateLogic.eq (Functions.DOMAIN Integers.pred)) Integers.Int)
+36 toTerm: (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy (Functions.DOMAIN::dummy ?etc.0:dummy)) Integers.Int::dummy)) ((PredicateLogic.eq::dummy (Functions.DOMAIN::dummy ?etc.0:dummy)) Integers.Int::dummy)
+36 goal: 10
+36 aconv: 111
+36 occurs:  
+36 instantiated: (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN Integers.pred)) Integers.Int))
+36 remaining:  11 
+36 renorm: 1
+36 eta2: ((PredicateLogic.eq (Functions.DOMAIN Integers.pred)) Integers.Int) (%e. (?0=((PredicateLogic.eq (Functions.DOMAIN Integers.pred)) Integers.Int) B0))
+36 ins: 1 -
+39 from: (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN Integers.succ)) Integers.Int))
+39 vars: 
+39 prems: 0
+39 concl: ((PredicateLogic.eq (Functions.DOMAIN Integers.succ)) Integers.Int)
+39 toTerm: (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy (Functions.DOMAIN::dummy ?etc.0:dummy)) Integers.Int::dummy)) ((PredicateLogic.eq::dummy (Functions.DOMAIN::dummy ?etc.0:dummy)) Integers.Int::dummy)
+39 goal: 10
+39 aconv: 111
+39 occurs:  
+39 instantiated: (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN Integers.succ)) Integers.Int))
+39 remaining:  11 
+39 renorm: 1
+39 eta2: ((PredicateLogic.eq (Functions.DOMAIN Integers.succ)) Integers.Int) (%e. (?0=((PredicateLogic.eq (Functions.DOMAIN Integers.succ)) Integers.Int) B0))
+39 ins: 1 -
+42 from: (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN Integers.Succ)) Integers.Nat))
+42 vars: 
+42 prems: 0
+42 concl: ((PredicateLogic.eq (Functions.DOMAIN Integers.Succ)) Integers.Nat)
+42 toTerm: (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy (Functions.DOMAIN::dummy ?etc.0:dummy)) Integers.Nat::dummy)) ((PredicateLogic.eq::dummy (Functions.DOMAIN::dummy ?etc.0:dummy)) Integers.Nat::dummy)
+42 goal: 10
+42 aconv: 111
+42 occurs:  
+42 instantiated: (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN Integers.Succ)) Integers.Nat))
+42 remaining:  11 
+42 renorm: 1
+42 eta2: ((PredicateLogic.eq (Functions.DOMAIN Integers.Succ)) Integers.Nat) (%e. (?0=((PredicateLogic.eq (Functions.DOMAIN Integers.Succ)) Integers.Nat) B0))
+42 ins: 1 -
+45 from: (PredicateLogic.Trueprop ((SetTheory.in Integers.zero) Integers.Int))
+45 vars: 
+45 prems: 0
+45 concl: ((SetTheory.in Integers.zero) Integers.Int)
+45 toTerm: (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy Integers.zero::dummy) Integers.Int::dummy)) ((SetTheory.in::dummy Integers.zero::dummy) Integers.Int::dummy)
+45 goal: 10
+45 aconv: 111
+45 occurs:  
+45 instantiated: (PredicateLogic.Trueprop ((SetTheory.in Integers.zero) Integers.Int))
+45 remaining:  11 
+45 renorm: 1
+45 eta2: ((SetTheory.in Integers.zero) Integers.Int) (%e. (?0=((SetTheory.in Integers.zero) Integers.Int) B0))
+45 ins: 1 -
+48 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Int)))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Int))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) Integers.Int))))
+48 vars: ?0
+48 prems: 2
+48 concl: ((PredicateLogic.eq ?0) Integers.Int)
+48 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) Integers.Int::dummy)
+48 goal: 10
+48 aconv: 010
+48 occurs: 1 1
+48 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?1=S:S0[]))) (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Int)))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Int))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?1=S:S0[])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[]) Integers.Int))))
+48 remaining:  01 
+48 renorm: 1
+48 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[]) S:S0[]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[]) Integers.Int)))
+48 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[]) Integers.Int))) (PredicateLogic.Trueprop ((SetTheory.in S:K[]) S:S0[])))
+48 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) Integers.Int))) 1
+48 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Int)))) 1
+48 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) Integers.Int)))
+48 eta2: ((PredicateLogic.eq ?0) Integers.Int) (%e. (?2=((PredicateLogic.eq ?0) Integers.Int) B0))
+48 ins: 3 2
+51 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Nat))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Nat)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq Integers.Nat) ?0))))
+51 vars: ?0
+51 prems: 2
+51 concl: ((PredicateLogic.eq Integers.Nat) ?0)
+51 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy Integers.Nat::dummy) ?etc.0:dummy)
+51 goal: 10
+51 aconv: 010
+51 occurs: 1 1
+51 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Nat))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?1=S:S0[])))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?1=S:S0[]))) (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Nat)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq Integers.Nat) S:S0[]))))
+51 remaining:  01 
+51 renorm: 1
+51 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[]) Integers.Nat))) (PredicateLogic.Trueprop ((SetTheory.in S:K[]) S:S0[])))
+51 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[]) S:S0[]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[]) Integers.Nat)))
+51 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) Integers.Nat))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) 1
+51 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) Integers.Nat))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))) 1
+51 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) Integers.Nat))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0)))
+51 eta2: ((PredicateLogic.eq Integers.Nat) ?0) (%e. (?2=((PredicateLogic.eq Integers.Nat) ?0) B0))
+51 ins: 3 2
+54 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Bijections ?1) ?2))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Bijections ?1) ?2)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.Bijections ?1) ?2)))))
+54 vars: ?0 ?1 ?2
+54 prems: 2
+54 concl: ((PredicateLogic.eq ?0) ((Functions.Bijections ?1) ?2))
+54 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((Functions.Bijections::dummy ?etc.0:dummy) ?etc.0:dummy))
+54 goal: 10
+54 aconv: 010
+54 occurs: 111 111
+54 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5]))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Bijections ?4) ?5=S:S2[]))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Bijections ?4) ?5=S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4]) ((Functions.Bijections ?4) S:S2[])))))
+54 remaining: ?4 01 ?4
+54 renorm: 1
+54 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((Functions.Bijections ?4) S:S2[]))))
+54 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((Functions.Bijections ?4) S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4])))
+54 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ((Functions.Bijections ?1) ?2)))) 1
+54 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Bijections ?1) ?2))))) 1
+54 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ((Functions.Bijections ?1) ?2))))
+54 eta2: ((PredicateLogic.eq ?0) ((Functions.Bijections ?1) ?2)) (%e. (?6=((PredicateLogic.eq ?0) ((Functions.Bijections ?1) ?2)) B0))
+54 ins: 3 2
+57 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Surjections ?1) ?2))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Surjections ?1) ?2)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.Surjections ?1) ?2)))))
+57 vars: ?0 ?1 ?2
+57 prems: 2
+57 concl: ((PredicateLogic.eq ?0) ((Functions.Surjections ?1) ?2))
+57 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((Functions.Surjections::dummy ?etc.0:dummy) ?etc.0:dummy))
+57 goal: 10
+57 aconv: 010
+57 occurs: 111 111
+57 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5]))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Surjections ?4) ?5=S:S2[]))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Surjections ?4) ?5=S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4]) ((Functions.Surjections ?4) S:S2[])))))
+57 remaining: ?4 01 ?4
+57 renorm: 1
+57 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((Functions.Surjections ?4) S:S2[]))))
+57 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((Functions.Surjections ?4) S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4])))
+57 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ((Functions.Surjections ?1) ?2)))) 1
+57 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Surjections ?1) ?2))))) 1
+57 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ((Functions.Surjections ?1) ?2))))
+57 eta2: ((PredicateLogic.eq ?0) ((Functions.Surjections ?1) ?2)) (%e. (?6=((PredicateLogic.eq ?0) ((Functions.Surjections ?1) ?2)) B0))
+57 ins: 3 2
+60 from: (PredicateLogic.Trueprop ((Functions.InjectiveOn ?0) SetTheory.emptyset))
+60 vars: ?0
+60 prems: 0
+60 concl: ((Functions.InjectiveOn ?0) SetTheory.emptyset)
+60 toTerm: (PredicateLogic.Trueprop::dummy ((Functions.InjectiveOn::dummy ?etc.0:dummy) SetTheory.emptyset::dummy)) ((Functions.InjectiveOn::dummy ?etc.0:dummy) SetTheory.emptyset::dummy)
+60 goal: 10
+60 aconv: 010
+60 occurs: 1 1
+60 instantiated: (PredicateLogic.Trueprop ((Functions.InjectiveOn S:S0[]) SetTheory.emptyset))
+60 remaining:  01 
+60 renorm: 1
+60 eta2: ((Functions.InjectiveOn ?0) SetTheory.emptyset) (%e. (?1=((Functions.InjectiveOn ?0) SetTheory.emptyset) B0))
+60 ins: 1 -
+63 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Injections ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2)))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Injections ?0) ?1))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((Functions.Injections ?0) ?1)) ?2))))
+63 vars: ?0 ?1 ?2
+63 prems: 2
+63 concl: ((PredicateLogic.eq ((Functions.Injections ?0) ?1)) ?2)
+63 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ((Functions.Injections::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+63 goal: 10
+63 aconv: 010
+63 occurs: 111 111
+63 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Injections ?3=S:S0[?4,?5]) ?4)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?5=S:S2[])))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?5=S:S2[]))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Injections ?3=S:S0[?4,?5]) ?4))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((Functions.Injections S:S0[?4]) ?4)) S:S2[]))))
+63 remaining: ?4 01 ?4
+63 renorm: 1
+63 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((Functions.Injections S:S0[?4]) ?4)))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S2[])))
+63 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S2[]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((Functions.Injections S:S0[?4]) ?4))))
+63 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ((Functions.Injections ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ?2))) 1
+63 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((Functions.Injections ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2)))) 1
+63 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ((Functions.Injections ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ?2)))
+63 eta2: ((PredicateLogic.eq ((Functions.Injections ?0) ?1)) ?2) (%e. (?6=((PredicateLogic.eq ((Functions.Injections ?0) ?1)) ?2) B0))
+63 ins: 3 2
+66 from: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ((Functions.extend ?1) ?2)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) (Functions.DOMAIN ((Functions.extend ?1) ?2))))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll (Functions.DOMAIN ((Functions.extend ?1) ?2))) (%x. ((PredicateLogic.eq ((Functions.fapply ?0) B0)) ((Functions.fapply ((Functions.extend ?1) ?2)) B0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.extend ?1) ?2)))))))
+66 vars: ?0 ?1 ?2
+66 prems: 4
+66 concl: ((PredicateLogic.eq ?0) ((Functions.extend ?1) ?2))
+66 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Functions.isAFcn::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((Functions.extend::dummy ?etc.0:dummy) ?etc.0:dummy))
+66 goal: 10
+66 aconv: 010
+66 occurs: 111 111
+66 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ((Functions.extend ?3) S:S2[])))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S0[?3])) (Functions.DOMAIN ((Functions.extend ?3) S:S2[]))))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll (Functions.DOMAIN ((Functions.extend ?3) S:S2[]))) (%x. ((PredicateLogic.eq ((Functions.fapply ?4=S:S0[?3,?5]) B0)) ((Functions.fapply ((Functions.extend ?3) ?5=S:S2[])) B0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ((Functions.extend ?3) S:S2[])))))))
+66 remaining: ?3 01 ?3
+66 renorm: 1
+66 beta: ((PredicateLogic.eq ((Functions.fapply ?0) F:a)) ((Functions.fapply ((Functions.extend ?1) ?2)) F:a)) 1
+66 eta: (%e. ((PredicateLogic.eq ((Functions.fapply ?0) B0)) ((Functions.fapply ((Functions.extend ?1) ?2)) B0))) 1
+66 nested: ((PredicateLogic.eq ((Functions.fapply ?0) F:b)) ((Functions.fapply ((Functions.extend ?1) ?2)) F:b))
+66 eta2: ((PredicateLogic.eq ?0) ((Functions.extend ?1) ?2)) (%e. (?6=((PredicateLogic.eq ?0) ((Functions.extend ?1) ?2)) B0))
+66 ins: 5 4
+69 from: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) ((SetTheory.addElt ?1) SetTheory.emptyset)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((Functions.fapply ?0) ?1)) ?2))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((Functions.oneArg ?1) ?2)) ?0)))))
+69 vars: ?1 ?2 ?0
+69 prems: 3
+69 concl: ((PredicateLogic.eq ((Functions.oneArg ?1) ?2)) ?0)
+69 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Functions.isAFcn::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy ((Functions.oneArg::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+69 goal: 10
+69 aconv: 010
+69 occurs: 111 111
+69 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S0[?3])) ((SetTheory.addElt ?3) SetTheory.emptyset)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((Functions.fapply S:S0[?3]) ?3)) S:S2[]))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((Functions.oneArg ?3) S:S2[])) S:S0[?3])))))
+69 remaining: ?3 01 ?3
+69 renorm: 1
+69 eta2: ((PredicateLogic.eq ((Functions.oneArg ?1) ?2)) ?0) (%e. (?4=((PredicateLogic.eq ((Functions.oneArg ?1) ?2)) ?0) B0))
+69 ins: 4 3
+72 from: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ?1) (%x. ((SetTheory.in ((Functions.fapply ?0) B0)) ?2))))) (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Functions.FuncSet ?1) ?2))))))
+72 vars: ?0 ?1 ?2
+72 prems: 3
+72 concl: ((SetTheory.in ?0) ((Functions.FuncSet ?1) ?2))
+72 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Functions.isAFcn::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((SetTheory.in::dummy ?etc.0:dummy) ((Functions.FuncSet::dummy ?etc.0:dummy) ?etc.0:dummy))
+72 goal: 10
+72 aconv: 010
+72 occurs: 111 111
+72 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S0[?3])) ?3))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ?3) (%x. ((SetTheory.in ((Functions.fapply ?4=S:S0[?3,?5]) B0)) ?5=S:S2[]))))) (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) ((Functions.FuncSet ?3) S:S2[]))))))
+72 remaining: ?3 01 ?3
+72 renorm: 1
+72 beta: ((SetTheory.in ((Functions.fapply ?0) F:a)) ?2) 1
+72 eta: (%e. ((SetTheory.in ((Functions.fapply ?0) B0)) ?2)) 1
+72 nested: ((SetTheory.in ((Functions.fapply ?0) F:b)) ?2)
+72 eta2: ((SetTheory.in ?0) ((Functions.FuncSet ?1) ?2)) (%e. (?6=((SetTheory.in ?0) ((Functions.FuncSet ?1) ?2)) B0))
+72 ins: 4 3
+75 from: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ?1) (%x. ((PredicateLogic.eq ((Functions.fapply ?0) B0)) (?2 B0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.Fcn ?1) ?2))))))
+75 vars: ?0 ?1 ?2
+75 prems: 3
+75 concl: ((PredicateLogic.eq ?0) ((Functions.Fcn ?1) ?2))
+75 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Functions.isAFcn::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((Functions.Fcn::dummy ?etc.0:dummy) ?etc.0:dummy))
+75 goal: 10
+75 aconv: 010
+75 occurs: 111 111
+75 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S0[?3])) ?3))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ?3) (%x. ((PredicateLogic.eq ((Functions.fapply ?4=S:S0[?3,?5]) B0)) (?5=S:S2[] B0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ((Functions.Fcn ?3) S:S2[]))))))
+75 remaining: ?3 01 ?3
+75 renorm: 1
+75 beta: ((PredicateLogic.eq ((Functions.fapply ?0) F:a)) (?2 F:a)) 1
+75 eta: (%e. ((PredicateLogic.eq ((Functions.fapply ?0) B0)) (?2 B0))) 1
+75 nested: ((PredicateLogic.eq ((Functions.fapply ?0) F:b)) (?2 F:b))
+75 eta2: ((PredicateLogic.eq ?0) ((Functions.Fcn ?1) ?2)) (%e. (?6=((PredicateLogic.eq ?0) ((Functions.Fcn ?1) ?2)) B0))
+75 ins: 4 3
+78 from: (PredicateLogic.Trueprop (PredicateLogic.isBool (Functions.isAFcn ?0)))
+78 vars: ?0
+78 prems: 0
+78 concl: (PredicateLogic.isBool (Functions.isAFcn ?0))
+78 toTerm: (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy (Functions.isAFcn::dummy ?etc.0:dummy))) (PredicateLogic.isBool::dummy (Functions.isAFcn::dummy ?etc.0:dummy))
+78 goal: 10
+78 aconv: 010
+78 occurs: 1 1
+78 instantiated: (PredicateLogic.Trueprop (PredicateLogic.isBool (Functions.isAFcn S:S0[])))
+78 remaining:  01 
+78 renorm: 1
+78 eta2: (PredicateLogic.isBool (Functions.isAFcn ?0)) (%e. (?1=(PredicateLogic.isBool (Functions.isAFcn ?0)) B0))
+78 ins: 1 -
+81 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Functions.DOMAIN ?1))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Functions.DOMAIN ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (Functions.DOMAIN ?1)))))
+81 vars: ?0 ?1
+81 prems: 2
+81 concl: ((PredicateLogic.eq ?0) (Functions.DOMAIN ?1))
+81 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) (Functions.DOMAIN::dummy ?etc.0:dummy))
+81 goal: 10
+81 aconv: 010
+81 occurs: 11 11
+81 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Functions.DOMAIN ?3))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Functions.DOMAIN ?3)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) (Functions.DOMAIN ?3)))))
+81 remaining: ?3 01 ?3
+81 renorm: 1
+81 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (Functions.DOMAIN ?3))))
+81 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (Functions.DOMAIN ?3)))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3])))
+81 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) (Functions.DOMAIN ?1)))) 1
+81 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (Functions.DOMAIN ?1))))) 1
+81 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) (Functions.DOMAIN ?1))))
+81 eta2: ((PredicateLogic.eq ?0) (Functions.DOMAIN ?1)) (%e. (?4=((PredicateLogic.eq ?0) (Functions.DOMAIN ?1)) B0))
+81 ins: 3 2
+84 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?0) ?2)))) (PredicateLogic.Trueprop ((SetTheory.in ?0) ((SetTheory.setminus ?1) ?2)))))
+84 vars: ?0 ?1 ?2
+84 prems: 2
+84 concl: ((SetTheory.in ?0) ((SetTheory.setminus ?1) ?2))
+84 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((SetTheory.in::dummy ?etc.0:dummy) ((SetTheory.setminus::dummy ?etc.0:dummy) ?etc.0:dummy))
+84 goal: 10
+84 aconv: 010
+84 occurs: 111 111
+84 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) ?3))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in S:S0[?3]) S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) ((SetTheory.setminus ?3) S:S2[])))))
+84 remaining: ?3 01 ?3
+84 renorm: 1
+84 eta2: ((SetTheory.in ?0) ((SetTheory.setminus ?1) ?2)) (%e. (?4=((SetTheory.in ?0) ((SetTheory.setminus ?1) ?2)) B0))
+84 ins: 3 2
+87 from: ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in ?0) ?2)))) (PredicateLogic.Trueprop ((SetTheory.in ?0) ((SetTheory.union ?2) ?1))))
+87 vars: ?0 ?2 ?1
+87 prems: 1
+87 concl: ((SetTheory.in ?0) ((SetTheory.union ?2) ?1))
+87 toTerm: ((Pure.imp::dummy ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((SetTheory.in::dummy ?etc.0:dummy) ((SetTheory.union::dummy ?etc.0:dummy) ?etc.0:dummy))
+87 goal: 10
+87 aconv: 010
+87 occurs: 111 111
+87 instantiated: ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in S:S0[?3]) ?3)))) (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) ((SetTheory.union S:S2[]) ?3))))
+87 remaining: ?3 01 ?3
+87 renorm: 1
+87 eta2: ((SetTheory.in ?0) ((SetTheory.union ?2) ?1)) (%e. (?4=((SetTheory.in ?0) ((SetTheory.union ?2) ?1)) B0))
+87 ins: 2 1
+90 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.All{PredicateLogic.c} (%x. (PredicateLogic.not ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq SetTheory.emptyset) ?0)))
+90 vars: ?0
+90 prems: 1
+90 concl: ((PredicateLogic.eq SetTheory.emptyset) ?0)
+90 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.All::dummy ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy SetTheory.emptyset::dummy) ?etc.0:dummy)
+90 goal: 10
+90 aconv: 010
+90 occurs: 1 1
+90 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.All{PredicateLogic.c} (%x. (PredicateLogic.not ((SetTheory.in B0) ?1=S:S0[])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq SetTheory.emptyset) S:S0[])))
+90 remaining:  01 
+90 renorm: 1
+90 beta: (PredicateLogic.not ((SetTheory.in F:a) ?0)) 1
+90 eta: (%e. (PredicateLogic.not ((SetTheory.in B0) ?0))) 1
+90 nested: (PredicateLogic.not ((SetTheory.in F:b) ?0))
+90 eta2: ((PredicateLogic.eq SetTheory.emptyset) ?0) (%e. (?2=((PredicateLogic.eq SetTheory.emptyset) ?0) B0))
+90 ins: 2 1
+93 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.setOfAll ?1) ?2))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.setOfAll ?1) ?2)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.setOfAll ?1) ?2)))))
+93 vars: ?0 ?1 ?2
+93 prems: 2
+93 concl: ((PredicateLogic.eq ?0) ((SetTheory.setOfAll ?1) ?2))
+93 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((SetTheory.setOfAll::dummy ?etc.0:dummy) ?etc.0:dummy))
+93 goal: 10
+93 aconv: 010
+93 occurs: 111 111
+93 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5]))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.setOfAll ?4) ?5=S:S2[]))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.setOfAll ?4) ?5=S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4]) ((SetTheory.setOfAll ?4) S:S2[])))))
+93 remaining: ?4 01 ?4
+93 renorm: 1
+93 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((SetTheory.setOfAll ?4) S:S2[]))))
+93 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((SetTheory.setOfAll ?4) S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4])))
+93 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ((SetTheory.setOfAll ?1) ?2)))) 1
+93 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.setOfAll ?1) ?2))))) 1
+93 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ((SetTheory.setOfAll ?1) ?2))))
+93 eta2: ((PredicateLogic.eq ?0) ((SetTheory.setOfAll ?1) ?2)) (%e. (?6=((PredicateLogic.eq ?0) ((SetTheory.setOfAll ?1) ?2)) B0))
+93 ins: 3 2
+96 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.subsetOf ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2)))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.subsetOf ?0) ?1))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.subsetOf ?0) ?1)) ?2))))
+96 vars: ?0 ?1 ?2
+96 prems: 2
+96 concl: ((PredicateLogic.eq ((SetTheory.subsetOf ?0) ?1)) ?2)
+96 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ((SetTheory.subsetOf::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+96 goal: 10
+96 aconv: 010
+96 occurs: 111 111
+96 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.subsetOf ?3=S:S0[?4,?5]) ?4)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?5=S:S2[])))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?5=S:S2[]))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.subsetOf ?3=S:S0[?4,?5]) ?4))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.subsetOf S:S0[?4]) ?4)) S:S2[]))))
+96 remaining: ?4 01 ?4
+96 renorm: 1
+96 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((SetTheory.subsetOf S:S0[?4]) ?4)))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S2[])))
+96 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S2[]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((SetTheory.subsetOf S:S0[?4]) ?4))))
+96 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ((SetTheory.subsetOf ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ?2))) 1
+96 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.subsetOf ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2)))) 1
+96 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ((SetTheory.subsetOf ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ?2)))
+96 eta2: ((PredicateLogic.eq ((SetTheory.subsetOf ?0) ?1)) ?2) (%e. (?6=((PredicateLogic.eq ((SetTheory.subsetOf ?0) ?1)) ?2) B0))
+96 ins: 3 2
+99 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.inter ?1) ?2))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.inter ?1) ?2)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.inter ?1) ?2)))))
+99 vars: ?0 ?1 ?2
+99 prems: 2
+99 concl: ((PredicateLogic.eq ?0) ((SetTheory.inter ?1) ?2))
+99 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((SetTheory.inter::dummy ?etc.0:dummy) ?etc.0:dummy))
+99 goal: 10
+99 aconv: 010
+99 occurs: 111 111
+99 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5]))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.inter ?4) ?5=S:S2[]))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.inter ?4) ?5=S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4]) ((SetTheory.inter ?4) S:S2[])))))
+99 remaining: ?4 01 ?4
+99 renorm: 1
+99 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((SetTheory.inter ?4) S:S2[]))))
+99 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((SetTheory.inter ?4) S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4])))
+99 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ((SetTheory.inter ?1) ?2)))) 1
+99 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.inter ?1) ?2))))) 1
+99 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ((SetTheory.inter ?1) ?2))))
+99 eta2: ((PredicateLogic.eq ?0) ((SetTheory.inter ?1) ?2)) (%e. (?6=((PredicateLogic.eq ?0) ((SetTheory.inter ?1) ?2)) B0))
+99 ins: 3 2
+102 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.union ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2)))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.union ?0) ?1))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.union ?0) ?1)) ?2))))
+102 vars: ?0 ?1 ?2
+102 prems: 2
+102 concl: ((PredicateLogic.eq ((SetTheory.union ?0) ?1)) ?2)
+102 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ((SetTheory.union::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+102 goal: 10
+102 aconv: 010
+102 occurs: 111 111
+102 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.union ?3=S:S0[?4,?5]) ?4)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?5=S:S2[])))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?5=S:S2[]))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.union ?3=S:S0[?4,?5]) ?4))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.union S:S0[?4]) ?4)) S:S2[]))))
+102 remaining: ?4 01 ?4
+102 renorm: 1
+102 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((SetTheory.union S:S0[?4]) ?4)))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S2[])))
+102 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S2[]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((SetTheory.union S:S0[?4]) ?4))))
+102 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ((SetTheory.union ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ?2))) 1
+102 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((SetTheory.union ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2)))) 1
+102 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ((SetTheory.union ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ?2)))
+102 eta2: ((PredicateLogic.eq ((SetTheory.union ?0) ?1)) ?2) (%e. (?6=((PredicateLogic.eq ((SetTheory.union ?0) ?1)) ?2) B0))
+102 ins: 3 2
+105 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.UNION ?1))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.UNION ?1)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (SetTheory.UNION ?1)))))
+105 vars: ?0 ?1
+105 prems: 2
+105 concl: ((PredicateLogic.eq ?0) (SetTheory.UNION ?1))
+105 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) (SetTheory.UNION::dummy ?etc.0:dummy))
+105 goal: 10
+105 aconv: 010
+105 occurs: 11 11
+105 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.UNION ?3))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.UNION ?3)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) (SetTheory.UNION ?3)))))
+105 remaining: ?3 01 ?3
+105 renorm: 1
+105 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (SetTheory.UNION ?3))))
+105 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (SetTheory.UNION ?3)))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3])))
+105 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) (SetTheory.UNION ?1)))) 1
+105 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.UNION ?1))))) 1
+105 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) (SetTheory.UNION ?1))))
+105 eta2: ((PredicateLogic.eq ?0) (SetTheory.UNION ?1)) (%e. (?4=((PredicateLogic.eq ?0) (SetTheory.UNION ?1)) B0))
+105 ins: 3 2
+108 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.SUBSET ?0)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?1)))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?1))) (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.SUBSET ?0))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq (SetTheory.SUBSET ?0)) ?1))))
+108 vars: ?0 ?1
+108 prems: 2
+108 concl: ((PredicateLogic.eq (SetTheory.SUBSET ?0)) ?1)
+108 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy (SetTheory.SUBSET::dummy ?etc.0:dummy)) ?etc.0:dummy)
+108 goal: 10
+108 aconv: 010
+108 occurs: 11 11
+108 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.SUBSET ?2=S:S0[?3])))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?3)))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?3))) (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.SUBSET ?2=S:S0[?3]))))))) (PredicateLogic.Trueprop ((PredicateLogic.eq (SetTheory.SUBSET S:S0[?3])) ?3))))
+108 remaining: ?3 01 ?3
+108 renorm: 1
+108 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (SetTheory.SUBSET S:S0[?3])))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) ?3)))
+108 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) ?3))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) (SetTheory.SUBSET S:S0[?3]))))
+108 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) (SetTheory.SUBSET ?0)))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ?1))) 1
+108 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (SetTheory.SUBSET ?0)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?1)))) 1
+108 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) (SetTheory.SUBSET ?0)))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ?1)))
+108 eta2: ((PredicateLogic.eq (SetTheory.SUBSET ?0)) ?1) (%e. (?4=((PredicateLogic.eq (SetTheory.SUBSET ?0)) ?1) B0))
+108 ins: 3 2
+111 from: (PredicateLogic.Trueprop ((SetTheory.subset ?0) ?0))
+111 vars: ?0
+111 prems: 0
+111 concl: ((SetTheory.subset ?0) ?0)
+111 toTerm: (PredicateLogic.Trueprop::dummy ((SetTheory.subset::dummy ?etc.0:dummy) ?etc.0:dummy)) ((SetTheory.subset::dummy ?etc.0:dummy) ?etc.0:dummy)
+111 goal: 10
+111 aconv: 010
+111 occurs: 1 1
+111 instantiated: (PredicateLogic.Trueprop ((SetTheory.subset S:S0[]) S:S0[]))
+111 remaining:  01 
+111 renorm: 1
+111 eta2: ((SetTheory.subset ?0) ?0) (%e. (?1=((SetTheory.subset ?0) ?0) B0))
+111 ins: 1 -
+114 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ?0) ((SetTheory.subset ?1) ?2)))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.subset ?1) ?2)))))
+114 vars: ?0 ?1 ?2
+114 prems: 2
+114 concl: ((PredicateLogic.eq ?0) ((SetTheory.subset ?1) ?2))
+114 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((SetTheory.subset::dummy ?etc.0:dummy) ?etc.0:dummy))
+114 goal: 10
+114 aconv: 010
+114 occurs: 111 111
+114 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff S:S0[?3]) ((SetTheory.subset ?3) S:S2[])))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ((SetTheory.subset ?3) S:S2[])))))
+114 remaining: ?3 01 ?3
+114 renorm: 1
+114 eta2: ((PredicateLogic.eq ?0) ((SetTheory.subset ?1) ?2)) (%e. (?4=((PredicateLogic.eq ?0) ((SetTheory.subset ?1) ?2)) B0))
+114 ins: 3 2
+117 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ((SetTheory.bEx ?1) ?2)) ?0))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.bEx ?1) ?2)) ?0))))
+117 vars: ?1 ?2 ?0
+117 prems: 2
+117 concl: ((PredicateLogic.eq ((SetTheory.bEx ?1) ?2)) ?0)
+117 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ((SetTheory.bEx::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+117 goal: 10
+117 aconv: 010
+117 occurs: 111 111
+117 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ((SetTheory.bEx ?3) S:S2[])) S:S0[?3]))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.bEx ?3) S:S2[])) S:S0[?3]))))
+117 remaining: ?3 01 ?3
+117 renorm: 1
+117 eta2: ((PredicateLogic.eq ((SetTheory.bEx ?1) ?2)) ?0) (%e. (?4=((PredicateLogic.eq ((SetTheory.bEx ?1) ?2)) ?0) B0))
+117 ins: 3 2
+120 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ?0) ((SetTheory.in ?1) ?2)))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.in ?1) ?2)))))
+120 vars: ?0 ?1 ?2
+120 prems: 2
+120 concl: ((PredicateLogic.eq ?0) ((SetTheory.in ?1) ?2))
+120 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))
+120 goal: 10
+120 aconv: 010
+120 occurs: 111 111
+120 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff S:S0[?3]) ((SetTheory.in ?3) S:S2[])))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ((SetTheory.in ?3) S:S2[])))))
+120 remaining: ?3 01 ?3
+120 renorm: 1
+120 eta2: ((PredicateLogic.eq ?0) ((SetTheory.in ?1) ?2)) (%e. (?4=((PredicateLogic.eq ?0) ((SetTheory.in ?1) ?2)) B0))
+120 ins: 3 2
+123 from: (PredicateLogic.Trueprop (PredicateLogic.isBool ((SetTheory.subset ?0) ?1)))
+123 vars: ?0 ?1
+123 prems: 0
+123 concl: (PredicateLogic.isBool ((SetTheory.subset ?0) ?1))
+123 toTerm: (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ((SetTheory.subset::dummy ?etc.0:dummy) ?etc.0:dummy))) (PredicateLogic.isBool::dummy ((SetTheory.subset::dummy ?etc.0:dummy) ?etc.0:dummy))
+123 goal: 10
+123 aconv: 010
+123 occurs: 11 11
+123 instantiated: (PredicateLogic.Trueprop (PredicateLogic.isBool ((SetTheory.subset S:S0[?2]) ?2)))
+123 remaining: ?2 01 ?2
+123 renorm: 1
+123 eta2: (PredicateLogic.isBool ((SetTheory.subset ?0) ?1)) (%e. (?3=(PredicateLogic.isBool ((SetTheory.subset ?0) ?1)) B0))
+123 ins: 1 -
+126 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((PredicateLogic.eq ?0) ?1)))) (PredicateLogic.Trueprop ((SetTheory.psubset ?0) ?1))))
+126 vars: ?0 ?1
+126 prems: 2
+126 concl: ((SetTheory.psubset ?0) ?1)
+126 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.subset::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((SetTheory.psubset::dummy ?etc.0:dummy) ?etc.0:dummy)
+126 goal: 10
+126 aconv: 010
+126 occurs: 11 11
+126 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset S:S0[?2]) ?2))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((PredicateLogic.eq S:S0[?2]) ?2)))) (PredicateLogic.Trueprop ((SetTheory.psubset S:S0[?2]) ?2))))
+126 remaining: ?2 01 ?2
+126 renorm: 1
+126 eta2: ((SetTheory.psubset ?0) ?1) (%e. (?3=((SetTheory.psubset ?0) ?1) B0))
+126 ins: 3 2
+129 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.All{PredicateLogic.c} (%x. ((PredicateLogic.imp (?0 B0)) ((PredicateLogic.eq B0) PredicateLogic.default)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq (PredicateLogic.Choice{PredicateLogic.c} ?0)) PredicateLogic.default)))
+129 vars: ?0
+129 prems: 1
+129 concl: ((PredicateLogic.eq (PredicateLogic.Choice{PredicateLogic.c} ?0)) PredicateLogic.default)
+129 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.All::dummy ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy (PredicateLogic.Choice::dummy ?etc.0:dummy)) PredicateLogic.default::dummy)
+129 goal: 10
+129 aconv: 010
+129 occurs: 1 1
+129 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.All{PredicateLogic.c} (%x. ((PredicateLogic.imp (?1=S:S0[] B0)) ((PredicateLogic.eq B0) PredicateLogic.default)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq (PredicateLogic.Choice{PredicateLogic.c} S:S0[])) PredicateLogic.default)))
+129 remaining:  01 
+129 renorm: 1
+129 beta: ((PredicateLogic.imp (?0 F:a)) ((PredicateLogic.eq F:a) PredicateLogic.default)) 1
+129 eta: (%e. ((PredicateLogic.imp (?0 B0)) ((PredicateLogic.eq B0) PredicateLogic.default))) 1
+129 nested: ((PredicateLogic.imp (?0 F:b)) ((PredicateLogic.eq F:b) PredicateLogic.default))
+129 eta2: ((PredicateLogic.eq (PredicateLogic.Choice{PredicateLogic.c} ?0)) PredicateLogic.default) (%e. (?2=((PredicateLogic.eq (PredicateLogic.Choice{PredicateLogic.c} ?0)) PredicateLogic.default) B0))
+129 ins: 2 1
+132 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ?0) (PredicateLogic.All{?1} ?2)))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (PredicateLogic.All{?1} ?2)))))
+132 vars: ?0 ?1 ?2
+132 prems: 2
+132 concl: ((PredicateLogic.eq ?0) (PredicateLogic.All{?1} ?2))
+132 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) (PredicateLogic.All::dummy ?etc.0:dummy))
+132 goal: 10
+132 aconv: 010
+132 occurs: 101 101
+132 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff S:S0[?3]) (PredicateLogic.All{?3} S:S2[])))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) (PredicateLogic.All{?3} S:S2[])))))
+132 remaining: ?3 01 ?3
+132 renorm: 1
+132 eta2: ((PredicateLogic.eq ?0) (PredicateLogic.All{?1} ?2)) (%e. (?4=((PredicateLogic.eq ?0) (PredicateLogic.All{?1} ?2)) B0))
+132 ins: 3 2
+135 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ?0) ((PredicateLogic.iff ?1) ?2)))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((PredicateLogic.iff ?1) ?2)))))
+135 vars: ?0 ?1 ?2
+135 prems: 2
+135 concl: ((PredicateLogic.eq ?0) ((PredicateLogic.iff ?1) ?2))
+135 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((PredicateLogic.iff::dummy ?etc.0:dummy) ?etc.0:dummy))
+135 goal: 10
+135 aconv: 010
+135 occurs: 111 111
+135 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff S:S0[?3]) ((PredicateLogic.iff ?3) S:S2[])))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ((PredicateLogic.iff ?3) S:S2[])))))
+135 remaining: ?3 01 ?3
+135 renorm: 1
+135 eta2: ((PredicateLogic.eq ?0) ((PredicateLogic.iff ?1) ?2)) (%e. (?4=((PredicateLogic.eq ?0) ((PredicateLogic.iff ?1) ?2)) B0))
+135 ins: 3 2
+138 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ((PredicateLogic.disj ?1) ?2)) ?0))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((PredicateLogic.disj ?1) ?2)) ?0))))
+138 vars: ?1 ?2 ?0
+138 prems: 2
+138 concl: ((PredicateLogic.eq ((PredicateLogic.disj ?1) ?2)) ?0)
+138 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ((PredicateLogic.disj::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+138 goal: 10
+138 aconv: 010
+138 occurs: 111 111
+138 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ((PredicateLogic.disj ?3) S:S2[])) S:S0[?3]))) (PredicateLogic.Trueprop ((PredicateLogic.eq ((PredicateLogic.disj ?3) S:S2[])) S:S0[?3]))))
+138 remaining: ?3 01 ?3
+138 renorm: 1
+138 eta2: ((PredicateLogic.eq ((PredicateLogic.disj ?1) ?2)) ?0) (%e. (?4=((PredicateLogic.eq ((PredicateLogic.disj ?1) ?2)) ?0) B0))
+138 ins: 3 2
+141 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ?0) ((PredicateLogic.conj ?1) ?2)))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((PredicateLogic.conj ?1) ?2)))))
+141 vars: ?0 ?1 ?2
+141 prems: 2
+141 concl: ((PredicateLogic.eq ?0) ((PredicateLogic.conj ?1) ?2))
+141 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((PredicateLogic.conj::dummy ?etc.0:dummy) ?etc.0:dummy))
+141 goal: 10
+141 aconv: 010
+141 occurs: 111 111
+141 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff S:S0[?3]) ((PredicateLogic.conj ?3) S:S2[])))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ((PredicateLogic.conj ?3) S:S2[])))))
+141 remaining: ?3 01 ?3
+141 renorm: 1
+141 eta2: ((PredicateLogic.eq ?0) ((PredicateLogic.conj ?1) ?2)) (%e. (?4=((PredicateLogic.eq ?0) ((PredicateLogic.conj ?1) ?2)) B0))
+141 ins: 3 2
+144 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ?0) ((PredicateLogic.eq ?1) ?2)))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((PredicateLogic.eq ?1) ?2)))))
+144 vars: ?0 ?1 ?2
+144 prems: 2
+144 concl: ((PredicateLogic.eq ?0) ((PredicateLogic.eq ?1) ?2))
+144 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))
+144 goal: 10
+144 aconv: 010
+144 occurs: 111 111
+144 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff S:S0[?3]) ((PredicateLogic.eq ?3) S:S2[])))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ((PredicateLogic.eq ?3) S:S2[])))))
+144 remaining: ?3 01 ?3
+144 renorm: 1
+144 eta2: ((PredicateLogic.eq ?0) ((PredicateLogic.eq ?1) ?2)) (%e. (?4=((PredicateLogic.eq ?0) ((PredicateLogic.eq ?1) ?2)) B0))
+144 ins: 3 2
+147 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?0)) (PredicateLogic.Trueprop PredicateLogic.FALSE))) (PredicateLogic.Trueprop ((PredicateLogic.eq PredicateLogic.FALSE) ?0))))
+147 vars: ?0
+147 prems: 2
+147 concl: ((PredicateLogic.eq PredicateLogic.FALSE) ?0)
+147 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy PredicateLogic.FALSE::dummy) ?etc.0:dummy)
+147 goal: 10
+147 aconv: 010
+147 occurs: 1 1
+147 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[]))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop S:S0[])) (PredicateLogic.Trueprop PredicateLogic.FALSE))) (PredicateLogic.Trueprop ((PredicateLogic.eq PredicateLogic.FALSE) S:S0[]))))
+147 remaining:  01 
+147 renorm: 1
+147 eta2: ((PredicateLogic.eq PredicateLogic.FALSE) ?0) (%e. (?1=((PredicateLogic.eq PredicateLogic.FALSE) ?0) B0))
+147 ins: 3 2
+150 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ?0) ?1))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (PredicateLogic.boolify ?1)))))
+150 vars: ?0 ?1
+150 prems: 2
+150 concl: ((PredicateLogic.eq ?0) (PredicateLogic.boolify ?1))
+150 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) (PredicateLogic.boolify::dummy ?etc.0:dummy))
+150 goal: 10
+150 aconv: 010
+150 occurs: 11 11
+150 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?2]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff S:S0[?2]) ?2))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?2]) (PredicateLogic.boolify ?2)))))
+150 remaining: ?2 01 ?2
+150 renorm: 1
+150 eta2: ((PredicateLogic.eq ?0) (PredicateLogic.boolify ?1)) (%e. (?3=((PredicateLogic.eq ?0) (PredicateLogic.boolify ?1)) B0))
+150 ins: 3 2
+153 from: (PredicateLogic.Trueprop (PredicateLogic.isBool (PredicateLogic.Ex{?0} ?1)))
+153 vars: ?0 ?1
+153 prems: 0
+153 concl: (PredicateLogic.isBool (PredicateLogic.Ex{?0} ?1))
+153 toTerm: (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy (PredicateLogic.Ex::dummy ?etc.0:dummy))) (PredicateLogic.isBool::dummy (PredicateLogic.Ex::dummy ?etc.0:dummy))
+153 goal: 10
+153 aconv: 010
+153 occurs: 01 01
+153 instantiated: (PredicateLogic.Trueprop (PredicateLogic.isBool (PredicateLogic.Ex{S:S0[?2]} ?2)))
+153 remaining: ?2 01 ?2
+153 renorm: 1
+153 eta2: (PredicateLogic.isBool (PredicateLogic.Ex{?0} ?1)) (%e. (?3=(PredicateLogic.isBool (PredicateLogic.Ex{?0} ?1)) B0))
+153 ins: 1 -
+156 from: (PredicateLogic.Trueprop (PredicateLogic.isBool ((PredicateLogic.disj ?0) ?1)))
+156 vars: ?0 ?1
+156 prems: 0
+156 concl: (PredicateLogic.isBool ((PredicateLogic.disj ?0) ?1))
+156 toTerm: (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ((PredicateLogic.disj::dummy ?etc.0:dummy) ?etc.0:dummy))) (PredicateLogic.isBool::dummy ((PredicateLogic.disj::dummy ?etc.0:dummy) ?etc.0:dummy))
+156 goal: 10
+156 aconv: 010
+156 occurs: 11 11
+156 instantiated: (PredicateLogic.Trueprop (PredicateLogic.isBool ((PredicateLogic.disj S:S0[?2]) ?2)))
+156 remaining: ?2 01 ?2
+156 renorm: 1
+156 eta2: (PredicateLogic.isBool ((PredicateLogic.disj ?0) ?1)) (%e. (?3=(PredicateLogic.isBool ((PredicateLogic.disj ?0) ?1)) B0))
+156 ins: 1 -
+159 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?1))) (PredicateLogic.Trueprop (PredicateLogic.isBool (((PredicateLogic.cond ?2) ?0) ?1)))))
+159 vars: ?2 ?0 ?1
+159 prems: 2
+159 concl: (PredicateLogic.isBool (((PredicateLogic.cond ?2) ?0) ?1))
+159 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) (PredicateLogic.isBool::dummy (((PredicateLogic.cond::dummy ?etc.0:dummy) ?etc.0:dummy) ?etc.0:dummy))
+159 goal: 10
+159 aconv: 010
+159 occurs: 111 111
+159 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?3))) (PredicateLogic.Trueprop (PredicateLogic.isBool (((PredicateLogic.cond S:S2[]) S:S0[?3]) ?3)))))
+159 remaining: ?3 01 ?3
+159 renorm: 1
+159 eta2: (PredicateLogic.isBool (((PredicateLogic.cond ?2) ?0) ?1)) (%e. (?4=(PredicateLogic.isBool (((PredicateLogic.cond ?2) ?0) ?1)) B0))
+159 ins: 3 2
+162 from: (PredicateLogic.Trueprop (PredicateLogic.isBool PredicateLogic.FALSE))
+162 vars: 
+162 prems: 0
+162 concl: (PredicateLogic.isBool PredicateLogic.FALSE)
+162 toTerm: (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy PredicateLogic.FALSE::dummy)) (PredicateLogic.isBool::dummy PredicateLogic.FALSE::dummy)
+162 goal: 10
+162 aconv: 111
+162 occurs:  
+162 instantiated: (PredicateLogic.Trueprop (PredicateLogic.isBool PredicateLogic.FALSE))
+162 remaining:  11 
+162 renorm: 1
+162 eta2: (PredicateLogic.isBool PredicateLogic.FALSE) (%e. (?0=(PredicateLogic.isBool PredicateLogic.FALSE) B0))
+162 ins: 1 -
+165 from: ((Pure.imp (Pure.all{?0} (%x. (PredicateLogic.Trueprop (?1 B0))))) (PredicateLogic.Trueprop (PredicateLogic.All{?0} ?1)))
+165 vars: ?0 ?1
+165 prems: 1
+165 concl: (PredicateLogic.All{?0} ?1)
+165 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy (PredicateLogic.All::dummy ?etc.0:dummy))) (PredicateLogic.All::dummy ?etc.0:dummy)
+165 goal: 10
+165 aconv: 010
+165 occurs: 01 01
+165 instantiated: ((Pure.imp (Pure.all{S:S0[?2]} (%x. (PredicateLogic.Trueprop (?2 B0))))) (PredicateLogic.Trueprop (PredicateLogic.All{S:S0[?2]} ?2)))
+165 remaining: ?2 01 ?2
+165 renorm: 1
+165 skolemized: (PredicateLogic.Trueprop (?2 S:K[?2]))
+165 beta: (PredicateLogic.Trueprop (?1 F:a)) 1
+165 eta: (%e. (PredicateLogic.Trueprop (?1 B0))) 1
+165 nested: (PredicateLogic.Trueprop (?1 F:b))
+165 eta2: (PredicateLogic.All{?0} ?1) (%e. (?3=(PredicateLogic.All{?0} ?1) B0))
+165 ins: 2 1
+168 from: ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?0)) (PredicateLogic.Trueprop ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ?0))) (PredicateLogic.Trueprop ?2))) (PredicateLogic.Trueprop (((PredicateLogic.cond ?0) ?1) ?2))))
+168 vars: ?0 ?1 ?2
+168 prems: 2
+168 concl: (((PredicateLogic.cond ?0) ?1) ?2)
+168 toTerm: ((Pure.imp::dummy ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) (((PredicateLogic.cond::dummy ?etc.0:dummy) ?etc.0:dummy) ?etc.0:dummy)
+168 goal: 10
+168 aconv: 010
+168 occurs: 111 111
+168 instantiated: ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop S:S0[?3])) (PredicateLogic.Trueprop ?3))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not S:S0[?3]))) (PredicateLogic.Trueprop S:S2[]))) (PredicateLogic.Trueprop (((PredicateLogic.cond S:S0[?3]) ?3) S:S2[]))))
+168 remaining: ?3 01 ?3
+168 renorm: 1
+168 eta2: (((PredicateLogic.cond ?0) ?1) ?2) (%e. (?4=(((PredicateLogic.cond ?0) ?1) ?2) B0))
+168 ins: 3 2
+171 from: ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?0)) (PredicateLogic.Trueprop ?1))) (PredicateLogic.Trueprop ((PredicateLogic.imp ?0) ?1)))
+171 vars: ?0 ?1
+171 prems: 1
+171 concl: ((PredicateLogic.imp ?0) ?1)
+171 toTerm: ((Pure.imp::dummy ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy ((PredicateLogic.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.imp::dummy ?etc.0:dummy) ?etc.0:dummy)
+171 goal: 10
+171 aconv: 010
+171 occurs: 11 11
+171 instantiated: ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop S:S0[?2])) (PredicateLogic.Trueprop ?2))) (PredicateLogic.Trueprop ((PredicateLogic.imp S:S0[?2]) ?2)))
+171 remaining: ?2 01 ?2
+171 renorm: 1
+171 eta2: ((PredicateLogic.imp ?0) ?1) (%e. (?3=((PredicateLogic.imp ?0) ?1) B0))
+171 ins: 2 1
+174 from: (PredicateLogic.Trueprop PredicateLogic.TRUE)
+174 vars: 
+174 prems: 0
+174 concl: PredicateLogic.TRUE
+174 toTerm: (PredicateLogic.Trueprop::dummy PredicateLogic.TRUE::dummy) PredicateLogic.TRUE::dummy
+174 goal: 10
+174 aconv: 111
+174 occurs:  
+174 instantiated: (PredicateLogic.Trueprop PredicateLogic.TRUE)
+174 remaining:  11 
+174 renorm: 1
+174 eta2: PredicateLogic.TRUE (%e. (?0=PredicateLogic.TRUE B0))
+174 ins: 1 -
+177 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Tuples.rel_comp ?1) ?2)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?1) ((Tuples.prod ?3) ?4)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?2) ((Tuples.prod ?5) ?3)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B1)) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?1))) (PredicateLogic.Trueprop ?6))))))))))) (PredicateLogic.Trueprop ?6)))))
+177 vars: ?4 ?5 ?3 ?0 ?2 ?1 ?6
+177 prems: 4
+177 concl: ?6
+177 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+177 goal: 10
+177 aconv: 010
+177 norm: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Tuples.rel_comp ?1) ?2)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?1) ((Tuples.prod ?3) ?4)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?2) ((Tuples.prod ?5) ?3)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B1)) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?1))) (PredicateLogic.Trueprop ?6=*False*))))))))))) (PredicateLogic.Trueprop *False*)))))
+177 occurs: 1111111 1111111
+177 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?7,?8,?9]) ((Tuples.rel_comp ?9) S:S2[?7,?8])))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?9) ((Tuples.prod ?8) S:S4[?7])))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset S:S2[?7,?8]) ((Tuples.prod ?7) ?8)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?10=S:S0[?9,?11,?8,?12,?7,?13]) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B1)) ?11=S:S2[?8,?12,?7,?13]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?9))) (PredicateLogic.Trueprop ?13=S:S6[]))))))))))) (PredicateLogic.Trueprop S:S6[])))))
+177 remaining: ?7 ?8 ?9 01 ?7 ?8 ?9
+177 renorm: 0
+177 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?7,?8,?9]) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:K[?9,?8,?7])) S:K[?9,?8,?7])))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:K[?9,?8,?7])) S:K[?9,?8,?7])) S:S2[?7,?8]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:K[?9,?8,?7])) S:K[?9,?8,?7])) ?9))) (PredicateLogic.Trueprop S:S6[]))))
+177 beta: (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:a)) B0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:a)) B1)) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?1))) (PredicateLogic.Trueprop ?6=*False*)))))))) 1
+177 eta: (%e. (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B1)) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?1))) (PredicateLogic.Trueprop ?6=*False*))))))))) 1
+177 nested: (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:b)) B0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:b)) B1)) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?1))) (PredicateLogic.Trueprop ?6=*False*))))))))
+177 eta2: *False* (%e. (?14=?6=*False* B0))
+177 ins: 5 4
+180 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) (Tuples.Product ?1)))) ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Tuples.Len ?0)) (Tuples.Len ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Functions.FuncSet ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?1))) (SetTheory.UNION ((Functions.Image ?1) (Functions.DOMAIN ?1))))))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?1))) (%k. ((SetTheory.in ((Functions.fapply ?0) B0)) ((Functions.fapply ?1) B0)))))) (PredicateLogic.Trueprop ?2)))))) (PredicateLogic.Trueprop ?2))))
+180 vars: ?0 ?1 ?2
+180 prems: 3
+180 concl: ?2
+180 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+180 goal: 10
+180 aconv: 010
+180 norm: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) (Tuples.Product ?1)))) ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Tuples.Len ?0)) (Tuples.Len ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Functions.FuncSet ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?1))) (SetTheory.UNION ((Functions.Image ?1) (Functions.DOMAIN ?1))))))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?1))) (%k. ((SetTheory.in ((Functions.fapply ?0) B0)) ((Functions.fapply ?1) B0)))))) (PredicateLogic.Trueprop *False*)))))) (PredicateLogic.Trueprop *False*))))
+180 occurs: 111 111
+180 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) (Tuples.Product ?3)))) ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?3))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Tuples.Len S:S0[?3])) (Tuples.Len ?3)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) ((Functions.FuncSet ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?3))) (SetTheory.UNION ((Functions.Image ?3) (Functions.DOMAIN ?3))))))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?3))) (%k. ((SetTheory.in ((Functions.fapply ?4=S:S0[?3,?5]) B0)) ((Functions.fapply ?3) B0)))))) (PredicateLogic.Trueprop S:S2[])))))) (PredicateLogic.Trueprop S:S2[]))))
+180 remaining: ?3 01 ?3
+180 renorm: 1
+180 beta: ((SetTheory.in ((Functions.fapply ?0) F:a)) ((Functions.fapply ?1) F:a)) 1
+180 eta: (%e. ((SetTheory.in ((Functions.fapply ?0) B0)) ((Functions.fapply ?1) B0))) 1
+180 nested: ((SetTheory.in ((Functions.fapply ?0) F:b)) ((Functions.fapply ?1) F:b))
+180 eta2: *False* (%e. (?6=?2=*False* B0))
+180 ins: 4 3
+183 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ((Functions.fapply Integers.pred) ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less ?0) ?1))) (PredicateLogic.Trueprop ?2))) (PredicateLogic.Trueprop ?2)))))
+183 vars: ?0 ?1 ?2
+183 prems: 4
+183 concl: ?2
+183 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+183 goal: 10
+183 aconv: 010
+183 norm: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ((Functions.fapply Integers.pred) ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less ?0) ?1))) (PredicateLogic.Trueprop *False*))) (PredicateLogic.Trueprop *False*)))))
+183 occurs: 111 111
+183 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?3]) ((Functions.fapply Integers.pred) ?3)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) Integers.Int))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less S:S0[?3]) ?3))) (PredicateLogic.Trueprop S:S2[]))) (PredicateLogic.Trueprop S:S2[])))))
+183 remaining: ?3 01 ?3
+183 renorm: 1
+183 eta2: *False* (%e. (?4=?2=*False* B0))
+183 ins: 5 4
+186 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ((Functions.fapply Integers.succ) ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ?1))) (PredicateLogic.Trueprop ?2))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.fapply Integers.succ) ?1)))) (PredicateLogic.Trueprop ?2))) (PredicateLogic.Trueprop ?2))))))
+186 vars: ?0 ?1 ?2
+186 prems: 5
+186 concl: ?2
+186 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+186 goal: 10
+186 aconv: 010
+186 norm: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ((Functions.fapply Integers.succ) ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ?1))) (PredicateLogic.Trueprop *False*))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.fapply Integers.succ) ?1)))) (PredicateLogic.Trueprop *False*))) (PredicateLogic.Trueprop *False*))))))
+186 occurs: 111 111
+186 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?3]) ((Functions.fapply Integers.succ) ?3)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) Integers.Int))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?3]) ?3))) (PredicateLogic.Trueprop S:S2[]))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ((Functions.fapply Integers.succ) ?3)))) (PredicateLogic.Trueprop S:S2[]))) (PredicateLogic.Trueprop S:S2[]))))))
+186 remaining: ?3 01 ?3
+186 renorm: 1
+186 eta2: *False* (%e. (?4=?2=*False* B0))
+186 ins: 6 5
+189 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((PredicateLogic.eq ?1) ?0)) PredicateLogic.FALSE))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ?0) ?1))))
+189 vars: ?0 ?1
+189 prems: 2
+189 concl: ((IntegerArithmetic.less ?0) ?1)
+189 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((IntegerArithmetic.less::dummy ?etc.0:dummy) ?etc.0:dummy)
+189 goal: 10
+189 aconv: 010
+189 occurs: 11 11
+189 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?2]) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((PredicateLogic.eq ?2) S:S0[?2])) PredicateLogic.FALSE))) (PredicateLogic.Trueprop ((IntegerArithmetic.less S:S0[?2]) ?2))))
+189 remaining: ?2 01 ?2
+189 renorm: 1
+189 eta2: ((IntegerArithmetic.less ?0) ?1) (%e. (?3=((IntegerArithmetic.less ?0) ?1) B0))
+189 ins: 3 2
+192 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((PredicateLogic.eq ?0) ?1)))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ?0) ?1))))
+192 vars: ?0 ?1
+192 prems: 2
+192 concl: ((IntegerArithmetic.less ?0) ?1)
+192 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((IntegerArithmetic.less::dummy ?etc.0:dummy) ?etc.0:dummy)
+192 goal: 10
+192 aconv: 010
+192 occurs: 11 11
+192 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?2]) ?2))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((PredicateLogic.eq S:S0[?2]) ?2)))) (PredicateLogic.Trueprop ((IntegerArithmetic.less S:S0[?2]) ?2))))
+192 remaining: ?2 01 ?2
+192 renorm: 1
+192 eta2: ((IntegerArithmetic.less ?0) ?1) (%e. (?3=((IntegerArithmetic.less ?0) ?1) B0))
+192 ins: 3 2
+195 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Functions.FuncSet ?1) ?2)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?2) ?3))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?4) ?1))) ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ?1) (%x. ((SetTheory.in ((Functions.fapply ?0) B0)) ?2))))) (PredicateLogic.Trueprop ((SetTheory.in ?5) ?3))))))) (PredicateLogic.Trueprop ((SetTheory.in (((Functions.except ?0) ?4) ?5)) ((Functions.FuncSet ?1) ?3))))))
+195 vars: ?2 ?0 ?4 ?5 ?1 ?3
+195 prems: 3
+195 concl: ((SetTheory.in (((Functions.except ?0) ?4) ?5)) ((Functions.FuncSet ?1) ?3))
+195 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((SetTheory.in::dummy (((Functions.except::dummy ?etc.0:dummy) ?etc.0:dummy) ?etc.0:dummy)) ((Functions.FuncSet::dummy ?etc.0:dummy) ?etc.0:dummy))
+195 goal: 10
+195 aconv: 010
+195 occurs: 111111 111111
+195 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?6,?7,?8]) ((Functions.FuncSet ?8) S:S2[?6,?7])))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset S:S2[?6,?7]) ?7))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S4[?6]) ?8))) ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn S:S0[?6,?7,?8]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S0[?6,?7,?8])) ?8))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ?8) (%x. ((SetTheory.in ((Functions.fapply ?9=S:S0[?8,?10,?7,?11,?6]) B0)) ?10=S:S2[?7,?11,?6]))))) (PredicateLogic.Trueprop ((SetTheory.in ?6) ?7))))))) (PredicateLogic.Trueprop ((SetTheory.in (((Functions.except S:S0[?6,?7,?8]) S:S4[?6]) ?6)) ((Functions.FuncSet ?8) ?7))))))
+195 remaining: ?6 ?7 ?8 01 ?6 ?8 ?7
+195 renorm: 0
+195 beta: ((SetTheory.in ((Functions.fapply ?0) F:a)) ?2) 1
+195 eta: (%e. ((SetTheory.in ((Functions.fapply ?0) B0)) ?2)) 1
+195 nested: ((SetTheory.in ((Functions.fapply ?0) F:b)) ?2)
+195 eta2: ((SetTheory.in (((Functions.except ?0) ?4) ?5)) ((Functions.FuncSet ?1) ?3)) (%e. (?12=((SetTheory.in (((Functions.except ?0) ?4) ?5)) ((Functions.FuncSet ?1) ?3)) B0))
+195 ins: 4 3
+198 from: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) (Functions.DOMAIN ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll (Functions.DOMAIN ?1)) (%x. ((PredicateLogic.eq ((Functions.fapply ?0) B0)) ((Functions.fapply ?1) B0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ?1))))))
+198 vars: ?0 ?1
+198 prems: 4
+198 concl: ((PredicateLogic.eq ?0) ?1)
+198 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Functions.isAFcn::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy)
+198 goal: 10
+198 aconv: 010
+198 occurs: 11 11
+198 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn S:S0[?2]))) ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S0[?2])) (Functions.DOMAIN ?2)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll (Functions.DOMAIN ?2)) (%x. ((PredicateLogic.eq ((Functions.fapply ?3=S:S0[?2]) B0)) ((Functions.fapply ?2) B0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?2]) ?2))))))
+198 remaining: ?2 01 ?2
+198 renorm: 1
+198 beta: ((PredicateLogic.eq ((Functions.fapply ?0) F:a)) ((Functions.fapply ?1) F:a)) 1
+198 eta: (%e. ((PredicateLogic.eq ((Functions.fapply ?0) B0)) ((Functions.fapply ?1) B0))) 1
+198 nested: ((PredicateLogic.eq ((Functions.fapply ?0) F:b)) ((Functions.fapply ?1) F:b))
+198 eta2: ((PredicateLogic.eq ?0) ?1) (%e. (?4=((PredicateLogic.eq ?0) ?1) B0))
+198 ins: 5 4
+201 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((SetTheory.addElt ?1) ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ?1))) (PredicateLogic.Trueprop ?3))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ?2))) (PredicateLogic.Trueprop ?3))) (PredicateLogic.Trueprop ?3))))
+201 vars: ?1 ?0 ?2 ?3
+201 prems: 3
+201 concl: ?3
+201 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+201 goal: 10
+201 aconv: 010
+201 norm: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((SetTheory.addElt ?1) ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ?1))) (PredicateLogic.Trueprop *False*))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ?2))) (PredicateLogic.Trueprop *False*))) (PredicateLogic.Trueprop *False*))))
+201 occurs: 1111 1111
+201 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?4,?5]) ((SetTheory.addElt ?5) S:S2[?4])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4,?5]) ?5))) (PredicateLogic.Trueprop ?4))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?4,?5]) S:S2[?4]))) (PredicateLogic.Trueprop ?4))) (PredicateLogic.Trueprop ?4))))
+201 remaining: ?4 ?5 01 ?5 ?4
+201 renorm: 0
+201 eta2: *False* (%e. (?6=?3=*False* B0))
+201 ins: 4 3
+204 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) SetTheory.emptyset))) (PredicateLogic.Trueprop ?1))
+204 vars: ?0 ?1
+204 prems: 1
+204 concl: ?1
+204 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ?etc.0:dummy
+204 goal: 10
+204 aconv: 010
+204 norm: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) SetTheory.emptyset))) (PredicateLogic.Trueprop *False*))
+204 occurs: 11 11
+204 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) SetTheory.emptyset))) (PredicateLogic.Trueprop ?2))
+204 remaining: ?2 01 ?2
+204 renorm: 1
+204 eta2: *False* (%e. (?3=?1=*False* B0))
+204 ins: 2 1
+207 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((SetTheory.setOfAll ?1) ?2)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (?2 B0)) ?0))) (PredicateLogic.Trueprop ?3)))))) (PredicateLogic.Trueprop ?3)))
+207 vars: ?1 ?2 ?0 ?3
+207 prems: 2
+207 concl: ?3
+207 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ?etc.0:dummy
+207 goal: 10
+207 aconv: 010
+207 norm: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((SetTheory.setOfAll ?1) ?2)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (?2 B0)) ?0))) (PredicateLogic.Trueprop ?3=*False*)))))) (PredicateLogic.Trueprop *False*)))
+207 occurs: 1111 1111
+207 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?4,?5]) ((SetTheory.setOfAll ?5) S:S2[?4])))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?5))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (?6=S:S2[?4] B0)) ?7=S:S0[?5,?6,?4]))) (PredicateLogic.Trueprop ?4)))))) (PredicateLogic.Trueprop ?4)))
+207 remaining: ?4 ?5 01 ?5 ?4
+207 renorm: 0
+207 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?5,?4]) ?5))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (S:S2[?4] S:K[?5,?4])) S:S0[?4,?5]))) (PredicateLogic.Trueprop ?4)))
+207 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (?2 F:a)) ?0))) (PredicateLogic.Trueprop ?3=*False*))) 1
+207 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (?2 B0)) ?0))) (PredicateLogic.Trueprop ?3=*False*)))) 1
+207 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (?2 F:b)) ?0))) (PredicateLogic.Trueprop *False*)))
+207 eta2: *False* (%e. (?8=?3=*False* B0))
+207 ins: 3 2
+210 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) PredicateLogic.TRUE))) (PredicateLogic.Trueprop ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) PredicateLogic.FALSE))) (PredicateLogic.Trueprop ?1))) (PredicateLogic.Trueprop ?1))))
+210 vars: ?0 ?1
+210 prems: 3
+210 concl: ?1
+210 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.isBool::dummy ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+210 goal: 10
+210 aconv: 010
+210 norm: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool ?0))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) PredicateLogic.TRUE))) (PredicateLogic.Trueprop *False*))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) PredicateLogic.FALSE))) (PredicateLogic.Trueprop *False*))) (PredicateLogic.Trueprop *False*))))
+210 occurs: 11 11
+210 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.isBool S:S0[?2]))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?2]) PredicateLogic.TRUE))) (PredicateLogic.Trueprop ?2))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?2]) PredicateLogic.FALSE))) (PredicateLogic.Trueprop ?2))) (PredicateLogic.Trueprop ?2))))
+210 remaining: ?2 01 ?2
+210 renorm: 1
+210 eta2: *False* (%e. (?3=?1=*False* B0))
+210 ins: 4 3
+213 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (((PredicateLogic.cond ?1) ?2) ?3)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?1)) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ?2))) (PredicateLogic.Trueprop ?4)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ?3))) (PredicateLogic.Trueprop ?4)))) (PredicateLogic.Trueprop ?4))))
+213 vars: ?2 ?1 ?0 ?3 ?4
+213 prems: 3
+213 concl: ?4
+213 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+213 goal: 10
+213 aconv: 010
+213 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (((PredicateLogic.cond ?1) ?2) ?3)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?1)) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ?2))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ?1))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ?3))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+213 occurs: 11111 11111
+213 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?5,?6]) (((PredicateLogic.cond ?6) S:S2[?5]) ?5)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?6)) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?5,?6]) S:S2[?5]))) (PredicateLogic.Trueprop S:S4[])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ?6))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?5,?6]) ?5))) (PredicateLogic.Trueprop S:S4[])))) (PredicateLogic.Trueprop S:S4[]))))
+213 remaining: ?5 ?6 01 ?6 ?5
+213 renorm: 0
+213 eta2: *False* (%e. (?7=?4=*False* B0))
+213 ins: 4 3
+216 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ?0) ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?0)) ((Pure.imp (PredicateLogic.Trueprop ?1)) (PredicateLogic.Trueprop ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ?0))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ?1))) (PredicateLogic.Trueprop ?2)))) (PredicateLogic.Trueprop ?2))))
+216 vars: ?0 ?1 ?2
+216 prems: 3
+216 concl: ?2
+216 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.iff::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+216 goal: 10
+216 aconv: 010
+216 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff ?0) ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?0)) ((Pure.imp (PredicateLogic.Trueprop ?1)) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ?0))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ?1))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+216 occurs: 111 111
+216 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.iff S:S0[?3]) ?3))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop S:S0[?3])) ((Pure.imp (PredicateLogic.Trueprop ?3)) (PredicateLogic.Trueprop S:S2[])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ?3))) (PredicateLogic.Trueprop S:S2[])))) (PredicateLogic.Trueprop S:S2[]))))
+216 remaining: ?3 01 ?3
+216 renorm: 1
+216 eta2: *False* (%e. (?4=?2=*False* B0))
+216 ins: 4 3
+219 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.disj ?0) ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?0)) (PredicateLogic.Trueprop ?2))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?1)) (PredicateLogic.Trueprop ?2))) (PredicateLogic.Trueprop ?2))))
+219 vars: ?0 ?1 ?2
+219 prems: 3
+219 concl: ?2
+219 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.disj::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+219 goal: 10
+219 aconv: 010
+219 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.disj ?0) ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?0)) (PredicateLogic.Trueprop *False*))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?1)) (PredicateLogic.Trueprop *False*))) (PredicateLogic.Trueprop *False*))))
+219 occurs: 111 111
+219 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.disj S:S0[?3]) ?3))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop S:S0[?3])) (PredicateLogic.Trueprop S:S2[]))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ?3)) (PredicateLogic.Trueprop S:S2[]))) (PredicateLogic.Trueprop S:S2[]))))
+219 remaining: ?3 01 ?3
+219 renorm: 1
+219 eta2: *False* (%e. (?4=?2=*False* B0))
+219 ins: 4 3
+222 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B1)) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?0))) (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B0)) ?0))))))))))) (PredicateLogic.Trueprop (Tuples.transitive ?0)))
+222 vars: ?0
+222 prems: 1
+222 concl: (Tuples.transitive ?0)
+222 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy (Tuples.transitive::dummy ?etc.0:dummy))) (Tuples.transitive::dummy ?etc.0:dummy)
+222 goal: 10
+222 aconv: 010
+222 occurs: 1 1
+222 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B1)) ?1=S:S0[]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?1=S:S0[]))) (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B0)) ?1=S:S0[]))))))))))) (PredicateLogic.Trueprop (Tuples.transitive S:S0[])))
+222 remaining:  01 
+222 renorm: 1
+222 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:K[])) S:K[])) S:S0[]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:K[])) S:K[])) S:S0[]))) (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:K[])) S:K[])) S:S0[]))))
+222 beta: (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:a)) B1)) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?0))) (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:a)) B0)) ?0)))))))) 1
+222 eta: (%e. (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B1)) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?0))) (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B2)) B0)) ?0))))))))) 1
+222 nested: (Pure.all{PredicateLogic.c} (%y. (Pure.all{PredicateLogic.c} (%z. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:b)) B1)) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)) ?0))) (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:b)) B0)) ?0))))))))
+222 eta2: (Tuples.transitive ?0) (%e. (?2=(Tuples.transitive ?0) B0))
+222 ins: 2 1
+225 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?0) ((Tuples.prod ?1) ?2)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?3) ((Tuples.prod ?2) ?4)))) (PredicateLogic.Trueprop ((SetTheory.subset ((Tuples.rel_comp ?3) ?0)) ((Tuples.prod ?1) ?4)))))
+225 vars: ?2 ?3 ?0 ?1 ?4
+225 prems: 2
+225 concl: ((SetTheory.subset ((Tuples.rel_comp ?3) ?0)) ((Tuples.prod ?1) ?4))
+225 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.subset::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((SetTheory.subset::dummy ((Tuples.rel_comp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Tuples.prod::dummy ?etc.0:dummy) ?etc.0:dummy))
+225 goal: 10
+225 aconv: 010
+225 occurs: 11111 11111
+225 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset S:S0[?5,?6]) ((Tuples.prod ?6) S:S2[?5])))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?5) ((Tuples.prod S:S2[?5]) S:S4[])))) (PredicateLogic.Trueprop ((SetTheory.subset ((Tuples.rel_comp ?5) S:S0[?5,?6])) ((Tuples.prod ?6) S:S4[])))))
+225 remaining: ?5 ?6 01 ?5 ?6
+225 renorm: 0
+225 eta2: ((SetTheory.subset ((Tuples.rel_comp ?3) ?0)) ((Tuples.prod ?1) ?4)) (%e. (?7=((SetTheory.subset ((Tuples.rel_comp ?3) ?0)) ((Tuples.prod ?1) ?4)) B0))
+225 ins: 3 2
+228 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ?1))) (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?0)) ?0)) (Tuples.Id ?1))))
+228 vars: ?0 ?1
+228 prems: 1
+228 concl: ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?0)) ?0)) (Tuples.Id ?1))
+228 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((SetTheory.in::dummy ((Tuples.Append::dummy ?etc.0:dummy) ?etc.0:dummy)) (Tuples.Id::dummy ?etc.0:dummy))
+228 goal: 10
+228 aconv: 010
+228 occurs: 11 11
+228 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) ?2))) (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:S0[?2])) S:S0[?2])) (Tuples.Id ?2))))
+228 remaining: ?2 01 ?2
+228 renorm: 1
+228 eta2: ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?0)) ?0)) (Tuples.Id ?1)) (%e. (?3=((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?0)) ?0)) (Tuples.Id ?1)) B0))
+228 ins: 2 1
+231 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((?1 ?2) ?3)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?2)) ?3)) ?4))) (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Tuples.setOfPairs ?4) ?1)))))
+231 vars: ?2 ?3 ?0 ?4 ?1
+231 prems: 2
+231 concl: ((SetTheory.in ?0) ((Tuples.setOfPairs ?4) ?1))
+231 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((SetTheory.in::dummy ?etc.0:dummy) ((Tuples.setOfPairs::dummy ?etc.0:dummy) ?etc.0:dummy))
+231 goal: 10
+231 aconv: 010
+231 occurs: 11111 11111
+231 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?5,?6]) ((?6 S:S2[?5]) ?5)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:S2[?5])) ?5)) S:S4[]))) (PredicateLogic.Trueprop ((SetTheory.in S:S0[?5,?6]) ((Tuples.setOfPairs S:S4[]) ?6)))))
+231 remaining: ?5 ?6 01 ?5 ?6
+231 renorm: 0
+231 eta2: ((SetTheory.in ?0) ((Tuples.setOfPairs ?4) ?1)) (%e. (?7=((SetTheory.in ?0) ((Tuples.setOfPairs ?4) ?1)) B0))
+231 ins: 3 2
+234 from: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) ((Functions.fapply Integers.succ) (Tuples.Len ?1)))))) ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?1))) (%n. ((PredicateLogic.eq ((Functions.fapply ?0) B0)) ((Functions.fapply ?1) B0)))))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((Functions.fapply ?0) ((Functions.fapply Integers.succ) (Tuples.Len ?1)))) ?2))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ?1) ?2))))))))
+234 vars: ?0 ?1 ?2
+234 prems: 5
+234 concl: ((PredicateLogic.eq ?0) ((Tuples.Append ?1) ?2))
+234 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Functions.isAFcn::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((Tuples.Append::dummy ?etc.0:dummy) ?etc.0:dummy))
+234 goal: 10
+234 aconv: 010
+234 occurs: 111 111
+234 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S0[?3])) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) ((Functions.fapply Integers.succ) (Tuples.Len ?3)))))) ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?3))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.bAll ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?3))) (%n. ((PredicateLogic.eq ((Functions.fapply ?4=S:S0[?3,?5]) B0)) ((Functions.fapply ?3) B0)))))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((Functions.fapply S:S0[?3]) ((Functions.fapply Integers.succ) (Tuples.Len ?3)))) S:S2[]))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ((Tuples.Append ?3) S:S2[]))))))))
+234 remaining: ?3 01 ?3
+234 renorm: 1
+234 beta: ((PredicateLogic.eq ((Functions.fapply ?0) F:a)) ((Functions.fapply ?1) F:a)) 1
+234 eta: (%e. ((PredicateLogic.eq ((Functions.fapply ?0) B0)) ((Functions.fapply ?1) B0))) 1
+234 nested: ((PredicateLogic.eq ((Functions.fapply ?0) F:b)) ((Functions.fapply ?1) F:b))
+234 eta2: ((PredicateLogic.eq ?0) ((Tuples.Append ?1) ?2)) (%e. (?6=((PredicateLogic.eq ?0) ((Tuples.Append ?1) ?2)) B0))
+234 ins: 6 5
+237 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) (Tuples.Seq ?1)))) (PredicateLogic.Trueprop (Functions.isAFcn ((Tuples.Append ?0) ?2))))
+237 vars: ?1 ?0 ?2
+237 prems: 1
+237 concl: (Functions.isAFcn ((Tuples.Append ?0) ?2))
+237 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy (Functions.isAFcn::dummy ?etc.0:dummy))) (Functions.isAFcn::dummy ((Tuples.Append::dummy ?etc.0:dummy) ?etc.0:dummy))
+237 goal: 10
+237 aconv: 010
+237 occurs: 111 111
+237 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) (Tuples.Seq ?3)))) (PredicateLogic.Trueprop (Functions.isAFcn ((Tuples.Append S:S0[?3]) S:S2[]))))
+237 remaining: ?3 01 ?3
+237 renorm: 1
+237 eta2: (Functions.isAFcn ((Tuples.Append ?0) ?2)) (%e. (?4=(Functions.isAFcn ((Tuples.Append ?0) ?2)) B0))
+237 ins: 2 1
+240 from: ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?0))) ((Pure.imp (Pure.all{PredicateLogic.c} (%k. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?0))))) (PredicateLogic.Trueprop ((SetTheory.in ((Functions.fapply ?0) B0)) ?1)))))) (PredicateLogic.Trueprop ((SetTheory.in ?0) (Tuples.Seq ?1)))))
+240 vars: ?0 ?1
+240 prems: 2
+240 concl: ((SetTheory.in ?0) (Tuples.Seq ?1))
+240 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Tuples.isASeq::dummy ?etc.0:dummy))) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((SetTheory.in::dummy ?etc.0:dummy) (Tuples.Seq::dummy ?etc.0:dummy))
+240 goal: 10
+240 aconv: 010
+240 occurs: 11 11
+240 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq S:S0[?2]))) ((Pure.imp (Pure.all{PredicateLogic.c} (%k. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?3=S:S0[?2]))))) (PredicateLogic.Trueprop ((SetTheory.in ((Functions.fapply ?3=S:S0[?2]) B0)) ?2)))))) (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) (Tuples.Seq ?2)))))
+240 remaining: ?2 01 ?2
+240 renorm: 1
+240 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?2]) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len S:S0[?2]))))) (PredicateLogic.Trueprop ((SetTheory.in ((Functions.fapply S:S0[?2]) S:K[?2])) ?2)))
+240 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?0))))) (PredicateLogic.Trueprop ((SetTheory.in ((Functions.fapply ?0) F:a)) ?1))) 1
+240 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?0))))) (PredicateLogic.Trueprop ((SetTheory.in ((Functions.fapply ?0) B0)) ?1)))) 1
+240 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?0))))) (PredicateLogic.Trueprop ((SetTheory.in ((Functions.fapply ?0) F:b)) ?1)))
+240 eta2: ((SetTheory.in ?0) (Tuples.Seq ?1)) (%e. (?4=((SetTheory.in ?0) (Tuples.Seq ?1)) B0))
+240 ins: 3 2
+243 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less Integers.zero) ?1))) (PredicateLogic.Trueprop ((SetTheory.in ((IntegerDivision.mod ?0) ?1)) Integers.Int)))))
+243 vars: ?0 ?1
+243 prems: 3
+243 concl: ((SetTheory.in ((IntegerDivision.mod ?0) ?1)) Integers.Int)
+243 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((SetTheory.in::dummy ((IntegerDivision.mod::dummy ?etc.0:dummy) ?etc.0:dummy)) Integers.Int::dummy)
+243 goal: 10
+243 aconv: 010
+243 occurs: 11 11
+243 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less Integers.zero) ?2))) (PredicateLogic.Trueprop ((SetTheory.in ((IntegerDivision.mod S:S0[?2]) ?2)) Integers.Int)))))
+243 remaining: ?2 01 ?2
+243 renorm: 1
+243 eta2: ((SetTheory.in ((IntegerDivision.mod ?0) ?1)) Integers.Int) (%e. (?3=((SetTheory.in ((IntegerDivision.mod ?0) ?1)) Integers.Int) B0))
+243 ins: 4 3
+246 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) (PredicateLogic.Trueprop ((IntegerDivision.dvd ?0) ((IntegerArithmetic.multint ?0) ?1)))))
+246 vars: ?0 ?1
+246 prems: 2
+246 concl: ((IntegerDivision.dvd ?0) ((IntegerArithmetic.multint ?0) ?1))
+246 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((IntegerDivision.dvd::dummy ?etc.0:dummy) ((IntegerArithmetic.multint::dummy ?etc.0:dummy) ?etc.0:dummy))
+246 goal: 10
+246 aconv: 010
+246 occurs: 11 11
+246 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) (PredicateLogic.Trueprop ((IntegerDivision.dvd S:S0[?2]) ((IntegerArithmetic.multint S:S0[?2]) ?2)))))
+246 remaining: ?2 01 ?2
+246 renorm: 1
+246 eta2: ((IntegerDivision.dvd ?0) ((IntegerArithmetic.multint ?0) ?1)) (%e. (?3=((IntegerDivision.dvd ?0) ((IntegerArithmetic.multint ?0) ?1)) B0))
+246 ins: 3 2
+249 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) (PredicateLogic.Trueprop ((IntegerDivision.dvd ?0) Integers.zero)))
+249 vars: ?0
+249 prems: 1
+249 concl: ((IntegerDivision.dvd ?0) Integers.zero)
+249 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy ((IntegerDivision.dvd::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerDivision.dvd::dummy ?etc.0:dummy) Integers.zero::dummy)
+249 goal: 10
+249 aconv: 010
+249 occurs: 1 1
+249 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[]) Integers.Int))) (PredicateLogic.Trueprop ((IntegerDivision.dvd S:S0[]) Integers.zero)))
+249 remaining:  01 
+249 renorm: 1
+249 eta2: ((IntegerDivision.dvd ?0) Integers.zero) (%e. (?1=((IntegerDivision.dvd ?0) Integers.zero) B0))
+249 ins: 2 1
+252 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((IntegerArithmetic.intvl ?1) ?2))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((IntegerArithmetic.intvl ?1) ?2)))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?0)))))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((IntegerArithmetic.intvl ?1) ?2)))))
+252 vars: ?0 ?1 ?2
+252 prems: 2
+252 concl: ((PredicateLogic.eq ?0) ((IntegerArithmetic.intvl ?1) ?2))
+252 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ((IntegerArithmetic.intvl::dummy ?etc.0:dummy) ?etc.0:dummy))
+252 goal: 10
+252 aconv: 010
+252 occurs: 111 111
+252 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5]))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((IntegerArithmetic.intvl ?4) ?5=S:S2[]))))))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ((IntegerArithmetic.intvl ?4) ?5=S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in B0) ?3=S:S0[?4,?5])))))) (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4]) ((IntegerArithmetic.intvl ?4) S:S2[])))))
+252 remaining: ?4 01 ?4
+252 renorm: 1
+252 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4]))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((IntegerArithmetic.intvl ?4) S:S2[]))))
+252 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) ((IntegerArithmetic.intvl ?4) S:S2[])))) (PredicateLogic.Trueprop ((SetTheory.in S:K[?4]) S:S0[?4])))
+252 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:a) ((IntegerArithmetic.intvl ?1) ?2)))) 1
+252 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in B0) ((IntegerArithmetic.intvl ?1) ?2))))) 1
+252 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in F:b) ((IntegerArithmetic.intvl ?1) ?2))))
+252 eta2: ((PredicateLogic.eq ?0) ((IntegerArithmetic.intvl ?1) ?2)) (%e. (?6=((PredicateLogic.eq ?0) ((IntegerArithmetic.intvl ?1) ?2)) B0))
+252 ins: 3 2
+255 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less Integers.zero) ?2))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ?0) ((IntegerArithmetic.addint ?2) ?1))))))))
+255 vars: ?0 ?2 ?1
+255 prems: 5
+255 concl: ((IntegerArithmetic.less ?0) ((IntegerArithmetic.addint ?2) ?1))
+255 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.less::dummy ?etc.0:dummy) ((IntegerArithmetic.addint::dummy ?etc.0:dummy) ?etc.0:dummy))
+255 goal: 10
+255 aconv: 010
+255 occurs: 111 111
+255 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?3]) ?3))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less Integers.zero) S:S2[]))) (PredicateLogic.Trueprop ((IntegerArithmetic.less S:S0[?3]) ((IntegerArithmetic.addint S:S2[]) ?3))))))))
+255 remaining: ?3 01 ?3
+255 renorm: 1
+255 eta2: ((IntegerArithmetic.less ?0) ((IntegerArithmetic.addint ?2) ?1)) (%e. (?4=((IntegerArithmetic.less ?0) ((IntegerArithmetic.addint ?2) ?1)) B0))
+255 ins: 6 5
+258 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq Integers.zero) ?2))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ?0) ((IntegerArithmetic.addint ?1) ?2))))))))
+258 vars: ?0 ?1 ?2
+258 prems: 5
+258 concl: ((IntegerArithmetic.less ?0) ((IntegerArithmetic.addint ?1) ?2))
+258 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.less::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.less::dummy ?etc.0:dummy) ((IntegerArithmetic.addint::dummy ?etc.0:dummy) ?etc.0:dummy))
+258 goal: 10
+258 aconv: 010
+258 occurs: 111 111
+258 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less S:S0[?3]) ?3))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq Integers.zero) S:S2[]))) (PredicateLogic.Trueprop ((IntegerArithmetic.less S:S0[?3]) ((IntegerArithmetic.addint ?3) S:S2[]))))))))
+258 remaining: ?3 01 ?3
+258 renorm: 1
+258 eta2: ((IntegerArithmetic.less ?0) ((IntegerArithmetic.addint ?1) ?2)) (%e. (?4=((IntegerArithmetic.less ?0) ((IntegerArithmetic.addint ?1) ?2)) B0))
+258 ins: 6 5
+261 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq Integers.zero) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?1) ((IntegerArithmetic.addint ?0) ?1))))))
+261 vars: ?0 ?1
+261 prems: 3
+261 concl: ((IntegerArithmetic.leq ?1) ((IntegerArithmetic.addint ?0) ?1))
+261 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ((IntegerArithmetic.addint::dummy ?etc.0:dummy) ?etc.0:dummy))
+261 goal: 10
+261 aconv: 010
+261 occurs: 11 11
+261 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq Integers.zero) S:S0[?2]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?2) ((IntegerArithmetic.addint S:S0[?2]) ?2))))))
+261 remaining: ?2 01 ?2
+261 renorm: 1
+261 eta2: ((IntegerArithmetic.leq ?1) ((IntegerArithmetic.addint ?0) ?1)) (%e. (?3=((IntegerArithmetic.leq ?1) ((IntegerArithmetic.addint ?0) ?1)) B0))
+261 ins: 4 3
+264 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ((Functions.fapply Integers.pred) ?0)) ?0)))
+264 vars: ?0
+264 prems: 1
+264 concl: ((IntegerArithmetic.less ((Functions.fapply Integers.pred) ?0)) ?0)
+264 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.less::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.less::dummy ((Functions.fapply::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+264 goal: 10
+264 aconv: 010
+264 occurs: 1 1
+264 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[]) Integers.Int))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ((Functions.fapply Integers.pred) S:S0[])) S:S0[])))
+264 remaining:  01 
+264 renorm: 1
+264 eta2: ((IntegerArithmetic.less ((Functions.fapply Integers.pred) ?0)) ?0) (%e. (?1=((IntegerArithmetic.less ((Functions.fapply Integers.pred) ?0)) ?0) B0))
+264 ins: 2 1
+267 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less ?0) ?1))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ((Functions.fapply Integers.succ) ?0)) ((Functions.fapply Integers.succ) ?1))))))
+267 vars: ?0 ?1
+267 prems: 3
+267 concl: ((IntegerArithmetic.less ((Functions.fapply Integers.succ) ?0)) ((Functions.fapply Integers.succ) ?1))
+267 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.less::dummy ((Functions.fapply::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Functions.fapply::dummy ?etc.0:dummy) ?etc.0:dummy))
+267 goal: 10
+267 aconv: 010
+267 occurs: 11 11
+267 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.less S:S0[?2]) ?2))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ((Functions.fapply Integers.succ) S:S0[?2])) ((Functions.fapply Integers.succ) ?2))))))
+267 remaining: ?2 01 ?2
+267 renorm: 1
+267 eta2: ((IntegerArithmetic.less ((Functions.fapply Integers.succ) ?0)) ((Functions.fapply Integers.succ) ?1)) (%e. (?3=((IntegerArithmetic.less ((Functions.fapply Integers.succ) ?0)) ((Functions.fapply Integers.succ) ?1)) B0))
+267 ins: 4 3
+270 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ?0)) ?1)))))
+270 vars: ?0 ?1
+270 prems: 3
+270 concl: ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ?0)) ?1)
+270 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.leq::dummy ((Functions.fapply::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+270 goal: 10
+270 aconv: 010
+270 occurs: 11 11
+270 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?2]) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) S:S0[?2])) ?2)))))
+270 remaining: ?2 01 ?2
+270 renorm: 1
+270 eta2: ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ?0)) ?1) (%e. (?3=((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ?0)) ?1) B0))
+270 ins: 4 3
+273 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ((Functions.fapply Integers.succ) ?0))))
+273 vars: ?0
+273 prems: 1
+273 concl: ((IntegerArithmetic.leq ?0) ((Functions.fapply Integers.succ) ?0))
+273 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ((Functions.fapply::dummy ?etc.0:dummy) ?etc.0:dummy))
+273 goal: 10
+273 aconv: 010
+273 occurs: 1 1
+273 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[]) Integers.Int))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[]) ((Functions.fapply Integers.succ) S:S0[]))))
+273 remaining:  01 
+273 renorm: 1
+273 eta2: ((IntegerArithmetic.leq ?0) ((Functions.fapply Integers.succ) ?0)) (%e. (?1=((IntegerArithmetic.leq ?0) ((Functions.fapply Integers.succ) ?0)) B0))
+273 ins: 2 1
+276 from: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((PredicateLogic.eq ?0) ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?1) ?0))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ?1) ?0))))
+276 vars: ?1 ?0
+276 prems: 2
+276 concl: ((IntegerArithmetic.less ?1) ?0)
+276 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (PredicateLogic.not::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((IntegerArithmetic.less::dummy ?etc.0:dummy) ?etc.0:dummy)
+276 goal: 10
+276 aconv: 010
+276 occurs: 11 11
+276 instantiated: ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((PredicateLogic.eq S:S0[?2]) ?2)))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?2) S:S0[?2]))) (PredicateLogic.Trueprop ((IntegerArithmetic.less ?2) S:S0[?2]))))
+276 remaining: ?2 01 ?2
+276 renorm: 1
+276 eta2: ((IntegerArithmetic.less ?1) ?0) (%e. (?3=((IntegerArithmetic.less ?1) ?0) B0))
+276 ins: 3 2
+279 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) (PredicateLogic.Trueprop ((SetTheory.in ((IntegerArithmetic.multint ?0) ?1)) Integers.Int))))
+279 vars: ?0 ?1
+279 prems: 2
+279 concl: ((SetTheory.in ((IntegerArithmetic.multint ?0) ?1)) Integers.Int)
+279 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((SetTheory.in::dummy ((IntegerArithmetic.multint::dummy ?etc.0:dummy) ?etc.0:dummy)) Integers.Int::dummy)
+279 goal: 10
+279 aconv: 010
+279 occurs: 11 11
+279 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) (PredicateLogic.Trueprop ((SetTheory.in ((IntegerArithmetic.multint S:S0[?2]) ?2)) Integers.Int))))
+279 remaining: ?2 01 ?2
+279 renorm: 1
+279 eta2: ((SetTheory.in ((IntegerArithmetic.multint ?0) ?1)) Integers.Int) (%e. (?3=((SetTheory.in ((IntegerArithmetic.multint ?0) ?1)) Integers.Int) B0))
+279 ins: 3 2
+282 from: (PredicateLogic.Trueprop ((Functions.InjectiveOn (Functions.Inverse ?0)) (Functions.DOMAIN (Functions.Inverse ?0))))
+282 vars: ?0
+282 prems: 0
+282 concl: ((Functions.InjectiveOn (Functions.Inverse ?0)) (Functions.DOMAIN (Functions.Inverse ?0)))
+282 toTerm: (PredicateLogic.Trueprop::dummy ((Functions.InjectiveOn::dummy (Functions.Inverse::dummy ?etc.0:dummy)) (Functions.DOMAIN::dummy ?etc.0:dummy))) ((Functions.InjectiveOn::dummy (Functions.Inverse::dummy ?etc.0:dummy)) (Functions.DOMAIN::dummy ?etc.0:dummy))
+282 goal: 10
+282 aconv: 010
+282 occurs: 1 1
+282 instantiated: (PredicateLogic.Trueprop ((Functions.InjectiveOn (Functions.Inverse S:S0[])) (Functions.DOMAIN (Functions.Inverse S:S0[]))))
+282 remaining:  01 
+282 renorm: 1
+282 eta2: ((Functions.InjectiveOn (Functions.Inverse ?0)) (Functions.DOMAIN (Functions.Inverse ?0))) (%e. (?1=((Functions.InjectiveOn (Functions.Inverse ?0)) (Functions.DOMAIN (Functions.Inverse ?0))) B0))
+282 ins: 1 -
+285 from: ((Pure.imp (Pure.all{PredicateLogic.c} (%B. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in ?1) B0)))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.Ex{PredicateLogic.c} (%B. ((SetTheory.in B0) ?0))))) (PredicateLogic.Trueprop ((SetTheory.in ?1) (SetTheory.INTER ?0)))))
+285 vars: ?1 ?0
+285 prems: 2
+285 concl: ((SetTheory.in ?1) (SetTheory.INTER ?0))
+285 toTerm: ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((SetTheory.in::dummy ?etc.0:dummy) (SetTheory.INTER::dummy ?etc.0:dummy))
+285 goal: 10
+285 aconv: 010
+285 occurs: 11 11
+285 instantiated: ((Pure.imp (Pure.all{PredicateLogic.c} (%B. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2=S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in ?3) B0)))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.Ex{PredicateLogic.c} (%B. ((SetTheory.in B0) ?2=S:S0[?3]))))) (PredicateLogic.Trueprop ((SetTheory.in ?3) (SetTheory.INTER S:S0[?3])))))
+285 remaining: ?3 01 ?3
+285 renorm: 1
+285 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?3]) S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in ?3) S:K[?3])))
+285 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?0))) (PredicateLogic.Trueprop ((SetTheory.in ?1) F:a))) 1
+285 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?0))) (PredicateLogic.Trueprop ((SetTheory.in ?1) B0)))) 1
+285 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?0))) (PredicateLogic.Trueprop ((SetTheory.in ?1) F:b)))
+285 eta2: ((SetTheory.in ?1) (SetTheory.INTER ?0)) (%e. (?4=((SetTheory.in ?1) (SetTheory.INTER ?0)) B0))
+285 ins: 3 2
+288 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop (?2 ?0))) (PredicateLogic.Trueprop ((SetTheory.bEx ?1) ?2))))
+288 vars: ?0 ?1 ?2
+288 prems: 2
+288 concl: ((SetTheory.bEx ?1) ?2)
+288 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((SetTheory.bEx::dummy ?etc.0:dummy) ?etc.0:dummy)
+288 goal: 10
+288 aconv: 010
+288 occurs: 111 111
+288 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) ?3))) ((Pure.imp (PredicateLogic.Trueprop (S:S2[] S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.bEx ?3) S:S2[]))))
+288 remaining: ?3 01 ?3
+288 renorm: 1
+288 eta2: ((SetTheory.bEx ?1) ?2) (%e. (?4=((SetTheory.bEx ?1) ?2) B0))
+288 ins: 3 2
+291 from: ((Pure.imp (PredicateLogic.Trueprop ?0)) (PredicateLogic.Trueprop ((PredicateLogic.eq (PredicateLogic.boolify ?0)) PredicateLogic.TRUE)))
+291 vars: ?0
+291 prems: 1
+291 concl: ((PredicateLogic.eq (PredicateLogic.boolify ?0)) PredicateLogic.TRUE)
+291 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy (PredicateLogic.boolify::dummy ?etc.0:dummy)) PredicateLogic.TRUE::dummy)
+291 goal: 10
+291 aconv: 010
+291 occurs: 1 1
+291 instantiated: ((Pure.imp (PredicateLogic.Trueprop S:S0[])) (PredicateLogic.Trueprop ((PredicateLogic.eq (PredicateLogic.boolify S:S0[])) PredicateLogic.TRUE)))
+291 remaining:  01 
+291 renorm: 1
+291 eta2: ((PredicateLogic.eq (PredicateLogic.boolify ?0)) PredicateLogic.TRUE) (%e. (?1=((PredicateLogic.eq (PredicateLogic.boolify ?0)) PredicateLogic.TRUE) B0))
+291 ins: 2 1
+294 from: ((Pure.imp (PredicateLogic.Trueprop (?0 ?1))) (PredicateLogic.Trueprop (PredicateLogic.Ex{?2} ?0)))
+294 vars: ?1 ?2 ?0
+294 prems: 1
+294 concl: (PredicateLogic.Ex{?2} ?0)
+294 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (?etc.0:dummy ?etc.0:dummy))) (PredicateLogic.Trueprop::dummy (PredicateLogic.Ex::dummy ?etc.0:dummy))) (PredicateLogic.Ex::dummy ?etc.0:dummy)
+294 goal: 10
+294 aconv: 010
+294 occurs: 101 110
+294 instantiated: ((Pure.imp (PredicateLogic.Trueprop (S:S0[?3] ?3))) (PredicateLogic.Trueprop (PredicateLogic.Ex{S:S2[]} S:S0[?3])))
+294 remaining: ?3 01 ?3
+294 renorm: 1
+294 eta2: (PredicateLogic.Ex{?2} ?0) (%e. (?4=(PredicateLogic.Ex{?2} ?0) B0))
+294 ins: 2 1
+297 from: ((Pure.imp (PredicateLogic.Trueprop (Tuples.antisymmetric ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?1)) ?2)) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?2)) ?1)) ?0))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?1) ?2)))))
+297 vars: ?0 ?1 ?2
+297 prems: 3
+297 concl: ((PredicateLogic.eq ?1) ?2)
+297 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Tuples.antisymmetric::dummy ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy)
+297 goal: 10
+297 aconv: 010
+297 occurs: 111 111
+297 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Tuples.antisymmetric S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?3)) S:S2[])) S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:S2[])) ?3)) S:S0[?3]))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?3) S:S2[])))))
+297 remaining: ?3 01 ?3
+297 renorm: 1
+297 eta2: ((PredicateLogic.eq ?1) ?2) (%e. (?4=((PredicateLogic.eq ?1) ?2) B0))
+297 ins: 4 3
+300 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) (Tuples.rel_domain ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?1) ((Tuples.prod ?2) ?3)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%y. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?0)) B0)) ?1))) (PredicateLogic.Trueprop ?4))))) (PredicateLogic.Trueprop ?4))))
+300 vars: ?2 ?3 ?0 ?1 ?4
+300 prems: 3
+300 concl: ?4
+300 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+300 goal: 10
+300 aconv: 010
+300 norm: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) (Tuples.rel_domain ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?1) ((Tuples.prod ?2) ?3)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%y. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?0)) B0)) ?1))) (PredicateLogic.Trueprop ?4=*False*))))) (PredicateLogic.Trueprop *False*))))
+300 occurs: 11111 11111
+300 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?5,?6]) (Tuples.rel_domain ?6)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?6) ((Tuples.prod S:S2[?5]) ?5)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%y. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?7=S:S0[?6,?8,?5,?9])) B0)) ?6))) (PredicateLogic.Trueprop ?9=S:S4[]))))) (PredicateLogic.Trueprop S:S4[]))))
+300 remaining: ?5 ?6 01 ?5 ?6
+300 renorm: 0
+300 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:S0[?5,?6])) S:K[?6,?5])) ?6))) (PredicateLogic.Trueprop S:S4[]))
+300 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?0)) F:a)) ?1))) (PredicateLogic.Trueprop ?4=*False*)) 1
+300 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?0)) B0)) ?1))) (PredicateLogic.Trueprop ?4=*False*))) 1
+300 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ((Tuples.Append ((Tuples.Append Tuples.emptySeq) ?0)) F:b)) ?1))) (PredicateLogic.Trueprop *False*))
+300 eta2: *False* (%e. (?10=?4=*False* B0))
+300 ins: 4 3
+303 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Tuples.prod ?1) ?2)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%a. (Pure.all{PredicateLogic.c} (%b. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B1) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)))) (PredicateLogic.Trueprop ?3))))))))) (PredicateLogic.Trueprop ?3)))
+303 vars: ?1 ?2 ?0 ?3
+303 prems: 2
+303 concl: ?3
+303 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ?etc.0:dummy
+303 goal: 10
+303 aconv: 010
+303 norm: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Tuples.prod ?1) ?2)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%a. (Pure.all{PredicateLogic.c} (%b. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B1) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)))) (PredicateLogic.Trueprop ?3=*False*))))))))) (PredicateLogic.Trueprop *False*)))
+303 occurs: 1111 1111
+303 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?4,?5]) ((Tuples.prod ?5) S:S2[?4])))) ((Pure.imp (Pure.all{PredicateLogic.c} (%a. (Pure.all{PredicateLogic.c} (%b. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B1) ?5))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?6=S:S2[?4]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?7=S:S0[?5,?6,?4]) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)))) (PredicateLogic.Trueprop ?4))))))))) (PredicateLogic.Trueprop ?4)))
+303 remaining: ?4 ?5 01 ?5 ?4
+303 renorm: 0
+303 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?5,?4]) ?5))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?5,?4]) S:S2[?4]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4,?5]) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) S:K[?5,?4])) S:K[?5,?4])))) (PredicateLogic.Trueprop ?4))))
+303 beta: (Pure.all{PredicateLogic.c} (%b. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:a)) B0)))) (PredicateLogic.Trueprop ?3=*False*)))))) 1
+303 eta: (%e. (Pure.all{PredicateLogic.c} (%b. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B1) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) B1)) B0)))) (PredicateLogic.Trueprop ?3=*False*))))))) 1
+303 nested: (Pure.all{PredicateLogic.c} (%b. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Tuples.Append ((Tuples.Append Tuples.emptySeq) F:b)) B0)))) (PredicateLogic.Trueprop ?3=*False*))))))
+303 eta2: *False* (%e. (?8=?3=*False* B0))
+303 ins: 3 2
+306 from: ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?0))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?0))))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in (Tuples.Len ?0)) Integers.Nat))) (PredicateLogic.Trueprop ?1))))) (PredicateLogic.Trueprop ?1)))
+306 vars: ?0 ?1
+306 prems: 2
+306 concl: ?1
+306 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy (Tuples.isASeq::dummy ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ?etc.0:dummy
+306 goal: 10
+306 aconv: 010
+306 norm: ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq ?0))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn ?0))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN ?0)) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len ?0))))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in (Tuples.Len ?0)) Integers.Nat))) (PredicateLogic.Trueprop *False*))))) (PredicateLogic.Trueprop *False*)))
+306 occurs: 11 11
+306 instantiated: ((Pure.imp (PredicateLogic.Trueprop (Tuples.isASeq S:S0[?2]))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (Functions.isAFcn S:S0[?2]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Functions.DOMAIN S:S0[?2])) ((IntegerArithmetic.intvl ((Functions.fapply Integers.succ) Integers.zero)) (Tuples.Len S:S0[?2]))))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in (Tuples.Len S:S0[?2])) Integers.Nat))) (PredicateLogic.Trueprop ?2))))) (PredicateLogic.Trueprop ?2)))
+306 remaining: ?2 01 ?2
+306 renorm: 1
+306 eta2: *False* (%e. (?3=?1=*False* B0))
+306 ins: 3 2
+309 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ((IntegerArithmetic.addint ?0) ?1))) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq Integers.zero) ?0))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ?1)) ?2)))))))
+309 vars: ?0 ?1 ?2
+309 prems: 5
+309 concl: ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ?1)) ?2)
+309 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.leq::dummy ((Functions.fapply::dummy ?etc.0:dummy) ?etc.0:dummy)) ?etc.0:dummy)
+309 goal: 10
+309 aconv: 010
+309 occurs: 111 111
+309 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ((IntegerArithmetic.addint S:S0[?3]) ?3))) S:S2[]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq Integers.zero) S:S0[?3]))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ?3)) S:S2[])))))))
+309 remaining: ?3 01 ?3
+309 renorm: 1
+309 eta2: ((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ?1)) ?2) (%e. (?4=((IntegerArithmetic.leq ((Functions.fapply Integers.pred) ?1)) ?2) B0))
+309 ins: 6 5
+312 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((IntegerArithmetic.addint ?0) ?1)) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq Integers.zero) ?1))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ?2)))))))
+312 vars: ?1 ?0 ?2
+312 prems: 5
+312 concl: ((IntegerArithmetic.leq ?0) ?2)
+312 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy)
+312 goal: 10
+312 aconv: 010
+312 occurs: 111 111
+312 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ((IntegerArithmetic.addint S:S0[?3]) ?3)) S:S2[]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq Integers.zero) ?3))) (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?3]) S:S2[])))))))
+312 remaining: ?3 01 ?3
+312 renorm: 1
+312 eta2: ((IntegerArithmetic.leq ?0) ?2) (%e. (?4=((IntegerArithmetic.leq ?0) ?2) B0))
+312 ins: 6 5
+315 from: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?1) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?1) ?0))))))
+315 vars: ?1 ?0
+315 prems: 4
+315 concl: ((PredicateLogic.eq ?1) ?0)
+315 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((IntegerArithmetic.leq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy)
+315 goal: 10
+315 aconv: 010
+315 occurs: 11 11
+315 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq S:S0[?2]) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((IntegerArithmetic.leq ?2) S:S0[?2]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?2]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) Integers.Int))) (PredicateLogic.Trueprop ((PredicateLogic.eq ?2) S:S0[?2]))))))
+315 remaining: ?2 01 ?2
+315 renorm: 1
+315 eta2: ((PredicateLogic.eq ?1) ?0) (%e. (?3=((PredicateLogic.eq ?1) ?0) B0))
+315 ins: 5 4
+318 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Integers.upto ?0)) ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) (Integers.upto ?0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) ?1))) (PredicateLogic.Trueprop ?3)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) (Integers.upto ?0))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) ?1)))) (PredicateLogic.Trueprop ?3)))) (PredicateLogic.Trueprop ?3))))
+318 vars: ?0 ?2 ?1 ?3
+318 prems: 3
+318 concl: ?3
+318 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+318 goal: 10
+318 aconv: 010
+318 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Integers.upto ?0)) ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) (Integers.upto ?0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) ?1))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) (Integers.upto ?0))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) ?1)))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+318 occurs: 1111 1111
+318 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Integers.upto S:S0[?4,?5])) ?5))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[?4]) (Integers.upto S:S0[?4,?5])))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[?4]) ?5))) (PredicateLogic.Trueprop ?4)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in S:S2[?4]) (Integers.upto S:S0[?4,?5]))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in S:S2[?4]) ?5)))) (PredicateLogic.Trueprop ?4)))) (PredicateLogic.Trueprop ?4))))
+318 remaining: ?4 ?5 01 ?5 ?4
+318 renorm: 0
+318 eta2: *False* (%e. (?6=?3=*False* B0))
+318 ins: 4 3
+321 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Integers.uminus ?0)) (Integers.uminus ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ?1))) ?2)) ?2))))
+321 vars: ?0 ?1 ?2
+321 prems: 4
+321 concl: ?2
+321 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+321 goal: 10
+321 aconv: 010
+321 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Integers.uminus ?0)) (Integers.uminus ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ?1))) *False*)) *False*))))
+321 occurs: 111 111
+321 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (Integers.uminus S:S0[?3])) (Integers.uminus ?3)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?3]) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) Integers.Int))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) ?3))) S:S2[])) S:S2[]))))
+321 remaining: ?3 01 ?3
+321 renorm: 1
+321 eta2: *False* (%e. (?4=?2=*False* B0))
+321 ins: 5 4
+324 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq Integers.Int) ?0))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) ?0))) (PredicateLogic.Trueprop ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?1) Integers.Int)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?1) ?0)))) (PredicateLogic.Trueprop ?2)))) (PredicateLogic.Trueprop ?2))))
+324 vars: ?1 ?0 ?2
+324 prems: 3
+324 concl: ?2
+324 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+324 goal: 10
+324 aconv: 010
+324 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq Integers.Int) ?0))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) ?0))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?1) Integers.Int)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?1) ?0)))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+324 occurs: 111 111
+324 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq Integers.Int) S:S0[?3]))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) Integers.Int))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) S:S0[?3]))) (PredicateLogic.Trueprop S:S2[])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) Integers.Int)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) S:S0[?3])))) (PredicateLogic.Trueprop S:S2[])))) (PredicateLogic.Trueprop S:S2[]))))
+324 remaining: ?3 01 ?3
+324 renorm: 1
+324 eta2: *False* (%e. (?4=?2=*False* B0))
+324 ins: 4 3
+327 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Functions.Image ?1) ?2)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Functions.DOMAIN ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.fapply ?1) B0)))) (PredicateLogic.Trueprop ?3))))))) (PredicateLogic.Trueprop ?3)))
+327 vars: ?2 ?0 ?1 ?3
+327 prems: 2
+327 concl: ?3
+327 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (Pure.all::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ?etc.0:dummy
+327 goal: 10
+327 aconv: 010
+327 norm: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?0) ((Functions.Image ?1) ?2)))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Functions.DOMAIN ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.fapply ?1) B0)))) (PredicateLogic.Trueprop ?3=*False*))))))) (PredicateLogic.Trueprop *False*)))
+327 occurs: 1111 1111
+327 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S0[?4,?5]) ((Functions.Image ?5) S:S2[?4])))) ((Pure.imp (Pure.all{PredicateLogic.c} (%x. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?6=S:S2[?4]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Functions.DOMAIN ?5)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?7=S:S0[?5,?6,?4]) ((Functions.fapply ?5) B0)))) (PredicateLogic.Trueprop ?4))))))) (PredicateLogic.Trueprop ?4)))
+327 remaining: ?4 ?5 01 ?5 ?4
+327 renorm: 0
+327 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?5,?4]) S:S2[?4]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:K[?5,?4]) (Functions.DOMAIN ?5)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4,?5]) ((Functions.fapply ?5) S:K[?5,?4])))) (PredicateLogic.Trueprop ?4))))
+327 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:a) (Functions.DOMAIN ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.fapply ?1) F:a)))) (PredicateLogic.Trueprop ?3=*False*)))) 1
+327 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in B0) (Functions.DOMAIN ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.fapply ?1) B0)))) (PredicateLogic.Trueprop ?3=*False*))))) 1
+327 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in F:b) (Functions.DOMAIN ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((Functions.fapply ?1) F:b)))) (PredicateLogic.Trueprop *False*))))
+327 eta2: *False* (%e. (?8=?3=*False* B0))
+327 ins: 3 2
+330 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?0) ((SetTheory.addElt ?1) ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?0) ?2))) (PredicateLogic.Trueprop ?3))) ((Pure.imp (Pure.all{PredicateLogic.c} (%C. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.addElt ?1) B0)))) (PredicateLogic.Trueprop ?3)))))) (PredicateLogic.Trueprop ?3))))
+330 vars: ?2 ?0 ?1 ?3
+330 prems: 3
+330 concl: ?3
+330 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.subset::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+330 goal: 10
+330 aconv: 010
+330 norm: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?0) ((SetTheory.addElt ?1) ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?0) ?2))) (PredicateLogic.Trueprop *False*))) ((Pure.imp (Pure.all{PredicateLogic.c} (%C. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.addElt ?1) B0)))) (PredicateLogic.Trueprop ?3=*False*)))))) (PredicateLogic.Trueprop *False*))))
+330 occurs: 1111 1111
+330 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset S:S0[?4,?5]) ((SetTheory.addElt ?5) S:S2[?4])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset S:S0[?4,?5]) S:S2[?4]))) (PredicateLogic.Trueprop ?4))) ((Pure.imp (Pure.all{PredicateLogic.c} (%C. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset B0) ?6=S:S2[?4]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?7=S:S0[?5,?6,?4]) ((SetTheory.addElt ?5) B0)))) (PredicateLogic.Trueprop ?4)))))) (PredicateLogic.Trueprop ?4))))
+330 remaining: ?4 ?5 01 ?5 ?4
+330 renorm: 0
+330 skolemized: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset S:K[?5,?4]) S:S2[?4]))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4,?5]) ((SetTheory.addElt ?5) S:K[?5,?4])))) (PredicateLogic.Trueprop ?4)))
+330 beta: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset F:a) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.addElt ?1) F:a)))) (PredicateLogic.Trueprop ?3=*False*))) 1
+330 eta: (%e. ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset B0) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.addElt ?1) B0)))) (PredicateLogic.Trueprop ?3=*False*)))) 1
+330 nested: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset F:b) ?2))) ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.addElt ?1) F:b)))) (PredicateLogic.Trueprop *False*)))
+330 eta2: *False* (%e. (?8=?3=*False* B0))
+330 ins: 4 3
+333 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.setOfAll ?1) ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ((SetTheory.setOfAll ?1) ?2)))) (PredicateLogic.Trueprop ?4)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ?0)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ((SetTheory.setOfAll ?1) ?2))))) (PredicateLogic.Trueprop ?4)))) (PredicateLogic.Trueprop ?4))))
+333 vars: ?0 ?3 ?1 ?2 ?4
+333 prems: 3
+333 concl: ?4
+333 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+333 goal: 10
+333 aconv: 010
+333 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.setOfAll ?1) ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ((SetTheory.setOfAll ?1) ?2)))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ?0)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ((SetTheory.setOfAll ?1) ?2))))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+333 occurs: 11111 11111
+333 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?5,?6]) ((SetTheory.setOfAll ?6) S:S2[?5])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?5) S:S0[?5,?6]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?5) ((SetTheory.setOfAll ?6) S:S2[?5])))) (PredicateLogic.Trueprop S:S4[])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?5) S:S0[?5,?6])))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?5) ((SetTheory.setOfAll ?6) S:S2[?5]))))) (PredicateLogic.Trueprop S:S4[])))) (PredicateLogic.Trueprop S:S4[]))))
+333 remaining: ?5 ?6 01 ?6 ?5
+333 renorm: 0
+333 eta2: *False* (%e. (?7=?4=*False* B0))
+333 ins: 4 3
+336 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.subsetOf ?0) ?1)) ?2))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ((SetTheory.subsetOf ?0) ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ?2))) (PredicateLogic.Trueprop ?4)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ((SetTheory.subsetOf ?0) ?1))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ?2)))) (PredicateLogic.Trueprop ?4)))) (PredicateLogic.Trueprop ?4))))
+336 vars: ?0 ?1 ?3 ?2 ?4
+336 prems: 3
+336 concl: ?4
+336 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+336 goal: 10
+336 aconv: 010
+336 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.subsetOf ?0) ?1)) ?2))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ((SetTheory.subsetOf ?0) ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ?2))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ((SetTheory.subsetOf ?0) ?1))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ?2)))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+336 occurs: 11111 11111
+336 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.subsetOf S:S0[?5,?6]) ?6)) S:S2[?5]))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?5) ((SetTheory.subsetOf S:S0[?5,?6]) ?6)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?5) S:S2[?5]))) (PredicateLogic.Trueprop S:S4[])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?5) ((SetTheory.subsetOf S:S0[?5,?6]) ?6))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?5) S:S2[?5])))) (PredicateLogic.Trueprop S:S4[])))) (PredicateLogic.Trueprop S:S4[]))))
+336 remaining: ?5 ?6 01 ?6 ?5
+336 renorm: 0
+336 eta2: *False* (%e. (?7=?4=*False* B0))
+336 ins: 4 3
+339 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.inter ?1) ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ((SetTheory.inter ?1) ?2)))) (PredicateLogic.Trueprop ?4)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ?0)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ((SetTheory.inter ?1) ?2))))) (PredicateLogic.Trueprop ?4)))) (PredicateLogic.Trueprop ?4))))
+339 vars: ?0 ?3 ?1 ?2 ?4
+339 prems: 3
+339 concl: ?4
+339 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+339 goal: 10
+339 aconv: 010
+339 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) ((SetTheory.inter ?1) ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ((SetTheory.inter ?1) ?2)))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ?0)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ((SetTheory.inter ?1) ?2))))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+339 occurs: 11111 11111
+339 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?5,?6]) ((SetTheory.inter ?6) S:S2[?5])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?5) S:S0[?5,?6]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?5) ((SetTheory.inter ?6) S:S2[?5])))) (PredicateLogic.Trueprop S:S4[])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?5) S:S0[?5,?6])))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?5) ((SetTheory.inter ?6) S:S2[?5]))))) (PredicateLogic.Trueprop S:S4[])))) (PredicateLogic.Trueprop S:S4[]))))
+339 remaining: ?5 ?6 01 ?6 ?5
+339 renorm: 0
+339 eta2: *False* (%e. (?7=?4=*False* B0))
+339 ins: 4 3
+342 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.union ?0) ?1)) ?2))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ((SetTheory.union ?0) ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ?2))) (PredicateLogic.Trueprop ?4)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ((SetTheory.union ?0) ?1))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ?2)))) (PredicateLogic.Trueprop ?4)))) (PredicateLogic.Trueprop ?4))))
+342 vars: ?0 ?1 ?3 ?2 ?4
+342 prems: 3
+342 concl: ?4
+342 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+342 goal: 10
+342 aconv: 010
+342 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.union ?0) ?1)) ?2))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ((SetTheory.union ?0) ?1)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) ?2))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ((SetTheory.union ?0) ?1))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) ?2)))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+342 occurs: 11111 11111
+342 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ((SetTheory.union S:S0[?5,?6]) ?6)) S:S2[?5]))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?5) ((SetTheory.union S:S0[?5,?6]) ?6)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?5) S:S2[?5]))) (PredicateLogic.Trueprop S:S4[])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?5) ((SetTheory.union S:S0[?5,?6]) ?6))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?5) S:S2[?5])))) (PredicateLogic.Trueprop S:S4[])))) (PredicateLogic.Trueprop S:S4[]))))
+342 remaining: ?5 ?6 01 ?6 ?5
+342 renorm: 0
+342 eta2: *False* (%e. (?7=?4=*False* B0))
+342 ins: 4 3
+345 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (SetTheory.UNION ?1)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) (SetTheory.UNION ?1)))) (PredicateLogic.Trueprop ?3)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) ?0)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) (SetTheory.UNION ?1))))) (PredicateLogic.Trueprop ?3)))) (PredicateLogic.Trueprop ?3))))
+345 vars: ?0 ?2 ?1 ?3
+345 prems: 3
+345 concl: ?3
+345 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+345 goal: 10
+345 aconv: 010
+345 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) (SetTheory.UNION ?1)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) (SetTheory.UNION ?1)))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) ?0)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) (SetTheory.UNION ?1))))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+345 occurs: 1111 1111
+345 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?4,?5]) (SetTheory.UNION ?5)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[?4]) S:S0[?4,?5]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[?4]) (SetTheory.UNION ?5)))) (PredicateLogic.Trueprop ?4)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in S:S2[?4]) S:S0[?4,?5])))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in S:S2[?4]) (SetTheory.UNION ?5))))) (PredicateLogic.Trueprop ?4)))) (PredicateLogic.Trueprop ?4))))
+345 remaining: ?4 ?5 01 ?5 ?4
+345 renorm: 0
+345 eta2: *False* (%e. (?6=?3=*False* B0))
+345 ins: 4 3
+348 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (SetTheory.SUBSET ?0)) ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) (SetTheory.SUBSET ?0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) ?1))) (PredicateLogic.Trueprop ?3)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) (SetTheory.SUBSET ?0))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) ?1)))) (PredicateLogic.Trueprop ?3)))) (PredicateLogic.Trueprop ?3))))
+348 vars: ?0 ?2 ?1 ?3
+348 prems: 3
+348 concl: ?3
+348 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+348 goal: 10
+348 aconv: 010
+348 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (SetTheory.SUBSET ?0)) ?1))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) (SetTheory.SUBSET ?0)))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) ?1))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) (SetTheory.SUBSET ?0))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?2) ?1)))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+348 occurs: 1111 1111
+348 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq (SetTheory.SUBSET S:S0[?4,?5])) ?5))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[?4]) (SetTheory.SUBSET S:S0[?4,?5])))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[?4]) ?5))) (PredicateLogic.Trueprop ?4)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in S:S2[?4]) (SetTheory.SUBSET S:S0[?4,?5]))))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in S:S2[?4]) ?5)))) (PredicateLogic.Trueprop ?4)))) (PredicateLogic.Trueprop ?4))))
+348 remaining: ?4 ?5 01 ?5 ?4
+348 renorm: 0
+348 eta2: *False* (%e. (?6=?3=*False* B0))
+348 ins: 4 3
+351 from: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) SetTheory.emptyset))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) SetTheory.emptyset))) (PredicateLogic.Trueprop ?2)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?1) ?0)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?1) SetTheory.emptyset)))) (PredicateLogic.Trueprop ?2)))) (PredicateLogic.Trueprop ?2))))
+351 vars: ?0 ?1 ?2
+351 prems: 3
+351 concl: ?2
+351 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((PredicateLogic.eq::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy)) ((Pure.imp::dummy ?etc.0:dummy) ?etc.0:dummy))) ?etc.0:dummy
+351 goal: 10
+351 aconv: 010
+351 norm: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq ?0) SetTheory.emptyset))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) ?0))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?1) SetTheory.emptyset))) (PredicateLogic.Trueprop *False*)))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?1) ?0)))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?1) SetTheory.emptyset)))) (PredicateLogic.Trueprop *False*)))) (PredicateLogic.Trueprop *False*))))
+351 occurs: 111 111
+351 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((PredicateLogic.eq S:S0[?3]) SetTheory.emptyset))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) S:S0[?3]))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?3) SetTheory.emptyset))) (PredicateLogic.Trueprop S:S2[])))) ((Pure.imp ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) S:S0[?3])))) ((Pure.imp (PredicateLogic.Trueprop (PredicateLogic.not ((SetTheory.in ?3) SetTheory.emptyset)))) (PredicateLogic.Trueprop S:S2[])))) (PredicateLogic.Trueprop S:S2[]))))
+351 remaining: ?3 01 ?3
+351 renorm: 1
+351 eta2: *False* (%e. (?4=?2=*False* B0))
+351 ins: 4 3
+354 from: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset ?0) ?1))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in ?2) ?0))) (PredicateLogic.Trueprop ((SetTheory.in ?2) ?1))))
+354 vars: ?0 ?2 ?1
+354 prems: 2
+354 concl: ((SetTheory.in ?2) ?1)
+354 toTerm: ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ((SetTheory.subset::dummy ?etc.0:dummy) ?etc.0:dummy))) ((Pure.imp::dummy (PredicateLogic.Trueprop::dummy ?etc.0:dummy)) (PredicateLogic.Trueprop::dummy ?etc.0:dummy))) ((SetTheory.in::dummy ?etc.0:dummy) ?etc.0:dummy)
+354 goal: 10
+354 aconv: 010
+354 occurs: 111 111
+354 instantiated: ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.subset S:S0[?3]) ?3))) ((Pure.imp (PredicateLogic.Trueprop ((SetTheory.in S:S2[]) S:S0[?3]))) (PredicateLogic.Trueprop ((SetTheory.in S:S2[]) ?3))))
+354 remaining: ?3 01 ?3
+354 renorm: 1
+354 eta2: ((SetTheory.in ?2) ?1) (%e. (?4=((SetTheory.in ?2) ?1) B0))
+354 ins: 3 2
