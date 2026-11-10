@@ -10,7 +10,8 @@ pub const EMPTY: Id = u32::MAX;
 
 const PROBATION: u64 = 1 << 13;
 const MINIMUM_HIT_RATE: f64 = 0.2;
-const MAXIMUM_ENTRIES: usize = 1 << 22;
+/// The most entries a table holds, shared out between the machines of a search on threads.
+pub const MAXIMUM_ENTRIES: usize = 1 << 22;
 // A table of width 1 indexes its values by its key while it has at least one entry for every
 // DIRECT_SPARSITY ids its array spans past the first DIRECT_MINIMUM, and never past
 // DIRECT_MAXIMUM ids.
@@ -102,6 +103,8 @@ pub struct MemoTable {
     can_cluster: bool,
     // The largest id stored since the table last forgot, so that it forgets only if it must.
     largest: Id,
+    // The most entries it takes.
+    maximum: usize,
 }
 
 const INITIAL_CAPACITY: usize = 64;
@@ -135,7 +138,13 @@ impl MemoTable {
             is_clustered: false,
             can_cluster: width > 1,
             largest: 0,
+            maximum: MAXIMUM_ENTRIES,
         }
+    }
+
+    /// Takes no more than `maximum` entries from now on.
+    pub fn limit(&mut self, maximum: usize) {
+        self.maximum = maximum;
     }
 
     pub fn width(&self) -> usize {
@@ -268,7 +277,7 @@ impl MemoTable {
 
     // Makes room for a new entry, or says the table takes no more.
     fn claim(&mut self) -> bool {
-        if !self.is_enabled || self.size >= MAXIMUM_ENTRIES {
+        if !self.is_enabled || self.size >= self.maximum {
             return false;
         }
         if (self.size + 1) * 2 > self.capacity() {
@@ -367,7 +376,7 @@ impl MemoTable {
             .iter()
             .fold(self.largest.max(value), |largest, &key| largest.max(key));
         if self.is_direct {
-            if !self.is_enabled || self.size >= MAXIMUM_ENTRIES {
+            if !self.is_enabled || self.size >= self.maximum {
                 return;
             }
             let key = keys[0];
@@ -574,6 +583,20 @@ mod tests {
             assert_eq!(table.get(&[key, key % 5, 1]), key);
         }
         assert!(table.is_clustered);
+    }
+
+    #[test]
+    fn a_limited_table_takes_no_more_entries() {
+        for width in 1..=6 {
+            let mut table = MemoTable::new(width);
+            table.limit(100);
+            for key in 0..200u32 {
+                table.set(&vec![key; width], key);
+            }
+            assert_eq!(table.size(), 100, "width {width}");
+            assert_eq!(table.get(&vec![99; width]), 99);
+            assert_eq!(table.get(&vec![100; width]), EMPTY);
+        }
     }
 
     #[test]
