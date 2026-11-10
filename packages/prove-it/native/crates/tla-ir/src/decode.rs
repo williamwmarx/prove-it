@@ -664,6 +664,7 @@ impl Decoder<'_> {
                     action: node(self)?,
                     subscript: node(self)?,
                     scope: self.optional_below(scope_count, "scope")?,
+                    name: self.text()?,
                 })
             })
             .collect::<Decoded<_>>()?;

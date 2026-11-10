@@ -40,7 +40,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 13;
+pub const IR_VERSION: u32 = 15;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -227,6 +227,10 @@ pub struct ActionProperty {
     pub subscript: NodeId,
     /// The scope of the instance the property comes from, which it is read in.
     pub scope: Option<Index>,
+    /// How TLC names the property as it reports a step that violates it
+    /// (`SpecProcessor.impliedActNameVec`): the configuration's name for a property that is the
+    /// `[][A]_v` alone, and where the `[][A]_v` is written for a conjunct of one.
+    pub name: TextId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
