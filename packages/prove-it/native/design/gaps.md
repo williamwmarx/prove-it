@@ -570,6 +570,43 @@ newest last. DESIGN.md holds the plan; this file holds how each gap was closed.
   (`<<1, 1>> = [a |-> 1, b |-> 1]` compares 1 with "a"). The other order still stops, since the
   left side may be a record. tla-rs model_values_distinct now prints what TLC prints.
 
+## The order TLC searches a function's keys in
+
+- `FcnRcdValue.select`, which applying a function and EXCEPT both start with, searches a sorted
+  domain of 32 keys or more with Java's `Arrays.binarySearch`, asking the key in the middle to
+  compare itself with the argument, and a shorter one key by key, asking each whether it equals
+  the argument. Where the two can't compare, TLC's message is the one of the question asked and
+  names them in that order: `A_31 and B_a` "compare" for Github696's 64 keys, `A_1 and B_1`
+  "check equality of" for two. The replay searched every domain by halves from the argument's
+  side, so it worded such a failure wrongly ("compare ... B_1 and A_2").
+- The replay's `find_key` now searches as TLC does where it knows how (`Function::search`):
+  - `Search::Sorted`, a function TLC built and sorted, searches as `select` does. TLC sorts a
+    state's values as it fingerprints the state (`settle`), and a constant definition's value
+    as it starts (`SpecProcessor.evalConstantDefn`, `note_sorted`). The replay of a failed check
+    of an initial state now settles the state where TLC fingerprints it, after the constraints
+    and before the invariants (`DoInitFunctor`).
+  - `Search::SortedDomain`, a constructor applied while TLC keeps it lazy, over a set a constant
+    definition names: it asks the set, which asks the argument to compare itself with the
+    element in the middle (`ValueVec.search`), as the replay searched every domain before
+    (suite/etest15's "compare integer 2 with non-integer: <<3>>").
+  - `Search::Unknown`, anything else: TLC searches what it hasn't sorted in the order it built
+    it, which the replay doesn't keep, as it doesn't a record's or a tuple's search. There a
+    failure to compare now has no message, so the run isn't native, where it printed a wrong
+    one (`[x \in {3, 1} |-> v]["a"]` asks 3 first, in TLC).
+
+## A lazy function applied outside its domain, in AssertError
+
+- TLC evaluates the function it applies keeping a constructor lazy (`EvalControl.KeepLazy`),
+  and `FcnLambdaValue.apply` words a key outside the domain as "In applying the function\n<the
+  function as its FcnRcdValue prints>,\nthe first argument is:\n<the key>\nwhich is not in its
+  domain.\n", reported with where the function was built. The replay had no message for it.
+  It now has one inside AssertError, which compares the message alone, for a constructor of one
+  name written in place, or named by a LET that names it nowhere else: a LET's value is cached
+  as first evaluated, so another use may have built the function first, which words the
+  failure as a built function's (`is_kept_lazy`, `once_named`; checked with TLC both ways).
+- With both, Github696 (TLC's tests) prints what TLC prints: its AssertError assumptions hold,
+  and the search stops on TLC's comparison of `A_31` with `B_a`.
+
 ## Nat, Int and STRING as values
 
 - TLC holds Nat, Int and STRING as values (`UserValue`): an element of a set, such as `{Nat}`, is
@@ -686,8 +723,9 @@ recursive operator (Github649), ENABLED in the initial predicate (EWD840/MC02, t
 function of several arguments in an action (Elevator), Print under a quantifier (Stones, test11)
 and inside ENABLED (test20), a quantifier over Nat as TLC's failure (Bakery), and membership in
 DOMAIN of a lazy function (test11), INSTANCE in a LET in the replay (the `_anim` models), a
-failure's trace through the ALIAS (bfs_anim) and its postconditions (ChainedCdots), and a
-function compared with a record (model_values_distinct). The addon suite's "leaves a model it can't search to the TypeScript
+failure's trace through the ALIAS (bfs_anim) and its postconditions (ChainedCdots), a function
+compared with a record (model_values_distinct), and Github696 (a lazy function's message in
+AssertError, and the order TLC searches a function's keys in). The addon suite's "leaves a model it can't search to the TypeScript
 engine" already declines on UNCHANGED in the initial predicate.
 
 Done before that (each in a section above): run-time error stops (ErrorSite Init, Next,
@@ -701,13 +739,6 @@ CyclicRedefineInstance, EWD998Chan).
 
 Open, with what is known:
 
-- **Github696, AssertError.** The startup follows AssertError assumptions now (the platform
-  session's), and Github696 declines on "checking an assumption again: ... applied a function
-  outside its domain": the replay has no message for a function TLC still keeps lazy
-  (`describe_missing`, `Class::Lambda`). TLC's `FcnLambdaValue.apply` says "In applying the
-  function\n<the function, printed as a FcnRcdValue>,\nthe first argument is:\n<the
-  argument>\nwhich is not in its domain.\n", which holds where the function is applied under
-  `EvalControl.KeepLazy` with no earlier evaluation that built it, as a LET's `f[-33]` is.
 - **A failure with a POSTCONDITION past the first state expanded.** The CLI declines it: TLC
   checks the postconditions only where the failed expansion had generated no successor, so the
   stop needs to say how many the expansion generated before it failed.

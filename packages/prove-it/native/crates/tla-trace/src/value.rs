@@ -116,9 +116,24 @@ pub struct Function {
     pub range: Vec<Value>,
     pub class: Cell<Class>,
     pub written: RefCell<Option<Vec<u32>>>,
+    /// How TLC searches the function's keys, where the evaluator knows.
+    pub search: Cell<Search>,
     /// The interval the function was built over, which DOMAIN gives back, as TLC keeps a
     /// tuple's or a function's over `a..b` (`getDomainInterval`); `None` for any other domain.
     pub interval: Option<(i32, i32)>,
+}
+
+/// How TLC searches a function's keys for an argument, which decides its message where two
+/// can't compare.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Search {
+    /// TLC holds the keys in the order it built them, which the evaluator doesn't keep.
+    Unknown,
+    /// A function TLC built and sorted (`FcnRcdValue.select` with `isNorm`), as it sorts a
+    /// constant definition's value as it starts and a state's as it fingerprints it.
+    Sorted,
+    /// A function TLC keeps lazy, over a set it has sorted: `SetEnumValue.member`.
+    SortedDomain,
 }
 
 /// The sets TLC keeps lazily, and the infinite ones.
@@ -201,6 +216,7 @@ impl Value {
             range,
             class: Cell::new(class),
             written: RefCell::new(None),
+            search: Cell::new(Search::Unknown),
             interval: None,
         }))
     }
@@ -213,6 +229,7 @@ impl Value {
             range,
             class: Cell::new(class),
             written: RefCell::new(None),
+            search: Cell::new(Search::Unknown),
             interval: Some((low, high)),
         }))
     }
@@ -293,6 +310,7 @@ pub fn written_function(keys: Vec<Value>, values: Vec<Value>, class: Class) -> E
         range,
         class: Cell::new(class),
         written: RefCell::new(written),
+        search: Cell::new(Search::Unknown),
         interval: None,
     })))
 }
@@ -900,18 +918,77 @@ pub fn normalize_failure(elements: &[Value]) -> Option<EvalError> {
     None
 }
 
-/// The position of a key in a function's domain, by binary search in TLC's order.
+/// From how many keys TLC searches a sorted function's domain by halves
+/// (`FcnRcdValue.LINEAR_SEARCH_THRESHOLD`).
+const BINARY_SEARCH_KEYS: usize = 32;
+
+/// The position of a key in a function's domain, as TLC searches for it. `FcnRcdValue.select`
+/// searches a sorted domain of 32 keys or more with Java's `Arrays.binarySearch`, which asks the
+/// key in the middle to compare itself with the argument, and a shorter one key by key, asking
+/// each whether it equals the argument. A function TLC keeps lazy asks its bound's set, which
+/// asks the argument to compare itself with the element in the middle (`ValueVec.search`).
+/// Where two can't compare, TLC's message is the one of the question asked, and names them in
+/// that order. TLC searches what it hasn't sorted in the order it built it, which the evaluator
+/// doesn't keep, as it doesn't a record's or a tuple's search: there a failure to compare has no
+/// message.
 pub fn find_key(function: &Function, key: &Value) -> Evaluated<Option<usize>> {
+    let is_function = matches!(function.class.get(), Class::Plain | Class::Lambda);
+    let search = if is_function && function.interval.is_none() {
+        function.search.get()
+    } else {
+        Search::Unknown
+    };
+    if search == Search::Sorted {
+        if function.domain.len() >= BINARY_SEARCH_KEYS {
+            let (mut low, mut high) = (0, function.domain.len() - 1);
+            while low <= high {
+                let middle = (low + high) / 2;
+                match compare(&function.domain[middle], key)? {
+                    Ordering::Equal => return Ok(Some(middle)),
+                    Ordering::Less => low = middle + 1,
+                    Ordering::Greater if middle == 0 => break,
+                    Ordering::Greater => high = middle - 1,
+                }
+            }
+            return Ok(None);
+        }
+        for (position, own) in function.domain.iter().enumerate() {
+            if equals(own, key)? {
+                return Ok(Some(position));
+            }
+        }
+        return Ok(None);
+    }
     let (mut low, mut high) = (0, function.domain.len());
     while low < high {
         let middle = low + (high - low) / 2;
-        match compare(key, &function.domain[middle])? {
+        let order = compare(key, &function.domain[middle]).map_err(|error| EvalError {
+            reason: error.reason,
+            message: error.message.filter(|_| search == Search::SortedDomain),
+        })?;
+        match order {
             Ordering::Equal => return Ok(Some(middle)),
             Ordering::Less => high = middle,
             Ordering::Greater => low = middle + 1,
         }
     }
     Ok(None)
+}
+
+/// Notes that TLC has sorted a value, a constant definition's as it starts
+/// (`SpecProcessor.evalConstantDefn`): each function in it that the evaluator holds sorted too.
+pub fn note_sorted(value: &Value) {
+    match value {
+        Value::Set(elements) => elements.iter().for_each(note_sorted),
+        Value::Function(function) => {
+            if function.written.borrow().is_none() {
+                function.search.set(Search::Sorted);
+            }
+            function.domain.iter().for_each(note_sorted);
+            function.range.iter().for_each(note_sorted);
+        }
+        _ => {}
+    }
 }
 
 /// TLC's fingerprint of a value as a trace rebuilds a state: it sorts each function it reaches
@@ -925,6 +1002,7 @@ pub fn settle(value: &Value) {
         }
         Value::Function(function) => {
             sort(function);
+            function.search.set(Search::Sorted);
             if function.class.get() == Class::Lambda {
                 function.class.set(Class::Plain);
             }
@@ -1173,6 +1251,7 @@ pub fn permute(value: &Value, permutation: &[(Rc<Text>, Rc<Text>)]) -> Evaluated
                     .collect::<Evaluated<_>>()?,
                 class: function.class.clone(),
                 written: RefCell::new(None),
+                search: Cell::new(Search::Unknown),
                 interval: function.interval,
             }))
         }

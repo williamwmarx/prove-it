@@ -4,7 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use tla_values::random::JavaRandom;
@@ -21,9 +21,10 @@ use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{as_tuple, cardinality, difference, intersection, is_member, union};
 use crate::value::{
-    Class, EvalError, Evaluated, Function, Lazy, Text, TlcMessage, Value, compare, elements,
-    equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store, is_enumerable,
-    mark_unnormalized, set_of, sorted_function, unnormalized, unsorted_failure, written_function,
+    Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
+    elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store,
+    is_enumerable, mark_unnormalized, note_sorted, set_of, sorted_function, unnormalized,
+    unsorted_failure, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -339,6 +340,11 @@ pub struct Evaluator<'ir> {
     /// How many workers TLC runs, which TLCGet("config") reads. `None` where the caller doesn't
     /// say, and TLCGet("config") isn't followed.
     pub workers: Option<usize>,
+    /// How many AssertError expressions the evaluator is inside, which compare a failure's
+    /// message alone, without where TLC reports it.
+    asserting: u32,
+    /// The function constructors a LET names once, found when first asked for.
+    once_named: Option<HashSet<NodeId>>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -561,6 +567,8 @@ impl<'ir> Evaluator<'ir> {
             register_reads: 0,
             is_tool: None,
             workers: None,
+            asserting: 0,
+            once_named: None,
         }
     }
 
@@ -1553,6 +1561,11 @@ impl<'ir> Evaluator<'ir> {
             DefinitionForm::Operator(_) => return fail("an operator used as a value"),
         };
         if self.reads == reads && self.printed.len() == printed {
+            // TLC computed the value of a definition that reads no state as it started, and
+            // sorted it.
+            if matches!(&definition.form, DefinitionForm::Operator(_)) {
+                note_sorted(&value);
+            }
             self.cache.insert(key, value.clone());
         }
         Ok(value)
@@ -2142,7 +2155,15 @@ impl<'ir> Evaluator<'ir> {
                 keys.push(element.clone());
                 values.push(self.function_body(body, &context.bind_value(name, element.clone()))?);
             }
-            return sorted_function(keys, values, Class::Lambda);
+            let function = sorted_function(keys, values, Class::Lambda)?;
+            // Applied while TLC keeps it lazy, the function asks its bound's set for the
+            // argument, which TLC has sorted where a definition that reads no state names it.
+            if let Value::Function(inner) = &function
+                && self.is_sorted_constant(bound.set)
+            {
+                inner.search.set(Search::SortedDomain);
+            }
+            return Ok(function);
         }
         // TLC evaluates every domain before it enumerates any (`Tool.evalAppl`'s
         // `OPCODE_fc`), so a later domain fails even when an earlier one is empty.
@@ -2165,7 +2186,28 @@ impl<'ir> Evaluator<'ir> {
                 Ok(())
             },
         )?;
-        sorted_function(keys, values, Class::Lambda)
+        let function = sorted_function(keys, values, Class::Lambda)?;
+        if let ([bound], Value::Function(inner)) = (bounds, &function)
+            && self.is_sorted_constant(bound.set)
+        {
+            inner.search.set(Search::SortedDomain);
+        }
+        Ok(function)
+    }
+
+    // Whether an expression names a definition whose value TLC computed and sorted as it
+    // started, which the evaluator has found to read no state.
+    fn is_sorted_constant(&self, node: NodeId) -> bool {
+        let NodeKind::Identifier(name) = self.kind(node) else {
+            return false;
+        };
+        let Resolution::Definition(index) = name.resolution else {
+            return false;
+        };
+        let definition = self.ir.definitions[index as usize];
+        !name.is_local
+            && matches!(&self.definition(definition).form, DefinitionForm::Operator(params) if params.is_empty())
+            && self.cache.contains_key(&(definition, false))
     }
 
     // A function's value at one key. TLC builds the function in a method of the FcnLambdaValue
@@ -2241,6 +2283,7 @@ impl<'ir> Evaluator<'ir> {
             return self.nested(|evaluator| evaluator.evaluate(body, &bound_context));
         }
         // `evalAppl` checks that it applies a function before it evaluates the argument.
+        let function_node = function;
         let function = self.evaluate(function, context)?;
         if let Some(kind) = scalar_kind(&function) {
             return fail_runtime(
@@ -2255,7 +2298,115 @@ impl<'ir> Evaluator<'ir> {
         if let Value::Lambda(lambda) = &function {
             return self.apply_lambda(lambda, &argument);
         }
-        self.apply_checked(&function, &argument)
+        let result = self.apply_checked(&function, &argument);
+        // TLC evaluates the function it applies keeping a constructor lazy
+        // (`EvalControl.KeepLazy`), and `FcnLambdaValue.apply` words a key outside the domain
+        // with the function as its `FcnRcdValue` prints. It reports the failure with where the
+        // function was built, which only AssertError leaves out.
+        match (&result, &function) {
+            (Err(error), Value::Function(inner))
+                if error.message.is_none()
+                    && error.reason == "applied a function outside its domain"
+                    && inner.class.get() == Class::Lambda
+                    && self.asserting > 0
+                    && !self.is_174()
+                    && self.is_kept_lazy(function_node, context) =>
+            {
+                fail_runtime(
+                    &error.reason,
+                    format!(
+                        "In applying the function\n{},\nthe first argument is:\n{}\nwhich is not in its domain.\n",
+                        format_pretty(&function),
+                        format_pretty(&argument)
+                    ),
+                )
+            }
+            _ => result,
+        }
+    }
+
+    // Whether the function `f[e]` applies is certainly one TLC still keeps lazy there: a
+    // constructor of one name written in place, or a LET's name for one that the LET names
+    // nowhere else, so no earlier evaluation has built it (a LET's value is cached as first
+    // evaluated).
+    fn is_kept_lazy(&mut self, function: NodeId, context: &Context) -> bool {
+        let is_constructor = |evaluator: &Self, node: NodeId| {
+            matches!(
+                evaluator.kind(node),
+                NodeKind::FunctionConstruction { is_recursive: false, bounds, .. }
+                    if matches!(&bounds[..], [bound] if matches!(bound.pattern, Pattern::Name(_)))
+            )
+        };
+        match self.kind(function) {
+            NodeKind::FunctionConstruction { .. } => is_constructor(self, function),
+            NodeKind::Identifier(name) if name.is_local => {
+                let Some(frame) = lookup(&context.env, name.text) else {
+                    return false;
+                };
+                let Binding::Thunk { node, .. } = &frame.binding else {
+                    return false;
+                };
+                let node = self.resolved(*node);
+                is_constructor(self, node) && self.once_named().contains(&node)
+            }
+            _ => false,
+        }
+    }
+
+    // The bodies of the LET definitions that are function constructors named once in their LET.
+    fn once_named(&mut self) -> &HashSet<NodeId> {
+        if self.once_named.is_none() {
+            let ir = self.ir;
+            let mut found = HashSet::new();
+            for node in &ir.nodes.arena {
+                let NodeKind::Let {
+                    definitions, body, ..
+                } = &node.kind
+                else {
+                    continue;
+                };
+                for &definition_node in definitions {
+                    let definition = self.definition(definition_node);
+                    let is_named_value = matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty());
+                    let constructor = self.resolved(definition.body);
+                    if !is_named_value
+                        || !matches!(
+                            self.kind(constructor),
+                            NodeKind::FunctionConstruction { .. }
+                        )
+                    {
+                        continue;
+                    }
+                    let uses: usize = definitions
+                        .iter()
+                        .map(|&other| self.definition(other).body)
+                        .chain([*body])
+                        .map(|root| self.count_names(root, definition.name))
+                        .sum();
+                    if uses == 1 {
+                        found.insert(constructor);
+                    }
+                }
+            }
+            self.once_named = Some(found);
+        }
+        self.once_named.as_ref().expect("the set just found")
+    }
+
+    // How many times an expression names `name`, whatever binds it there.
+    fn count_names(&self, node: NodeId, name: TextId) -> usize {
+        let kind = self.kind(node);
+        let own = match kind {
+            NodeKind::Identifier(named) | NodeKind::Apply { name: named, .. } => {
+                usize::from(named.text == name)
+            }
+            _ => 0,
+        };
+        own + kind
+            .children()
+            .into_iter()
+            .map(|child| self.count_names(child, name))
+            .sum::<usize>()
     }
 
     // `FcnLambdaValue.apply`: the value of the last EXCEPT at the key, or else the body on a key
@@ -2469,6 +2620,7 @@ impl<'ir> Evaluator<'ir> {
             range,
             class: function.class.clone(),
             written: function.written.clone(),
+            search: function.search.clone(),
             interval: function.interval,
         })))
     }
@@ -2987,7 +3139,10 @@ impl<'ir> Evaluator<'ir> {
                 if !is_literal {
                     return fail("AssertError of a message that isn't a string");
                 }
-                let message = match self.operand(&operands[1]) {
+                self.asserting += 1;
+                let asserted = self.operand(&operands[1]);
+                self.asserting -= 1;
+                let message = match asserted {
                     Ok(_) => return Ok(Value::Bool(false)),
                     Err(EvalError {
                         message: Some(message),
