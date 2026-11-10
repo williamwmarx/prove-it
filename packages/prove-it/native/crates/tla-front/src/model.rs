@@ -87,6 +87,10 @@ pub fn lower_front(
     lower_ranked(spec_path, config_text, options, &[]).map(|(lowered, _)| lowered)
 }
 
+/// What finds the texts TLC interns as it computes the constant definitions an IR holds, given
+/// their indexes in TLC's order.
+pub type StartupTexts = dyn Fn(&tla_ir::Ir, &[tla_ir::Index]) -> Vec<Box<[u16]>>;
+
 /// The model as `lower_front` lowers it, with the strings TLC makes as it computes the constant
 /// definitions ranked after the spec's, as `check.ts` lowers its IR once it has computed them.
 /// `get_startup_texts` finds them in the IR, given the indexes of the definitions TLC computes
@@ -95,7 +99,7 @@ pub fn lower_front_ranking(
     spec_path: &Path,
     config_text: &str,
     options: &ModelOptions,
-    get_startup_texts: &dyn Fn(&tla_ir::Ir, &[tla_ir::Index]) -> Vec<Box<[u16]>>,
+    get_startup_texts: &StartupTexts,
 ) -> Result<LoweredModel, FrontError> {
     let (lowered, startup) = lower_ranked(spec_path, config_text, options, &[])?;
     let Ok(ir) = tla_ir::decode(&lowered.ir) else {
