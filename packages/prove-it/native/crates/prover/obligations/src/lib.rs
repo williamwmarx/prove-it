@@ -9,6 +9,7 @@ pub mod expression;
 pub mod first_order;
 pub mod format;
 pub mod generate;
+pub mod index;
 pub mod isabelle;
 pub mod levels;
 pub mod module;
