@@ -1,0 +1,102 @@
+// Writes every text tla-ts's prove sends a backend on the recorded modules to .prover-inputs, one
+// file per distinct input, named by its digest, for prover-differential.ts to decide again.
+//
+// Which backends prove tries on an obligation depends on what the earlier ones answered, so the
+// texts come from proving each module. By default the answers come from prover-inputs.json, which
+// makes the run quick and the inputs the same on every machine. With --record, each backend decides
+// each input anew, and prover-inputs.json is rewritten: first with tlapm's time limit, to find the
+// steps the backend takes within it on this machine, then again with those steps as its step limit
+// and no time limit. The second answer and its statistics are what is recorded, and what any port of
+// the backend must reproduce from the same step limit, on any machine. Run it under Node with a
+// larger heap than the default, as the solver's heap fills on a few modules:
+//   NODE_OPTIONS=--max-old-space-size=4500 bun scripts/run.ts prover-inputs [--record] [--jobs n]
+
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { TlaError, TlaProverError } from "../src/errors";
+import { decide } from "../src/prover/deciders";
+import { proveObligations } from "../src/prover/prove";
+import type { Decision } from "../src/prover/verdict";
+import { CORPORA_DIRECTORY, getOption } from "./corpora";
+import { runModuleWorkers } from "./module-workers";
+import {
+  getModuleObligations,
+  getObligationCount,
+  type ModuleProofRecord,
+  readProofRecords,
+} from "./proof-records";
+import {
+  getInputPath,
+  type InputRecord,
+  PROVER_INPUTS_DIRECTORY,
+  PROVER_INPUTS_PATH,
+  readInputRecords,
+  writeInputRecords,
+} from "./prover-records";
+import { getDigest } from "./tlapm-digest";
+
+const isRecording = process.argv.includes("--record");
+
+// What is recorded already. A recording of some modules, with --filter, keeps the others' inputs.
+const records: Record<string, InputRecord> =
+  isRecording && (getOption("--filter") === undefined || !existsSync(PROVER_INPUTS_PATH))
+    ? {}
+    : readInputRecords();
+
+// The recorded answer, as prove's decide gives it: a decision, or the TlaProverError the backend
+// threw.
+const replay = (record: InputRecord): Decision => {
+  if (record.error !== undefined) throw new TlaProverError(record.error);
+  return { verdict: record.verdict, timeUsedMs: 0, statistics: record.statistics };
+};
+
+const record = (prover: string, text: string, timeLimitMs: number): InputRecord => {
+  const getRecord = (): InputRecord => {
+    const steps = Number(decide(prover, text, { timeLimitMs }).statistics.steps);
+    const decision = decide(prover, text, { timeLimitMs: Infinity }, steps);
+    return { prover, stepLimit: steps, verdict: decision.verdict, statistics: decision.statistics };
+  };
+  try {
+    return getRecord();
+  } catch (error) {
+    if (!(error instanceof TlaProverError)) throw error;
+    return { prover, stepLimit: 0, verdict: "unknown", statistics: {}, error: error.message };
+  }
+};
+
+// The inputs of a module's proofs, by digest.
+const writeModuleInputs = async (module: ModuleProofRecord) => {
+  const inputs: Record<string, InputRecord> = {};
+  const obligations = (() => {
+    try {
+      return getModuleObligations(join(CORPORA_DIRECTORY, module.id));
+    } catch (error) {
+      if (!(error instanceof TlaError)) throw error;
+      return [];
+    }
+  })();
+  await proveObligations(obligations, {
+    decide: async (prover, text, options) => {
+      const digest = getDigest(text);
+      const path = getInputPath(prover, digest);
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, text);
+      const recorded = inputs[digest] ?? (isRecording ? undefined : records[digest]);
+      if (!isRecording && recorded === undefined)
+        throw new Error(`${module.id}: ${prover} input ${digest} isn't in prover-inputs.json`);
+      inputs[digest] = recorded ?? record(prover, text, options.timeLimitMs);
+      return replay(inputs[digest]);
+    },
+  });
+  return inputs;
+};
+
+const modules = readProofRecords();
+const byModule = await runModuleWorkers(modules, getObligationCount, writeModuleInputs, 1);
+const inputs: Record<string, InputRecord> = Object.assign({}, ...byModule.values());
+if (isRecording) writeInputRecords({ ...records, ...inputs });
+const count = Object.keys(inputs).length;
+console.log(
+  `${count} inputs from ${byModule.size} of ${modules.length} modules in ${PROVER_INPUTS_DIRECTORY}`,
+);
