@@ -17,7 +17,7 @@ use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::files::FileDescriber;
 use crate::front::{Failure, Read, read_front};
-use crate::messages::{self as code, Level, Printer};
+use crate::messages::{self as code, Level, Output, Printer};
 use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
     optimistic_probability, out_degree_summary,
@@ -54,24 +54,27 @@ const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
 /// and the values they evaluate. It is reserved, not committed.
 pub(crate) const SEARCH_STACK_BYTES: usize = 256 * 1024 * 1024;
 
-pub fn run(args: &[String]) -> i32 {
+/// Runs the command line `args` as TLC (or SANY's XMLExporter) would, writing to `output`, and
+/// returns the exit code.
+pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
     if args.first().is_some_and(|arg| arg == "tlapm") {
-        return not_native("tlapm");
+        return not_native(output, "tlapm");
     }
     let Some(launch) = get_java_launch(args) else {
-        return check_specs(args, &Java::default(), false);
+        return check_specs(args, &Java::default(), false, output);
     };
     if launch.java.class_path.is_some() {
-        return not_native("reading the version of a tla2tools.jar");
+        return not_native(output, "reading the version of a tla2tools.jar");
     }
     match launch.main_class.as_str() {
         "tlc2.TLC" => match &launch.java.unmodelled_property {
-            Some(property) => not_native(&format!("the system property {property}")),
-            None => check_specs(&launch.args, &launch.java, true),
+            Some(property) => not_native(output, &format!("the system property {property}")),
+            None => check_specs(&launch.args, &launch.java, true, output),
         },
-        "tla2sany.xml.XMLExporter" => not_native("tla2sany.xml.XMLExporter"),
+        "tla2sany.xml.XMLExporter" => not_native(output, "tla2sany.xml.XMLExporter"),
         other => {
-            eprintln!(
+            let _ = writeln!(
+                output.err,
                 "Error: tla-ts runs the Java classes tlc2.TLC and tla2sany.xml.XMLExporter, not {other}."
             );
             1
@@ -79,8 +82,8 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-fn not_native(what: &str) -> i32 {
-    eprintln!("prove-it: not native yet: {what}");
+fn not_native(output: &mut Output<'_>, what: &str) -> i32 {
+    let _ = writeln!(output.err, "prove-it: not native yet: {what}");
     NOT_NATIVE
 }
 
@@ -96,27 +99,27 @@ fn file_name(path: &str) -> String {
 }
 
 // With `is_tlc` the command line is `tlc2.TLC`'s, which names one module.
-fn check_specs(args: &[String], java: &Java, is_tlc: bool) -> i32 {
+fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'_>) -> i32 {
     if java.is_174 {
-        return not_native("TLC 1.7.4");
+        return not_native(output, "TLC 1.7.4");
     }
     let parsed = match Parsed::parse(args, is_tlc) {
         Ok(parsed) => parsed,
-        Err(Stop::NotNative(what)) => return not_native(&what),
+        Err(Stop::NotNative(what)) => return not_native(output, &what),
         Err(Stop::Error { message, is_tool }) => {
-            return print_command_line_error(&mut Printer::new(is_tool, true), &message);
+            return print_command_line_error(&mut Printer::new(is_tool, true, output), &message);
         }
     };
     // TLC takes Spec.cfg for a module of that name.
     if is_tlc && parsed.positionals.iter().any(|path| path.ends_with(".cfg")) {
-        return not_native("a module named as a configuration file");
+        return not_native(output, "a module named as a configuration file");
     }
     if parsed
         .positionals
         .iter()
         .any(|path| path.contains(GLOB_CHARACTERS))
     {
-        return not_native("globs");
+        return not_native(output, "globs");
     }
     let is_configured = parsed.has("-config");
     // Like TLC, a spec named without an extension is the .tla file of that name.
@@ -130,11 +133,14 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool) -> i32 {
         })
         .collect();
     if spec_paths.is_empty() {
-        eprintln!("{USAGE}");
+        let _ = writeln!(output.err, "{USAGE}");
         return 1;
     }
     if is_configured && spec_paths.len() > 1 {
-        eprintln!("Error: -config applies to one specification, but several were given.");
+        let _ = writeln!(
+            output.err,
+            "Error: -config applies to one specification, but several were given."
+        );
         return 1;
     }
     // TLC also looks for the spec itself in the library directories.
@@ -156,7 +162,7 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool) -> i32 {
     }
     let mut exit_codes = Vec::new();
     for (index, path) in paths.iter().enumerate() {
-        let mut printer = Printer::new(parsed.has("-tool"), !parsed.has("-nowarning"));
+        let mut printer = Printer::new(parsed.has("-tool"), !parsed.has("-nowarning"), output);
         if index > 0 {
             printer.line("");
         }
@@ -738,6 +744,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // When the check of the temporal properties part way through the search that found a
     // counterexample started.
     let mut checking = None;
+    let mut is_misprinted = false;
     let (outcome, assumed_printed) = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
@@ -759,7 +766,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 (outcome, relay.assumed_printed)
             })
             .expect("a thread for the search");
-        for event in receiver {
+        for event in receiver.iter() {
             match event {
                 Event::InitialStatesStarted => printer.print(
                     code::COMPUTING_INIT,
@@ -796,18 +803,25 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 Event::Print(Some(text)) => printer.line(&text),
                 Event::StartupMessage(message) => print_startup_message(printer, &message),
                 Event::SymmetrySetsTooSmall(names) => print_small_sets(printer, &names),
-                // Nothing more this run prints can be right, so it ends here rather than search
-                // on, the search thread with it.
-                Event::Print(None) => std::process::exit(report_not_native(
-                    printer,
-                    "printing a value whose text depends on how TLC built it",
-                )),
+                // Nothing more this run prints can be right, so it prints nothing more, and
+                // leaves the search to end with the events it sends unread.
+                Event::Print(None) => {
+                    is_misprinted = true;
+                    break;
+                }
             }
         }
+        drop(receiver);
         searching
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     });
+    if is_misprinted {
+        return report_not_native(
+            printer,
+            "printing a value whose text depends on how TLC built it",
+        );
+    }
     let (counts, fingerprints) = match outcome {
         SearchOutcome::Complete {
             counts,
@@ -1801,8 +1815,8 @@ pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
 }
 
 fn report_not_native(printer: &mut Printer, what: &str) -> i32 {
-    printer.flush();
-    not_native(what)
+    printer.note(&format!("prove-it: not native yet: {what}"));
+    NOT_NATIVE
 }
 
 #[cfg(test)]

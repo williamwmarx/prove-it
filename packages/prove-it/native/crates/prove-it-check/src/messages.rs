@@ -3,7 +3,7 @@
 //! otherwise starts it with the prefix of its level.
 
 use std::collections::HashSet;
-use std::io::{BufWriter, Stdout, Write};
+use std::io::{BufWriter, Write};
 
 pub const COMMAND_LINE_ERROR: u32 = 1102;
 pub const STARTING: u32 = 2185;
@@ -55,22 +55,31 @@ pub enum Level {
     State = 4,
 }
 
-/// Writes TLC's messages to stdout. MP.printWarning prints a warning once, which -nowarning drops,
-/// and without -tool, TLC follows the first warning with how to drop them.
-pub struct Printer {
+/// Where a check writes: what TLC prints, and Prove It's own notes, such as that a model isn't
+/// native yet, which the binary writes to stdout and stderr.
+pub struct Output<'o> {
+    pub out: &'o mut dyn Write,
+    pub err: &'o mut dyn Write,
+}
+
+/// Writes TLC's messages. MP.printWarning prints a warning once, which -nowarning drops, and
+/// without -tool, TLC follows the first warning with how to drop them.
+pub struct Printer<'o> {
     pub is_tool: bool,
     is_warning_enabled: bool,
     warnings: HashSet<String>,
-    out: BufWriter<Stdout>,
+    out: BufWriter<&'o mut dyn Write>,
+    err: &'o mut dyn Write,
 }
 
-impl Printer {
-    pub fn new(is_tool: bool, is_warning_enabled: bool) -> Self {
+impl<'o> Printer<'o> {
+    pub fn new(is_tool: bool, is_warning_enabled: bool, output: &'o mut Output<'_>) -> Self {
         Self {
             is_tool,
             is_warning_enabled,
             warnings: HashSet::new(),
-            out: BufWriter::new(std::io::stdout()),
+            out: BufWriter::new(&mut *output.out),
+            err: &mut *output.err,
         }
     }
 
@@ -116,9 +125,15 @@ impl Printer {
     pub fn flush(&mut self) {
         let _ = self.out.flush();
     }
+
+    /// A note of Prove It's own, after what TLC printed so far.
+    pub fn note(&mut self, text: &str) {
+        self.flush();
+        let _ = writeln!(self.err, "{text}");
+    }
 }
 
-impl Drop for Printer {
+impl Drop for Printer<'_> {
     fn drop(&mut self) {
         self.flush();
     }
