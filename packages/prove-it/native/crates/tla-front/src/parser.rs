@@ -754,7 +754,9 @@ impl Parser {
             && !self.is_tlapm()
             && self.is_application_subscript_ahead()
         {
-            return self.parse_primary(None);
+            let start = self.index;
+            let application = self.parse_primary(None)?;
+            return Ok(self.with_range(application, start));
         }
         if token.kind == TokenKind::Identifier {
             let start = self.index;
