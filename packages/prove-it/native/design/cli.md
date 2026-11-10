@@ -309,6 +309,23 @@ Still to do:
     assumption TLC finds true, which the replay catches ("it didn't fail");
   - ValueSemanticsAssume: the replay enumerates an infinite set the engine failed on.
 
+## The command line
+
+`args.rs` reads the arguments as `TLC.handleParameters` does, in order, and stops at the first one
+TLC rejects with TLC's message (1102 and the usage line, marked only where `-tool` came before it):
+an option TLC doesn't know, a missing or malformed value of `-seed`, `-workers`, `-fp`, `-config`,
+`-lncheck` or `-metadir`, and, on the `tlc2.TLC` form, a second module or none. Each message was
+compared with a TLC built from the clone at d8fb231.
+
+It models `-config` (with or without `.cfg`, as TLC), `-continue`, `-deadlock`, `-dump`,
+`-fp 0`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
+trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`,
+`-noGenerateSpecTEBin`/`-noTEBin`). Every other option TLC reads (`-simulate`, `-difftrace`,
+`-coverage`, `-maxSetSize`, `-dfid`, `-fp N`, ...) is not native, as are the shapes where TLC
+throws (`-dump` last, an empty argument), an argument that isn't ASCII, and `Spec.cfg` named as
+the module on the `tlc2.TLC` form. `prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
+form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.
+
 ## Handoff
 
 - Two paths feed the search. With a recorded front (`PROVE_IT_FRONT/<spec>.front`, what TLC

@@ -103,6 +103,61 @@ fn reports_what_tlc_reports_before_the_search() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// Each output is what TLC at d8fb231 prints for the command line.
+#[test]
+fn reads_the_command_line_as_tlc() {
+    let directory = commit_directory("command-line");
+    let usage = "\nUsage: java tlc2.TLC [-help] [-option] inputfile\n";
+    for (args, message) in [
+        (&["-foo", "TCommit"][..], "unrecognized option: -foo"),
+        (
+            &["TCommit", "Other"],
+            "more than one input files: TCommit and Other",
+        ),
+        (&["-nowarning"], "Missing input TLA+ module."),
+        (
+            &["-workers", "0", "TCommit"],
+            "at least one worker required.",
+        ),
+        (
+            &["TCommit", "-config"],
+            "expect a file name for -config option.",
+        ),
+    ] {
+        let output = run(&directory, &[&["tlc2.TLC"], args].concat());
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let text = stdout(&output);
+        assert!(text.starts_with("TLC2 Version "), "{text}");
+        assert!(
+            text.ends_with(&format!("\nError: Error: {message}{usage}")),
+            "{text}"
+        );
+    }
+    let marked = run(&directory, &["tlc2.TLC", "-tool", "-fp", "131", "TCommit"]);
+    assert!(stdout(&marked).ends_with(&format!(
+        "@!@!@STARTMSG 1102:1 @!@!@\nError: The number for -fp must be between 0 and 130 (inclusive).{usage}@!@!@ENDMSG 1102 @!@!@\n"
+    )));
+    // TLC names the configuration file with or without its extension.
+    let configured = run(&directory, &["tlc2.TLC", "-config", "TCommit", "TCommit"]);
+    assert_eq!(configured.status.code(), Some(0), "{}", stdout(&configured));
+    for (args, what) in [
+        (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
+        (&["-simulate", "TCommit"], "the TLC option -simulate"),
+        (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
+        (&["-fp", "1", "TCommit"], "-fp 1"),
+        (&["TCommit.cfg"], "a module named as a configuration file"),
+    ] {
+        let output = run(&directory, &[&["tlc2.TLC"], args].concat());
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert_eq!(stdout(&output), "", "{args:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("prove-it: not native yet: {what}\n")
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn prints_a_deadlock_unless_deadlock_turns_it_off() {
     // TCommit's configuration turns deadlock checking off; with it on, its final states deadlock.
