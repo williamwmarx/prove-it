@@ -10,8 +10,9 @@
 use std::collections::{HashMap, HashSet};
 
 use tla_ir::{
-    Action, Bound, Builtin, Definition, DefinitionForm, Index, InstanceAction, Ir, Name, Node,
-    NodeId, NodeKind, Pattern, Resolution, Scope, ScopeBinding, SourceRange, TextId,
+    Action, Atom, AtomKind, Bound, Builtin, Definition, DefinitionForm, EnabledActions, Index,
+    InstanceAction, Ir, Name, Node, NodeId, NodeKind, Pattern, Resolution, Scope, ScopeBinding,
+    SourceRange, TextId,
 };
 
 use crate::Unsupported;
@@ -19,7 +20,7 @@ use crate::eval::{Context, Evaluator};
 use crate::print::format_value;
 use crate::rebuild::run;
 use crate::sets::as_tuple;
-use crate::value::{Class, Evaluated, Value, elements, set_of};
+use crate::value::{Class, Evaluated, Value, elements, is_same, set_of};
 
 /// One of TLC's actions: the expression it walks, with the values of the names the split bound,
 /// and what a trace calls it.
@@ -96,7 +97,7 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     if !ir.model.actions.is_empty() || ir.model.is_labelled || ir.variables.is_empty() {
         return Ok(ir);
     }
-    let (actions, scopes, nodes) = {
+    let (actions, scopes, nodes, positions) = {
         let mut evaluator = Evaluator::new(&ir);
         // The actions read what TLC computed when it started, as the search does.
         if let Err(error) = evaluator.compute_startup() {
@@ -110,8 +111,19 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
             scopes: Vec::new(),
             nodes: Vec::new(),
         };
-        let actions = splitter.split_next()?;
-        let actions: Vec<Labelled> = actions
+        let split = splitter.split_next()?;
+        // The atoms' actions split as Next does, with what that binds dropped after: only the
+        // positions of the actions they split into are kept.
+        let (scope_count, node_count) = (splitter.scopes.len(), splitter.nodes.len());
+        let positions: Vec<EnabledActions> = ir
+            .model
+            .atoms
+            .iter()
+            .map(|atom| splitter.atom_positions(&split, atom))
+            .collect();
+        splitter.scopes.truncate(scope_count);
+        splitter.nodes.truncate(node_count);
+        let actions: Vec<Labelled> = split
             .iter()
             .map(|action| {
                 let name = action
@@ -133,7 +145,7 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
                 }
             })
             .collect();
-        (actions, splitter.scopes, splitter.nodes)
+        (actions, splitter.scopes, splitter.nodes, positions)
     };
     let mut writer = Writer::new(&mut ir);
     let scopes: Vec<Scope> = scopes
@@ -165,6 +177,34 @@ pub fn add_actions(ir: &Ir) -> Result<Ir, Unsupported> {
     ir.nodes.arena.extend(nodes);
     ir.scopes.extend(scopes);
     ir.model.actions = actions;
+    // check.ts answers ENABLED of a state from the steps the search took from it only where no
+    // constraint dropped any and nothing in the spec has an effect TLC's ENABLED would repeat.
+    // The engine itself runs ENABLED where the action prints or draws as the search goes.
+    let is_effectful = ir.builtins.iter().any(|builtin| {
+        matches!(
+            &*ir.texts[builtin.name as usize],
+            "Print" | "PrintT" | "TLCSet" | "TLCGet" | "JavaTime"
+        )
+    });
+    let is_constrained =
+        !ir.model.constraints.is_empty() || !ir.model.action_constraints.is_empty();
+    if !is_effectful && !is_constrained {
+        for (atom, positions) in ir.model.atoms.iter_mut().zip(positions) {
+            if let AtomKind::Enabled { actions } = &mut atom.kind {
+                *actions = positions;
+            }
+        }
+    }
+    // The search labels each step with the action that took it only where ENABLED asks about some
+    // of the actions.
+    ir.model.is_labelled = ir.model.atoms.iter().any(|atom| {
+        matches!(
+            atom.kind,
+            AtomKind::Enabled {
+                actions: EnabledActions::Some(_)
+            }
+        )
+    });
     Ok(ir)
 }
 
@@ -361,6 +401,77 @@ impl Splitter<'_, '_> {
             }]),
             None => self.split(next, &place, None),
         }
+    }
+
+    // `findActionPositions`: the positions among Next's actions of those an atom's action splits
+    // into, each the same expression with the same values bound and in TLC's order, or unknown
+    // unless every one is among them.
+    fn atom_positions(&mut self, actions: &[SplitAction], atom: &Atom) -> EnabledActions {
+        let ir = self.evaluator.ir;
+        let action = match &atom.kind {
+            AtomKind::Enabled { .. } => {
+                match &ir.nodes.arena[self.evaluator.resolved(atom.expression) as usize].kind {
+                    NodeKind::AngleAction { action, .. } => *action,
+                    _ => return EnabledActions::Unknown,
+                }
+            }
+            AtomKind::State | AtomKind::Action { .. } => return EnabledActions::Unknown,
+        };
+        let Ok(context) = self.evaluator.scope_context(atom.scope) else {
+            return EnabledActions::Unknown;
+        };
+        let place = Place {
+            context,
+            scope: atom.scope,
+        };
+        let Ok(splits) = self.split(action, &place, None) else {
+            return EnabledActions::Unknown;
+        };
+        let mut positions = Vec::with_capacity(splits.len());
+        for split in &splits {
+            let start = positions.last().map_or(0, |&last: &i32| last as usize + 1);
+            let found = actions[start..].iter().position(|action| {
+                action.expression == split.expression
+                    && self.is_same_scope(action.place.scope, split.place.scope)
+            });
+            let Some(found) = found else {
+                return EnabledActions::Unknown;
+            };
+            positions.push((start + found) as i32);
+        }
+        if positions.len() == actions.len() {
+            EnabledActions::All
+        } else {
+            EnabledActions::Some(positions)
+        }
+    }
+
+    // `isSameScope`: one scope, or scopes the split added with the same names and the same values
+    // over the same scopes.
+    fn is_same_scope(&self, left: Option<Index>, right: Option<Index>) -> bool {
+        if left == right {
+            return true;
+        }
+        let base = self.evaluator.ir.scopes.len();
+        let (Some(left), Some(right)) = (left, right) else {
+            return false;
+        };
+        let (Some(left), Some(right)) = (
+            (left as usize).checked_sub(base).map(|at| &self.scopes[at]),
+            (right as usize)
+                .checked_sub(base)
+                .map(|at| &self.scopes[at]),
+        ) else {
+            return false;
+        };
+        let ((left_parent, left_name, left_bound), (right_parent, right_name, right_bound)) =
+            (left, right);
+        left_name == right_name
+            && matches!(
+                (left_bound, right_bound),
+                (Added::Value(left), Added::Value(right)) if is_same(left, right)
+            )
+            && self.is_same_scope(*left_parent, *right_parent)
     }
 
     fn split(
