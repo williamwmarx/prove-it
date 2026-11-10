@@ -1090,7 +1090,8 @@ without failing.
   same number or string, or the same global operator, builtin, constant or variable applied to
   arguments that are the same, a bound name standing for the one of Next's it was paired with.
   An `\E` pairs its names only over the same constant (a declared one, or one TLC computes as it
-  starts). The matcher asks for no other conjunct beside a piece, though a conjunct at the top of
+  starts). A disjunct of Next is tried as it stands before either side's definition is unwrapped,
+  so `WF_x(A)` over a disjunct `A` of Next matches it. The matcher asks for no other conjunct beside a piece, though a conjunct at the top of
   Next holds of every step the search keeps, so it couldn't change an answer; context inside a
   disjunct or under a bound value can, which `(G /\ A) \/ B` tests.
 - `EngineContext::build` matches each action atom before it compiles Next (at most eight, a bit

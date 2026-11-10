@@ -44,6 +44,15 @@ impl Compiler<'_> {
             (NodeKind::And(items), _) if items.len() == 1 => {
                 self.match_into(items[0], next, renaming, pieces)
             }
+            // A disjunct of Next the action is as it stands, before either is unwrapped.
+            (_, NodeKind::Or(next_disjuncts))
+                if let Some(&next_disjunct) = next_disjuncts
+                    .iter()
+                    .find(|&&next_disjunct| self.is_same(action, next_disjunct, renaming)) =>
+            {
+                pieces.push(next_disjunct);
+                true
+            }
             (_, NodeKind::Identifier(name)) if self.definition_body(name).is_some() => {
                 let body = self.definition_body(name).expect("a body");
                 self.match_into(action, body, renaming, pieces)
@@ -82,13 +91,6 @@ impl Compiler<'_> {
                     })
                 })
             }
-            (_, NodeKind::Or(next_disjuncts)) => next_disjuncts.iter().any(|&next_disjunct| {
-                let is_same = self.is_same(action, next_disjunct, renaming);
-                if is_same {
-                    pieces.push(next_disjunct);
-                }
-                is_same
-            }),
             _ => false,
         }
     }
