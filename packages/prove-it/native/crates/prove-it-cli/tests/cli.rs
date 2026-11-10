@@ -1387,6 +1387,70 @@ fn exits_as_tlc_does_where_an_atom_fails_adding_a_state() {
 }
 
 #[test]
+fn declines_what_it_doesnt_follow_of_the_behavior_graphs() {
+    let declines = |test: &str, body: &str, config: &str, arguments: &[&str], reason: &str| {
+        let spec = format!("---- MODULE Stop ----\nEXTENDS Naturals, TLC\n{body}\n====\n");
+        let directory =
+            std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        std::fs::write(directory.join("Stop.front"), "").expect("a front");
+        std::fs::write(directory.join("Stop.tla"), spec).expect("the spec");
+        std::fs::write(directory.join("Stop.cfg"), config).expect("the configuration");
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["tlc2.TLC", "-workers", "1", "-lncheck", "final"])
+            .args(arguments)
+            .arg("Stop")
+            .current_dir(&directory)
+            .env("PROVE_IT_FRONT", &directory)
+            .output()
+            .expect("the binary runs");
+        let error = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(error.contains(reason), "{}{error}", stdout(&output));
+        std::fs::remove_dir_all(directory).expect("removed");
+    };
+    // TLC runs Next again from a state it adds a tableau node of late, so it prints <<"n", 0>>
+    // twice before the deadlock.
+    declines(
+        "late-stop",
+        "VARIABLES x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT(<<\"n\", x>>)\nSpec == Init /\\ [][Next]_x\nProp == [](x # 1 => [](x # 7))",
+        "SPECIFICATION Spec\nPROPERTY Prop\n",
+        &[],
+        "the engine stopped: deadlock",
+    );
+    // TLC runs it action by action there, with the atoms of each action's successors between.
+    declines(
+        "late-order",
+        "VARIABLES x\nInit == x = 0\nA == x' = 1 - x /\\ PrintT(<<\"a\", x>>)\nB == x' = (x + 2) % 3 /\\ PrintT(<<\"b\", x>>)\nNext == A \\/ B\nSpec == Init /\\ [][Next]_x /\\ SF_x(A)\nProp == [](x # 1 => [](x # 7))",
+        "SPECIFICATION Spec\nPROPERTY Prop\n",
+        &["-deadlock"],
+        "prints it doesn't place in TLC's order",
+    );
+    // TLC ends this lasso, whose last state is its cycle's first, with "State 3: Stuttering".
+    declines(
+        "lasso-end",
+        "VARIABLES x, y\nvars == <<x, y>>\nInit == x \\in {0, 1} /\\ y = 0\nA0 == x = 1 /\\ y = 0 /\\ x' = 1 /\\ y' \\in {0, 1}\nA1 == x = 1 /\\ x' = 0 /\\ y' = 1\nA2 == x = 1 /\\ y = 0 /\\ x' = 0 /\\ y' = y\nA3 == x = 0 /\\ x' = 1 /\\ y' \\in {0, 0}\nNext == A0 \\/ A1 \\/ A2 \\/ A3\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\nP0 == []<>(x # 0)\nP1 == []((x = 0) => <>[](y = 1))",
+        "SPECIFICATION Spec\nPROPERTY P0\nPROPERTY P1\n",
+        &[],
+        "a lasso that ends in the first state of its cycle",
+    );
+}
+
+#[test]
+fn prints_the_statistics_where_an_atom_fails_on_the_initial_state() {
+    // TLC reports the error with the initial state, then the statistics, and exits 255.
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x\nInit == x = 0\nNext == x' = (x + 1) % 4\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>(x = 0 /\\ x[1] = 3)\n====\n";
+    let (output, directory) =
+        run_lowered("initial-atom", spec, "SPECIFICATION Spec\nPROPERTY Prop\n");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(255), "{text}");
+    assert!(
+        text.contains("Error: A non-function (an integer) was applied as a function.\nline 7, col 21 to line 7, col 24 of module Stop\nWhile working on the initial state:\nx = 0\n\n1 states generated, 1 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 1.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+#[test]
 fn reads_and_sets_tlcs_registers() {
     // TLCCache evaluates Counted once, TLCFP is TLC's fingerprint under -fp 0, which the
     // interpreter and TLC print the same, and a Java property TLC hasn't set is its key.

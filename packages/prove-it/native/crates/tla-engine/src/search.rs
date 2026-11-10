@@ -3038,14 +3038,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     }
                     if let Some(held) = search.held.take() {
                         let order = (!is_late_printed && !settings.is_live_checked)
-                            .then(|| {
-                                order_printed(
-                                    &held,
-                                    &tables,
-                                    &liveness,
-                                    context.is_invariant_printing || is_distinct_read,
-                                )
-                            })
+                            .then(|| order_printed(&held, &tables, &liveness))
                             .flatten();
                         let Some(order) = order else {
                             // The interpreter checks the properties from the start, printing all
@@ -3339,6 +3332,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 // deadlock, with what its atoms set, which the engine doesn't follow.
                 Some(found) if online.is_some() => {
                     (!matches!(found.kind, ViolationKind::Deadlock { .. })).then_some(found)
+                }
+                // TLC runs Next again from a state it adds a tableau node of late, printing
+                // again what Next prints, which the search doesn't place before its stop.
+                Some(_)
+                    if search.graph.is_some()
+                        && search.held.as_ref().is_some_and(|held| {
+                            held.iter().skip(1).any(|printed| !printed.is_empty())
+                        }) =>
+                {
+                    None
                 }
                 Some(mut found) if search.graph.is_some() => {
                     let mut expanded = search.expanding;
@@ -4260,7 +4263,7 @@ enum Out<'p> {
 
 // What the search and the atoms printed, in TLC's order: the initial states' prints, then each
 // expanded state's, followed by those of the atoms TLC evaluates as it adds the state to the
-// behavior graphs, and again where TLC runs Next from a state it adds a node of late. Nothing where
+// behavior graphs. Nothing where TLC runs Next again from a state it adds a node of late, where
 // anything printed and the native checker leaves the properties to the interpreter or finds a node
 // that accepts every behavior, or where an atom printed as TLC adds an initial state, which the
 // engine doesn't follow.
@@ -4268,7 +4271,6 @@ fn order_printed<'p>(
     held: &'p [Vec<Printed>],
     tables: &'p [Table],
     liveness: &Liveness,
-    is_replay_inexact: bool,
 ) -> Option<Vec<Out<'p>>> {
     let is_printed = held.iter().any(|printed| !printed.is_empty())
         || tables.iter().any(|table| !table.prints.is_empty());
@@ -4299,17 +4301,15 @@ fn order_printed<'p>(
                 }
                 next = next.max(end);
             }
-            // TLC runs Next again from a stored state it adds a node of late, and prints what
-            // the search printed expanding it.
-            // TLC checks no invariant then, and the count of distinct states has grown since, so
-            // where an invariant may print among Next's prints or anything reads that count, the
-            // interpreter checks from the start.
+            // TLC runs Next again from a stored state it adds a node of late, action by action
+            // with the atoms of each action's successors between, which the search doesn't
+            // follow where Next prints: the interpreter checks from the start.
             Event::Late(state) => {
-                if let Some(printed) = expansions.get(state as usize) {
-                    if is_replay_inexact && !printed.is_empty() {
-                        return None;
-                    }
-                    order.extend(printed.iter().map(Out::Printed));
+                if expansions
+                    .get(state as usize)
+                    .is_some_and(|printed| !printed.is_empty())
+                {
+                    return None;
                 }
             }
             Event::Atom { atom, slot } => {
