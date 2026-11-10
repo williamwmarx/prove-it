@@ -357,9 +357,14 @@ const isIntRunId = (id: number) => {
   );
 };
 
+// An untyped model value comes before any value that isn't a model value in TLC's order, so a
+// function holds one among its keys only if its first key is a model value: the keys of any other
+// function aren't read.
 const hasUntypedModelKey = (id: number) => {
-  if (kinds[id] !== KIND_FUNCTION) return false;
   const offset = payloads[id];
+  if (kinds[id] !== KIND_FUNCTION || sizes[id] === 0 || kinds[heap[offset]] !== KIND_MODEL) {
+    return false;
+  }
   for (let index = 0; index < sizes[id]; index++) {
     const key = heap[offset + index];
     if (kinds[key] === KIND_MODEL && getModelType(key) === 0) return true;

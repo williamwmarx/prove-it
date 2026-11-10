@@ -934,10 +934,16 @@ impl Store {
         meta.kind == KIND_TUPLE || meta.flags & IS_INT_RUN != 0
     }
 
+    // An untyped model value comes before any value that isn't a model value in TLC's order, so a
+    // function holds one among its keys only if its first key is a model value: the keys of any
+    // other function aren't read.
     fn has_untyped_model_key(&self, meta: &Meta) -> bool {
+        let keys = self.words(meta.payload as usize, meta.size as usize);
         meta.kind == KIND_FUNCTION
-            && self
-                .words(meta.payload as usize, meta.size as usize)
+            && keys
+                .first()
+                .is_some_and(|&first| self.kind_of(first) == KIND_MODEL)
+            && keys
                 .iter()
                 .any(|&key| self.kind_of(key) == KIND_MODEL && self.get_model_type(key) == 0)
     }
