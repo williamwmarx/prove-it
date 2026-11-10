@@ -768,6 +768,14 @@ session:
 - Last: `nra-solver.ts`, the one file that imports `nlsat` (its solver, algebraic numbers and
   types), which needs P3b-nlsat.
 - First gate: `tests/unit/smt-intervals.test.ts` (16) and `smt-pdd.test.ts` (17).
+- Oracle: `PROVE_IT_LP_TRACE=<dir>` makes each SMT decision write `<dir>/<digest>.lptrace`, the
+  JSON lines of every call `theory-lra-*` makes into lp, with its arguments and result, every
+  callback lp makes into the theory with its answer, and the theory's field reads of lp objects
+  (`src/prover/smt/solver/lp-trace.ts` documents the format). `bun scripts/run.ts lp-trace`
+  records them for the SMT inputs of the decider corpus in `tests/conformance/.lp-traces`, and
+  checks that each traced answer, statistics included, is the recorded one. A Rust replayer
+  drives the Rust lp with the same calls, answers its callbacks from the trace and compares the
+  rest.
 
 **P3b-nlsat** (`prove-smt`, module `nlsat`):
 - In scope: `smt/solver/nlsat/` (7,875 lines).
