@@ -4286,3 +4286,39 @@ VARIABLE x
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn applies_a_function_tlc_keeps_lazy_in_the_initial_predicate() {
+    // F's domain is infinite, so TLC keeps F lazy and applies it in the initial predicate without
+    // building it. The replay of the initial state prints what TLC at d8fb231 prints.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-lazy-applied-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("M.tla"),
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nF == [p \\in Nat |-> p = 0]\nInit == F[0] /\\ x = 0\nNext == x' = x\nInv == x = 1\n====\n",
+    )
+    .expect("a spec");
+    std::fs::write(
+        directory.join("M.cfg"),
+        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+    )
+    .expect("a configuration");
+    for threads in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noGenerateSpecTE", "M"])
+            .current_dir(&directory)
+            .env("PROVE_IT_WORKERS", threads)
+            .env("PROVE_IT_SHARED_LEVEL", "1")
+            .output()
+            .expect("the binary runs");
+        let text = stdout(&output);
+        assert!(
+            text.contains(
+                "Error: Invariant Inv is violated by the initial state:\nx = 0\n\nFinished in "
+            ),
+            "on {threads}: {text}"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}

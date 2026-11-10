@@ -146,8 +146,7 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
-    // A function's value the walk tests, which `OPCODE_fa` words apart from a guard's: TLC
-    // evaluates the function, then the argument, and applies the one to the other.
+    // A function's value the walk tests, which `OPCODE_fa` words apart from a guard's.
     fn applied(
         &mut self,
         node: NodeId,
@@ -155,20 +154,7 @@ impl<'ir> Evaluator<'ir> {
         is_init: bool,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        let demand = Demand::Applied { is_init };
-        let value = match self.kind(node) {
-            NodeKind::FunctionApplication { function, args } if args.len() == 1 => {
-                let function = self.evaluate(*function, context)?;
-                let argument = self.evaluate(args[0], context)?;
-                self.apply_checked(&function, &argument)?
-            }
-            _ => return self.guard_as(node, context, demand, then),
-        };
-        match value {
-            Value::Bool(true) => then(self),
-            Value::Bool(false) => Ok(true),
-            other => self.non_boolean(node, &other, demand),
-        }
+        self.guard_as(node, context, Demand::Applied { is_init }, then)
     }
 
     /// Whether TLC computes a definition as it starts (`processConstantDefns`), which it does to
