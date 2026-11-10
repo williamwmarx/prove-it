@@ -15,6 +15,8 @@ interface JavaMethod {
   // Method#toString, which TLC prints as the signature of an override.
   signature: string;
   code: Uint8Array | undefined;
+  // Whether the bytecode catches an exception (an exception table).
+  isCatching: boolean;
 }
 
 // A public static method of the class named after a module, which TLC reports as it loads the
@@ -47,11 +49,57 @@ const POOL_TAG = {
   double: 6,
   class: 7,
   string: 8,
+  fieldRef: 9,
+  methodRef: 10,
+  interfaceMethodRef: 11,
+  nameAndType: 12,
   methodHandle: 15,
   methodType: 16,
+  dynamic: 17,
+  invokeDynamic: 18,
   module: 19,
   package: 20,
 };
+
+// The newest class file version the front end reads, Java 25's.
+const MAXIMUM_MAJOR_VERSION = 69;
+// ACC_INTERFACE, ACC_ABSTRACT, ACC_ANNOTATION, ACC_ENUM and ACC_MODULE: a class that isn't a plain
+// one.
+const UNPLAIN_CLASS = 0x0200 | 0x0400 | 0x2000 | 0x4000 | 0x8000;
+// The Java names TLC maps to an operator's (TLARegistry.mapName), which its standard modules'
+// classes register: an override of one of these names overrides that operator.
+const REGISTERED_NAMES = new Set([
+  "BagCup",
+  "BagDiff",
+  "CombineFcn",
+  "Concat",
+  "Divide",
+  "DotDot",
+  "Expt",
+  "GEQ",
+  "GT",
+  "LE",
+  "LT",
+  "MakeFcn",
+  "Minus",
+  "Mod",
+  "Neg",
+  "Plus",
+  "SqSubseteq",
+  "Times",
+]);
+
+const PAIRED_TAGS = new Set([
+  POOL_TAG.fieldRef,
+  POOL_TAG.methodRef,
+  POOL_TAG.interfaceMethodRef,
+  POOL_TAG.nameAndType,
+  POOL_TAG.dynamic,
+  POOL_TAG.invokeDynamic,
+]);
+
+const createUnreadError = (reason: string) =>
+  new TlaUnsupportedError(`${reason}, which tla-ts cannot run`);
 
 // The JVM opcodes that an override returning a constant value uses.
 const OPCODE = {
@@ -130,7 +178,8 @@ const readClassFile = (bytes: Uint8Array) => {
   if (reader.readUint32() !== CLASS_MAGIC)
     throw new TlaSyntaxError("A module override is not a class file");
   reader.readUint16();
-  reader.readUint16();
+  if (reader.readUint16() > MAXIMUM_MAJOR_VERSION)
+    throw createUnreadError("A Java class file of a version the front end doesn't read");
   const pool: PoolEntry[] = [];
   const poolSize = reader.readUint16();
   const decoder = new TextDecoder();
@@ -155,22 +204,23 @@ const readClassFile = (bytes: Uint8Array) => {
     } else if (tag === POOL_TAG.methodHandle) {
       reader.readUint8();
       entry.first = reader.readUint16();
-    } else {
+    } else if (PAIRED_TAGS.has(tag)) {
       entry.first = reader.readUint16();
       entry.second = reader.readUint16();
+    } else {
+      throw createUnreadError("A Java class file's constant the front end doesn't read");
     }
   }
-  reader.readUint16();
+  // Java runs a class's static initializer, its fields' and its superclasses', before it calls an
+  // override, which the front end doesn't run: it reads only a plain class with none.
+  if ((reader.readUint16() & UNPLAIN_CLASS) !== 0)
+    throw createUnreadError("A Java override class that isn't a plain class");
   const className = getJavaClassName(pool, reader.readUint16());
-  reader.readUint16();
-  reader.readBytes(reader.readUint16() * 2);
-  for (let fields = reader.readUint16(); fields > 0; fields--) {
-    reader.readBytes(6);
-    for (let attributes = reader.readUint16(); attributes > 0; attributes--) {
-      reader.readUint16();
-      reader.readBytes(reader.readUint32());
-    }
-  }
+  if (pool[pool[reader.readUint16()]?.first]?.text !== "java/lang/Object")
+    throw createUnreadError("A Java override class with a superclass");
+  if (reader.readUint16() !== 0)
+    throw createUnreadError("A Java override class that implements an interface");
+  if (reader.readUint16() !== 0) throw createUnreadError("A Java override class with fields");
   const methods: JavaMethod[] = [];
   for (let remaining = reader.readUint16(); remaining > 0; remaining--) {
     const access = reader.readUint16();
@@ -178,10 +228,14 @@ const readClassFile = (bytes: Uint8Array) => {
     const descriptor = pool[reader.readUint16()].text;
     const parametersEnd = descriptor.indexOf(")");
     const parameters = getTypeNames(descriptor.slice(1, parametersEnd));
+    if (name === "<clinit>")
+      throw createUnreadError("A Java override class with a static initializer");
     const attributes = Array.from({ length: reader.readUint16() }, () => ({
       name: pool[reader.readUint16()].text,
       reader: createReader(reader.readBytes(reader.readUint32())),
     }));
+    if (attributes.some((attribute) => attribute.name.includes("Annotation")))
+      throw createUnreadError("A Java override class with annotations");
     const isOverride = (access & ACCESS_PUBLIC) !== 0 && (access & ACCESS_STATIC) !== 0;
     if (!isOverride) continue;
     const code = attributes.find((attribute) => attribute.name === "Code")?.reader;
@@ -198,13 +252,30 @@ const readClassFile = (bytes: Uint8Array) => {
     );
     const returnType = getTypeNames(descriptor.slice(parametersEnd + 1))[0];
     const throwsClause = exceptions.length === 0 ? "" : ` throws ${exceptions.join(",")}`;
+    const bytecode = code?.readBytes(code.readUint32());
     methods.push({
       name,
       arity: parameters.length,
-      code: code?.readBytes(code.readUint32()),
+      code: bytecode,
+      // The exception table follows the bytecode.
+      isCatching: code !== undefined && code.readUint16() !== 0,
       signature: `${modifiers.join(" ")} ${returnType} ${className}.${name}(${parameters.join(",")})${throwsClause}`,
     });
   }
+  for (let attributes = reader.readUint16(); attributes > 0; attributes--) {
+    const name = pool[reader.readUint16()].text;
+    reader.readBytes(reader.readUint32());
+    if (name.includes("Annotation"))
+      throw createUnreadError("A Java override class with annotations");
+  }
+  // TLC loads every public static method of a name, the one it loads last overriding the others,
+  // in the order the JVM lists them, and maps a registered name to an operator's.
+  methods.forEach((method, position) => {
+    if (methods.slice(0, position).some((other) => other.name === method.name))
+      throw createUnreadError("A Java override class with methods of one name");
+    if (REGISTERED_NAMES.has(method.name))
+      throw createUnreadError("A Java override of a name TLC maps to an operator's");
+  });
   return { pool, methods };
 };
 
@@ -213,7 +284,8 @@ const getMemberReference = (pool: PoolEntry[], index: number) => {
   const nameAndType = pool[reference.second];
   return {
     className: getClassName(pool, reference.first),
-    name: pool[nameAndType.first].text,
+    // The member's name and its descriptor.
+    name: `${pool[nameAndType.first].text}${pool[nameAndType.second].text}`,
   };
 };
 
@@ -231,7 +303,7 @@ const getReturnedLiteral = (
       `The Java override ${className}.${method.name} computes its value, which tla-ts cannot run`,
     );
   const code = method.code;
-  if (!code) throw createUnsupportedError();
+  if (!code || method.isCatching) throw createUnsupportedError();
   const stack: StackItem[] = [];
   const pop = () => {
     const item = stack.pop();
@@ -263,23 +335,33 @@ const getReturnedLiteral = (
       stack.push(getConstant(getIndex()));
       offset += 3;
     } else if (opcode === OPCODE.dup) {
+      // Only of an object, as `new` makes one for its constructor.
       const top = pop();
+      if (typeof top !== "object" || !("className" in top) || top.value)
+        throw createUnsupportedError();
       stack.push(top, top);
       offset += 1;
     } else if (opcode === OPCODE.getstatic) {
       const field = getMemberReference(pool, getIndex());
       if (field.className !== `${VALUE_PACKAGE}BoolValue`) throw createUnsupportedError();
-      if (field.name !== "ValTrue" && field.name !== "ValFalse") throw createUnsupportedError();
+      const name = new Map([
+        ["ValTrueLtlc2/value/impl/BoolValue;", "TRUE"],
+        ["ValFalseLtlc2/value/impl/BoolValue;", "FALSE"],
+      ]).get(field.name);
+      if (name === undefined) throw createUnsupportedError();
       stack.push({
         kind: "Identifier",
-        name: field.name === "ValTrue" ? "TRUE" : "FALSE",
+        name,
         location,
       });
       offset += 3;
     } else if (opcode === OPCODE.invokestatic) {
       const callee = getMemberReference(pool, getIndex());
       const value = pop();
-      if (callee.className !== `${VALUE_PACKAGE}IntValue` || callee.name !== "gen") {
+      if (
+        callee.className !== `${VALUE_PACKAGE}IntValue` ||
+        callee.name !== "gen(I)Ltlc2/value/impl/IntValue;"
+      ) {
         throw createUnsupportedError();
       }
       if (typeof value !== "number") throw createUnsupportedError();
@@ -294,7 +376,7 @@ const getReturnedLiteral = (
       const instance = pop();
       const isStringValue =
         constructor.className === `${VALUE_PACKAGE}StringValue` &&
-        constructor.name === "<init>" &&
+        constructor.name === "<init>(Ljava/lang/String;)V" &&
         typeof text === "string" &&
         typeof instance === "object" &&
         "className" in instance;
@@ -302,8 +384,10 @@ const getReturnedLiteral = (
       instance.value = { kind: "String", value: text, location };
       offset += 3;
     } else if (opcode === OPCODE.areturn) {
+      // Of the only value, as the method's last instruction.
       const returned = pop();
-      if (typeof returned !== "object") throw createUnsupportedError();
+      if (typeof returned !== "object" || stack.length > 0 || offset + 1 !== code.length)
+        throw createUnsupportedError();
       if ("className" in returned) {
         if (!returned.value) throw createUnsupportedError();
         return returned.value;

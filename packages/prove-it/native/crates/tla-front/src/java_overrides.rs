@@ -33,6 +33,8 @@ struct JavaMethod {
     arity: usize,
     signature: String,
     code: Option<Vec<u8>>,
+    /// Whether the bytecode catches an exception (an exception table).
+    is_catching: bool,
 }
 
 const CLASS_MAGIC: u32 = 0xcafe_babe;
@@ -48,10 +50,44 @@ const LONG: u8 = 5;
 const DOUBLE: u8 = 6;
 const CLASS: u8 = 7;
 const STRING: u8 = 8;
+const FIELD_REF: u8 = 9;
+const METHOD_REF: u8 = 10;
+const INTERFACE_METHOD_REF: u8 = 11;
+const NAME_AND_TYPE: u8 = 12;
 const METHOD_HANDLE: u8 = 15;
 const METHOD_TYPE: u8 = 16;
 const MODULE: u8 = 19;
 const PACKAGE: u8 = 20;
+const DYNAMIC: u8 = 17;
+const INVOKE_DYNAMIC: u8 = 18;
+
+/// The newest class file version the front end reads, Java 25's.
+const MAXIMUM_MAJOR_VERSION: u16 = 69;
+/// ACC_INTERFACE, ACC_ABSTRACT, ACC_ANNOTATION, ACC_ENUM and ACC_MODULE: a class that isn't a
+/// plain one.
+const UNPLAIN_CLASS: u16 = 0x0200 | 0x0400 | 0x2000 | 0x4000 | 0x8000;
+/// The Java names TLC maps to an operator's (`TLARegistry.mapName`), which its standard modules'
+/// classes register: an override of one of these names overrides that operator.
+const REGISTERED_NAMES: [&str; 18] = [
+    "BagCup",
+    "BagDiff",
+    "CombineFcn",
+    "Concat",
+    "Divide",
+    "DotDot",
+    "Expt",
+    "GEQ",
+    "GT",
+    "LE",
+    "LT",
+    "MakeFcn",
+    "Minus",
+    "Mod",
+    "Neg",
+    "Plus",
+    "SqSubseteq",
+    "Times",
+];
 
 // The modifiers Method#toString prints, in the order of Modifier#toString.
 const METHOD_MODIFIERS: [(u16, &str); 9] = [
@@ -150,7 +186,12 @@ fn read_class_file(bytes: &[u8]) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
     if reader.u32()? != CLASS_MAGIC {
         return Err(not_yet("a module override that isn't a class file"));
     }
-    reader.bytes(4)?;
+    reader.u16()?;
+    if reader.u16()? > MAXIMUM_MAJOR_VERSION {
+        return Err(not_yet(
+            "a Java class file of a version the front end doesn't read",
+        ));
+    }
     let pool_size = reader.u16()?;
     let mut pool = vec![PoolEntry::default(); pool_size as usize];
     let mut index = 1;
@@ -181,33 +222,47 @@ fn read_class_file(bytes: &[u8]) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
                 reader.u8()?;
                 entry.first = reader.u16()?;
             }
-            _ => {
+            FIELD_REF | METHOD_REF | INTERFACE_METHOD_REF | NAME_AND_TYPE | DYNAMIC
+            | INVOKE_DYNAMIC => {
                 entry.first = reader.u16()?;
                 entry.second = reader.u16()?;
+            }
+            _ => {
+                return Err(not_yet(
+                    "a Java class file's constant the front end doesn't read",
+                ));
             }
         }
         pool[index as usize] = entry;
         index += 1;
     }
-    reader.u16()?;
+    // Java runs a class's static initializer, its fields' and its superclasses', before it calls
+    // an override, which the front end doesn't run: it reads only a plain class with none.
+    if reader.u16()? & UNPLAIN_CLASS != 0 {
+        return Err(not_yet("a Java override class that isn't a plain class"));
+    }
     let class_name = get_class_name(&pool, reader.u16()?)?.replace('/', ".");
-    reader.u16()?;
-    let interfaces = reader.u16()? as usize;
-    reader.bytes(interfaces * 2)?;
-    for _ in 0..reader.u16()? {
-        reader.bytes(6)?;
-        for _ in 0..reader.u16()? {
-            reader.u16()?;
-            let length = reader.u32()? as usize;
-            reader.bytes(length)?;
-        }
+    if get_class_name(&pool, reader.u16()?)? != "java/lang/Object" {
+        return Err(not_yet("a Java override class with a superclass"));
+    }
+    if reader.u16()? != 0 {
+        return Err(not_yet(
+            "a Java override class that implements an interface",
+        ));
+    }
+    if reader.u16()? != 0 {
+        return Err(not_yet("a Java override class with fields"));
     }
     let mut methods = Vec::new();
     for _ in 0..reader.u16()? {
         let access = reader.u16()?;
         let name = get_entry(&pool, reader.u16()?)?.text.clone();
         let descriptor = get_entry(&pool, reader.u16()?)?.text.clone();
+        if name == "<clinit>" {
+            return Err(not_yet("a Java override class with a static initializer"));
+        }
         let mut code = None;
+        let mut is_catching = false;
         let mut exceptions = Vec::new();
         for _ in 0..reader.u16()? {
             let attribute = get_entry(&pool, reader.u16()?)?.text.clone();
@@ -216,11 +271,16 @@ fn read_class_file(bytes: &[u8]) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
                 bytes: reader.bytes(length)?,
                 offset: 0,
             };
+            if attribute.contains("Annotation") {
+                return Err(not_yet("a Java override class with annotations"));
+            }
             if attribute == "Code" {
-                // max_stack and max_locals come before the length of the bytecode.
+                // max_stack and max_locals come before the length of the bytecode, and the
+                // exception table after it.
                 body.bytes(4)?;
                 let length = body.u32()? as usize;
                 code = Some(body.bytes(length)?.to_vec());
+                is_catching = body.u16()? != 0;
             } else if attribute == "Exceptions" {
                 for _ in 0..body.u16()? {
                     exceptions.push(get_class_name(&pool, body.u16()?)?.replace('/', "."));
@@ -257,18 +317,46 @@ fn read_class_file(bytes: &[u8]) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
             ),
             name,
             code,
+            is_catching,
         });
+    }
+    for _ in 0..reader.u16()? {
+        let attribute = get_entry(&pool, reader.u16()?)?.text.clone();
+        let length = reader.u32()? as usize;
+        reader.bytes(length)?;
+        if attribute.contains("Annotation") {
+            return Err(not_yet("a Java override class with annotations"));
+        }
+    }
+    // TLC loads every public static method of a name, the one it loads last overriding the
+    // others, in the order the JVM lists them, and maps a registered name to an operator's.
+    for (position, method) in methods.iter().enumerate() {
+        if methods[..position]
+            .iter()
+            .any(|other| other.name == method.name)
+        {
+            return Err(not_yet("a Java override class with methods of one name"));
+        }
+        if REGISTERED_NAMES.contains(&method.name.as_str()) {
+            return Err(not_yet(
+                "a Java override of a name TLC maps to an operator's",
+            ));
+        }
     }
     Ok((pool, methods))
 }
 
-// A class and a member of it that a constant names.
+// A class and a member of it that a constant names, with the member's descriptor.
 fn get_member(pool: &[PoolEntry], index: u16) -> Result<(String, String)> {
     let reference = get_entry(pool, index)?;
     let name_and_type = get_entry(pool, reference.second)?;
     Ok((
         get_class_name(pool, reference.first)?,
-        get_entry(pool, name_and_type.first)?.text.clone(),
+        format!(
+            "{}{}",
+            get_entry(pool, name_and_type.first)?.text,
+            get_entry(pool, name_and_type.second)?.text
+        ),
     ))
 }
 
@@ -294,6 +382,9 @@ fn get_returned_literal(
 ) -> Result<Expr> {
     let unsupported = || not_yet("a Java override that computes its value");
     let code = method.code.as_ref().ok_or_else(unsupported)?;
+    if method.is_catching {
+        return Err(unsupported());
+    }
     let mut stack: Vec<Item> = Vec::new();
     let constant = |index: u16| -> Result<Item> {
         let entry = get_entry(pool, index)?;
@@ -351,8 +442,8 @@ fn get_returned_literal(
             0xb2 => {
                 let (class, field) = get_member(pool, index()?)?;
                 let name = match (class.strip_prefix(VALUE_PACKAGE), field.as_str()) {
-                    (Some("BoolValue"), "ValTrue") => "TRUE",
-                    (Some("BoolValue"), "ValFalse") => "FALSE",
+                    (Some("BoolValue"), "ValTrueLtlc2/value/impl/BoolValue;") => "TRUE",
+                    (Some("BoolValue"), "ValFalseLtlc2/value/impl/BoolValue;") => "FALSE",
                     _ => return Err(unsupported()),
                 };
                 stack.push(Item::Literal(literal(
@@ -371,7 +462,9 @@ fn get_returned_literal(
                 let Some(Item::Integer(value)) = stack.pop() else {
                     return Err(unsupported());
                 };
-                if class.strip_prefix(VALUE_PACKAGE) != Some("IntValue") || callee != "gen" {
+                if class.strip_prefix(VALUE_PACKAGE) != Some("IntValue")
+                    || callee != "gen(I)Ltlc2/value/impl/IntValue;"
+                {
                     return Err(unsupported());
                 }
                 stack.push(Item::Literal(literal(
@@ -396,7 +489,7 @@ fn get_returned_literal(
                     return Err(unsupported());
                 };
                 if class.strip_prefix(VALUE_PACKAGE) != Some("StringValue")
-                    || constructor != "<init>"
+                    || constructor != "<init>(Ljava/lang/String;)V"
                 {
                     return Err(unsupported());
                 }
@@ -412,12 +505,16 @@ fn get_returned_literal(
                 }
                 offset += 3;
             }
-            // areturn
+            // areturn, of the only value, as the method's last instruction
             0xb0 => {
-                return match stack.pop() {
-                    Some(Item::Literal(value)) | Some(Item::Object(_, Some(value))) => Ok(value),
-                    _ => Err(unsupported()),
+                let value = match stack.pop() {
+                    Some(Item::Literal(value)) | Some(Item::Object(_, Some(value))) => value,
+                    _ => return Err(unsupported()),
                 };
+                if !stack.is_empty() || offset + 1 != code.len() {
+                    return Err(unsupported());
+                }
+                return Ok(value);
             }
             _ => return Err(unsupported()),
         }

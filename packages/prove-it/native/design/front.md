@@ -516,6 +516,22 @@ argument, in order, before it calls the method, `OpValue.eval`, so an argument t
 does so, which the literal would skip; both fronts decline it), overrides of two modules, a class
 path a URL would escape, and more than one report, which TLC lists in the JVM's order.
 
+Both fronts read an override class only within a whitelist, since Java runs what a class holds
+around the method TLC calls; outside it they decline, naming why (`tests/fixtures/override-shapes`
+holds a class for each exclusion, with what TLC does with it):
+
+- a class file of version 69 or older whose constant pool holds only the JVM's known tags;
+- a plain class (not an interface, abstract, annotation, enum or module) that extends
+  java.lang.Object, implements no interface, and has no fields and no static initializer, which
+  TLC runs as it first calls an override;
+- no annotations, such as `@TLAPlusOperator`, whose method TLC skips here;
+- one public static method of each name, none a name TLC maps to an operator's
+  (`TLARegistry.mapName`, such as `Plus` for `+`);
+- a matched method without parameters whose bytecode is one of `getstatic BoolValue.ValTrue` or
+  `ValFalse`, an int constant then `invokestatic IntValue.gen(I)`, or `new StringValue`, `dup`, a
+  string constant and `invokespecial StringValue.<init>(String)`, then `areturn` as its last
+  instruction, with no exception table.
+
 The binary prints an assumption's Print of a value the store can't word as the trace evaluator
 prints it (`Rebuilder::check_assumption`, each assumption in turn), as 635457c does for the
 startup's, as long as every print before it the store worded alike.

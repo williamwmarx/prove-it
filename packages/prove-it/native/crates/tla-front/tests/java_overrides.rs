@@ -14,7 +14,14 @@ use tla_front::spec::create_identifier;
 use tla_front::values::ValueOrder;
 
 fn link(source: &str) -> Result<Environment, FrontError> {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/overrides");
+    link_in("overrides", source)
+}
+
+// Links the spec with the classes of the fixture directory `fixture`.
+fn link_in(fixture: &str, source: &str) -> Result<Environment, FrontError> {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../tests/fixtures")
+        .join(fixture);
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
     let load_class = |name: &str| std::fs::read(directory.join(format!("{name}.class"))).ok();
     create_environment(&EnvironmentOptions {
@@ -91,4 +98,36 @@ fn leaves_an_override_with_parameters_to_java() {
     )
     .err();
     assert!(matches!(error, Some(FrontError::NotYet(_))), "{error:?}");
+}
+
+#[test]
+fn leaves_an_override_class_it_does_not_read_whole_to_java() {
+    // tests/fixtures/override-shapes: in each, TLC runs what the front end can't, or matches
+    // otherwise (each P.java says what TLC does).
+    for (shape, reason) in [
+        ("clinit", "a Java override class with a static initializer"),
+        ("field", "a Java override class with fields"),
+        ("super", "a Java override class with a superclass"),
+        ("overload", "a Java override class with methods of one name"),
+        ("annotation", "a Java override class with annotations"),
+        ("trycatch", "a Java override that computes its value"),
+        (
+            "registry",
+            "a Java override of a name TLC maps to an operator's",
+        ),
+    ] {
+        let directory = format!("override-shapes/{shape}");
+        let source = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../tests/fixtures")
+                .join(&directory)
+                .join("P.tla"),
+        )
+        .expect("the spec");
+        let error = link_in(&directory, &source).err();
+        assert!(
+            matches!(&error, Some(FrontError::NotYet(message)) if message == reason),
+            "{shape}: {error:?}"
+        );
+    }
 }

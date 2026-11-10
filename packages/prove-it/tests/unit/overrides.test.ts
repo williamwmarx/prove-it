@@ -65,6 +65,32 @@ describe("Java module overrides match TLC", () => {
     ).rejects.toThrow(TlaUnsupportedError);
   });
 
+  it("rejects an override class it does not read whole", async () => {
+    // tests/fixtures/override-shapes: in each, TLC runs what the front end can't, or matches
+    // otherwise (each P.java says what TLC does).
+    for (const [shape, reason] of [
+      ["clinit", "A Java override class with a static initializer"],
+      ["field", "A Java override class with fields"],
+      ["super", "A Java override class with a superclass"],
+      ["overload", "A Java override class with methods of one name"],
+      ["annotation", "A Java override class with annotations"],
+      ["trycatch", "The Java override P.K computes its value"],
+      ["registry", "A Java override of a name TLC maps to an operator's"],
+    ]) {
+      const directory = join(import.meta.dirname, "../fixtures/override-shapes", shape);
+      await expect(
+        check({
+          source: readFileSync(join(directory, "P.tla"), "utf8"),
+          config: readFileSync(join(directory, "P.cfg"), "utf8"),
+          loadClass: (name) => {
+            const path = join(directory, `${name}.class`);
+            return existsSync(path) ? readFileSync(path) : undefined;
+          },
+        }),
+      ).rejects.toThrow(`${reason}, which tla-ts cannot run`);
+    }
+  });
+
   it("rejects an override whose method computes its value", async () => {
     await expect(
       check({
