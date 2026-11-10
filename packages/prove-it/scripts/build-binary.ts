@@ -60,7 +60,7 @@ const result = await Bun.build({
   // executable embeds the entries and the snapshot side by side at its root, and the ahead-of-time
   // one the snapshot at its path from the package, so the entries go beside it.
   naming: isAheadOfTime ? `${EMBEDDED_DIRECTORY}/[name].[ext]` : "[name].[ext]",
-  // An ahead-of-time binary holds machine code rather than bytecode, and runs its actions as closures.
+  // An ahead-of-time binary holds machine code rather than bytecode.
   bytecode: !isAheadOfTime,
   define: {
     PROVE_IT_BINARY: "true",
@@ -71,7 +71,6 @@ const result = await Bun.build({
     // entry instead.
     ...(isAheadOfTime && {
       "import.meta.url": JSON.stringify(`file:///$bunfs/root/${EMBEDDED_DIRECTORY}/cli.js`),
-      PROVE_IT_AOT: "true",
     }),
   },
   target: "bun",
@@ -100,7 +99,6 @@ const checks = [
           args: ["Commit.cfg"],
           env: {
             PROVE_IT_ENGINE: "debug",
-            PROVE_IT_ENGINE_BACKEND: "rust",
             PROVE_IT_ENGINE_ADDON: undefined,
           },
           expected: ["[engine] native: complete: ", " on 1 thread "],

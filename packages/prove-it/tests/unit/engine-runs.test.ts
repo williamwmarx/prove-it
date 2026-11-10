@@ -15,9 +15,9 @@ const checkModel = (environment: Record<string, string>) =>
     { encoding: "utf8", env: { ...process.env, ...environment } },
   );
 
-describe("the engine's backends in the conformance scripts", () => {
-  it("checks a model with the TypeScript engine", () => {
-    const result = checkModel({ PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "ts" });
+describe("the engine in the conformance scripts", () => {
+  it("checks a model with the engine", () => {
+    const result = checkModel({ PROVE_IT_ENGINE: "debug" });
     expect(JSON.parse(result.stdout)).toMatchObject({
       status: "success",
       generatedStates: 10,
@@ -27,12 +27,6 @@ describe("the engine's backends in the conformance scripts", () => {
       engine: "completed",
       reason: undefined,
     });
-  });
-
-  it("refuses a backend that doesn't exist", () => {
-    const result = checkModel({ PROVE_IT_ENGINE_BACKEND: "java" });
-    expect(result.status).toBe(2);
-    expect(result.stderr).toBe("PROVE_IT_ENGINE_BACKEND takes one of ts, rust, not java\n");
   });
 
   it("reads what the engine did from its [engine] lines", () => {

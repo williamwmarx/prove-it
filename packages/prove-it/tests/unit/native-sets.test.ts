@@ -134,7 +134,7 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     ];
     const native = await run(
       { source: toModule(body), config: CONFIG },
-      { PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "rust" },
+      { PROVE_IT_ENGINE: "debug" },
     );
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
     // {} and {2} come up from both sets: 8 initial states and 6 steps.
@@ -150,7 +150,7 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     ];
     const native = await run(
       { source: toModule(body), config: CONFIG },
-      { PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_BACKEND: "rust" },
+      { PROVE_IT_ENGINE: "debug" },
     );
     expect(native.lines).toContainEqual(expect.stringMatching(COMPLETE));
     // {} and {2} come up from both sets.
@@ -235,9 +235,9 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     );
   });
 
-  it("leaves a set it has no order for, as the TypeScript engine does", async () => {
-    // TLC streams the union in the UNION, duplicates and all, which neither engine follows once it
-    // holds the union as an id, nor where a bound name may hold it.
+  it("leaves a set it has no order for to the interpreter", async () => {
+    // TLC streams the union in the UNION, duplicates and all, which the engine doesn't follow once
+    // it holds the union as an id, nor where a bound name may hold it.
     for (const set of [
       "UNION {(SUBSET {1}) \\cup SUBSET {2}}",
       "UNION {s : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",
@@ -249,7 +249,6 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
       expect(lines).toEqual([
         expect.stringMatching(/^\[engine\] native: ir: /),
         expect.stringMatching(/^\[engine\] native: declined: unsupported: enumerating a set TLC /),
-        expect.stringMatching(/^\[engine\] handed over after \d+ ms: unsupported: enumerating /),
       ]);
     }
   });
