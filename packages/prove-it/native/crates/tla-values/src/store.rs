@@ -887,6 +887,10 @@ impl Store {
     #[inline(always)]
     pub fn equals(&mut self, left: Id, right: Id) -> Outcome<bool> {
         if left == right {
+            // TLC builds a function it kept lazy to compare it, with itself too.
+            if self.meta(left).kind == KIND_LAZY_FUNCTION {
+                return Err(LAZY_FUNCTION);
+            }
             return Ok(true);
         }
         let (left_meta, right_meta) = (self.meta(left), self.meta(right));
