@@ -479,19 +479,27 @@ impl<'ir> Rebuilder<'ir> {
                         position as usize + 1,
                     ),
                 };
+                // The invariants as TLC checks them: the model's, then its properties checked as
+                // invariants, which the engine counts past them.
+                let mut invariants = evaluator.tlc_invariants()?;
+                invariants.truncate(invariant_count);
+                if invariants.iter().any(|&(_, scope, _)| scope.is_some()) {
+                    return Err(Unsupported(
+                        "evaluating the failure again: an invariant in an instance's scope".into(),
+                    ));
+                }
+                if invariant_count > invariants.len() {
+                    return Err(Unsupported(
+                        "evaluating the failure again: an invariant the model doesn't have".into(),
+                    ));
+                }
                 let checks: Option<Vec<NodeId>> = ir
                     .model
                     .constraints
                     .iter()
                     .take(constraint_count)
                     .map(body)
-                    .chain(
-                        ir.model
-                            .invariants
-                            .iter()
-                            .take(invariant_count)
-                            .map(|invariant| body(&invariant.root)),
-                    )
+                    .chain(invariants.iter().map(|&(invariant, _, _)| Some(invariant)))
                     .chain(
                         ir.model
                             .initial_predicates

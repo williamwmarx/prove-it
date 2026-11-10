@@ -4157,3 +4157,22 @@ fn checks_the_postconditions_once_a_stuttering_lasso_is_printed() {
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn reports_a_property_checked_as_an_invariant_that_fails_on_an_initial_state() {
+    // TLC checks []P of a state predicate P as an invariant, after the model's own, and reports
+    // one that fails to evaluate on an initial state with the state, then its replay's call stack.
+    let spec = "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in {0, 1, 2}\nA == x' = x\nSpec == Init /\\ [][A]_x\nInv == x \\in 0..9\nP == [](IF x # 1 THEN x[1] = 0 ELSE TRUE)\n====\n";
+    let (output, directory) = run_lowered(
+        "property-invariant-initial",
+        spec,
+        "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY P\n",
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Computing initial states...\nError: A non-function (an integer) was applied as a function.\nline 8, col 23 to line 8, col 26 of module M\nWhile working on the initial state:\nx = 0\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 4, column 9 to line 4, column 23 in M\n1. Line 8, column 9 to line 8, column 40 in M\n2. Line 8, column 23 to line 8, column 30 in M\n3. Line 8, column 23 to line 8, column 26 in M\n\n\n1 states generated, 1 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 1.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
