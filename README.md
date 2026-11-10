@@ -32,7 +32,7 @@ prove-it Spec.tla
 prove-it tlapm Module.tla
 ```
 
-`check` searches with a native engine written in Rust. npm installs it as an optional package for Linux (x64 and arm64, glibc and musl), macOS (arm64 and x64) and Windows (x64), and as WebAssembly for the browser and any other platform. Where no engine loads, as when optional dependencies were left out, `check` throws `EngineUnavailableError` and the command line exits with 255; `PROVE_IT_ENGINE=0` checks with the interpreter instead, which needs no engine and is much slower.
+`check` searches with a native engine written in Rust. npm installs it as an optional package for Linux (x64 and arm64, glibc and musl), macOS (arm64 and x64) and Windows (x64), and the main package carries it as WebAssembly for the browser, for any other platform and for an install without optional dependencies. Where no engine loads, `check` throws `EngineUnavailableError` and the command line exits with 255; `PROVE_IT_ENGINE=0` checks with the interpreter instead, which needs no engine and is much slower.
 
 ## Development
 

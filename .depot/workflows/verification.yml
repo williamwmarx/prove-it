@@ -79,9 +79,9 @@ jobs:
               cd packages/prove-it
               (cd native && cargo clippy --locked --target wasm32-unknown-unknown -p prove-it-wasm -- -D warnings)
               bun scripts/platform-packages.ts build
-              bun scripts/platform-packages.ts build --target wasm32-unknown-unknown
               bun run build
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/native/npm/wasm32/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
+              bun scripts/platform-packages.ts build --target wasm32-unknown-unknown
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/dist/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts
           # Every unit test, with the native engine that bun run test builds searching
           # (tests/setup.ts).
           - task: Test
@@ -120,17 +120,19 @@ jobs:
           - task: Cargo Fmt
             command: cd packages/prove-it/native && cargo fmt --check
           # Packs the main package and the platform package as release.yml does, then installs them
-          # without scripts: the main package alone exits 255 for want of an engine, naming
-          # PROVE_IT_ENGINE=0, which checks with the interpreter; with the wasm32 package it searches
-          # the model as WebAssembly, and with its platform package it loads the addon.
+          # without scripts: the main package without its WebAssembly engine or a platform package
+          # exits 255 for want of an engine, naming PROVE_IT_ENGINE=0, which checks with the
+          # interpreter; with the engine as WebAssembly in its dist it searches the model with that,
+          # and with its platform package it loads the addon.
           - task: Packages
             command: |
               cd packages/prove-it
               bun scripts/platform-packages.ts build
-              bun scripts/platform-packages.ts build --target wasm32-unknown-unknown
               bun run build
               packs="$RUNNER_TEMP/packs"
-              mkdir -p "$packs"
+              mkdir -p "$packs/bare"
+              bare=$(npm pack --silent --pack-destination "$packs/bare")
+              bun scripts/platform-packages.ts build --target wasm32-unknown-unknown
               main=$(npm pack --silent --pack-destination "$packs")
               bun scripts/platform-packages.ts pack "$packs"
               install="$RUNNER_TEMP/install"
@@ -138,13 +140,13 @@ jobs:
               cp tests/fixtures/commit/Commit.* "$install"
               cd "$install"
               npm init -y > /dev/null
-              npm install --ignore-scripts --no-audit --no-fund "$packs/$main"
+              npm install --ignore-scripts --no-audit --no-fund "$packs/bare/$bare"
               status=0
               npx --no prove-it Commit.cfg 2> engine.log > /dev/null || status=$?
               test "$status" -eq 255
               grep -q '^The native engine is unavailable: no @atemp/prove-it-linux-x64-gnu' engine.log
               PROVE_IT_ENGINE=0 npx --no prove-it Commit.cfg | grep -q '251 distinct states found'
-              npm install --ignore-scripts --no-audit --no-fund "$packs"/atemp-prove-it-wasm32-*.tgz
+              npm install --ignore-scripts --no-audit --no-fund "$packs/$main"
               PROVE_IT_ENGINE=debug npx --no prove-it Commit.cfg 2> engine.log > /dev/null
               grep -q '^\[engine\] native: complete: ' engine.log
               npm install --ignore-scripts --no-audit --no-fund "$packs"/atemp-prove-it-linux-x64-gnu-*.tgz

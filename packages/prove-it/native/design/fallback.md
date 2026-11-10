@@ -34,11 +34,12 @@ slower; the gaps workstream ([gaps.md](gaps.md)) takes the declines to zero.
 - the module `PROVE_IT_ENGINE_WASM` names, if set;
 - where there is `process.dlopen` (Node, Bun): the addon `PROVE_IT_ENGINE_ADDON` names, the one an
   executable embeds, or the one in the platform package installed for this system; failing those,
-  the WebAssembly engine from the `@atemp/prove-it-wasm32` package, which has no `os` or `cpu`
-  fields, so an unlisted platform (riscv64, FreeBSD, win32 arm64 and so on) still searches
-  natively. An addon named by `PROVE_IT_ENGINE_ADDON` or embedded is the only one tried;
+  the WebAssembly engine the main package ships as `dist/prove-it-engine.wasm`, so an unlisted
+  platform (riscv64, FreeBSD, win32 arm64 and so on), or an install without optional
+  dependencies, still searches natively, on one thread. An addon named by `PROVE_IT_ENGINE_ADDON`
+  or embedded is the only one tried;
 - where there is none (a browser): the WebAssembly engine `loadWasmEngine` fetched and compiled
-  before the check, from the wasm32 package or beside the module (DESIGN.md 7.4).
+  before the check from beside the module, where a bundler copies it (DESIGN.md 7.4).
 
 Where none loads, `check` throws `EngineUnavailableError` (src/errors.ts, exported). Its message
 gives the loader's reason and says to install the package with its optional dependencies on a
@@ -46,9 +47,10 @@ supported platform, or to set `PROVE_IT_ENGINE=0` to check with the interpreter.
 and exits with 255, TLC's exit code for an internal error. Nothing falls back to a slower search
 unasked.
 
-Who reaches the error: `npm install --omit=optional` and its equivalents, a lockfile written on
-another platform under npm's optional-dependency bug (npm/cli#4828), a copy of `dist/` without
-`node_modules`, and a platform package from another release (an ABI mismatch).
+Who reaches the error, now that the main package carries the WebAssembly engine: a host where it
+fails to compile or instantiate, a build of `dist/` without it (`bun run build` alone, without
+`platform-packages.ts build --target wasm32-unknown-unknown`), and a platform package from another
+release (an ABI mismatch) where the addon is named or embedded.
 
 ## Where the interpreter remains a fallback
 

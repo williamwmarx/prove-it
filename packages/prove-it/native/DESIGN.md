@@ -1054,11 +1054,13 @@ boundary. CPU baseline is `x86-64-v2` (no AVX2 assumption) and the default for a
 
 Where there is no `process.dlopen`, as in a browser, the engine runs as WebAssembly:
 `crates/prove-it-wasm` builds it for `wasm32-unknown-unknown` with the standard library only, over
-a hand-written ABI that `src/engine/wasm.ts` instantiates as the addon's functions. npm ships it as
-the `wasm32` platform package (`platform-packages.ts build --target wasm32-unknown-unknown`), which
-has no `os` or `cpu` fields; `loadWasmEngine` in `native.ts` fetches and compiles it before a
-check, and `PROVE_IT_ENGINE_WASM` loads it in Node or Bun for testing. In Node or Bun it is also
-the engine where no platform package loads, as on a platform none is built for
+a hand-written ABI that `src/engine/wasm.ts` instantiates as the addon's functions. The main
+package ships it as `dist/prove-it-engine.wasm` (`platform-packages.ts build --target
+wasm32-unknown-unknown`, after `bun run build`), beside the modules; `loadWasmEngine` in
+`native.ts` fetches and compiles it before a check from a literal `new URL("./prove-it-engine.wasm",
+import.meta.url)`, which a bundler finds and copies as it does the workers, and
+`PROVE_IT_ENGINE_WASM` loads it in Node or Bun for testing. In Node or Bun it is
+also the engine where no platform package loads, as on a platform none is built for
 ([design/fallback.md](design/fallback.md)).
 
 - **One thread.** WebAssembly here has no threads, so the search runs on one, and the store hooks
@@ -2745,7 +2747,7 @@ The milestones' as-built notes are in [design/front.md](design/front.md).
 **engine-wasm (pushed at 58710d0, no PR).**
 - `prove-it-host` holds what both bindings hand JavaScript.
 - `prove-it-wasm` is the WebAssembly binding. `src/engine/wasm.ts` is its loader, and §7.4 describes it.
-- The wasm32 platform package is built by `platform-packages.ts build --target wasm32-unknown-unknown`.
+- The engine as WebAssembly is built into `dist/` by `platform-packages.ts build --target wasm32-unknown-unknown` and ships in the main package.
 - Its differential against the addon matched on 657 of 657 runs.
 - It branched before the latest native-parity, so it merges once native-parity lands, together with option C (exit 255, from #157).
 - When merging, rebuild the IR goldens and redo the `Settings` fields that native-parity added since: `workers`, and the `is_native` the Json operators read. `prove-it-host/src/outcome.rs` builds them for both bindings.
