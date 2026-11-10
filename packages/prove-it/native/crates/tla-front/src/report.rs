@@ -323,9 +323,10 @@ impl Loader<'_> {
             .flatten();
         let parse_error = match (lexical_error, &parsed) {
             (Some(lexical_error), _) => Some(lexical_error),
-            (None, Err(error)) => Some(
+            // SANY's parser accepts what the front end's parser doesn't.
+            (None, Err(_)) => Some(
                 get_sany_parse_error(&text, self.options.version)
-                    .unwrap_or_else(|| format!("***Parse Error***\n{}", error.message)),
+                    .ok_or_else(|| not_yet("a module SANY's parser accepts"))?,
             ),
             (None, Ok(_)) => None,
         };
