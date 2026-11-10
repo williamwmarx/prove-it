@@ -286,12 +286,19 @@ enum Event {
     /// TLC warns that the sets the symmetry permutes, by these names, hold fewer than two
     /// elements.
     SymmetrySetsTooSmall(Vec<String>),
+    /// TLC would evaluate the `_PERIODIC` expression now, as it prints its progress, which the
+    /// engine doesn't: the search ends as not native.
+    Periodic,
 }
 
 struct Relay<'ir> {
     sender: mpsc::Sender<Event>,
     /// Whether something printed has a text TLC's isn't known to be, which ends the search.
     is_misprinted: bool,
+    /// Whether the configuration names a `_PERIODIC` expression, which TLC evaluates as it prints
+    /// its progress; the search ends there, if it gets that far.
+    is_periodic: bool,
+    is_periodic_reached: bool,
     ir: &'ir tla_ir::Ir,
     is_tool: bool,
     workers: usize,
@@ -365,7 +372,7 @@ impl Relay<'_> {
 
 impl Reporter for Relay<'_> {
     fn is_cancelled(&self) -> bool {
-        self.is_misprinted
+        self.is_misprinted || self.is_periodic_reached
     }
 
     fn initial_states_started(&mut self) {
@@ -380,7 +387,14 @@ impl Reporter for Relay<'_> {
         let _ = self.sender.send(Event::InitialStates(generated, distinct));
     }
 
+    // TLC evaluates the `_PERIODIC` expression in `doPeriodicWork` just before it prints its
+    // progress, and not at all in a run that ends first (AbstractChecker.runTLC).
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64) {
+        if self.is_periodic {
+            self.is_periodic_reached = true;
+            let _ = self.sender.send(Event::Periodic);
+            return;
+        }
         let _ = self
             .sender
             .send(Event::Progress(generated, distinct, queued, depth));
@@ -754,6 +768,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     // counterexample started.
     let mut checking = None;
     let mut is_misprinted = false;
+    let mut is_periodic_reached = false;
+    let is_periodic = config.periodic.is_some();
     let (outcome, assumed_printed) = std::thread::scope(|scope| {
         let ir = &ir;
         let searching = std::thread::Builder::new()
@@ -762,6 +778,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 let mut relay = Relay {
                     sender,
                     is_misprinted: false,
+                    is_periodic,
+                    is_periodic_reached: false,
                     ir,
                     is_tool,
                     workers,
@@ -819,6 +837,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     is_misprinted = true;
                     break;
                 }
+                Event::Periodic => {
+                    is_periodic_reached = true;
+                    break;
+                }
             }
         }
         drop(receiver);
@@ -826,6 +848,12 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     });
+    if is_periodic_reached {
+        return report_not_native(
+            printer,
+            "_PERIODIC, which TLC evaluates as it prints its progress",
+        );
+    }
     if is_misprinted {
         return report_not_native(
             printer,
