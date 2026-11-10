@@ -939,6 +939,34 @@ fn reports_a_spec_sany_rejects() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+#[test]
+fn reports_the_exception_sanys_generator_throws_as_a_failed_parse() {
+    // TLC's tla2sany error corpus, E4294_Module_Test, as TLC at d8fb231 prints it.
+    let spec = "---- MODULE Stop ----\nRECURSIVE op\n---- MODULE Inner ----\n====\nop == 0\n====\n";
+    let exception = "util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.";
+    let (output, directory) = run_spec("exception", spec, "");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(150), "{text}");
+    assert!(
+        text.contains(&format!("Semantic processing of module Stop\n{exception}\nError: Parsing or semantic analysis failed.Parsing or semantic analysis failed.{exception}\nFinished in ")),
+        "{text}"
+    );
+    assert!(!text.contains("Starting..."), "{text}");
+    let tool = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-tool", "Stop"])
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    let text = stdout(&tool);
+    assert_eq!(tool.status.code(), Some(150), "{text}");
+    assert!(
+        text.contains(&format!("{exception}\n@!@!@STARTMSG 2171:1 @!@!@\nParsing or semantic analysis failed.@!@!@STARTMSG 2171:0 @!@!@\nParsing or semantic analysis failed.{exception}\n@!@!@ENDMSG 2171 @!@!@\n@!@!@ENDMSG 2171 @!@!@\n@!@!@STARTMSG 2186:0 @!@!@\nFinished in ")),
+        "{text}"
+    );
+    assert!(!text.contains("SANY finished."), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 // Runs the binary on a spec of the test's own, which tla-front lowers, without the trace
 // exploration spec TLC would parse with it.
 fn run_lowered(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {

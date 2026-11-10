@@ -8,7 +8,7 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { getTranscript } from "./normalize-output";
 
@@ -25,8 +25,10 @@ if (tlaplus === undefined || classpath === undefined) {
   );
   process.exit(2);
 }
-const native =
-  getOption("--native") ?? join(import.meta.dirname, "../native/target/release/prove-it");
+// Resolved here, since each run is from a directory of its own.
+const native = resolve(
+  getOption("--native") ?? join(import.meta.dirname, "../native/target/release/prove-it"),
+);
 const ARGUMENTS = ["-nowarning", "-noGenerateSpecTE", "-workers", "1", "-fp", "0", "-seed", "0"];
 const SEMANTIC = join(tlaplus, "tlatools/org.lamport.tlatools/test/tla2sany/semantic");
 

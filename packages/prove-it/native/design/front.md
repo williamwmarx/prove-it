@@ -593,8 +593,8 @@ brought:
   the literal on its own line, exit 151 or 255. The TypeScript CLI still prints the front end's
   error (code 1000, exit 75).
 
-The generator's checks the error corpus declined (E4200, E4203, E4204, E4223, E4293 ×2, E4351,
-E4355) are now written, from `Generator.java` and `SymbolTable.java` at d8fb231:
+The generator's checks the error corpus declined (E4200, E4203, E4204, E4223, E4293 ×2, E4294,
+E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d8fb231:
 
 - `selectorToNode` (`resolve.rs`, `get_symbol_arity`): an INSTANCE's name as an expression, with
   its arguments checked first ("The operator I requires n arguments." at the arguments, or at the
@@ -627,13 +627,19 @@ E4355) are now written, from `Generator.java` and `SymbolTable.java` at d8fb231:
   (`FileUtil`) a module of the root module's file, so `report.rs` reads a standard module before a
   nested module of its name, which SANY's parse doesn't see.
 
+- E4294_Module, a MODULE inside a recursive section: the nested module's end takes the section's
+  count off the total (`checkForUndefinedRecursiveOps`), so the definition after it drives the
+  total below zero and `endOpDefNode` throws a WrongInvocationException. `SANY.parse` prints it
+  after the module's "Semantic processing" line and none of its messages, and SpecProcessor fails
+  with `Assert.fail(EC.TLC_PARSING_FAILED2, e)`, whose message TLC words with 2171 twice (nested
+  markers under -tool), with no "SANY finished." or "Starting...", and exit 150; recorded from TLC
+  at d8fb231 (`report.rs` `get_generator_exception`, `SanyText::exception`). It is written for
+  the root module after standard modules alone; a recursive section the module leaves without a
+  definition after it, or one that goes on after it, stays `NotYet`. The TypeScript report's "A
+  MODULE may not appear within a recursive definition section." is not what TLC does.
+
 Declines left, each for a reason:
 
-- E4294_Module: a MODULE inside a recursive section. The nested module's end clears the section's
-  count, so the definition after it drives the count below zero and `endOpDefNode` throws a
-  WrongInvocationException, which reaches TLC as a failed parse (`Assert.fail(2171, ...)`). What
-  TLC prints of that exception is to be recorded from TLC before it is written; the TypeScript
-  report's "A MODULE may not appear within a recursive definition section." is not what TLC does.
 - AssumeProveTest's labeled ASSUME/PROVE, which the front end's parser rejects.
 - ProofsTest: a theorem whose statement is an expression, named as an expression in its own proof.
 - Four corpus specs whose failing assumptions the engine declines to replay (AssumeTest,
@@ -641,20 +647,16 @@ Declines left, each for a reason:
 
 The binary names the check it declines (`SANY's report of <reason>`).
 
-Measured against the TypeScript report, which matches TLC on these specs except where listed
-below (TLC itself runs on the coordinator's side, as this container can't build it): the 8 newly
-written errors print what it prints, so 124 of the 125 errors print and 1 declines; the accepted
-specs are as before (22 print, 6 decline); and `front-differential.ts sany-text` stays at 2,367 of
-2,367.
-
 `bun scripts/sany-corpus.ts --tlaplus <clone> --classpath <tla2tools>` runs TLC live against the
-binary over both directories and counts them: before the port, 138 of 153 printed what TLC prints
-(116 of the 125 errors, 22 of the 28 accepted specs), 15 declined and none differed. The recorded
+binary over both directories and counts them (TLC runs on the coordinator's side, as this
+container can't build it). Before the port 138 of 153 printed what TLC prints (116 of the 125
+errors, 22 of the 28 accepted specs), 15 declined and none differed; after it, before E4294_Module
+was written, 146 printed, 7 declined and none differed: all 125 errors but E4294_Module, and the
+six accepted specs above. `front-differential.ts sany-text` stays at 2,367 of 2,367. The recorded
 gate, with the directories in `corpora.json` and TLC's output recorded, is still to come.
 
 ### Open
 
-- E4294_Module, once TLC's output for it is recorded.
 - `report.rs`'s semantic checks still port `src/resolve.ts` and `src/levels.ts`, not the whole of
   `src/sany`; the generator's errors the corpus doesn't reach are the next to port.
 - A RECURSIVE operator that applies another of its section (mutual recursion): SANY's first pass
@@ -670,8 +672,8 @@ declines:
 
 - E4243 ×3 (an explicit substitute's arity, two errors in SANY) and E4260 ×2 (a function applied
   to another number of arguments).
-- E4294_Module and E4350_Plus/Star (a named `<*>` or `<+>` step, which it rejects as a parse
-  error).
+- E4294_Module (an exception, above) and E4350_Plus/Star (a named `<*>` or `<+>` step, which it
+  rejects as a parse error).
 - AssumeProveTest (a labeled ASSUME/PROVE among the assumptions) and FairnessTest (`WF_B(A)(Act)`),
   which it rejects as parse errors.
 - NumbersTest: a decimal or a number TLC can't hold, which it reports with code 1000 and exit 75

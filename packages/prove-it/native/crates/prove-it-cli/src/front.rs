@@ -20,10 +20,11 @@ pub enum Read {
 }
 
 /// A spec TLC stops at before the search: SANY's report, then SANY's rejection of the spec, or
-/// else the error TLC reports with its code.
+/// else the error TLC reports with its code, or the exception SANY threw, which ends the report.
 pub struct Failure {
     pub sany: String,
     pub error: Option<CodedError>,
+    pub exception: Option<String>,
 }
 
 /// The model to check, and what TLC prints after the banner and before it computes the initial
@@ -73,6 +74,7 @@ pub fn read_front(
         return Ok(Read::Failed(Failure {
             sany: sany.text,
             error: None,
+            exception: sany.exception,
         }));
     }
     // TLC's seed as the generator's 64 bits.
@@ -100,6 +102,7 @@ pub fn read_front(
     Ok(Read::Failed(Failure {
         sany: sany.text,
         error: Some(coded),
+        exception: None,
     }))
 }
 

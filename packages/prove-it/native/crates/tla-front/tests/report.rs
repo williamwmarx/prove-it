@@ -196,3 +196,31 @@ fn reports_a_nested_module_named_like_a_standard_module_it_extends() {
         "Parsing file Main File\nParsing file Naturals Standard\nSemantic processing of module Naturals\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 1\n\nline 3, col 1 to line 4, col 4 of module Main\n\nMultiply-defined module 'Naturals': this definition or declaration conflicts \nwith the one at line 1, col 1 to line 36, col 77 of module Naturals.\n\n\n"
     );
 }
+
+// E4294_Module: a nested module ends the recursive section's count, so the definition after it
+// makes SANY's generator throw (`endOpDefNode`), which `SANY.parse` prints after the module's
+// "Semantic processing" line, with no messages.
+#[test]
+fn ends_with_the_exception_sanys_generator_throws_for_a_module_in_a_recursive_section() {
+    let report = get_report(
+        "exception",
+        "---- MODULE Main ----\nRECURSIVE op\n---- MODULE Inner ----\n====\nop == 0\n====\n",
+    )
+    .expect("a text");
+    let exception = "util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.";
+    assert!(report.is_failed);
+    assert_eq!(report.exception.as_deref(), Some(exception));
+    assert_eq!(
+        report.text,
+        format!("Parsing file Main File\nSemantic processing of module Main\n{exception}\n")
+    );
+    // Without a definition after the module nothing throws, and the count SANY is left with
+    // isn't followed.
+    assert!(matches!(
+        get_report(
+            "exception-undefined",
+            "---- MODULE Main ----\nRECURSIVE op\n---- MODULE Inner ----\n====\n====\n",
+        ),
+        Err(FrontError::NotYet(_))
+    ));
+}
