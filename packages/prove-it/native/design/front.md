@@ -614,9 +614,8 @@ E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d
   nothing before it in its module or LET names or binds N, and nothing after it in its scope binds
   N but one definition of N in the same module or LET (or, for a LET, one LET definition of N
   within a later definition of that LET, "defined at wrong LET/IN level"). That definition is an
-  operator
-  with k parameters that take no arguments, or a function when k is 0; at module level it may
-  instead have another number of such parameters ("Definition of N has different arity than its
+  operator with k parameters that take no arguments, or a function when k is 0; at module level it
+  may instead have another number of such parameters ("Definition of N has different arity than its
   RECURSIVE declaration.") or be a function when k isn't 0 ("Function N has operator arguments in
   its RECURSIVE declaration."). Where N is left undefined, defined at a deeper LET, or defined in
   one of those two other shapes, nothing may name N. A LET with RECURSIVE declarations has no
