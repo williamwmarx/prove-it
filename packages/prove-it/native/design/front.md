@@ -761,7 +761,17 @@ exception of SANY's generator (E4294_Module), which the CLI's printer doesn't wo
 module's text by its name or the file TLC prints that it parses a module from, and the CLI calls
 it again with those, so the WebAssembly engine needs no file system and no call back into
 JavaScript. The report is written again from the start each time, which costs a few milliseconds
-for a few rounds.
+for a few rounds. This is how every export of the host reads what JavaScript holds
+(`prove-it-host`'s `sources`, which lists the keys): the in-process check and the prover's
+exports read their sources this way too.
+
+The report grows the WebAssembly engine from 1.39 MB to 2.98 MB, and the addon on x86_64 Linux
+from 2.22 MB to 4.23 MB. One module carries it, as the in-process check will need tla-front's
+parser, resolver and lowering there anyway. Of the addon's 2.0 MB, about 0.74 MB is the report's
+alone (an addon with the report and the lowering is 5.35 MB, one with the lowering alone 4.61 MB),
+and 1.27 MB the parser, resolver and level checks the lowering shares; in proportion, about
+0.6 MB of the WebAssembly engine's 1.6 MB. That part could go behind a feature of the host crates
+for a build without the CLI, which nothing builds yet.
 
 On SANY's corpus (153 specs), the CLI with the addon prints what the binary prints on 144 specs,
 up from 135. The 3 that differ are E4294_Module, which the CLI leaves to the TypeScript report,

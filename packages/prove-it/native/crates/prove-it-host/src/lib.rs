@@ -8,6 +8,7 @@
 pub mod hooks;
 pub mod outcome;
 pub mod sany;
+pub mod sources;
 pub mod value;
 
 pub use tla_engine::search::{MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome, Settings};

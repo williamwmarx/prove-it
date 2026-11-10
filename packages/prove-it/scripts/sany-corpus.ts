@@ -8,9 +8,12 @@
 // it prints to a file instead of running the binary. `--recorded` holds the binary to such a file
 // with no TLC, as Verification does with tests/conformance/sany-stdout; `--cli` holds the CLI of
 // dist/ to it too. Without `--tlaplus` or `--specs`, it reads the `sany` corpus that
-// fetch-corpora.ts fetches.
+// fetch-corpora.ts fetches. `--main` names the class the jar runs, tlc2.TLC by default, such as
+// tla2sany.xml.XMLExporter, and `--arguments` the arguments every run takes before the spec's name,
+// TLC's below by default.
 // Usage: bun scripts/sany-corpus.ts [--tlaplus <clone> | --specs <directory>]
 //   (--classpath <tla2tools> [--record <file>] | --recorded <file> [--cli]) [--native <binary>]
+//   [--main <class>] [--arguments "<argument> ..."]
 
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -47,7 +50,17 @@ const native = resolve(
   getOption("--native") ?? join(import.meta.dirname, "../native/target/release/prove-it"),
 );
 const cli = join(import.meta.dirname, "../dist/cli.js");
-const ARGUMENTS = ["-nowarning", "-noGenerateSpecTE", "-workers", "1", "-fp", "0", "-seed", "0"];
+const main = getOption("--main") ?? "tlc2.TLC";
+const ARGUMENTS = getOption("--arguments")?.split(" ") ?? [
+  "-nowarning",
+  "-noGenerateSpecTE",
+  "-workers",
+  "1",
+  "-fp",
+  "0",
+  "-seed",
+  "0",
+];
 
 // What a run printed, with what differs between two runs of the same spec rewritten, and without
 // the JVM's note of the options it was given. TLC built as a directory of classes reads the
@@ -95,17 +108,13 @@ for (const source of corpora) {
     const expected =
       classpath === undefined
         ? recorded[id]
-        : run("java", ["-cp", classpath, "tlc2.TLC", ...ARGUMENTS, name], directory);
+        : run("java", ["-cp", classpath, main, ...ARGUMENTS, name], directory);
     if (expected === undefined) throw new Error(`${recordedPath} records nothing for ${id}`);
     if (recordPath !== undefined) recording[id] = expected;
     else {
       count(id, expected, run(native, [...ARGUMENTS, name], directory));
       if (isCliChecked) {
-        count(
-          `${id} (cli)`,
-          expected,
-          run("node", [cli, "tlc2.TLC", ...ARGUMENTS, name], directory),
-        );
+        count(`${id} (cli)`, expected, run("node", [cli, main, ...ARGUMENTS, name], directory));
       }
     }
     rmSync(directory, { recursive: true, force: true });

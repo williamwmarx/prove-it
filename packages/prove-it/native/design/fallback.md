@@ -61,6 +61,10 @@ code runs: SANY's report still needs the addon or the WebAssembly engine. Where 
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
 the search. Until then, the CLI prints the TypeScript report where no engine loads.
 
+The engine reads nothing itself: an export that reads what JavaScript holds, such as a spec's
+modules, names what it needs and is called again with it (`prove-it-host`'s `sources`), so the
+WebAssembly engine needs no file system and calls nothing in JavaScript.
+
 ### Decision: the WebAssembly engine ships in the main package
 
 Settled on 2026-11-10 (#166): the engine as WebAssembly ships inside `@atemp/prove-it` as
