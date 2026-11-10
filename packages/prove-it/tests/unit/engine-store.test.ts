@@ -267,9 +267,14 @@ describe.each(STORES)("the engine's %s store", (_, store) => {
         expect(() => store.setOf([other, integers])).toThrow(new Bailout(reason));
       }
     }
+    // A miss compares too: TLC's search compares <<m>> with a function over n.
+    const pair = store.functionOf([n], [one]);
+    expect(() => store.isMember(store.tupleOf([m], 1), store.setOf([pair]))).toThrow(
+      new Bailout(reason),
+    );
     // RecordValue.compareTo fails on a function of its size, which, asking, compares by its keys.
     expect(() => store.compare(models, record)).toThrow(
-      new Bailout("record compared with a function"),
+      new Bailout("a record compared with a function of its size over a model value"),
     );
     // Functions of other sizes compare by size, and functions over model values by their keys.
     expect(Math.sign(store.compare(run, store.functionOf([m], [one])))).toBe(1);

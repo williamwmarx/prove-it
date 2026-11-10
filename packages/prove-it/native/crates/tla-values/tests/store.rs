@@ -5,7 +5,8 @@ mod common;
 
 use common::workload;
 use tla_values::store::{
-    Bail, EMPTY_SET, EMPTY_TUPLE, FALSE, INTERVAL_KEYS, Id, KIND_INT, KIND_SET, Store, TRUE,
+    Bail, EMPTY_SET, EMPTY_TUPLE, FALSE, INTERVAL_KEYS, Id, KIND_INT, KIND_SET, RECORD_KEYS, Store,
+    TRUE,
 };
 
 fn utf16(text: &str) -> Vec<u16> {
@@ -366,6 +367,14 @@ fn stops_comparing_a_run_of_integers_with_a_function_over_a_model_value() {
             assert_eq!(store.set_of(&[integers, other]), Err(INTERVAL_KEYS));
         }
     }
+    // A miss compares too: TLC's search compares <<m>> with a function over n.
+    let tuple_of_model = store.tuple_of(&[m]);
+    let over_n = store.function_of(&[n], &[one]).unwrap();
+    let functions = store.set_of(&[over_n]).unwrap();
+    assert_eq!(
+        store.is_member(tuple_of_model, functions),
+        Err(INTERVAL_KEYS)
+    );
     // Functions of other sizes compare by size, and functions over model values by their keys.
     let single = store.function_of(&[m], &[one]).unwrap();
     assert_eq!(store.compare(run, single).map(i32::signum), Ok(1));
@@ -385,10 +394,12 @@ fn stops_comparing_a_record_with_a_function_of_its_size_over_a_model_value() {
     let shape = store.create_record_shape(&keys);
     let record = store.record_of(&shape, &[one, one]);
     let models = store.function_of(&[m, n], &[one, one]).unwrap();
-    let reason = Bail("record compared with a function");
-    assert_eq!(store.compare(record, models), Err(reason));
-    assert_eq!(store.compare(models, record), Err(reason));
-    assert_eq!(store.equals(models, record), Err(reason));
+    assert_eq!(store.compare(record, models), Err(RECORD_KEYS));
+    assert_eq!(store.compare(models, record), Err(RECORD_KEYS));
+    assert_eq!(
+        store.equals(models, record),
+        Err(Bail("record compared with a function"))
+    );
 }
 
 #[test]

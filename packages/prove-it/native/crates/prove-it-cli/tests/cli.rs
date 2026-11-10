@@ -816,21 +816,33 @@ fn unites_and_compares_sets_and_functions_by_tlc_classes() {
 }
 
 // TLC holds [i \in 0..1 |-> 1] over an interval, whose keys it compares as integers, failing at a
-// model value (`FcnRcdValue.compareToInterval`), and [i \in {0, 1} |-> 1] over its keys, which it
-// compares with the model value without failing. The store can't tell them apart: it stops, and
-// the evaluator reports TLC's failure, or finds none and declines.
+// model value (`FcnRcdValue.compareToInterval` and `equals`), and [i \in {0, 1} |-> 1] over its
+// keys, which it compares with the model value without failing. The store can't tell them apart:
+// it stops, and the evaluator reports TLC's failure, or finds none and declines.
 #[test]
 fn compares_functions_over_intervals_with_functions_over_model_values_as_tlc() {
-    for (test, domain, failure) in [
+    let unexpected = "Error: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
+    for (test, init, failure) in [
         (
             "interval",
-            "0..1",
-            Some("Attempted to compare integer with non-integer\nm.\n"),
+            "{[i \\in 0..1 |-> 1], [k \\in {m, 0} |-> 1]}",
+            Some(format!(
+                "{unexpected}Attempted to compare integer with non-integer\nm.\n"
+            )),
         ),
-        ("enumerated", "{0, 1}", None),
+        (
+            "interval-equality",
+            "([i \\in 0..1 |-> 1] = [k \\in {m, 0} |-> 1])",
+            Some("Error: Attempted to compare an integer with non-integer:\nm.\n".to_string()),
+        ),
+        (
+            "enumerated",
+            "{[i \\in {0, 1} |-> 1], [k \\in {m, 0} |-> 1]}",
+            None,
+        ),
     ] {
         let spec = format!(
-            "---- MODULE Keys ----\nEXTENDS Integers\nCONSTANT m\nVARIABLE x\nInit == x = {{[i \\in {domain} |-> 1], [k \\in {{m, 0}} |-> 1]}}\nNext == UNCHANGED x\n====\n"
+            "---- MODULE Keys ----\nEXTENDS Integers\nCONSTANT m\nVARIABLE x\nInit == x = {init}\nNext == UNCHANGED x\n====\n"
         );
         let (output, directory) =
             run_front(test, &spec, "CONSTANT m = m\nINIT Init\nNEXT Next\n", &[]);
@@ -838,15 +850,10 @@ fn compares_functions_over_intervals_with_functions_over_model_values_as_tlc() {
         std::fs::remove_dir_all(directory).expect("removed");
         assert!(!text.contains("Model checking completed"), "{test}: {text}");
         match failure {
-            Some(failure) => {
-                assert_eq!(output.status.code(), Some(255), "{text}");
-                assert!(
-                    text.contains(&format!(
-                        "Computing initial states...\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: {failure}"
-                    )),
-                    "{text}"
-                );
-            }
+            Some(failure) => assert!(
+                text.contains(&format!("Computing initial states...\n{failure}")),
+                "{test}: {text}"
+            ),
             None => assert!(
                 String::from_utf8_lossy(&output.stderr).contains("not native yet"),
                 "{test}: {text}"

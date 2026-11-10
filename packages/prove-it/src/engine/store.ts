@@ -383,10 +383,11 @@ const compareFunctions = (left: number, right: number) => {
   if (size > 0 && rightSize > 0 && isRecordId(left) !== isRecordId(right)) {
     // TLC compares a record only with a record (RecordValue.compareTo), which may fail before the
     // sizes decide. Of one size, a function asking compares by its keys, which fail against
-    // strings unless they are untyped model values.
-    const fn = isRecordId(left) ? right : left;
-    if (size !== rightSize || hasUntypedModelKey(fn)) {
-      return bail("record compared with a function");
+    // strings unless they are untyped model values: the evaluator, which knows which TLC built as
+    // a record, finds whether it fails.
+    if (size !== rightSize) return bail("record compared with a function");
+    if (hasUntypedModelKey(isRecordId(left) ? right : left)) {
+      return bail("a record compared with a function of its size over a model value");
     }
   }
   if (size !== rightSize) return size - rightSize;
@@ -689,11 +690,26 @@ const computeIsSafe = (left: Structure, right: Structure) => {
   const size = left.parts.length;
   if (size === 0 || right.parts.length === 0) return true;
   if (isRecordStructure(left) !== isRecordStructure(right)) return false;
-  return (
-    size !== right.parts.length ||
-    left.parts.every((part, index) => isSafe(part, right.parts[index]))
-  );
+  if (size !== right.parts.length) return true;
+  // A function over integers, which TLC may hold over an interval, fails against an untyped model
+  // value among the other's keys.
+  if (
+    (hasIntKeysOnly(left) && hasUntypedModelKeyStructure(right)) ||
+    (hasIntKeysOnly(right) && hasUntypedModelKeyStructure(left))
+  ) {
+    return false;
+  }
+  return left.parts.every((part, index) => isSafe(part, right.parts[index]));
 };
+
+const getKeyStructures = (structure: Structure) =>
+  structure.parts.slice(0, structure.parts.length / 2).map((part) => structures[part - 1]);
+
+const hasIntKeysOnly = (structure: Structure) =>
+  getKeyStructures(structure).every((key) => key.kind === KIND_INT);
+
+const hasUntypedModelKeyStructure = (structure: Structure) =>
+  getKeyStructures(structure).some((key) => key.kind === KIND_MODEL && key.modelType === 0);
 
 const isComparableWithMembers = (element: number, set: number) => {
   const size = sizes[set];

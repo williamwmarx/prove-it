@@ -46,6 +46,11 @@ pub const LAZY_FUNCTION: Bail = Bail("unsupported: comparing a function TLC keep
 pub const INTERVAL_KEYS: Bail =
     Bail("a function over an interval compared with one over other keys");
 
+/// Why the store stops comparing a record with a function of its size over an untyped model
+/// value, where TLC fails if the record asks.
+pub const RECORD_KEYS: Bail =
+    Bail("a record compared with a function of its size over a model value");
+
 pub const FALSE: Id = 0;
 pub const TRUE: Id = 1;
 pub const EMPTY_SET: Id = 2;
@@ -857,14 +862,18 @@ impl Store {
         if size > 0 && right_meta.size > 0 && self.is_record(left) != self.is_record(right) {
             // TLC compares a record only with a record (`RecordValue.compareTo`), which may fail
             // before the sizes decide. Of one size, a function asking compares by its keys, which
-            // fail against strings unless they are untyped model values.
+            // fail against strings unless they are untyped model values: the evaluator, which
+            // knows which TLC built as a record, finds whether it fails.
             let function = if self.is_record(left) {
                 &right_meta
             } else {
                 &left_meta
             };
-            if size != right_meta.size || self.has_untyped_model_key(function) {
+            if size != right_meta.size {
                 return Err(Bail("record compared with a function"));
+            }
+            if self.has_untyped_model_key(function) {
+                return Err(RECORD_KEYS);
             }
         }
         if size != right_meta.size {

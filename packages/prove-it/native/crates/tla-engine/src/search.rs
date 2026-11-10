@@ -465,6 +465,7 @@ const TLC_FAILURES: &[&str] = &[
     "enumerated a non-set",
     crate::compile::INFINITE_BOUND,
     tla_values::store::INTERVAL_KEYS.0,
+    tla_values::store::RECORD_KEYS.0,
     "equality of values TLC can't compare",
     "expected a bag",
     "expected a boolean",
@@ -4619,6 +4620,7 @@ mod tests {
         assert!(is_engine_limit("record compared with a function"));
         // TLC fails where it holds a function over an interval, which the evaluator knows.
         assert!(!is_engine_limit(tla_values::store::INTERVAL_KEYS.0));
+        assert!(!is_engine_limit(tla_values::store::RECORD_KEYS.0));
     }
 
     fn verified_states() -> States {
