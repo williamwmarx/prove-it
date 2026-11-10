@@ -2092,6 +2092,15 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("fails on zero to the power of zero in an invariant of a later state", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == x < 1 \\/ 0 ^ (x - 1) = 1\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.failure?.message).toBe("Evaluating invariant Inv failed.\n0^0 is undefined.");
+  });
+
   it("words arithmetic, sequence, and membership errors like TLC", async () => {
     const cases = [
       ["1 \\div 0 = 0", "The second argument of \\div is 0."],
