@@ -378,6 +378,29 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
         Value::Interval(..) | Value::Lazy(_) if matches!(value, Value::Model(model) if model.model_type() == 0) => {
             Ok(false)
         }
+        // A typed one fails there, for the sets whose `member` hands it to it.
+        Value::Lazy(lazy)
+            if matches!(value, Value::Model(_))
+                && matches!(
+                    **lazy,
+                    Lazy::Nat
+                        | Lazy::Int
+                        | Lazy::Strings
+                        | Lazy::Seq(_)
+                        | Lazy::FunctionSet(..)
+                        | Lazy::RecordSet(..)
+                        | Lazy::Product(_)
+                ) =>
+        {
+            fail_runtime(
+                "a typed model value's membership",
+                format!(
+                    "Attempted to check if the typed model value {} is an element of\n{}",
+                    format_pretty(value),
+                    format_pretty(set)
+                ),
+            )
+        }
         Value::Interval(low, high) => match value {
             Value::Int(int) => Ok(low <= int && int <= high),
             _ if low > high => Ok(false),
@@ -406,9 +429,17 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 Value::Str(_) => Ok(true),
                 _ => mistyped(value, "STRING"),
             },
+            // `SubsetValue.member`.
             Lazy::Subset(base) => {
-                if !value.is_set() {
-                    return fail("a membership in SUBSET of a non-set");
+                if !is_enumerable(value) {
+                    return fail_runtime(
+                        "a membership in SUBSET of a non-enumerable value",
+                        format!(
+                            "Attempted to check if the non-enumerable value\n{}\nis element of\n{}",
+                            format_pretty(value),
+                            format_pretty(set)
+                        ),
+                    );
                 }
                 for element in elements(value)?.iter() {
                     if !is_member(element, base)? {
@@ -498,9 +529,10 @@ pub fn is_member(value: &Value, set: &Value) -> Evaluated<bool> {
                 }
                 Ok(true)
             }
+            // `Sequences.member`.
             Lazy::Seq(base) => {
                 let Some(tuple) = as_tuple(value) else {
-                    return Ok(false);
+                    return mistyped(value, &format_pretty(set));
                 };
                 for element in tuple {
                     if !is_member(element, base)? {
