@@ -784,6 +784,19 @@ session:
 - It needs only P3a: from `lp` it takes `dependency.ts` alone.
 - First gate: `tests/unit/smt-nlsat.test.ts`, all but the `nra …` groups (those wait for
   `nra-solver`, P3b-lp's last file).
+- Status: ported, one `.rs` per TS file under `smt/src/nlsat/`; every non-`nra` group of
+  `smt-nlsat.test.ts` passes as Rust tests that read the same fixtures
+  (`tests/fixtures/nlsat/*.json`, through `nlsat/test_util.rs`). Representation: monomials are
+  ids into the manager's table, which `rename` rewrites in place as the TS does; a `Polynomial`
+  is an `Rc` node whose term order sits in a `RefCell`, since `lex_sort` and
+  `make_first_maximal` reorder shared polynomials; an `Anum` is a shared `Rc<RefCell>` handle,
+  since refinement changes it in place; atoms and clauses are `Rc`s with their mutable fields in
+  `Cell`s. No module stores another's state: the solver owns the managers, the cache, the atom
+  table and the assignment and passes them into each call; the atom table's `BoolVarHooks`
+  (`on_mk`, `on_delete`, `bvalues`) reach the solver's per-variable vectors, from `Explain` too.
+  TS throws are `Err(SmtError::…)`; `AddAllCoeffsRestart` is an internal error variant of
+  `explain`. The `ResourceLimit` is passed to `check`/`check_assignment`, not stored. Next:
+  `nra-solver` (P3b-lp) on top of it, then the decider differential once `core` calls `lp`.
 
 **P3c SMT core** (`prove-smt`, modules `util` from P3a and `core`):
 - In scope: `smt/solver/*.ts` (23,254 lines) but P3a's files; the `theory-lra-*` files (2,141)
