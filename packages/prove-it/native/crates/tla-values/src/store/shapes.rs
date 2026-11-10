@@ -296,6 +296,20 @@ impl Store {
         self.shapes.join(element, elements) != NONE
     }
 
+    /// Whether no comparison of `key` with the keys of `block`, a set's elements or a function's
+    /// domain, can fail, as TLC searches them for it.
+    pub(super) fn is_key_comparable(&mut self, block: Id, key: Id) -> bool {
+        let block = self.shape_of(block);
+        let keys = match self.shapes.term(block) {
+            Some(&Term::Set(elements)) => elements,
+            Some(&Term::Function(keys, _)) => keys,
+            Some(Term::Record(_)) => STRING,
+            _ => return false,
+        };
+        let key = self.shape_of(key);
+        self.shapes.join(key, keys) != NONE
+    }
+
     fn shape_of(&mut self, id: Id) -> Shape {
         let index = id as usize;
         if let Some(&shape) = self.shapes.of_value.get(index)

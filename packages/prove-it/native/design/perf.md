@@ -520,6 +520,21 @@ no failure of TLC's that the store misses.
 | PaxosCommit | 35.45 (34.35–36.91) | 33.30 (32.76–33.53) | 1.06× |
 | MCabs | 18.34 (17.77–18.71) | 17.48 (16.92–17.64) | 1.05× |
 
+### Function application by id
+
+TLC finds a key in a function's domain by a binary search with `compareTo` (`FcnRcdValue.select`)
+or a scan with `equals`. Where the key's shape joins the class of the function's keys, neither can
+fail, so the store finds the key's id in a domain of up to 256 keys instead of comparing. GameOfLife
+applies a function over 36 tuple keys 128 times a state. Measured against main fb05e28, one worker:
+
+| Model | Before, s | After, s | Speedup |
+|---|---|---|---:|
+| GameOfLife | 1.50 (1.47–1.64) | 1.20 (1.13–1.31) | 1.25× |
+
+MCabs spends a similar share in `find_in_block`, but on functions of a few model-value keys, which
+the store already scans by id: its cost is the misses of reading their values, which this doesn't
+change.
+
 ## Measured and dropped
 
 Tried on the symmetry and evaluator tracks, measured with the suite on the 4-core container, and
@@ -534,6 +549,9 @@ dropped because they did not move it. Recorded so that nobody repeats them.
 | A table from label to walks for PlusCal's `switch` (string labels compare by id) | Detlefs | 4.70 → 4.63 s, within noise | The `switch`'s self time is the walks inlined into it, not the 49-label scan. |
 | An index, per (quantifier, set id), of the elements whose leading `m.f = c` holds | PaxosCommit | 33.1–35.0 s → 36.0–37.0 s | `msgs` is a new set in nearly every state, so the index is used only by that state's 3 acceptor scans. |
 | Fuse a whole PlusCal step into one closure | MCbtree, MCExactInitialSync | Not built: estimated 5–10% | `walker::segments`' self time is spread over the per-op dispatch, 1–2% a line, with no hot spot. |
+| Cache membership in a set that reads nothing (a type's record sets) by the element | PaxosCommit, MCExactInitialSync | PaxosCommit 21.85 → 21.63 s; MCExactInitialSync 18.41 → 20.94 s, 190 MB more | `msgs \in SUBSET Message` falls from 14% to 1% of the profile but not in wall time, and the tables of elements cost the fast model. |
+| Search a long set's ids in a sorted copy instead of scanning them | TLCSailfish1 | 4.15, 4.41, 3.88 s → 4.16, 4.38, 3.83 s | Its sets are new in most states, so each copy is sorted for few tests. |
+| Read a key's metadata only where a short domain doesn't hold its id | MCabs | 12.22, 11.21 s → 11.68, 11.48 s | The misses are on the function's own words, which are read either way. |
 | Share one parse between SANY's report and the lowering | 2PCwithBTM, TCommit, TwoPhase, DieHard (`-workers 1`) | Not built: tokenizing and parsing a spec and its standard modules takes 0.26–0.66 ms of 7.9–16.7 ms runs, 3–5% at most | The report's resolution, level checks and linting stay, and the run goes to lowering (25–33%), the process (about 2 ms) and the engine's setup; such a run is already far below TLC's startup. |
 
 Counts behind the quantifier index, from an instrumentation build that counted every quantifier,

@@ -729,6 +729,111 @@ fn answers_a_membership_among_records_of_many_keys() {
     assert_eq!(store.is_member(missing, set), Ok(false));
 }
 
+// TLC's FcnRcdValue.select of a function it has normalized, of 32 keys or more: Java's
+// Arrays.binarySearch of its domain, each key asking compareTo of the argument.
+fn search_domain(store: &mut Store, domain: &[Id], key: Id) -> Result<Option<usize>, Bail> {
+    let (mut low, mut high) = (0i64, domain.len() as i64 - 1);
+    while low <= high {
+        let middle = (low + high) >> 1;
+        let comparison = store.compare(domain[middle as usize], key)?;
+        if comparison < 0 {
+            low = middle + 1;
+        } else if comparison > 0 {
+            high = middle - 1;
+        } else {
+            return Ok(Some(middle as usize));
+        }
+    }
+    Ok(None)
+}
+
+// The store finds some keys of a function by id, without comparing: it must fail wherever TLC's
+// search of the domain fails, and find what it finds.
+#[test]
+fn applies_a_function_as_tlcs_search_of_its_domain_does() {
+    let mut store = Store::new();
+    store.reset(
+        ["b", "a", "m1"]
+            .map(|text| text.encode_utf16().collect::<Vec<_>>())
+            .iter()
+            .map(Vec::as_slice),
+    );
+    let mut random = Random(0x9e3779b97f4a7c15 ^ 7);
+    let values: Vec<Id> = (0..if cfg!(miri) { 60 } else { 600 })
+        .map(|_| generate(&mut store, &mut random, 3))
+        .collect();
+    let (mut failed, mut found) = (0, 0);
+    // Families of keys a domain is drawn from: pairs of integers, records, sets of integers,
+    // functions over model values, and the generated values of every kind.
+    let (keys, models) = (
+        [str(&mut store, "a"), str(&mut store, "b")],
+        [store.model(&utf16("m1")), store.model(&utf16("m2"))],
+    );
+    let shape = store.create_record_shape(&keys);
+    let mut families: Vec<Vec<Id>> = vec![Vec::new(); 4];
+    for index in 0..120i64 {
+        let [low, high, other] =
+            [index % 11, index / 11, index % 3].map(|value| store.int(value).unwrap());
+        families[0].push(store.tuple_of(&[low, high]));
+        families[1].push(store.record_of(&shape, &[low, other]));
+        families[2].push(store.set_of(&[low, high, other]).unwrap());
+        families[3].push(store.function_of(&models, &[low, high]).unwrap());
+    }
+    families.push(values.clone());
+    let everything: Vec<Id> = families.concat();
+    for _ in 0..if cfg!(miri) { 20 } else { 300 } {
+        // A domain grown one key at a time from keys that compare with those before them.
+        let family = &families[random.next(families.len() as u64) as usize];
+        let target = 32 + random.next(60) as usize;
+        let mut domain_set = EMPTY_SET;
+        for _ in 0..target * 8 {
+            let candidate = family[random.next(family.len() as u64) as usize];
+            let Ok(set) = store
+                .set_of(&[candidate])
+                .and_then(|single| store.union(domain_set, single))
+            else {
+                continue;
+            };
+            domain_set = set;
+            if store.size_of(domain_set) as usize >= target {
+                break;
+            }
+        }
+        let domain = store.set_elements(domain_set).to_vec();
+        if domain.len() < 32 {
+            continue;
+        }
+        let range: Vec<Id> = (0..domain.len())
+            .map(|index| store.int(index as i64).unwrap())
+            .collect();
+        let function = store.function_of_sorted(&domain, &range);
+        if store.kind_of(function) != tla_values::store::KIND_FUNCTION {
+            continue;
+        }
+        let mut asked: Vec<Id> = domain.clone();
+        asked.extend((0..30).map(|_| everything[random.next(everything.len() as u64) as usize]));
+        for key in asked {
+            let applied = store.apply(function, key);
+            match search_domain(&mut store, &domain, key) {
+                Err(_) => {
+                    failed += 1;
+                    assert!(applied.is_err(), "{key} of {function}");
+                }
+                Ok(Some(position)) => {
+                    found += 1;
+                    let value = store.get_range_value(function, position as u32);
+                    assert_eq!(applied, Ok(value), "{key} of {function}");
+                }
+                Ok(None) => assert!(applied.is_err(), "{key} of {function}"),
+            }
+        }
+    }
+    assert!(
+        failed > 100 && found > 1_000,
+        "{failed} failed, {found} found"
+    );
+}
+
 // A string ranked after the order is frozen, as ToString ranks one in a search, compares only
 // with itself; a reset orders all strings again.
 #[test]

@@ -1732,7 +1732,9 @@ impl Store {
                 -1
             });
         }
-        if size <= LINEAR_SIZE {
+        // A short block, or one of keys no comparison with which can fail, holds the key where it
+        // holds its id: TLC's search, by compareTo or equals, would find it there.
+        if size <= LINEAR_SIZE || size <= SCANNED_SIZE && self.is_key_comparable(block, key) {
             let words = self.words(offset, size);
             return Ok(words
                 .iter()
