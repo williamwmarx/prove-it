@@ -1,0 +1,28 @@
+translated
+lemma zenon_thm ()
+  all #1 #4 (#4 #8 #9)
+    pnotp #10 #8 (#8 #10 #9)
+      noteq #1 (#12)
+      axiom #9 (#9 #13)
+optimised
+lemma zenon_thm ()
+  all #1 #4 (#4 #8 #9)
+    pnotp #10 #8 (#8 #10 #9)
+      noteq #1 (#12)
+      axiom #9 (#9 #13)
+numbers
+exprs
+(v "a")
+(a "f" #0)
+(v "x")
+(a "R" #2 #2)
+(all "zenon_U" #2 #3)
+(v "b")
+(a "g" #5)
+(a "R" #1 #6)
+(not #7)
+(a "=" #1 #6)
+(a "R" #1 #1)
+(a "=" #1 #1)
+(not #11)
+(not #9)

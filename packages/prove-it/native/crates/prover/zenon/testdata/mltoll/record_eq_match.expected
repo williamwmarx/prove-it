@@ -1,0 +1,24 @@
+translated
+lemma zenon_thm ()
+  extension "zenon_record_eq_match" () (#10) ((#11 #12)) (#10 #13)
+    axiom #12 (#13 #12)
+optimised
+lemma zenon_thm ()
+  extension "zenon_record_eq_match" () (#10) ((#11 #12)) (#10 #13)
+    axiom #12 (#13 #12)
+numbers
+exprs
+(v "\"a\"")
+(a "$string" #0)
+(v "x")
+(v "\"b\"")
+(a "$string" #3)
+(v "y")
+(a "TLA.record" #1 #2 #4 #5)
+(v "z")
+(v "w")
+(a "TLA.record" #4 #7 #1 #8)
+(a "=" #6 #9)
+(a "=" #5 #7)
+(a "=" #2 #8)
+(not #12)

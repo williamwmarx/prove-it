@@ -1,0 +1,14 @@
+translated
+lemma zenon_thm ()
+  extension "zenon_tuple_eq_mismatch" (#5) (#5) () (#5)
+optimised
+lemma zenon_thm ()
+  extension "zenon_tuple_eq_mismatch" (#5) (#5) () (#5)
+numbers
+exprs
+(v "a")
+(v "b")
+(a "TLA.tuple" #0 #1)
+(v "c")
+(a "TLA.tuple" #3)
+(a "=" #2 #4)

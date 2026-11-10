@@ -1,0 +1,13 @@
+translated
+lemma zenon_thm ()
+  extension "zenon_box_p" () (#1) ((#0)) (#1 #2)
+    axiom #0 (#2 #0)
+optimised
+lemma zenon_thm ()
+  extension "zenon_box_p" () (#1) ((#0)) (#1 #2)
+    axiom #0 (#2 #0)
+numbers
+exprs
+(v "p")
+(a "TLA.box" #0)
+(not #0)

@@ -1,0 +1,7 @@
+(exprs (v "b") (a "g" #0) (v "c") (a "h" #2) (a "=" #1 #3) (not #4) (v "a") (a "f" #6) (a "=" #7 #7) (not #8) (a "R" #7 #1) (a "R" #3 #7) (not #11) (v "x") (v "y") (a "R" #13 #14) (a "R" #14 #13) (imply #15 #16) (all "zenon_U" #14 #17) (all "zenon_U" #13 #18) (a "R" #1 #7) (not #10))
+(next "zenon_Vi")
+(hyps #19 #10 #4 #12)
+(phrases #19 #10 #4 #12)
+(defs)
+(nodes (node 0 0 "close" nil nil (#4) (#4 #5) (#5 #4) ()) (node 1 0 "close_refl" "=" nil (#7) (#9) (#9) ()) (node 2 0 "p_not_p_sym" "R" nil (#10 #12) (#12 #10 #4) (#10 #12) (0 1)))
+(root 2)

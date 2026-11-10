@@ -1,0 +1,7 @@
+(exprs (v "a") (v "b") (a "=" #0 #1) (not #2) (v "c") (a "=" #0 #4) (not #5) (a "TLA.upair" #1 #4) (a "TLA.in" #0 #7) (or #2 #5) (not #9))
+(next "zenon_Vk")
+(hyps #8 #10)
+(phrases #8 #10)
+(defs)
+(nodes (node 0 0 "close" nil nil (#2) (#3 #2) (#2 #3) ()) (node 1 0 "close" nil nil (#5) (#6 #5) (#5 #6) ()) (node 2 0 "in_upair" nil nil (#8 #2 #5 #0 #1 #4) (#8 #6 #3) (#8) (0 1)) (node 3 0 "not_or" nil nil (#2 #5) (#10 #8) (#10) (2)))
+(root 3)

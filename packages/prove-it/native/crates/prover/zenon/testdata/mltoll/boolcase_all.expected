@@ -1,0 +1,34 @@
+translated
+lemma zenon_thm ()
+  extension "zenon_boolcase_all" (#2 #5) (#7) ((#9 #10) (#12 #13)) (#7 #14 #17)
+    extension "zenon_eq_x_true" (#6) (#9) ((#6)) (#9 #17)
+      all #15 #6 (#6 #17)
+        axiom #16 (#17 #16)
+    axiom #13 (#14 #13)
+optimised
+lemma zenon_thm ()
+  extension "zenon_boolcase_all" (#2 #5) (#7) ((#9 #10) (#12 #13)) (#7 #14 #17)
+    extension "zenon_eq_x_true" (#6) (#9) ((#6)) (#9 #17)
+      all #15 #6 (#6 #17)
+        axiom #16 (#17 #16)
+    axiom #13 (#14 #13)
+numbers
+exprs
+(v "zenon_Vh")
+(a "P" #0)
+(lam "" #0 #1)
+(v "x")
+(a "Q" #3)
+(lam "zenon_U" #3 #4)
+(all "zenon_U" #3 #4)
+(a "P" #6)
+T
+(a "=" #6 #8)
+(a "P" #8)
+F
+(a "=" #6 #11)
+(a "P" #11)
+(not #13)
+(v "a")
+(a "Q" #15)
+(not #16)

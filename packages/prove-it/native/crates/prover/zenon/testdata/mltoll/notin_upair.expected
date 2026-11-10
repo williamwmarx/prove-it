@@ -1,0 +1,19 @@
+translated
+lemma zenon_thm ()
+  extension "zenon_notin_upair" (#0 #1 #0) (#4) ((#6 #8)) (#4)
+    noteq #0 (#8)
+optimised
+lemma zenon_thm ()
+  extension "zenon_notin_upair" (#0 #1 #0) (#4) ((#6 #8)) (#4)
+    noteq #0 (#8)
+numbers
+exprs
+(v "b")
+(v "c")
+(a "TLA.upair" #1 #0)
+(a "TLA.in" #0 #2)
+(not #3)
+(a "=" #0 #1)
+(not #5)
+(a "=" #0 #0)
+(not #7)

@@ -1,0 +1,7 @@
+(exprs T (a "P" #0) (not #1) (v "p") (not #3) (v "q") (or #3 #5) (not #6) F (a "=" #6 #8) (a "P" #6) (a "=" #6 #0) (a "P" #8) (v "zenon_Vh") (a "P" #13) (lam "" #13 #14))
+(next "zenon_Vo")
+(hyps #10 #3 #2)
+(phrases #10 #3 #2)
+(defs)
+(nodes (node 0 0 "close" nil nil (#1) (#2 #1) (#1 #2) ()) (node 1 0 "close" nil nil (#3) (#3 #4) (#4 #3) ()) (node 2 0 "not_or" nil nil (#3 #5) (#7 #3) (#7) (1)) (node 3 0 "eq_x_false" nil nil (#9 #7 #6) (#9 #3) (#9) (2)) (node 4 0 "boolcase_or" nil nil (#10 #11 #1 #9 #12 #15 #3 #5) (#10 #3 #2) (#10) (0 3)))
+(root 4)

@@ -1,0 +1,29 @@
+translated
+lemma zenon_thm ()
+  extension "zenon_case" (#3) (#9) ((#4 #11) (#14 #16)) (#9 #9 #15 #10)
+    axiom #10 (#10 #11)
+    axiom #15 (#15 #16)
+optimised
+lemma zenon_thm ()
+  extension "zenon_case" (#3) (#9) ((#4 #11) (#14 #16)) (#9 #9 #15 #10)
+    axiom #10 (#10 #11)
+    axiom #15 (#15 #16)
+numbers
+exprs
+(v "zenon_Vf")
+(a "P" #0)
+(not #1)
+(lam "" #0 #2)
+(v "c1")
+(v "a")
+(v "b")
+(a "TLA.CASE" #4 #5 #6)
+(a "P" #7)
+(not #8)
+(a "P" #5)
+(not #10)
+(not #4)
+T
+(and #12 #13)
+(a "P" #6)
+(not #15)

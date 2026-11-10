@@ -25,6 +25,14 @@ macro_rules! rule_names {
                 }
             }
 
+            /// The rule named `name` as the TypeScript and Zenon spell it.
+            pub fn from_name(name: &str) -> Option<RuleName> {
+                match name {
+                    $($name => Some(RuleName::$variant),)*
+                    _ => None,
+                }
+            }
+
             /// The number of arguments, or the least number for a variadic rule.
             pub fn arity(self) -> usize {
                 match self {

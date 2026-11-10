@@ -1,0 +1,7 @@
+(exprs (v "0") (v "arith.N") (a "TLA.in" #0 #1) (not #2) (v "TLA.Succ") (a "TLA.fapply" #4 #0) (a "TLA.in" #5 #1) (not #6) (a "TLA.fapply" #4 #5) (a "TLA.in" #8 #1) (not #9))
+(next "zenon_Vl")
+(hyps #10)
+(phrases #10)
+(defs)
+(nodes (node 0 0 "in_nat_0" nil nil (#3) (#3) (#3) ()) (node 1 0 "in_nat_succ" nil nil (#7 #3 #0) (#7) (#7) (0)) (node 2 0 "in_nat_succ" nil nil (#10 #7 #5) (#10) (#10) (1)))
+(root 2)

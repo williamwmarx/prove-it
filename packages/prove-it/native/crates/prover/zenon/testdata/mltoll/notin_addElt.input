@@ -1,0 +1,7 @@
+(exprs (v "c") (a "=" #0 #0) (not #1) (v "b") (v "s") (a "TLA.addElt" #0 #4) (a "TLA.addElt" #3 #5) (a "TLA.in" #0 #6) (not #7) (a "=" #0 #3) (not #9) (a "TLA.in" #0 #4) (not #11))
+(next "zenon_Vk")
+(hyps #8)
+(phrases #8)
+(defs)
+(nodes (node 0 0 "close_refl" "=" nil (#0) (#2) (#2) ()) (node 1 0 "notin_addElt" nil nil (#8 #0 #6) (#8) (#8) (0)))
+(root 1)

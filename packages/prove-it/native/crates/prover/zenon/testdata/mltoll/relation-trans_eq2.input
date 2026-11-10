@@ -1,0 +1,7 @@
+(exprs (v "c") (a "f" #0) (v "a") (a "f" #2) (a "R" #1 #3) (not #4) (v "x") (a "f" #6) (a "R" #7 #3) (all "zenon_U" #6 #8) (v "b") (a "g" #10) (v "d") (a "g" #12) (a "R" #11 #13) (not #14) (v "y") (a "g" #16) (a "R" #11 #17) (all "zenon_U" #16 #18) (a "R" #1 #13) (not #20) (a "=" #11 #3) (v "z") (a "R" #6 #16) (a "R" #16 #23) (and #24 #25) (a "R" #6 #23) (imply #26 #27) (all "zenon_U" #23 #28) (all "zenon_U" #16 #29) (all "zenon_U" #6 #30) (a "=" #3 #11) (a "R" #1 #11) (not #33) (not #32) (a "R" #3 #13) (a "=" #3 #1) (not #37) (a "=" #13 #13) (not #39) (not #36) (a "=" #3 #3) (not #22) (not #42) (a "=" #11 #11) (not #45))
+(next "zenon_Vrb")
+(hyps #31 #22 #9 #19 #21)
+(phrases #31 #22 #9 #19 #21)
+(defs)
+(nodes (node 0 0 "close" nil nil (#4) (#5 #4) (#4 #5) ()) (node 1 0 "all" nil nil (#9 #0) (#9 #5) (#9) (0)) (node 2 0 "close" nil nil (#14) (#15 #14) (#14 #15) ()) (node 3 1 "all" nil nil (#19 #12) (#19 #15) (#19) (2)) (node 4 0 "trans_eq2" nil nil (#11 #3 #21) (#21 #22 #19 #9) (#22 #21) (1 3 3)))
+(root 4)

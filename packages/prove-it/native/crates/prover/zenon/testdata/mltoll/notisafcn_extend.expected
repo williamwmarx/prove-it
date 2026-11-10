@@ -1,0 +1,13 @@
+translated
+lemma zenon_thm ()
+  extension "zenon_notisafcn_extend" (#0 #1) (#4) () (#4)
+optimised
+lemma zenon_thm ()
+  extension "zenon_notisafcn_extend" (#0 #1) (#4) () (#4)
+numbers
+exprs
+(v "f")
+(v "g")
+(a "TLA.extend" #0 #1)
+(a "TLA.isAFcn" #2)
+(not #3)

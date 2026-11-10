@@ -1,0 +1,7 @@
+(exprs (v "\"a\"") (a "$string" #0) (v "x") (a "TLA.record" #1 #2) (a "TLA.isAFcn" #3) (not #4))
+(next "zenon_Vh")
+(hyps #5)
+(phrases #5)
+(defs)
+(nodes (node 0 0 "record_notisafcn" nil nil (#5) (#5) (#5) ()))
+(root 0)

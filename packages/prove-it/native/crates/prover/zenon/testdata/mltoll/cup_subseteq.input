@@ -1,0 +1,7 @@
+(exprs (v "b") (v "c") (a "TLA.subseteq" #0 #1) (not #2) (v "a") (a "TLA.cup" #4 #0) (a "TLA.subseteq" #5 #1) (a "TLA.subseteq" #4 #1))
+(next "zenon_Vy")
+(hyps #6 #3)
+(phrases #6 #3)
+(defs)
+(nodes (node 0 0 "close" nil nil (#2) (#3 #2) (#2 #3) ()) (node 1 0 "cup_subseteq" nil nil (#6 #7 #2) (#6 #3) (#6) (0)))
+(root 1)

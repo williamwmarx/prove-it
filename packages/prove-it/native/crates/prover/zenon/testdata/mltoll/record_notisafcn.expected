@@ -1,0 +1,14 @@
+translated
+lemma zenon_thm ()
+  extension "zenon_record_notisafcn" () (#5) () (#5)
+optimised
+lemma zenon_thm ()
+  extension "zenon_record_notisafcn" () (#5) () (#5)
+numbers
+exprs
+(v "\"a\"")
+(a "$string" #0)
+(v "x")
+(a "TLA.record" #1 #2)
+(a "TLA.isAFcn" #3)
+(not #4)
