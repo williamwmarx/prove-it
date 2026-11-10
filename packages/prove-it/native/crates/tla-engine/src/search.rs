@@ -1955,10 +1955,13 @@ impl Search<'_, States> {
         let width = self.states.width;
         let key_width = self.states.key_width;
         let is_verified = self.states.is_verified;
-        // Where the set keeps no indices and no invariant waits on the merge, which candidates
-        // are new is found first on the threads, each filling a range of the set's slots, so that
-        // the merge reads none of the set but for the few the threads leave it.
+        // Where the set keeps no indices, no graph is recorded and no invariant waits on the merge,
+        // which candidates are new is found first on the threads, each filling a range of the
+        // set's slots, so that the merge reads none of the set but for the few the threads leave
+        // it. A graph's edges need the index of each state a step reached, found or new, which the
+        // threads don't keep.
         let statuses = (self.states.set.indices.is_none()
+            && self.graph.is_none()
             && expanded.iter().all(|found| found.deferred.is_empty()))
         .then(|| {
             let runs: Vec<&[u64]> = owners
