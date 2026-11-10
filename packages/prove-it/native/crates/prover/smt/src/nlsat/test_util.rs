@@ -92,6 +92,41 @@ pub fn read_fixture(name: &str) -> Vec<(String, String)> {
     }
 }
 
+use super::Rational;
+use super::algebraic::{AlgebraicManager, Anum, AnumValue};
+
+/// parseRational: `n` or `n/d`.
+pub fn parse_rational(text: &str) -> Rational {
+    let mut parts = text.split('/');
+    let num = parts
+        .next()
+        .expect("a numerator")
+        .parse()
+        .expect("an integer");
+    let den = parts.next().unwrap_or("1").parse().expect("an integer");
+    Rational::of(num, den)
+}
+
+/// an_show in the harness: a rational, or the defining polynomial, root index and isolating
+/// interval.
+pub fn show_anum(am: &mut AlgebraicManager, anum: &Anum) -> String {
+    if let AnumValue::Rational(value) = &*anum.value() {
+        return format!(" q{value}");
+    }
+    let root_index = am.get_root_index(anum);
+    let value = anum.value();
+    let AnumValue::Cell(cell) = &*value else {
+        unreachable!("get_root_index leaves the number irrational");
+    };
+    let coeffs: Vec<String> = cell.p.iter().map(ToString::to_string).collect();
+    format!(
+        " r[{}]#{root_index}({},{})",
+        coeffs.join(" "),
+        cell.lower,
+        cell.upper
+    )
+}
+
 struct JsonParser<'text> {
     bytes: &'text [u8],
     position: usize,
