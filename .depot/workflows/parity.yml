@@ -3,11 +3,11 @@
 # if a model tests/conformance/passing.json lists no longer matches it; Engine coverage runs every
 # model with the engine on and off and fails if the two reach different outcomes; Differential
 # compares Prove It's full output, with the engine, without it, and stopped part way, with TLC's
-# recorded in tests/conformance/tlc-stdout, and the native engine's with the TypeScript engine's,
-# and fails on a difference tests/conformance/known-differences.json doesn't list; it then runs the
-# native binary alone, with no recorded front, and fails on a difference with TLC that file doesn't
-# list. It runs by hand and on every push to main, never on a pull request, and holds no
-# credential. Each job's results are its artifact.
+# recorded in tests/conformance/tlc-stdout, and fails on a difference
+# tests/conformance/known-differences.json doesn't list; it then runs the native binary alone, with
+# no recorded front, and fails on a difference with TLC that file doesn't list. It runs by hand and
+# on every push to main, never on a pull request, and holds no credential. Each job's results are
+# its artifact.
 name: Parity
 "on":
   workflow_dispatch:
@@ -45,13 +45,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Build Prove It and fetch the corpora
+      - name: Build Prove It and its native engine, and fetch the corpora
         run: |
           set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           bun install --frozen-lockfile --ignore-scripts
           bun run build
           cd packages/prove-it
+          bun scripts/platform-packages.ts build
           bun scripts/fetch-corpora.ts
       - name: Compare with TLC's recorded results
         env:
@@ -63,6 +64,7 @@ jobs:
           cd packages/prove-it
           mkdir -p "$RUNNER_TEMP/parity"
           status=0
+          export PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node"
           bun scripts/run.ts conformance --check --concurrency 12 --max-tlc-ms "$MAX_TLC_MS" \
             ${FILTER:+--filter "$FILTER"} | tee "$RUNNER_TEMP/parity/conformance.log" || status=$?
           cp tests/conformance/.results.json "$RUNNER_TEMP/parity/conformance.json"
@@ -92,13 +94,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Build Prove It and fetch the corpora
+      - name: Build Prove It and its native engine, and fetch the corpora
         run: |
           set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           bun install --frozen-lockfile --ignore-scripts
           bun run build
           cd packages/prove-it
+          bun scripts/platform-packages.ts build
           bun scripts/fetch-corpora.ts
       - name: Run every model with the engine on and off
         env:
@@ -110,6 +113,7 @@ jobs:
           cd packages/prove-it
           mkdir -p "$RUNNER_TEMP/parity"
           status=0
+          export PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node"
           bun scripts/run.ts engine-coverage --concurrency 6 --max-tlc-ms "$MAX_TLC_MS" \
             ${FILTER:+--filter "$FILTER"} --out "$RUNNER_TEMP/parity/engine-coverage.json" \
             | tee "$RUNNER_TEMP/parity/engine-coverage.log" || status=$?
@@ -159,7 +163,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/parity"
           status=0
           export PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node"
-          bun scripts/run.ts differential --stop-at --compare-backends --concurrency 12 \
+          bun scripts/run.ts differential --stop-at --concurrency 12 \
             --max-tlc-ms "$MAX_TLC_MS" --native "$PWD/native/target/release/prove-it" \
             ${FILTER:+--filter "$FILTER"} --out "$RUNNER_TEMP/parity/differential.json" \
             | tee "$RUNNER_TEMP/parity/differential.log" || status=$?
@@ -171,7 +175,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
-      # The end state: tla-front is the whole front end, with no front the TypeScript CLI recorded.
+      # The end state: tla-front is the whole front end, with no front the CLI recorded.
       - name: Compare the native binary's output with TLC's, with no recorded front
         if: success() || failure()
         env:

@@ -6,7 +6,9 @@ identical to TLC and to the TypeScript checker before it is switched on.
 
 Status: M1 to M7 built (their outcomes are in section 11). Section 12 supersedes the fallback
 chain described in sections 0, 1 and 8.4: the target is now an all-Rust checker, with no
-TypeScript fallback. Every number marked *measured*
+TypeScript fallback. The TypeScript engine is deleted; [design/fallback.md](design/fallback.md)
+records what `check` does now where the native engine declines or doesn't load. The sections below
+that compare with the TypeScript engine are the record of when it was the oracle. Every number marked *measured*
 comes from the prototypes that were under `native/prototypes/` until 1916b69 (section 10) on a
 local 4-core cloud machine (Rust 1.97.0, Bun 1.4.4, Node 22.23.4). Those timings vary by about 10%
 between runs. Depot numbers come from the benchmark of `main` at f284739 (run cb7zd2w63s), as
@@ -1055,7 +1057,9 @@ Where there is no `process.dlopen`, as in a browser, the engine runs as WebAssem
 a hand-written ABI that `src/engine/wasm.ts` instantiates as the addon's functions. npm ships it as
 the `wasm32` platform package (`platform-packages.ts build --target wasm32-unknown-unknown`), which
 has no `os` or `cpu` fields; `loadWasmEngine` in `native.ts` fetches and compiles it before a
-check, and `PROVE_IT_ENGINE_WASM` loads it in Node or Bun for testing.
+check, and `PROVE_IT_ENGINE_WASM` loads it in Node or Bun for testing. In Node or Bun it is also
+the engine where no platform package loads, as on a platform none is built for
+([design/fallback.md](design/fallback.md)).
 
 - **One thread.** WebAssembly here has no threads, so the search runs on one, and the store hooks
   run in place.
@@ -1448,7 +1452,8 @@ Against the 733 models with TLC under 20 s, on a 16-core Depot machine with main
 - build the other platforms: arm64 and musl need their `rust-std` and a linker (or Depot's arm64
   runner), macOS needs a macOS runner, and Windows needs an import library for the `napi_*`
   symbols, which the hand-written binding does not provide yet (napi-rs's `napi-sys` can
-  resolve them at load time instead). A platform that is not built is not packed, and its users get the TS engine.
+  resolve them at load time instead). A platform that is not built is not packed, and its users
+  get the engine as WebAssembly (7.4).
 
 ### M2. Values and fingerprints (`tla-values`)
 
@@ -2354,14 +2359,15 @@ The target is one Rust implementation of the checker: front end, engine, livenes
 shipped as a native binary and as the N-API addon, with **no third-party crates** (the standard
 library only) and no TypeScript at run time. Output stays byte-identical to TLC.
 
-**Fallbacks go away.** Today a model can decline to the TypeScript engine, stop and hand over to
-the interpreter, or leave liveness and printing to TypeScript. Each of those paths is closed by
+**Fallbacks go away.** A model used to decline to the TypeScript engine, which is now deleted
+([design/fallback.md](design/fallback.md)); it can still decline or stop and hand over to the
+interpreter, or leave liveness and printing to TypeScript. Each of those paths is closed by
 covering it in Rust, then removing the TypeScript path once the gates below hold on it:
 - a Rust decline or run-time stop (other than a violation or deadlock, which Rust then prints) is a
   coverage regression, gated by `engine-coverage`;
-- the TypeScript checker remains, for a while, the oracle that the differential and state-log
-  harnesses compare Rust with; it is deleted area by area when Rust has matched it on the whole
-  corpus and TLC's recordings carry the comparison alone.
+- the TypeScript checker was, for a while, the oracle that the differential and state-log
+  harnesses compared Rust with; the engine is deleted, and the interpreter and TLC's recordings
+  carry the comparison now.
 
 **Workstreams.** Each lands as small PRs that keep Parity at no new differences:
 

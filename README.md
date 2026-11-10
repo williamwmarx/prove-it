@@ -32,9 +32,11 @@ prove-it Spec.tla
 prove-it tlapm Module.tla
 ```
 
+`check` searches with a native engine written in Rust. npm installs it as an optional package for Linux (x64 and arm64, glibc and musl), macOS (arm64 and x64) and Windows (x64), and as WebAssembly for the browser and any other platform. Where no engine loads, as when optional dependencies were left out, `check` throws `EngineUnavailableError` and the command line exits with 255; `PROVE_IT_ENGINE=0` checks with the interpreter instead, which needs no engine and is much slower.
+
 ## Development
 
-The repository is a Bun workspace, and the library lives in `packages/prove-it`. Install [Bun](https://bun.com) 1.4.4 and Node 22, then:
+The repository is a Bun workspace, and the library lives in `packages/prove-it`. Install [Bun](https://bun.com) 1.4.4, Node 22 and the Rust toolchain that `packages/prove-it/native/rust-toolchain.toml` pins, then:
 
 ```shell
 bun install
@@ -42,7 +44,7 @@ bun run build         # bundle dist/ and emit its type declarations
 bun run typecheck
 bun run lint
 bun run format:check
-bun run test          # builds first, since some tests run dist/cli.js
+bun run test          # builds dist/ and the native engine first, which the tests run
 ```
 
 `bun run build:binary` in `packages/prove-it` compiles the CLI into a standalone executable, `dist/prove-it`, with its code compiled to Bun bytecode, which starts faster than `dist/cli.js`.

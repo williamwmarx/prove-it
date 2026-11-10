@@ -6,7 +6,7 @@
 // the main package's.
 // The wasm32 package holds prove-it-engine.wasm instead, the engine for hosts without
 // process.dlopen, such as a browser, with no os or cpu fields, so every package manager installs
-// it; native.ts fetches it there.
+// it; native.ts fetches it there, and loads it in Node or Bun where no platform package loads.
 // Usage: bun scripts/platform-packages.ts build [--target <Rust target>]
 //        bun scripts/platform-packages.ts pack <destination>
 //        bun scripts/platform-packages.ts install-test
@@ -232,7 +232,7 @@ const pack = (argument: string | undefined) => {
   const missing = PLATFORMS.filter((platform) => !built.includes(platform.name));
   if (missing.length > 0) {
     console.error(
-      `Not built, so their users get the TypeScript engine: ${missing.map((platform) => platform.name).join(", ")}`,
+      `Not built, so their users can check only with the interpreter (PROVE_IT_ENGINE=0): ${missing.map((platform) => platform.name).join(", ")}`,
     );
   }
 };

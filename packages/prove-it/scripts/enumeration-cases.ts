@@ -1,9 +1,8 @@
 // The cases of the enumeration oracle (native/DESIGN.md 6.8): sets TLC keeps lazy, written in
 // native/oracle/ValueOracle.java's tokens, and the interpreter's answers for them. The interpreter
-// builds each set as the TypeScript engine's references do (compile.ts): a set enumeration as the
-// normalized set an id converts to, SUBSET, [S -> T], a set of records with its fields in TLC's
-// order, a product, and \cup, \cap and \ through the interpreter's builtins, which combine a set
-// enumeration with the other set at once. It answers the elements in the order a quantifier binds
+// builds each set: a set enumeration as the normalized set an id converts to, SUBSET, [S -> T], a
+// set of records with its fields in TLC's order, a product, and \cup, \cap and \ through the
+// interpreter's builtins, which combine a set enumeration with the other set at once. It answers the elements in the order a quantifier binds
 // them (getQuantifierElements) and the order x' \in S assigns them (getStreamedElements), as
 // their TLC fingerprints, which TLC (enumerate q and s) and the native engine (replay enumerate)
 // answer too.

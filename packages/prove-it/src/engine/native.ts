@@ -1,10 +1,11 @@
 // The native engine: the N-API addon that native/crates/prove-it-napi builds. The npm package finds
-// it in the optional package for its platform, and the executables embed it. It reads the model
-// as the engine IR and searches it as runEngine does, or declines it before producing any state,
-// and the TypeScript engine checks what it declines.
+// it in the optional package for its platform, and the executables embed it; where there is no
+// process.dlopen it runs as WebAssembly (wasm.ts). It reads the model as the engine IR and searches
+// it, or declines it before producing any state, and the interpreter checks what it declines.
 
+import type { CheckProgress } from "../check";
 import { EngineInvariantError } from "../errors";
-import type { LiveExpression } from "../tableau";
+import type { LiveEnabled, LiveExpression } from "../tableau";
 import {
   createStateDecoder,
   FALSE_TAG,
@@ -20,11 +21,9 @@ import { formatPrinted, type Value } from "../values";
 import { fromEnumeratedValue } from "./convert";
 import { resetFingerprints } from "./fingerprint";
 import type { IrOutcome } from "./ir";
-import type { LiveOracle } from "./live";
-import type { EngineCheckpoint, EngineInput, EngineResult } from "./search";
 import {
   getEngineAddon,
-  getEngineBackend,
+  getEngineSetting,
   getEngineThreads,
   getEngineWasm,
   getEnvironmentFlag,
@@ -141,7 +140,8 @@ export interface NativeLiveness {
 
 // What the native engine did with a model (binding/check.rs).
 export type NativeOutcome =
-  | { status: "unavailable" | "declined"; reason: string }
+  | { status: "unavailable"; reason: string }
+  | { status: "declined"; reason: string }
   // A self-check failed.
   | { status: "invariant"; reason: string }
   | {
@@ -159,6 +159,82 @@ export type NativeOutcome =
       checkpoint?: NativeCheckpoint;
     }
   | ({ status: "stopped"; reason: string } & NativeCheckpoint);
+
+// Answers a question the liveness checker asks of a state or a step, or undefined for the
+// interpreter to answer.
+export type LiveOracle = (
+  expression: LiveExpression,
+  state: Value[],
+  next: Value[] | undefined,
+) => boolean | undefined;
+
+// The positions, among TLC's actions of the next-state relation, of the actions the action of
+// ENABLED splits into, in their order, "all" when it splits into every one, or undefined when it
+// isn't made of them.
+export type EnabledActions = (expression: LiveEnabled) => readonly number[] | "all" | undefined;
+
+// The steps of a search, for the interpreter to check temporal properties on: for each of the first
+// `expanded` states, how many successors it generated, how many of them were new, and the states, in
+// the model, its steps went to in the order generated, between edgeOffsets[i] and edgeOffsets[i + 1].
+// A search of spec.actions labels each step with the position of the action that took it.
+export interface EngineGraph {
+  expanded: number;
+  successorCounts: Int32Array;
+  newCounts: Int32Array;
+  edgeOffsets: Int32Array;
+  edges: Int32Array;
+  labels: Int32Array | undefined;
+}
+// The search up to the state the engine was expanding when it stopped: the states found before
+// that expansion, as ids, with their parents and the counts so far. With a graph, the interpreter
+// replays the steps of the states the engine expanded rather than expanding them again, answering
+// its liveness checker from the engine's states, given the index of each state and the actions
+// ENABLED of an action asks about.
+export interface EngineCheckpoint {
+  graph?: EngineGraph;
+  // With a graph, how many initial states the search had generated when it found each initial
+  // state it kept, for the counts as the interpreter adds that state to its liveness checker.
+  initialCounts?: number[];
+  createLiveOracle?: (
+    getIndex: (state: Value[]) => number | undefined,
+    getEnabledActions: EnabledActions,
+  ) => LiveOracle;
+  // Without a graph, the index of the state whose key, what TLC fingerprints, has these values, -1
+  // for none, or undefined when the engine can't tell.
+  findState?: (key: Value[]) => number | undefined;
+  // What TLC fingerprints in place of each state, when that isn't the state: its representative
+  // under symmetry, or its view, `keyWidth` ids each.
+  keys?: Int32Array;
+  keyWidth?: number;
+  expanding: number;
+  count: number;
+  generated: number;
+  initialGenerated: number;
+  outDegrees: number[];
+  // From the native engine, what each _POSSIBLE predicate counted before the expansion the
+  // interpreter goes on from, or -1 where it wasn't evaluated.
+  possible?: number[];
+  states: Int32Array;
+  parents: Int32Array;
+  width: number;
+}
+export interface EngineResult {
+  generatedStates: number;
+  distinctStates: number;
+  depth: number;
+  outDegrees: number[];
+  initialStates: { generated: number; distinct: number };
+  getFingerprints: () => BigInt64Array;
+  valueCount: number;
+  threads: number;
+  // From the native engine, what each _POSSIBLE predicate counted, or -1 where it wasn't evaluated.
+  possible?: number[];
+  // From the native engine, the states left to expand where a check of the temporal properties
+  // part way through the search found a counterexample.
+  queuedStates?: number;
+  // A complete search the interpreter is to replay, when it checks temporal properties.
+  checkpoint: EngineCheckpoint | undefined;
+}
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
 const ABI_VERSION = 10;
@@ -181,12 +257,17 @@ const getPackages = () =>
       : [""]
   ).map((suffix) => `@atemp/prove-it-${process.platform}-${process.arch}${suffix}`);
 
-const resolveAddon = (name: string) => {
+const resolveFile = (specifier: string) => {
   try {
-    return new URL(import.meta.resolve(`${name}/${ADDON_FILE}`));
+    return new URL(import.meta.resolve(specifier));
   } catch {
     return undefined;
   }
+};
+
+const toPath = (url: URL) => {
+  const path = decodeURIComponent(url.pathname);
+  return process.platform === "win32" ? path.slice(1) : path;
 };
 
 // The addon PROVE_IT_ENGINE_ADDON names, the one an executable embeds, or the one in the platform
@@ -198,12 +279,10 @@ const getAddonPath = () => {
   const url = isBinary
     ? new URL(`./${ADDON_FILE}`, import.meta.url)
     : getPackages().reduce<URL | undefined>(
-        (found, name) => found ?? resolveAddon(name),
+        (found, name) => found ?? resolveFile(`${name}/${ADDON_FILE}`),
         undefined,
       );
-  if (url === undefined) return undefined;
-  const path = decodeURIComponent(url.pathname);
-  return process.platform === "win32" ? path.slice(1) : path;
+  return url && toPath(url);
 };
 
 const getChecked = (addon: NativeAddon, path: string) => {
@@ -240,11 +319,27 @@ const loaded: { addon?: NativeAddon | string } = {};
 
 const isDlopen = () => typeof globalThis.process?.dlopen === "function";
 
+// The addon for this platform, or else the engine as WebAssembly from the wasm32 package, as on a
+// platform no package is built for. An addon PROVE_IT_ENGINE_ADDON names, or one an executable
+// embeds, is the only one tried.
+const loadAddonOrWasm = () => {
+  const addon = loadAddon();
+  const wasm =
+    isBinary || getEngineAddon() !== undefined
+      ? undefined
+      : resolveFile(`@atemp/prove-it-wasm32/${WASM_FILE}`);
+  return typeof addon !== "string" || wasm === undefined ? addon : loadWasm(toPath(wasm));
+};
+
 // The addon, or the engine compiled to WebAssembly, loaded on first use, or why it can't be loaded.
 export const getNativeAddon = () => {
   const wasmPath = getEngineWasm();
   loaded.addon ??=
-    wasmPath !== undefined ? loadWasm(wasmPath) : isDlopen() ? loadAddon() : "no process.dlopen";
+    wasmPath !== undefined
+      ? loadWasm(wasmPath)
+      : isDlopen()
+        ? loadAddonOrWasm()
+        : "no process.dlopen";
   return loaded.addon;
 };
 
@@ -256,7 +351,7 @@ export const loadWasmEngine = async () => {
     loaded.addon !== undefined ||
     isDlopen() ||
     getEngineWasm() !== undefined ||
-    getEngineBackend() === "ts"
+    getEngineSetting() === "0"
   ) {
     return;
   }
@@ -277,13 +372,17 @@ export const loadWasmEngine = async () => {
   }
 };
 
-type NativeCallbacks = Pick<
-  EngineInput,
-  "onProgress" | "onInitialStatesStarted" | "onInitialStates" | "onPrint"
->;
+// What the search reports as it goes: its progress, the initial states as it starts computing them
+// and once it has, so the caller reports them, and each line the spec prints.
+interface NativeCallbacks {
+  onProgress: ((progress: CheckProgress) => void) | undefined;
+  onInitialStatesStarted: () => void;
+  onInitialStates: (generated: number, distinct: number) => void;
+  onPrint: (text: string) => void;
+}
 
-// Loads the addon on first use, and lowers the model only once it has. The TypeScript engine checks
-// what it declines, and everything when it can't be loaded.
+// Loads the engine on first use, and lowers the model only once it has. The interpreter checks what
+// it declines; where it can't be loaded, check throws EngineUnavailableError.
 export const checkNatively = (
   lower: () => IrOutcome,
   callbacks: NativeCallbacks,
@@ -395,8 +494,8 @@ const decodeStates = (words: Int32Array, strings: string[], positions: Int32Arra
   return Int32Array.from(positions, (position) => values[position]);
 };
 
-// Answers the liveness checker from the native engine's tables, as live.ts's oracle answers it
-// from the TypeScript engine's states, and leaves the rest to the interpreter.
+// Answers the liveness checker from the native engine's tables, and leaves the rest to the
+// interpreter.
 const createNativeOracle = (
   graph: NativeGraph,
   edgeOffsets: Int32Array,
@@ -564,7 +663,7 @@ const toCheckpoint = (
   };
 };
 
-// A search the native engine completed, as runEngine returns one: with temporal properties, the
+// A search the native engine completed: with temporal properties, the
 // whole search for the interpreter to replay.
 export const toEngineResult = (
   outcome: Extract<NativeOutcome, { status: "complete" }>,
@@ -587,7 +686,7 @@ export const toEngineResult = (
   };
 };
 
-// What the native engine's search stopping throws, as runEngine throws it: a Bailout with the
+// What the native engine's search stopping throws: a Bailout with the
 // search for the interpreter to go on from, or an EngineInvariantError where a self-check failed.
 export const toStop = (
   outcome: Extract<NativeOutcome, { status: "stopped" | "invariant" }>,

@@ -6,22 +6,22 @@
 // lists for that model, mode and pair of checkers, or the run fails.
 //
 // --stop-at also runs the engine stopped by PROVE_IT_STOP_AT before a state picked at random
-// from those it found, and its output must not differ from the engine's. --backend picks the
-// engine's backend, and --compare-backends runs every one: each is compared with TLC and the
-// interpreter (tlc/rust, rust/interpreter), and each other with the first (ts/rust). --update rewrites
-// known-differences.json from the run, keeping the reasons it gives.
+// from those it found, and its output must not differ from the engine's. The engine, named rust in
+// the pairs, is compared with TLC (tlc/rust), with the interpreter (rust/interpreter) and with
+// itself stopped (rust/stopped). --update rewrites known-differences.json from the run, keeping
+// the reasons it gives.
 // --native names the native prove-it binary (native/DESIGN.md 13), which then runs on each model
-// too, with the front the first backend's run recorded, and is compared with TLC as tlc/native.
+// too, with the front the engine's run recorded, and is compared with TLC as tlc/native.
 // That pair fails nothing yet: the run reports how many runs it matches and why the others differ.
 // With --native-front, the binary runs with no recorded front, as tla-front is its whole front end.
-// --native-only runs the native binary alone that way, without the TypeScript runs, so a pass over
+// --native-only runs the native binary alone that way, without the CLI's runs, so a pass over
 // the whole corpus takes minutes, and fails if it prints something TLC doesn't that
 // known-differences.json doesn't list for tlc/native; a run it declines as not native fails nothing.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
 //        [--modes default,tool] [--stop-at] [--timeout-ms ms] [--update] [--out path]
-//        [--backend ts | --compare-backends] [--native path [--native-front | --native-only]]
+//        [--native path [--native-front | --native-only]]
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -39,8 +39,8 @@ import {
 } from "./corpora";
 import {
   classifyEngineLine,
-  getBackendEnvironment,
-  getBackends,
+  ENGINE_LABEL,
+  getEngineEnvironment,
   getEngineLine,
 } from "./engine-runs";
 import { getLineDiff } from "./line-diff";
@@ -67,7 +67,7 @@ interface Output {
 interface KnownDifference {
   id: string;
   mode: OutputMode;
-  // The two checkers, such as "tlc/ts" or "ts/interpreter".
+  // The two checkers, such as "tlc/rust" or "rust/interpreter".
   pair: string;
   reason: string;
   diff: string[];
@@ -97,16 +97,12 @@ const modes = (getOption("--modes")?.split(",") ?? OUTPUT_MODES).filter(
 const isStopping = process.argv.includes("--stop-at");
 const isUpdate = process.argv.includes("--update");
 const outPath = getOption("--out") ?? join(CONFORMANCE_DIRECTORY, ".differential.json");
-const backends = getBackends();
 // Resolved here, since each checker runs from its model's directory.
 const nativeOption = getOption("--native");
 const nativeBinary = nativeOption && resolve(nativeOption);
 const isNativeFront = process.argv.includes("--native-front");
 const isNativeOnly = process.argv.includes("--native-only");
 if (isNativeOnly && !nativeBinary) throw new Error("--native-only needs --native");
-// The native binary reads the IR the Rust engine reads, so the run on that backend records its
-// front: the TypeScript engine skips models the Rust engine takes.
-const frontBackend = backends.includes("rust") ? "rust" : backends[0];
 
 // Runs a checker with TLC's command line for the model, from the model's directory.
 const runChecker = (
@@ -180,7 +176,7 @@ const getFront = (stdout: string) => {
     : stdout.slice(start, end + (isTool ? 0 : 1));
 };
 
-// Runs the native binary on a model, with the front the TypeScript CLI recorded for it.
+// Runs the native binary on a model, with the front the CLI recorded for it.
 const runNative = async (
   binary: string,
   model: CorpusModel,
@@ -286,8 +282,8 @@ const compareNative = (id: string, mode: OutputMode, tlc: string, native: Output
   const comparison = getComparison(id, mode, "tlc/native", tlc, native.transcript);
   nativeComparisons.push({
     ...comparison,
-    // A run with no front never reached the engine in TypeScript: SANY, the configuration or
-    // an assumption stopped it, which tla-front will report.
+    // A run with no front never reached the engine in the CLI: SANY, the configuration or an
+    // assumption stopped it, which tla-front will report.
     reason: /^prove-it: not native yet: (.*)$/m
       .exec(native.stderr)?.[1]
       ?.replace(/^no recorded front of .*$/, "no recorded front"),
@@ -319,73 +315,52 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     const modelComparisons: Comparison[] = [];
     const outputs: Record<string, Output> = { interpreter };
     const frontDirectory = nativeBinary && mkdtempSync(join(tmpdir(), "prove-it-front-"));
-    for (const backend of backends) {
-      const isFrontRecorded = frontDirectory && backend === frontBackend;
-      const engine = await runCli(model, mode, {
-        ...getBackendEnvironment(backend),
-        PROVE_IT_ENGINE: "debug",
-        ...(isFrontRecorded && {
-          PROVE_IT_IR_DUMP: join(frontDirectory, `${basename(model.specPath, ".tla")}.ir`),
-        }),
-      });
-      outputs[backend] = engine;
-      const first = backends[0];
-      if (backend !== first) {
-        modelComparisons.push(
-          compare(
-            model.id,
-            mode,
-            `${first}/${backend}`,
-            outputs[first].transcript,
-            engine.transcript,
-          ),
-        );
-      }
-      if (tlc)
-        modelComparisons.push(compare(model.id, mode, `tlc/${backend}`, tlc, engine.transcript));
-      modelComparisons.push(
-        compare(
-          model.id,
-          mode,
-          `${backend}/interpreter`,
-          engine.transcript,
-          interpreter.transcript,
-        ),
-      );
-      // A stop needs a search to stop: an engine that skipped the spec would only run the
-      // interpreter again.
-      const isSearched = ["completed", "handed over"].includes(
-        classifyEngineLine(engine.engineLine).engine,
-      );
-      // The final count includes states the engine never expanded when it handed over, so a stop
-      // there wouldn't stop it: a run counts only when the engine says it stopped, and otherwise
-      // the stop moves to half as far, down to the first state.
-      let stopAt = isStopping && isSearched ? getStopState(model.id, engine.transcript) : undefined;
-      let isForced = false;
-      while (stopAt !== undefined && !isForced) {
-        const stopped = await runCli(model, mode, {
-          ...getBackendEnvironment(backend),
-          PROVE_IT_ENGINE: "debug",
-          PROVE_IT_STOP_AT: String(stopAt),
-        });
-        isForced = stopped.engineLine?.endsWith(STOPPED_REASON) ?? false;
-        if (isForced) {
-          outputs[`${backend} stopped at ${stopAt}`] = stopped;
-          modelComparisons.push(
-            compare(model.id, mode, `${backend}/stopped`, engine.transcript, stopped.transcript),
-          );
-        } else stopAt = stopAt > 0 ? Math.floor(stopAt / 2) : undefined;
-      }
-      if (isStopping && isSearched && !isForced) unforced.push(`${backend} ${mode} ${model.id}`);
-    }
-    if (nativeBinary && frontDirectory) {
-      const native = await runNative(
-        nativeBinary,
-        model,
+    const engine = await runCli(model, mode, {
+      ...getEngineEnvironment(),
+      PROVE_IT_ENGINE: "debug",
+      ...(frontDirectory && {
+        PROVE_IT_IR_DUMP: join(frontDirectory, `${basename(model.specPath, ".tla")}.ir`),
+      }),
+    });
+    outputs[ENGINE_LABEL] = engine;
+    if (tlc)
+      modelComparisons.push(compare(model.id, mode, `tlc/${ENGINE_LABEL}`, tlc, engine.transcript));
+    modelComparisons.push(
+      compare(
+        model.id,
         mode,
-        outputs[frontBackend],
-        frontDirectory,
-      );
+        `${ENGINE_LABEL}/interpreter`,
+        engine.transcript,
+        interpreter.transcript,
+      ),
+    );
+    // A stop needs a search to stop: an engine that skipped the spec would only run the
+    // interpreter again.
+    const isSearched = ["completed", "handed over"].includes(
+      classifyEngineLine(engine.engineLine).engine,
+    );
+    // The final count includes states the engine never expanded when it handed over, so a stop
+    // there wouldn't stop it: a run counts only when the engine says it stopped, and otherwise
+    // the stop moves to half as far, down to the first state.
+    let stopAt = isStopping && isSearched ? getStopState(model.id, engine.transcript) : undefined;
+    let isForced = false;
+    while (stopAt !== undefined && !isForced) {
+      const stopped = await runCli(model, mode, {
+        ...getEngineEnvironment(),
+        PROVE_IT_ENGINE: "debug",
+        PROVE_IT_STOP_AT: String(stopAt),
+      });
+      isForced = stopped.engineLine?.endsWith(STOPPED_REASON) ?? false;
+      if (isForced) {
+        outputs[`${ENGINE_LABEL} stopped at ${stopAt}`] = stopped;
+        modelComparisons.push(
+          compare(model.id, mode, `${ENGINE_LABEL}/stopped`, engine.transcript, stopped.transcript),
+        );
+      } else stopAt = stopAt > 0 ? Math.floor(stopAt / 2) : undefined;
+    }
+    if (isStopping && isSearched && !isForced) unforced.push(`${mode} ${model.id}`);
+    if (nativeBinary && frontDirectory) {
+      const native = await runNative(nativeBinary, model, mode, engine, frontDirectory);
       outputs.native = native;
       if (tlc) compareNative(model.id, mode, tlc, native);
     }
