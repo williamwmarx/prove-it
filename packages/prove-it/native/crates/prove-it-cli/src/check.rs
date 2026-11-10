@@ -728,6 +728,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         test_live_check_at: std::env::var("PROVE_IT_TEST_LIVE_CHECK_AT")
             .ok()
             .and_then(|at| at.parse().ok()),
+        large_region_advice: crate::pages::LARGE_REGION_ADVICE,
         ..Settings::default()
     };
     let (sender, receiver) = mpsc::channel();

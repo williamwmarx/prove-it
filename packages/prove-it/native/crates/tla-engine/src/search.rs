@@ -75,7 +75,14 @@ pub struct Settings {
     /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
     /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
     pub test_live_check_at: Option<usize>,
+    /// What the caller tells the system of a large region of memory the search has just allocated
+    /// and not yet touched, its address and length in bytes: the state table, from 32 MB, whose
+    /// probes land anywhere in it. The CLI asks Linux to back it with huge pages.
+    pub large_region_advice: Option<Advice>,
 }
+
+/// See [`Settings::large_region_advice`].
+pub type Advice = fn(address: *const u8, length: usize);
 
 // How many candidates ahead the merge reads the state table.
 const MERGE_PREFETCH: usize = 16;
@@ -104,6 +111,7 @@ impl Default for Settings {
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
+            large_region_advice: None,
         }
     }
 }
@@ -571,6 +579,7 @@ struct FingerprintSet {
     mask: usize,
     len: usize,
     zero: Option<u32>,
+    advice: Option<Advice>,
 }
 
 // The slot that stands for the fingerprint 0, past the table's.
@@ -579,15 +588,16 @@ const ZERO_SLOT: usize = usize::MAX;
 impl FingerprintSet {
     const INITIAL_CAPACITY: usize = 1 << 12;
 
-    fn new(is_indexed: bool) -> FingerprintSet {
+    fn new(is_indexed: bool, advice: Option<Advice>) -> FingerprintSet {
         let capacity = Self::INITIAL_CAPACITY;
         FingerprintSet {
-            fingerprints: get_table(capacity),
+            fingerprints: vec![0; capacity],
             indices: is_indexed.then(|| vec![0; capacity]),
             shift: u64::BITS - capacity.trailing_zeros(),
             mask: capacity - 1,
             len: 0,
             zero: None,
+            advice,
         }
     }
 
@@ -650,7 +660,15 @@ impl FingerprintSet {
         // more often than a probe leaves its cache line, and 70% no faster.
         if self.len * 2 > self.fingerprints.len() {
             let capacity = self.fingerprints.len() * 2;
-            let fingerprints = std::mem::replace(&mut self.fingerprints, get_table(capacity));
+            let fingerprints = std::mem::replace(&mut self.fingerprints, vec![0; capacity]);
+            if let Some(advice) = self.advice
+                && capacity * size_of::<u64>() >= LARGE_TABLE_BYTES
+            {
+                advice(
+                    self.fingerprints.as_ptr().cast(),
+                    capacity * size_of::<u64>(),
+                );
+            }
             let indices = self
                 .indices
                 .as_mut()
@@ -673,37 +691,9 @@ impl FingerprintSet {
     }
 }
 
-// A table of empty slots. One of 32 MB or more asks for huge pages: its probes land anywhere in
-// it, each missing the TLB on small pages, and faulting it in a small page at a time costs the
-// growth most of its time. Smaller tables stay on small pages, which fault in faster.
-fn get_table(capacity: usize) -> Vec<u64> {
-    let table = vec![0; capacity];
-    #[cfg(target_os = "linux")]
-    if size_of_val(table.as_slice()) >= HUGE_TABLE_BYTES {
-        advise_huge_pages(&table);
-    }
-    table
-}
-
-#[cfg(target_os = "linux")]
-const HUGE_TABLE_BYTES: usize = 32 << 20;
-
-// Asks the kernel to back the table's whole 2 MB pages with huge pages, before they are touched.
-#[cfg(target_os = "linux")]
-fn advise_huge_pages(table: &[u64]) {
-    const HUGE_PAGE: usize = 1 << 21;
-    const MADV_HUGEPAGE: i32 = 14;
-    unsafe extern "C" {
-        fn madvise(address: *mut std::ffi::c_void, length: usize, advice: i32) -> i32;
-    }
-    let start = (table.as_ptr() as usize).next_multiple_of(HUGE_PAGE);
-    let end = (table.as_ptr() as usize + size_of_val(table)) / HUGE_PAGE * HUGE_PAGE;
-    // SAFETY: the range lies inside the table's allocation, and the advice changes only how the
-    // kernel backs its pages, not what they hold. Where the kernel refuses, nothing changes.
-    unsafe {
-        madvise(start as *mut std::ffi::c_void, end - start, MADV_HUGEPAGE);
-    }
-}
+// The size from which a state table is a large region, which the caller may advise: its probes
+// land anywhere in it, and smaller tables stay in the cache.
+const LARGE_TABLE_BYTES: usize = 32 << 20;
 
 // The states found so far and how the search tells them apart.
 struct States {
@@ -1738,7 +1728,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     let (before, level) = (shared.before, shared.level);
     let candidates = Candidates {
         before,
-        seen: FingerprintSet::new(before.set.indices.is_some()),
+        seen: FingerprintSet::new(before.set.indices.is_some(), None),
         ids: Vec::new(),
         keys: Vec::new(),
         fingerprints: Vec::new(),
@@ -2404,7 +2394,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         keys: Vec::new(),
         parents: Vec::new(),
         fingerprints: Vec::new(),
-        set: FingerprintSet::new(settings.is_fingerprint_verified || model.is_recording_graph),
+        set: FingerprintSet::new(
+            settings.is_fingerprint_verified || model.is_recording_graph,
+            settings.large_region_advice,
+        ),
         order,
         is_verified: settings.is_fingerprint_verified,
         collisions: 0,
@@ -4682,7 +4675,7 @@ mod tests {
             keys: Vec::new(),
             parents: Vec::new(),
             fingerprints: Vec::new(),
-            set: FingerprintSet::new(true),
+            set: FingerprintSet::new(true, None),
             order: vec![0],
             is_verified: true,
             collisions: 0,

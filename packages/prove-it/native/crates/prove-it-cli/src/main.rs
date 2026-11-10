@@ -7,6 +7,7 @@ mod failure;
 mod files;
 mod front;
 mod messages;
+mod pages;
 mod summary;
 mod time;
 mod trace;
