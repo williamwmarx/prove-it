@@ -758,9 +758,8 @@ trait Reached {
     // The index of the state in a slot, for an edge of the graph.
     fn index(&self, slot: usize) -> u32;
     // Whether an invariant that fails of a new state, false or failing to evaluate, waits to stop
-    // the search until it is known that no other thread found another state with its key first,
-    // which it records with the reason it stops for.
-    fn defers_violation(&mut self, _parent: usize, _fingerprint: u64, _bail: Bail) -> bool {
+    // the search until it is known that no other thread found another state with its key first.
+    fn defers_violation(&mut self, _parent: usize, _fingerprint: u64) -> bool {
         false
     }
 }
@@ -1311,8 +1310,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             if let Some(bail) = failed {
                 let is_deferred = is_new
                     && fingerprint.is_some_and(|fingerprint| {
-                        self.states
-                            .defers_violation(self.expanding, fingerprint, bail)
+                        self.states.defers_violation(self.expanding, fingerprint)
                     });
                 if !is_deferred {
                     return Err(bail);
@@ -1522,7 +1520,7 @@ struct Candidates<'b> {
     keys: Vec<Id>,
     fingerprints: Vec<u64>,
     parents: Vec<u32>,
-    deferred: Vec<(u32, u64, Bail)>,
+    deferred: Vec<(u32, u64)>,
     collisions: u64,
 }
 
@@ -1590,11 +1588,11 @@ impl Reached for Candidates<'_> {
 
     // Where the key isn't the state, a thread that takes a state for new may have missed another
     // with the same key that another thread found first, whose invariant TLC checks instead.
-    fn defers_violation(&mut self, parent: usize, fingerprint: u64, bail: Bail) -> bool {
+    fn defers_violation(&mut self, parent: usize, fingerprint: u64) -> bool {
         if self.before.key_width.is_none() {
             return false;
         }
-        self.deferred.push((parent as u32, fingerprint, bail));
+        self.deferred.push((parent as u32, fingerprint));
         true
     }
 }
@@ -1636,7 +1634,7 @@ struct Claimed {
 }
 
 // What a thread did in a level: the runs it claimed, how many successors it generated from each
-// state it expanded, the states it found, and where it stopped.
+// state it expanded, and the states it found.
 struct Expanded {
     claimed: Vec<Claimed>,
     successors: Vec<u32>,
@@ -1646,9 +1644,8 @@ struct Expanded {
     parents: Vec<u32>,
     // Each state, by its parent, whose invariant failed but which another thread may have found
     // first under a VIEW or symmetry, as another state with the same key.
-    deferred: Vec<(u32, u64, Bail)>,
+    deferred: Vec<(u32, u64)>,
     collisions: u64,
-    stop: Option<(usize, Bail)>,
     is_past_walk: bool,
 }
 
@@ -1703,7 +1700,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     search.level = level.number;
     search.fingerprints = std::mem::take(&mut worker.fingerprints);
     search.canonicalizer = worker.canonicalizer.take();
-    let (mut claimed, mut successors, mut stop) = (Vec::new(), Vec::new(), None);
+    let (mut claimed, mut successors) = (Vec::new(), Vec::new());
     let width = before.width;
     'claiming: loop {
         let start = level.cursor.fetch_add(level.chunk, Ordering::Relaxed);
@@ -1736,9 +1733,8 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
                 level.check_deadlock,
             ) {
                 Ok(()) => successors.push(search.successors as u32),
-                Err(bail) => {
+                Err(_) => {
                     level.stop.fetch_min(expanding, Ordering::Relaxed);
-                    stop = Some((expanding, bail));
                     break 'claiming;
                 }
             }
@@ -1756,7 +1752,6 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
         parents: found.parents,
         deferred: found.deferred,
         collisions: found.collisions,
-        stop,
         is_past_walk: worker.machine.is_past_walk,
     }
 }
@@ -1823,7 +1818,6 @@ impl Search<'_, States> {
         let key_width = self.states.key_width;
         let is_verified = self.states.is_verified;
         let mut new_counts = vec![0u32; level.end - level.start];
-        let mut violated = None;
         let (mut state, mut key) = (Vec::with_capacity(width), Vec::with_capacity(width));
         // The states in order, each run by the thread that claimed it: what each state's expansion
         // found joins the states found, unless an invariant it deferred fails of a state that is
@@ -1844,19 +1838,18 @@ impl Search<'_, States> {
             let mut candidate = claimed.candidates;
             let mut deferred = found
                 .deferred
-                .partition_point(|&(parent, _, _)| (parent as usize) < claimed.start);
+                .partition_point(|&(parent, _)| (parent as usize) < claimed.start);
             for (offset, parent) in
                 (claimed.start..(claimed.start + level.chunk).min(level.end)).enumerate()
             {
                 if parent > stop {
                     break 'states;
                 }
-                while let Some(&(at, fingerprint, bail)) = found.deferred.get(deferred)
+                while let Some(&(at, fingerprint)) = found.deferred.get(deferred)
                     && at as usize == parent
                 {
                     if self.states.set.find(fingerprint).is_err() {
                         stop = parent;
-                        violated = Some(bail);
                         break 'states;
                     }
                     deferred += 1;
@@ -1910,19 +1903,13 @@ impl Search<'_, States> {
             self.fingerprints
                 .absorb(&worker.fingerprints, &worker.imported);
         }
-        if let Some(bail) = violated {
-            return Err(bail);
-        }
         if stop < level.end && stop_at == Some(stop) {
             return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
         }
-        match expanded
-            .iter()
-            .find_map(|found| found.stop.filter(|&(at, _)| at == stop))
-        {
-            Some((_, bail)) => Err(bail),
-            None => Ok(()),
-        }
+        // A level stopped part way, by a violation, an error or a limit at the state `stop`, ends
+        // on one thread: it expands `stop` again, and stops there as the one-thread search does,
+        // with everything TLC reports of the stop, which a thread keeps none of.
+        Ok(())
     }
 }
 
@@ -2215,10 +2202,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !model.is_recording_graph
         && !settings.is_live_checked
         && context.possible.is_empty();
-    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings
-    // or TLCCache caches: TLC keeps one cache for the run, which the search's machine holds, and
-    // fills it in the order it first evaluates each expression.
-    let atom_threads = if compiler.is_ranking || is_lambda_built || compiler.is_tlc_cache_used {
+    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings,
+    // TLCCache caches (TLC keeps one cache for the run, which the search's machine holds, and fills
+    // it in the order it first evaluates each expression), or anything prints, draws or reads or
+    // sets TLC's registers: a helper machine has none of the search's registers or generator.
+    let atom_threads = if compiler.is_ranking
+        || compiler.is_printing
+        || is_lambda_built
+        || compiler.is_tlc_cache_used
+    {
         1
     } else {
         thread_count
