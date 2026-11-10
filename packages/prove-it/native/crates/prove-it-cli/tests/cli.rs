@@ -2283,3 +2283,83 @@ fn reports_the_progress_of_the_initial_states_tlc_computes_again() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// TLC drops a SYMMETRY whose definition has as many arguments as permutations, counting the
+// arguments of whatever node SANY made of it, and fails on one that is no application.
+#[test]
+fn declines_a_symmetry_that_is_no_operator_application() {
+    for definition in [
+        "IF TRUE THEN Permutations(P) ELSE {}",
+        "LET Q == P IN Permutations(Q)",
+        "{(a :> b) @@ (b :> a)}",
+    ] {
+        let spec = format!(
+            "---- MODULE Shape ----\nEXTENDS TLC\nCONSTANTS a, b, P\nVARIABLE x\nSym == {definition}\nInit == x \\in P\nNext == x' \\in P\n====\n"
+        );
+        let config = "CONSTANTS a = a\nb = b\nP = {a, b}\nINIT Init\nNEXT Next\nSYMMETRY Sym\n";
+        let (output, directory) = run_front("symmetry-shape", &spec, config, &[]);
+        assert_eq!(output.status.code(), Some(1), "{definition}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(
+                "not native yet: a SYMMETRY definition that isn't an operator applied to its sets"
+            ),
+            "{definition}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+// TLC's Json module writes a record's fields in the order TLC holds them, which the store forgets.
+#[test]
+fn declines_to_serialize_a_record_of_several_fields() {
+    let spec = "---- MODULE Fields ----\nEXTENDS Json\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ JsonSerialize(\"fields.out.json\", <<[b |-> 1, a |-> 2]>>)\n====\n";
+    let (output, directory) = run_front("json-fields", spec, "INIT Init\nNEXT Next\n", &[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("a Json operator's record, whose fields TLC writes as it holds them"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!directory.join("fields.out.json").exists());
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// TLC drops its generator before it rebuilds a trace, so the initial predicate draws again from
+// the seed and TLC fails to find the state where the startup drew first.
+#[test]
+fn declines_a_trace_after_the_startup_draws_at_random() {
+    let spec = "---- MODULE Drawn ----\nEXTENDS Integers, TLC\nVARIABLES x, n\nASSUME RandomElement(1..1000) > 0\nInit == x = RandomElement(1..1000) /\\ n = 0\nNext == n < 3 /\\ n' = n + 1 /\\ x' = x\nInv == n < 3\n====\n";
+    let config = "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n";
+    let (output, directory) = run_front("startup-draws", spec, config, &[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("a trace of a model that draws at random as it starts"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// TLC stops at the first state whose tableau node accepts every behavior, before the deadlock
+// the search goes on to.
+#[test]
+fn declines_a_deadlock_past_a_node_that_accepts_every_behavior() {
+    let spec = "---- MODULE Past ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == [](x = 1 => [](x # 2))\n====\n";
+    let (output, directory) = run_front(
+        "deadlock-past",
+        spec,
+        "SPECIFICATION Spec\nPROPERTY Prop\n",
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("not native yet: the engine stopped: deadlock"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
