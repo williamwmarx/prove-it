@@ -1019,7 +1019,9 @@ packages/prove-it/native/           Cargo workspace; rust-toolchain.toml pins 1.
   crates/tla-engine      IR decoder, compiler, memo, walker, search, parallel, symmetry, graph, live tables
   crates/tla-live        stage 3: tableau, SCCs, counterexamples
   crates/tla-front       stage 4: lexer, parser, resolver, levels, SANY success path, config, TLC order
+  crates/prove-it-host   what the engine hands its host, built once for both bindings
   crates/prove-it-napi   cdylib: the N-API binding
+  crates/prove-it-wasm   cdylib: the WebAssembly binding, for hosts without process.dlopen
   crates/prove-it-cli    stages 4–5: the native binary (13)
   oracle/ValueOracle.java, tools/replay, fuzz/
 ```
@@ -1045,6 +1047,28 @@ boundary. CPU baseline is `x86-64-v2` (no AVX2 assumption) and the default for a
   arm64 runner). macOS and Windows build and run the 20-model differential smoke on hosted runners
   of those systems. A platform that cannot be tested is not published, and its users get the TS
   engine.
+
+### 7.4 WebAssembly
+
+Where there is no `process.dlopen`, as in a browser, the engine runs as WebAssembly:
+`crates/prove-it-wasm` builds it for `wasm32-unknown-unknown` with the standard library only, over
+a hand-written ABI that `src/engine/wasm.ts` instantiates as the addon's functions. The main
+package ships it as `dist/prove-it-engine.wasm` (`platform-packages.ts build --target
+wasm32-unknown-unknown`, after `bun run build`), beside the modules; `loadWasmEngine` in
+`native.ts` fetches and compiles it before a check from a literal `new URL("./prove-it-engine.wasm",
+import.meta.url)`, which a bundler finds and copies as it does the workers, and
+`PROVE_IT_ENGINE_WASM` loads it in Node or Bun for testing.
+
+- **One thread.** WebAssembly here has no threads, so the search runs on one, and the store hooks
+  run in place.
+- **Shallower recursion.** The engine's frames are on the host's call stack, not on a thread
+  with a deep stack, so a recursive operator or function reaches only 1,000 to 2,000 calls deep
+  in Bun and 2,000 to 4,000 in Node, against the addon's 20,000 before "recursion too deep". A
+  check that exhausts the stack traps; the loader replaces the instance and returns a stop that
+  hands nothing over, so the interpreter searches from the start.
+- **Output.** On the differential's models that TLC checks within 3 seconds, in both output modes
+  (1,314 runs, one worker), every transcript matches the addon's, and the engine ends each run as
+  the addon does: 838 complete, 226 stop and hand over, 28 decline, and none traps.
 
 ---
 
@@ -2717,7 +2741,7 @@ The milestones' as-built notes are in [design/front.md](design/front.md).
 **engine-wasm (pushed at 58710d0, no PR).**
 - `prove-it-host` holds what both bindings hand JavaScript.
 - `prove-it-wasm` is the WebAssembly binding. `src/engine/wasm.ts` is its loader, and §7.4 describes it.
-- The wasm32 platform package is built by `platform-packages.ts build --target wasm32-unknown-unknown`.
+- The engine as WebAssembly is built into `dist/` by `platform-packages.ts build --target wasm32-unknown-unknown` and ships in the main package.
 - Its differential against the addon matched on 657 of 657 runs.
 - It branched before the latest native-parity, so it merges once native-parity lands, together with option C (exit 255, from #157).
 - When merging, rebuild the IR goldens and redo the `Settings` fields that native-parity added since: `workers`, and the `is_native` the Json operators read. `prove-it-host/src/outcome.rs` builds them for both bindings.

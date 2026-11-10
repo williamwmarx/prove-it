@@ -669,10 +669,16 @@ impl Canonicalizer {
                 }
             }
             KIND_FUNCTION if store.is_record(id) => {
+                // Records of different keys compare by their keys, which must be ordered.
                 let mut fields: Vec<(Id, u32)> = (0..size)
                     .map(|position| {
+                        let key = store.get_key(id, position);
                         let value = store.get_range_value(id, position);
-                        (store.get_key(id, position), self.shape_of(store, value))
+                        let shape = match self.shape_of(store, key) {
+                            UNSAFE => UNSAFE,
+                            _ => self.shape_of(store, value),
+                        };
+                        (key, shape)
                     })
                     .collect();
                 // By key id, which `join` searches by, not TLC's order of the keys.
@@ -1011,6 +1017,38 @@ mod tests {
         assert!(canonicalizer.canonicalize(&mut store, &mut state).is_err());
     }
 
+    #[test]
+    fn fails_where_tlc_fails_comparing_record_keys_ranked_late() {
+        let mut store = Store::new();
+        let [a, b, c] = ["a", "b", "c"].map(|name| model(&mut store, name));
+        let swaps = vec![
+            HashMap::from([(a, b), (b, a)]),
+            HashMap::from([(b, c), (c, b)]),
+        ];
+        let mut canonicalizer = Canonicalizer::new(&store, close_group(swaps), vec![0, 1]);
+        // Keys ranked after the order is frozen, as ToString's are, which TLC's order may not
+        // follow: comparing records of different keys bails.
+        store.freeze_string_order();
+        let text = |name: &str| name.encode_utf16().collect::<Vec<u16>>();
+        let [f, g] = ["f", "g"].map(|name| {
+            store.rank_text(&text(name));
+            store.str(&text(name))
+        });
+        let one = store.int(1).expect("an int");
+        let records = [f, g].map(|key| store.function_of(&[key], &[one]).expect("a record"));
+        let y = store
+            .function_of(&[a, b, c], &[records[0], records[1], a])
+            .expect("a function");
+        let mut in_order = [c, y];
+        assert!(
+            canonicalizer
+                .canonicalize_in_order(&mut store, &mut in_order)
+                .is_err()
+        );
+        let mut state = [c, y];
+        assert!(canonicalizer.canonicalize(&mut store, &mut state).is_err());
+    }
+
     // A value of mixed kinds, built from `next`, or none where the store refuses one.
     fn mixed_value(
         store: &mut Store,
@@ -1023,7 +1061,7 @@ mod tests {
         let count = match kind {
             0 => return store.int(1 + next(2) as i64).ok(),
             1 => return Some(store.bool(next(2) == 0)),
-            2 => return Some(store.str(&text(["s", "t"][next(2)]))),
+            2 => return Some(store.str(&text(["s", "t", "u"][next(3)]))),
             3 => return Some(models[next(3)]),
             4 => next(4),
             5 => next(3),
@@ -1050,6 +1088,9 @@ mod tests {
         let text = |name: &str| name.encode_utf16().collect::<Vec<u16>>();
         store.rank_strings([text("f"), text("g"), text("h")].iter().map(Vec::as_slice));
         store.str(&text("h"));
+        // And a string ranked after the order is frozen, which compares with no other.
+        store.freeze_string_order();
+        store.rank_text(&text("u"));
         let [a, b, c] = ["a", "b", "c"].map(|name| model(&mut store, name));
         let swaps = vec![
             HashMap::from([(a, b), (b, a)]),

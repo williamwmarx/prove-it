@@ -117,12 +117,6 @@ napi_functions! {
     ) -> napi_status;
     fn napi_create_int32(env: napi_env, value: i32, result: *mut napi_value) -> napi_status;
     fn napi_create_object(env: napi_env, result: *mut napi_value) -> napi_status;
-    fn napi_create_string_utf8(
-        env: napi_env,
-        text: *const c_char,
-        length: usize,
-        result: *mut napi_value,
-    ) -> napi_status;
     fn napi_throw_error(env: napi_env, code: *const c_char, message: *const c_char) -> napi_status;
     fn napi_throw_type_error(
         env: napi_env,
@@ -162,12 +156,6 @@ unsafe fn guard(env: napi_env, body: impl FnOnce() -> Result<napi_value, Thrown>
         };
     }
     null_mut()
-}
-
-unsafe fn create_string(env: napi_env, text: &str) -> Result<napi_value, Thrown> {
-    let mut result = null_mut();
-    status(unsafe { napi_create_string_utf8(env, text.as_ptr().cast(), text.len(), &mut result) })?;
-    Ok(result)
 }
 
 unsafe fn set_property(
