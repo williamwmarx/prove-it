@@ -994,6 +994,15 @@ and FiniteSets and has `VARIABLE x`, `Init == x = 0` unless shown.
 The search now stops as at a graph too large to keep before its 32-bit numbering of states and
 steps could wrap.
 
+## A SYMMETRY that applies one operator to several sets (2026-11-10)
+
+`compile_symmetry` declines a SYMMETRY TLC may keep lazy. `may_be_lazy` took any node it met
+twice for a recursion, so a definition such as summerset's Crossword_MC
+`SymmetricPerms == ConditionalPerm(Replicas) \cup ConditionalPerm(Writes) \cup …` was declined,
+and with the TypeScript engine deleted the interpreter ran out of heap on it (Parity's
+Conformance). It now takes only a node it is still looking through for a recursion; one looked
+through before answers again. Crossword_MC searches natively and matches TLC's recorded result.
+
 ## Handoff (gaps session, 2026-11-09)
 
 Done since by the engine-gaps session (each in a section above): the run-time walk of a

@@ -4,8 +4,8 @@
 # for Linux x64 and arm64 with glibc and with musl, macOS arm64 and x64 and Windows x64 go first,
 # each built and tested on its own system (musl in Alpine, macOS and Windows on GitHub's runners, by
 # platforms.yml), and the main package lists them as optionalDependencies, added when it is
-# packed, and carries the engine as WebAssembly for hosts without process.dlopen; other platforms get the
-# TypeScript engine.
+# packed, and carries the engine as WebAssembly for hosts without process.dlopen. Where none
+# loads, check throws EngineUnavailableError, which names PROVE_IT_ENGINE=0, the interpreter.
 #
 # The npm token is NPM_TOKEN in the 1Password Environment prove-it-release, whose ID is below.
 # ONEPASSWORD_PROVE_IT_RELEASE_TOKEN, a Depot CI secret scoped to this repository, main and this
@@ -51,7 +51,7 @@ jobs:
           (cd native && cargo test --locked)
           bun scripts/platform-packages.ts build
           bun run build
-          PROVE_IT_ENGINE_BACKEND=rust PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-arm64-gnu/prove-it-engine.node" \
+          PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-arm64-gnu/prove-it-engine.node" \
             bun test tests/unit
           platform=$(bun scripts/platform-packages.ts pack "$RUNNER_TEMP/platform-packages")
           echo "Packed $(basename "$platform"), sha256 $(sha256sum "$platform" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -154,7 +154,8 @@ jobs:
         if: steps.plan.outputs.publish == 'true'
         run: |
           set -euo pipefail
-          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          # bun run test builds the native engine, which every check needs.
+          PATH="$(scripts/ci/bootstrap.sh bun node rust):$PATH"
           bun run typecheck
           bun run lint
           bun run format:check

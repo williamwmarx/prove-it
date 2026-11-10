@@ -4,9 +4,10 @@
 // manager install only the one for its platform, and the main package's version.
 // src/engine/native.ts finds the installed one. The package declares no bin, so it never shadows
 // the main package's.
-// The engine as WebAssembly, for hosts without process.dlopen such as a browser, ships in the main
-// package instead: build --target wasm32-unknown-unknown writes it to dist/prove-it-engine.wasm,
-// after bun run build, beside the modules that name it.
+// The engine as WebAssembly, for hosts without process.dlopen such as a browser, and for Node or Bun
+// where no platform package loads, ships in the main package instead: build --target
+// wasm32-unknown-unknown writes it to dist/prove-it-engine.wasm, after bun run build, beside the
+// modules that name it.
 // Usage: bun scripts/platform-packages.ts build [--target <Rust target>]
 //        bun scripts/platform-packages.ts pack <destination>
 //        bun scripts/platform-packages.ts install-test
@@ -110,6 +111,25 @@ export const PLATFORMS: Platform[] = [
     description: "Windows x64",
   },
 ];
+
+// The addon `build` built for this system, if it did, which the tests and the conformance scripts
+// check with unless PROVE_IT_ENGINE_ADDON or PROVE_IT_ENGINE_WASM names an engine.
+export const getBuiltAddon = () =>
+  PLATFORMS.filter((platform) => platform.os === process.platform && platform.cpu === process.arch)
+    .map((platform) => join(NPM_DIRECTORY, platform.name, ADDON_FILE))
+    .find(existsSync);
+
+// Sets PROVE_IT_ENGINE_ADDON to the addon built for this system, where no engine is named.
+export const useBuiltAddon = () => {
+  const addon = getBuiltAddon();
+  if (
+    addon !== undefined &&
+    process.env.PROVE_IT_ENGINE_ADDON === undefined &&
+    process.env.PROVE_IT_ENGINE_WASM === undefined
+  ) {
+    process.env.PROVE_IT_ENGINE_ADDON = addon;
+  }
+};
 
 // npm is npm.cmd on Windows, which only a shell runs, and the shell splits an argument at its
 // spaces, as in a temporary directory under C:\Users\Jane Doe, unless it is quoted. No argument
@@ -219,7 +239,7 @@ const pack = (argument: string | undefined) => {
   const missing = PLATFORMS.filter((platform) => !built.includes(platform.name));
   if (missing.length > 0) {
     console.error(
-      `Not built, so their users get the TypeScript engine: ${missing.map((platform) => platform.name).join(", ")}`,
+      `Not built, so their users can check only with the interpreter (PROVE_IT_ENGINE=0): ${missing.map((platform) => platform.name).join(", ")}`,
     );
   }
 };

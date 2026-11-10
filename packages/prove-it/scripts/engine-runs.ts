@@ -1,27 +1,12 @@
-// What the conformance scripts share about the engine: the backends they can run it with, and how
-// they read what it did from the [engine] lines PROVE_IT_ENGINE=debug prints on stderr.
+// What the conformance scripts share about the engine: how they run it, and how they read what
+// it did from the [engine] lines PROVE_IT_ENGINE=debug prints on stderr.
 
-import { getOption } from "./corpora";
+// The engine's name in the scripts' outputs and in known-differences.json's pairs, such as tlc/rust.
+export const ENGINE_LABEL = "rust";
 
-// The engine's implementations, which PROVE_IT_ENGINE_BACKEND picks: the TypeScript engine, and
-// the native engine in front of it, which hands the TypeScript engine what it declines.
-export const BACKENDS = ["ts", "rust"];
-
-// The backend --backend names, or every backend with --compare-backends. A name that isn't a
-// backend ends the run.
-export const getBackends = () => {
-  const backend = getOption("--backend") ?? BACKENDS[0];
-  if (!BACKENDS.includes(backend)) {
-    console.error(`--backend takes one of ${BACKENDS.join(", ")}, not ${backend}`);
-    process.exit(2);
-  }
-  return process.argv.includes("--compare-backends") ? BACKENDS : [backend];
-};
-
-export const getBackendEnvironment = (backend: string) => ({
+export const getEngineEnvironment = () => ({
   ...process.env,
   PROVE_IT_ENGINE: process.env.PROVE_IT_ENGINE ?? "debug",
-  PROVE_IT_ENGINE_BACKEND: backend,
 });
 
 // Notes on how the engine runs, such as closures standing in for generated code, what the workers

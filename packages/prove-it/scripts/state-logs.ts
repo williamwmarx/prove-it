@@ -1,4 +1,4 @@
-// Compares two state logs PROVE_IT_STATE_LOG wrote (src/engine/state-log.ts), for
+// Compares two state logs PROVE_IT_STATE_LOG wrote (native/crates/tla-engine/src/search.rs), for
 // state-log-diff.ts and engine-coverage.ts --state-logs. A log can be longer than a string can be,
 // so it is read and compared as lines, and only the states printed are parsed.
 
