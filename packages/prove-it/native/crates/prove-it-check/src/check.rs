@@ -187,7 +187,7 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
         // Where TLC records the trace for its trace exploration spec, a counterexample makes it
         // write the trace's file beside the spec (`_TLCTraceSilent`), and, for one of two or more
         // states, the spec (`TraceExplorationSpec.generate`), which the binary doesn't yet.
-        if is_trace_recorded(&parsed) && COUNTEREXAMPLE_EXITS.contains(&exit_code) {
+        if printer.is_trace_recorded && COUNTEREXAMPLE_EXITS.contains(&exit_code) {
             return report_not_native(
                 &mut printer,
                 "the trace exploration spec TLC writes for a counterexample",
@@ -764,6 +764,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     }
     if let Some(sany) = &front.sany {
         print_sany(printer, sany);
+        printer.is_trace_recorded = is_trace_recorded(args);
     }
     // TLC loads the classes of the modules before it computes the constant definitions.
     for message in &front.override_messages {
