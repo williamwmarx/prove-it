@@ -19,10 +19,20 @@ fn run(directory: &PathBuf, args: &[&str]) -> Output {
 // Runs the binary on the engine IR `<name>.ir` in the directory, in place of the one tla-front
 // lowers.
 fn run_ir(directory: &PathBuf, name: &str, args: &[&str]) -> Output {
+    run_ir_with(directory, name, args, &[])
+}
+
+fn run_ir_with(
+    directory: &PathBuf,
+    name: &str,
+    args: &[&str],
+    environment: &[(&str, &str)],
+) -> Output {
     Command::new(env!("CARGO_BIN_EXE_prove-it"))
         .args(args)
         .current_dir(directory)
         .env("PROVE_IT_TEST_IR", directory.join(format!("{name}.ir")))
+        .envs(environment.iter().copied())
         .output()
         .expect("the binary runs")
 }
@@ -3210,5 +3220,107 @@ fn reads_a_system_property_as_tlc_or_declines() {
         String::from_utf8_lossy(&set.stderr),
         "prove-it: not native yet: TLCGet of the system property foo, which the command line sets\n"
     );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// What the binary prints but its process id and the times, which differ from run to run.
+fn untimed(output: &Output) -> String {
+    stdout(output)
+        .lines()
+        .filter(|line| {
+            ![
+                "[pid: ",
+                "Starting...",
+                "Progress(",
+                "Finished",
+                " at (",
+                " at 20",
+            ]
+            .iter()
+            .any(|timed| line.contains(timed))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn prints_on_four_threads_what_it_prints_on_one() {
+    let goldens: [(&str, &[u8], &str, &str); 4] = [
+        ("TCommit", COMMIT_IR, "", "a search that finds no error"),
+        (
+            "ACP_NB_WRONG_TLC",
+            include_bytes!(
+                "../../../../tests/conformance/ir/examples/specifications/acp/ACP_NB_WRONG_TLC.ir"
+            ),
+            "CONSTANTS\n  participants = { p0, p1 }\n  waiting = waiting\n  notsent = notsent\n  undecided = undecided\n  commit = commit\n  abort = abort\n  yes = yes\n  timeout = timeout\n  no = no\nSPECIFICATION SpecNB\nPROPERTIES AC1\nCHECK_DEADLOCK FALSE\n",
+            "an invariant violated part way through a level",
+        ),
+        (
+            "stages",
+            include_bytes!(
+                "../../../../tests/conformance/ir/examples/specifications/glowingRaccoon/stages.ir"
+            ),
+            "CONSTANTS\n  DNA = 5\n  PRIMER = 5\nINVARIANT TypeOK\nSPECIFICATION Spec\nPROPERTIES cleanSpec primerDepleted\nCHECK_DEADLOCK FALSE\n",
+            "temporal properties that hold",
+        ),
+        (
+            "MCDistributedReplicatedLog",
+            include_bytes!(
+                "../../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/examples/FiniteMonotonic/MCDistributedReplicatedLog.ir"
+            ),
+            "SPECIFICATION Spec\nCONSTANTS\n    Servers = {n1, n2, n3}\n    Values = {v}\n    Lag = 3\nINVARIANTS TypeOK BoundedLag\nPROPERTIES AllExtending InSync\nVIEW DropCommonPrefix\nCHECK_DEADLOCK TRUE\n",
+            "a lasso under a VIEW",
+        ),
+    ];
+    for (name, ir, config, what) in goldens {
+        let (one, directory) = run_golden(&format!("threads-{name}"), ir, name, config, &[]);
+        // Every level shared, between as many threads as the machine runs, up to four.
+        let four = run_ir_with(
+            &directory,
+            name,
+            &[name],
+            &[("PROVE_IT_WORKERS", "4"), ("PROVE_IT_SHARED_LEVEL", "1")],
+        );
+        assert_eq!(four.status.code(), one.status.code(), "{name}: {what}");
+        assert_eq!(untimed(&four), untimed(&one), "{name}: {what}");
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
+fn reads_what_tlc_drew_at_startup_on_every_thread() {
+    // TLC's SpanTreeRandom, smaller: Edges draws once, as TLC starts, and the liveness checker's
+    // threads read that draw, where drawing again from their own generators finds no violation.
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-drawn-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for (file, contents) in [
+        (
+            "Drawn.tla",
+            "---- MODULE Drawn ----\nEXTENDS Integers, FiniteSets, TLC\nCONSTANTS Nodes, Root, MaxCardinality\nEdges == UNION { {{n, m} : m \\in RandomElement(SUBSET (Nodes \\ {n}))} : n \\in Nodes }\nVARIABLES mom, dist\nvars == <<mom, dist>>\nNbrs(n) == {m \\in Nodes : {m, n} \\in Edges}\nInit == /\\ mom = [n \\in Nodes |-> n]\n        /\\ dist = [n \\in Nodes |-> IF n = Root THEN 0 ELSE MaxCardinality]\nNext == \\E n \\in Nodes : \\E m \\in Nbrs(n) :\n          /\\ dist[m] < 1 + dist[n]\n          /\\ \\E d \\in (dist[m] + 1)..(dist[n] - 1) :\n                /\\ dist' = [dist EXCEPT ![n] = d]\n                /\\ mom' = [mom EXCEPT ![n] = m]\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\nNextAlwaysEnabled == []<>(ENABLED Next)\n====\n",
+        ),
+        (
+            "Drawn.cfg",
+            "CONSTANTS\n  Nodes = {n1, n2, n3, n4, n5}\n  MaxCardinality = 5\n  Root = n1\nSPECIFICATION Spec\nPROPERTY NextAlwaysEnabled\nCHECK_DEADLOCK FALSE\n",
+        ),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let run_with = |threads: &str| {
+        Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-seed", "4", "-lncheck", "final", "-noTE", "Drawn"])
+            .current_dir(&directory)
+            .env("PROVE_IT_WORKERS", threads)
+            .output()
+            .expect("the binary runs")
+    };
+    let one = run_with("1");
+    let four = run_with("4");
+    assert!(
+        stdout(&one).contains("Error: Temporal property NextAlwaysEnabled was violated."),
+        "{}",
+        stdout(&one)
+    );
+    assert_eq!(four.status.code(), one.status.code());
+    assert_eq!(untimed(&four), untimed(&one));
     std::fs::remove_dir_all(directory).expect("removed");
 }

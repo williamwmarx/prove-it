@@ -6,7 +6,8 @@ use std::sync::mpsc;
 use std::time::{Instant, SystemTime};
 
 use tla_engine::search::{
-    Delegated, ErrorSite, Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
+    Delegated, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome, Settings, Violation,
+    ViolationKind, search,
 };
 use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, write_value};
@@ -221,6 +222,11 @@ fn memory_megabytes() -> u64 {
 
 fn cores() -> usize {
     std::thread::available_parallelism().map_or(1, usize::from)
+}
+
+// A whole number an environment variable sets.
+fn env_number(name: &str) -> Option<usize> {
+    std::env::var(name).ok()?.parse().ok()
 }
 
 /// TLC.printStartupBanner, with what runs Prove It in place of the JVM.
@@ -710,6 +716,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let settings = Settings {
         is_violation_reported: true,
         workers,
+        // PROVE_IT_WORKERS: the threads the search shares its levels and the liveness checker's
+        // atoms between, which find what one thread finds. PROVE_IT_SHARED_LEVEL: the fewest
+        // states a level shares.
+        threads: env_number("PROVE_IT_WORKERS")
+            .unwrap_or(1)
+            .clamp(1, cores()),
+        minimum_shared_level: env_number("PROVE_IT_SHARED_LEVEL").unwrap_or(MINIMUM_SHARED_LEVEL),
         is_liveness_periodic,
         test_live_check_at: std::env::var("PROVE_IT_TEST_LIVE_CHECK_AT")
             .ok()
