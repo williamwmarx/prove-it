@@ -6,7 +6,7 @@
 //! one the search didn't keep, and TLC fingerprinted it only if it satisfies the constraints.
 
 use tla_ir::{AtomKind, Ir, NodeId};
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
 
@@ -296,7 +296,7 @@ impl<'ir> Rebuilder<'ir> {
         // TLC's worker seeds the draws of each expansion with the fingerprint of the state it
         // expands, which is of the state itself where TLC fingerprints no other key.
         let order: Vec<usize> = ir.tlc_order.iter().map(|&index| index as usize).collect();
-        let mut fingerprints = Fingerprints::new();
+        let mut fingerprints = Fingerprints::new(Polynomial::get(ir.model.fingerprint_index));
         let mut seeded = |state: &[Id]| -> Result<Option<JavaRandom>, Unsupported> {
             if !is_drawing || !matches!(self.key, Key::State) {
                 return Ok(None);

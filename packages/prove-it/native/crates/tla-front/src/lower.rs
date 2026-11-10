@@ -1063,6 +1063,7 @@ impl<'a> Lowering<'a> {
             version,
             // TLC's default seed.
             random_seed: self.random_seed,
+            fingerprint_index: 0,
             atoms,
             live_formula,
             live_properties,

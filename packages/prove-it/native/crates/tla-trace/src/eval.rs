@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::random::JavaRandom;
 
 use tla_ir::{
@@ -3869,7 +3870,8 @@ impl<'ir> Evaluator<'ir> {
             "TLCFP" => {
                 arity(1)?;
                 let value = self.operand(&operands[0])?;
-                let mut fingerprints = tla_values::fingerprint::Fingerprints::new();
+                let mut fingerprints =
+                    Fingerprints::new(Polynomial::get(self.ir.model.fingerprint_index));
                 match crate::fingerprint::state_fingerprint(&mut fingerprints, &[&value]) {
                     Some(fingerprint) => Value::Int(fingerprint as i32),
                     None => return fail("TLCFP of a value the evaluator doesn't fingerprint"),
@@ -3945,7 +3947,10 @@ impl<'ir> Evaluator<'ir> {
                             ),
                             (
                                 text("fingerprint"),
-                                string(&(tla_values::fingerprint::INITIAL as i64).to_string()),
+                                string(
+                                    &(Polynomial::get(model.fingerprint_index).value() as i64)
+                                        .to_string(),
+                                ),
                             ),
                             (text("install"), string("unknown")),
                         ])?

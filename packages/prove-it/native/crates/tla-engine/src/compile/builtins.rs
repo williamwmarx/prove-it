@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeId, NodeKind, Resolution};
-use tla_values::fingerprint::INITIAL;
 use tla_values::json;
 use tla_values::print::{is_printable, write_value};
 use tla_values::store::{
@@ -829,7 +828,10 @@ impl Compiler<'_> {
             ("deadlock", Field::Bool(model.check_deadlock)),
             ("worker", Field::Int(self.workers as i64)),
             ("seed", Field::Text((model.random_seed as i64).to_string())),
-            ("fingerprint", Field::Text((INITIAL as i64).to_string())),
+            (
+                "fingerprint",
+                Field::Text((self.program.polynomial().value() as i64).to_string()),
+            ),
             ("install", Field::Text("unknown".into())),
         ];
         let mut keys = Vec::with_capacity(fields.len());

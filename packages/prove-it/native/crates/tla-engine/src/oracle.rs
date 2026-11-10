@@ -3,7 +3,7 @@
 //! enumerate a set, as the native engine builds and enumerates them, so `replay enumerate` can
 //! answer each line as TLC does. A set's elements are answered as their TLC fingerprints.
 
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::store::Outcome;
 use tla_values::{Bail, Id, Store};
 
@@ -139,7 +139,7 @@ impl<'a> Reader<'a> {
 pub fn answer_requests<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let program = Program::default();
     let mut machine = Machine::new(&program, Store::new());
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(0));
     let mut values: Vec<Outcome<Lazy>> = Vec::new();
     let mut answers = Vec::new();
     for line in lines {
