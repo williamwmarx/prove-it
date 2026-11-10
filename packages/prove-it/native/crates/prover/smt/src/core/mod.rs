@@ -1,1 +1,10 @@
-//! Z3's SMT core: `src/prover/smt/solver/*.ts` (design/prover.md, stage P3c; design/smt-core.md).
+//! The SMT core, `src/prover/smt/solver/*.ts` (design/smt-core.md): one module per TypeScript
+//! file.
+
+pub mod case_split_queue;
+pub mod cg_table;
+pub mod clause;
+pub mod enode;
+pub mod literal;
+pub mod sort;
+pub mod sticky_generations;

@@ -127,4 +127,4 @@ group, integrated and tested before the next:
 ## 4. Handoff
 
 - P3a: done on branch `smt-foundation`.
-- P3c: conventions fixed (this note); wave 1 next.
+- P3c: conventions fixed (this note). Wave 1: `literal`, `sort`, `enode` (arenas `Enodes`, `Justifications`), `cg_table`, `case_split_queue`, `sticky_generations`, `clause` with `smt-clause-store` ported, on branch `smt-core`; `ast` in progress.
