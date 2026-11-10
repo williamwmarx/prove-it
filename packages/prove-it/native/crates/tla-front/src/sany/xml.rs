@@ -227,6 +227,29 @@ fn get_hash_map_bucket(key: u32, capacity: usize) -> usize {
     (key ^ (key >> 16)) as usize & (capacity - 1)
 }
 
+/// Whether putting `keys` into a `java.util.HashMap` in order grows a bucket to
+/// TREEIFY_THRESHOLD + 1 entries, where `putVal` calls `treeifyBin`, which resizes the table early
+/// or makes the bucket a tree, whose order `get_hash_map_bucket` doesn't follow.
+fn is_treeified(keys: &[u32]) -> bool {
+    let mut capacity = 16;
+    let mut lengths = vec![0usize; capacity];
+    for (index, &key) in keys.iter().enumerate() {
+        let bucket = &mut lengths[get_hash_map_bucket(key, capacity)];
+        *bucket += 1;
+        if *bucket > 8 {
+            return true;
+        }
+        if (index + 1) * 4 > capacity * 3 {
+            capacity *= 2;
+            lengths = vec![0; capacity];
+            for &key in &keys[..=index] {
+                lengths[get_hash_map_bucket(key, capacity)] += 1;
+            }
+        }
+    }
+    false
+}
+
 fn get_utf16(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
 }
@@ -972,6 +995,10 @@ fn export_specification(specification: &SanySpecification, options: &XmlExportOp
     };
     let module_references = exporter.get_references(modules)?;
     let capacity = get_hash_map_capacity(exporter.entries.len());
+    let uids: Vec<u32> = exporter.entries.iter().map(|&(uid, _)| uid).collect();
+    if is_treeified(&uids) {
+        not_yet("a context whose HashMap makes a bucket a tree")?;
+    }
     let mut entries = exporter.entries;
     entries.sort_by_key(|&(uid, _)| get_hash_map_bucket(uid, capacity));
     let context = create_element(
@@ -1027,8 +1054,8 @@ mod tests {
     use super::{
         Data, Element, XmlExportOptions, create_element, create_text, escape_xml, export_sany_xml,
         find_unrepresentable_in, get_hash_map_bucket, get_hash_map_capacity,
-        get_unrepresentable_message, get_utf16, print_element, trim_end_javascript, trim_java,
-        unbox_backslash_star_comment, unbox_comment,
+        get_unrepresentable_message, get_utf16, is_treeified, print_element, trim_end_javascript,
+        trim_java, unbox_backslash_star_comment, unbox_comment,
     };
     use crate::sany::SanySpecification;
     use crate::sany::nodes::{Context, Graph, Module, NodeKind, SanyLocation};
@@ -1123,6 +1150,14 @@ mod tests {
             "The spec contains the character U+0001 in the StringValue element. XML 1.0 cannot represent that character in character data, not even as a numeric character reference, so the spec cannot be exported until the character is removed from it."
         );
         assert!(get_unrepresentable_message("x", 0xDE00).contains("U+DE00 in the x element"));
+    }
+
+    #[test]
+    fn finds_a_bucket_java_makes_a_tree() {
+        let colliding: Vec<u32> = (0..9).map(|index| index * 64).collect();
+        assert!(is_treeified(&colliding));
+        assert!(!is_treeified(&colliding[..8]));
+        assert!(!is_treeified(&(0..1000).collect::<Vec<u32>>()));
     }
 
     #[test]
