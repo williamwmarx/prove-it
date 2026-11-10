@@ -1260,6 +1260,11 @@ fn check_spec(
             .host
             .get_variable("PROVE_IT_TEST_EVALUATIONS")
             .and_then(|evaluations| evaluations.parse().ok()),
+        test_progress_every: printer
+            .host
+            .get_variable("PROVE_IT_TEST_PROGRESS_EVERY")
+            .and_then(|every| every.parse().ok())
+            .filter(|&every| every > 0),
         is_dumped,
         is_continued,
         is_step_dumped: dot.is_some(),

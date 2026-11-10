@@ -3,6 +3,9 @@
 
 mod common;
 
+use std::path::PathBuf;
+use std::process::{Command, Output};
+
 use common::{run_spec, run_spec_with, stdout};
 
 // A counter with a `_PERIODIC` expression, as TLC's ran at d8fb231 with `-workers 1`: TLC
@@ -17,8 +20,35 @@ fn periodic_spec(next: &str, periodic: &str) -> String {
 
 const PERIODIC_CONFIG: &str = "INIT Init\nNEXT Next\n_PERIODIC Periodic\nCHECK_DEADLOCK FALSE\n";
 
-// A counter long enough to reach the binary's first progress, 3 s in, in a debug build.
-const PERIODIC_COUNTER: &str = "x < 4000000 /\\ x' = x + 1";
+// A counter of 1001 states, which reports its progress after 300, 600 and 900 expanded states under
+// PROVE_IT_TEST_PROGRESS_EVERY=300, in place of the clock's 3 s and each minute after.
+const PERIODIC_COUNTER: &str = "x < 1000 /\\ x' = x + 1";
+
+// Runs the binary on a spec of the test's own, with its progress every 300 expanded states.
+fn run_spec_every_300(test: &str, spec: &str) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
+    std::fs::write(directory.join("Stop.cfg"), PERIODIC_CONFIG).expect("a configuration");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noTE", "Stop"])
+        .current_dir(&directory)
+        .env("PROVE_IT_TEST_PROGRESS_EVERY", "300")
+        .output()
+        .expect("the binary runs");
+    (output, directory)
+}
+
+// The lines after the initial states.
+fn get_search_lines(text: &str) -> Vec<&str> {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with("Finished computing initial states: "))
+        .expect("the initial states");
+    lines[start + 1..].to_vec()
+}
 
 // The depth, the states generated and found, and the states left on the queue a Progress line
 // reports.
@@ -97,29 +127,29 @@ fn prints_what_the_periodic_expression_prints_before_each_progress_as_tlc() {
         PERIODIC_COUNTER,
         "PrintT(<<TLCGet(\"distinct\"), TLCGet(\"generated\"), TLCGet(\"queue\"), TLCGet(\"diameter\"), TLCGet(\"level\")>>)",
     );
-    let (output, directory) = run_spec("periodic-counts", &spec, PERIODIC_CONFIG);
+    let (output, directory) = run_spec_every_300("periodic-counts", &spec);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
-    let lines: Vec<&str> = text.lines().collect();
-    let progress: Vec<usize> = (0..lines.len())
-        .filter(|&index| lines[index].starts_with("Progress("))
-        .collect();
-    assert!(!progress.is_empty(), "{text}");
-    for index in progress {
-        let [depth, generated, distinct, queued] = get_progress_counts(lines[index]);
+    let lines = get_search_lines(&text);
+    for (position, count) in [301, 601, 901].into_iter().enumerate() {
         assert_eq!(
-            lines[index - 1],
-            format!("<<{distinct}, {generated}, {queued}, {depth}, 1>>"),
+            lines[position * 2],
+            format!("<<{count}, {count}, 1, {count}, 1>>"),
+            "{text}"
+        );
+        assert_eq!(
+            get_progress_counts(lines[position * 2 + 1]),
+            [count, count, count, 1],
             "{text}"
         );
     }
-    assert!(
-        text.contains("Model checking completed. No error has been found."),
+    assert_eq!(
+        lines[6], "Model checking completed. No error has been found.",
         "{text}"
     );
     assert!(
         text.contains(
-            "4000001 states generated, 4000001 distinct states found, 0 states left on queue.\n"
+            "1001 states generated, 1001 distinct states found, 0 states left on queue.\n"
         ),
         "{text}"
     );
@@ -130,34 +160,58 @@ fn prints_what_the_periodic_expression_prints_before_each_progress_as_tlc() {
 #[test]
 fn prints_a_constant_periodic_expression_again_before_each_progress_as_tlc() {
     let spec = periodic_spec(PERIODIC_COUNTER, "PrintT(\"periodic\")");
-    let (output, directory) = run_spec("periodic-again", &spec, PERIODIC_CONFIG);
+    let (output, directory) = run_spec_every_300("periodic-again", &spec);
     let text = stdout(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(
         text.contains(")\n\"periodic\"\nComputing initial states...\n"),
         "{text}"
     );
-    let lines: Vec<&str> = text.lines().collect();
-    let progress: Vec<usize> = (0..lines.len())
-        .filter(|&index| lines[index].starts_with("Progress("))
-        .collect();
-    assert!(!progress.is_empty(), "{text}");
-    for &index in &progress {
-        assert_eq!(lines[index - 1], "\"periodic\"", "{text}");
+    let lines = get_search_lines(&text);
+    for (position, count) in [301, 601, 901].into_iter().enumerate() {
+        assert_eq!(lines[position * 2], "\"periodic\"", "{text}");
+        assert_eq!(
+            get_progress_counts(lines[position * 2 + 1]),
+            [count, count, count, 1],
+            "{text}"
+        );
     }
     assert_eq!(
-        lines.iter().filter(|line| **line == "\"periodic\"").count(),
-        progress.len() + 1,
-        "{text}"
-    );
-    assert!(
-        text.contains("Model checking completed. No error has been found."),
+        lines[6], "Model checking completed. No error has been found.",
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
-// TLC stops at its first progress, where the expression is FALSE, with what it printed and the
+// Where the expression holds at one progress and is FALSE at the next, TLC prints the first
+// progress, and at the next what the expression printed and the statistics, with exit 10.
+#[test]
+fn stops_at_the_progress_where_the_periodic_expression_turns_false() {
+    let spec = periodic_spec(
+        "x' = x + 1",
+        "PrintT(TLCGet(\"distinct\")) /\\ TLCGet(\"distinct\") < 500",
+    );
+    let (output, directory) = run_spec_every_300("periodic-turns", &spec);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(10), "{text}");
+    let lines = get_search_lines(&text);
+    assert_eq!(lines[0], "301", "{text}");
+    assert_eq!(get_progress_counts(lines[1]), [301, 301, 301, 1], "{text}");
+    assert_eq!(
+        lines[2..5],
+        [
+            "601",
+            "601 states generated, 601 distinct states found, 1 states left on queue.",
+            "The depth of the complete state graph search is 601.",
+        ],
+        "{text}"
+    );
+    assert!(lines[5].starts_with("Finished in "), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// On the clock, which reaches its first progress at any speed on an endless counter: TLC stops at
+// its first progress, where the expression is FALSE, with what it printed and the
 // statistics in place of the Progress line: `6240082`, then "6240082 states generated, 6240082
 // distinct states found, 1 states left on queue." and its depth, with exit 10. With -tool it
 // prints the progress first, as it prints the statistics.
@@ -228,7 +282,7 @@ fn declines_a_periodic_expression_it_doesnt_follow() {
         ("3", "a _PERIODIC that isn't a boolean"),
     ] {
         let spec = periodic_spec("x' = x + 1", periodic);
-        let (output, directory) = run_spec("periodic-declined", &spec, PERIODIC_CONFIG);
+        let (output, directory) = run_spec_every_300("periodic-declined", &spec);
         let text = stdout(&output);
         assert_eq!(output.status.code(), Some(1), "{text}");
         assert_eq!(

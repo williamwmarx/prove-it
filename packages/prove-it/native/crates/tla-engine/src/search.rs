@@ -90,6 +90,10 @@ pub struct Settings {
     /// PROVE_IT_TEST_PROGRESS_AT, for tests: the state whose claim by a thread of a shared level
     /// has the search report its progress then, as it does on TLC's schedule.
     pub test_progress_at: Option<usize>,
+    /// PROVE_IT_TEST_PROGRESS_EVERY, for tests: the number of expanded states between the
+    /// search's progress reports, the first after that many, in place of the clock's FIRST_PROGRESS
+    /// and PROGRESS_INTERVAL.
+    pub test_progress_every: Option<usize>,
     /// Whether the search hands every state it found to [`Reporter::dumped`] as it ends, for
     /// `-dump`.
     pub is_dumped: bool,
@@ -141,6 +145,7 @@ impl Default for Settings {
             test_memo_entries: None,
             test_evaluations: None,
             test_progress_at: None,
+            test_progress_every: None,
             is_dumped: false,
             is_continued: false,
             is_step_dumped: false,
@@ -3508,6 +3513,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         let mut level_start = (0, Instant::now(), 1);
         let started_at = Instant::now();
         let mut progress_at = started_at + FIRST_PROGRESS;
+        // Under PROVE_IT_TEST_PROGRESS_EVERY, the number of expanded states at which the search
+        // next reports its progress.
+        let mut test_progress_due = settings.test_progress_every;
         // TLC's check of the temporal properties on the graph of the states expanded so far, where
         // it grew enough and the checks took little enough of the time: it skips the nodes of the
         // states not yet expanded, and the search stops where it finds a counterexample.
@@ -3658,8 +3666,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         test_live_check_at = None;
                         check_periodically(&mut machine, &mut search)?;
                     }
-                    if Instant::now() >= progress_at {
+                    let is_progress_due = match test_progress_due {
+                        Some(at) => search.expanding >= at,
+                        None => Instant::now() >= progress_at,
+                    };
+                    if is_progress_due {
                         progress_at = Instant::now() + PROGRESS_INTERVAL;
+                        test_progress_due = settings
+                            .test_progress_every
+                            .map(|every| search.expanding + every);
                         if is_periodic {
                             check_periodically(&mut machine, &mut search)?;
                         }
@@ -3748,8 +3763,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if expanding & 0xff == 0 && search.reporter.is_cancelled() {
                 return Err(Bail(CANCELLED));
             }
-            if expanding & 0xff == 0 && Instant::now() >= progress_at {
+            let is_progress_due = match test_progress_due {
+                Some(at) => expanding + 1 >= at,
+                None => expanding & 0xff == 0 && Instant::now() >= progress_at,
+            };
+            if is_progress_due {
                 progress_at = Instant::now() + PROGRESS_INTERVAL;
+                test_progress_due = settings
+                    .test_progress_every
+                    .map(|every| expanding + 1 + every);
                 if is_periodic {
                     check_periodically(&mut machine, &mut search)?;
                 }
