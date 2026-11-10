@@ -84,7 +84,8 @@ fn prints_a_lasso_whose_actions_print_as_tlc_rebuilds_it() {
 }
 
 // Small specs of two to four actions over two variables, with fairness and one or two temporal
-// properties, whose lassos take many shapes: the binary prints what TLC built at d8fb231 prints
+// properties, whose lassos take many shapes, and specs whose property reads TLCGet("level") over a
+// graph of three to five states (`Level*`): the binary prints what TLC built at d8fb231 prints
 // for each (`lasso-grid/*.out`, with -fp 0 -seed 0 -nowarning), on one thread and with every level
 // shared between four, checking the properties periodically and at the end.
 #[test]

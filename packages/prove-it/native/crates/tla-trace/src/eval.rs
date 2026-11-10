@@ -366,6 +366,8 @@ pub struct Evaluator<'ir> {
     drawn: HashMap<usize, (Rc<Frame>, Value)>,
     /// TLCGet("level") of the current state.
     pub level: i32,
+    /// TLCGet("level") of the next state, where it isn't one past the current's.
+    pub next_level: Option<i32>,
     /// What Print and PrintT printed, each as the texts of its values.
     pub printed: Vec<Vec<String>>,
     /// The state a walk looks for, where a value that differs from it can't lead to it: a walk
@@ -656,6 +658,7 @@ impl<'ir> Evaluator<'ir> {
             reads: 0,
             drawn: HashMap::new(),
             level: 0,
+            next_level: None,
             printed: Vec::new(),
             target: None,
             is_enabling: false,
@@ -4546,7 +4549,10 @@ impl<'ir> Evaluator<'ir> {
                         if *key.units == *"level".encode_utf16().collect::<Vec<_>>() =>
                     {
                         self.reads += 1;
-                        Value::Int(self.level + i32::from(context.is_primed))
+                        Value::Int(match self.next_level {
+                            Some(level) if context.is_primed => level,
+                            _ => self.level + i32::from(context.is_primed),
+                        })
                     }
                     // Once the search is over, the run's counts, and its named registers, each
                     // the tuple of one worker's value.

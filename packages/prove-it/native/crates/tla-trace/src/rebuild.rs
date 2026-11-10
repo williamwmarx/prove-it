@@ -127,10 +127,12 @@ impl<'ir> Rebuilder<'ir> {
     pub fn answer_atom(
         &mut self,
         atom: u32,
-        state: &[Value],
-        next: &[Value],
+        (state, level): (&[Value], i32),
+        (next, next_level): (&[Value], i32),
     ) -> Result<bool, Unsupported> {
         let evaluator = &mut self.evaluator;
+        evaluator.level = level;
+        evaluator.next_level = Some(next_level);
         let Some(atom) = evaluator.ir.model.atoms.get(atom as usize) else {
             return unsupported("an atom the checker asks nothing of");
         };
@@ -139,7 +141,7 @@ impl<'ir> Rebuilder<'ir> {
         evaluator.printed.clear();
         evaluator.current = values(state);
         evaluator.next = vec![None; state.len()];
-        match &atom.kind {
+        let answer = match &atom.kind {
             AtomKind::State => run(evaluator.boolean(atom.expression, &context)),
             AtomKind::Enabled { .. } => Ok(matches!(
                 run(evaluator.enabled(atom.expression, &context))?,
@@ -154,7 +156,9 @@ impl<'ir> Rebuilder<'ir> {
                 }
                 run(evaluator.boolean(atom.expression, &context))
             }
-        }
+        };
+        evaluator.next_level = None;
+        answer
     }
 
     /// Takes how many workers TLC runs, which TLCGet("config") reads.
