@@ -25,6 +25,10 @@ const MAXIMUM_DIAMETER_ANSWERS: usize = 1 << 26;
 /// ENABLED run.
 pub const ENABLED_DIFFERS: &str = "ENABLED from the steps the search took differs from ENABLED run";
 
+/// What PROVE_IT_LIVE_CHECK finds when the next-state relation evaluated on a step the search took
+/// doesn't hold.
+pub const NEXT_DIFFERS: &str = "the next-state relation doesn't hold of a step the search took";
+
 /// The states of a search and its steps: those from state i between `edge_offsets[i]` and
 /// `edge_offsets[i + 1]`, for the first `expanded` states, each labelled with the position of the
 /// action that took it when the search took TLC's actions one by one.
@@ -38,6 +42,9 @@ pub struct LiveGraph<'g> {
     pub labels: Option<&'g [u32]>,
     /// Whether a state's steps are those TLC's ENABLED finds when it runs an action from it.
     pub is_enabled_exact: bool,
+    /// Whether TLC's predicate evaluation of the next-state relation holds of every step, without
+    /// failing: no walk took the shortcut, and no comparison of a value a walk assigned can fail.
+    pub is_next_taken: bool,
 }
 
 /// The answers to one atom: for a state predicate or ENABLED, one per state; for an action, one
@@ -142,6 +149,8 @@ impl Evaluator<'_, '_, '_> {
         self.machine.store.equals(after, before)
     }
 
+    // An action on a step, false where the subscript's value is unchanged, and true where the
+    // action is the next-state relation and the step one the search took (`is_taken`).
     fn action(
         &mut self,
         values: &mut [Id],
@@ -149,6 +158,7 @@ impl Evaluator<'_, '_, '_> {
         subscript: Option<&Eval>,
         index: usize,
         next: usize,
+        is_taken: bool,
     ) -> u8 {
         if let Some(subscript) = subscript {
             match self.is_unchanged(values, subscript, index, next) {
@@ -156,6 +166,9 @@ impl Evaluator<'_, '_, '_> {
                 Ok(false) => {}
                 Err(_) => return UNKNOWN,
             }
+        }
+        if is_taken {
+            return 1;
         }
         self.set_current(index);
         let graph = self.graph;
@@ -234,10 +247,18 @@ impl Run<'_, '_, '_> {
         answer(eval(self.machine))
     }
 
-    // An action on a step, false where the subscript's value is unchanged. Only the states asked
+    // An action on a step, false where the subscript's value is unchanged, and true where the
+    // action is the next-state relation and the step one the search took. Only the states asked
     // about have their subscript evaluated, as on one thread, and an evaluation that fails leaves
     // the step unknown on either.
-    fn action(&mut self, action: &Eval, subscript: Option<&Eval>, index: usize, next: usize) -> u8 {
+    fn action(
+        &mut self,
+        action: &Eval,
+        subscript: Option<&Eval>,
+        index: usize,
+        next: usize,
+        is_taken: bool,
+    ) -> u8 {
         if let Some(subscript) = subscript {
             let unchanged = self.subscript_value(subscript, next).and_then(|after| {
                 let before = self.subscript_value(subscript, index)?;
@@ -248,6 +269,9 @@ impl Run<'_, '_, '_> {
                 Ok(false) => {}
                 Err(_) => return UNKNOWN,
             }
+        }
+        if is_taken {
+            return 1;
         }
         self.set_current(index);
         let graph = self.graph;
@@ -434,7 +458,9 @@ pub fn answer_atoms(
                     action,
                     subscript,
                     enabled,
+                    is_next,
                 } if is_shared => {
+                    let is_taken = *is_next && graph.is_next_taken;
                     let disabled = enabled
                         .and_then(|position| tables.get(position))
                         .filter(|table: &&Table| table.answers.len() == graph.count)
@@ -455,7 +481,8 @@ pub fn answer_atoms(
                             let end = graph.edge_offsets[index + 1] as usize;
                             for edge in start..end {
                                 answers.push(if is_asked(index) {
-                                    run.action(action, subscript, index, graph.edges[edge] as usize)
+                                    let next = graph.edges[edge] as usize;
+                                    run.action(action, subscript, index, next, is_taken)
                                 } else {
                                     UNKNOWN
                                 });
@@ -470,7 +497,7 @@ pub fn answer_atoms(
                         |_| 1,
                         |run, index, answers| {
                             answers.push(if is_asked(index) {
-                                run.action(action, subscript, index, index)
+                                run.action(action, subscript, index, index, false)
                             } else {
                                 UNKNOWN
                             });
@@ -487,7 +514,9 @@ pub fn answer_atoms(
                     action,
                     subscript,
                     enabled,
+                    is_next,
                 } => {
+                    let is_taken = *is_next && graph.is_next_taken;
                     // The checker asks about no step from a state where the ENABLED of the action's
                     // fairness is false, and the interpreter answers any it does; where the atom
                     // prints, it evaluates the action on every step TLC does.
@@ -508,19 +537,43 @@ pub fn answer_atoms(
                         }
                         for edge in start..end {
                             let next = graph.edges[edge] as usize;
-                            answers.push(evaluator.action(
+                            let subscript = subscript.as_ref();
+                            let answer = evaluator.action(
                                 &mut values,
                                 action,
-                                subscript.as_ref(),
+                                subscript,
                                 index,
                                 next,
-                            ));
+                                is_taken,
+                            );
+                            if is_taken
+                                && is_live_checked
+                                && answer == 1
+                                && evaluator.action(
+                                    &mut values,
+                                    action,
+                                    subscript,
+                                    index,
+                                    next,
+                                    false,
+                                ) == 0
+                            {
+                                return Err(NEXT_DIFFERS);
+                            }
+                            answers.push(answer);
                             keep_printed(evaluator.machine, &mut prints, edge);
                         }
                     }
                     for index in 0..graph.count {
                         answers.push(if is_asked(index) {
-                            evaluator.action(&mut values, action, subscript.as_ref(), index, index)
+                            evaluator.action(
+                                &mut values,
+                                action,
+                                subscript.as_ref(),
+                                index,
+                                index,
+                                false,
+                            )
                         } else {
                             UNKNOWN
                         });

@@ -620,6 +620,31 @@ several steps s→t carry different labels, the answer is TRUE if any label is i
 step is a step of A, so `<<A>>_v` is the subscript test alone, with no labels at all. Needs the
 walker-hook shape guard and the fallbacks below.
 
+**Plan (i), as built.**
+- `compile_atom` marks an action atom `is_next` where its expression is the next-state relation:
+  the same node, or the same global definition named with no arguments, in the same scope. Its
+  compiled footprint must read nothing of the search (TLCGet, the registers, prints and draws), and
+  `Compiler::is_walk_repeatable` must find no ENABLED, `\cdot`, `[A]_v`, `<<A>>_v`, temporal
+  operator, subexpression selector, or JavaTime, TLCModelValue, TLCDefer, Trace or JSON builtin
+  through the definitions it names. It doesn't look into the constant definitions TLC computes as
+  it starts (`NORMALIZED`), such as SpanTreeRandom's `Edges`, which draws.
+- Where an atom is marked, the machine keeps a `ShapeJoin` per variable (`Machine::assigned_shapes`,
+  on #176's shapes), and the walker joins every value it assigns: `Op::Assign`, `either_step` and
+  the membership enumeration, in Init and Next. Each search thread joins in its own overlay, and the
+  level's merge imports the values that widened a thread's joins into the store and joins them
+  there. Unmarked runs pay one branch on a `None` per assignment.
+- `LiveGraph::is_next_taken` holds where no walk took the shortcut (`is_enabled_exact`), no string
+  was ranked since the order froze (which can take a string out of its class after its shape was
+  joined), and every variable's join is comparable. TLC's `equals` fails only where `compareTo`
+  does, for these classes: an untyped model value is never equal to another kind
+  (`modelValueEquals`), and a typed one fails against other kinds in both.
+- `answer_atoms` answers a marked atom on a step the search took with 1 once the subscript test
+  finds the subscript changed, on both the helpers' path and the one-thread path; the stuttering
+  steps and everything else are evaluated as before. PROVE_IT_LIVE_CHECK evaluates the action too
+  and stops with `NEXT_DIFFERS` where it doesn't hold.
+- SYMMETRY and VIEW need no fallback: the graph's steps are then the real successors (`Reals`),
+  which the walk generated, and expanding the states past the stored ones walks Next too.
+
 **Plan (ii): cf1s-shaped atoms.**
 - Record per step the path of disjuncts and `\E` values the walker took, through conjunctions too.
 - Split each atom's action by the walker's own split, not TLC's. Match by node and bound values.

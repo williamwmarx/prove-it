@@ -2553,6 +2553,87 @@ fn run_front(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, Pa
     (output, directory)
 }
 
+// What a run printed from `Starting...` to `Finished in`, but the lines that tell the time.
+fn get_untimed(text: &str) -> String {
+    let start = text.find("Starting... (").expect("the start");
+    let end = text.find("Finished in ").expect("the end");
+    text[start..end]
+        .lines()
+        .skip(1)
+        .filter(|line| {
+            ![
+                "Finished computing initial states",
+                "Progress(",
+                "Checking ",
+                "Finished checking temporal properties",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+const NEXT_FAIR: &str = "---- MODULE NextFair ----\nEXTENDS Naturals\nVARIABLE x\nInc == x < 2 /\\ x' = x + 1\nTwice == x = 0 /\\ x' = 1\nBack == x > 0 /\\ x' = 0\nNext == Inc \\/ Twice \\/ Back\nWeak == x = 0 /\\ [][Next]_x /\\ WF_x(Next)\nStrong == x = 0 /\\ [][Next]_x /\\ SF_x(Next)\nReach == <>(x = 2)\nLive == []<>(x = 0)\nStable == <>[](x = 2)\n====\n";
+
+const NEXT_MIXED: &str = "---- MODULE Mixed ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA == x' = \"a\" /\\ FALSE\nB == x' = (x + 1) % 3\nNext == A \\/ B\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == []<>(x = 2)\n====\n";
+
+const NEXT_PIECES: &str = "---- MODULE Pieces ----\nEXTENDS Naturals\nVARIABLES x, y\nvars == <<x, y>>\nInit == x = 0 /\\ y = 0\nA == x' = (x + 1) % 3 /\\ y' = y\nB == x' = (x + 1) % 3 /\\ UNCHANGED y\nC == y' = 1 - y /\\ UNCHANGED x\nD == x' = 2 /\\ y' = y\nNext == A \\/ B \\/ C\nSubSpec == Init /\\ [][Next]_vars /\\ WF_vars(B)\nOtherSpec == Init /\\ [][Next]_vars /\\ WF_vars(D)\nLive == []<>(x = 2)\n====\n";
+
+#[test]
+fn answers_fairness_of_the_next_state_relation_as_tlc() {
+    // TLC's output on each, at d8fb231. The engine answers <<Next>>_x of each step from the
+    // search's steps, which hold of Next, where no comparison of TLC's predicate evaluation can
+    // fail: under WF and SF, with a successor two disjuncts take and a step to a state seen
+    // before. Where x' = "a" may be compared with an integer, as TLC does and fails, it evaluates;
+    // and an action that is part of Next, or not of it, is evaluated as before.
+    let same = NEXT_MIXED
+        .replace("MODULE Mixed", "MODULE Same")
+        .replace("\"a\"", "7");
+    let other = NEXT_PIECES.replace("MODULE Pieces", "MODULE Other");
+    let cases = [
+        (
+            NEXT_FAIR.to_string(),
+            "SPECIFICATION Weak\nPROPERTY Live Reach\n",
+            include_str!("next-fair-weak.txt"),
+        ),
+        (
+            NEXT_FAIR.replace("MODULE NextFair", "MODULE NextStrong"),
+            "SPECIFICATION Strong\nPROPERTY Live Stable\n",
+            include_str!("next-fair-strong.txt"),
+        ),
+        (
+            NEXT_MIXED.to_string(),
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            include_str!("next-fair-mixed.txt"),
+        ),
+        (
+            same,
+            "SPECIFICATION Spec\nPROPERTY Live\n",
+            include_str!("next-fair-same.txt"),
+        ),
+        (
+            NEXT_PIECES.to_string(),
+            "SPECIFICATION SubSpec\nPROPERTY Live\n",
+            include_str!("next-fair-part.txt"),
+        ),
+        (
+            other,
+            "SPECIFICATION OtherSpec\nPROPERTY Live\n",
+            include_str!("next-fair-other.txt"),
+        ),
+    ];
+    for (position, (spec, config, expected)) in cases.iter().enumerate() {
+        for workers in ["1", "4"] {
+            let test = format!("next-fair-{position}-{workers}");
+            let (output, directory) = run_front(&test, spec, config, &["-workers", workers]);
+            let text = stdout(&output);
+            assert_eq!(get_untimed(&text), *expected, "{text}");
+            std::fs::remove_dir_all(directory).expect("removed");
+        }
+    }
+}
+
 // What a run printed from `Starting...` to computing the initial states.
 fn get_startup(text: &str) -> &str {
     let start = text.find("Starting... (").expect("the start");

@@ -2575,6 +2575,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // Read as the tables are answered, since taking the steps from the states the search
         // didn't store may take a shortcut past a walk too.
         let is_enabled_exact = !machine.is_past_walk;
+        // Where no walk took the shortcut, no comparison of an assigned value can fail, and no
+        // string was ranked since (which may take a string out of its class), TLC's predicate
+        // evaluation of the next-state relation holds of every step the walks took.
+        let is_next_taken = is_enabled_exact
+            && !machine.store.has_unordered_strings()
+            && machine
+                .assigned_shapes
+                .as_ref()
+                .is_some_and(|joins| joins.iter().all(ShapeJoin::is_comparable));
         let live = match reals {
             Some(reals) => LiveGraph {
                 states: &reals.states,
@@ -2585,6 +2594,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 edges: &reals.edges,
                 labels: reals.labels.as_deref(),
                 is_enabled_exact,
+                is_next_taken,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -2595,6 +2605,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 edges: &graph.edges[..edge_count],
                 labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
                 is_enabled_exact,
+                is_next_taken,
             },
         };
         answer_atoms(
@@ -2648,6 +2659,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         machine.set_slot(LEVEL_SLOT, zero);
         search.set_distinct(&mut machine, 0)?;
         search.reporter.initial_states_started();
+        // An action atom answered from the steps needs the shapes of what the walks assign.
+        if context
+            .atoms
+            .iter()
+            .any(|atom| matches!(atom, Atom::Action { is_next: true, .. }))
+        {
+            machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
+        }
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
             search.visit_initial(machine, &context)
         })?;
