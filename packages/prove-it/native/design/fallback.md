@@ -242,8 +242,19 @@ A model the CLI then checks the old way prints only once. Streaming waits until 
 are few.
 
 TLC writes a trace exploration spec unless `-noGenerateSpecTE` says not to, and the binary
-doesn't yet write SANY's report of the spec TLC parses with it. So without that option every run
-still goes the old way. The corpus and the differential pass it.
+doesn't yet write SANY's report of the spec TLC parses with it. So without that option, most runs
+still go the old way. The corpus and the differential pass it.
+
+What the CLI's runs declined at the flip (`bun test tests/unit` and the 733 corpus models, each
+run with and without `-noGenerateSpecTE`):
+
+| Kind | CLI test runs | Owner |
+|---|---:|---|
+| `java -cp …jar tlc2.TLC`: reading the version of a tla2tools.jar | 117 | the CLI (prove-it-check) |
+| SANY's report of the trace exploration spec | 64 test runs, 664 corpus runs | the front end |
+| TLC 1.7.4's output | 5 | waits on the owner |
+| `-dump`, `-continue` | 7 | S2 |
+| the 518 of the library's `check` calls, by mechanism (above) | the rest | as staffed |
 
 ### The public API afterwards
 
