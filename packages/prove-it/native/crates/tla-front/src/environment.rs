@@ -9,36 +9,48 @@ use std::rc::Rc;
 use crate::TlcVersion;
 use crate::ast::*;
 use crate::config::{ConfigValue, ModelConfig};
-use crate::dependencies::create_definition_facts;
 use crate::errors::{FrontError, SanyError, SanyReport, SyntaxError, format_range};
+use crate::eval::Evaluator;
 use crate::hash::{FastMap, FastSet};
 use crate::instances::{
     AddDefinition, Instantiation, Instantiator, apply, identifier, let_expression, local_arguments,
     local_identifier, operator_definition, param, rename_locals, with_let_instances,
 };
+use crate::levels::{
+    InstanceCheck, LevelAnalyzer, LevelContext, ModuleLevelContext, Scope, check_instance,
+    get_level_units,
+};
 use crate::lexer::tokenize;
 use crate::order::TlcOrder;
 use crate::ordered_map::OrderedMap;
-use crate::parser::{extract_module, parse_module_tokens};
+use crate::parser::{extract_module, parse_module_for_sany, parse_module_tokens};
 use crate::resolve::{
     ErrorList, GetKey, InstancedModule, KEY_SEPARATOR, MODULE_START, ModuleContext, ModuleReport,
-    ModuleSymbol, Result, SymbolKind, Symbols, Tables, get_arity, get_param_arities, is_before,
-    is_theorem_definition, resolve_module, resolve_substitutions,
+    ModuleSymbol, Result, SemanticUnit, SymbolKind, Symbols, Tables, collect_semantic_errors,
+    get_arity, get_param_arities, is_before, is_theorem_definition, resolve_module,
+    resolve_substitutions,
 };
+use crate::spec::get_definition;
 use crate::standard_builtins::{
     self, CORE_OPERATORS, STANDARD_DEPENDENCIES, StandardModule, USER_STANDARD_MODULES,
 };
 use crate::standard_modules;
 use crate::subexpressions::{resolve_instance_subexpressions, resolve_module_subexpressions};
+use crate::values::ValueOrder;
 
 /// A builtin the environment holds: its name, arity and flags (state-level, level-constant,
 /// lazy), which the IR writes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Builtin {
     pub name: Name,
     pub arity: usize,
     pub flags: u32,
+    /// A configuration's definition of a constant operator by its values: each row's arguments
+    /// and its value (`createOperatorTable`).
+    pub table: Option<Rc<OperatorTable>>,
 }
+
+pub type OperatorTable = Vec<(Vec<ConfigValue>, ConfigValue)>;
 
 /// What linking makes of a spec.
 pub struct Environment {
@@ -51,14 +63,69 @@ pub struct Environment {
     /// The values the configuration assigns, by key.
     pub constants: OrderedMap<Name, ConfigValue>,
     pub variables: Vec<Name>,
+    /// Where the root module declares each of its variables (`variableLocations`).
+    pub variable_locations: Vec<Location>,
     pub variable_index: OrderedMap<Name, usize>,
     pub root_constants: Vec<Rc<Declaration>>,
     pub root_symbols: Rc<Symbols>,
     /// The copies an INSTANCE with substitutions makes (`substitutedDefinitions`), by address.
     pub substituted_definitions: FastMap<usize, Rc<Definition>>,
+    /// The copies an INSTANCE with substitutions makes, by key, with the name and location TLC
+    /// gives an action that applies one (`instanceActions`).
+    pub instance_actions: OrderedMap<Name, InstanceAction>,
+    /// The name TLC gives each copy a named INSTANCE makes, by key: `I!Foo` (`instanceNames`).
+    pub instance_names: OrderedMap<Name, Name>,
     /// What linking prints: SANY's warnings.
     pub printed: Vec<String>,
+    /// The definitions TLC computes when it starts, each module's in the order TLC computes them,
+    /// the modules in the order SANY finishes them, except a module an INSTANCE gives parameters
+    /// to; empty for a spec linked without a configuration.
+    pub startup_definitions: Vec<Rc<Definition>>,
+    /// The assumptions of the root module and the modules it extends, an extended module's first.
+    pub assumptions: Vec<Rc<Assumption>>,
+    /// The resolution tables SANY's level analysis reads.
+    pub tables: Rc<Tables>,
+    /// The methods of the Java class that overrides a module's operators, which TLC reports as it
+    /// starts.
+    pub java_overrides: Vec<crate::java_overrides::JavaOverride>,
 }
+
+impl Environment {
+    /// `createLevelAnalyzer` over the model: its assigned constants, and its variables with the
+    /// builtins of `state_builtins` the spec has.
+    pub fn create_level_analyzer(&self, state_builtins: &[&str]) -> LevelAnalyzer<'_> {
+        LevelAnalyzer::new(
+            LevelContext {
+                constants: self.constants.keys().cloned().collect(),
+                variables: self
+                    .variables
+                    .iter()
+                    .cloned()
+                    .chain(
+                        state_builtins
+                            .iter()
+                            .map(|name| Name::from(*name))
+                            .filter(|name| self.builtins.contains_key(name)),
+                    )
+                    .collect(),
+                get_definition: Box::new(|name| get_definition(name, self).cloned()),
+                get_qualified_name: Box::new(|_| None),
+            },
+            &self.tables,
+        )
+    }
+}
+
+/// The name and location TLC gives an action that applies a definition an INSTANCE with
+/// substitutions copies: the name the instance exports it by, at the INSTANCE.
+#[derive(Clone)]
+pub struct InstanceAction {
+    pub name: Name,
+    pub location: Location,
+}
+
+/// What reads the bytes of the Java class TLC loads for a module, if it has one.
+pub type ClassLoader<'a> = dyn Fn(&str) -> Option<Vec<u8>> + 'a;
 
 pub struct EnvironmentOptions<'a> {
     pub source: &'a str,
@@ -67,6 +134,12 @@ pub struct EnvironmentOptions<'a> {
     /// Links the modules without a model, as SANY does, so a declared constant needs no value.
     pub is_unconfigured: bool,
     pub version: TlcVersion,
+    /// Checks the levels of each module, as `createEnvironment` does for a spec SANY hasn't
+    /// accepted (`isSanyAccepted`).
+    pub is_level_checked: bool,
+    /// The bytes of the Java class TLC loads for a module (`loadClass`), whose public static
+    /// methods override the module's operators.
+    pub load_class: Option<&'a ClassLoader<'a>>,
 }
 
 struct LinkedModule {
@@ -78,6 +151,7 @@ struct LinkedModule {
     exported: Rc<Symbols>,
     modules: OrderedMap<Name, Rc<LinkedModule>>,
     facts: FastSet<Name>,
+    extended: Vec<Rc<LinkedModule>>,
 }
 
 /// `errors` and `warnings` collect what SANY reports for the module.
@@ -88,7 +162,12 @@ struct ModuleScope {
     nested: Rc<RefCell<Vec<Rc<Module>>>>,
     errors: ErrorList,
     warnings: ErrorList,
+    level_checks: LevelChecks,
 }
+
+/// The modules a top-level module links, each with the instances SANY checks with it.
+type ModuleLevelChecks = Vec<(Rc<LinkedModule>, Vec<InstanceCheck>)>;
+type LevelChecks = Rc<RefCell<ModuleLevelChecks>>;
 
 /// `createSanyError`.
 fn sany_error(errors: Vec<SanyError>, is_fatal: bool, warnings: Vec<SanyError>) -> FrontError {
@@ -253,6 +332,8 @@ struct Linker<'a> {
     linked_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     nested_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
     link_order: RefCell<Vec<Rc<LinkedModule>>>,
+    /// The methods of the Java class that overrides a module's operators.
+    java_overrides: RefCell<Vec<crate::java_overrides::JavaOverride>>,
     dependencies: RefCell<FastMap<Name, FastSet<Name>>>,
     loading: RefCell<Vec<FastSet<Name>>>,
     /// The top-level modules being linked, to report a cycle of EXTENDS or INSTANCE.
@@ -266,6 +347,34 @@ struct Linker<'a> {
     /// The definition each instance copy came from, and the instance parameters the copy adds.
     copy_sources: RefCell<OrderedMap<Name, (Name, usize)>>,
     tables: Rc<Tables>,
+    /// The instances linked so far whose substitutions SANY checks.
+    instance_checks: RefCell<Vec<InstanceCheck>>,
+    /// The first module linked of each name, which an instance check reads.
+    checked_modules: RefCell<FastMap<Name, Rc<LinkedModule>>>,
+    /// The qualified name, such as I!Foo, of each copy a named INSTANCE makes.
+    qualified_names: RefCell<FastMap<Name, Name>>,
+    instance_actions: RefCell<OrderedMap<Name, InstanceAction>>,
+    instance_names: RefCell<OrderedMap<Name, Name>>,
+    /// Whether linking goes on after a module's errors, as SANY's semantic analysis does,
+    /// keeping each module's messages and level checks in `collected`.
+    is_collecting: Cell<bool>,
+    collected: RefCell<Collected>,
+}
+
+/// What linking collects of each top-level module for SANY's report.
+#[derive(Default)]
+struct Collected {
+    errors: FastMap<Name, Vec<SanyError>>,
+    /// The module each warning so far was reported in.
+    warning_modules: Vec<Name>,
+    level_checks: FastMap<Name, ModuleLevelChecks>,
+}
+
+/// SANY's messages for a module: its warnings and its errors.
+#[derive(Clone, Debug, Default)]
+pub struct ModuleMessages {
+    pub warnings: Vec<SanyError>,
+    pub errors: Vec<SanyError>,
 }
 
 fn get_standard_modules(version: TlcVersion) -> &'static [StandardModule] {
@@ -345,6 +454,7 @@ impl Linker<'_> {
                     name: operator_name.clone(),
                     arity: operator.arity,
                     flags: operator.flags,
+                    table: None,
                 },
             );
             let range = operator
@@ -410,6 +520,25 @@ impl Linker<'_> {
         symbols
     }
 
+    /// `overrideDefinitions` with the class TLC loads for the module, if any.
+    fn override_module(&self, module: Rc<Module>, is_root: bool) -> Result<Rc<Module>> {
+        let Some(bytes) = self.options.load_class.and_then(|load| load(&module.name)) else {
+            return Ok(module);
+        };
+        let (module, overrides) =
+            crate::java_overrides::override_definitions(&module, &bytes, is_root)?;
+        let mut java_overrides = self.java_overrides.borrow_mut();
+        // TLC reports the overrides in the order it links the modules, which matters only for
+        // two of them.
+        if !java_overrides.is_empty() {
+            return Err(FrontError::NotYet(
+                "Java classes overriding two modules".to_owned(),
+            ));
+        }
+        *java_overrides = overrides;
+        Ok(module)
+    }
+
     fn load_module(&self, name: &Name, importer: &str) -> Result<Rc<Module>> {
         let source = (self.options.load_module)(name)
             .or_else(|| {
@@ -424,6 +553,7 @@ impl Linker<'_> {
         let module = self
             .parse_text(&source)
             .map_err(|_| FrontError::NotYet(format!("SANY's parse error for module {name}")))?;
+        let module = self.override_module(module, false)?;
         if module.name != *name {
             return Err(sany_error(
                 vec![SanyError {
@@ -437,7 +567,10 @@ impl Linker<'_> {
                 Vec::new(),
             ));
         }
-        reject_module_literals(&module)?;
+        // SANY accepts the literals TLC can't evaluate.
+        if !self.is_collecting.get() {
+            reject_module_literals(&module)?;
+        }
         Ok(module)
     }
 
@@ -460,6 +593,7 @@ impl Linker<'_> {
         }
         let nested: Rc<RefCell<Vec<Rc<Module>>>> = Rc::default();
         let errors: ErrorList = Rc::default();
+        let level_checks: LevelChecks = Rc::default();
         self.linking.borrow_mut().push(parsed.name.clone());
         self.loading.borrow_mut().push(FastSet::default());
         let linked = self.link_module(
@@ -471,11 +605,21 @@ impl Linker<'_> {
                 nested: nested.clone(),
                 errors: errors.clone(),
                 warnings: self.warnings.clone(),
+                level_checks: level_checks.clone(),
             },
         );
         let closure = self.loading.borrow_mut().pop().unwrap_or_default();
         self.linking.borrow_mut().pop();
         let linked = linked?;
+        if self.is_collecting.get() {
+            let mut collected = self.collected.borrow_mut();
+            let count = self.warnings.borrow().len();
+            let owned = collected.warning_modules.len();
+            collected
+                .warning_modules
+                .extend((owned..count).map(|_| parsed.name.clone()));
+            collected.errors.insert(parsed.name.clone(), errors.take());
+        }
         if !errors.borrow().is_empty() {
             return Err(sany_error(
                 errors.take(),
@@ -501,7 +645,99 @@ impl Linker<'_> {
             }
             return Err(module_redefined_error(&duplicate));
         }
+        if self.is_collecting.get() {
+            self.collected
+                .borrow_mut()
+                .level_checks
+                .insert(parsed.name.clone(), level_checks.take());
+        } else if self.options.is_level_checked {
+            for (module, checks) in level_checks.take() {
+                self.check_levels(&module, checks)?;
+            }
+        }
         Ok((linked, closure))
+    }
+
+    /// `checkModuleLevels`'s context of a linked module: its declarations, and its definitions by
+    /// the names it sees them by.
+    fn create_level_context(&self, linked: &Rc<LinkedModule>) -> LevelContext<'_> {
+        let get_key = {
+            let linked = linked.clone();
+            move |symbol: &str| -> Name {
+                linked
+                    .visible
+                    .get(symbol)
+                    .map_or_else(|| Rc::from(symbol), |visible| visible.key.clone())
+            }
+        };
+        let definition_key = get_key.clone();
+        LevelContext {
+            constants: linked
+                .constants
+                .iter()
+                .map(|constant| constant.name.clone())
+                .collect(),
+            variables: linked.variables.iter().cloned().collect(),
+            get_definition: Box::new(move |symbol| {
+                self.definitions
+                    .borrow()
+                    .get(&definition_key(symbol))
+                    .cloned()
+            }),
+            get_qualified_name: Box::new(move |symbol| {
+                self.qualified_names.borrow().get(&get_key(symbol)).cloned()
+            }),
+        }
+    }
+
+    /// What an instance check reads of the module an instance names.
+    fn create_module_level_context(&self, name: &Name) -> Result<ModuleLevelContext<'_>> {
+        let checked = self.checked_modules.borrow().get(name).cloned();
+        let linked = match checked {
+            Some(linked) => linked,
+            None => self.get_linked_module(name, name)?,
+        };
+        let mut seen: FastSet<usize> = FastSet::default();
+        let definitions = linked
+            .visible
+            .values()
+            .filter_map(|symbol| self.definitions.borrow().get(&symbol.key).cloned())
+            .filter(|definition| seen.insert(Rc::as_ptr(definition) as usize))
+            .collect();
+        Ok(ModuleLevelContext {
+            constants: linked.constants.clone(),
+            variables: linked.variables.clone(),
+            definitions,
+            assumptions: linked
+                .module
+                .assumptions
+                .iter()
+                .map(|assumption| assumption.expression.clone())
+                .collect(),
+            theorems: linked.module.theorems.clone(),
+            analyzer: LevelAnalyzer::new(self.create_level_context(&linked), &self.tables),
+        })
+    }
+
+    /// `checkModuleLevels`: SANY's level errors in a linked module and its instances.
+    fn check_levels(&self, linked: &Rc<LinkedModule>, checks: Vec<InstanceCheck>) -> Result<()> {
+        let analyzer = LevelAnalyzer::new(self.create_level_context(linked), &self.tables);
+        let instance_units = checks
+            .iter()
+            .map(|check| SemanticUnit {
+                location: check.location.position(),
+                check: Box::new(|_, _| {
+                    let instancee = self.create_module_level_context(&check.module)?;
+                    check_instance(check, &instancee, &analyzer)
+                }),
+            })
+            .collect();
+        let units = get_level_units(&linked.module, &analyzer, instance_units);
+        let errors = collect_semantic_errors(units, &self.warnings)?;
+        if errors.is_empty() {
+            return Ok(());
+        }
+        Err(sany_error(errors, false, self.warnings.borrow().clone()))
     }
 
     fn get_linked_module(&self, name: &Name, importer: &str) -> Result<Rc<LinkedModule>> {
@@ -538,6 +774,7 @@ impl Linker<'_> {
                         name: Rc::from(operator.name),
                         arity: operator.arity,
                         flags: operator.flags,
+                        table: None,
                     },
                 );
                 self.definitions.borrow_mut().remove(&symbol.key);
@@ -553,6 +790,7 @@ impl Linker<'_> {
     }
 
     fn link_module(&self, parsed: &Rc<Module>, scope: ModuleScope) -> Result<Rc<LinkedModule>> {
+        let first_check = self.instance_checks.borrow().len();
         let mut visible: Symbols = CORE_OPERATORS
             .iter()
             .map(|(name, arity, _)| {
@@ -622,6 +860,7 @@ impl Linker<'_> {
         let facts: Rc<RefCell<FastSet<Name>>> = Rc::default();
         let mut modules: OrderedMap<Name, Rc<LinkedModule>> = OrderedMap::new();
         let mut constants: Vec<Rc<Declaration>> = parsed.constants.clone();
+        let mut extended = Vec::new();
         let mut variables: Vec<Name> = parsed
             .variables
             .iter()
@@ -667,6 +906,7 @@ impl Linker<'_> {
             for (module_name, module) in linked.modules.iter() {
                 modules.insert(module_name.clone(), module.clone());
             }
+            extended.push(linked);
         }
         let bound = Rc::new(visible.clone());
         let declaration_symbol = |declaration: &Declaration, kind: SymbolKind| ModuleSymbol {
@@ -823,6 +1063,7 @@ impl Linker<'_> {
                             nested: scope.nested.clone(),
                             errors: report.errors.clone(),
                             warnings: report.warnings.clone(),
+                            level_checks: scope.level_checks.clone(),
                         },
                     )?;
                     if let Some(redefinition) = redefinition {
@@ -920,7 +1161,19 @@ impl Linker<'_> {
             exported: Rc::new(exported),
             modules,
             facts: linked_facts,
+            extended,
         });
+        self.checked_modules
+            .borrow_mut()
+            .entry(linked.module.name.clone())
+            .or_insert_with(|| linked.clone());
+        // SANY checks the instances of a module with its definitions and theorems, so it reports
+        // their errors together.
+        let checks = self.instance_checks.borrow_mut().split_off(first_check);
+        scope
+            .level_checks
+            .borrow_mut()
+            .push((linked.clone(), checks));
         self.link_order.borrow_mut().push(linked.clone());
         Ok(linked)
     }
@@ -1133,9 +1386,36 @@ impl Linker<'_> {
             module,
             context,
         )?;
+        // Generator.createSubstIn: the definitions of a module with errors have no bodies to
+        // substitute in, which SANY reports once at each INSTANCE of it.
+        let is_instancee_failed = self
+            .collected
+            .borrow()
+            .errors
+            .get(&instance.module)
+            .is_some_and(|errors| !errors.is_empty());
+        if is_instancee_failed
+            && let Some(report) = context.reports.borrow().last()
+            && let Some(range) = &instance.location.range
+        {
+            report.errors.borrow_mut().push(SanyError {
+                location: format_range(range),
+                message:
+                    "Substitution error, probably due to error \nin module being instantiated."
+                        .to_owned(),
+            });
+        }
+        self.instance_checks.borrow_mut().push(InstanceCheck {
+            module: instance.module.clone(),
+            instancer: module.name.clone(),
+            lets: Vec::new(),
+            substitutions: substitutions.clone(),
+            location: instance.location.clone(),
+        });
         let has_declarations = !declarations.is_empty();
         let prefix = instance.params.len();
         let module_name = module.name.clone();
+        let instance_name = instance.name.clone();
         let instantiator = self.instantiation(
             instance
                 .params
@@ -1172,23 +1452,50 @@ impl Linker<'_> {
                 self.copy_sources
                     .borrow_mut()
                     .insert(key.clone(), (source.clone(), prefix));
+                if let Some(instance_name) = &instance_name {
+                    let mut instance_names = self.instance_names.borrow_mut();
+                    let source_name = instance_names.get(source).cloned().unwrap_or(name.clone());
+                    instance_names.insert(
+                        key.clone(),
+                        Rc::from(format!("{instance_name}!{source_name}")),
+                    );
+                }
                 Ok(key)
             }),
         );
-        self.get_instance_symbols(instance, &linked.exported, &declarations, &mut |key, _| {
-            if instance.name.is_none() {
-                instantiator.get_key(key)
-            } else {
-                instantiator.get_qualified_key(key)
-            }
-        })
+        self.get_instance_symbols(
+            instance,
+            &linked.exported,
+            &declarations,
+            &mut |key, name| {
+                let copy = match instance.name {
+                    None => instantiator.get_key(key)?,
+                    Some(_) => instantiator.get_qualified_key(key)?,
+                };
+                if has_declarations {
+                    self.instance_actions.borrow_mut().insert(
+                        copy.clone(),
+                        InstanceAction {
+                            name: name.clone(),
+                            location: instance.location.clone(),
+                        },
+                    );
+                }
+                if instance.name.is_some() {
+                    self.qualified_names
+                        .borrow_mut()
+                        .insert(copy.clone(), name.clone());
+                }
+                Ok(copy)
+            },
+        )
     }
 
     /// `instantiateLocally`: the definitions an INSTANCE in a LET adds to the LET.
     fn instantiate_locally(
         &self,
         instance: &Rc<Instance>,
-        _lets: &[Rc<Definition>],
+        lets: &[Rc<Definition>],
         instancer: &Name,
         nested: Option<Rc<LinkedModule>>,
     ) -> Result<Vec<Rc<Definition>>> {
@@ -1234,6 +1541,16 @@ impl Linker<'_> {
                 .cloned()
                 .unwrap_or_else(|| identifier(declaration.name.clone(), location))
         };
+        self.instance_checks.borrow_mut().push(InstanceCheck {
+            module: instance.module.clone(),
+            instancer: instancer.clone(),
+            lets: lets.to_vec(),
+            substitutions: declarations
+                .iter()
+                .map(|declaration| (declaration.name.clone(), get_replacement(declaration)))
+                .collect(),
+            location: location.clone(),
+        });
         let instance_param_names: FastSet<Name> = instance
             .params
             .iter()
@@ -1529,15 +1846,8 @@ pub fn get_enabled_variable_name(name: &str) -> Name {
     Rc::from(format!("{name}@ENABLED"))
 }
 
-/// Links the spec's modules as `createEnvironment` does for a spec without a model
-/// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
-pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
-    let root = Rc::new(parse_module_tokens(
-        options.source,
-        &tokenize(options.source)?,
-        options.version,
-    )?);
-    let linker = Linker {
+fn create_linker<'a>(options: &'a EnvironmentOptions<'a>, root: &Rc<Module>) -> Linker<'a> {
+    Linker {
         options,
         root: root.clone(),
         texts: RefCell::new(
@@ -1557,6 +1867,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                             name,
                             arity: *arity,
                             flags: *flags,
+                            table: None,
                         },
                     )
                 })
@@ -1566,6 +1877,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         linked_modules: RefCell::default(),
         nested_modules: RefCell::default(),
         link_order: RefCell::default(),
+        java_overrides: RefCell::default(),
         dependencies: RefCell::default(),
         loading: RefCell::default(),
         linking: RefCell::default(),
@@ -1575,7 +1887,134 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         substituted_definitions: RefCell::default(),
         copy_sources: RefCell::default(),
         tables: Rc::default(),
+        instance_checks: RefCell::default(),
+        checked_modules: RefCell::default(),
+        qualified_names: RefCell::default(),
+        instance_actions: RefCell::default(),
+        instance_names: RefCell::default(),
+        is_collecting: Cell::new(false),
+        collected: RefCell::default(),
+    }
+}
+
+/// SANY's messages for each module of `order`, the order SANY analyzes the modules in. SANY goes
+/// on after a module's errors, and level-checks a module, when `is_level_checked`, only while no
+/// module so far has errors. A module with messages that isn't in `order` is `NotYet`.
+pub fn get_sany_messages(
+    options: &EnvironmentOptions,
+    order: &[Name],
+) -> Result<Vec<ModuleMessages>> {
+    // SANY reports what the parser rejects in a BY, USE or HIDE as semantic errors of the module,
+    // before the others.
+    let (root, parser_errors) =
+        parse_module_for_sany(options.source, &tokenize(options.source)?, options.version)?;
+    let root = Rc::new(root);
+    let linker = create_linker(options, &root);
+    linker.is_collecting.set(true);
+    linker.tables.is_collecting.set(true);
+    if let Err(error) = linker.link_top_level(&root) {
+        // An error of the root module that stops linking is one SANY reports with the module's
+        // other messages, after the modules before it.
+        let FrontError::Syntax(SyntaxError {
+            sany: Some(report), ..
+        }) = &error
+        else {
+            return Err(error);
+        };
+        // SANY places the arity of a substitution in the builtins' module.
+        let is_in_root = |location: &str| {
+            location.ends_with(&format!(" of module {}", root.name))
+                || location == format!("In module {}", root.name)
+                || location == "In module --TLA+ BUILTINS--"
+        };
+        if report.is_fatal || !report.errors.iter().all(|item| is_in_root(&item.location)) {
+            return Err(error);
+        }
+        let mut collected = linker.collected.borrow_mut();
+        collected
+            .errors
+            .entry(root.name.clone())
+            .or_default()
+            .extend(report.errors.iter().cloned());
+        let count = linker.warnings.borrow().len();
+        let owned = collected.warning_modules.len();
+        collected
+            .warning_modules
+            .extend((owned..count).map(|_| root.name.clone()));
+    }
+    let mut collected = linker.collected.take();
+    if !parser_errors.is_empty() {
+        let errors = collected.errors.entry(root.name.clone()).or_default();
+        if !errors.is_empty() {
+            return Err(FrontError::NotYet(
+                "SANY's errors in a BY, USE or HIDE with other errors".to_owned(),
+            ));
+        }
+        *errors = parser_errors;
+    }
+    let warnings = linker.warnings.borrow().clone();
+    let is_listed = |name: &Name| order.contains(name);
+    let is_unlisted = collected
+        .errors
+        .iter()
+        .any(|(name, errors)| !errors.is_empty() && !is_listed(name))
+        || collected
+            .warning_modules
+            .iter()
+            .any(|name| !is_listed(name));
+    if is_unlisted {
+        return Err(FrontError::NotYet(
+            "messages of a module SANY doesn't analyze".to_owned(),
+        ));
+    }
+    let mut level_checks = collected.level_checks;
+    let mut has_errors = false;
+    let mut messages = Vec::new();
+    for name in order {
+        let mut errors = collected.errors.get(name).cloned().unwrap_or_default();
+        has_errors = has_errors || !errors.is_empty();
+        if !has_errors && options.is_level_checked {
+            for (module, checks) in level_checks.remove(name).unwrap_or_default() {
+                match linker.check_levels(&module, checks) {
+                    Ok(()) => {}
+                    Err(FrontError::Syntax(SyntaxError {
+                        sany: Some(report), ..
+                    })) => errors.extend(report.errors),
+                    Err(error) => return Err(error),
+                }
+            }
+            has_errors = !errors.is_empty();
+        }
+        messages.push(ModuleMessages {
+            warnings: warnings
+                .iter()
+                .zip(&collected.warning_modules)
+                .filter(|(_, module)| *module == name)
+                .map(|(warning, _)| warning.clone())
+                .collect(),
+            errors,
+        });
+    }
+    if linker.warnings.borrow().len() != warnings.len() {
+        return Err(FrontError::NotYet("a level check's warnings".to_owned()));
+    }
+    Ok(messages)
+}
+
+/// Links the spec's modules as `createEnvironment` does for a spec without a model
+/// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
+pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
+    let parsed = Rc::new(parse_module_tokens(
+        options.source,
+        &tokenize(options.source)?,
+        options.version,
+    )?);
+    let (root, root_overrides) = match options.load_class.and_then(|load| load(&parsed.name)) {
+        Some(bytes) => crate::java_overrides::override_definitions(&parsed, &bytes, true)?,
+        None => (parsed, Vec::new()),
     };
+    let linker = create_linker(options, &root);
+    *linker.java_overrides.borrow_mut() = root_overrides;
     reject_module_literals(&root)?;
     let (linked_root, _) = linker.link_top_level(&root)?;
     let warnings = linker.warnings.borrow().clone();
@@ -1671,6 +2110,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                         name: key.clone(),
                         arity,
                         flags: BUILTIN_LAZY,
+                        table: None,
                     },
                     &mut definitions,
                     &mut constants,
@@ -1679,7 +2119,8 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         }
     }
     // The rows of each operator the configuration gives by its values, as a table.
-    let mut tables: OrderedMap<String, (Name, Option<String>, usize)> = OrderedMap::new();
+    let mut tables: OrderedMap<String, (Name, Option<String>, usize, OperatorTable)> =
+        OrderedMap::new();
     for assignment in &config.constants {
         let Some(args) = &assignment.args else {
             continue;
@@ -1702,16 +2143,21 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         }
         if !tables.contains_key(&table_key) {
             tables.insert(
-                table_key,
+                table_key.clone(),
                 (
                     Rc::from(assignment.name.as_str()),
                     assignment.module.clone(),
                     args.len(),
+                    Vec::new(),
                 ),
             );
         }
+        if let Some(table) = tables.get_mut(&table_key) {
+            table.3.push((args.clone(), assignment.value.clone()));
+        }
     }
-    for (name, module, row_arity) in tables.values() {
+    for (name, module, row_arity, rows) in tables.values() {
+        let rows = Rc::new(rows.clone());
         for key in get_scoped_keys(name, module.as_deref()) {
             let arity = match get_key_arity(&definitions, &key) {
                 0 => *row_arity,
@@ -1723,6 +2169,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                     name: name.clone(),
                     arity,
                     flags: 0,
+                    table: Some(rows.clone()),
                 },
                 &mut definitions,
                 &mut constants,
@@ -1881,39 +2328,123 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
             .unwrap_or(variable_index.len());
         variable_index.insert(get_enabled_variable_name(&name), index);
     }
+    let startup_definitions = if options.is_unconfigured {
+        Vec::new()
+    } else {
+        get_startup_definitions(&linker, &linked_root, &definitions, options)?
+    };
+    let mut assumptions = Vec::new();
+    add_assumptions(&linked_root, &mut Vec::new(), &mut assumptions);
     let environment = Environment {
+        startup_definitions,
+        assumptions,
+        tables: linker.tables.clone(),
         definitions,
         builtins,
         substitutions,
         constants,
         variables,
+        variable_locations: linked_root.variable_locations.clone(),
         variable_index,
         root_constants: linked_root.constants.clone(),
         root_symbols: linked_root.visible.clone(),
         substituted_definitions: linker.substituted_definitions.take(),
+        instance_actions: linker.instance_actions.take(),
+        instance_names: linker.instance_names.take(),
         printed,
+        java_overrides: linker.java_overrides.take(),
     };
-    // TLC evaluates a substitute for a constant at startup, and rejects it only when that fails
-    // and the level it bounds is above constant: the engine's startup phase will evaluate it.
-    let substitutes: Vec<&Rc<Definition>> = environment
-        .substitutions
-        .iter()
-        .filter(|(name, _)| declared_constants.contains(name))
-        .filter_map(|(_, target)| environment.definitions.get(target))
-        .filter(|definition| {
-            matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
-        })
-        .collect();
-    if !substitutes.is_empty() {
-        let facts = create_definition_facts(&environment);
-        if substitutes
-            .iter()
-            .any(|definition| !facts.is_constant_level(definition, &environment))
-        {
-            return Err(FrontError::NotYet(
-                "a substitute TLC evaluates at startup".to_owned(),
-            ));
+    // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
+    // the level bound it computes is above constant. The bound counts the operators that TLC's
+    // Java code overrides with a minimum level as state-level, so the analyzer takes them for
+    // variables.
+    {
+        let analyzer = environment.create_level_analyzer(&["TLCGet", "Trace", "CounterExample"]);
+        let ranks = FastMap::default();
+        let evaluator = Evaluator::new(
+            &environment,
+            ValueOrder { ranks: &ranks },
+            options.version,
+            false,
+        );
+        for (name, target) in environment.substitutions.iter() {
+            let Some(definition) = environment.definitions.get(target) else {
+                continue;
+            };
+            let is_parameterless = matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty());
+            if !declared_constants.contains(name)
+                || !is_parameterless
+                || analyzer
+                    .analyze_definition(definition, &Scope::default())?
+                    .data
+                    .level
+                    == 0
+            {
+                continue;
+            }
+            match evaluator.evaluate(&definition.body, None) {
+                // TLC's SpecProcessor adds the message of a TLCRuntimeException, which these are.
+                Err(FrontError::Evaluation(message)) => {
+                    return Err(FrontError::Config(format!(
+                        "The configuration file substitutes constant {name} with non-constant {target} - specifically: {message}"
+                    )));
+                }
+                Err(error) => return Err(error),
+                Ok(_) => {}
+            }
         }
     }
     Ok(environment)
+}
+
+// TLC computes the constant definitions of each module in the order SANY finishes the modules,
+// except those of a module that an INSTANCE gives parameters to.
+fn get_startup_definitions(
+    linker: &Linker,
+    linked_root: &Rc<LinkedModule>,
+    definitions: &OrderedMap<Name, Rc<Definition>>,
+    options: &EnvironmentOptions,
+) -> Result<Vec<Rc<Definition>>> {
+    let link_order = linker.link_order.borrow();
+    let instantiated: FastSet<Name> = link_order
+        .iter()
+        .flat_map(|linked| {
+            linked
+                .module
+                .instances
+                .iter()
+                .map(|instance| instance.module.clone())
+        })
+        .collect();
+    let order = TlcOrder::new(options.source, options.load_module, options.version)?;
+    let mut startup = Vec::new();
+    for linked in link_order.iter().filter(|linked| {
+        !instantiated.contains(&linked.module.name)
+            || (linked.constants.is_empty() && linked.variables.is_empty())
+    }) {
+        let name = (!Rc::ptr_eq(linked, linked_root)).then_some(&*linked.module.name);
+        for name in order.get_definition_order(name)? {
+            let key = linked
+                .visible
+                .get(&name)
+                .map_or(&name, |symbol| &symbol.key);
+            startup.extend(definitions.get(key).cloned());
+        }
+    }
+    Ok(startup)
+}
+
+fn add_assumptions(
+    linked: &Rc<LinkedModule>,
+    visited: &mut Vec<*const LinkedModule>,
+    assumptions: &mut Vec<Rc<Assumption>>,
+) {
+    if visited.contains(&Rc::as_ptr(linked)) {
+        return;
+    }
+    visited.push(Rc::as_ptr(linked));
+    for extended in &linked.extended {
+        add_assumptions(extended, visited, assumptions);
+    }
+    assumptions.extend(linked.module.assumptions.iter().cloned());
 }

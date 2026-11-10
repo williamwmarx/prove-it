@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use tla_ir::{
     AtomKind, ConfigName, Definition, DefinitionForm, EnabledActions, Index, Ir, NodeId, NodeKind,
-    Resolution, Startup,
+    PredicateForm, Resolution,
 };
 use tla_values::Bail;
 use tla_values::store::{FALSE, Outcome, TRUE};
@@ -23,8 +23,16 @@ pub struct Predicate {
 
 pub struct EngineContext {
     pub width: usize,
+    /// Whether the search reads TLC's diameter, which the native checker doesn't follow: it
+    /// stops once TLC has started, as an assumption may stop TLC first.
+    pub is_diameter_searched: bool,
+    /// Whether the VIEW reads what the search sets, such as TLCGet("level"), which the native
+    /// checker doesn't follow: it too stops once TLC has started.
+    pub is_view_search_read: bool,
     pub init: Step,
-    pub next: Step,
+    /// The walk of the next-state relation, none where the configuration names none: TLC then
+    /// stops once it has the initial states.
+    pub next: Option<Step>,
     /// A walk of each of TLC's actions, which together take the steps of `next` in its order, or
     /// `None` when the engine can't build one. The search walks them only when the model asks it
     /// to label its steps; they also label the steps of a path it prints.
@@ -40,6 +48,9 @@ pub struct EngineContext {
     /// The owner of each of `initial_invariants`, as `invariant_owners`.
     pub initial_invariant_owners: Vec<usize>,
     pub constraints: Vec<Predicate>,
+    /// For each of `constraints`, the position in the model's constraints of the first it is a
+    /// conjunct of.
+    pub constraint_owners: Vec<u32>,
     pub action_constraints: Vec<Eval>,
     /// The `_POSSIBLE` predicates, each with whether it is of a step: TLC counts the states in the
     /// model, or the steps, each holds of.
@@ -53,10 +64,34 @@ pub struct EngineContext {
     pub atoms: Vec<Atom>,
     /// Whether evaluating an atom may print.
     pub is_live_printing: bool,
+    /// Whether an atom sets or reads TLC's registers, which the search then answers as TLC
+    /// evaluates it.
+    pub is_live_registered: bool,
     /// Whether each atom reads TLCGet("diameter").
     pub diameter_atoms: Vec<bool>,
     /// Whether an invariant may print, which the search prints among Next's prints.
     pub is_invariant_printing: bool,
+    /// What TLC evaluates when it starts.
+    pub startup: Startup,
+}
+
+/// What TLC evaluates when it starts, compiled: each substitute, then each constant definition
+/// with effects, then the symmetry, then each assumption, with the name TLC reports it by.
+pub struct Startup {
+    pub substitutes: Vec<Eval>,
+    pub definitions: Vec<Eval>,
+    /// The constant definitions the configuration names, with how TLC rejects each one's value
+    /// and the configuration error's words for it.
+    pub predicates: Vec<(Eval, PredicateForm, String, String)>,
+    pub symmetry: Option<StartupSymmetry>,
+    pub assumptions: Vec<(Eval, String)>,
+}
+
+/// The SYMMETRY definition's body, and each set it permutes: the name TLC's warning gives it, and
+/// the set TLC checks for a model value the group moves.
+pub struct StartupSymmetry {
+    pub definition: Eval,
+    pub permuted_sets: Vec<(String, Option<Eval>)>,
 }
 
 /// How the engine answers a liveness atom on its states, or why it can't, in which case the
@@ -98,15 +133,6 @@ pub fn holds(machine: &mut Machine<'_>, predicate: &Eval) -> Outcome<bool> {
 }
 
 /// The position of the first predicate that doesn't hold, if one doesn't.
-pub fn first_failing(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<Option<usize>> {
-    for (position, predicate) in predicates.iter().enumerate() {
-        if !holds(machine, predicate)? {
-            return Ok(Some(position));
-        }
-    }
-    Ok(None)
-}
-
 pub fn holds_all(machine: &mut Machine<'_>, predicates: &[Eval]) -> Outcome<bool> {
     for predicate in predicates {
         if !holds(machine, predicate)? {
@@ -140,7 +166,9 @@ pub fn holds_all_changed(
     successor: &[u32],
     parent: &[u32],
 ) -> Outcome<bool> {
-    Ok(first_failing_changed(machine, predicates, successor, parent)?.is_none())
+    first_failing_changed(machine, predicates, successor, parent)
+        .map(|failing| failing.is_none())
+        .map_err(|(_, bail)| bail)
 }
 
 /// The position of the first predicate that doesn't hold of the successor that is current, given
@@ -151,7 +179,7 @@ pub fn first_failing_changed(
     predicates: &[Predicate],
     successor: &[u32],
     parent: &[u32],
-) -> Outcome<Option<usize>> {
+) -> Result<Option<usize>, (usize, Bail)> {
     for (position, predicate) in predicates.iter().enumerate() {
         if let Some(vars) = &predicate.vars
             && vars
@@ -160,7 +188,7 @@ pub fn first_failing_changed(
         {
             continue;
         }
-        if !holds(machine, &predicate.eval)? {
+        if !holds(machine, &predicate.eval).map_err(|bail| (position, bail))? {
             return Ok(Some(position));
         }
     }
@@ -173,6 +201,8 @@ pub fn first_failing_changed(
 enum Conjunct {
     Named(Index),
     Node(NodeId),
+    /// An expression read in the scope of the instance it comes from, checked whole.
+    Scoped(NodeId, Index),
 }
 
 struct Conjuncts<'i> {
@@ -211,11 +241,12 @@ impl<'i> Conjuncts<'i> {
         }
     }
 
-    // The definition a conjunct asserts, a zero-arity operator with no startup value, as the
-    // compiler resolves a name nothing binds locally.
+    // The definition a conjunct asserts, a zero-arity operator TLC doesn't evaluate at startup,
+    // as the compiler resolves a name nothing binds locally.
     fn asserted(&self, conjunct: Conjunct) -> Option<Index> {
         let index = match conjunct {
             Conjunct::Named(index) => index,
+            Conjunct::Scoped(..) => return None,
             Conjunct::Node(node) => match self.resolve(node).1 {
                 NodeKind::Identifier(name) if !name.is_local => match name.resolution {
                     Resolution::Definition(index) => index,
@@ -224,12 +255,11 @@ impl<'i> Conjuncts<'i> {
                 _ => return None,
             },
         };
-        let definition = self.definition(index);
-        matches!(
-            (&definition.form, &definition.startup),
-            (DefinitionForm::Operator(params), Startup::None) if params.is_empty()
-        )
-        .then_some(index)
+        let is_operator = matches!(
+            &self.definition(index).form,
+            DefinitionForm::Operator(params) if params.is_empty()
+        );
+        (is_operator && !self.ir.model.startup.definitions.contains(&index)).then_some(index)
     }
 
     fn add(&mut self, conjunct: Conjunct) {
@@ -243,7 +273,7 @@ impl<'i> Conjuncts<'i> {
     fn collect(&mut self, conjunct: Conjunct) {
         let conjunct = match conjunct {
             Conjunct::Node(node) => Conjunct::Node(self.resolve(node).0),
-            named => named,
+            other => other,
         };
         if let Conjunct::Node(node) = conjunct
             && let NodeKind::And(operands) = self.resolve(node).1
@@ -280,13 +310,12 @@ fn compile_conjunct(
     conjunct: Conjunct,
     can_print: bool,
 ) -> Result<Compiled, CompileError> {
-    compiler.compile_root_printing(
-        match conjunct {
-            Conjunct::Named(index) => Root::Definition(index),
-            Conjunct::Node(node) => Root::Expression(node),
-        },
-        can_print,
-    )
+    let (root, scope) = match conjunct {
+        Conjunct::Named(index) => (Root::Definition(index), None),
+        Conjunct::Node(node) => (Root::Expression(node), None),
+        Conjunct::Scoped(node, scope) => (Root::Expression(node), Some(scope)),
+    };
+    compiler.compile_scoped(root, scope, can_print)
 }
 
 // The variables a state predicate reads, which decide its value: it reads only its footprint.
@@ -305,6 +334,98 @@ impl EngineContext {
     pub fn build(compiler: &mut Compiler<'_>, ir: &Ir) -> Result<EngineContext, CompileError> {
         let model = &ir.model;
         let width = ir.variables.len();
+        let startup = Startup {
+            substitutes: model
+                .startup
+                .substitutes
+                .iter()
+                .map(|&(_, index)| {
+                    let body = match &ir.nodes.arena[ir.definitions[index as usize] as usize].kind {
+                        NodeKind::Definition(definition) => definition.body,
+                        _ => unreachable!("a definition's node"),
+                    };
+                    compiler
+                        .compile_root_printing(Root::Expression(body), true)
+                        .map(|compiled| compiled.eval)
+                })
+                .collect::<Result<_, CompileError>>()?,
+            definitions: model
+                .startup
+                .definitions
+                .iter()
+                .map(|&index| {
+                    compiler
+                        .compile_root_printing(Root::Definition(index), true)
+                        .map(|compiled| compiled.eval)
+                })
+                .collect::<Result<_, CompileError>>()?,
+            predicates: model
+                .startup
+                .predicates
+                .iter()
+                .map(|predicate| {
+                    compiler
+                        .compile_root_printing(Root::Definition(predicate.definition), true)
+                        .map(|compiled| {
+                            (
+                                compiled.eval,
+                                predicate.form,
+                                ir.texts[predicate.kind as usize].to_string(),
+                                ir.texts[predicate.name as usize].to_string(),
+                            )
+                        })
+                })
+                .collect::<Result<_, CompileError>>()?,
+            symmetry: model
+                .startup
+                .symmetry
+                .as_ref()
+                .map(|symmetry| {
+                    let body = match &ir.nodes.arena
+                        [ir.definitions[symmetry.definition as usize] as usize]
+                        .kind
+                    {
+                        NodeKind::Definition(definition) => definition.body,
+                        _ => unreachable!("a definition's node"),
+                    };
+                    Ok::<_, CompileError>(StartupSymmetry {
+                        definition: compiler.compile_symmetry(body)?.eval,
+                        permuted_sets: symmetry
+                            .permuted_sets
+                            .iter()
+                            .map(|set| {
+                                let operand = set
+                                    .operand
+                                    .map(|node| compiler.compile_root(Root::Expression(node)))
+                                    .transpose()?;
+                                Ok((
+                                    ir.texts[set.name as usize].to_string(),
+                                    operand.map(|compiled| compiled.eval),
+                                ))
+                            })
+                            .collect::<Result<_, CompileError>>()?,
+                    })
+                })
+                .transpose()?,
+            assumptions: model
+                .startup
+                .assumptions
+                .iter()
+                .map(|&(node, name)| {
+                    let eval = match compiler.compile_root_printing(Root::Expression(node), true) {
+                        Ok(compiled) => compiled.eval,
+                        // The native checker leaves one the engine doesn't compile to its
+                        // caller, as it does one it stops at a limit of: RandomSubset in an
+                        // operator's argument draws once where TLC first uses the argument.
+                        Err(CompileError::Bail(_)) if compiler.is_native => {
+                            crate::compile::eval(|_| Err(Bail(UNCOMPILED_ASSUMPTION)))
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    Ok((eval, ir.texts[name as usize].to_string()))
+                })
+                .collect::<Result<_, CompileError>>()?,
+        };
         // Each invariant and constraint is checked conjunct by conjunct, so a successor skips
         // each conjunct that reads only variables its step left unchanged. An invariant that may
         // print is checked whole each time, as TLC checks it, where the search may print.
@@ -321,12 +442,20 @@ impl EngineContext {
                 let root = Conjunct::Named(named("invariant", ir, &invariant.root)?);
                 Ok((root, invariant.has_repeated_effect))
             })
-            .chain(model.property_invariants.iter().map(|invariant| {
-                Ok((
-                    Conjunct::Node(invariant.root),
-                    invariant.has_repeated_effect,
-                ))
-            }))
+            .chain(
+                model
+                    .property_invariants
+                    .iter()
+                    .zip(&model.property_invariant_scopes)
+                    .map(|(invariant, scope)| {
+                        Ok((
+                            scope.map_or(Conjunct::Node(invariant.root), |scope| {
+                                Conjunct::Scoped(invariant.root, scope)
+                            }),
+                            invariant.has_repeated_effect,
+                        ))
+                    }),
+            )
             .collect::<Result<Vec<_>, CompileError>>()?;
         for (owner, (root, has_repeated_effect)) in roots.into_iter().enumerate() {
             if has_repeated_effect && can_print {
@@ -352,46 +481,72 @@ impl EngineContext {
         } else {
             HashSet::new()
         };
+        // TLC checks each step against the action properties as it finds the step, after the
+        // invariants (`doNextCheckImplied`), as the search does, so they may print where the
+        // native checker reports what the search finds.
         let mut action_properties = Vec::new();
+        let is_native = compiler.is_native;
         for property in &model.action_properties {
-            let action = compiler.compile_root(Root::Expression(property.action))?;
-            let unchanged = compiler.compile_root(Root::Unchanged(property.subscript))?;
+            let action = compiler.compile_scoped(
+                Root::Expression(property.action),
+                property.scope,
+                is_native,
+            )?;
+            let unchanged = compiler.compile_scoped(
+                Root::Unchanged(property.subscript),
+                property.scope,
+                is_native,
+            )?;
             action_properties.push((action.eval, unchanged.eval));
         }
         let initial_predicates = model
             .initial_predicates
             .iter()
-            .map(|&predicate| {
+            .zip(&model.initial_predicate_scopes)
+            .map(|(&predicate, &scope)| {
                 compiler
-                    .compile_root(Root::Expression(predicate))
+                    .compile_scoped(Root::Expression(predicate), scope, false)
                     .map(|compiled| compiled.eval)
             })
             .collect::<Result<Vec<Eval>, CompileError>>()?;
+        let mut is_view_search_read = false;
         let view = match &model.view {
             Some(view) => {
                 let compiled = compiler.compile_root(Root::Definition(named("view", ir, view)?))?;
                 if compiled.reads_search() {
-                    return Err(CompileError::Bail("unsupported: TLCGet in a VIEW".into()));
+                    if !compiler.is_native {
+                        return Err(CompileError::Bail(VIEW_SEARCH_READ.into()));
+                    }
+                    is_view_search_read = true;
                 }
                 Some(compiled.eval)
             }
             None => None,
         };
-        let mut constraint_roots = Vec::new();
-        for constraint in &model.constraints {
-            constraint_roots.push(Conjunct::Named(named("constraint", ir, constraint)?));
-        }
+        // A constraint that may print or set a register is checked whole each time, as TLC
+        // checks it, where the native checker reports what the search finds.
         let mut conjuncts = Conjuncts::new(ir);
-        for root in constraint_roots {
-            conjuncts.collect(root);
+        let mut constraint_owners = Vec::new();
+        let mut printed = HashSet::new();
+        for (owner, constraint) in model.constraints.iter().enumerate() {
+            let root = Conjunct::Named(named("constraint", ir, constraint)?);
+            if compiler.is_native && compile_conjunct(compiler, root, true)?.is_printing() {
+                printed.insert(root);
+                conjuncts.add(root);
+            } else {
+                conjuncts.collect(root);
+            }
+            constraint_owners.resize(conjuncts.found.len(), owner as u32);
         }
         let constraints = conjuncts
             .found
             .into_iter()
             .map(|conjunct| {
-                compile_conjunct(compiler, conjunct, false).map(|compiled| Predicate {
-                    vars: predicate_vars(&compiled, width),
-                    eval: compiled.eval,
+                compile_conjunct(compiler, conjunct, printed.contains(&conjunct)).map(|compiled| {
+                    Predicate {
+                        vars: predicate_vars(&compiled, width),
+                        eval: compiled.eval,
+                    }
                 })
             })
             .collect::<Result<Vec<Predicate>, CompileError>>()?;
@@ -425,16 +580,33 @@ impl EngineContext {
             },
             "a specification",
         )?;
-        let next = compiler.compile_action(
-            model.next,
-            model.scope,
-            ActionOptions {
-                is_init: false,
-                is_shortcut: model.is_warning_enabled,
-                can_print,
-            },
-            "a specification",
-        )?;
+        // Without a next-state relation TLC stops once it has the initial states, before the
+        // temporal properties, the postconditions and the `_POSSIBLE` predicates it would check.
+        if model.next.is_none()
+            && (!compiler.is_native
+                || model.is_recording_graph
+                || !model.postconditions.is_empty()
+                || !model.possible.is_empty())
+        {
+            return Err(CompileError::Decline(
+                "a model without a next-state relation".into(),
+            ));
+        }
+        let next = model
+            .next
+            .map(|next| {
+                compiler.compile_action(
+                    next,
+                    model.scope,
+                    ActionOptions {
+                        is_init: false,
+                        is_shortcut: model.is_warning_enabled,
+                        can_print,
+                    },
+                    "a specification",
+                )
+            })
+            .transpose()?;
         // Compiled whether or not the search walks them, since they also label a printed path.
         let actions = match Some(&model.actions).filter(|actions| !actions.is_empty()) {
             None => None,
@@ -464,10 +636,9 @@ impl EngineContext {
             }
         };
         // TLC's diameter grows as the search goes, which only the liveness checker's atoms follow.
-        if compiler.is_diameter_read {
-            return Err(CompileError::Bail(
-                "unsupported: TLCGet(\"diameter\") in the search".into(),
-            ));
+        let is_diameter_searched = compiler.is_diameter_read;
+        if is_diameter_searched && !compiler.is_native {
+            return Err(CompileError::Bail(DIAMETER_SEARCHED.into()));
         }
         let compiled: Vec<CompiledAtom> = if model.is_recording_graph {
             model
@@ -479,6 +650,7 @@ impl EngineContext {
             Vec::new()
         };
         let is_live_printing = compiled.iter().any(|atom| atom.is_printing);
+        let is_live_registered = compiled.iter().any(|atom| atom.uses_registers);
         let diameter_atoms = compiled.iter().map(|atom| atom.reads_diameter).collect();
         let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
         let (initial_invariants, initial_invariant_owners) = invariants
@@ -488,6 +660,13 @@ impl EngineContext {
             .filter(|((_, conjunct), _)| !init_conjuncts.contains(conjunct))
             .map(|((compiled, _), &owner)| (compiled.eval.clone(), owner))
             .unzip();
+        // Under a VIEW TLC fingerprints the view's value alone, so a set TLC keeps lazy that a
+        // variable holds stays as the spec built it, in an order the store doesn't keep.
+        if view.is_some() && compiler.is_lazy_set_held && compiler.is_held_set_enumerated {
+            return Err(CompileError::Bail(
+                "unsupported: enumerating a lazy set of the state under a VIEW".into(),
+            ));
+        }
         Ok(EngineContext {
             width,
             init,
@@ -504,15 +683,20 @@ impl EngineContext {
             initial_invariants,
             initial_invariant_owners,
             constraints,
+            constraint_owners,
             action_constraints,
             possible,
             action_properties,
+            is_diameter_searched,
+            is_view_search_read,
             initial_predicates,
             view,
             atoms,
             is_live_printing,
+            is_live_registered,
             diameter_atoms,
             is_invariant_printing,
+            startup,
         })
     }
 }
@@ -526,6 +710,11 @@ fn resolve(ir: &Ir, node: NodeId) -> &NodeKind {
         }
     }
 }
+
+/// Why the engine doesn't search a model that reads TLC's diameter.
+const UNCOMPILED_ASSUMPTION: &str = "unsupported: an assumption the engine doesn't compile";
+pub const DIAMETER_SEARCHED: &str = "unsupported: TLCGet(\"diameter\") in the search";
+pub const VIEW_SEARCH_READ: &str = "unsupported: TLCGet in a VIEW";
 
 fn describe(error: CompileError) -> String {
     match error {
@@ -543,6 +732,11 @@ fn compile_live(
     match compiler.compile_in_scope(node, scope) {
         Ok(Some(compiled)) if compiled.reads_tlc_get() => {
             Err("unsupported: TLCGet after the search".into())
+        }
+        // TLC evaluates the atoms as it adds each state to the behavior graphs, in an order
+        // the registers would tell.
+        Ok(Some(compiled)) if compiled.uses_registers() && !compiler.is_native => {
+            Err("unsupported: TLC's registers in the liveness checker's atoms".into())
         }
         Ok(Some(compiled)) => Ok(compiled),
         Ok(None) => Err("a scope the engine can't translate".into()),
@@ -568,16 +762,19 @@ struct CompiledAtom {
     atom: Atom,
     is_printing: bool,
     reads_diameter: bool,
+    uses_registers: bool,
 }
 
 fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> CompiledAtom {
     let scope = atom.scope;
     let mut is_printing = false;
     let mut reads_diameter = false;
+    let mut uses_registers = false;
     let compiled = match &atom.kind {
         AtomKind::State => compile_live(compiler, atom.expression, scope).map(|compiled| {
             is_printing = compiled.is_printing();
             reads_diameter = compiled.reads_diameter();
+            uses_registers = compiled.uses_registers();
             Atom::State(compiled.eval)
         }),
         AtomKind::Action { unchanged, enabled } => (|| {
@@ -592,6 +789,8 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
             is_printing = action.is_printing();
             reads_diameter =
                 action.reads_diameter() || subscript.as_ref().is_some_and(Compiled::reads_diameter);
+            uses_registers =
+                action.uses_registers() || subscript.as_ref().is_some_and(Compiled::uses_registers);
             Ok(Atom::Action {
                 action: action.eval,
                 subscript: subscript.map(|subscript| subscript.eval),
@@ -602,6 +801,7 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
             let run = match compiler.compile_enabled_in_scope(atom.expression, scope) {
                 Ok(Some(compiled)) => {
                     is_printing = compiled.is_printing();
+                    uses_registers = compiled.uses_registers();
                     Ok(compiled.eval)
                 }
                 Ok(None) => Err("a scope the engine can't translate".to_string()),
@@ -640,5 +840,6 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
         atom: compiled.unwrap_or_else(Atom::Unknown),
         is_printing,
         reads_diameter,
+        uses_registers,
     }
 }

@@ -5,7 +5,7 @@ use tla_front::TlcVersion;
 use tla_front::config::parse_config;
 use tla_front::environment::{EnvironmentOptions, create_environment};
 use tla_front::lower::{Lowering, RankedTexts};
-use tla_ir::{Ir, Junction, Model, NodeKind, Resolution};
+use tla_ir::{Ir, Junction, Model, NodeKind, Resolution, Startup};
 
 fn lower(source: &str, name: &str) -> Ir {
     let config = parse_config("", TlcVersion::Master).expect("a configuration");
@@ -15,6 +15,8 @@ fn lower(source: &str, name: &str) -> Ir {
         config: &config,
         is_unconfigured: true,
         version: TlcVersion::Master,
+        is_level_checked: false,
+        load_class: None,
     })
     .expect("an environment");
     let mut lowering = Lowering::new(
@@ -28,20 +30,24 @@ fn lower(source: &str, name: &str) -> Ir {
     lowering
         .finish(Model {
             init: 0,
-            next: 0,
+            next: Some(0),
             scope: None,
             actions: Vec::new(),
             is_labelled: false,
             invariants: vec![invariant],
             property_invariants: Vec::new(),
             property_invariant_names: Vec::new(),
+            property_invariant_scopes: Vec::new(),
             constraints: Vec::new(),
             action_constraints: Vec::new(),
             possible: Vec::new(),
             action_properties: Vec::new(),
             initial_predicates: Vec::new(),
+            initial_predicate_scopes: Vec::new(),
+            initial_predicate_names: Vec::new(),
             view: None,
-            symmetry: None,
+            alias: None,
+            postconditions: Vec::new(),
             check_deadlock: true,
             is_warning_enabled: true,
             is_recording_graph: false,
@@ -49,10 +55,15 @@ fn lower(source: &str, name: &str) -> Ir {
             // TLC's default seed, 0, and java.util.Random seeded with it, which no assumption has drawn
             // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
             random_seed: 0,
-            startup_random: 0x5_DEEC_E66D,
             atoms: Vec::new(),
             live_formula: Vec::new(),
             live_properties: Vec::new(),
+            specification: None,
+            startup: Startup::default(),
+            next_substitution: None,
+            instance_actions: Vec::new(),
+            instance_names: Vec::new(),
+            tlc_spec: None,
         })
         .expect("an IR")
 }

@@ -63,60 +63,74 @@ finding them would change what the run does.
 - Measured on Depot: 650 of 1466 runs print what TLC prints, up from 600. Nothing new differs.
   Most remaining deadlocks and invariant violations print records, which wait for #74.
 
-## The startup phase (planned, DESIGN 14.3)
+## The startup phase (DESIGN 14.3)
 
-Today the IR holds values that the TypeScript environment computes by evaluating TLA+ before the
-search. To lower IR without an evaluator, the front end leaves them out, and the engine computes
-them in a startup phase that runs on the IR before the search. The front-end session (F8) agreed
-the boundary: `tla-front` evaluates nothing and returns `NotYet` for a model that needs any of
-the items below until this lands. The IR version bump and the matching `ir.ts` change land in one
-PR, and `tla-front` then writes the same fields.
+The engine runs TLC's startup on the IR before its search (`run_startup`, `search.rs`). Until
+then, the TypeScript environment evaluated TLA+ before the search and wrote the values into the
+IR. The front end evaluates nothing (F8 agreed the boundary), and `tla-front` returns `NotYet` for
+a model that needs an item below that the engine doesn't take yet.
 
-What moves, where TypeScript does it today, and what the IR carries instead:
+IR 11 carries `model.startup`, which `ir.ts` writes from `check.ts` and `tla-front` will write the
+same way:
+- **substitutes**: each a declared constant's name and the 0-ary definition the configuration puts
+  in its place, where that definition isn't of constant level. TLC evaluates it at startup
+  (`SpecProcessor.processConstantDefns`), and reports 2281 only where that fails and the level is
+  above constant. The engine declines a model whose substitute fails, for now.
+- **definitions**: the constant definitions TLC evaluates at startup that have effects (`Print`,
+  `RandomElement`, `TLCSet` and the like), in the order TLC evaluates them. A definition without
+  effects is the same wherever it is first evaluated, so the engine computes it there. Each is
+  compiled once with an empty footprint. The engine declines one TLC may keep lazy (`may_be_lazy`),
+  as TLC then evaluates it again where it is used.
+- **symmetry**: the SYMMETRY definition, and each set its body's operator applies to, by the name
+  TLC's warning gives it (`getPermutedSets`, `symmetry.ts`) and, for `Permutations(S)` of a
+  constant or definition the configuration doesn't replace with `<-`, S. TLC evaluates the body
+  again as it builds its `Tool` (`Tool.getSymmetryPerms`), after the constant definitions and
+  before the assumptions. The engine builds the group (`close_group`), and declines a value that
+  isn't a set of functions of model values, or a body TLC may keep lazy, which TLC may reject. It
+  hands the group to the interpreter and `tla-trace` by the model values' names
+  (`Checkpoint.symmetry`, `Rebuilder::set_symmetry`).
+- **assumptions**: each one's expression and the name TLC reports it by (`describeRange`).
+- The settings carry TLC's seed, from which the engine draws what the startup draws
+  (`JavaRandom::seeded`), and then reseeds for each state as before. `TLCGet("level")` is 0 at
+  startup.
 
-| Item | TypeScript today | IR instead | Engine reports |
-| --- | --- | --- | --- |
-| Startup values | `evaluateStartupDefinitions` (`evaluate.ts`) over `specification.startupDefinitions`, from `reportStartup` (`search.ts`); each definition node carries the value, or `NO_STARTUP_VALUE` | `startup_definitions: Vec<Index>`, the definitions in that list's order, already filtered as the TS filter does where the filter is static (parameters, a constant or substitution replacing it, constant level); no value in the definition node | each `Print` in order; an error is swallowed, as TLC does, and the definition is evaluated where it's used |
-| Substitute checks | `getEvaluationError` (`environment.ts`, after the level analyzer): a substitute TLC evaluates at startup, rejected only when that fails and its level bound is above constant | the substitutes to check, each its definition and its level bound | the error TLC reports |
-| Assumptions | `findAssumptionViolation` (`search.ts`), called from `check.ts` after `reportStartup` | `assumptions: Vec<(NodeId, TextId)>` in module order with each one's name | 2104 (false), 2105 (failed to evaluate), with the exit codes |
-| SYMMETRY | `getSymmetryGroup` (`symmetry.ts`) evaluates the definition to a set of permutations | the SYMMETRY definition's name (a `ConfigName`), in place of the permutations | the configuration errors `getSymmetryGroup` throws, word for word |
-| TLC's actions | `getNextActions` (`spec-description.ts`) splits Next, enumerating the constant sets of its `\E`; `getActionLabel` names each | nothing beyond Next and the IR's version: the engine splits Next itself | the actions and labels, as `Model.actions` holds them now |
+What the engine reports (`Reporter`):
+- `startup_print`: each `Print` and `PrintT` of the substitutes, definitions and symmetry, then
+  `symmetry_sets_too_small` with the sets TLC warns about (2300), then `startup_done`, then what
+  the assumptions print. The front prints TLC's own text between them:
+  TLC prints what it prints itself after the constant definitions and before it checks the
+  assumptions (`ModelChecker`, then `checkAssumptions`).
+- `SearchOutcome::AssumptionViolated { name }`: the first false assumption (2104, exit code 10).
+- An assumption that fails to evaluate (2105), and any other `Bail` at startup, declines the model
+  before anything is reported, so the interpreter that takes the model over prints it all once.
+- Through the addon, the interpreter has already run the startup, printed what it printed and
+  checked the assumptions before it hands the search over. The addon's reporter keeps the default
+  `startup_print` and `startup_done`, which do nothing, and declines an assumption the engine finds
+  false. The binary (`prove-it-cli`) declines it too, until it prints the startup itself.
+- `Checkpoint.startup` and `Violation.startup` carry the definitions' values, so the interpreter
+  and `tla-trace` (`Rebuilder::set_startup`) read the values the search read rather than draw again.
 
-Two consequences:
-- Once the engine splits Next, the effect guard on TLC's actions (#72: none when evaluating them
-  has an effect) goes away, since the engine captures what it prints. That unblocks native traces
-  for specs that print (etest3, etest8).
+Still to do:
+- **Multi-module order.** TLC runs `processConstantDefns` per module, in its module table's order:
+  each module's substitutes, then that module's constant definitions, then its inner modules. The
+  IR lists all the substitutes and then all the definitions, as `evaluate.ts` evaluates them. The
+  two differ only where printing or drawing definitions sit in more than one module along with
+  substitutes. No corpus model has been found that shows the difference; one that does is a
+  TypeScript bug to fix on both sides, not a design choice.
+- **The small-set warning of a body that isn't an operator application.** TLC counts the
+  arguments of any operator application, `IF` included, as the permuted sets, and names each by
+  its text. `getPermutedSets` reads only an `Apply`, so for `Sym == IF c THEN Permutations(S)
+  ELSE {}` TLC may warn where TypeScript and the engine don't. That is a TypeScript bug to fix on
+  both sides.
+- TLC's actions (`getNextActions`, `spec-description.ts`): the engine is to split Next itself and
+  label each action. Then the effect guard on TLC's actions (#72) goes away, which unblocks native
+  traces for specs that print (etest3, etest8).
 - A configuration constant with arguments (`createOperatorTable` in `environment.ts`) needs no
-  evaluation: its rows are the configuration's literals (`toValue`). So the front end writes the
-  table itself, in a section `operator_tables` of the values: per builtin, its rows of arguments
-  and value in `transfer.ts`'s encoding. The engine formats the table and the arguments with TLC's
-  printer for the two errors it raises, so no formatted text is carried.
-
-Agreed with the front-end session in review:
-- Substitute checks need no level analyzer on either side. The IR lists every substitute of a
-  declared constant by a 0-ary operator definition, with the `dependencies.ts` facts' NONCONSTANT
-  bit as its level bound. The engine evaluates each at startup and reports a failure only where
-  the bound is above constant. The front-end differential checks that the bit agrees with the
-  level analyzer (2,711 configurations, no mismatch so far).
-- Action labels read `specification.instanceActions`: the name and location of an instance an
-  action was copied through. The IR carries, per definition key an instance copied, the instance's
-  name and location. `tla-front` fills it from linking.
-- Scope bindings: an IR scope holds a `Value` binding only from the action split
-  (`getActions` evaluating an action's constant arguments, `spec-description.ts`), which moves to
-  the engine. `Model.scope`, from SPECIFICATION resolved through an instance, holds thunks and
-  closures over the AST, which the front end writes without evaluating.
-
-Open before the layout is final:
-- Startup definitions whose level depends on a substitution: is the TS level filter static
-  everywhere, or does it read values?
-- The order TLC reports these in. Substitute checks run while the environment is built, so they
-  come first. Then come the startup values, before the constant-level invariant warnings
-  (`reportStartup`), and then the assumptions. That still needs checking against TLC's `Tool` and
-  `ModelChecker` startup.
+  evaluation: the front end can write its rows of literals in a section `operator_tables`, and
+  the engine formats them with TLC's printer for the two errors it raises.
+- Action labels read `specification.instanceActions`, which `tla-front` fills from linking. A scope
+  binding holds a `Value` only from the action split, which moves to the engine.
 - `getActionLabel` depends on the TLC version (1.7.4 or later); the IR already carries the version.
-
-The front-end session reviewed this layout (points above). The IR fields' exact order is fixed in
-the implementing PR, with the front end's review.
 
 ## Temporal properties that hold (#134)
 
@@ -129,7 +143,215 @@ the implementing PR, with the front end's review.
     branches × distinct total distinct states at (…)`;
   - 2267 `Finished checking temporal properties in … at …`;
   - then the summary, as for any search.
-- A counterexample (a lasso, or an accepting node) stays not native ("a temporal property's
-  counterexample") until the binary prints it with the trace evaluator's states and labels.
+- A counterexample stays not native ("a temporal property's counterexample") until the binary
+  prints it with the trace evaluator's states and labels.
 - Measured on Depot: 798 of 1466 runs print what TLC prints. That count includes main's own gains
   since #84. Of the 264 temporal runs, 132 remain counterexamples. Nothing native differs.
+
+## A temporal property's lasso
+
+- When the liveness check finds a lasso and the binary reports violations itself, the search's
+  `Complete` outcome carries it as a `Violation` of kind `Lasso { loop_start, loop_label }`: the
+  lasso's states, the action of each step (`label_lasso`), the counts and the store. Under SYMMETRY
+  or a VIEW the stored states aren't the ones TLC prints, so there is none.
+- The binary prints what `printViolation` prints for a `liveness-violation` with a `loopStart`:
+  - the Progress line and 2192, as for properties that hold;
+  - what the spec printed as TLC rebuilt the whole trace, which it rebuilds before it reports;
+  - 2116, naming the violated properties as `getTemporalHeadline` does;
+  - 2264 and each state (2217);
+  - `Back to state N: <label>` (2122 with -tool), or `N: Stuttering` (2218) where the cycle is the
+    last state alone;
+  - 2267, then the statistics and exit code 13.
+- Still not native:
+  - a stuttering counterexample TLC warns of under a SPECIFICATION (2259), which names where the
+    specification is defined. Without one, the binary prints TLC's 2257 warning after the
+    `Stuttering` line;
+  - a lasso whose cycle steps back to an earlier state in a spec that prints, since TLC prints as it
+    finds that step's action;
+  - an accepting node, which TLC reports as it builds the behavior graph.
+
+## Temporal checks part way through the search
+
+- As TLC does unless `-lncheck final` (or `seqfinal`, `off`), the binary asks the engine to check the
+  temporal properties as the search goes (`is_liveness_periodic`, #148). For each check it prints
+  2192 `Checking [N branches of ]temporal properties for the current state space with
+  branches × expanded total distinct states at (…)`, with no Progress line before it, and 2267 once
+  the check finds that the properties hold so far, as check.ts does for the engine's
+  `liveness-started` and `liveness-finished`.
+- PROVE_IT_TEST_LIVE_CHECK_AT sets the number of expanded states after which the first check comes,
+  as for the TypeScript CLI, so a test can reach one on a small model.
+- A counterexample a check part way through finds stays not native: the interpreter prints it with
+  the counts so far.
+
+## Step labels from the rebuilt trace
+
+- The binary labels each step of a trace with the action `tla-trace` finds as it rebuilds the
+  trace (`TraceState.action`, #139), as TLC's `Tool.getState` does, not with the search's own labels.
+- So the search hands over a violation's trace wherever the caller reports it:
+  - under VIEW or SYMMETRY, whose stored states aren't the ones TLC prints;
+  - in specs that print, where finding the actions would print again;
+  - where the search can't find a step's action.
+  In those cases each step's label is `None` and the rebuild tries TLC's actions in turn.
+- Still not native:
+  - a step whose action the rebuilt trace lacks, as in a model whose IR has no actions (etest3), whose
+    label is the whole next-state relation's range;
+  - a trace the rebuild declines, such as RandomElement and RandomSubset, or the several states
+    one symmetry orbit may give TLC.
+
+## ALIAS
+
+- With an ALIAS, the binary prints each state of a trace through it, as TLC does. `tla-trace`'s
+  `Rebuilder::alias` evaluates it on the rebuilt trace, with the next state TLC gives it: the
+  following state, or for a lasso's last state the state its cycle starts at. The binary prints the
+  record's fields in the order TLC prints them, a line each, as a conjunction when there are
+  several.
+- An alias whose value isn't a record leaves the state printed as it is. What the rebuild can't
+  follow, such as an alias that fails or prints, stays not native.
+
+## The front, from tla-front
+
+- Without a recorded `<Spec>.ir`, the binary lowers the model with `tla_front::model::lower_model`.
+  Its IR has no TLC actions yet, so a trace that needs labels stays not native until the engine
+  splits Next.
+- `files.rs` names the files SANY parses as `createFileDescriber` does. The directory TLC copies
+  a module into is named by TLC's fingerprint of a string, as `getTemporaryName` does it.
+- With PROVE_IT_NATIVE_FRONT=1 the binary prints SANY's report as
+  `tla_front::report::get_sany_text` writes it, in place of the recorded one. Under -tool it goes
+  between "Starting SANY..." (2220) and "SANY finished." (2219), and otherwise before `Starting...`.
+  The rest of the front stays recorded until tla-front writes it too.
+- The engine's startup hooks (`startup_print`, `symmetry_sets_too_small`, `startup_done`) stay
+  silent while the front is recorded, since the recorded text already holds what they report.
+
+## POSTCONDITION
+
+- The IR carries the configuration's POSTCONDITIONs (`Model.postconditions`). `tla-trace`'s
+  `Rebuilder::postcondition` evaluates each one, with TLCGet("all:named")'s `_POSSIBLE` counts,
+  TLCGet("stats") and, after a violation, CounterExample built from the rebuilt trace.
+- After a search that completes, the binary prints what the postconditions printed as TLC
+  evaluates them, then the first that doesn't hold, in place of the success:
+  - 2404 `Postcondition X at <body range> is false.`, or
+  - 2405 `Evaluating postcondition X at <body range> failed.` with TLC's message;
+  then the statistics, and exit code 10.
+- After a violation, what the postconditions printed follows the trace, and a failing postcondition
+  is reported after the step back into a lasso's cycle. The violation's exit code stands.
+- Still not native:
+  - a postcondition TLC computes as it starts, which it rejects;
+  - an unwitnessed `_POSSIBLE` predicate after a violation (the violation carries the counts as
+    the search left them, `Violation::possible`, which a witnessed one checks with);
+  - what `Rebuilder::postcondition` declines, such as CounterExample's actions with parameters.
+
+## Specs TLC stops at before the search
+
+- Where the differential records no front, the binary asks tla-front whether TLC stops before it
+  searches, and prints what TLC prints then:
+  - SANY's report, framed by 2220 "Starting SANY..." and 2219 "SANY finished." under -tool;
+  - 2185 `Starting... (…)`;
+  - SANY's rejection of the spec (3002, exit 150), or the error tla-front's lowering raises with
+    TLC's code and exit code (`FrontError::get_coded`: configuration errors with 151, evaluation
+    errors with 75, a stack overflow with 255, and TLC's `errorConstantToExitStatus` by code:
+    2146 with 76, 2253 with 77, 2213 and 2214 and an unexpected exception with 255);
+  - then 2186.
+- A configuration file `parse_config` rejects is reported the same way, right after the banner, as
+  TLC reads it before it parses the spec.
+- Lowering reads modules beside the spec, then from each `-DTLA-Library` directory in order.
+- Where tla-front doesn't find where TLC stops, the not-native reason says why.
+
+## The front from tla-front alone
+
+- Without `PROVE_IT_FRONT`, tla-front is the whole front end: the binary prints SANY's report as
+  tla-front writes it (framed by 2220 and 2219 under -tool), then `Starting...`, and lowers the
+  model itself. What TLC prints as it starts comes from the engine's startup hooks, which the
+  binary wires only on this path (`Relay::is_startup_printed`), since a recorded front holds it:
+  - `startup_print` prints as `Relay::print` does, with the same `is_printable` check, so a value
+    whose text depends on how TLC built it stops the run as not native;
+    Where the store has forgotten how TLC built a value, the binary takes what the substitutes,
+    constant definitions and configured definitions print from the trace evaluator
+    (`Rebuilder::startup_prints`), so long as each print the store words is the same and there
+    are as many; not under SYMMETRY, whose body the evaluator doesn't evaluate;
+  - `symmetry_sets_too_small` prints 2300 as `Tool.getSymmetryPerms` words it.
+- Still not native on this path, as TLC prints more as it starts:
+  - the Java overrides TLC loads (any `.class` file beside the spec);
+  - the warning of a constant-level invariant (2149), which the IR drops;
+  - a PROPERTY: the warning of a state-level property and the tableau's branches (2212);
+  - the trace exploration spec TLC parses with the spec, unless `-tool`, `-noGenerateSpecTE`
+    (`-noTE`) or `-continue` (`isTraceRecorded`).
+- The binary seeds TLC's generator with -seed, which tla-front's IR doesn't hold.
+- `differential --native <binary> --native-front` runs the binary this way.
+- Measured (2026-11-09) on the TLC test models of up to 5 s: 462 of 758 runs print what TLC
+  prints with no recorded front, and none differs once the seed is set. What only this path
+  declines:
+  - a PROPERTY (244 runs, 122 models): TLC's warning of a state-level property (2255,
+    `getProperties`), the warning of symmetry with liveness (2279), and 2212 `Implied-temporal
+    checking--satisfiability problem has N branches.`, with N the tableau's solutions
+    (`Tableau::solutions` on the IR's `live_formula`), all in TLC's order after 2300 and before
+    the assumptions. The state-level check needs a property's level, which tla-front knows
+    (`get_properties`) and the IR doesn't carry;
+  - an assumption's print whose value the store forgot (SetPredValue): it needs the trace
+    evaluator's prints of the assumptions, with a check of their count where the search starts;
+  - Java overrides (UserModuleOverride): TLC's report of the class it loads (2168, or 2400
+    where a method matches no operator).
+
+## AssertError assumptions
+
+- AssertError compares TLC's message for a failure, which the engine doesn't word. Under
+  `compiler.is_native` it compiles to a failure `DELEGATED_ASSUMPTION`, and an assumption that
+  fails with it is left to the caller (`Reporter::check_assumption`): the binary checks it with
+  the trace evaluator (`Rebuilder::check_assumption`), after the startup and the assumptions
+  before it, with -tool or without, since under -tool a message TLC raises with a code holds the
+  code's markers. The engine takes TLC's generator from where the check left it and checks the
+  assumptions after it itself.
+- Still not native: an AssertError assumption that fails to evaluate, sets a register, or follows
+  the configuration's predicates or a SYMMETRY, and AssertError anywhere but an assumption.
+- The corpus models with AssertError assumptions are blocked elsewhere:
+  - ModuleSemanticsAssume: `RandomSubset` in an operator's argument doesn't compile (the argument
+    may not print);
+  - EmptySetEqAssume (`{<<>>} = [{} -> Nat]`) and RandomSubsetEmpty: the engine fails on an
+    assumption TLC finds true, which the replay catches ("it didn't fail");
+  - ValueSemanticsAssume: the replay enumerates an infinite set the engine failed on.
+
+## The command line
+
+`args.rs` reads the arguments as `TLC.handleParameters` does, in order, and stops at the first one
+TLC rejects with TLC's message (1102 and the usage line, marked only where `-tool` came before it):
+an option TLC doesn't know, a missing or malformed value of `-seed`, `-workers`, `-fp`, `-config`,
+`-lncheck` or `-metadir`, and, on the `tlc2.TLC` form, a second module or none. Each message was
+compared with a TLC built from the clone at d8fb231.
+
+It models `-config` (with or without `.cfg`, as TLC), `-continue`, `-deadlock`, `-dump`,
+`-fp 0`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
+trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`,
+`-noGenerateSpecTEBin`/`-noTEBin`). Every other option TLC reads (`-simulate`, `-difftrace`,
+`-coverage`, `-maxSetSize`, `-dfid`, `-fp N`, ...) is not native, as are the shapes where TLC
+throws (`-dump` last, an empty argument), an argument that isn't ASCII, and `Spec.cfg` named as
+the module on the `tlc2.TLC` form. `-lncheck off` is not native either: TLC then checks no temporal property (`LiveCheck.java:238`).
+`seqfinal` is `final` with one worker for the liveness check (`LiveCheck.java:291`), so the two
+read alike.
+
+On the `tlc2.TLC` form a system property in TLC's namespaces (`-Dtlc2.…`, `-Dutil.…`,
+`-Dtla2sany.…`, `-Dtlc.…`) is not native, except the two that only reach the execution statistics
+TLC reports home and change nothing it prints: `tlc2.TLC.ide` (`TLC.java:1710`, `REPL.java:275`)
+and `util.ExecutionStatisticsCollector.id` (`ExecutionStatisticsCollector.java:74`, `205`).
+
+`TLCGet("-Dname")` reads a system property with the key as the default
+(`TLCGetSet.java:485`). The engine answers the key for a name nothing sets and the platform's
+`file.separator` and `path.separator`, and declines any other name in the JVM's own namespaces
+(`java.`, `os.`, `user.`, ...) and a key the spec computes. The binary declines a command line
+that sets a property whose `-Dname` the model's strings hold, since the spec may read it.
+The TypeScript CLI carries the launch's properties into the run (`systemProperties`), with the
+platform's separators and `user.dir`, and fails as unsupported on another of the JVM's own.
+
+`prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
+form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.
+
+## Handoff
+
+- Two paths feed the search. With a recorded front (`PROVE_IT_FRONT/<spec>.front`, what TLC
+  printed from the banner to "Computing initial states", which the differential records), the
+  binary prints that text and lowers the IR itself where no `.ir` is recorded. Where the directory
+  has no recorded front, it only reports where TLC stops before the search. Without
+  `PROVE_IT_FRONT`, tla-front is the whole front end (above).
+- Sweep for wrong output after a big push: list the corpus models whose configuration uses
+  SYMMETRY, VIEW, ALIAS, POSTCONDITION(S) or `_POSSIBLE`, and run
+  `bun scripts/run.ts differential --compare-backends --filter <id> --native
+  native/target/release/prove-it` for each, on freshly built `dist/`, addon and binary. Any native
+  "differs" is a blocker: fix it or decline the run as not native.

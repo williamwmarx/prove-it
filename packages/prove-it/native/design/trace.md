@@ -125,9 +125,15 @@ impl<'ir> Rebuilder<'ir> {
         ending: Ending,
     ) -> Result<Trace, Unsupported>;
 
-    /// Planned: evaluates again where the search failed, on a rebuilt state (and its successor),
-    /// and returns TLC's error with its values in TLC's text.
-    pub fn evaluate_failure(&mut self, trace: &Trace, site: Site) -> Result<Failure, Unsupported>;
+    /// Evaluates again where the search failed, at `site`, after the path `states` (none for the
+    /// initial predicate), and returns TLC's report of the error.
+    pub fn evaluate_failure(
+        &mut self,
+        store: &Store,
+        states: &[&[Id]],
+        actions: &[Option<u32>],
+        site: Site,
+    ) -> Result<Failure, Unsupported>;
 }
 
 /// What the last state is to TLC (`known` in `toTrace`): a state the search kept (a deadlock's),
@@ -154,6 +160,15 @@ pub struct TraceState {
     /// which the caller pretty prints and joins as it does a print during the search.
     pub printed: Vec<Vec<String>>,
 }
+
+/// Where the search failed: computing the initial states, the successors of the path's last
+/// state, or the invariant at a position on the path's last state, a successor past the initial
+/// states (which the caller appends, as the search doesn't keep it).
+pub enum Site { Init, Next, Invariant(u32) }
+
+/// TLC's report of the error: the code of its message, the message and its -tool text, and the
+/// nested expressions it was in, which the caller prints with `format_call_stack` as message 2103.
+pub struct Failure { pub code: u32, pub message: String, pub tool_message: String, pub call_stack: Vec<SourceRange> }
 
 /// TLC's `Value.toString`; the caller pretty prints it.
 pub fn format_value(value: &Value) -> String;
@@ -228,8 +243,13 @@ after each pull request.
   Under both, the views of their least states in the orbit must be equal (`TLCStateMut.fingerPrint`).
   A violation's last state is matched by its value, as TLC holds it (`getTrace` with the last
   successor). Every state but the last is settled as `settleRecoveredState` settles it: fingerprinted
-  without VIEW or SYMMETRY, deeply but for lambdas under SYMMETRY, and as `deepNormalize` with the
-  view deeply under a VIEW. So is the last one if
+  without VIEW or SYMMETRY, and as `deepNormalize` with the view deeply under a VIEW. Under
+  SYMMETRY it is settled as TLC's search of its orbit leaves it: each permutation, in the group's
+  order (generators, then their closure, the identity left out), permutes the values in TLC's order
+  of the variables until one compares greater than the least so far, and permuting a value
+  normalizes it and builds its lambdas. The state is then fingerprinted, which sorts it all, where
+  it is the least of its orbit, and deep-normalized, which leaves lambdas, where it isn't. So is
+  the last one if
   it satisfies the CONSTRAINTs and ACTION_CONSTRAINTs, as TLC fingerprints only such a state.
   A violating last state outside them goes through TLC's checks of it instead, which sort what
   their comparisons reach: the invariants in order until one fails, then the action properties
@@ -260,6 +280,76 @@ Tests:
   TLC's recorded text, whitespace aside;
 - unit tests on the printer and on written order.
 
+### Failures (`failure.rs`)
+
+`evaluate_failure` replays the failure as TLC's `CallStackTool` does, which `tlc/replay.ts` and the
+tracing evaluator of `evaluate.ts` port. While it replays, the evaluator keeps a call stack:
+- each node `evaluate` evaluates;
+- each node the walk visits, as `visit` and `visitUnchanged` do;
+- each prefix of an infix chain of junctions, which SANY nests as a node of its own. Its range
+  comes from the IR's prefix ends (IR 9).
+
+The successors are replayed for each of TLC's actions: the IR's, or, where the IR has none (as for
+a spec that prints), the next-state relation split as `Tool.getActions` splits it. Each disjunct,
+the body of an operator whose arguments evaluate without the state, a LET's body and `\E` at each
+binding is an action. The first failure freezes the stack. The walk takes TLC's shortcut past assigned conjuncts only in
+the initial predicate, and in an action with warnings on, as `isAssignedShortcut` does; that also
+decides which frames a stack keeps. The report follows `getFailureMessage`:
+- an EvalException that escapes the next-state computation keeps its own code;
+- any other error there is TLC's unexpected RuntimeException;
+- in the initial predicate the code is the general one, and the -tool text marks the coded message
+  inside it;
+- an invariant that fails to evaluate past the initial states has the headline "Evaluating
+  invariant Inv failed." (2111) and no call stack. Its successor is held as found, as a violating
+  one is. On an initial state TLC reports it otherwise, which returns `Unsupported` so far.
+
+After an invariant fails to evaluate past the initial states, TLC replays the expansion of the
+state before (`ModelChecker.doNext` with the `CallStackTool`), and `replay_expansion` follows it:
+- The caller hands over TLC's set of fingerprints when the search stopped
+  (`Rebuilder::set_fingerprints`, from the engine's `Violation::fingerprints`).
+- Each action's successors are computed, then checked in turn. One in the model is fingerprinted
+  (`state_fingerprint`, the store's fingerprint computed on the evaluator's values) and skipped
+  where the set has it. One the set lacks counts as a distinct state, and one that passes the
+  invariants as queued (`Failure::replay`).
+- TLC's error is already set, so an invariant that is false ends the replay quietly. One that
+  fails to evaluate is reported: as a FingerprintException with the replay's call stack where the
+  failure is in a method of a value with a source (2147), and otherwise with the nested
+  expressions (2103). TLC then exits by that error and prints no out-degrees.
+- The first failure, the one the search met, has no sources: TLC's search evaluates without the
+  `CallStackTool`. Its message is the evaluator's where the failure is a membership followed to
+  the set whose own test fails (`failing_sets`). A set enumeration the evaluation built itself
+  returns `Unsupported`: TLC hasn't normalized it, and searches it element by element with
+  `equals`, which words its failure otherwise (PrintTraceRace).
+- `Unsupported` covers a VIEW or SYMMETRY, action properties and properties checked as
+  invariants, a successor that is incomplete or fails to fingerprint, a failure computing the
+  successors, and a FingerprintException of any failure but such a membership.
+
+An error has TLC's message only where its kind is ported. So far:
+- a mistyped membership in Nat, Int or STRING (2158);
+- Assert (2132);
+- a field selected from a record that lacks it, from a tuple or from a value that isn't a
+  function, worded as `getFieldSelector` words it;
+- a function applied outside its domain, worded by its class (`describeMissingArgument`);
+- a variable read before the state assigns it (2280, `createUnassignedError`), with the range of
+  the name read.
+
+A lambda has no message yet: TLC keeps a function constructor lazy only where it evaluates it so
+(`EvalControl.KeepLazy`), which the evaluator doesn't follow. A model for TLC 1.7.4 returns
+`Unsupported`: that version streams a quantifier's lazy bounds rather than enumerating them in order,
+and words some messages apart.
+
+TLC reports a failure in a method of a value with a source (a set, tuple, record or function set
+the replay built, or a `\cup`, `\cap` or `\`) as a FingerprintException, with the values'
+sources. The replay marks it, as `freezeCallStack` finds it, and returns `Unsupported` for it so
+far. So does a failure reached through an assignment `x' \in S` from a set TLC streams in an
+order of its own, such as a union built during the walk, and one in the predicate of a filter TLC
+keeps lazy, of a set other than an enumeration or an interval. Every other failure returns
+`Unsupported` too. The pretty printer moved here from the CLI, since the messages need it.
+
+Tests: `tests/failure.rs` runs the engine's search on golden IRs of TLC's own tests (etest9, 10 and
+11, AssertExpressionStack, Github461 and EvaluatingValueTest) until it stops, and compares the
+message and the call stack with TLC's text.
+
 ### Parity
 
 The crate isn't wired into the binary in this pull request, so on main `tlc/native` is unchanged.
@@ -274,3 +364,201 @@ is outside the evaluator:
 - traces the engine hands over no violation for, as where it can't label a step (ACP_NB_WRONG,
   the raft specs);
 - one ENABLED (spectacle's Elevator).
+
+## The ALIAS
+
+`Rebuilder::alias(trace, cycle_start)` evaluates the configuration's ALIAS on each state of a
+rebuilt trace, as `Tool.evalAlias` does. `TLCGet("level")` is the state's position in the trace
+plus one. The next state is the state after it: for a lasso's last state, the state its cycle
+starts at, and otherwise the state itself. TLC prints a record (`RecordValue.toState`) through
+`PrintTLCState`, in the order of the record's names: as written until TLC sorts it. A value that
+isn't a function gives `Value.toState`'s null, and TLC prints the state itself (`Alias::State`).
+`Unsupported` covers the rest:
+- a function TLC converts to a record (`FcnRcdValue.toState`) or one it keeps lazy;
+- a `_format` field;
+- an alias that prints;
+- an alias that fails, which TLC prints as the state with an `_ALIASEvalError` field.
+
+The test rebuilds Github746's initial state, which violates its invariant, through its alias. The
+alias reads the next state. EWD840/MC02's alias reads ENABLED, and the engine stops at no
+violation there.
+
+## Random draws
+
+The evaluator draws RandomElement and RandomSubset as TLC does (`TLC.RandomElement`,
+`Enumerable.getRandomSubset`), from the java.util.Random draws that `tla-values` shares with the
+engine. A set of functions, records or tuples draws component by component, into a normalized
+value. Any other set draws from its normalized elements. TLC's thread-local generator
+(`RandomEnumerableValues`) is never reseeded in the initial predicate, so the rebuild draws there
+from the state startup left (`Model.startup_random`). It walks the whole initial predicate, so it
+draws as the search drew. Each step draws from a generator seeded with the predecessor's
+fingerprint XOR `Model.random_seed`, as the worker does, but the step to a violating successor
+of an initial state, which TLC holds: its worker finds that successor again drawing on from its
+generator as the search left it, still seeded for the state (`TLCTrace.printTrace`,
+`Tool.getState`), from the search's `Violation::random`. Where that walk finds no such successor,
+TLC fails, and the rebuild is `Unsupported`. A model that draws walks each step
+through all of TLC's actions in order, as one that prints does. An operator's argument or a LET
+definition that drew keeps its value for the uses that follow, as TLC's `LazyValue` keeps it, so
+`T` in `Same(RandomSubset(1, S))` is one subset. A negative count of a set enumeration or an
+interval fails as the Java method does making room for the subset. `Unsupported` covers:
+- draws under a VIEW or SYMMETRY, whose key the seed is the fingerprint of;
+- draws in the checks after the last step;
+- the step to a violating successor of an initial state, where the caller gives no generator;
+- RandomSubset in TLC 1.7.4, which draws a subset's indices another way.
+
+The test rebuilds the invariant traces of TLC's RandomElement, RandomElementXandY, RandomSubset
+and RandomSubsetNextTuples.
+
+## Postconditions
+
+`Rebuilder::postcondition(index, inputs)` evaluates a POSTCONDITION as `findPostconditionViolation`
+does: with no state, reading what TLC holds once the search is over. It gives Holds, False or
+Failed with TLC's message, and what the postcondition printed. The values it reads are built as
+TLC builds them:
+- `TLCGet("stats")`: the record of queue, distinct, initial, generated, diameter, duration and
+  worker, in that order.
+- The plain counts it holds.
+- `TLCGet("all:named")`: each named register as the tuple of one worker's value, with
+  `s:_possible` the count of each `_POSSIBLE` predicate TLC evaluated.
+- `CounterExample`: the numbered state records of the trace TLC printed and its steps, each with
+  its action's name and location record, plus the step back into a lasso's cycle.
+
+`Unsupported` covers:
+- an action with parameters, whose record holds them;
+- a step whose action the trace lacks;
+- a result that isn't a boolean;
+- an error without TLC's message.
+
+The test checks Github1389Counting's postcondition on its ten-state counterexample, and on one a
+state short.
+
+## Lazy sets, as TLC's value classes
+
+The replay follows TLC's set classes where a set has an infinite part, so an assumption the
+engine leaves to it (AssertError) and a replayed failure read what TLC reads:
+- `\cap`, `\cup` and `\` keep a reducible operand's eager result (a set enumeration or an
+  interval, `Tool`'s OPCODE_cap, OPCODE_cup and OPCODE_setdiff) and are otherwise
+  `Lazy::Cap`, `Lazy::Cup` and `Lazy::Diff`, with `SetCapValue`'s, `SetCupValue`'s and
+  `SetDiffValue`'s membership, `isFinite`, enumeration and messages. A `\cup` whose reducible
+  operand is on the right puts it first, as `arg2.cup(arg1)` does. Printing expands them
+  (`TLCGlobals.expand`) and shows the operation where that fails.
+- Nat, Int, STRING and Seq(S) are `UserValue`s: they compare only with another, by their
+  module's `compareTo` (Nat before Int, Seq(S) by its range), and fail with any other set.
+- Sets of functions, records and tuples compare with their own class by emptiness and the sets
+  they are built from (`equals` of `SetOfFcnsValue`, `SetOfRcdsValue`, `SetOfTuplesValue`).
+- `isFinite` and `isEmpty` follow each class, and fail on a value that isn't a set as TLC does;
+  IsFiniteSet and Cardinality report a failure, but an EvalException, as their Java method's.
+- TLCFP fingerprints a value as the engine does; TLCDefer is TRUE; an interval past 2^24
+  elements is declined rather than built.
+- `{x \in S : P}` over any set but a set enumeration or an interval is `Lazy::Filter`
+  (`SetPredValue`), as `Tool`'s OPCODE_sso tests `Reducible`. Its membership asks S first and
+  words a failing predicate as `SetPredValue.member` does. Over a finite S the evaluator filters
+  ahead, where the predicate neither fails nor has effects, and its enumeration reads that;
+  otherwise the comparison, Print or Cardinality that enumerates the filter evaluates the
+  predicate in turn (`settle`), as `SetPredValue.toSetEnum` does.
+- `UNION` of sets that aren't all set enumerations is `Lazy::Union` (`UnionValue`), and a
+  function over a domain it can't enumerate is `Value::Lambda` (`FcnLambdaValue`), which applies,
+  takes DOMAIN and EXCEPT lazily. Their membership evaluates the predicate or the body, so
+  `member` lives in the evaluator.
+- `isEmpty` of a lazy set is answered by its enumerator's first element; Cardinality of a set
+  enumeration that fails to normalize reports the comparison's failure as its Java method's.
+- ToString prints with `toStringUnchecked`, where a lazy set's expansion that fails fails.
+
+The replay evaluates every assumption of ValueSemanticsAssume and EmptySetEqAssume as TLC does,
+so the CLI reports an AssertError assumption it finds false.
+
+## The second rebuild of a violation's trace (as built)
+
+TLC rebuilds a violation's or a deadlock's trace as it prints it, and once more for the
+counterexample its postconditions read (`checkPostConditionWithCounterExample` takes the trace
+again), before it evaluates them. Each rebuild runs the initial predicate and Next again, so a
+spec that prints, or sets a register, does it both times: measured on TLC d8fb231, Next ==
+... /\ TLCSet(2, TLCGet(2) + 1) over a trace of three steps leaves the register at 9 for the
+postcondition, 3 from the search and 3 from each rebuild, and what Next prints in the second
+rebuild comes after the trace and before what the postconditions print. A lasso is rebuilt once.
+
+`Rebuilder::rebuild` therefore runs a second pass (`rebuild_pass`) where the spec prints or sets
+registers and the trace isn't a lasso's, and that pass's prints are the trace's `trace_output`;
+with TLCSet in the spec each walk runs to its end, as with Print. The binary prints
+`trace_output` before the postconditions' prints. TLC evaluates an ALIAS of each state as it
+prints the state, part way through its lazy first rebuild, so an ALIAS that uses the registers
+where a rebuild set one isn't native ("an ALIAS that uses registers the rebuild of the trace
+sets").
+
+## Sets TLC holds unnormalized
+
+TLC builds a set enumeration as written (`SetEnumValue` with `isNorm` false) and normalizes it in
+place only as it compares, enumerates, sizes, prints or fingerprints it. Until then `member`
+searches it element by element, asking each element whether it equals the value
+(`ValueVec.search`), so the error and its wording can differ from a sorted search's. A failure
+replay records each set enumeration it builds, with its elements as written, in a registry keyed
+by the set's address (`mark_unnormalized` in `value.rs`). Each entry holds its set, so that no
+other set takes a freed one's address. `elements`, `compare`, `equals`, printing and settling
+drop the entry, as TLC's `normalize` would. `\cap` and `\` of a recorded set test its elements
+as written and give a recorded set, as `SetEnumValue.cap` and `diff` keep `isNorm`. Not followed
+yet: `\cup` normalizes its left operand, where TLC's `cup` doesn't, and DOMAIN of a lambda over a
+recorded set.
+
+## Handoff
+
+Done:
+- PrintTraceRace: membership in sets TLC holds unnormalized (above). A failure in a method of a
+  set with a source is followed through a membership (`is_member_followed`) where each set
+  enumeration the failure passes through has no source or is one the replay records as TLC holds
+  it unnormalized.
+- semantic_error1: TLC's own NullPointerException as it reports the failure is a TLC bug. The
+  binary prints Prove It's error, the one tlc/ts and tlc/rust print, and
+  `known-differences.json` lists it for tlc/native as for the others. function_syntax (TLC
+  overflows Java's default stack) is listed for tlc/native too.
+- EWD998Chan: TLCGet's key is read through the parameter an INSTANCE of TLC binds it to.
+  TLCSet("exit", TRUE) in an invariant stops the search once the state being expanded is done,
+  with the states left on the queue (`ModelChecker.stop` finishes the queue). TLC's main thread,
+  woken by the stop, prints a progress line or not as the threads race: TLC at d8fb231 with one
+  worker printed it in 6 of 8 runs of EWD998Chan, with three different counts, and in none of 6
+  runs of a smaller spec. The binary prints none; the differential drops progress lines. Exit set
+  elsewhere (Next, a constraint, the initial states) or with temporal properties is not native.
+
+- Pre-PR review (each checked against TLC d8fb231 and tested in `prove-it-cli/tests/cli.rs`):
+  - a POSTCONDITION or ALIAS TLC computes as it starts is declined (`is_precomputed`: constant
+    level, reaching none of TLCGet, TLCSet, CounterExample or _Counts); a postcondition after an
+    initial state's violation is declined; -lncheck off is declined;
+  - a postcondition's failure nests its coded message under -tool; an EvalException in the
+    next states exits by its code (255; 151 for an undefined identifier);
+  - CounterExample's records order their fields as TLC interns RecordValue's names, after the
+    spec's strings; a safety violation's CounterExample holds the ALIAS records
+    (`Worker.doPostCondition`), a lasso the states;
+  - an ALIAS that prints, or sets registers, is declined;
+  - the rebuild keeps TLC's registers: its own constraint and invariant checks, and the walk of
+    the initial predicate of a trace of two states TLC holds, set none;
+  - random draws: TLC rebuilds an initial state from a generator reset to the seed (a violation of
+    three states or more, a deadlock or failure trace, a lasso) and finds a two-state violation's
+    successor drawing on from the search's generator (`Violation::random`); the rebuild follows
+    both and declines where TLC finds no state; a second rebuild of a spec that draws, and prints
+    or sets registers, is declined;
+  - a constraint that fails on an initial state keeps its frames; TLC rebuilds a failure's trace
+    again, printing, only where its worker checks the postconditions (after a next-state failure
+    with deadlock checked and no successor generated).
+
+Open:
+- Sets TLC holds unnormalized: `\cup` and DOMAIN, above.
+- Not this workstream's: FingerprintExceptionHang, TSnapShot and DoInitFunctorMinimalErrorStack
+  (infinite sets and the trace's stops).
+
+## What the replay declines of TLC's own orders
+
+- TLC fingerprints a state only where the constraints hold of it (`isInModel`). The replay
+  doesn't evaluate them where it fingerprints, so a state that fails to fingerprint in a model
+  with constraints, or action constraints for a successor, is declined.
+- TLC's worker fingerprints each successor as the action gives it, but its replay, and
+  `Tool.getState` as it prints the trace, take all of the action's successors first. After a
+  successor that fails to fingerprint the replay finishes the action without the call stack, and
+  declines where the rest fails or prints.
+- TLC streams a set it keeps lazy in an order of its own. A print, a draw or a register read or
+  written under an assignment from such a set is declined, and a variable, a constant or a
+  definition TLC computes at startup counts as normalized only where what it holds is: a set TLC
+  normalized, a set of functions, records or tuples of such sets, or a union of them whose
+  elements, the first operand's then the second's own, come in normalized order
+  (`is_streamed_normalized`).
+- The replay reads TLC's actions from the IR, which `add_actions` gives it; where the IR holds
+  none it declines. There is one port of `Tool.getActions`, in `split.rs`.
+

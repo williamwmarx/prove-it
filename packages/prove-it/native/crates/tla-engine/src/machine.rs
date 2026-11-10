@@ -4,13 +4,17 @@
 //! find by number, and how many caches of each kind to make. A [`Machine`] runs closures of one
 //! program on one store.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use tla_ir::NodeId;
+use tla_values::fingerprint::Fingerprints;
 use tla_values::store::Outcome;
 use tla_values::{Bail, Id, Store};
 
-use crate::compile::random::JavaRandom;
+use crate::compile::Lambda;
 use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MemoTable};
+use tla_values::random::JavaRandom;
 
 /// A compiled expression: its value, or where TLC would fail, or the engine hands over.
 pub type Eval = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Id> + Send + Sync>;
@@ -70,10 +74,9 @@ pub struct Program {
     pub(crate) round_count: usize,
     pub(crate) recursives: Vec<Option<Recursive>>,
     pub(crate) is_epoch_checked: bool,
-    /// What a state's fingerprint is xored with to seed the draws of its expansion.
+    /// What TLC seeds the generator its startup and initial states draw from with, and what a
+    /// state's fingerprint is xored with to seed the draws of its expansion.
     pub(crate) random_seed: u64,
-    /// The generator the initial states draw from, as the interpreter left it.
-    pub(crate) startup_random: u64,
 }
 
 /// The statistics of one memo table, as `getMemoStatistics` gives them.
@@ -115,6 +118,34 @@ pub struct Machine<'p> {
     /// The generator RandomElement and RandomSubset draw from: the interpreter's for the initial
     /// states, then one seeded for each state the search expands (`runtime.getRandom`).
     pub(crate) random: JavaRandom,
+    /// The state of the generator the startup left, which a violation's trace draws from.
+    pub(crate) startup_random: u64,
+    /// TLC's registers, which TLCSet sets and TLCGet reads.
+    pub registers: Registers,
+    /// TLCCache's value of each expression it caches, by the expression's node and the key's
+    /// fingerprint (`tlcEval2`).
+    pub(crate) tlc_caches: HashMap<(NodeId, u64), Id>,
+    /// The fingerprints of the values TLCFP and TLCCache's keys fingerprint.
+    pub(crate) fingerprints: Fingerprints,
+    /// The functions TLC keeps lazy that the machine built, which the store's ids of them number.
+    pub(crate) lazy_functions: Vec<Lambda>,
+}
+
+/// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
+/// each natural number, and under each name that starts with "s:", ids of the machine's store.
+#[derive(Clone, Debug, Default)]
+pub struct Registers {
+    pub numbered: Vec<Option<Id>>,
+    pub named: Vec<(Id, Id)>,
+    /// Whether TLCSet("exit", TRUE) ran, which stops TLC's search once the worker finishes the
+    /// state it is expanding (`ModelChecker.stop`).
+    pub is_exit: bool,
+}
+
+impl Registers {
+    pub fn is_empty(&self) -> bool {
+        self.numbered.iter().all(Option::is_none) && self.named.is_empty()
+    }
 }
 
 impl<'p> Machine<'p> {
@@ -145,7 +176,12 @@ impl<'p> Machine<'p> {
             is_past_walk: false,
             spare_states: Vec::new(),
             output: Vec::new(),
-            random: JavaRandom::from_state(program.startup_random),
+            random: JavaRandom::seeded(program.random_seed),
+            startup_random: 0,
+            registers: Registers::default(),
+            tlc_caches: HashMap::new(),
+            fingerprints: Fingerprints::new(),
+            lazy_functions: Vec::new(),
         }
     }
 
@@ -376,6 +412,18 @@ impl<'p> Machine<'p> {
             }
             _ => self.keeping_slots(&recursive.body, recursive.slot_start, recursive.slot_end),
         };
+        self.depth -= 1;
+        result
+    }
+
+    /// Runs a walk of a recursive function's body one call deeper, as `call_recursive` runs a
+    /// call.
+    pub(crate) fn nested(&mut self, run: impl FnOnce(&mut Self) -> Outcome<()>) -> Outcome<()> {
+        if self.depth >= MAXIMUM_RECURSION {
+            return Err(Bail("recursion too deep"));
+        }
+        self.depth += 1;
+        let result = run(self);
         self.depth -= 1;
         result
     }

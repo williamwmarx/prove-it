@@ -5,6 +5,7 @@
 
 mod decode;
 mod encode;
+pub mod wtf8;
 
 /// The stack the decoder and the encoder run on. Both follow nested nodes by recursion, up to the
 /// decoder's limit, and a Rust stack overflow aborts the process rather than failing, so they run
@@ -34,7 +35,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 10;
+pub const IR_VERSION: u32 = 13;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -46,12 +47,25 @@ pub type NodeId = u32;
 /// An index into [`Ir::definitions`], [`Ir::scopes`], [`Ir::constants`] or [`Ir::builtins`].
 pub type Index = u32;
 
+impl Ir {
+    /// A text's UTF-16 code units, as the store holds a string.
+    pub fn get_text_units(&self, text: TextId) -> Vec<u16> {
+        self.wide_texts.get(&text).map_or_else(
+            || self.texts[text as usize].encode_utf16().collect(),
+            |units| units.to_vec(),
+        )
+    }
+}
+
 /// A decoded IR. Everything that refers to a node does so by its [`NodeId`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ir {
     /// How many of the texts TLC ranks: text `i` below this has rank `i`.
     pub ranked_count: u32,
     pub texts: Vec<Box<str>>,
+    /// The UTF-16 code units of each text with a lone surrogate, which a `str` can't hold: TLC
+    /// computes such strings, as `Tail("😀a")`, and ranks them.
+    pub wide_texts: std::collections::BTreeMap<TextId, Box<[u16]>>,
     /// The variables in the engine's order.
     pub variables: Vec<TextId>,
     /// TLC's order of the variables, as positions in [`Ir::variables`].
@@ -71,12 +85,19 @@ pub struct Builtin {
     pub name: TextId,
     pub arity: i32,
     pub flags: i32,
+    /// With `TABLE`, a configuration's definition of a constant operator by its values: each
+    /// row's arguments as a tuple and its value, or `None` for one the IR can't hold.
+    pub table: Vec<(Option<Index>, Option<Index>)>,
 }
 
 impl Builtin {
     pub const STATE_LEVEL: i32 = 1;
     pub const LEVEL_CONSTANT: i32 = 2;
     pub const LAZY: i32 = 4;
+    pub const TABLE: i32 = 8;
+    /// `>=` of `tlc2.module.Naturals`, which names itself `>` in its errors, where the `>=` of
+    /// Integers names itself.
+    pub const NATURALS_GEQ: i32 = 16;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,7 +139,7 @@ pub struct Param {
     pub arity: i32,
 }
 
-/// The values of constants, scopes and startup values, in `transfer.ts`'s encoding.
+/// The values of constants and scopes, in `transfer.ts`'s encoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Values {
     /// The texts the values' strings and model values name, by the encoding's string index.
@@ -169,6 +190,23 @@ pub struct Action {
     pub scope: Option<Index>,
     /// How TLC names the action in a trace: `Inc line 5, col 8 to line 5, col 41 of module D`.
     pub label: TextId,
+    /// The name and location TLC's `Action` holds, which TLCExt's CounterExample records:
+    /// `UnnamedAction` for an action of no operator.
+    pub name: TextId,
+    pub location: Option<SourceRange>,
+    /// The definition TLC split the action from (`Action.getOpDef`), whose parameters
+    /// CounterExample binds, by index; none for an action of no operator, or of one a LET
+    /// defines.
+    pub definition: Option<Index>,
+}
+
+/// A definition an INSTANCE with substitutions copies, and the name and location TLC gives an
+/// action that applies it: the name the instance exports it by, at the INSTANCE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstanceAction {
+    pub definition: Index,
+    pub name: TextId,
+    pub location: Option<SourceRange>,
 }
 
 /// A `_POSSIBLE` predicate, which TLC counts the states, or with `is_action` the steps, it holds of.
@@ -182,6 +220,8 @@ pub struct Possible {
 pub struct ActionProperty {
     pub action: NodeId,
     pub subscript: NodeId,
+    /// The scope of the instance the property comes from, which it is read in.
+    pub scope: Option<Index>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,7 +281,9 @@ pub struct LiveProperty {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Model {
     pub init: NodeId,
-    pub next: NodeId,
+    /// The next-state relation, none where the configuration names none: TLC then computes
+    /// the initial states only, and the configuration checks nothing of behaviors.
+    pub next: Option<NodeId>,
     pub scope: Option<Index>,
     /// TLC's actions of the next-state relation, which a trace labels its steps with.
     pub actions: Vec<Action>,
@@ -253,28 +295,115 @@ pub struct Model {
     /// The name TLC gives each of `property_invariants` when it reports it violated: the operator
     /// the property asserts always holds, or the property's name.
     pub property_invariant_names: Vec<TextId>,
+    /// The scope of the instance each of `property_invariants` comes from, which it is read in.
+    pub property_invariant_scopes: Vec<Option<Index>>,
     pub constraints: Vec<ConfigName>,
     pub action_constraints: Vec<ConfigName>,
     pub possible: Vec<Possible>,
     pub action_properties: Vec<ActionProperty>,
     pub initial_predicates: Vec<NodeId>,
+    /// The scope of the instance each of `initial_predicates` comes from, which it is read in.
+    pub initial_predicate_scopes: Vec<Option<Index>>,
+    /// The name TLC gives each of `initial_predicates` when an initial state violates it: the
+    /// property's.
+    pub initial_predicate_names: Vec<TextId>,
     pub view: Option<ConfigName>,
-    /// The symmetry group: each permutation as the model values it moves, by text.
-    pub symmetry: Option<Vec<Vec<(TextId, TextId)>>>,
+    /// The configuration's ALIAS, which TLC prints each state of a trace through.
+    pub alias: Option<ConfigName>,
+    /// The configuration's POSTCONDITIONs, which TLC checks once the search ends.
+    pub postconditions: Vec<ConfigName>,
     pub check_deadlock: bool,
     pub is_warning_enabled: bool,
     pub is_recording_graph: bool,
     pub version: Option<TextId>,
-    /// The seed TLC reseeds its generator with for each state it expands, xored with the state's
-    /// fingerprint (`RandomEnumerableValues`).
+    /// The seed TLC seeds its generator with before it starts, and reseeds it with for each state
+    /// it expands, xored with the state's fingerprint (`RandomEnumerableValues`).
     pub random_seed: u64,
-    /// The 48 bits of the generator the initial states draw from, as the assumptions left it.
-    pub startup_random: u64,
     pub atoms: Vec<Atom>,
     /// The fairness and the negated properties as the liveness checker joins them, or no terms.
     pub live_formula: Vec<LiveTerm>,
     /// Each property, whose violation a counterexample's checks find, in the configuration's order.
     pub live_properties: Vec<LiveProperty>,
+    /// The source range of the definition the configuration's SPECIFICATION names, which TLC's
+    /// warning of a stuttering counterexample prints.
+    pub specification: Option<SourceRange>,
+    /// Where the SPECIFICATION reaches the next-state relation through a definition an INSTANCE
+    /// with substitutions copies, the first such INSTANCE, at which TLC takes the relation as one
+    /// unnamed action (`describeSpecification`).
+    pub next_substitution: Option<SourceRange>,
+    /// The definitions of the IR an INSTANCE with substitutions copies (`instanceActions`), by
+    /// index.
+    pub instance_actions: Vec<InstanceAction>,
+    /// The name TLC gives each definition of the IR a named INSTANCE copies, such as `I!Foo`
+    /// (`instanceNames`), by index.
+    pub instance_names: Vec<(Index, TextId)>,
+    /// TLCGet("spec"), the record of the specification as TLC processed it, by its position in
+    /// the IR's values, where an expression reads it (`TLCGetSet.TLCGetStringValue`).
+    pub tlc_spec: Option<u32>,
+    /// What TLC evaluates when it starts, before the search.
+    pub startup: Startup,
+}
+
+/// What TLC evaluates when it starts, in the order the engine evaluates it: each substitute,
+/// then each definition, then the symmetry, then each assumption.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Startup {
+    /// The substitutes for declared constants that TLC evaluates and rejects if they fail: the
+    /// constant's name and the 0-ary definition substituted for it, whose level bound is above
+    /// constant.
+    pub substitutes: Vec<(TextId, Index)>,
+    /// The constant definitions with effects that TLC evaluates once, in TLC's order. Each keeps
+    /// the value it computes.
+    pub definitions: Vec<Index>,
+    /// The constant definitions the configuration names, which TLC evaluates as it reads the
+    /// configuration (`getConstantValue`) and rejects for their value, in TLC's order.
+    pub predicates: Vec<StartupPredicate>,
+    /// The SYMMETRY definition, which TLC evaluates to its group as it builds its `Tool`.
+    pub symmetry: Option<Symmetry>,
+    /// The assumptions that aren't axioms, each with the name TLC reports it by.
+    pub assumptions: Vec<(NodeId, TextId)>,
+}
+
+/// A constant definition the configuration names, which TLC rejects for its value. A definition
+/// that fails to evaluate is no error: TLC keeps it as an operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartupPredicate {
+    pub form: PredicateForm,
+    /// What the configuration names it as, such as `invariant`.
+    pub kind: TextId,
+    pub name: TextId,
+    pub definition: Index,
+}
+
+/// How TLC rejects a constant definition the configuration names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredicateForm {
+    /// `getConfigPredicate`: any value but TRUE, as "The {kind} of {name} is equal to {value}".
+    Predicate = 0,
+    /// `getConfigDefinition`: any value, as "The {kind} {name} cannot be a constant.".
+    Definition = 1,
+    /// The SPECIFICATION: any value, as "The value of {name} is equal to {value}".
+    Specification = 2,
+}
+
+/// The configuration's SYMMETRY: a 0-ary definition whose value is a set of permutations of
+/// model values (`Tool.getSymmetryPerms`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Symmetry {
+    pub definition: Index,
+    /// The sets the definition's body applies its operator to, which TLC warns about where they
+    /// hold fewer than two elements.
+    pub permuted_sets: Vec<PermutedSet>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PermutedSet {
+    /// The name TLC's warning gives the set: the name the configuration substitutes for it, or
+    /// the text of its expression.
+    pub name: TextId,
+    /// For `Permutations(S)` with S a constant or definition the configuration doesn't replace
+    /// with `<-`, S, whose value TLC checks for a model value the group moves.
+    pub operand: Option<NodeId>,
 }
 
 /// The nodes, in the order of the blob, and which of them are written at the top level.
@@ -382,9 +511,6 @@ pub enum DefinitionForm {
 pub struct Definition {
     pub name: TextId,
     pub flags: i32,
-    /// The value TLC computed at startup for a definition with effects, which the compiler reads
-    /// in its place.
-    pub startup: Startup,
     pub form: DefinitionForm,
     pub body: NodeId,
 }
@@ -395,15 +521,8 @@ impl Definition {
     pub const SELF_REFERENTIAL: i32 = 4;
     pub const REPEATED_EFFECT: i32 = 8;
     pub const SUBSTITUTED: i32 = 16;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Startup {
-    None,
-    /// A value the engine can't read: one TLC may keep lazy, or one the encoding can't hold.
-    Object,
-    /// A value, or `None` for one the transfer encoding can't hold.
-    Value(Option<u32>),
+    /// A constant definition TLC computes and deep-normalizes at startup (`processConstantDefns`).
+    pub const NORMALIZED: i32 = 32;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -528,6 +647,123 @@ pub enum NodeKind {
     Reference(NodeId),
 }
 
+impl NodeKind {
+    /// The expressions directly inside a node, as `collectChildren` finds them. A reference has
+    /// none: it stands for the node it names.
+    pub fn children(&self) -> Vec<NodeId> {
+        let mut children = Vec::new();
+        match self {
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_)
+            | NodeKind::Identifier(_)
+            | NodeKind::OperatorReference(_)
+            | NodeKind::ExceptAt
+            | NodeKind::Reference(_) => {}
+            NodeKind::Apply { args, .. } => children.extend(args),
+            NodeKind::Lambda { body, .. } => children.push(*body),
+            NodeKind::And(operands)
+            | NodeKind::Or(operands)
+            | NodeKind::SetEnumeration(operands)
+            | NodeKind::Tuple(operands)
+            | NodeKind::Bracket(operands)
+            | NodeKind::Product(operands) => children.extend(operands),
+            NodeKind::Prime(inner)
+            | NodeKind::Unchanged(inner)
+            | NodeKind::Enabled(inner)
+            | NodeKind::Always(inner)
+            | NodeKind::Eventually(inner) => children.push(*inner),
+            NodeKind::If {
+                condition,
+                consequent,
+                alternative,
+            } => children.extend([*condition, *consequent, *alternative]),
+            NodeKind::Case { arms, other } => {
+                for (condition, body) in arms {
+                    children.extend([*condition, *body]);
+                }
+                children.extend(other);
+            }
+            NodeKind::Let {
+                definitions, body, ..
+            } => {
+                children.extend(definitions);
+                children.push(*body);
+            }
+            NodeKind::Forall { bounds, body }
+            | NodeKind::Exists { bounds, body }
+            | NodeKind::FunctionConstruction { bounds, body, .. } => {
+                children.extend(bounds.iter().map(|bound| bound.set));
+                children.push(*body);
+            }
+            NodeKind::SetMap { expression, bounds } => {
+                children.push(*expression);
+                children.extend(bounds.iter().map(|bound| bound.set));
+            }
+            NodeKind::UnboundedQuantifier { body, .. } => children.push(*body),
+            NodeKind::Choose { set, body, .. } => {
+                children.extend(set);
+                children.push(*body);
+            }
+            NodeKind::SetFilter { predicate, .. } => children.push(*predicate),
+            NodeKind::FunctionSet { domain, range } => children.extend([*domain, *range]),
+            NodeKind::Record(fields) | NodeKind::RecordSet(fields) => {
+                children.extend(fields.iter().map(|(_, value)| *value))
+            }
+            NodeKind::Except { function, updates } => {
+                children.push(*function);
+                for update in updates {
+                    for step in &update.path {
+                        if let PathStep::Index(indices) = step {
+                            children.extend(indices);
+                        }
+                    }
+                    children.push(update.value);
+                }
+            }
+            NodeKind::FunctionApplication { function, args } => {
+                children.push(*function);
+                children.extend(args);
+            }
+            NodeKind::FieldAccess { record, .. } => children.push(*record),
+            NodeKind::BoxAction { action, subscript }
+            | NodeKind::AngleAction { action, subscript } => children.extend([*action, *subscript]),
+            NodeKind::WeakFairness {
+                subscript,
+                action,
+                enabled,
+            }
+            | NodeKind::StrongFairness {
+                subscript,
+                action,
+                enabled,
+            } => {
+                children.extend([*subscript, *action]);
+                children.extend(enabled);
+            }
+            NodeKind::Label { body, .. } => children.push(*body),
+            NodeKind::Subexpression(selectors) => {
+                for selector in selectors {
+                    match selector {
+                        Selector::Name { args, .. } | Selector::Bound(args) => {
+                            children.extend(args)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            NodeKind::Definition(definition) => {
+                if let DefinitionForm::Function(bounds) = &definition.form {
+                    children.extend(bounds.iter().map(|bound| bound.set));
+                }
+                children.push(definition.body);
+            }
+        }
+        children
+    }
+}
+
 // The tags of the blob, the positions of NODE_KINDS in ir.ts.
 pub(crate) mod tag {
     pub const NUMBER: i32 = 0;
@@ -586,8 +822,6 @@ pub(crate) mod code {
     pub const RESOLUTION_CONSTANT: i32 = 2;
     pub const RESOLUTION_DEFINITION: i32 = 3;
     pub const RESOLUTION_BUILTIN: i32 = 4;
-    pub const NO_STARTUP_VALUE: i32 = -1;
-    pub const OBJECT_STARTUP_VALUE: i32 = -2;
     pub const SCOPE_VALUE: i32 = 0;
     pub const SCOPE_THUNK: i32 = 1;
     pub const SCOPE_CLOSURE: i32 = 2;

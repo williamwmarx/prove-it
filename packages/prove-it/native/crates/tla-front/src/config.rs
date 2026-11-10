@@ -12,6 +12,9 @@ pub enum ConfigValue {
     Boolean(bool),
     ModelValue(String),
     Set(Vec<ConfigValue>),
+    /// A record the constant evaluator builds, its fields in TLC's order of their names. A
+    /// configuration has none.
+    Record(Vec<(String, ConfigValue)>),
 }
 
 #[derive(Clone, Debug, PartialEq)]

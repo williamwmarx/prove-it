@@ -8,10 +8,17 @@
 //! parent's, one per variable that changed.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::store::{
-    EMPTY_SLOT, Id, KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, Store, TRUE,
+    Bail, EMPTY_SLOT, Id, KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT,
+    KIND_LAZY_FUNCTION, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, Store, TRUE,
 };
+
+/// Why a value has no fingerprint here: it holds, at any depth, a function TLC keeps lazy or
+/// Nat, Int or STRING, which TLC fails to fingerprint with an error the engine doesn't model.
+pub const UNFINGERPRINTABLE: Bail =
+    Bail("unsupported: fingerprinting a function TLC keeps lazy, or Nat, Int or STRING");
 
 /// FP64.Polys[0], which `-fp 0` selects. A fingerprint starts as the polynomial.
 pub const INITIAL: u64 = 0x911498ae0e66bad6;
@@ -102,8 +109,9 @@ const UNKNOWN_TABLE: i32 = 0;
 // A length past the cap, shifted by powers of two.
 const NO_TABLE: i32 = -1;
 
+/// A value's F and length, with the number of the table that shifts by its length, in a cache.
 #[derive(Clone, Copy, Default)]
-struct ValueFingerprint {
+pub struct ValueFingerprint {
     fingerprint: u64,
     length: u64,
     // The number of the value's length table, from 1, or UNKNOWN_TABLE or NO_TABLE.
@@ -124,29 +132,141 @@ pub struct Parent {
     prefixes: Vec<u64>,
 }
 
-/// The fingerprints the overlays of a parallel level computed, by the ids the store imported
-/// their values as, from the store's count of values before: what a value's fingerprint is
-/// doesn't depend on which overlay computed it, so every overlay keeps them all.
-#[derive(Default)]
-pub struct Carried {
-    bound: Id,
-    values: Vec<ValueFingerprint>,
+/// Where a cache keeps the entries of the store's values: a search's own in [`Dense`], and a
+/// parallel level's thread's in [`Overlaid`], which reads the search's in place. A search's cache
+/// reads its entries as directly as it did before threads shared them.
+pub trait Entries: Default {
+    fn is_computed(&self, id: Id) -> bool;
+    /// A computed value's entry.
+    fn entry(&self, id: Id) -> ValueFingerprint;
+    fn set(&mut self, id: Id, entry: ValueFingerprint);
+    /// Keeps the number of the table a computed value's length takes, where the entry is the
+    /// cache's own.
+    fn set_table(&mut self, id: Id, table: i32);
+    fn clear(&mut self);
+    /// Forgets the entries of the values from this id on.
+    fn truncate(&mut self, id: Id);
 }
 
-impl Carried {
-    /// Empties it, for the values of overlays laid on a store of this many values.
-    pub fn reset(&mut self, bound: Id) {
-        self.bound = bound;
+/// The entries of a search's cache, by id.
+#[derive(Default)]
+pub struct Dense(Vec<ValueFingerprint>);
+
+impl Entries for Dense {
+    #[inline(always)]
+    fn is_computed(&self, id: Id) -> bool {
+        self.0
+            .get(id as usize)
+            .is_some_and(|entry| entry.is_computed)
+    }
+
+    #[inline(always)]
+    fn entry(&self, id: Id) -> ValueFingerprint {
+        self.0[id as usize]
+    }
+
+    fn set(&mut self, id: Id, entry: ValueFingerprint) {
+        let index = id as usize;
+        if index >= self.0.len() {
+            self.0
+                .resize((2 * (index + 1)).max(1024), ValueFingerprint::default());
+        }
+        self.0[index] = entry;
+    }
+
+    #[inline(always)]
+    fn set_table(&mut self, id: Id, table: i32) {
+        self.0[id as usize].table = table;
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    fn truncate(&mut self, id: Id) {
+        self.0.truncate(id as usize);
+    }
+}
+
+/// The fingerprints a search computed of its store's values, which the caches of a parallel
+/// level's threads read in place while the store doesn't change.
+pub struct SharedFingerprints(Arc<Vec<ValueFingerprint>>);
+
+/// The entries of a parallel level's thread's cache: those of the store's values below `bound`
+/// in the search's, else in `misses` where the thread computed them, and of the thread's own
+/// values from `bound` on.
+#[derive(Default)]
+pub struct Overlaid {
+    values: Vec<ValueFingerprint>,
+    bound: Id,
+    base: Option<Arc<Vec<ValueFingerprint>>>,
+    misses: HashMap<Id, ValueFingerprint>,
+}
+
+impl Entries for Overlaid {
+    #[inline(always)]
+    fn is_computed(&self, id: Id) -> bool {
+        self.entry(id).is_computed
+    }
+
+    // An id below the thread's own wraps past the end of its entries.
+    #[inline(always)]
+    fn entry(&self, id: Id) -> ValueFingerprint {
+        match self.values.get(id.wrapping_sub(self.bound) as usize) {
+            Some(&entry) => entry,
+            None if id < self.bound => {
+                let base = self.base.as_ref().and_then(|base| base.get(id as usize));
+                match base.filter(|entry| entry.is_computed) {
+                    // A length table's number is the search's cache's own.
+                    Some(entry) => ValueFingerprint {
+                        table: UNKNOWN_TABLE,
+                        ..*entry
+                    },
+                    None => self.misses.get(&id).copied().unwrap_or_default(),
+                }
+            }
+            None => ValueFingerprint::default(),
+        }
+    }
+
+    fn set(&mut self, id: Id, entry: ValueFingerprint) {
+        let Some(own) = id.checked_sub(self.bound) else {
+            self.misses.insert(id, entry);
+            return;
+        };
+        let index = own as usize;
+        if index >= self.values.len() {
+            self.values
+                .resize((2 * (index + 1)).max(1024), ValueFingerprint::default());
+        }
+        self.values[index] = entry;
+    }
+
+    fn set_table(&mut self, id: Id, table: i32) {
+        if let Some(entry) = id
+            .checked_sub(self.bound)
+            .and_then(|own| self.values.get_mut(own as usize))
+        {
+            entry.table = table;
+        }
+    }
+
+    fn clear(&mut self) {
         self.values.clear();
+        self.misses.clear();
+    }
+
+    fn truncate(&mut self, id: Id) {
+        self.values.truncate(id.saturating_sub(self.bound) as usize);
     }
 }
 
 /// F(v) and |v| of the store's values, computed as they are first asked for, and the tables that
 /// shift by their lengths.
 #[derive(Default)]
-pub struct Fingerprints {
+pub struct Fingerprints<E = Dense> {
     generation: Option<u32>,
-    values: Vec<ValueFingerprint>,
+    values: E,
     // Shifts by 2^j zero bytes.
     powers: Vec<Box<ShiftTable>>,
     lengths: Vec<Box<ShiftTable>>,
@@ -163,6 +283,60 @@ impl Fingerprints {
         Fingerprints::default()
     }
 
+    /// Lends the fingerprints computed so far to the caches of a parallel level's threads, until
+    /// [`Fingerprints::take_back`].
+    pub fn share(&mut self) -> SharedFingerprints {
+        SharedFingerprints(Arc::new(std::mem::take(&mut self.values.0)))
+    }
+
+    /// Takes back what [`Fingerprints::share`] lent, once the threads' caches let go of it.
+    pub fn take_back(&mut self, shared: SharedFingerprints) {
+        self.values.0 = Arc::into_inner(shared.0).expect("the fingerprints, once threads let go");
+    }
+
+    /// Adds what a thread's cache computed: the fingerprints of the store's values it computed,
+    /// and of its own values, which `imported` gives the ids of in the store, by their position
+    /// among them. What a value's fingerprint is doesn't depend on which cache computed it.
+    pub fn absorb(&mut self, overlay: &Fingerprints<Overlaid>, imported: &[Id]) {
+        let entries = &overlay.values;
+        let own = imported
+            .iter()
+            .copied()
+            .zip(&entries.values)
+            .filter(|&(id, _)| id != EMPTY_SLOT);
+        let misses = entries.misses.iter().map(|(&id, entry)| (id, entry));
+        for (id, entry) in own.chain(misses) {
+            if !entry.is_computed || self.values.is_computed(id) {
+                continue;
+            }
+            // A length table's number is the thread's cache's own.
+            self.values.set(
+                id,
+                ValueFingerprint {
+                    table: UNKNOWN_TABLE,
+                    ..*entry
+                },
+            );
+        }
+    }
+}
+
+impl Fingerprints<Overlaid> {
+    /// Makes this the cache of a thread whose overlay is laid on a store of `bound` values, whose
+    /// fingerprints so far are `shared`, forgetting what it computed before.
+    pub fn attach(&mut self, shared: &SharedFingerprints, bound: Id) {
+        self.values.clear();
+        self.values.bound = bound;
+        self.values.base = Some(Arc::clone(&shared.0));
+    }
+
+    /// Lets go of what [`Fingerprints::attach`] lent, keeping what this cache computed.
+    pub fn detach(&mut self) {
+        self.values.base = None;
+    }
+}
+
+impl<E: Entries> Fingerprints<E> {
     /// Forgets every value's fingerprint, as `resetFingerprints` does. The fingerprints also
     /// forget them when the store they were computed from is reset.
     pub fn reset(&mut self) {
@@ -171,45 +345,7 @@ impl Fingerprints {
 
     /// Forgets the fingerprints of the values from this id on, which an overlay has let go of.
     pub fn forget_from(&mut self, id: Id) {
-        self.values.truncate(id as usize);
-    }
-
-    /// Adds the fingerprints this cache computed of an overlay's own values, which `imported` gives
-    /// the ids of in the store the overlay was laid on, by their position among them.
-    pub fn carry(&self, imported: &[Id], carried: &mut Carried) {
-        let bound = carried.bound;
-        let own = self.values.get(bound as usize..).unwrap_or_default();
-        for (&id, entry) in imported.iter().zip(own) {
-            if id == EMPTY_SLOT || id < bound || !entry.is_computed {
-                continue;
-            }
-            let index = (id - bound) as usize;
-            if index >= carried.values.len() {
-                carried
-                    .values
-                    .resize(index + 1, ValueFingerprint::default());
-            }
-            // A length table's number is this cache's own.
-            carried.values[index] = ValueFingerprint {
-                table: UNKNOWN_TABLE,
-                ..*entry
-            };
-        }
-    }
-
-    /// Forgets the fingerprints of the values from `bound` on, as [`Fingerprints::forget_from`]
-    /// does, then keeps those carried of the values imported from `bound` on, if they were carried
-    /// from overlays laid where this one was.
-    pub fn forget_from_carried(&mut self, bound: Id, carried: &Carried) {
-        self.values.truncate(bound as usize);
-        if carried.bound != bound {
-            return;
-        }
-        for (index, entry) in carried.values.iter().enumerate() {
-            if entry.is_computed {
-                *self.get_entry(bound + index as Id) = *entry;
-            }
-        }
+        self.values.truncate(id);
     }
 
     fn get_power(&mut self, exponent: usize) -> &ShiftTable {
@@ -301,21 +437,12 @@ impl Fingerprints {
         }
     }
 
-    fn get_entry(&mut self, id: Id) -> &mut ValueFingerprint {
-        let index = id as usize;
-        if index >= self.values.len() {
-            self.values
-                .resize((2 * (index + 1)).max(1024), ValueFingerprint::default());
-        }
-        &mut self.values[index]
-    }
-
     // Extends a fingerprint by a value whose F and length are known, with its table found once.
     fn extend_known(&mut self, fingerprint: u64, id: Id) -> u64 {
-        let entry = self.values[id as usize];
+        let entry = self.values.entry(id);
         let number = if entry.table == UNKNOWN_TABLE {
             let number = self.get_length_table(entry.length);
-            self.values[id as usize].table = number;
+            self.values.set_table(id, number);
             number
         } else {
             entry.table
@@ -341,71 +468,54 @@ impl Fingerprints {
     }
 
     /// F(v) and |v| of a value.
-    pub fn get_value(&mut self, store: &Store, id: Id) -> (u64, u64) {
+    pub fn get_value(&mut self, store: &Store, id: Id) -> Outcome<(u64, u64)> {
         self.check_generation(store);
-        self.compute(store, id);
-        let entry = self.values[id as usize];
-        (entry.fingerprint, entry.length)
+        self.compute(store, id)?;
+        let entry = self.values.entry(id);
+        Ok((entry.fingerprint, entry.length))
     }
 
     // Computes a value's F and length, its parts' first, without recursing: a value is computed
     // when it comes off the stack the second time, after the parts pushed above it.
     #[inline(always)]
-    fn compute(&mut self, store: &Store, id: Id) {
+    fn compute(&mut self, store: &Store, id: Id) -> Outcome<()> {
         // A value met before is known, as nearly every value of a generated state is.
-        if !self
-            .values
-            .get(id as usize)
-            .is_some_and(|entry| entry.is_computed)
-        {
-            self.compute_new(store, id);
+        if self.values.is_computed(id) {
+            return Ok(());
         }
+        self.compute_new(store, id)
     }
 
     #[inline(never)]
-    fn compute_new(&mut self, store: &Store, id: Id) {
+    fn compute_new(&mut self, store: &Store, id: Id) -> Outcome<()> {
         let mut pending = vec![(id, false)];
         while let Some((top, is_expanded)) = pending.pop() {
-            if self.get_entry(top).is_computed {
+            if self.values.is_computed(top) {
                 continue;
             }
             if is_expanded {
-                let computed = self.compute_one(store, top);
-                *self.get_entry(top) = computed;
+                let computed = self.compute_one(store, top)?;
+                self.values.set(top, computed);
                 continue;
             }
             pending.push((top, true));
-            Fingerprints::for_each_part(store, top, |part, _| {
+            Self::for_each_part(store, top, |part, _| {
                 if let Some(part) = part {
                     pending.push((part, false));
                 }
             });
         }
+        Ok(())
     }
 
-    fn compute_one(&mut self, store: &Store, id: Id) -> ValueFingerprint {
+    fn compute_one(&mut self, store: &Store, id: Id) -> Outcome<ValueFingerprint> {
         let (fingerprint, length) = match store.kind_of(id) {
-            KIND_BOOL => (
-                extend_byte(
-                    extend_byte(0, BOOL_VALUE),
-                    if id == TRUE { b't' } else { b'f' },
-                ),
-                2,
-            ),
-            KIND_INT => (get_int(store.int_of(id)), 5),
-            KIND_STRING => {
-                let text = store.text_of(id);
-                let start = extend_int(extend_byte(0, STRING_VALUE), text.len() as i32);
-                let fingerprint = text.iter().fold(start, |fingerprint, &unit| {
-                    extend_byte(fingerprint, unit as u8)
-                });
-                (fingerprint, 5 + text.len() as u64)
-            }
-            KIND_MODEL => (
-                extend_int(extend_byte(0, MODEL_VALUE), store.text_rank_of(id) + 1),
-                5,
-            ),
-            kind => {
+            KIND_BOOL => of_bool(id == TRUE),
+            KIND_INT => of_int(store.int_of(id)),
+            KIND_STRING => of_string(store.text_of(id)),
+            KIND_MODEL => of_model(store.text_rank_of(id)),
+            KIND_LAZY_FUNCTION | KIND_INFINITE_SET => return Err(UNFINGERPRINTABLE),
+            kind @ (KIND_SET | KIND_FUNCTION | KIND_TUPLE) => {
                 let tag = if kind == KIND_SET {
                     SET_ENUM_VALUE
                 } else {
@@ -414,12 +524,12 @@ impl Fingerprints {
                 let mut fingerprint = extend_int(extend_byte(0, tag), store.size_of(id) as i32);
                 let mut length = 5;
                 let mut parts = Vec::new();
-                Fingerprints::for_each_part(store, id, |part, index| parts.push((part, index)));
+                Self::for_each_part(store, id, |part, index| parts.push((part, index)));
                 for (part, index) in parts {
                     match part {
                         Some(part) => {
                             fingerprint = self.extend_known(fingerprint, part);
-                            length += self.values[part as usize].length;
+                            length += self.values.entry(part).length;
                         }
                         None => {
                             fingerprint = self.shift(fingerprint, 5) ^ get_int(index as i32 + 1);
@@ -429,21 +539,51 @@ impl Fingerprints {
                 }
                 (fingerprint, length)
             }
+            _ => return Err(UNFINGERPRINTABLE),
         };
-        ValueFingerprint {
+        Ok(ValueFingerprint {
             fingerprint,
             length,
             table: UNKNOWN_TABLE,
             is_computed: true,
-        }
+        })
+    }
+
+    /// F and length of a set outside a store, from those of its elements in TLC's order, or of a
+    /// function, from those of each key and its value in turn.
+    pub fn of_parts(&mut self, is_set: bool, parts: &[(u64, u64)]) -> (u64, u64) {
+        let (tag, size) = if is_set {
+            (SET_ENUM_VALUE, parts.len())
+        } else {
+            (FCN_RCD_VALUE, parts.len() / 2)
+        };
+        let start = (extend_int(extend_byte(0, tag), size as i32), 5);
+        parts
+            .iter()
+            .fold(start, |(fingerprint, length), &(part, part_length)| {
+                (
+                    self.shift(fingerprint, part_length) ^ part,
+                    length + part_length,
+                )
+            })
+    }
+
+    /// TLC's fingerprint of a state outside a store, from F and length of its values in TLC's
+    /// order.
+    pub fn of_state(&mut self, values: &[(u64, u64)]) -> u64 {
+        values
+            .iter()
+            .fold(INITIAL, |fingerprint, &(value, length)| {
+                self.shift(fingerprint, length) ^ value
+            })
     }
 
     /// TLC's fingerprint of one state, its values read in `order`.
-    pub fn get_state(&mut self, store: &Store, state: &[Id], order: &[usize]) -> u64 {
+    pub fn get_state(&mut self, store: &Store, state: &[Id], order: &[usize]) -> Outcome<u64> {
         self.check_generation(store);
-        order.iter().fold(INITIAL, |fingerprint, &index| {
-            self.compute(store, state[index]);
-            self.extend_known(fingerprint, state[index])
+        order.iter().try_fold(INITIAL, |fingerprint, &index| {
+            self.compute(store, state[index])?;
+            Ok(self.extend_known(fingerprint, state[index]))
         })
     }
 
@@ -463,7 +603,7 @@ impl Fingerprints {
         width: usize,
         order: &[usize],
         parents: Option<&[i32]>,
-    ) -> Vec<u64> {
+    ) -> Outcome<Vec<u64>> {
         self.check_generation(store);
         let count = states.len().checked_div(width).unwrap_or(0);
         let mut fingerprints = Vec::with_capacity(count);
@@ -487,14 +627,17 @@ impl Fingerprints {
                     fingerprints[earlier],
                     order,
                     &mut tails,
-                )
+                )?
             } else {
                 None
             };
-            let fingerprint = from_earlier.unwrap_or_else(|| self.get_state(store, row, order));
+            let fingerprint = match from_earlier {
+                Some(fingerprint) => fingerprint,
+                None => self.get_state(store, row, order)?,
+            };
             fingerprints.push(fingerprint);
         }
-        fingerprints
+        Ok(fingerprints)
     }
 
     // A state's fingerprint from that of an earlier one, if the values that differ keep their
@@ -507,18 +650,17 @@ impl Fingerprints {
         earlier_fingerprint: u64,
         order: &[usize],
         tails: &mut [(u64, i32)],
-    ) -> Option<u64> {
+    ) -> Outcome<Option<u64>> {
         let mut fingerprint = earlier_fingerprint;
         let mut tail = 0;
         for (position, &index) in order.iter().enumerate().rev() {
             let (id, earlier_id) = (row[index], earlier_row[index]);
-            self.compute(store, id);
+            self.compute(store, id)?;
             if id != earlier_id {
-                self.compute(store, earlier_id);
-                let (value, earlier_value) =
-                    (self.values[id as usize], self.values[earlier_id as usize]);
+                self.compute(store, earlier_id)?;
+                let (value, earlier_value) = (self.values.entry(id), self.values.entry(earlier_id));
                 if value.length != earlier_value.length {
-                    return None;
+                    return Ok(None);
                 }
                 if tails[position].0 != tail {
                     tails[position] = (tail, self.get_length_table(tail));
@@ -526,9 +668,9 @@ impl Fingerprints {
                 let changed = value.fingerprint ^ earlier_value.fingerprint;
                 fingerprint ^= self.shift_by_table(tails[position].1, changed, tail);
             }
-            tail += self.values[id as usize].length;
+            tail += self.values.entry(id).length;
         }
-        Some(fingerprint)
+        Ok(Some(fingerprint))
     }
 
     /// Makes `state`, its values read in `order` and its fingerprint `fingerprint`, the parent
@@ -541,7 +683,7 @@ impl Fingerprints {
         order: &[usize],
         fingerprint: u64,
         parent: &mut Parent,
-    ) {
+    ) -> Outcome<()> {
         self.check_generation(store);
         parent.fingerprint = fingerprint;
         parent.positions.resize(state.len(), 0);
@@ -561,9 +703,10 @@ impl Fingerprints {
                 let table = self.get_table_under(tail, MAXIMUM_LENGTH_TABLES / 2);
                 parent.tails[position] = (tail, table);
             }
-            self.compute(store, state[index]);
-            tail += self.values[state[index] as usize].length;
+            self.compute(store, state[index])?;
+            tail += self.values.entry(state[index]).length;
         }
+        Ok(())
     }
 
     /// The fingerprint of a successor of the parent [`Fingerprints::set_parent`] last set, from
@@ -578,7 +721,7 @@ impl Fingerprints {
         parent_state: &[Id],
         state: &[Id],
         order: &[usize],
-    ) -> u64 {
+    ) -> Outcome<u64> {
         self.check_generation(store);
         let mut fingerprint = parent.fingerprint;
         let mut first = order.len();
@@ -589,9 +732,9 @@ impl Fingerprints {
             }
             let position = parent.positions[index];
             first = first.min(position);
-            self.compute(store, id);
-            self.compute(store, parent_id);
-            let (value, parent_value) = (self.values[id as usize], self.values[parent_id as usize]);
+            self.compute(store, id)?;
+            self.compute(store, parent_id)?;
+            let (value, parent_value) = (self.values.entry(id), self.values.entry(parent_id));
             let (tail, table) = parent.tails[position];
             is_in_place &= value.length == parent_value.length && table != NO_TABLE;
             if is_in_place {
@@ -600,7 +743,7 @@ impl Fingerprints {
             }
         }
         if is_in_place {
-            return fingerprint;
+            return Ok(fingerprint);
         }
         while parent.prefixes.len() <= first {
             let position = parent.prefixes.len() - 1;
@@ -608,11 +751,11 @@ impl Fingerprints {
                 self.extend_known(parent.prefixes[position], parent_state[order[position]]);
             parent.prefixes.push(prefix);
         }
-        order[first..]
+        Ok(order[first..]
             .iter()
             .fold(parent.prefixes[first], |fingerprint, &index| {
                 self.extend_known(fingerprint, state[index])
-            })
+            }))
     }
 
     /// The fingerprints extended over every value of every state, which
@@ -623,17 +766,17 @@ impl Fingerprints {
         states: &[Id],
         width: usize,
         order: &[usize],
-    ) -> Vec<u64> {
+    ) -> Outcome<Vec<u64>> {
         self.check_generation(store);
         if width == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         states
             .chunks_exact(width)
             .map(|row| {
-                order.iter().fold(INITIAL, |fingerprint, &index| {
-                    let (value, length) = self.get_value(store, row[index]);
-                    self.shift_by_powers(fingerprint, length) ^ value
+                order.iter().try_fold(INITIAL, |fingerprint, &index| {
+                    let (value, length) = self.get_value(store, row[index])?;
+                    Ok(self.shift_by_powers(fingerprint, length) ^ value)
                 })
             })
             .collect()
@@ -643,4 +786,29 @@ impl Fingerprints {
 // F of an integer.
 fn get_int(value: i32) -> u64 {
     extend_int(extend_byte(0, INT_VALUE), value)
+}
+
+/// F and length of a boolean, as of a store's.
+pub fn of_bool(value: bool) -> (u64, u64) {
+    let byte = if value { b't' } else { b'f' };
+    (extend_byte(extend_byte(0, BOOL_VALUE), byte), 2)
+}
+
+/// F and length of an integer.
+pub fn of_int(value: i32) -> (u64, u64) {
+    (get_int(value), 5)
+}
+
+/// F and length of a string.
+pub fn of_string(text: &[u16]) -> (u64, u64) {
+    let start = extend_int(extend_byte(0, STRING_VALUE), text.len() as i32);
+    let fingerprint = text.iter().fold(start, |fingerprint, &unit| {
+        extend_byte(fingerprint, unit as u8)
+    });
+    (fingerprint, 5 + text.len() as u64)
+}
+
+/// F and length of a model value, by the rank of its name.
+pub fn of_model(rank: i32) -> (u64, u64) {
+    (extend_int(extend_byte(0, MODEL_VALUE), rank + 1), 5)
 }

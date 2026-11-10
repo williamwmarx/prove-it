@@ -1583,9 +1583,10 @@ this design change, the code wins, and this records how:
   that ran before. `PROVE_IT_ENGINE=debug` reports `[engine] native: ir: <n> bytes in <ms> ms` or
   `native: ir: declined: <reason>`, after the file is written.
 - **Layout** (`ir.ts`'s header comment is the reference). Little-endian 32-bit words, then the
-  texts as one UTF-8 string, padded to a word. Each text's end is a count of UTF-16 code units, so
-  JavaScript encodes every text in one `TextEncoder` call; a text with a lone surrogate, which UTF-8
-  can't hold, declines the IR. Text `i` below the ranked count is the string of rank `i`; the texts
+  texts as one WTF-8 string, padded to a word: UTF-8, which also encodes a lone surrogate, since
+  a string TLC computes at startup can hold one, as `Tail("😀a")` does. Each text's end is a count
+  of UTF-16 code units, so JavaScript encodes every well-formed text in one `TextEncoder` call, and
+  `Ir::wide_texts` keeps the units of a text with a lone surrogate. Text `i` below the ranked count is the string of rank `i`; the texts
   TLC doesn't rank, such as names and the TLC version, follow. Sections: texts, variables in the
   engine's order and TLC's order of them, the builtins named (name, arity, state-level, level-
   constant and lazy flags), the constants named, the instance scopes read (a value, a thunk, a
@@ -2689,3 +2690,32 @@ Speed is measured at F2, F4 and F8 on the largest corpus modules (`TE.tla`, 2.9 
 the TypeScript front end in Bun.
 
 The milestones' as-built notes are in [design/front.md](design/front.md).
+
+## 15. Handoff: native IO, startup failures and WebAssembly (2026-11-09)
+
+**Done on native-parity.**
+- The engine reads and writes the Json module's files where it is native (`tla-values/src/json.rs`).
+- The replay rebuilds an ALIAS that fails (`_ALIASEvalError`), and evaluates IOUtils's `Serialize` as `Json.textSerialize`.
+- `x' \subseteq S`, and `\cap` and `\` with a set TLC only tests for membership, are native.
+- TLCExt's `Trace` hands over only where it is evaluated.
+- The native checker follows TLC's startup to an assumption that fails: definitions and substitutes that fail are swallowed, and the replay words the 2105, `TLCEval`'s Java failure included.
+- These models print what TLC prints: EWD840_json, EWD998ChanTrace, Traceetcdraft, suite/test8 and SubseteqNextState.
+
+**Open: the startup declines taken from the gaps session.** Each must end in TLC's exact output, which the recordings hold:
+- suite/etest12 and etest13: Cardinality's "Overflow when computing the number of elements in:\n[0..2 -> 1..2000]", wrapped as `FiniteSets.Cardinality`'s Java failure. The engine declines first, with "function set too large to build".
+- StringDeserialize: "TLC attempted to evaluate an unbounded CHOOSE", with IOUtils's location.
+- qlearning/Counter: a nonexistent field of `TLCGet("config")`.
+- ModuleSemanticsAssume and EmptySetEqAssume: their `AssertError` assumptions hold in TLC, which completes with no error.
+- Done since: suite/etest12 and etest13, and StringDeserialize, print what TLC prints. AssertError
+  assumptions go to the trace evaluator (`design/cli.md`), but each corpus model with them is
+  blocked elsewhere, as noted there. qlearning/Counter needs TLCDefer and TLCGet("config") in the
+  replay, and at best differs as known, since TLC's record holds its install path.
+- The replay doesn't read or write Json files. It evaluates their arguments, then gives up, since it can't rank the strings a file holds as TLC does.
+
+**engine-wasm (pushed at 58710d0, no PR).**
+- `prove-it-host` holds what both bindings hand JavaScript.
+- `prove-it-wasm` is the WebAssembly binding. `src/engine/wasm.ts` is its loader, and §7.4 describes it.
+- The wasm32 platform package is built by `platform-packages.ts build --target wasm32-unknown-unknown`.
+- Its differential against the addon matched on 657 of 657 runs.
+- It branched before the latest native-parity, so it merges once native-parity lands, together with option C (exit 255, from #157).
+- When merging, rebuild the IR goldens and redo the `Settings` fields that native-parity added since: `workers`, and the `is_native` the Json operators read. `prove-it-host/src/outcome.rs` builds them for both bindings.

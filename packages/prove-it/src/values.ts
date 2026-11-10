@@ -1,5 +1,6 @@
 import { TlaEvaluationError } from "./errors";
 import { prettyPrint } from "./pretty-print";
+import { isEvalException } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
 
 export interface ModelValue {
@@ -1028,12 +1029,18 @@ const equalsFunctionLikeTlc = (left: FunctionValue | LazyFunctionValue, right: V
 };
 
 const equalsSetLikeTlc = (left: ObjectValue, right: Value): boolean => {
+  // UserValue.equals compares, which puts any model value first and fails on any other value but
+  // a set.
+  if (isOverriddenSet(left) && isModelValue(right)) return false;
+  if (isOverriddenSet(left) && !isSetValue(right)) {
+    return compareOverriddenSets(left, right, "check equality of") === 0;
+  }
   if (isComparedByClass(left, right)) return valuesEqual(left, right);
   if (!isEnumeratedSet(left)) return equalsSetLikeTlc(toFiniteSet(left), right);
   if (!isSetValue(right)) {
     if (isModelValue(right)) return equalsModelValueWith(right, left);
     throw new TlaEvaluationError(
-      `Attempted to check equality of the set ${formatValue(left)} with the value:\n${formatValue(right)}`,
+      `Attempted to check equality of the set ${prettyPrint(formatValue(left))} with the value:\n${prettyPrint(formatValue(right))}`,
     );
   }
   const sets = getSetElementsLikeTlc(left, right);
@@ -1963,6 +1970,12 @@ const findSortedIndex = (sortedValues: Value[], target: Value, compare = compare
 
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
+  // FcnLambdaValue.toTuple enumerates its domain, which a set a Java class overrides can't.
+  if (value.kind === "LazyFunction" && isOverriddenSet(value.domain)) {
+    throw new TlaEvaluationError(
+      "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
+    );
+  }
   const functionValue = toFiniteFunction(value);
   return functionValue.domain.every((key, index) => key === index + 1)
     ? functionValue.range
@@ -2042,6 +2055,29 @@ const isInSortedSetLikeTlc = (element: Value, set: SetValue) =>
     ? searchLikeTlc(element, set.elements).isFound
     : isElementOfLikeTlc(element, set.elements);
 
+// ModelValue.modelValueMember, to which the sets the standard modules override and the sets of
+// functions, records and tuples hand a model value: false, unless it is typed.
+const isModelValueMember = (element: ModelValue, set: Value) => {
+  if (element.type === undefined) return false;
+  throw new TlaEvaluationError(
+    `Attempted to check if the typed model value ${prettyPrint(formatValue(element))} is an element of\n${prettyPrint(formatValue(set))}`,
+  );
+};
+
+// SetPredValue.member words an EvalException of its predicate as its own failure.
+const testFilteredElement = (element: Value, set: FilteredSetValue) => {
+  try {
+    return set.test(element);
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError) || !isEvalException(error) || !set.source) {
+      throw error;
+    }
+    throw new TlaEvaluationError(
+      `Cannot decide if element:\n${prettyPrint(formatValue(element))}\n is element of:\n${prettyPrint(formatValue(set.base))}\nand satisfies the predicate ${set.source.predicate}`,
+    );
+  }
+};
+
 const isElementOfSet = (element: Value, set: Value): boolean => {
   if (!isSetValue(set)) throw new TlaEvaluationError(describeNonSetMembership(element, set));
   switch (set.kind) {
@@ -2053,7 +2089,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       return isElementOfLikeTlc(element, set.elements);
     case "Interval":
       if (typeof element === "number") return element >= set.low && element <= set.high;
-      if (set.low <= set.high && !isModelValue(element)) {
+      if (set.low <= set.high && (!isModelValue(element) || element.type !== undefined)) {
         throw new TlaEvaluationError(
           `Attempted to check if the value:\n${formatValue(element)}\nis in the integer interval ${formatValue(set)}`,
         );
@@ -2061,7 +2097,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       return false;
     case "InfiniteSet": {
       if (set.name === "Any") return true;
-      if (isModelValue(element)) return false;
+      if (isModelValue(element)) return isModelValueMember(element, set);
       const isMemberType =
         set.name === "STRING" ? typeof element === "string" : typeof element === "number";
       if (!isMemberType) {
@@ -2082,7 +2118,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       return toFiniteSet(element).elements.every((item) => isElementOf(item, set.base));
     case "FunctionSet": {
       if (!isFunctionValue(element)) {
-        if (isModelValue(element)) return false;
+        if (isModelValue(element)) return isModelValueMember(element, set);
         // SetOfFcnsValue.member prints the element without Values.ppr.
         throw new TlaEvaluationError(
           `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
@@ -2102,7 +2138,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
     case "RecordSet": {
       const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
       if (!functionValue || !isRecordDomain(functionValue.domain)) {
-        if (isModelValue(element)) return false;
+        if (isModelValue(element)) return isModelValueMember(element, set);
         throw new TlaEvaluationError(
           `Attempted to check if non-record\n${formatValue(element)}\nis in the set of records:\n${formatValue(set)}`,
         );
@@ -2121,7 +2157,8 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
         const isFunction =
           isFunctionValue(element) &&
           toFiniteFunction(element).domain.every((key) => typeof key === "number");
-        if (isFunction || isModelValue(element)) return false;
+        if (isModelValue(element)) return isModelValueMember(element, set);
+        if (isFunction) return false;
         throw new TlaEvaluationError(
           `Attempted to check if non-tuple\n${formatValue(element)}\nis in the set of tuples:\n${formatValue(set)}`,
         );
@@ -2132,7 +2169,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
       );
     }
     case "FilteredSet":
-      return isElementOf(element, set.base) && set.test(element);
+      return isElementOf(element, set.base) && testFilteredElement(element, set);
     case "Union":
       if (!isTlcEnumerable(set.base)) {
         throw new TlaEvaluationError(
@@ -2150,7 +2187,7 @@ const isElementOfSet = (element: Value, set: Value): boolean => {
     case "SequenceSet": {
       const elements = getSequenceElements(element);
       if (elements === undefined) {
-        if (isModelValue(element)) return false;
+        if (isModelValue(element)) return isModelValueMember(element, set);
         // Sequences.member raises TLC_MODULE_CHECK_MEMBER_OF.
         throw new TlaEvaluationError(
           `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of ${prettyPrint(formatValue(set))}.`,

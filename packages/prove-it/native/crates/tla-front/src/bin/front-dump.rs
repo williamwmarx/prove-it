@@ -19,6 +19,12 @@
 //!   its definitions in the order TLC computes them;
 //! - `front-dump model-ir [--library <directory>]` reads lines as `model` does and writes the IR
 //!   of each model's environment as `ir` does, with the texts ranked in TLC's string order;
+//! - `front-dump pcal` writes SANY's validation of each module's PlusCal algorithm, for TLC
+//!   master and 1.7.4: its results, what the translator logs, and the exception it throws;
+//! - `front-dump sany-parse-error` writes SANY's report of a module its lexer or parser rejects,
+//!   for TLC master and 1.7.4, and TLC 1.7.4's lexical error, or null for each it accepts;
+//! - `front-dump coded` reads each file as an error's message and writes TLC's code for it, and
+//!   the message as TLC prints it with and without -tool;
 //! - `front-dump time` writes the best of five times to tokenize and parse each module, in
 //!   milliseconds.
 
@@ -33,14 +39,20 @@ use tla_front::config::parse_config;
 use tla_front::dump;
 
 use tla_front::ast::{Expression, ExpressionKind, Location};
+use tla_front::dependencies::create_definition_facts;
 use tla_front::environment::{Environment, EnvironmentOptions, create_environment};
 use tla_front::errors::FrontError;
 use tla_front::json::write_js_string;
 use tla_front::lexer::tokenize;
 use tla_front::lower::{Lowering, RankedTexts};
+use tla_front::model::{ModelOptions, lower_model};
 use tla_front::order::TlcOrder;
 use tla_front::parser::{parse_module, parse_sany_module};
-use tla_ir::Model;
+use tla_front::pcal::{PcalFatal, PcalSession};
+use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text};
+use tla_front::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
+use tla_front::spec::{get_properties, get_specification};
+use tla_ir::{Model, Startup};
 
 fn write_tokens(out: &mut String, source: &str) {
     match tokenize(source) {
@@ -99,6 +111,17 @@ fn link(
     library: Option<&Path>,
     config: Option<&str>,
 ) -> Result<Environment, FrontError> {
+    link_checked(source, path, library, config, false)
+}
+
+/// Links the spec at `path`, checking its levels when `is_level_checked`.
+fn link_checked(
+    source: &str,
+    path: &Path,
+    library: Option<&Path>,
+    config: Option<&str>,
+    is_level_checked: bool,
+) -> Result<Environment, FrontError> {
     let load_module = |name: &str| load(path, library, name);
     let parsed = match config {
         None => parse_config("", TlcVersion::Master),
@@ -113,6 +136,8 @@ fn link(
                 config: &model,
                 is_unconfigured: config.is_none(),
                 version: TlcVersion::Master,
+                is_level_checked,
+                load_class: None,
             })
         })
 }
@@ -154,31 +179,39 @@ fn lower_definitions(
         .collect();
     let model = Model {
         init,
-        next,
+        next: Some(next),
         scope: None,
         actions: Vec::new(),
         is_labelled: false,
         invariants,
         property_invariants: Vec::new(),
         property_invariant_names: Vec::new(),
+        property_invariant_scopes: Vec::new(),
         constraints: Vec::new(),
         action_constraints: Vec::new(),
         possible: Vec::new(),
         action_properties: Vec::new(),
         initial_predicates: Vec::new(),
+        initial_predicate_scopes: Vec::new(),
+        initial_predicate_names: Vec::new(),
         view: None,
-        symmetry: None,
+        alias: None,
+        postconditions: Vec::new(),
         check_deadlock: true,
         is_warning_enabled: true,
         is_recording_graph: false,
         version: None,
-        // TLC's default seed, 0, and java.util.Random seeded with it, which no assumption has drawn
-        // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
+        // TLC's default seed.
         random_seed: 0,
-        startup_random: 0x5_DEEC_E66D,
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
+        specification: None,
+        startup: Startup::default(),
+        next_substitution: None,
+        instance_actions: Vec::new(),
+        instance_names: Vec::new(),
+        tlc_spec: None,
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }
@@ -226,6 +259,8 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
                 config: &model,
                 is_unconfigured: false,
                 version: TlcVersion::Master,
+                is_level_checked: false,
+                load_class: None,
             })?;
             let ranks = texts
                 .iter()
@@ -241,6 +276,45 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
             )
         });
     write_ir(out, lowered);
+}
+
+/// The IR of a model as `check.ts` lowers it, without TLC's actions, which the engine splits.
+/// What SANY prints for the spec at `path`, with each file described by its module's name and
+/// origin.
+fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
+    let load_module = |name: &str| load(path, library, name);
+    let describe_file = |name: &str, origin: ModuleOrigin| format!("{name}|{origin:?}");
+    match get_sany_text(
+        path,
+        &ReportOptions {
+            version: TlcVersion::Master,
+            file_name: None,
+            load_module: &load_module,
+            describe_file: &describe_file,
+        },
+    ) {
+        Ok(sany) => {
+            out.push_str("{\"text\":");
+            write_js_string(out, &sany.text);
+            out.push_str(if sany.is_failed {
+                ",\"isFailed\":true}"
+            } else {
+                ",\"isFailed\":false}"
+            });
+        }
+        Err(error) => dump::environment(&Err(error)).write(out),
+    }
+}
+
+fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: Option<&Path>) {
+    let options = ModelOptions {
+        libraries: library.as_slice(),
+        version: None,
+        is_warning_enabled: true,
+        is_spec_described: false,
+        random_seed: 0,
+    };
+    write_ir(out, lower_model(spec_path, config, &options));
 }
 
 /// TLC's orders of a model: its string order, the root module's variables and constants, and the
@@ -286,6 +360,43 @@ fn write_order(out: &mut String, config: &str, spec_path: &Path, library: Option
     }
 }
 
+fn write_pcal_validation(out: &mut String, source: &str, version: TlcVersion) {
+    let lines: Vec<&str> = source
+        .split("\r\n")
+        .flat_map(|line| line.split(['\r', '\n']))
+        .collect();
+    let mut session = PcalSession::new();
+    let outcome = session.validate(&lines, version);
+    out.push('{');
+    if let Err(fatal) = &outcome {
+        let (PcalFatal::Runtime(message) | PcalFatal::Bug(message)) = fatal;
+        out.push_str("\"fatal\":");
+        write_js_string(out, message);
+        out.push(',');
+    }
+    out.push_str("\"log\":[");
+    for (index, line) in session.log.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write_js_string(out, line);
+    }
+    out.push(']');
+    if let Ok(results) = &outcome {
+        let mut names: Vec<&str> = results.iter().map(|result| result.name()).collect();
+        names.sort_unstable();
+        out.push_str(",\"results\":[");
+        for (index, name) in names.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            write_js_string(out, name);
+        }
+        out.push(']');
+    }
+    out.push('}');
+}
+
 fn write_time(out: &mut String, source: &str) {
     let best = (0..5)
         .map(|_| {
@@ -306,11 +417,46 @@ fn main() -> ExitCode {
         .and_then(|index| arguments.get(index + 1))
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
-        "resolve" | "model" | "ir" | "order" | "model-ir" => |_, _| {},
+        "resolve" | "model" | "ir" | "order" | "model-ir" | "model-full" | "spec"
+        | "properties" | "sany-text" | "levels" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, source, false),
         "sany-ast" => |out, source| write_module(out, source, true),
         "time" => write_time,
+        "sany-parse-error" => |out, source| {
+            let write = |out: &mut String, text: Option<String>| match text {
+                Some(text) => write_js_string(out, &text),
+                None => out.push_str("null"),
+            };
+            out.push_str("{\"master\":");
+            write(out, get_sany_parse_error(source, TlcVersion::Master));
+            out.push_str(",\"v174\":");
+            write(out, get_sany_parse_error(source, TlcVersion::V1_7_4));
+            out.push_str(",\"lexical174\":");
+            write(out, get_sany_174_lexical_error(source));
+            out.push('}');
+        },
+        "coded" => |out, source| {
+            let error = FrontError::Config(source.to_owned());
+            let write = |out: &mut String, is_tool: bool| {
+                if let Some(coded) = error.get_coded(is_tool) {
+                    let _ = write!(out, "{},", coded.code);
+                    write_js_string(out, &coded.text);
+                }
+            };
+            out.push('[');
+            write(out, false);
+            out.push(',');
+            write(out, true);
+            out.push(']');
+        },
+        "pcal" => |out, source| {
+            out.push_str("{\"master\":");
+            write_pcal_validation(out, source, TlcVersion::Master);
+            out.push_str(",\"v174\":");
+            write_pcal_validation(out, source, TlcVersion::V1_7_4);
+            out.push('}');
+        },
         "config" => |out, source| {
             out.push_str("{\"master\":");
             dump::config(&parse_config(source, TlcVersion::Master)).write(out);
@@ -320,7 +466,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|config|resolve|model|ir|order|model-ir|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|config|coded|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
             );
             return ExitCode::from(2);
         }
@@ -336,7 +482,16 @@ fn main() -> ExitCode {
             }
         };
         let mut line = String::new();
-        if mode == "model-ir" {
+        if mode == "levels" {
+            match link_checked(&source, Path::new(&path), library.as_deref(), None, true) {
+                Ok(_) => line.push_str("{\"isLevelChecked\":true}"),
+                Err(error) => dump::environment(&Err(error)).write(&mut line),
+            }
+        } else if mode == "sany-text" {
+            write_sany_text(&mut line, Path::new(&path), library.as_deref());
+        } else if mode == "model-full" {
+            write_model_full(&mut line, &source, Path::new(spec_path), library.as_deref());
+        } else if mode == "model-ir" {
             write_model_ir(&mut line, &source, Path::new(spec_path), library.as_deref());
         } else if mode == "order" {
             write_order(&mut line, &source, Path::new(spec_path), library.as_deref());
@@ -350,6 +505,36 @@ fn main() -> ExitCode {
                 library.as_deref(),
                 None,
             );
+        } else if mode == "properties" {
+            let spec = std::fs::read_to_string(spec_path).unwrap_or_default();
+            let properties = link(
+                &spec,
+                Path::new(spec_path),
+                library.as_deref(),
+                Some(&source),
+            )
+            .and_then(|environment| {
+                let config = parse_config(&source, TlcVersion::Master)
+                    .map_err(|error| FrontError::Config(error.message))?;
+                let facts = create_definition_facts(&environment);
+                get_properties(&config, &environment, &facts, TlcVersion::Master, None)
+            });
+            dump::properties(&properties).write(&mut line);
+        } else if mode == "spec" {
+            let spec = std::fs::read_to_string(spec_path).unwrap_or_default();
+            let specification = link(
+                &spec,
+                Path::new(spec_path),
+                library.as_deref(),
+                Some(&source),
+            )
+            .and_then(|environment| {
+                let config = parse_config(&source, TlcVersion::Master)
+                    .map_err(|error| FrontError::Config(error.message))?;
+                let facts = create_definition_facts(&environment);
+                get_specification(&config, &environment, &facts, TlcVersion::Master, None)
+            });
+            dump::specification(&specification).write(&mut line);
         } else if mode == "model" {
             // The line names the configuration and then, after a tab, the spec.
             let spec = std::fs::read_to_string(spec_path).unwrap_or_default();

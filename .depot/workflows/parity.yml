@@ -4,9 +4,10 @@
 # model with the engine on and off and fails if the two reach different outcomes; Differential
 # compares Prove It's full output, with the engine, without it, and stopped part way, with TLC's
 # recorded in tests/conformance/tlc-stdout, and the native engine's with the TypeScript engine's,
-# and fails on a difference tests/conformance/known-differences.json doesn't list. It runs by hand
-# and on every push to main, never on a pull request, and holds no credential. Each job's results
-# are its artifact.
+# and fails on a difference tests/conformance/known-differences.json doesn't list; it then runs the
+# native binary alone, with no recorded front, and fails on a difference with TLC that file doesn't
+# list. It runs by hand and on every push to main, never on a pull request, and holds no
+# credential. Each job's results are its artifact.
 name: Parity
 "on":
   workflow_dispatch:
@@ -167,6 +168,30 @@ jobs:
             echo
             echo '```'
             sed -n '/^┌/,$p' "$RUNNER_TEMP/parity/differential.log" | head -100
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      # The end state: tla-front is the whole front end, with no front the TypeScript CLI recorded.
+      - name: Compare the native binary's output with TLC's, with no recorded front
+        if: success() || failure()
+        env:
+          FILTER: ${{ inputs.filter || '' }}
+          MAX_TLC_MS: ${{ inputs.max_tlc_ms || '20000' }}
+        run: |
+          set -euo pipefail
+          PATH="$(scripts/ci/bootstrap.sh bun node):$PATH"
+          cd packages/prove-it
+          mkdir -p "$RUNNER_TEMP/parity"
+          status=0
+          bun scripts/run.ts differential --native-only --concurrency 12 \
+            --max-tlc-ms "$MAX_TLC_MS" --native "$PWD/native/target/release/prove-it" \
+            ${FILTER:+--filter "$FILTER"} --out "$RUNNER_TEMP/parity/differential-native.json" \
+            | tee "$RUNNER_TEMP/parity/differential-native.log" || status=$?
+          {
+            echo "## Differential without a recorded front"
+            echo
+            echo '```'
+            sed -n '/^native:/,$p' "$RUNNER_TEMP/parity/differential-native.log" | head -100
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"

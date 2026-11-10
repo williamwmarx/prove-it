@@ -15,9 +15,16 @@ const TEMPORARY_DIRECTORY_PROPERTY = "-Djava.io.tmpdir=";
 const TLC_VERSION_PROPERTY = "-Dtla-ts.tlc=";
 
 const getJavaLaunch = (args: string[]) => {
-  const java: JavaProperties = { libraries: [] };
+  const java: JavaProperties = { libraries: [], properties: new Map() };
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
+    if (arg.startsWith("-D")) {
+      const separator = arg.indexOf("=");
+      java.properties.set(
+        arg.slice(2, separator === -1 ? undefined : separator),
+        separator === -1 ? "" : arg.slice(separator + 1),
+      );
+    }
     if (arg === "-cp" || arg === "-classpath" || arg === "--class-path") {
       index++;
       java.classPath = args[index];
@@ -44,7 +51,7 @@ const run = async (args: string[]) => {
     return reportErrors(() => tlapm.runTlapm(args.slice(1)));
   }
   const launch = getJavaLaunch(args);
-  if (launch === undefined) return checkSpecs(args, { libraries: [] });
+  if (launch === undefined) return checkSpecs(args, { libraries: [], properties: new Map() });
   launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
   if (launch.mainClass === "tlc2.TLC") return checkSpecs(launch.args, launch.java);
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {

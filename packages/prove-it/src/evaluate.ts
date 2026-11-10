@@ -102,6 +102,11 @@ export interface Builtin {
   // Whether TLC takes an application for a constant one although its value depends on the state.
   isLevelConstant?: boolean;
   isLazy?: boolean;
+  // Whether it is the >= of tlc2.module.Naturals, which names itself > in its errors.
+  isNaturalsGeq?: boolean;
+  // A configuration's definition of a constant operator by its values, F(0) = 1: each row's
+  // arguments and value.
+  table?: [Value[], Value][];
 }
 
 export interface Closure {
@@ -313,12 +318,14 @@ export const getFieldSelector = (expression: Expression & { kind: "FieldAccess" 
     `Attempted to select nonexistent field "${field}" from the record\n${formatValue(record)}\n${describeRange(expression)}`;
   const describeNotInDomain = (functionValue: Value) =>
     `Attempted to apply function:\n${prettyPrint(formatValue(functionValue))}\nto argument "${field}", which is not in the domain of the function.`;
-  return (value: Value) => {
-    if (!isFunctionValue(value)) {
+  return (selected: Value) => {
+    if (!isFunctionValue(selected)) {
       throw new TlaEvaluationError(
-        `Attempted to select field "${field}" from a non-record value ${prettyPrint(formatValue(value))}\n${describeRange(expression)}`,
+        `Attempted to select field "${field}" from a non-record value ${prettyPrint(formatValue(selected))}\n${describeRange(expression)}`,
       );
     }
+    // TLC selects from the function it builds of one it keeps lazy (toFcnRcd).
+    const value = selected.kind === "LazyFunction" ? toFiniteFunction(selected) : selected;
     const functionClass = getFunctionClass(value);
     if (functionClass === "tuple") throw createNonIntegerKeyError(field);
     // Only TLC's RecordValue names the field it lacks. Any other function, such as a FcnRcdValue
@@ -811,14 +818,19 @@ export const getStartupValue = (definition: Definition, environment: Environment
   return id === undefined ? undefined : environment.startupValues[id];
 };
 
+// Whether TLC computes a definition when it starts: one with no parameters, of constant level,
+// whose name the configuration doesn't replace. Nothing but linking decides it.
+export const isStartupDefinition = (definition: Definition, environment: Environment) =>
+  (definition.kind !== "Operator" || definition.params.length === 0) &&
+  !environment.constants.has(definition.name) &&
+  !environment.substitutions.has(definition.name) &&
+  isConstantLevel(definition, environment);
+
 // TLC computes each constant definition the configuration doesn't replace when it starts, and
 // leaves one it fails to compute to evaluate where the spec uses it.
 export const evaluateStartupDefinitions = (definitions: Definition[], environment: Environment) =>
   definitions.forEach((definition) => {
-    if (definition.kind === "Operator" && definition.params.length > 0) return;
-    const name = definition.name;
-    if (environment.constants.has(name) || environment.substitutions.has(name)) return;
-    if (!isConstantLevel(definition, environment)) return;
+    if (!isStartupDefinition(definition, environment)) return;
     const id = environment.facts.ids.get(definition);
     if (id === undefined || environment.startupValues[id] !== undefined) return;
     const context = { environment, scope: undefined, state: undefined, next: undefined };
@@ -1498,6 +1510,11 @@ const compileApply = (
     const subset = getSubsetOperator(expression, global);
     return (context) => subset(left(context), right(context));
   }
+  // A configuration may substitute a value such as FALSE for an operator with parameters, and
+  // TLC then takes the value, without evaluating the arguments (Tool.evalAppl).
+  if (global?.kind === "Builtin" && global.arity === 0) {
+    return (context) => global.evaluate([], context);
+  }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
   // TLC refuses action composition unless a Java property enables its incomplete implementation.
   if (expression.operator === "\\cdot" && args.length === 2) {
@@ -1940,7 +1957,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         location: expression.location,
       });
       const current = getChildEvaluator(expression.expression);
-      return (context) => valuesEqual(primed(context), current(context));
+      // TLC evaluates the current state's side first (Tool.evalAppl's OPCODE_unchanged).
+      return (context) => valuesEqual(current(context), primed(context));
     }
     case "If": {
       const condition = getChildEvaluator(expression.condition);

@@ -5,7 +5,7 @@ use tla_front::TlcVersion;
 use tla_front::ast::{DefinitionKind, Expression, ExpressionKind};
 use tla_front::config::parse_config;
 use tla_front::environment::{Environment, EnvironmentOptions, create_environment};
-use tla_front::errors::FrontError;
+use tla_front::errors::{FrontError, describe_range};
 
 fn link(source: &str, modules: &[(&str, &str)]) -> Result<Environment, FrontError> {
     link_model(source, modules, None)
@@ -29,6 +29,8 @@ fn link_model(
         config: &model,
         is_unconfigured: config.is_none(),
         version: TlcVersion::Master,
+        is_level_checked: false,
+        load_class: None,
     })
 }
 
@@ -128,6 +130,23 @@ fn reports_a_missing_module_in_its_importer() {
 }
 
 #[test]
+fn sees_a_declaration_only_after_it() {
+    let error = link(
+        "---- MODULE Main ----\nFoo == x = 1\nVARIABLE x\nP == INSTANCE Counter\nVARIABLE y\n====",
+        &[("Counter", "---- MODULE Counter ----\nVARIABLE x, y\n====")],
+    )
+    .err()
+    .expect("an error");
+    assert_eq!(
+        sany_messages(error),
+        [
+            "line 2, col 8 to line 2, col 8 of module Main: Unknown operator: `x'.",
+            "line 4, col 1 to line 4, col 21 of module Main: Substitution missing for symbol y declared at line 2, col 13 to line 2, col 13 of module Counter \nand instantiated in module Main.",
+        ]
+    );
+}
+
+#[test]
 fn copies_the_definitions_an_instance_substitutes_into() {
     let environment = link(
         "---- MODULE Main ----\nVARIABLE y\nC == INSTANCE Counter WITH x <- y\nNext == C!Step\n====",
@@ -195,4 +214,54 @@ fn assigns_and_substitutes_the_constants_of_the_configuration() {
                 .to_owned()
         )
     );
+}
+
+#[test]
+fn rejects_a_substitute_that_fails_at_startup() {
+    // TLC's etest7 and TLCGetNamedUndefined: TLC evaluates a non-constant substitute at startup.
+    let variable = "---- MODULE Main ----\nCONSTANT C\nVARIABLE x\nFoo == x\n====";
+    assert_eq!(
+        link_model(variable, &[], Some("CONSTANT C <- Foo")).err(),
+        Some(FrontError::Config(
+            "The configuration file substitutes constant C with non-constant Foo - specifically: In evaluation, the identifier x is either undefined or not an operator.\nline 4, col 8 to line 4, col 8 of module Main".to_owned()
+        ))
+    );
+    let checker =
+        "---- MODULE Main ----\nEXTENDS TLC\nCONSTANT A\nqueue == TLCGet(\"queue\")\n====";
+    let error = link_model(checker, &[], Some("CONSTANT A <- queue")).err();
+    assert!(
+        matches!(error, Some(FrontError::Config(message)) if message.ends_with("TLCGet(queue) was undefined."))
+    );
+}
+
+#[test]
+fn lists_the_assumptions_and_startup_definitions_of_a_model() {
+    let environment = link_model(
+        "---- MODULE Main ----\nEXTENDS Base\nASSUME Two == N > 1\nAXIOM N > 0\nDouble == 2 * N\nInit == TRUE\n====",
+        &[(
+            "Base",
+            "---- MODULE Base ----\nEXTENDS Naturals\nCONSTANT N\nASSUME N \\in Nat\nHalf == N \\div 2\n====",
+        )],
+        Some("CONSTANT N = 3\nINIT Init\nNEXT Init"),
+    )
+    .expect("an environment");
+    let assumptions: Vec<String> = environment
+        .assumptions
+        .iter()
+        .map(|assumption| describe_range(&assumption.expression))
+        .collect();
+    assert_eq!(
+        assumptions,
+        [
+            "line 4, col 8 to line 4, col 16 of module Base",
+            "line 3, col 15 to line 3, col 19 of module Main",
+            "line 4, col 7 to line 4, col 11 of module Main",
+        ]
+    );
+    let startup: Vec<&str> = environment
+        .startup_definitions
+        .iter()
+        .map(|definition| &*definition.name)
+        .collect();
+    assert!(startup.contains(&"Half") && startup.contains(&"Double"));
 }

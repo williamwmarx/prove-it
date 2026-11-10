@@ -228,7 +228,7 @@ unsafe fn create_verdict(env: napi_env, liveness: &Liveness) -> Result<napi_valu
             0,
             *is_cycle_constrained,
         ),
-        Verdict::Accepted { state, path } => ("accepted", "", &path[..], 0, *state, false),
+        Verdict::Accepted { state, path, .. } => ("accepted", "", &path[..], 0, *state, false),
         Verdict::Declined(declined) => ("declined", declined.0.as_str(), &[][..], 0, 0, false),
         Verdict::Unexpanded => ("declined", tla_live::UNEXPANDED, &[][..], 0, 0, false),
     };
@@ -372,6 +372,8 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                 state_log: (!state_log.is_empty()).then_some(state_log),
                 is_live_checked: live_checked != 0,
                 threads: usize::try_from(threads).unwrap_or(1).max(1),
+                // The engine declines TLCGet("config") here.
+                workers: 1,
                 minimum_shared_level: usize::try_from(minimum_shared_level)
                     .unwrap_or(MINIMUM_SHARED_LEVEL),
                 // The interpreter reports a violation itself.
@@ -447,6 +449,22 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     set(env, result, c"status", create_string(env, "declined")?)?;
                     set(env, result, c"reason", create_string(env, &reason)?)?;
                 }
+                // The search doesn't report violations here, so it declines an assumption that
+                // fails to evaluate rather than report it.
+                SearchOutcome::AssumptionFailed { .. } => {
+                    unreachable!("an assumption's failure reported without is_violation_reported")
+                }
+                // The interpreter rejects the configuration before it hands the search over.
+                SearchOutcome::ConfigError { message } => {
+                    set(env, result, c"status", create_string(env, "declined")?)?;
+                    set(env, result, c"reason", create_string(env, &message)?)?;
+                }
+                // The interpreter checks the assumptions before it hands the search over.
+                SearchOutcome::AssumptionViolated { name } => {
+                    set(env, result, c"status", create_string(env, "declined")?)?;
+                    let reason = format!("the assumption {name} is false");
+                    set(env, result, c"reason", create_string(env, &reason)?)?;
+                }
                 SearchOutcome::Complete {
                     counts,
                     checkpoint,
@@ -457,6 +475,9 @@ pub(super) unsafe extern "C" fn check_model(env: napi_env, info: napi_callback_i
                     threads,
                     collisions,
                     possible,
+                    // The interpreter prints a lasso.
+                    violation: _,
+                    registers: _,
                 } => {
                     set(env, result, c"possible", create_possible(env, &possible)?)?;
                     if let Some(verdict) = &liveness {

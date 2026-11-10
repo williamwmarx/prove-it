@@ -4,24 +4,37 @@
 pub mod ast;
 pub mod config;
 pub mod dependencies;
+pub mod describe;
 pub mod dump;
 pub mod environment;
 pub mod errors;
+pub mod eval;
 pub mod hash;
 pub mod instances;
+pub mod java_overrides;
 pub mod json;
+pub mod levels;
 pub mod lexer;
+pub mod linter;
+pub mod live;
 pub mod lower;
+pub mod model;
 pub mod order;
 pub mod ordered_map;
 pub mod parser;
+pub mod pcal;
+pub mod report;
 pub mod resolve;
+pub mod sany_parse_error;
+pub mod spec;
 #[rustfmt::skip]
 pub mod standard_builtins;
 pub mod standard_modules;
 pub mod subexpressions;
 #[rustfmt::skip]
 pub mod tlc_data;
+pub mod tlc_messages;
+pub mod values;
 
 /// The version of TLC whose behaviour the front end reproduces, as `TlcVersion` in
 /// `src/tlc/version.ts`.

@@ -1,13 +1,14 @@
 //! Reads the blob `src/engine/ir.ts` writes, checking every count, index and offset as it goes.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::{
     Action, ActionProperty, Atom, AtomKind, Bound, Builtin, ConfigName, Constant, Definition,
-    DefinitionForm, EnabledActions, IR_VERSION, Index, Ir, Junction, LiveProperty, LiveTerm, MAGIC,
-    Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern, Possible, Printed,
-    Resolution, Scope, ScopeBinding, Selector, SourceRange, Startup, TextId, Update, Value, Values,
-    code, tag,
+    DefinitionForm, EnabledActions, IR_VERSION, Index, InstanceAction, Ir, Junction, LiveProperty,
+    LiveTerm, MAGIC, Model, Name, Node, NodeId, NodeKind, Nodes, Param, PathStep, Pattern,
+    PermutedSet, Possible, PredicateForm, Printed, Resolution, Scope, ScopeBinding, Selector,
+    SourceRange, Startup, StartupPredicate, Symmetry, TextId, Update, Value, Values, code, tag,
 };
 
 /// Why a blob isn't an IR this decoder reads: where it stopped, in words, and what it found.
@@ -163,6 +164,14 @@ impl Decoder<'_> {
     }
 
     // A 64-bit number as two words, the low first.
+    // A definition's index, which the definitions decoded after the model bound.
+    fn index(&mut self) -> Decoded<Index> {
+        match self.next()? {
+            index if index >= 0 => Ok(index as Index),
+            other => self.error(format!("definition {other}")),
+        }
+    }
+
     fn long(&mut self) -> Decoded<u64> {
         let low = self.next()? as u32;
         let high = self.next()? as u32;
@@ -262,33 +271,36 @@ impl Decoder<'_> {
         if ranked_count < 0 || ranked_count as usize > text_count {
             return self.error(format!("{ranked_count} ranked of {text_count} texts"));
         }
-        let text = match std::str::from_utf8(text) {
-            Ok(text) => text,
-            Err(error) => return self.error(format!("text that isn't UTF-8: {error}")),
+        let Ok(units) = crate::wtf8::decode(text) else {
+            return self.error("text that isn't WTF-8".to_owned());
         };
-        // Each text ends at a count of UTF-16 code units, as JavaScript measures it.
+        // Each text ends at a count of UTF-16 code units, as JavaScript measures it. A text with a
+        // lone surrogate keeps its units in `wide_texts`, and its text has U+FFFD in their place.
         let mut texts = Vec::with_capacity(text_count);
-        let mut characters = text.char_indices().peekable();
-        let (mut start, mut units) = (0, 0);
-        for _ in 0..text_count {
+        let mut wide_texts = BTreeMap::new();
+        let mut start = 0;
+        for id in 0..text_count {
             let end = self.next()?;
-            while units < end {
-                let Some((_, character)) = characters.next() else {
-                    return self.error(format!("a text ending at {end}, past the text"));
-                };
-                units += character.len_utf16() as i32;
-            }
-            if units != end {
-                return self.error(format!("a text ending at {end}, within a character"));
-            }
-            let byte = characters.peek().map_or(text.len(), |&(byte, _)| byte);
-            texts.push(Box::from(&text[start..byte]));
-            start = byte;
+            let Some(entry) = usize::try_from(end)
+                .ok()
+                .filter(|&end| end >= start)
+                .and_then(|end| units.get(start..end))
+            else {
+                return self.error(format!("a text ending at {end}, past the text"));
+            };
+            texts.push(match String::from_utf16(entry) {
+                Ok(text) => text.into_boxed_str(),
+                Err(_) => {
+                    wide_texts.insert(id as TextId, Box::from(entry));
+                    String::from_utf16_lossy(entry).into_boxed_str()
+                }
+            });
+            start += entry.len();
         }
-        if start != text.len() {
+        if start != units.len() {
             return self.error(format!(
-                "{} bytes of text after the last",
-                text.len() - start
+                "{} units of text after the last",
+                units.len() - start
             ));
         }
         self.text_count = text_count as u32;
@@ -302,20 +314,32 @@ impl Decoder<'_> {
             })
             .collect::<Decoded<_>>()?;
 
-        let builtin_count = self.count()?;
-        let builtins = (0..builtin_count)
-            .map(|_| {
-                Ok(Builtin {
-                    name: self.text()?,
-                    arity: self.next()?,
-                    flags: self.next()?,
-                })
-            })
-            .collect::<Decoded<Vec<_>>>()?;
-
-        // The values come after the constants and scopes that name them, so their ordinals are
-        // checked once the values are read.
+        // The values come after the builtins, constants and scopes that name them, so their
+        // ordinals are checked once the values are read.
         let mut value_refs = Vec::new();
+        let builtin_count = self.count()?;
+        let mut builtins = Vec::with_capacity(builtin_count);
+        for _ in 0..builtin_count {
+            let name = self.text()?;
+            let arity = self.next()?;
+            let flags = self.next()?;
+            let mut table = Vec::new();
+            if flags & Builtin::TABLE != 0 {
+                for _ in 0..self.count()? {
+                    value_refs.push(self.at);
+                    let arguments = self.value_ordinal()?;
+                    value_refs.push(self.at);
+                    table.push((arguments, self.value_ordinal()?));
+                }
+            }
+            builtins.push(Builtin {
+                name,
+                arity,
+                flags,
+                table,
+            });
+        }
+
         let constant_count = self.count()?;
         let mut constants = Vec::with_capacity(constant_count);
         for _ in 0..constant_count {
@@ -390,11 +414,47 @@ impl Decoder<'_> {
                 self.words.len() - nodes_start
             ));
         }
+        if let Some(&index) = model
+            .startup
+            .substitutes
+            .iter()
+            .map(|(_, index)| index)
+            .chain(&model.startup.definitions)
+            .chain(
+                model
+                    .startup
+                    .predicates
+                    .iter()
+                    .map(|predicate| &predicate.definition),
+            )
+            .chain(
+                model
+                    .startup
+                    .symmetry
+                    .iter()
+                    .map(|symmetry| &symmetry.definition),
+            )
+            .chain(
+                model
+                    .instance_actions
+                    .iter()
+                    .map(|action| &action.definition),
+            )
+            .chain(model.instance_names.iter().map(|(index, _)| index))
+            .chain(
+                model
+                    .actions
+                    .iter()
+                    .filter_map(|action| action.definition.as_ref()),
+            )
+            .find(|&&index| index as usize >= definition_count)
+        {
+            return self.error(format!("definition {index} of {definition_count}"));
+        }
         let limits = Limits {
             constants: constant_count,
             definitions: definition_count,
             builtins: builtin_count,
-            values: values.list.len(),
         };
         let nodes = self.nodes(nodes_start, &limits)?;
 
@@ -437,6 +497,7 @@ impl Decoder<'_> {
         Ok(Ir {
             ranked_count: ranked_count as u32,
             texts,
+            wide_texts,
             variables,
             tlc_order,
             builtins,
@@ -547,7 +608,12 @@ impl Decoder<'_> {
             Ok(0)
         };
         let init = node(self)?;
-        let next = node(self)?;
+        let next = if self.words.get(self.at) == Some(&-1) {
+            self.at += 1;
+            None
+        } else {
+            Some(node(self)?)
+        };
         let scope = self.optional_below(scope_count, "scope")?;
         let count = self.count()?;
         let actions = (0..count)
@@ -556,25 +622,31 @@ impl Decoder<'_> {
                     expression: node(self)?,
                     scope: self.optional_below(scope_count, "scope")?,
                     label: self.text()?,
+                    name: self.text()?,
+                    location: self.range()?,
+                    definition: match self.next()? {
+                        -1 => None,
+                        index if index >= 0 => Some(index as Index),
+                        other => return self.error(format!("action definition {other}")),
+                    },
                 })
             })
             .collect::<Decoded<_>>()?;
         let is_labelled = self.flag()?;
         let invariants = self.config_names(true)?;
         let count = self.count()?;
-        let (property_invariants, property_invariant_names) = (0..count)
-            .map(|_| {
-                Ok((
-                    Printed {
-                        root: node(self)?,
-                        has_repeated_effect: self.flag()?,
-                    },
-                    self.text()?,
-                ))
-            })
-            .collect::<Decoded<Vec<_>>>()?
-            .into_iter()
-            .unzip();
+        let mut property_invariants = Vec::with_capacity(count);
+        let mut property_invariant_scopes = Vec::with_capacity(count);
+        let mut property_invariant_names = Vec::with_capacity(count);
+        for _ in 0..count {
+            let root = node(self)?;
+            property_invariant_scopes.push(self.optional_below(scope_count, "scope")?);
+            property_invariants.push(Printed {
+                root,
+                has_repeated_effect: self.flag()?,
+            });
+            property_invariant_names.push(self.text()?);
+        }
         let constraints = self.unprinted()?;
         let action_constraints = self.unprinted()?;
         let possible = self
@@ -591,36 +663,35 @@ impl Decoder<'_> {
                 Ok(ActionProperty {
                     action: node(self)?,
                     subscript: node(self)?,
+                    scope: self.optional_below(scope_count, "scope")?,
                 })
             })
             .collect::<Decoded<_>>()?;
         let count = self.count()?;
-        let initial_predicates = (0..count).map(|_| node(self)).collect::<Decoded<_>>()?;
+        let mut initial_predicates = Vec::with_capacity(count);
+        let mut initial_predicate_scopes = Vec::with_capacity(count);
+        let mut initial_predicate_names = Vec::with_capacity(count);
+        for _ in 0..count {
+            initial_predicates.push(node(self)?);
+            initial_predicate_names.push(self.text()?);
+            initial_predicate_scopes.push(self.optional_below(scope_count, "scope")?);
+        }
         let mut views = self.unprinted()?;
         if views.len() > 1 {
             return self.error(format!("{} views", views.len()));
         }
         let view = views.pop();
-        let symmetry = match self.next()? {
-            -1 => None,
-            count if count >= 0 => Some(
-                (0..count)
-                    .map(|_| {
-                        let pairs = self.count()?;
-                        (0..pairs)
-                            .map(|_| Ok((self.text()?, self.text()?)))
-                            .collect::<Decoded<Vec<_>>>()
-                    })
-                    .collect::<Decoded<_>>()?,
-            ),
-            other => return self.error(format!("{other} permutations")),
-        };
+        let mut aliases = self.unprinted()?;
+        if aliases.len() > 1 {
+            return self.error(format!("{} aliases", aliases.len()));
+        }
+        let alias = aliases.pop();
+        let postconditions = self.unprinted()?;
         let check_deadlock = self.flag()?;
         let is_warning_enabled = self.flag()?;
         let is_recording_graph = self.flag()?;
         let version = self.optional_below(self.text_count as usize, "text")?;
         let random_seed = self.long()?;
-        let startup_random = self.long()?;
         let count = self.count()?;
         let mut atoms = Vec::with_capacity(count);
         for _ in 0..count {
@@ -672,6 +743,76 @@ impl Decoder<'_> {
                 })
             })
             .collect::<Decoded<_>>()?;
+        let specification = self.range()?;
+        let count = self.count()?;
+        let substitutes = (0..count)
+            .map(|_| Ok((self.text()?, self.index()?)))
+            .collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let definitions = (0..count).map(|_| self.index()).collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let predicates = (0..count)
+            .map(|_| {
+                let form = match self.next()? {
+                    0 => PredicateForm::Predicate,
+                    1 => PredicateForm::Definition,
+                    2 => PredicateForm::Specification,
+                    other => return self.error(format!("predicate form {other}")),
+                };
+                Ok(StartupPredicate {
+                    form,
+                    kind: self.text()?,
+                    name: self.text()?,
+                    definition: self.index()?,
+                })
+            })
+            .collect::<Decoded<_>>()?;
+        let symmetry = match self.next()? {
+            -1 => None,
+            definition if definition >= 0 => {
+                let count = self.count()?;
+                let mut permuted_sets = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let name = self.text()?;
+                    let operand = if self.words.get(self.at) == Some(&-1) {
+                        self.at += 1;
+                        None
+                    } else {
+                        Some(node(self)?)
+                    };
+                    permuted_sets.push(PermutedSet { name, operand });
+                }
+                Some(Symmetry {
+                    definition: definition as Index,
+                    permuted_sets,
+                })
+            }
+            other => return self.error(format!("symmetry definition {other}")),
+        };
+        let count = self.count()?;
+        let assumptions = (0..count)
+            .map(|_| Ok((node(self)?, self.text()?)))
+            .collect::<Decoded<_>>()?;
+        let next_substitution = self.range()?;
+        let count = self.count()?;
+        let instance_actions = (0..count)
+            .map(|_| {
+                Ok(InstanceAction {
+                    definition: self.index()?,
+                    name: self.text()?,
+                    location: self.range()?,
+                })
+            })
+            .collect::<Decoded<_>>()?;
+        let count = self.count()?;
+        let instance_names = (0..count)
+            .map(|_| Ok((self.index()?, self.text()?)))
+            .collect::<Decoded<_>>()?;
+        let tlc_spec = match self.next()? {
+            -1 => None,
+            value if value >= 0 => Some(value as u32),
+            other => return self.error(format!("TLCGet(\"spec\") value {other}")),
+        };
         Ok(Model {
             init,
             next,
@@ -681,22 +822,37 @@ impl Decoder<'_> {
             invariants,
             property_invariants,
             property_invariant_names,
+            property_invariant_scopes,
             constraints,
             action_constraints,
             possible,
             action_properties,
             initial_predicates,
+            initial_predicate_scopes,
+            initial_predicate_names,
             view,
-            symmetry,
+            alias,
+            postconditions,
             check_deadlock,
             is_warning_enabled,
             is_recording_graph,
             version,
             random_seed,
-            startup_random,
             atoms,
             live_formula,
             live_properties,
+            specification,
+            startup: Startup {
+                substitutes,
+                definitions,
+                predicates,
+                symmetry,
+                assumptions,
+            },
+            next_substitution,
+            instance_actions,
+            instance_names,
+            tlc_spec,
         })
     }
 
@@ -954,18 +1110,10 @@ impl Decoder<'_> {
                 NodeKind::Subexpression(selectors)
             }
             tag::DEFINITION => {
-                if flags & !0x1f != 0 {
+                if flags & !0x3f != 0 {
                     return self.error(format!("definition flags {flags}"));
                 }
                 let name = self.text()?;
-                let startup = match self.next()? {
-                    code::NO_STARTUP_VALUE => Startup::None,
-                    code::OBJECT_STARTUP_VALUE => Startup::Object,
-                    ordinal if (ordinal as usize) < limits.values => {
-                        Startup::Value(Some(ordinal as u32))
-                    }
-                    other => return self.error(format!("startup value {other}")),
-                };
                 let form = match self.next()? {
                     0 => DefinitionForm::Operator(self.params()?),
                     1 => DefinitionForm::Function(self.bounds(&mut child)?),
@@ -974,7 +1122,6 @@ impl Decoder<'_> {
                 NodeKind::Definition(Definition {
                     name,
                     flags,
-                    startup,
                     form,
                     body: child(self)?,
                 })
@@ -1089,7 +1236,6 @@ struct Limits {
     constants: usize,
     definitions: usize,
     builtins: usize,
-    values: usize,
 }
 
 impl Model {
@@ -1099,7 +1245,9 @@ impl Model {
         visit: &mut impl FnMut(&mut NodeId) -> Decoded<()>,
     ) -> Decoded<()> {
         visit(&mut self.init)?;
-        visit(&mut self.next)?;
+        if let Some(next) = &mut self.next {
+            visit(next)?;
+        }
         for action in &mut self.actions {
             visit(&mut action.expression)?;
         }
@@ -1122,6 +1270,19 @@ impl Model {
             {
                 visit(unchanged)?;
             }
+        }
+        for set in self
+            .startup
+            .symmetry
+            .iter_mut()
+            .flat_map(|symmetry| &mut symmetry.permuted_sets)
+        {
+            if let Some(operand) = &mut set.operand {
+                visit(operand)?;
+            }
+        }
+        for (assumption, _) in &mut self.startup.assumptions {
+            visit(assumption)?;
         }
         Ok(())
     }

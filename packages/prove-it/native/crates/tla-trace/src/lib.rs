@@ -9,14 +9,35 @@
 //! thread with a deep stack, as the search runs.
 
 mod action;
+mod alias;
 mod eval;
+mod failure;
+mod fingerprint;
+mod postcondition;
+mod pretty;
 mod print;
+mod random;
 mod rebuild;
 mod sets;
+mod split;
 mod value;
 
+pub use alias::Alias;
+
+/// The texts TLC interns as it computes the model's constant definitions, `definitions` by index
+/// in TLC's order, past those the IR ranks, in the order it interns them.
+pub fn get_startup_texts(ir: &tla_ir::Ir, definitions: &[tla_ir::Index]) -> Vec<Box<[u16]>> {
+    eval::Evaluator::get_startup_texts(ir, definitions)
+}
+pub use eval::Registers;
+pub use failure::{
+    Assumption, Failure, FingerprintFailure, Incomplete, Replay, Site, format_call_stack,
+};
+pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Verdict};
+pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};
 pub use rebuild::Rebuilder;
+pub use split::{Described, SpecDescription, add_actions, add_spec};
 pub use value::Value;
 
 /// Where the evaluator can't follow TLC yet: the caller reports `not native yet: <reason>`.

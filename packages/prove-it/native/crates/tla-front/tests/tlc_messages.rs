@@ -1,0 +1,113 @@
+//! TLC's message codes for the front end's errors, as `src/tlc/messages.ts` finds them.
+
+use tla_front::errors::FrontError;
+use tla_front::tlc_messages::CodedError;
+
+fn coded(error: FrontError, is_tool: bool) -> Option<CodedError> {
+    error.get_coded(is_tool)
+}
+
+#[test]
+fn codes_configuration_errors_by_their_text() {
+    let error = FrontError::Config(
+        "The constant parameter N is not assigned a value by the configuration file.".to_owned(),
+    );
+    let printed = coded(error, true).expect("a coded error");
+    assert_eq!((printed.code, printed.exit_code), (2222, 151));
+    let error = FrontError::Config("something TLC never says".to_owned());
+    assert_eq!(coded(error, false).map(|coded| coded.code), Some(1000));
+}
+
+#[test]
+fn nests_the_error_a_message_reports_under_tool() {
+    let text = "The configuration file substitutes constant C with non-constant Foo - specifically: In evaluation, the identifier x is either undefined or not an operator.\nline 1";
+    let error = FrontError::Config(text.to_owned());
+    assert_eq!(
+        coded(error.clone(), false)
+            .map(|coded| coded.text)
+            .as_deref(),
+        Some(text)
+    );
+    assert_eq!(
+        coded(error, true).map(|coded| coded.text).as_deref(),
+        Some(
+            "The configuration file substitutes constant C with non-constant Foo - specifically: @!@!@STARTMSG 2280:0 @!@!@\nIn evaluation, the identifier x is either undefined or not an operator.\nline 1\n@!@!@ENDMSG 2280 @!@!@"
+        )
+    );
+}
+
+#[test]
+fn leaves_other_errors_uncoded() {
+    let error = FrontError::NotYet("anything".to_owned());
+    assert_eq!(coded(error, false), None);
+    let error = FrontError::Evaluation("Attempted to apply a function to a value".to_owned());
+    assert_eq!(
+        coded(error, false).map(|coded| (coded.code, coded.exit_code)),
+        Some((1000, 75))
+    );
+}
+
+#[test]
+fn codes_a_literal_tlc_cannot_hold_as_its_spec_processor_does() {
+    // TLC's tla2sany corpus, NumbersTest.
+    let real = FrontError::Evaluation(
+        "TLC can't handle real numbers: 12345.67890 at line 5, column 16".to_owned(),
+    );
+    let big = FrontError::Evaluation(
+        "TLC can't handle a number this big: 99999999999 at line 2, column 8".to_owned(),
+    );
+    assert_eq!(
+        [real, big].map(|error| coded(error, true).map(|coded| (
+            coded.code,
+            coded.text,
+            coded.exit_code
+        ))),
+        [
+            Some((
+                2244,
+                "TLC can't handle real numbers.\n12345.67890".to_owned(),
+                151
+            )),
+            Some((
+                2265,
+                "TLC can't handle a number this big.\n99999999999".to_owned(),
+                255
+            )),
+        ]
+    );
+}
+
+#[test]
+fn exits_as_for_a_general_error_after_an_unexpected_exception() {
+    let error = FrontError::Evaluation(format!(
+        "{}The symmetry function Proc must specify a set of permutations.",
+        tla_front::errors::UNEXPECTED_EXCEPTION
+    ));
+    let printed = coded(error, false).expect("a coded error");
+    assert_eq!((printed.code, printed.exit_code), (1000, 255));
+}
+
+#[test]
+fn exits_as_tlc_does_for_a_temporal_formula_it_rejects() {
+    for (text, exit_code) in [
+        (
+            "Temporal formula is a tautology (its negation is unsatisfiable).",
+            77,
+        ),
+        (
+            "TLC cannot handle the temporal formula line 21, col 11 to line 21, col 15 of module M",
+            255,
+        ),
+        (
+            "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.",
+            255,
+        ),
+        (
+            "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
+            255,
+        ),
+    ] {
+        let printed = coded(FrontError::Evaluation(text.to_owned()), false).expect("a coded error");
+        assert_eq!(printed.exit_code, exit_code, "{text}");
+    }
+}

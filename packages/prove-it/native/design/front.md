@@ -203,3 +203,453 @@ corpus (the 641 IRs `bun scripts/run.ts engine-ir` writes, and the 30 goldens in
 - With TLC's orders in, a configuration that leaves several constants unassigned is reported as
   TLC reports it, by the first in SANY's order of declarations: `model` now matches 2,694 of
   2,711 with `--mutate 400`, up from 2,682.
+
+## F8 slice 4 in progress (the model section, on `native-parity`)
+
+- The environment lists the definitions TLC computes at startup, in `environment.ts`'s order, and
+  the assumptions of the root module and those it extends; `describe_range` names an assumption as
+  TLC prints it. `front-differential model` compares both.
+- `spec` ports `getLevel` (`liveness.ts`), the scopes an instance or an operator's arguments give a
+  formula (thunks, closures, a LET's own scope, and literal or configured values),
+  `getSpecification` and `expandTemporal`, and `getProperties`. The `spec` mode compares the split
+  of SPECIFICATION (1,093 of 1,111 models) and the `properties` mode the sorted properties (1,032
+  of 1,111), none differing. What TLC evaluates there (a constant conjunct or definition, a `\A`
+  a property unrolls over a constant set) is `NotYet`.
+- `Lowering::write_model` writes the model section in `lowerToIr`'s order, and the scopes
+  interleaved with the definitions as `ir.ts` writes them. `model::lower_model` lowers a model
+  from its files for the native binary. The `model-full` mode compares the whole IR with
+  `lowerToIr`'s, without TLC's actions, which the engine's startup phase splits: 676 of 1,111
+  models are byte-identical, none differ. Still `NotYet`: temporal properties and fairness (the
+  liveness formula and atoms), SYMMETRY (the engine's startup phase), scoped properties, and the
+  evaluations above.
+
+## (d1) as built: what SANY prints (`report.rs`)
+
+`report::get_sany_text` writes what `getSanyReport` prints while TLC runs SANY on a spec that SANY accepts without a message. That covers the "Parsing file" lines in the order `SpecObj.loadSpec` reads the modules, the "Semantic processing" lines in `calculateDependencies` order, and the "Linting" lines. The caller describes each file through `describe_file(name, origin)`, so the CLI keeps `createFileDescriber`'s temporary paths.
+
+It returns `NotYet` in these cases, which (d2) and (d4) take on:
+
+- SANY's parse errors;
+- a file named apart from its module;
+- a missing module;
+- a circular dependency;
+- linking's semantic errors or warnings;
+- PlusCal;
+- any record field named like a symbol of a loaded module.
+
+The last case is a conservative stand-in for SANY's linter. On the corpora it holds back 150 specs, and only 25 of them really warn.
+
+The `sany-text` gate (`front-differential.ts sany-text`) describes files as `name|origin` on both sides. It reports 1,716 of 2,357 matching and 636 not compared yet.
+
+The mutated variants all come back `NotYet`, because their files are named apart from their modules.
+
+## (d2) part 1 as built: SANY's level checks (`levels.rs`)
+
+`levels.rs` ports `src/levels.ts` and `src/substitution-levels.ts`, which compute on the AST the levels, weights and Leibniz flags SANY does, and report its level errors. The linker runs them when `EnvironmentOptions.is_level_checked` is set, as `createEnvironment` does without `isSanyAccepted`. That covers each module's definitions, assumptions and theorems, and the substitutions of every INSTANCE, in the order SANY reports them.
+
+`get_sany_text` links with the checks, so a spec with a level error comes back `NotYet` instead of printing a clean parse. The `levels` gate compares the linker's result with TypeScript's `createEnvironment` with level checks on: 2,332 of 2,357 match, and 3,932 of 3,957 with `--mutate 400`, with 0 differing. The 25 left are the ones `resolve` doesn't compare yet.
+
+The corpora exercise these errors, with SANY's wording:
+
+- actions in a temporal formula;
+- `[]` or `<>` followed by a raw action;
+- action-level bounds;
+- non-constant steps of a temporal proof;
+- arguments over an operator's levels;
+- the levels and Leibniz checks of instance substitutions.
+
+With the checks, `sany-text` reports 1,716 of 2,357 matching and 0 differing.
+
+## (d2) part 2 as built: SANY's fatal errors
+
+`get_sany_text` writes the fatal errors that stop SANY's parsing phase, other than parse errors:
+
+- a module no file holds, reported in the module that names it;
+- a circular dependency, found before semantic analysis;
+- a file named apart from the module it holds.
+
+It prints them as `getSanyReport` does, after the "Parsing file" lines so far. `ReportOptions.file_name` is the name TLC gives SANY for its "Fatal errors while parsing TLA+ spec in file" line.
+
+TLC 1.7.4's aborts and SANY's parse errors (`src/sany/parse-error.ts`) are still `NotYet`.
+
+`sany-text` reports 1,825 of 2,357 matching, and 2,117 of 3,957 with `--mutate 400`, with 0 differing.
+
+## (d2) part 3 as built: SANY's semantic errors and warnings
+
+SANY goes on analyzing after a module with errors. After each module it prints every message so far: the warnings, then "Semantic errors:" and the errors. It level-checks a module only while no module so far has an error.
+
+`environment::get_sany_messages` links in a collecting mode, which does this:
+
+- It keeps each top-level module's errors and warnings instead of stopping at the first module with errors.
+- It defers the level checks, then runs them in SANY's order of analysis, which the caller gives.
+- It reports "Substitution error, probably due to error in module being instantiated." at each INSTANCE of a module with errors, as `Generator.createSubstIn` does.
+
+`get_sany_text` prints the messages cumulatively, as `getSanyReport` does, and skips linting when there are errors.
+
+Still `NotYet`:
+
+- TLC 1.7.4's message layout;
+- an error that stops linking itself;
+- a definition whose arity differs from its RECURSIVE declaration. SANY applies the declared arity, and neither resolver models this.
+
+Porting this showed that both resolvers saw a module's own declarations before they're declared. That is fixed in `resolve.ts` and `resolve.rs`.
+
+`sany-text` reports 1,886 of 2,357 matching, and 2,175 of 3,957 with `--mutate 400`, with 0 differing.
+
+## (d) the linter as built (`linter.rs`)
+
+`linter.rs` ports `src/sany/linter.ts` on the modules the report parses, standard modules included, so it reads their texts' dummy definitions as SANY does.
+
+1. **Records.** It collects each top-level module's records (record constructors and sets of records) in SANY's order of generation, with the names bound around each. That covers definitions, assumptions, theorems and their proofs (DEFINE steps included), and instance substitutions, but not inner modules.
+2. **Exemption.** It exempts a record when a field of any record with the same fields (the module's own, or an extended module's) is built from declarations. Reaching a definition by name walks its body: in the defining module, and, through an INSTANCE of a module with declarations, also the instance's substitutions. That way `1 + 2` is built from the parameters of Naturals' `a+b == {a, b}`, while `2 * 3` (`a*b == TRUE`) isn't.
+3. **Warning.** For a field named like a declaration or definition of the module, or of a module it extends, it writes SANY's warning at the field's name.
+
+It returns `NotYet` for:
+
+- a field named like an instance's definition, a theorem or an assumption;
+- a subexpression it would have to follow.
+
+`sany-text` reports 2,257 of 2,357 matching, and 2,558 of 3,957 with `--mutate 400`, with 0 differing. The corpora's 30 specs with linter warnings all match.
+
+What's left `NotYet`:
+
+| Specs | Cause |
+|---|---|
+| 89 | SANY's parse errors (`src/sany/parse-error.ts`) |
+| 10 | Errors that stop linking |
+| 1 | RECURSIVE arity |
+
+## The startup section and operator tables as built
+
+- `lower.rs` writes `model.startup` in the speed session's layout: the substitutes TLC checks, the constant definitions with effects in TLC's order, and the assumptions that aren't axioms with their names. This is `getIrStartup`, which `check.ts` now exports, so the model-full gate's TypeScript side writes the same section.
+- SYMMETRY stays `NotYet` until its permuted sets are lowered.
+- `create_environment` still returns `NotYet` for a substitute that isn't of constant level. The TypeScript environment evaluates it while linking, where the engine evaluates it at startup, so the two would differ on a substitute that fails (etest7, TLCGetNamedUndefined).
+- A configuration's operator table (`F(0) = 1`) gives the environment's builtin its rows. `lower.rs` writes them with `Builtin::TABLE`, each row's arguments as a tuple.
+- model-full: 831 of 1,111 with 0 differing, and 2,336 of 2,711 with `--mutate 400`.
+
+## The constant evaluator as built (`eval.rs`)
+
+`eval::Evaluator` evaluates the constant expressions the front end needs values of before the search, as `evaluate.ts` computes them:
+
+- booleans, integers, strings, model values, and finite sets of them, normalized in TLC's order (`values::ValueOrder`, by the texts' ranks);
+- configuration constants, substitutions, definitions and closures, and LET;
+- the arithmetic, comparison and set operators of Naturals, Integers and FiniteSets, and membership in Nat, Int and STRING;
+- junctions, IF, quantifiers, set filters and set maps.
+
+Anything else is `NotYet`: tuples, records, functions, CHOOSE, SUBSET, TLC 1.7.4's streamed sets, and every evaluation error, which TLC's startup reports.
+
+`get_bindings` binds a list of bounds to their sets' elements in `forEachBoundElement`'s order, the last bound outermost.
+
+A property's `\A` over constant sets is now unrolled, as `expandTemporal` does for properties, with each instance named by `describeRange` of the body. A `\A` over sets that aren't constant stays a single formula, as in TypeScript.
+
+model-full: 842 of 1,111 with 0 differing, and 2,355 of 2,711 with `--mutate 400`.
+
+The liveness session wires the evaluator into `live.rs`: the temporal quantifiers over constant sets, the constant parts and the constant IF conditions.
+
+## SYMMETRY in the startup section
+
+`lower.rs` writes the SYMMETRY entry of `model.startup` as `getIrStartup` does: the definition, then `getPermutedSets` of its body. That is each argument the body's operator applies to, named by the configuration's substitution for its image or by the image (`getHumanReadableImage`, over the resolved keys as TypeScript's AST holds them). For `Permutations(S)` of an identifier the configuration doesn't replace with `<-`, it also writes S. The engine evaluates the group. model-full: 918 of 1,111 with 0 differing, and 2,441 of 2,711 with `--mutate 400`.
+
+## A spec without variables
+
+TLC searches no states of a spec without variables. `check.ts` lowers its model, once
+`createSearch`'s configuration checks pass, with the identifier `FALSE` at (0,0) as both the
+initial predicate and the next-state relation, no properties, no liveness and an empty TLC order,
+but with the startup section, so the binary still evaluates its assumptions and finds no initial
+state. `lower_model` does the same; the configuration errors of such a spec stay not yet. The
+TS side is `lowerConstantSpec`, which both the dump path and the model-full gate call.
+
+## Substitutes TLC evaluates at startup
+
+TLC evaluates a parameterless substitute for a declared constant at startup and rejects it only
+when that fails and the level bound `createLevelAnalyzer` computes is above constant, with TLCGet,
+Trace and CounterExample read as variables. `create_environment` runs the same analyzer from
+`levels.rs`, and evaluates such a substitute with the constant evaluator before TLC starts
+(`is_started: false`, with no string ranks). Two failures are TLC's:
+
+- a variable, which no state assigns: TLC's "is either undefined or not an operator";
+- TLCGet of a key TLC's model checker holds (diameter, generated, distinct, queue, stats, config),
+  which `TLCGetSet.TLCGetEval` reports as its own failure on master.
+
+Either becomes TLC's configuration error "substitutes constant C with non-constant D -
+specifically: …". Anything else the evaluator can't compute is still `NotYet`.
+
+## Constant parts of the liveness formula
+
+`live.rs` evaluates what `toLiveExpression` evaluates, with the constant evaluator:
+
+- a constant atom becomes TRUE or FALSE;
+- a quantifier whose bound sets are all constant is expanded over their bindings, in the order
+  `get_bindings` gives them, into a conjunction or disjunction of the body's conversions, or
+  TRUE or FALSE over no bindings;
+- an IF whose condition is a constant boolean converts only the branch it chooses.
+
+Where the evaluator fails, TLC's handling (an atom, or "cannot handle" with the failure's message)
+isn't followed yet, so it stays `NotYet`, as does a constant atom that isn't a boolean.
+
+## The configuration checks of `createSearch`
+
+`lower_model` makes `createSearch`'s checks in its order:
+
+1. Each invariant is a state predicate by SANY's level analysis (`check_invariants`, before the
+   specification). `Environment` keeps the resolution tables, and `create_level_analyzer` builds
+   the analyzer the startup substitutes use too.
+2. The specification and its properties.
+3. A missing initial predicate, then a missing next-state relation.
+4. `check_search_config`: the constraints, action constraints, RL reward, periodic and possible
+   operators, and, with variables, the SYMMETRY's definition and the VIEW.
+
+`getConstantValue` evaluates a constant definition the configuration names with the constant
+evaluator. A value other than TRUE is TLC's configuration error, and a definition that fails to
+evaluate stays an operator, as in TLC. The engine checks the same definitions again at startup
+(`Startup::predicates`, below), so a predicate the evaluator can't compute yet is left to it:
+the evaluator records the deferral, and any error the front end would report after it becomes
+`NotYet`, since TLC stops on the predicate first. TLC rejects any value of an INIT, NEXT, possible
+or SPECIFICATION definition, so one of those the evaluator can't compute stays `NotYet`. The evaluator reads
+the builtins the configuration substitutes (`Nat <- Int`), and stops as `NotYet` past 400 nested
+evaluations rather than overflow on a recursion.
+
+A text with a lone surrogate, which TLC's strings hold, makes the TypeScript IR decline the
+model; model-full lists such a model as not compared.
+
+## TLC's errors of the specification and its temporal formulas
+
+`get_specification` and `get_properties` read a conjunct that is a constant name as
+`isConstantTrue` does, with the evaluator: TRUE is dropped, FALSE is "The spec is trivially
+false", and another value can't be "used as a spec". `[]P` of a state predicate in the
+specification is "TLC cannot handle the temporal formula" at P.
+
+`live.rs` follows `toLiveExpression`'s failures:
+- "cannot handle" at a formula it can't translate;
+- `expandCall` re-reports a failure inside an operator's expansion as "cannot handle" at the
+  application, except for a recursive operator;
+- a constant quantifier whose body fails becomes an atom below temporal level, or "cannot handle"
+  under `\E` (under `\A`, TLC adds the inner message: still `NotYet`);
+- expanding past 100 levels is TLC's stack overflow.
+
+`tla_live::atom_order`'s refusals become TLC's errors: the tautology, the formula too large in
+disjunctive normal form, and actions outside `<>[]A` and `[]<>A`.
+
+## Startup predicates and normalized definitions
+
+`Startup::predicates` lists each constant-level definition the configuration names, unless it is a
+literal number or string or a constant the configuration assigns, in TLC's order:
+invariants, the SPECIFICATION or INIT and NEXT, properties, constraints, action constraints,
+then possible (`getConstantPredicates` in `search.ts`). Each entry carries how TLC rejects the
+value: a predicate for any value but TRUE, a definition and the SPECIFICATION for any value. The
+engine evaluates them after the constant definitions and before the SYMMETRY and the
+assumptions, and swallows a failure to evaluate, as `getConstantValue` does.
+
+`Definition::NORMALIZED` marks each definition TLC computes and deep-normalizes in
+`processConstantDefns`: `isStartupDefinition` over the startup definitions, which skip the
+modules an INSTANCE gives parameters to.
+
+## Models without a next-state relation, and properties in a scope
+
+`Model::next` is optional: TLC computes the initial states of a model whose configuration names
+no next-state relation (and checks nothing of behaviors), then stops. `check.ts` lowers it, and a
+spec without variables, through `lowerUnsearchedSpec`.
+
+Each property invariant, action property and initial predicate carries the scope of the instance
+it comes from (`property_invariant_scopes`, `ActionProperty::scope`,
+`initial_predicate_scopes`), which `Model::has_scoped_property` tells; the engine and tla-trace
+decline one until they read it there. An operator argument to a temporal formula binds a closure as
+`evaluateOperatorArgument` does: a LAMBDA, a local operator, or a definition, and an application of
+an instance's operator is named by its key, as TLC names the property it checks.
+
+## TLC's failures the evaluator raises as they are
+
+The evaluator computes CASE, CHOOSE over a set it lists, and, for what it can't hold (DOMAIN, a
+record's field), the argument first, as TLC does, so a failure there comes out as TLC's. A
+quantifier or CHOOSE over `[D -> R]` with D a set TLC knows only by name (Nat, Int, STRING) fails
+as `enumerateSet` does, which IOUtils' `IOEnv` meets without its Java override. `live.rs` raises
+such a failure of a constant part as `toAtom` does, and `expandCall` still re-reports one inside an
+operator's expansion as "cannot handle".
+
+## Records in the constant evaluator
+
+`ConfigValue::Record` holds a record the evaluator builds, its fields sorted by TLC's string order
+of their names (`getSortedFields`). The evaluator computes record constructors, sets of records
+(the last field varying fastest, as `getCartesianProduct` lists them, then sorted) and field
+selection. `ValueOrder::compare` orders two records as `compareFunctions` does: by size, then names
+by rank, then values. The lowering writes one as TLC's RecordValue (function class 3, the names
+before the values). A repeated field, a missing field, a field of another value, TLC 1.7.4's sets
+of records, and tuples and other functions stay `NotYet`.
+
+`ir.ts` writes a name that nothing global resolves (a definition an INSTANCE in a LET copies in)
+with the local flag; `lower.rs` does the same.
+
+## Handoff
+
+model-full: 1,100 of 1,111 with 0 differing, and 2,695 of 2,711 with `--mutate 400`. The 11 not
+compared:
+
+| Models | Cause |
+|---|---|
+| 10 | SANY's parse errors: TLC itself fails to parse these specs ("Precedence conflict" in ccfraft, KVsnap, Linearizability, Bodega, NormalizationCases, and the two fixtures' `Base`), so no model is lowered. The native binary's SANY report owns their output. |
+| 1 | `tlc-174/Unhandled`, TLC 1.7.4 only. |
+
+## The end-state front (no recorded front)
+
+Without `PROVE_IT_FRONT`, `front.rs` reads the whole front from tla-front: `Output::Native` holds
+SANY's report and `LoweredModel::startup_messages`,
+what TLC prints itself after the constant definitions and before the assumptions, in its order:
+
+- 2149, each invariant that is a constant equal to TRUE (`check_invariants`), and 2255, each
+  property that is a state formula, both warnings, which `-nowarning` drops;
+- with liveness, 2279 under a SYMMETRY (a warning), then 2212 "Implied-temporal
+  checking--satisfiability problem has N branches.", N counted by `tla_live::count_branches`.
+
+The CLI prints SANY's report framed under -tool, then 2185 `Starting...`, and, through the engine's
+startup hooks, what Print and PrintT print as TLC starts and the symmetry's 2300, and
+`startup_messages` at `startup_done`. Not native yet in tla-front: TLC 1.7.4, an invariant the
+engine checks at startup with warnings on, and warnings about invariants or properties under a
+SYMMETRY (the order of 2300 among them isn't checked).
+
+`java_overrides` ports `java-overrides.ts`: the public static methods of the class named after a
+module, beside the spec (`EnvironmentOptions::load_class`, which `lower_model` gives), replace the
+operators of the same name and arity with the constant they return (`BoolValue.ValTrue`,
+`IntValue.gen(n)`, `new StringValue(s)`). `LoweredModel::override_messages` is TLC's 2168 for each
+(2400, a warning, for a method that matches no operator), which the binary prints right after
+`Starting...`. Not native: a method that computes its value, a method with parameters (TLC evaluates each
+argument, in order, before it calls the method, `OpValue.eval`, so an argument that fails or prints
+does so, which the literal would skip; both fronts decline it), overrides of two modules, a class
+path a URL would escape, and more than one report, which TLC lists in the JVM's order.
+
+Both fronts read an override class only within a whitelist, since Java runs what a class holds
+around the method TLC calls; outside it they decline, naming why (`tests/fixtures/override-shapes`
+holds a class for each exclusion, with what TLC does with it):
+
+- a class file of version 69 or older whose constant pool holds only the JVM's known tags;
+- a plain class (not an interface, abstract, annotation, enum or module) that extends
+  java.lang.Object, implements no interface, and has no fields and no static initializer, which
+  TLC runs as it first calls an override;
+- no annotations, such as `@TLAPlusOperator`, whose method TLC skips here;
+- one public static method of each name, none a name TLC maps to an operator's
+  (`TLARegistry.mapName`, such as `Plus` for `+`);
+- a matched method without parameters whose bytecode is one of `getstatic BoolValue.ValTrue` or
+  `ValFalse`, an int constant then `invokestatic IntValue.gen(I)`, or `new StringValue`, `dup`, a
+  string constant and `invokespecial StringValue.<init>(String)`, then `areturn` as its last
+  instruction, with no exception table.
+
+The binary prints an assumption's Print of a value the store can't word as the trace evaluator
+prints it (`Rebuilder::check_assumption`, each assumption in turn), as 635457c does for the
+startup's, as long as every print before it the store worded alike.
+
+`ModelOptions::random_seed` carries `-seed` into the model, as `runtime.seed` does.
+
+`bun scripts/run.ts differential --native native/target/release/prove-it --native-only` runs the
+binary alone this way (as `--native-front` does, without the TypeScript runs) on the whole corpus,
+against TLC's recordings, in minutes. Measured before the hooks were wired, with `check.rs` printing
+the messages after `Starting...` and no startup Prints: 1,298 of 1,466 runs printed what TLC prints,
+and the 80 that differed each lacked a startup Print, which the hooks now report.
+
+No-recording mode on the whole corpus (`--native-only`, after the messages landed): 1,392 of 1,466
+runs print what TLC prints and none differ. Of the 74 others, 4 are listed known differences
+(function_syntax, where TLC overflows its stack) and 2 decline for a Java class that overrides a
+module, the front end's one open case; the rest are the engine's and the trace evaluator's
+declines, as with a recorded front.
+
+A property is named by its operator as written (`opNode.getName()`): `PSafe == A!Safe` names
+"A!Safe", while `A!Safe2 == Safe` inside the instance names "Safe". `expand` takes the identifier's
+written name; the TypeScript resolver keeps it in `getWrittenName` (`tests/fixtures/instance-property`).
+
+After the overrides and the assumptions' prints: 1,400 of 1,466 runs in no-recording mode, none
+differing, against 1,402 with recordings. The 2 runs only a recording gives are
+test-model/CyclicRedefineInstance, whose Next `tla_trace::add_actions` can't split through an
+INSTANCE in a LET; the recorded IR holds the TypeScript front end's actions.
+
+## SANY's check of a recursive operator's arguments
+
+`levels.rs` ports `src/levels.ts`, which lacks the check `ModuleNode.levelCheck` makes of each
+recursive section (`src/sany/levels.ts`, which the TypeScript CLI's report runs): a RECURSIVE
+operator, of the module or of a LET, whose body takes an argument below action level, as a primed
+parameter, is "Argument i of recursive operator Op is primed" at the definition. A unit at the
+module's start reports it, before the module's other units, as SANY checks the recursive sections
+first. `NotYet`: a recursive operator that applies another (SANY's first pass reads the section's
+operators with action-level arguments), one whose levels fail to analyze, and errors of both a
+module's and a LET's operators, whose order isn't checked.
+
+## TLC's negative tests
+
+`tlatools/test/tla2sany/semantic/error_corpus` (125 specs, each a SANY error) and `corpus` (28
+specs SANY accepts), run through the binary against master TLC with an empty configuration: 116
+and 21 print what TLC prints, and the rest decline. None differ. The front end's checks they
+brought:
+
+- `resolve.rs`: SANY's `@` outside an EXCEPT, a recursive section's units, a function's RECURSIVE
+  declaration with parameters, a function applied to another number of arguments, the arity of an
+  explicit substitute (two errors, the second in `--TLA+ BUILTINS--`), and DEF entries that aren't
+  definitions.
+- `levels.rs`: an assumption above level 0, `checkArguments`'s errors of an operator's
+  arguments, junctions' and bounded quantifiers' level errors under SANY's names, and a NEW over a
+  temporal set.
+- The parser: a named `<*>` or `<+>` step, a semantic error of the TLC-mode parse, and SANY's
+  `WF_B(A)(Act)`, whose subscript is `B(A)`.
+- `report.rs` declines a module the front end's parser rejects where SANY's parser
+  (`sany_parse_error`) accepts it, rather than print the front end's message: a labeled
+  ASSUME/PROVE among the assumptions (AssumeProveTest) is one.
+- `get_coded` reports a decimal or an integer TLC can't hold as SpecProcessor does: 2244 or 2265,
+  the literal on its own line, exit 151 or 255. The TypeScript CLI still prints the front end's
+  error (code 1000, exit 75).
+
+Declines left: 9 of the error corpus's SANY errors (E4200, E4203, E4204, E4223, E4293 ×2, E4294,
+E4351, E4355), whose reports `report.rs` doesn't write; AssumeProveTest's labeled ASSUME/PROVE and
+ProofsTest's DEFINE step; and four corpus specs whose failing assumptions the engine declines to
+replay (AssumeTest, BasicTest, InnerModuleTest, Semantics).
+
+`bun scripts/sany-corpus.ts --tlaplus <clone> --classpath <tla2tools>` runs TLC live against the
+binary over both directories and counts them: 138 of 153 print what TLC prints (116 of the 125
+errors, 22 of the 28 accepted specs), 15 decline and none differ. The recorded gate, with the
+directories in `corpora.json` and TLC's output recorded, comes with the generator's port below.
+
+### Next milestone: SANY's generator in tla-front (after native-parity)
+
+The binary's SANY report comes from `report.rs`, over `resolve.rs` and `levels.rs`, which port
+`src/resolve.ts` and `src/levels.ts` and cover a subset of SANY; the TypeScript CLI writes its
+report with `src/sany/` (`generator.ts`, `levels.ts`, `selectors.ts`), a port of SANY's whole
+semantic analysis. Porting `src/sany` to tla-front replaces `report.rs`'s semantic checks as the
+source of the native report, so no TypeScript is in its path, and can land a check at a time
+behind the existing report. It must keep `front-differential.ts sany-text` at 2,359 of 2,359,
+the error corpus at 116 of 125 with none differing, and write the 9 SANY errors `report.rs`
+declines (E4200, E4203, E4204, E4223, E4293 ×2, E4294, E4351, E4355).
+
+### Open
+
+- The 9 SANY errors above, which the native report declines.
+- A RECURSIVE operator that applies another of its section (mutual recursion): SANY's first pass
+  reads the section's operators with action-level arguments, which `levels.rs` declines.
+- Labeled ASSUME/PROVE (AssumeProveTest) and a DEFINE step's operator (ProofsTest), which the
+  native front declines.
+- The TypeScript front end's differences from TLC, below.
+
+### Where the TypeScript front end differs from TLC
+
+The TypeScript CLI's report still differs from TLC on these, which the native front writes or
+declines:
+
+- E4243 ×3 (an explicit substitute's arity, two errors in SANY) and E4260 ×2 (a function applied
+  to another number of arguments).
+- E4294_Module and E4350_Plus/Star (a named `<*>` or `<+>` step, which it rejects as a parse
+  error).
+- AssumeProveTest (a labeled ASSUME/PROVE among the assumptions) and FairnessTest (`WF_B(A)(Act)`),
+  which it rejects as parse errors.
+- NumbersTest: a decimal or a number TLC can't hold, which it reports with code 1000 and exit 75
+  for TLC's 2244 (exit 151) and 2265 (exit 255).
+- ProofsTest (a DEFINE step's operator), which the native front declines too.
+
+## The strings TLC interns as it starts
+
+TLC orders strings and model values by when it interns their texts, and it interns those
+ToString, `\o`, Tail and SubSeq make as it computes the constant definitions
+(`processConstantDefns`). `check.ts` lowers its IR after it has computed them, so a recorded IR
+ranks them; `lower_front` ranks only the spec's. The binary lowers with `lower_front_ranking`:
+`tla_trace::get_startup_texts` evaluates the substitutes and every startup definition the IR holds,
+in TLC's order, ranking what those operators make as `rankString` does, and where it finds some, the
+model is lowered again with them ranked (test-model/Github696, whose search compares `A_31` with
+`B_a`). `lower_front` and the model-full gate keep the spec's ranks, as the TypeScript side of that
+gate computes no startup.
+
+No-recording mode on the whole corpus after it and after the split of a LET's operator
+(test-model/CyclicRedefineInstance): 1,460 of 1,466 runs print what TLC prints, and the 6 others
+are listed known differences.

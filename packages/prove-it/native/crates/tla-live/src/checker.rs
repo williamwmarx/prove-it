@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::tableau::{Kind, Model, Solution, Tableau, TermId, Terms};
-use crate::{Declined, Event, Graph, Verdict};
+use crate::{Declined, Event, Slot, Source, Unanswered, Verdict};
 
 const NO_NODE: u32 = u32::MAX;
 const UNWRITTEN: usize = usize::MAX;
@@ -54,13 +54,13 @@ type Lasso = (Vec<u32>, Vec<u32>);
 type IntegerMap<Key, Value> = HashMap<Key, Value, BuildHasherDefault<IntegerHasher>>;
 
 /// A step of the search: a successor of a state, the state the step reached (the successor itself
-/// unless SYMMETRY or a VIEW told it apart from the state stored for it), and the position of the
-/// step's answers in the engine's tables of actions.
+/// unless SYMMETRY or a VIEW told it apart from the state stored for it), and where the engine
+/// answers the actions of the step.
 #[derive(Clone, Copy)]
 struct Step {
     target: u32,
     real: u32,
-    answer: usize,
+    slot: Slot,
 }
 
 struct Behavior {
@@ -133,11 +133,9 @@ impl Behavior {
     }
 }
 
-pub struct Checker<'c> {
+pub struct Checker {
     terms: Terms,
     solutions: Vec<Solution>,
-    graph: &'c Graph<'c>,
-    tables: &'c [Option<&'c [u8]>],
     behaviors: Vec<Behavior>,
     action_count: usize,
     /// The results of the action checks on each step, a row of action ids per step: -1 until
@@ -153,6 +151,10 @@ pub struct Checker<'c> {
     effects: RefCell<Option<Effects>>,
     /// TLC's diameter as it evaluates, for the atoms that read it.
     diameter: Cell<u32>,
+    /// The state being added, with whether as an initial state, and the first atom found
+    /// unanswered while adding one.
+    adding: Cell<Option<(u32, bool)>>,
+    pub(crate) unanswered: Cell<Option<Unanswered>>,
 }
 
 /// The evaluations of atoms so far, and the atoms' answers within the evaluation of one check, as
@@ -163,13 +165,8 @@ struct Effects {
     known: Vec<(u32, bool)>,
 }
 
-impl<'c> Checker<'c> {
-    pub fn new(
-        mut terms: Terms,
-        formula: TermId,
-        graph: &'c Graph<'c>,
-        tables: &'c [Option<&'c [u8]>],
-    ) -> Result<Self, Declined> {
+impl Checker {
+    pub fn new(mut terms: Terms, formula: TermId) -> Result<Self, Declined> {
         let solutions = terms.solutions(formula)?;
         let mut action_ids: HashMap<TermId, usize> = HashMap::new();
         let mut behaviors: Vec<Behavior> = Vec::with_capacity(solutions.len());
@@ -205,7 +202,7 @@ impl<'c> Checker<'c> {
                 next_siblings: Vec::new(),
                 node_ids: IntegerMap::default(),
                 node_reals: IntegerMap::default(),
-                is_done: vec![false; graph.count()],
+                is_done: Vec::new(),
                 error_node: None,
             });
         }
@@ -226,8 +223,6 @@ impl<'c> Checker<'c> {
         Ok(Self {
             terms,
             solutions,
-            graph,
-            tables,
             behaviors,
             action_count: action_ids.len(),
             steps: Vec::new(),
@@ -237,55 +232,51 @@ impl<'c> Checker<'c> {
             is_cycle_constrained,
             effects: RefCell::new(None),
             diameter: Cell::new(1),
+            adding: Cell::new(None),
+            unanswered: Cell::new(None),
         })
     }
 
-    // --- evaluation: `evaluateLive` over the engine's tables ---
+    // --- evaluation: `evaluateLive` over the engine's answers ---
 
-    // The position in an atom's table of its answer on the state or step at the position, which
-    // for an atom that reads TLCGet("diameter") is among the answers for TLC's diameter now.
-    fn position(&self, atom: u32, position: usize) -> usize {
-        match &self.graph.diameters {
-            Some(diameters) if diameters.atoms.get(atom as usize) == Some(&true) => {
-                let length = self.tables[atom as usize].map_or(0, <[u8]>::len);
-                length / diameters.last as usize * (self.diameter.get() as usize - 1) + position
-            }
-            _ => position,
+    fn answer(&self, source: &Source<'_>, atom: u32, slot: Slot) -> Result<bool, Declined> {
+        let answer = source.answers.answer(atom, slot, self.diameter.get());
+        if answer.is_err()
+            && let Some((state, is_initial)) = self.adding.get()
+            && self.unanswered.get().is_none()
+        {
+            self.unanswered.set(Some(Unanswered {
+                state,
+                atom,
+                slot: source.answers.position(atom, slot, self.diameter.get()) as u32,
+                is_initial,
+            }));
         }
+        answer
     }
 
-    fn answer(&self, atom: u32, position: usize) -> Result<bool, Declined> {
-        let position = self.position(atom, position);
-        let table = self
-            .tables
-            .get(atom as usize)
-            .copied()
-            .flatten()
-            .ok_or_else(|| Declined::from("an atom the engine doesn't answer"))?;
-        match table.get(position) {
-            Some(0) => Ok(false),
-            Some(1) => Ok(true),
-            _ => Err(Declined::from(
-                "a predicate the engine leaves to the interpreter",
-            )),
-        }
-    }
-
-    fn evaluate(&self, term: TermId, state: u32, step: Option<Step>) -> Result<bool, Declined> {
+    fn evaluate(
+        &self,
+        source: &Source<'_>,
+        term: TermId,
+        state: u32,
+        step: Option<Step>,
+    ) -> Result<bool, Declined> {
         match self.terms.kind(term) {
             Kind::Boolean(value) => Ok(value),
             Kind::State(atom) | Kind::Enabled(atom) => {
                 let mut effects = self.effects.borrow_mut();
+                let slot = Slot::State(state);
                 let Some(effects) = effects.as_mut() else {
-                    return self.answer(atom, state as usize);
+                    return self.answer(source, atom, slot);
                 };
                 if let Some(&(_, known)) = effects.known.iter().find(|known| known.0 == atom) {
                     return Ok(known);
                 }
-                let answer = self.answer(atom, state as usize)?;
+                let answer = self.answer(source, atom, slot)?;
                 effects.events.push(Event::Atom {
                     atom,
-                    slot: self.position(atom, state as usize),
+                    slot: source.answers.position(atom, slot, self.diameter.get()),
                 });
                 effects.known.push((atom, answer));
                 Ok(answer)
@@ -297,27 +288,26 @@ impl<'c> Checker<'c> {
                     return Ok(false);
                 }
                 let step = step.ok_or_else(|| Declined::from("an action without a step"))?;
-                let answer = self.answer(atom, step.answer)?;
+                let answer = self.answer(source, atom, step.slot)?;
                 effects.events.push(Event::Atom {
                     atom,
-                    slot: self.position(atom, step.answer),
+                    slot: source
+                        .answers
+                        .position(atom, step.slot, self.diameter.get()),
                 });
                 Ok(answer)
             }
             Kind::Action { atom, enabled } => {
-                if let Some(enabled) = enabled
-                    && let Some(Some(table)) = self.tables.get(enabled as usize)
-                    && table.get(state as usize) == Some(&0)
-                {
+                if enabled.is_some_and(|enabled| source.answers.is_disabled(enabled, state)) {
                     return Ok(false);
                 }
                 let step = step.ok_or_else(|| Declined::from("an action without a step"))?;
-                self.answer(atom, step.answer)
+                self.answer(source, atom, step.slot)
             }
-            Kind::Not => Ok(!self.evaluate(self.terms.body(term), state, step)?),
+            Kind::Not => Ok(!self.evaluate(source, self.terms.body(term), state, step)?),
             Kind::And => {
                 for &operand in self.terms.children(term) {
-                    if !self.evaluate(operand, state, step)? {
+                    if !self.evaluate(source, operand, state, step)? {
                         return Ok(false);
                     }
                 }
@@ -325,7 +315,7 @@ impl<'c> Checker<'c> {
             }
             Kind::Or => {
                 for &operand in self.terms.children(term) {
-                    if self.evaluate(operand, state, step)? {
+                    if self.evaluate(source, operand, state, step)? {
                         return Ok(true);
                     }
                 }
@@ -334,6 +324,7 @@ impl<'c> Checker<'c> {
             Kind::Next => {
                 let outer = self.start_evaluation();
                 let result = self.evaluate(
+                    source,
                     self.terms.body(term),
                     step.map_or(state, |step| step.real),
                     None,
@@ -374,6 +365,46 @@ impl<'c> Checker<'c> {
         *self.effects.get_mut() = Some(Effects::default());
     }
 
+    /// The evaluations logged so far, which the log goes on from.
+    pub fn drain_events(&mut self) -> Vec<Event> {
+        self.effects
+            .get_mut()
+            .as_mut()
+            .map(|effects| std::mem::take(&mut effects.events))
+            .unwrap_or_default()
+    }
+
+    /// Whether TLC evaluates an atom as it adds an initial state: a state predicate of an initial
+    /// node of a tableau.
+    pub fn asks_initial_states(&self) -> bool {
+        self.solutions
+            .iter()
+            .filter_map(|solution| solution.tableau.as_ref())
+            .any(|tableau| {
+                tableau.nodes[..tableau.initial_count]
+                    .iter()
+                    .any(|node| !node.state_predicates.is_empty())
+            })
+    }
+
+    /// Adds an initial state, or a state the search expanded, naming the first atom left
+    /// unanswered as `add_states` does.
+    pub fn add_one(
+        &mut self,
+        source: &Source<'_>,
+        state: u32,
+        is_initial: bool,
+    ) -> Result<Option<Vec<u32>>, Declined> {
+        self.adding.set(Some((state, is_initial)));
+        let added = if is_initial {
+            self.add_initial_state(source, state).map(|()| None)
+        } else {
+            self.add_state(source, state)
+        };
+        self.adding.set(None);
+        added
+    }
+
     /// The evaluations logged, which ends the log.
     pub fn take_events(&mut self) -> Vec<Event> {
         self.effects
@@ -383,24 +414,27 @@ impl<'c> Checker<'c> {
             .unwrap_or_default()
     }
 
-    fn self_step(&self, state: u32, real: u32) -> Step {
+    fn self_step(state: u32, real: u32) -> Step {
         Step {
             target: state,
             real,
-            answer: self.graph.edges.len() + real as usize,
+            slot: Slot::Stutter(real),
         }
     }
 
-    fn edge_step(&self, state: u32, edge: usize) -> Step {
-        let target = self.graph.edges[edge];
-        let real = self.graph.reals.map_or(target, |reals| reals[edge]);
+    fn edge_step(source: &Source<'_>, state: u32, edge: usize) -> Step {
+        let target = source.graph.edges[edge];
+        let real = source.graph.reals.map_or(target, |reals| reals[edge]);
         if target == state && real == state {
-            self.self_step(state, state)
+            Self::self_step(state, state)
         } else {
             Step {
                 target,
                 real,
-                answer: edge,
+                slot: Slot::Step {
+                    state,
+                    edge: edge as u32,
+                },
             }
         }
     }
@@ -414,6 +448,7 @@ impl<'c> Checker<'c> {
 
     fn check_step(
         &mut self,
+        source: &Source<'_>,
         behavior: usize,
         state: u32,
         step: Step,
@@ -426,19 +461,30 @@ impl<'c> Checker<'c> {
                 continue;
             }
             self.start_evaluation();
-            self.steps[slot] = i8::from(self.evaluate(check, state, Some(step))?);
+            self.steps[slot] = i8::from(self.evaluate(source, check, state, Some(step))?);
         }
         Ok(())
     }
 
-    fn check_action(&mut self, behavior: usize, state: u32, step: Step) -> Result<u32, Declined> {
+    fn check_action(
+        &mut self,
+        source: &Source<'_>,
+        behavior: usize,
+        state: u32,
+        step: Step,
+    ) -> Result<u32, Declined> {
         let row = self.add_steps(1);
-        self.check_step(behavior, state, step, row)?;
+        self.check_step(source, behavior, state, step, row)?;
         Ok(row as u32)
     }
 
     // The state checks of a state the search reached, kept for the nodes of the state it reached.
-    fn check_state(&mut self, behavior: usize, real: u32) -> Result<(), Declined> {
+    fn check_state(
+        &mut self,
+        source: &Source<'_>,
+        behavior: usize,
+        real: u32,
+    ) -> Result<(), Declined> {
         let solution = &self.solutions[self.behaviors[behavior].solution];
         let count = solution.state_checks.len();
         let offset = real as usize * count;
@@ -447,7 +493,7 @@ impl<'c> Checker<'c> {
             .iter()
             .map(|&check| {
                 self.start_evaluation();
-                self.evaluate(check, real, None).map(u8::from)
+                self.evaluate(source, check, real, None).map(u8::from)
             })
             .collect::<Result<_, _>>()?;
         let stored = &mut self.behaviors[behavior].state_results;
@@ -465,14 +511,20 @@ impl<'c> Checker<'c> {
     }
 
     // Whether a reached state is consistent with a tableau node.
-    fn is_consistent(&mut self, behavior: usize, node: u32, state: u32) -> Result<bool, Declined> {
+    fn is_consistent(
+        &mut self,
+        source: &Source<'_>,
+        behavior: usize,
+        node: u32,
+        state: u32,
+    ) -> Result<bool, Declined> {
         let Some(tableau) = self.tableau(behavior) else {
             return Ok(true);
         };
         let slot = state as usize * tableau.nodes.len() + node as usize;
         // TLC evaluates each time, which keeping nothing matches where an atom has effects or
         // reads TLC's diameter, which grows as the states are added.
-        let is_effectful = self.is_effectful() || self.graph.diameters.is_some();
+        let is_effectful = self.is_effectful() || source.graph.diameters.is_some();
         if !is_effectful
             && let Some(&known) = self.behaviors[behavior].consistency.get(slot)
             && known != UNKNOWN_RESULT
@@ -482,7 +534,7 @@ impl<'c> Checker<'c> {
         self.start_evaluation();
         let mut is_held = true;
         for &predicate in &tableau.nodes[node as usize].state_predicates {
-            if !self.evaluate(predicate, state, None)? {
+            if !self.evaluate(source, predicate, state, None)? {
                 is_held = false;
                 break;
             }
@@ -504,12 +556,39 @@ impl<'c> Checker<'c> {
             .map_or(0, |tableau| tableau.nodes.len())
     }
 
+    fn is_done(&self, behavior: usize, state: u32) -> bool {
+        self.behaviors[behavior]
+            .is_done
+            .get(state as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn set_done(&mut self, behavior: usize, state: u32) {
+        let is_done = &mut self.behaviors[behavior].is_done;
+        if is_done.len() <= state as usize {
+            is_done.resize(state as usize + 1, false);
+        }
+        is_done[state as usize] = true;
+    }
+
     fn is_accepting(&self, behavior: usize, node: u32) -> bool {
         let Some(tableau) = self.tableau(behavior) else {
             return false;
         };
         let tableau_node = &tableau.nodes[node as usize];
         tableau_node.particle.is_empty() && tableau_node.successors == [node]
+    }
+
+    // Whether a state may reach a tableau node that accepts every behavior, which TLC stops at as
+    // it adds the state: one with no particle that leads only to itself, of a solution with a
+    // model that asks nothing of the cycle.
+    fn may_accept(&self) -> bool {
+        (0..self.behaviors.len()).any(|behavior| {
+            self.has_empty_model(behavior)
+                && (0..self.tableau_size(behavior) as u32)
+                    .any(|node| self.is_accepting(behavior, node))
+        })
     }
 
     fn has_empty_model(&self, behavior: usize) -> bool {
@@ -534,14 +613,14 @@ impl<'c> Checker<'c> {
 
     /// TLC collects a state's successors and the state itself in a SetOfStates, a hash set it
     /// iterates in slot order, keyed by the states' fingerprints.
-    fn successor_set(&mut self, state: u32) -> Vec<Step> {
-        let graph = self.graph;
+    fn successor_set(&mut self, source: &Source<'_>, state: u32) -> Vec<Step> {
+        let graph = source.graph;
         let start = graph.edge_offsets[state as usize] as usize;
         let end = graph.edge_offsets[state as usize + 1] as usize;
         let mut entries: Vec<Step> = (start..end)
-            .map(|edge| self.edge_step(state, edge))
+            .map(|edge| Self::edge_step(source, state, edge))
             .collect();
-        entries.push(self.self_step(state, state));
+        entries.push(Self::self_step(state, state));
         let fingerprint =
             |step: &Step| (graph.fingerprints[step.target as usize] as u32 & 0x7fff_ffff) as usize;
         let insert = |slots: &mut [u32], position: usize| {
@@ -591,7 +670,7 @@ impl<'c> Checker<'c> {
             .collect()
     }
 
-    fn add_initial_state(&mut self, state: u32) -> Result<(), Declined> {
+    fn add_initial_state(&mut self, source: &Source<'_>, state: u32) -> Result<(), Declined> {
         self.log(Event::Initial(state));
         self.diameter.set(1);
         for behavior in 0..self.behaviors.len() {
@@ -601,7 +680,7 @@ impl<'c> Checker<'c> {
                 continue;
             };
             for node in 0..initial_count as u32 {
-                if !self.is_consistent(behavior, node, state)? {
+                if !self.is_consistent(source, behavior, node, state)? {
                     continue;
                 }
                 let target = match self.node_id(behavior, state, node) {
@@ -616,12 +695,12 @@ impl<'c> Checker<'c> {
 
     /// Adds a state with its successors to every graph, and returns the path to a node of a
     /// tableau that accepts every behavior, when TLC finds one.
-    fn add_state(&mut self, state: u32) -> Result<Option<Vec<u32>>, Declined> {
+    fn add_state(&mut self, source: &Source<'_>, state: u32) -> Result<Option<Vec<u32>>, Declined> {
         self.log(Event::Expanded(state));
-        if let Some(diameters) = &self.graph.diameters {
+        if let Some(diameters) = &source.graph.diameters {
             self.diameter.set(diameters.states[state as usize]);
         }
-        let set = self.successor_set(state);
+        let set = self.successor_set(source, state);
         // With effects, each behavior checks its actions on each step anew, as TLC does.
         let is_effectful = self.is_effectful();
         let shared_step = self.add_steps(if is_effectful { 0 } else { set.len() });
@@ -633,15 +712,15 @@ impl<'c> Checker<'c> {
             };
             if is_effectful || !self.behaviors[behavior].is_covered {
                 for (position, &step) in set.iter().enumerate() {
-                    self.check_step(behavior, state, step, first_step + position)?;
+                    self.check_step(source, behavior, state, step, first_step + position)?;
                 }
             }
-            self.check_state(behavior, state)?;
+            self.check_state(source, behavior, state)?;
             if self.tableau(behavior).is_none() {
                 self.add_plain_state(behavior, &set, first_step, state);
                 continue;
             }
-            if let Some(path) = self.add_tableau_state(behavior, &set, first_step, state)? {
+            if let Some(path) = self.add_tableau_state(source, behavior, &set, first_step, state)? {
                 return Ok(Some(path));
             }
         }
@@ -677,6 +756,7 @@ impl<'c> Checker<'c> {
 
     fn add_tableau_state(
         &mut self,
+        source: &Source<'_>,
         behavior: usize,
         set: &[Step],
         first_step: usize,
@@ -687,10 +767,10 @@ impl<'c> Checker<'c> {
         for node in 0..node_count {
             for (position, step) in set.iter().enumerate() {
                 consistency[node * set.len() + position] =
-                    self.is_consistent(behavior, node as u32, step.real)?;
+                    self.is_consistent(source, behavior, node as u32, step.real)?;
             }
         }
-        self.behaviors[behavior].is_done[state as usize] = true;
+        self.set_done(behavior, state);
         // TLC expands the nodes recorded before the loop, not the ones the loop records.
         let last = self.behaviors[behavior]
             .last_nodes
@@ -707,7 +787,7 @@ impl<'c> Checker<'c> {
             let mut targets = Vec::new();
             let mut steps = Vec::new();
             for (position, step) in set.iter().enumerate() {
-                let is_done = self.behaviors[behavior].is_done[step.target as usize];
+                let is_done = self.is_done(behavior, step.target);
                 for &next in &tableau_successors {
                     if !consistency[next as usize * set.len() + position] {
                         continue;
@@ -723,7 +803,7 @@ impl<'c> Checker<'c> {
                     targets.push(target);
                     steps.push((first_step + position) as u32);
                     if existing.is_none() && is_done {
-                        self.expand_late(behavior, step.target, step.real, target)?;
+                        self.expand_late(source, behavior, step.target, step.real, target)?;
                     }
                 }
             }
@@ -750,17 +830,18 @@ impl<'c> Checker<'c> {
     /// state: it checks the state the step reached, `real`, and runs Next from it.
     fn expand_late(
         &mut self,
+        source: &Source<'_>,
         behavior: usize,
         state: u32,
         real: u32,
         node: u32,
     ) -> Result<(), Declined> {
-        if real as usize + 1 >= self.graph.edge_offsets.len() {
+        if real as usize + 1 >= source.graph.edge_offsets.len() {
             return Err(Declined::from(crate::UNEXPANDED));
         }
         // TLC checks a late node at the diameter then, which the checks kept for the state may
         // not have read.
-        if let Some(diameters) = &self.graph.diameters
+        if let Some(diameters) = &source.graph.diameters
             && diameters.states.get(real as usize) != Some(&self.diameter.get())
         {
             return Err(Declined::from("a late node TLC adds at another diameter"));
@@ -768,17 +849,17 @@ impl<'c> Checker<'c> {
         if real != state {
             self.behaviors[behavior].node_reals.insert(node, real);
         }
-        self.check_state(behavior, real)?;
+        self.check_state(source, behavior, real)?;
         let tableau_successors = self.tableau_successors(behavior, node);
         let mut targets = Vec::new();
         let mut steps = Vec::new();
         let self_step = if tableau_successors.is_empty() {
             u32::MAX
         } else {
-            self.check_action(behavior, real, self.self_step(state, real))?
+            self.check_action(source, behavior, real, Self::self_step(state, real))?
         };
         for &next in &tableau_successors {
-            if !self.is_consistent(behavior, next, real)? {
+            if !self.is_consistent(source, behavior, next, real)? {
                 continue;
             }
             if self.is_accepting(behavior, next)
@@ -799,18 +880,18 @@ impl<'c> Checker<'c> {
             targets.push(target);
             steps.push(self_step);
             if existing.is_none() {
-                self.expand_late(behavior, state, real, target)?;
+                self.expand_late(source, behavior, state, real, target)?;
             }
         }
         self.log(Event::Late(real));
-        let start = self.graph.edge_offsets[real as usize] as usize;
-        let end = self.graph.edge_offsets[real as usize + 1] as usize;
+        let start = source.graph.edge_offsets[real as usize] as usize;
+        let end = source.graph.edge_offsets[real as usize + 1] as usize;
         for edge in start..end {
-            let step = self.edge_step(real, edge);
-            let successor_step = self.check_action(behavior, real, step)?;
-            let is_done = self.behaviors[behavior].is_done[step.target as usize];
+            let step = Self::edge_step(source, real, edge);
+            let successor_step = self.check_action(source, behavior, real, step)?;
+            let is_done = self.is_done(behavior, step.target);
             for &next in &tableau_successors {
-                if !self.is_consistent(behavior, next, step.real)? {
+                if !self.is_consistent(source, behavior, next, step.real)? {
                     continue;
                 }
                 let existing = self.node_id(behavior, step.target, next);
@@ -824,7 +905,7 @@ impl<'c> Checker<'c> {
                 targets.push(target);
                 steps.push(successor_step);
                 if existing.is_none() && is_done {
-                    self.expand_late(behavior, step.target, step.real, target)?;
+                    self.expand_late(source, behavior, step.target, step.real, target)?;
                 }
             }
         }
@@ -886,21 +967,22 @@ impl<'c> Checker<'c> {
     }
 
     // The step from one state to another, as the first of the search's steps between them.
-    fn step_to(&self, state: u32, target: u32) -> Result<Step, Declined> {
+    fn step_to(source: &Source<'_>, state: u32, target: u32) -> Result<Step, Declined> {
         if state == target {
-            return Ok(self.self_step(state, state));
+            return Ok(Self::self_step(state, state));
         }
-        let start = self.graph.edge_offsets[state as usize] as usize;
-        let end = self.graph.edge_offsets[state as usize + 1] as usize;
+        let start = source.graph.edge_offsets[state as usize] as usize;
+        let end = source.graph.edge_offsets[state as usize + 1] as usize;
         (start..end)
-            .find(|&edge| self.graph.edges[edge] == target)
-            .map(|edge| self.edge_step(state, edge))
+            .find(|&edge| source.graph.edges[edge] == target)
+            .map(|edge| Self::edge_step(source, state, edge))
             .ok_or_else(|| Declined::from("a step the search didn't take"))
     }
 
     /// Whether a formula holds of the lasso from the position on, as `evaluateOnLasso` finds it.
     fn evaluate_on_lasso(
         &self,
+        source: &Source<'_>,
         term: TermId,
         path: &[u32],
         cycle_start: usize,
@@ -915,12 +997,16 @@ impl<'c> Checker<'c> {
         };
         let future = position.min(cycle_start)..path.len();
         match self.terms.kind(term) {
-            Kind::Not => {
-                Ok(!self.evaluate_on_lasso(self.terms.body(term), path, cycle_start, position)?)
-            }
+            Kind::Not => Ok(!self.evaluate_on_lasso(
+                source,
+                self.terms.body(term),
+                path,
+                cycle_start,
+                position,
+            )?),
             Kind::And => {
                 for &operand in self.terms.children(term) {
-                    if !self.evaluate_on_lasso(operand, path, cycle_start, position)? {
+                    if !self.evaluate_on_lasso(source, operand, path, cycle_start, position)? {
                         return Ok(false);
                     }
                 }
@@ -928,18 +1014,28 @@ impl<'c> Checker<'c> {
             }
             Kind::Or => {
                 for &operand in self.terms.children(term) {
-                    if self.evaluate_on_lasso(operand, path, cycle_start, position)? {
+                    if self.evaluate_on_lasso(source, operand, path, cycle_start, position)? {
                         return Ok(true);
                     }
                 }
                 Ok(false)
             }
-            Kind::Next => {
-                self.evaluate_on_lasso(self.terms.body(term), path, cycle_start, next(position))
-            }
+            Kind::Next => self.evaluate_on_lasso(
+                source,
+                self.terms.body(term),
+                path,
+                cycle_start,
+                next(position),
+            ),
             Kind::Always => {
                 for index in future {
-                    if !self.evaluate_on_lasso(self.terms.body(term), path, cycle_start, index)? {
+                    if !self.evaluate_on_lasso(
+                        source,
+                        self.terms.body(term),
+                        path,
+                        cycle_start,
+                        index,
+                    )? {
                         return Ok(false);
                     }
                 }
@@ -947,7 +1043,13 @@ impl<'c> Checker<'c> {
             }
             Kind::Eventually => {
                 for index in future {
-                    if self.evaluate_on_lasso(self.terms.body(term), path, cycle_start, index)? {
+                    if self.evaluate_on_lasso(
+                        source,
+                        self.terms.body(term),
+                        path,
+                        cycle_start,
+                        index,
+                    )? {
                         return Ok(true);
                     }
                 }
@@ -955,8 +1057,10 @@ impl<'c> Checker<'c> {
             }
             _ => {
                 let state = path[position];
-                let step = self.step_to(state, path[next(position)])?;
-                self.evaluate(term, state, Some(step))
+                let step = Self::step_to(source, state, path[next(position)])?;
+                // TLC evaluates each atom of a property anew.
+                self.start_evaluation();
+                self.evaluate(source, term, state, Some(step))
             }
         }
     }
@@ -964,13 +1068,14 @@ impl<'c> Checker<'c> {
     /// The positions of the properties the lasso violates, in order.
     pub fn violated(
         &self,
+        source: &Source<'_>,
         properties: &[TermId],
         path: &[u32],
         loop_start: usize,
     ) -> Result<Vec<usize>, Declined> {
         let mut violated = Vec::new();
         for (position, &property) in properties.iter().enumerate() {
-            if !self.evaluate_on_lasso(property, path, loop_start, 0)? {
+            if !self.evaluate_on_lasso(source, property, path, loop_start, 0)? {
                 violated.push(position);
             }
         }
@@ -1010,8 +1115,8 @@ fn remove_repeats(states: impl Iterator<Item = u32>) -> Vec<u32> {
 
 /// The search of one model of one behavior graph for a strongly connected component that
 /// violates it.
-struct Search<'s, 'c> {
-    checker: &'s Checker<'c>,
+struct Search<'s> {
+    checker: &'s Checker,
     index: usize,
     behavior: &'s Behavior,
     solution: &'s Solution,
@@ -1026,8 +1131,8 @@ struct Search<'s, 'c> {
     fulfilling: Vec<bool>,
 }
 
-impl<'s, 'c> Search<'s, 'c> {
-    fn new(checker: &'s Checker<'c>, behavior: usize, model: &'s Model) -> Self {
+impl<'s> Search<'s> {
+    fn new(checker: &'s Checker, behavior: usize, model: &'s Model) -> Self {
         let graph = &checker.behaviors[behavior];
         let solution = &checker.solutions[graph.solution];
         let node_count = graph.node_states.len();
@@ -1394,38 +1499,113 @@ impl<'s, 'c> Search<'s, 'c> {
     }
 }
 
-/// Checks the formula on the search's graph, and names the properties a lasso violates.
-/// Builds the behavior graphs, into `events` the evaluations it logged, and searches them.
-pub fn check(
-    checker: &mut Checker<'_>,
-    properties: &[TermId],
-    events: &mut Vec<Event>,
-) -> Result<Verdict, Declined> {
-    let graph = checker.graph;
+/// The first atom the engine didn't answer that TLC evaluates as it adds the states to the
+/// behavior graphs, unless it stops first at a node that accepts every behavior.
+pub fn find_unanswered(checker: &mut Checker, source: &Source<'_>) -> Option<Unanswered> {
+    add_states(checker, source)
+        .is_err()
+        .then(|| checker.unanswered.get())
+        .flatten()
+}
+
+/// Where no state may reach a tableau node that accepts every behavior, none: otherwise as
+/// `add_states`.
+pub fn find_accepted(
+    checker: &mut Checker,
+    source: &Source<'_>,
+) -> Result<Option<(u32, Vec<u32>)>, Declined> {
+    if !checker.may_accept() {
+        return Ok(None);
+    }
+    add_states(checker, source)
+}
+
+/// Adds the states to the behavior graphs as TLC does as it searches: the first whose tableau node
+/// accepts every behavior, and the path to it.
+fn add_states(
+    checker: &mut Checker,
+    source: &Source<'_>,
+) -> Result<Option<(u32, Vec<u32>)>, Declined> {
+    let graph = source.graph;
     for (state, &parent) in graph.parents.iter().enumerate() {
         if parent == -1 {
-            checker.add_initial_state(state as u32)?;
+            checker.adding.set(Some((state as u32, true)));
+            checker.add_initial_state(source, state as u32)?;
         }
     }
     // A check part way through the search, as TLC's periodic one, adds the states it expanded:
     // the nodes of the others are undone, and the search for a cycle passes them by.
     for state in 0..graph.expanded() as u32 {
-        if let Some(path) = checker.add_state(state)? {
-            *events = checker.take_events();
-            return Ok(Verdict::Accepted { state, path });
+        checker.adding.set(Some((state, false)));
+        if let Some(path) = checker.add_state(source, state)? {
+            checker.adding.set(None);
+            return Ok(Some((state, path)));
         }
     }
+    checker.adding.set(None);
+    Ok(None)
+}
+
+/// The path to a node that accepts every behavior, and the properties it violates, which TLC
+/// names from the path with its last state stuttering.
+pub fn accepted(
+    checker: &Checker,
+    source: &Source<'_>,
+    properties: &[TermId],
+    state: u32,
+    path: Vec<u32>,
+) -> Result<Verdict, Declined> {
+    let loop_start = path.len().saturating_sub(1);
+    Ok(Verdict::Accepted {
+        violated: checker.violated(source, properties, &path, loop_start)?,
+        state,
+        path,
+    })
+}
+
+/// Checks the formula on the search's graph, and names the properties a lasso violates.
+/// Builds the behavior graphs, into `events` the evaluations it logged, and searches them.
+pub fn check(
+    checker: &mut Checker,
+    source: &Source<'_>,
+    properties: &[TermId],
+    events: &mut Vec<Event>,
+) -> Result<Verdict, Declined> {
+    let found = add_states(checker, source)?;
+    let is_effectful = checker.is_effectful();
     *events = checker.take_events();
-    if let Some(diameters) = &graph.diameters {
+    if let Some((state, path)) = found {
+        return accepted(checker, source, properties, state, path);
+    }
+    finish(checker, source, properties, events, is_effectful)
+}
+
+/// TLC's check of the behavior graphs once the states are added: the search of each for a
+/// counterexample, whose properties it names, logging what it evaluates for that into `events`
+/// where the atoms have effects.
+pub fn finish(
+    checker: &mut Checker,
+    source: &Source<'_>,
+    properties: &[TermId],
+    events: &mut Vec<Event>,
+    is_effectful: bool,
+) -> Result<Verdict, Declined> {
+    if let Some(diameters) = &source.graph.diameters {
         checker.diameter.set(diameters.last);
     }
-    Ok(match checker.find_violation()? {
-        Some((path, loop_start, is_cycle_constrained)) => Verdict::Lasso {
-            violated: checker.violated(properties, &path, loop_start)?,
-            path,
-            loop_start,
-            is_cycle_constrained,
-        },
-        None => Verdict::Holds,
+    let Some((path, loop_start, is_cycle_constrained)) = checker.find_violation()? else {
+        return Ok(Verdict::Holds);
+    };
+    if is_effectful {
+        checker.log_effects();
+        checker.log(Event::Lasso);
+    }
+    let violated = checker.violated(source, properties, &path, loop_start)?;
+    events.extend(checker.take_events());
+    Ok(Verdict::Lasso {
+        violated,
+        path,
+        loop_start,
+        is_cycle_constrained,
     })
 }

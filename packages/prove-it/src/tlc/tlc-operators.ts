@@ -13,7 +13,7 @@ import {
   getValue,
   overrideWithJava,
 } from "../builtins";
-import { TlaModuleError } from "../errors";
+import { TlaModuleError, TlaUnsupportedError } from "../errors";
 import type { Builtin, Context } from "../evaluate";
 import { EXIT_STATUS } from "../exit-codes";
 import { prettyPrint } from "../pretty-print";
@@ -44,6 +44,26 @@ const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
   createFunction([...registers].map(([key, value]): [Value, Value] => [key, createTuple([value])]));
 
 // TLC creates its model checker after it processes the spec, so these are undefined before then.
+// Where a JVM and its libraries name the system properties they set themselves.
+const JVM_PROPERTY_NAMESPACES = [
+  "java.",
+  "javax.",
+  "jdk.",
+  "sun.",
+  "os.",
+  "user.",
+  "file.",
+  "line.",
+  "path.",
+  "native.",
+  "stdout.",
+  "stderr.",
+  "awt.",
+  "http.",
+  "https.",
+  "ftp.",
+];
+
 const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
 // The keys of TLC 1.7.4's TLCGet, and those it can't read before it creates its model checker.
 const TLC_174_KEYS = new Set(["diameter", "distinct", "queue", "duration", "level"]);
@@ -116,7 +136,16 @@ const getRuntimeValue = (
     if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
     return value;
   }
-  if (key.startsWith("-D")) return rankString(runtime.properties.get(key.slice(2)) ?? key);
+  // System.getProperty with the key as the default (TLCGetSet.TLCGet). A property a JVM sets
+  // itself has a value only a JVM knows, unless the caller gave it.
+  if (key.startsWith("-D")) {
+    const name = key.slice(2);
+    const value = runtime.properties.get(name);
+    if (value === undefined && JVM_PROPERTY_NAMESPACES.some((prefix) => name.startsWith(prefix))) {
+      throw new TlaUnsupportedError(`TLCGet of the Java system property ${name}`);
+    }
+    return rankString(value ?? key);
+  }
   throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
 };
 

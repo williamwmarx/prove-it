@@ -1009,6 +1009,18 @@ fn config_value(value: &crate::config::ConfigValue) -> Json {
             kind("Set"),
             ("elements", Some(list(elements, config_value))),
         ]),
+        ConfigValue::Record(fields) => object(vec![
+            kind("Record"),
+            (
+                "fields",
+                Some(list(fields, |(name, value)| {
+                    object(vec![
+                        ("name", Some(text(name))),
+                        ("value", Some(config_value(value))),
+                    ])
+                })),
+            ),
+        ]),
     }
 }
 
@@ -1091,6 +1103,12 @@ pub fn environment(
         Err(FrontError::Syntax(error)) => return syntax_error(error),
         Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
             return object(vec![("error", Some(text(message)))]);
+        }
+        Err(FrontError::StackOverflow) => {
+            return object(vec![(
+                "error",
+                Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
+            )]);
         }
         Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
     };
@@ -1177,5 +1195,157 @@ pub fn environment(
             "printed",
             Some(list(&environment.printed, |printed| text(printed))),
         ),
+        (
+            "assumptions",
+            Some(Json::Array(
+                environment
+                    .assumptions
+                    .iter()
+                    .filter(|assumption| !assumption.is_axiom)
+                    .map(|assumption| text(&crate::errors::describe_range(&assumption.expression)))
+                    .collect(),
+            )),
+        ),
+        ("levels", Some(levels(environment, &keys))),
+        (
+            "startup",
+            Some(list(&environment.startup_definitions, |definition| {
+                name(&keys[&Rc::as_ptr(definition)])
+            })),
+        ),
+    ])
+}
+
+/// Each operator without parameters by its first key, with its body's level (`getLevel`).
+fn levels(
+    environment: &crate::environment::Environment,
+    keys: &crate::hash::FastMap<*const Definition, Name>,
+) -> Json {
+    let facts = crate::dependencies::create_definition_facts(environment);
+    Json::Array(
+        environment
+            .definitions
+            .iter()
+            .filter(|(key, definition)| {
+                keys.get(&Rc::as_ptr(definition)) == Some(key)
+                    && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+            })
+            .map(|(key, definition)| {
+                let level = crate::spec::get_level(&definition.body, None, environment, &facts, &[]);
+                Json::Array(vec![name(key), number(level as usize)])
+            })
+            .collect(),
+    )
+}
+
+/// What `front-differential spec` compares of `getSpecification`: Init's conjuncts and Next, each
+/// its name if an identifier and where it is written, the scope's names, and the temporals.
+pub fn specification(
+    value: &Result<crate::spec::Specification, crate::errors::FrontError>,
+) -> Json {
+    use crate::errors::{FrontError, describe_range};
+    let specification = match value {
+        Ok(specification) => specification,
+        Err(FrontError::Syntax(error)) => return syntax_error(error),
+        Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
+            return object(vec![("error", Some(text(message)))]);
+        }
+        Err(FrontError::StackOverflow) => {
+            return object(vec![(
+                "error",
+                Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
+            )]);
+        }
+        Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
+    };
+    let describe = |expression: &Expr| {
+        Json::Array(vec![
+            match &expression.kind {
+                ExpressionKind::Identifier { .. } => {
+                    name(&expression.reference().unwrap_or_default())
+                }
+                _ => Json::Null,
+            },
+            text(&describe_range(expression)),
+        ])
+    };
+    let init = specification.init.as_ref().map(|init| match &init.kind {
+        ExpressionKind::Junction {
+            is_and: true,
+            operands,
+            ..
+        } => Json::Array(operands.iter().map(describe).collect()),
+        _ => Json::Array(vec![describe(init)]),
+    });
+    let mut names = Vec::new();
+    let mut scope = specification.scope.as_ref();
+    while let Some(current) = scope {
+        names.push(name(&current.name));
+        scope = current.parent.as_ref();
+    }
+    object(vec![
+        ("init", Some(init.unwrap_or(Json::Null))),
+        (
+            "next",
+            Some(specification.next.as_ref().map_or(Json::Null, describe)),
+        ),
+        ("scope", Some(Json::Array(names))),
+        (
+            "temporals",
+            Some(Json::Array(
+                specification
+                    .temporals
+                    .iter()
+                    .map(|temporal| text(&describe_range(&temporal.expression)))
+                    .collect(),
+            )),
+        ),
+    ])
+}
+
+/// What `front-differential properties` compares of `getProperties`: each conjunct's name, where
+/// it is written, and whether it reads a scope.
+pub fn properties(value: &Result<crate::spec::Properties, crate::errors::FrontError>) -> Json {
+    use crate::errors::{FrontError, describe_range};
+    let properties = match value {
+        Ok(properties) => properties,
+        Err(FrontError::Syntax(error)) => return syntax_error(error),
+        Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
+            return object(vec![("error", Some(text(message)))]);
+        }
+        Err(FrontError::StackOverflow) => {
+            return object(vec![(
+                "error",
+                Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
+            )]);
+        }
+        Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
+    };
+    let describe = |property: &crate::spec::Property| {
+        Json::Array(vec![
+            name(&property.name),
+            text(&describe_range(&property.expression)),
+            Json::Bool(property.scope.is_some()),
+        ])
+    };
+    object(vec![
+        ("invariants", Some(list(&properties.invariants, describe))),
+        (
+            "actionProperties",
+            Some(list(&properties.action_properties, |property| {
+                Json::Array(vec![
+                    name(&property.name),
+                    text(&describe_range(&property.action)),
+                    text(&describe_range(&property.subscript)),
+                    Json::Bool(property.scope.is_some()),
+                ])
+            })),
+        ),
+        (
+            "initialPredicates",
+            Some(list(&properties.initial_predicates, describe)),
+        ),
+        ("liveness", Some(list(&properties.liveness, describe))),
+        ("stateLevel", Some(list(&properties.state_level, name))),
     ])
 }

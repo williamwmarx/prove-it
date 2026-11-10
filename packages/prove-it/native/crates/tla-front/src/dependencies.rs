@@ -22,6 +22,15 @@ const STREAMED: u32 = 8;
 /// action.
 const READS_IMPURE: u32 = 16;
 /// The liveness level of the definition, as thresholds so that reachability is a bitwise or.
+/// A formula's level, `CONSTANT_LEVEL` to `TEMPORAL_LEVEL` in `liveness.ts`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    Constant,
+    Variable,
+    Action,
+    Temporal,
+}
+
 const VARIABLE_LEVEL_FLAGS: u32 = 32;
 const ACTION_LEVEL_FLAGS: u32 = VARIABLE_LEVEL_FLAGS | 64;
 const TEMPORAL_LEVEL_FLAGS: u32 = ACTION_LEVEL_FLAGS | 128;
@@ -456,6 +465,16 @@ impl DefinitionFacts {
         self.get_row(definition, environment)[0] & REPEATED_EFFECT != 0
     }
 
+    /// `isImpureDefinition`: evaluating the definition can print, assert, read the clock or
+    /// choose at random.
+    pub fn is_impure_definition(
+        &self,
+        definition: &Rc<Definition>,
+        environment: &Environment,
+    ) -> bool {
+        self.get_row(definition, environment)[0] & IMPURE != 0
+    }
+
     /// `isConstantLevel`.
     pub fn is_constant_level(
         &self,
@@ -463,6 +482,21 @@ impl DefinitionFacts {
         environment: &Environment,
     ) -> bool {
         self.get_row(definition, environment)[0] & NONCONSTANT == 0
+    }
+
+    /// `getDefinitionLevel`: constant, state, action or temporal, as `CONSTANT_LEVEL` and the rest
+    /// number them.
+    pub fn get_definition_level(
+        &self,
+        definition: &Rc<Definition>,
+        environment: &Environment,
+    ) -> Level {
+        match self.get_row(definition, environment)[0] & TEMPORAL_LEVEL_FLAGS {
+            TEMPORAL_LEVEL_FLAGS => Level::Temporal,
+            ACTION_LEVEL_FLAGS => Level::Action,
+            VARIABLE_LEVEL_FLAGS => Level::Variable,
+            _ => Level::Constant,
+        }
     }
 
     /// `hasRepeatedEffect`.

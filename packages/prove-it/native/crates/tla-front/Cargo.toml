@@ -9,3 +9,7 @@ publish.workspace = true
 
 [dependencies]
 tla-ir = { path = "../tla-ir" }
+tla-live = { path = "../tla-live" }
+# For TLCGet("spec")'s record (`add_spec`). tla-trace must not depend on tla-front, which would
+# make a cycle.
+tla-trace = { path = "../tla-trace" }

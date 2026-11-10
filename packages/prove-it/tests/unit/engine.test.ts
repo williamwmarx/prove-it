@@ -117,6 +117,132 @@ describe("the engine", () => {
     expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 1 states/)]);
   });
 
+  it("expands a definition again through an argument, which isn't recursion", async () => {
+    // As mongodb-txns' ClientCentric does: a fold in the operator a fold applies, and in its base.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        FOLD,
+        "VARIABLE x",
+        "Sum(f) == FoldFunction(LAMBDA a, b : a + b, 0, f)",
+        "Init == x = 0",
+        "Next == x' = (x + 1) % 3",
+        "Inv == /\\ FoldFunction(LAMBDA a, acc : acc + Sum([i \\in 1..a |-> i + x]), 0, <<1, 2>>) = 4 + 3 * x",
+        "       /\\ FoldFunction(LAMBDA a, acc : a + acc, FoldFunction(LAMBDA a, b : a + b, x, <<1>>), <<2>>) = 3 + x",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("success");
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 3 states/)]);
+  });
+
+  it("evaluates UNCHANGED in the current state first like TLC", async () => {
+    // Tool.evalAppl evaluates the current state's side first, so its failure is the one TLC meets.
+    const subscript = 'IF x = 0 THEN Assert(FALSE, "before") ELSE <<>>[1]';
+    for (const form of ["[FALSE]_(e)", "IF UNCHANGED (e) THEN TRUE ELSE TRUE", "<<TRUE>>_(e)"]) {
+      const { lines } = await checkInEngine(
+        [
+          "EXTENDS TLC",
+          "VARIABLE x",
+          "Init == x = 0",
+          `Next == x' = 1 /\\ ${form.replace("(e)", `(${subscript})`)}`,
+        ].join("\n"),
+        "INIT Init\nNEXT Next",
+      );
+      expect([form, lines]).toEqual([form, [expect.stringMatching(/an assertion failed$/)]]);
+    }
+  });
+
+  it("takes a value a configuration substitutes for an operator with parameters", async () => {
+    // As mongodb-txns' Storage.cfg substitutes FALSE for its actions: TLC takes the value and
+    // leaves the arguments unevaluated (Tool.evalAppl).
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "A(n) == x' = n",
+        "Init == x = 0",
+        "Next == \\/ x < 3 /\\ x' = x + 1",
+        "        \\/ \\E n \\in {0} : A(1 \\div n)",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCONSTANT A <- FALSE\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 4]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+  });
+
+  it("assigns a primed variable a LET names, as TLC's getPrimedVar looks through the LET", async () => {
+    // From TLC's Github725d, in the next-state relation and in ENABLED.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x < 3 /\\ (LET y == x' IN y) = x + 1",
+        "Inv == ENABLED ((LET y == x' IN y) = 0)",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 4]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 4 states/)]);
+  });
+
+  it("assigns from SUBSET of a set it has no order for, in TLC's normalized order", async () => {
+    // From TLC's test46: SubsetValue.elementsNormalized enumerates SUBSET S in the normalized
+    // order of S's elements, whatever S's own order.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals, FiniteSets",
+        "VARIABLES x, f",
+        "S == UNION {[p : {k}, i : DOMAIN f[k]] : k \\in {1, 2}}",
+        "Init == f = [k \\in {1, 2} |-> <<0>>] /\\ x = {}",
+        "Next == f' = f /\\ x' \\in SUBSET (S' \\X S')",
+        "Inv == Cardinality(x) < 3",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("invariant-violation");
+    expect(lines).toEqual([expect.stringMatching(/an invariant violated$/)]);
+  });
+
+  it("applies an operator the configuration defines by its values", async () => {
+    // From TLC's ConstantOperatorConfiguration.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "CONSTANT F(_)",
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x' = F(x)",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nCONSTANT\nF(0) = 1\nF(1) = 2\nF(2) = 2",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 3 states/)]);
+  });
+
+  it("applies recursive functions an instance or an operator gives", async () => {
+    // From tla-rs's function_instance.
+    const { result, lines } = await checkInEngine(
+      [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "---- MODULE Lib ----",
+        "EXTENDS Naturals",
+        "fact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]",
+        "====",
+        "I == INSTANCE Lib",
+        "Scaled(b) == LET s[n \\in Nat] == IF n = 0 THEN b ELSE n * s[n - 1] IN s",
+        "Init == x = 0",
+        "Next == x' = (x + 1) % 3",
+        "Inv == I!fact[4] = 24 /\\ Scaled(2)[3] = 12 /\\ Scaled(x + 1)[2] = 2 * (x + 1)",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+    expect(lines).toEqual([expect.stringMatching(/^\[engine\] checked 3 states/)]);
+  });
+
   it("keeps the names a recursive function binds apart in each call", async () => {
     const { result, lines } = await checkInEngine(
       [

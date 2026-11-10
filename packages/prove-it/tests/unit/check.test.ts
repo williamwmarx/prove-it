@@ -1420,6 +1420,35 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
+  // TLC evaluates UNCHANGED e, [A]_e and <<A>>_e in the current state before the next one
+  // (Tool.evalAppl), so the first failure is the current state's.
+  it.each(["[FALSE]_(e)", "IF UNCHANGED (e) THEN TRUE ELSE TRUE", "<<TRUE>>_(e)"])(
+    "evaluates %s in the current state first like TLC",
+    async (form) => {
+      const subscript = 'IF x = 0 THEN Assert(FALSE, "before") ELSE Assert(FALSE, "after")';
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = 0\nNext == x' = 1 /\\ ${form.replace("(e)", `(${subscript})`)}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.message).toContain('"before"');
+    },
+  );
+
+  // TLC 1.8.0 takes a value a configuration substitutes for an operator with parameters, as
+  // mongodb-txns' Storage.cfg substitutes FALSE for actions, and leaves the arguments unevaluated.
+  it("takes a value substituted for an operator with parameters like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nA(n) == x' = n\nInit == x = 0\nNext == \\/ x < 3 /\\ x' = x + 1\n        \\/ \\E n \\in {0} : A(1 \\div n)\n====",
+      config: "INIT Init\nNEXT Next\nCONSTANT A <- FALSE\nCHECK_DEADLOCK FALSE",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      4,
+      4,
+    ]);
+  });
+
   it("reports a CASE with no true guard like TLC", async () => {
     const result = await check({
       source:
@@ -1709,6 +1738,29 @@ describe("evaluation errors match TLC", () => {
     });
     expect(new Set(ranges)).toEqual(new Set(["9-57", "9-46", "51-57", "34-45", "34-41"]));
     expect(ranges?.at(-1)).toBe("34-41");
+  });
+
+  // SpecProcessor.processConfigSpec keeps a definition that is a state predicate whole, so TLC's
+  // call stack starts at the list the definition wrote (TLC's own run of this model).
+  it("records the specification's initial predicate as the definition wrote it", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit ==\n  /\\ x \\in {0, 1, 2}\n  /\\ 3 \\div (x - 1) >= 0\n  /\\ Assert(x # 2, "two")\nNext == x\' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\n====',
+      config: "SPECIFICATION Spec",
+    });
+    const ranges = result.failure?.callStack?.map((expression) => {
+      const range = expression.location.range;
+      return range
+        ? `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`
+        : "";
+    });
+    // TLC prints a node its stack holds twice in a row once.
+    expect(ranges?.filter((range, index) => range !== ranges[index - 1])).toEqual([
+      "5:3-7:25",
+      "5:6-5:20",
+      "6:6-6:24",
+      "6:6-6:19",
+    ]);
   });
 
   // Tool.processUnchangedImplTuple puts the elements after the first in front of the conjuncts left,
@@ -2063,6 +2115,88 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  // TLC fingerprints a state only once the constraints hold of it (isInModel), so one they
+  // exclude never fails to fingerprint (TLC's own run of this model finds no error).
+  it("doesn't fingerprint a state the constraints exclude", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == \\/ (x = SUBSET (1..31) /\\ y = 0) \\/ (x = 0 /\\ y = 1)\nNext == UNCHANGED <<x, y>>\nC == y = 1\n====",
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      3,
+      1,
+    ]);
+  });
+
+  // TLC's replay, and Tool.getState as it prints the trace, take all of the action's successors
+  // before they fingerprint one, so both meet the assertion that fails after the successor TLC
+  // couldn't fingerprint (TLC's own run of this model, which exits 14).
+  it("reports what fails after a successor TLC can't fingerprint", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    const failure = result.failure;
+    expect([failure?.message, failure?.traceFailure?.message, failure?.exitCode]).toEqual([
+      `${getUnexpectedException("java.lang.RuntimeException")}Overflow when computing the number of elements in:\nSUBSET (1..31)`,
+      `${getUnexpectedException("tlc2.tool.EvalException")}The first argument of Assert evaluated to FALSE; the second argument was:\n"boom"`,
+      14,
+    ]);
+    expect(failure?.callStack?.at(-1)?.location.range?.start.column).toBe(75);
+    expect(failure?.fingerprint).toBeUndefined();
+  });
+
+  // Under a VIEW TLC fingerprints the view's value alone, so the union a variable holds is never
+  // normalized and streams {3} first each time (TLC's own run of this model).
+  it("streams a set a variable holds as the spec built it under a VIEW", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n, s\nInit == x = {} /\\ n = 0 /\\ s = (SUBSET {1, 2}) \\cup {{3}}\nNext == n < 3 /\\ x' \\in s /\\ Cardinality(x') = 1 /\\ n' = n + 1 /\\ s' = s\nInv == n < 2\nV == <<n>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW V",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "{}",
+      "{3}",
+      "{3}",
+    ]);
+  });
+
+  it("fails on zero to the power of zero in an invariant of a later state", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == x < 1 \\/ 0 ^ (x - 1) = 1\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.failure?.message).toBe("Evaluating invariant Inv failed.\n0^0 is undefined.");
+  });
+
+  it.each([
+    [
+      "ASSUME {1} \\in {s \\in SUBSET {1} : 1 \\div 0 = 0}",
+      "Cannot decide if element:\n{1}\n is element of:\n{{}, {1}}\nand satisfies the predicate line 6, col 36 to line 6, col 47 of module M",
+    ],
+    [
+      "ASSUME [n \\in Nat |-> n].a = 1",
+      "Attempted to compute the number of elements in the overridden value Nat.",
+    ],
+    [
+      "ASSUME [n \\in Nat |-> n] \\in Seq(Nat)",
+      "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
+    ],
+  ])("words %s as TLC's lazy values do", async (assumption, message) => {
+    const result = await checkModule(assumption);
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toBe(message);
+  });
+
+  it("puts a typed model value before an overridden set", async () => {
+    const result = await checkModule("CONSTANT m\nASSUME ~(Nat = m)", "CONSTANT m = A_b");
+    expect(result.status).toBe("success");
+  });
+
   it("words arithmetic, sequence, and membership errors like TLC", async () => {
     const cases = [
       ["1 \\div 0 = 0", "The second argument of \\div is 0."],
@@ -2164,6 +2298,15 @@ describe("evaluation errors match TLC", () => {
       ],
       ["{{}} \\cup {1} = {}", "Attempted to check equality of the set {} with the value:\n1"],
       ["{1} \\ {{}} = {}", "Attempted to check equality of the set {} with the value:\n1"],
+      ["Nat = 1", "Attempted to compare overridden value Nat with non-overridden value:\n1"],
+      [
+        "Seq({1}) = <<1>>",
+        "Attempted to compare overridden value Seq({1}) with non-overridden value:\n<<1>>",
+      ],
+      [
+        "(1..30) = <<1>>",
+        "Attempted to check equality of the set { 1,\n  2,\n  3,\n  4,\n  5,\n  6,\n  7,\n  8,\n  9,\n  10,\n  11,\n  12,\n  13,\n  14,\n  15,\n  16,\n  17,\n  18,\n  19,\n  20,\n  21,\n  22,\n  23,\n  24,\n  25,\n  26,\n  27,\n  28,\n  29,\n  30 } with the value:\n<<1>>",
+      ],
       ["{{}} \\cap {1} = {}", "Attempted to check equality of integer 1 with non-integer:\n{}"],
       [
         "0 \\in SUBSET {1}",
@@ -2637,6 +2780,26 @@ describe("evaluation errors match TLC", () => {
     expect(result.status).toBe("success");
   });
 
+  it.each([
+    ["Nat", "Nat"],
+    ["Seq({1})", "Seq({1})"],
+    ["[a : {1}]", "{[a |-> 1]}"],
+    ["{1} \\X {1}", "{<<1, 1>>}"],
+  ])("rejects a typed model value's membership in %s", async (set, shown) => {
+    const result = await checkModule(`CONSTANT m\nASSUME m \\in ${set}`, "CONSTANT m = A_b");
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violation?.message).toBe(
+      `Attempted to check if the typed model value A_b is an element of\n${shown}`,
+    );
+  });
+
+  it("rejects a typed model value's membership in an interval", async () => {
+    const result = await checkModule("CONSTANT m\nASSUME m \\in 1..3", "CONSTANT m = A_b");
+    expect(result.violation?.message).toBe(
+      "Attempted to check if the value:\nA_b\nis in the integer interval 1..3",
+    );
+  });
+
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",
     async (membership) => {
@@ -2683,6 +2846,69 @@ describe("evaluation errors match TLC", () => {
         `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${item[1]}`,
         75,
       ]),
+    );
+  });
+
+  it("reports a property that is an action like TLC", async () => {
+    // TLC's test-model/ActionLevelProp.tla and its ActionLevelProp*Test cases.
+    const source = [
+      "---- MODULE ActionLevelProp ----",
+      "EXTENDS Naturals",
+      "",
+      "VARIABLE x",
+      "vars == x",
+      "",
+      "Init ==",
+      "    x = 0",
+      "",
+      "Next ==",
+      "    /\\ x < 5",
+      "    /\\ x' = x + 1",
+      "",
+      "Spec ==",
+      "    Init /\\ [][Next]_vars",
+      "",
+      "------",
+      "",
+      "ActionLivePropA ==",
+      "    x' > x",
+      "",
+      "ActionLivePropB ==",
+      "\tNext",
+      "",
+      "ActionLivePropC ==",
+      "    Next \\/ UNCHANGED vars",
+      "",
+      "ActionLivePropD ==",
+      "    [Next]_vars",
+      "",
+      "ActionLivePropE ==",
+      "    <<Next>>_vars",
+      "",
+      "====",
+    ].join("\n");
+    // TLC rejects the configuration before it searches.
+    const getFailure = (property: string) =>
+      check({ source, config: `SPECIFICATION Spec\nPROPERTY ${property}` }).then(
+        () => undefined,
+        (error: unknown) => (error instanceof TlaConfigError ? error.message : error),
+      );
+    const formula = (name: string, at: string) =>
+      `The formula ${name} at ${at} is an action-level formula (i.e., it contains no temporal operators). Only temporal-level (or state-level) formulas are allowed under PROPERTY or PROPERTIES.`;
+    const book = "https://lamport.azurewebsites.net/tla/book.html";
+    const rewrite = (name: string, at: string) =>
+      `${formula(name, at)} To check that action ${name} holds in *every* step of the behavior, define a temporal property: Let A be the formula at ${at}; rewrite A as [][A]_v, where v is a state function (typically the tuple of variables) (compare page 90 of Specifying Systems at ${book}).`;
+    const at = (line: number, from: number, to: number) =>
+      `line ${line}, col ${from} to line ${line}, col ${to} of module ActionLevelProp`;
+    expect(await getFailure("ActionLivePropA")).toBe(rewrite("ActionLivePropA", at(20, 5, 10)));
+    // TLC names a conjunct of the action by its location.
+    expect(await getFailure("ActionLivePropB")).toBe(rewrite(at(12, 8, 17), at(12, 8, 17)));
+    expect(await getFailure("ActionLivePropC")).toBe(rewrite("ActionLivePropC", at(26, 5, 26)));
+    expect(await getFailure("ActionLivePropD")).toBe(
+      `${formula("ActionLivePropD", at(29, 5, 15))} To check that action ActionLivePropD holds in *every* step of the behavior, define a temporal property by applying the "always" temporal operator ([]) to the formula at ${at(29, 5, 15)} (compare page 90 of Specifying Systems at ${book}).`,
+    );
+    expect(await getFailure("ActionLivePropE")).toBe(
+      `${formula("ActionLivePropE", at(32, 5, 17))} To check that infinitely many ActionLivePropE steps occur, define a temporal property by applying the "always eventually" temporal operator combination ([]<>) to the formula at ${at(32, 5, 17)} (compare page 91 of Specifying Systems at ${book}).`,
     );
   });
 
@@ -3389,6 +3615,7 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     ["Ab == 1\nf == Abc", [["line 3, col 6 to line 3, col 8", "Unknown operator: `Abc'."]]],
+    ["Foo == x = 1\nVARIABLE x", [["line 2, col 8 to line 2, col 8", "Unknown operator: `x'."]]],
     [
       "EXTENDS Naturals\nf == -1",
       [
@@ -5263,6 +5490,17 @@ describe("check matches TLC 1.7.4", () => {
     await expect(getPropertyStatus("R(x)", "1.7.4")).rejects.toThrow(
       "TLC cannot handle the temporal formula line 9, col 6 to line 9, col 9 of module M",
     );
+  });
+
+  it("overflows on an initial predicate the configuration redefines by itself", async () => {
+    // The shape of TLC's CyclicRedefineVars: Init <- ReInit, whose body names Init.
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nInit == x = FALSE\nNext == x' = ~x\nSpec == Init /\\ [][Next]_x\nReInit == x \\in BOOLEAN /\\ Init\n====",
+        config: "SPECIFICATION Spec\nCONSTANT Init <- ReInit",
+      }),
+    ).rejects.toThrow(new TlaStackOverflowError());
   });
 
   it("doesn't expect an EvalException in the values a property quantifies over", async () => {

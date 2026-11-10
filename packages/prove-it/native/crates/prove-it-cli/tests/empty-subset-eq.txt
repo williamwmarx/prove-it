@@ -1,0 +1,26 @@
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check if the value:
+{}
+is in the integer interval 1..4
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+b = TRUE
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 8, column 9 to line 8, column 48 in EmptySubsetEq
+1. Line 8, column 14 to line 8, column 48 in EmptySubsetEq
+2. Line 8, column 17 to line 8, column 48 in EmptySubsetEq
+3. Line 8, column 18 to line 8, column 30 in EmptySubsetEq
+
+
+Reason:
+Attempted to check if the value:
+{}
+is in the integer interval 1..4
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

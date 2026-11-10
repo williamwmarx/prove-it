@@ -47,6 +47,8 @@ name = "tla-front"
 version = "0.1.0"
 dependencies = [
  "tla-ir",
+ "tla-live",
+ "tla-trace",
 ]
 
 [[package]]

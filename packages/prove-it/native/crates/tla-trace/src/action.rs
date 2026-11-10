@@ -5,11 +5,17 @@
 //! has a value, TLC evaluates the rest of a conjunction as guards, in the initial predicate and,
 //! with warnings on, in an action.
 
-use tla_ir::{NodeId, NodeKind, Resolution, Startup};
+use std::collections::HashSet;
 
-use crate::eval::{Context, Evaluator};
+use tla_values::random::JavaRandom;
+
+use tla_ir::{Bound, Definition, DefinitionForm, Name, NodeId, NodeKind, PathStep, Resolution};
+
+use crate::eval::{Context, Evaluator, PRIMED_UNASSIGNED, StackFrame, bound_expression};
 use crate::sets::is_member;
-use crate::value::{Evaluated, Value, elements, equals, fail, is_same};
+use crate::value::{
+    Evaluated, Lazy, TlcMessage, Value, elements, equals, fail, fail_with, is_same,
+};
 
 /// What a walk calls for each state it completes; it returns false to stop the walk.
 pub type Visit<'v, 'ir> = dyn FnMut(&mut Evaluator<'ir>) -> Evaluated<bool> + 'v;
@@ -107,42 +113,6 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
-    // The variables UNCHANGED e names, following names to what they're bound to.
-    fn unchanged_variables(
-        &mut self,
-        node: NodeId,
-        context: &Context,
-        depth: u32,
-    ) -> Evaluated<Option<Vec<u32>>> {
-        if depth > MAXIMUM_DEPTH {
-            return Ok(None);
-        }
-        match self.kind(node) {
-            NodeKind::Tuple(items) => {
-                let mut variables = Vec::new();
-                for &item in items {
-                    match self.unchanged_variables(item, context, depth + 1)? {
-                        Some(found) => variables.extend(found),
-                        None => return Ok(None),
-                    }
-                }
-                Ok(Some(variables))
-            }
-            NodeKind::Identifier(name) => {
-                if !name.is_local
-                    && let Resolution::Variable(index) = name.resolution
-                {
-                    return Ok(Some(vec![index]));
-                }
-                match self.resolve_action(node, context)? {
-                    Some((body, inner)) => self.unchanged_variables(body, &inner, depth + 1),
-                    None => Ok(None),
-                }
-            }
-            _ => Ok(None),
-        }
-    }
-
     fn guard(
         &mut self,
         node: NodeId,
@@ -156,7 +126,225 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
-    fn walk(
+    /// Whether TLC computes a definition as it starts (`processConstantDefns`), which it does to
+    /// one of constant level whose evaluation then succeeds. One that reads TLC's registers, its
+    /// counterexample or the _POSSIBLE counts fails then, so TLC keeps it; any other one of
+    /// constant level may be computed, so this says yes for it.
+    pub(crate) fn is_precomputed(&mut self, definition: NodeId) -> bool {
+        !self.may_reach(
+            definition,
+            &["TLCGet", "TLCSet", "CounterExample", "_Counts"],
+        )
+    }
+
+    /// Whether an expression may read the state or apply one of these builtins.
+    pub(crate) fn may_reach(&mut self, node: NodeId, builtins: &'static [&'static str]) -> bool {
+        self.state_builtins = builtins;
+        let reads = self.can_read(node, &Context::default());
+        self.state_builtins = &[];
+        reads
+    }
+
+    /// Whether an expression may read the state, as `getLevel` finds it above constant level.
+    pub(crate) fn can_read(&self, node: NodeId, context: &Context) -> bool {
+        self.can_read_state(node, context, &mut HashSet::new())
+    }
+
+    // Whether an expression may read the state, as an expression above constant level, which
+    // `getLevel` finds: a variable, a prime, UNCHANGED or ENABLED in it or in a definition it names.
+    // A form the check doesn't follow counts as one that may.
+    fn can_read_state(
+        &self,
+        node: NodeId,
+        context: &Context,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        let any = |nodes: &[NodeId], visited: &mut HashSet<NodeId>| {
+            nodes
+                .iter()
+                .any(|&inner| self.can_read_state(inner, context, visited))
+        };
+        let bounds = |bounds: &[Bound]| bounds.iter().map(|bound| bound.set).collect::<Vec<_>>();
+        match self.kind(node) {
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_)
+            | NodeKind::ExceptAt => false,
+            NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => {
+                self.can_name_read_state(name, context, visited)
+            }
+            NodeKind::Apply { name, args } => {
+                self.can_name_read_state(name, context, visited) || any(args, visited)
+            }
+            NodeKind::Lambda { body, .. }
+            | NodeKind::UnboundedQuantifier { body, .. }
+            | NodeKind::Label { body, .. } => self.can_read_state(*body, context, visited),
+            NodeKind::And(nodes)
+            | NodeKind::Or(nodes)
+            | NodeKind::SetEnumeration(nodes)
+            | NodeKind::Tuple(nodes)
+            | NodeKind::Bracket(nodes)
+            | NodeKind::Product(nodes) => any(nodes, visited),
+            NodeKind::If {
+                condition,
+                consequent,
+                alternative,
+            } => any(&[*condition, *consequent, *alternative], visited),
+            NodeKind::Case { arms, other } => {
+                arms.iter()
+                    .any(|&(condition, body)| any(&[condition, body], visited))
+                    || other.is_some_and(|other| self.can_read_state(other, context, visited))
+            }
+            NodeKind::Let {
+                definitions, body, ..
+            } => any(definitions, visited) || self.can_read_state(*body, context, visited),
+            NodeKind::Forall { bounds: list, body }
+            | NodeKind::Exists { bounds: list, body }
+            | NodeKind::FunctionConstruction {
+                bounds: list, body, ..
+            } => any(&bounds(list), visited) || self.can_read_state(*body, context, visited),
+            NodeKind::SetMap {
+                expression,
+                bounds: list,
+            } => any(&bounds(list), visited) || self.can_read_state(*expression, context, visited),
+            NodeKind::Choose { set, body, .. } => {
+                set.is_some_and(|set| self.can_read_state(set, context, visited))
+                    || self.can_read_state(*body, context, visited)
+            }
+            NodeKind::SetFilter { bound, predicate } => any(&[bound.set, *predicate], visited),
+            NodeKind::FunctionSet { domain, range } => any(&[*domain, *range], visited),
+            NodeKind::Record(fields) | NodeKind::RecordSet(fields) => fields
+                .iter()
+                .any(|&(_, value)| self.can_read_state(value, context, visited)),
+            NodeKind::Except { function, updates } => {
+                self.can_read_state(*function, context, visited)
+                    || updates.iter().any(|update| {
+                        self.can_read_state(update.value, context, visited)
+                            || update.path.iter().any(|step| match step {
+                                PathStep::Field(_) => false,
+                                PathStep::Index(indices) => any(indices, visited),
+                            })
+                    })
+            }
+            NodeKind::FunctionApplication { function, args } => {
+                self.can_read_state(*function, context, visited) || any(args, visited)
+            }
+            NodeKind::FieldAccess { record, .. } => self.can_read_state(*record, context, visited),
+            NodeKind::Definition(definition) => {
+                let sets = match &definition.form {
+                    DefinitionForm::Function(list) => bounds(list),
+                    DefinitionForm::Operator(_) => Vec::new(),
+                };
+                visited.insert(node)
+                    && sets
+                        .into_iter()
+                        .chain([definition.body])
+                        .any(|inner| self.can_read_state(inner, context, visited))
+            }
+            _ => true,
+        }
+    }
+
+    // Whether a name may read the state: a variable, a definition whose body may, or a LET
+    // definition or operator argument whose expression may in the scope that binds it.
+    fn can_name_read_state(
+        &self,
+        name: &Name,
+        context: &Context,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        if name.is_local {
+            return bound_expression(context, name.text).is_some_and(|(node, inner)| {
+                // A definition checks its own visit, in the Definition arm.
+                (matches!(self.kind(node), NodeKind::Definition(_)) || visited.insert(node))
+                    && self.can_read_state(node, &inner, visited)
+            });
+        }
+        match name.resolution {
+            Resolution::Variable(_) => true,
+            Resolution::Builtin(index) => self
+                .state_builtins
+                .contains(&&*self.ir.texts[self.ir.builtins[index as usize].name as usize]),
+            Resolution::Definition(index) => self.can_read_state(
+                self.ir.definitions[index as usize],
+                &Context::default(),
+                visited,
+            ),
+            _ => false,
+        }
+    }
+
+    // Walks a node in its frame of the call stack, as `visit` in `tlc/replay.ts` does.
+    pub(crate) fn walk(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if self.call_stack.is_none() {
+            return self.walk_node(node, context, is_init, then);
+        }
+        let frame = StackFrame::Node(self.resolved(node));
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.walk_node(node, context, is_init, then)
+        })
+    }
+
+    // The first `count` operands of an infix conjunction, as SANY's node of that prefix: the
+    // prefix of one fewer, then the last.
+    fn conjunction_prefix(
+        &mut self,
+        node: NodeId,
+        operands: &[NodeId],
+        count: usize,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if self.is_walked_whole(node, count) {
+            return self.conjunction(&operands[..count], true, context, is_init, then);
+        }
+        let last = operands[count - 1];
+        let frame = StackFrame::Prefix(self.resolved(node), count - 1);
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.conjunction_prefix(
+                node,
+                operands,
+                count - 1,
+                context,
+                is_init,
+                &mut |evaluator| evaluator.conjunction(&[last], false, context, is_init, then),
+            )
+        })
+    }
+
+    // The first `count` operands of an infix disjunction, as `conjunction_prefix` nests them.
+    fn disjunction_prefix(
+        &mut self,
+        node: NodeId,
+        operands: &[NodeId],
+        count: usize,
+        context: &Context,
+        is_init: bool,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if self.is_walked_whole(node, count) {
+            return self.disjunction(&operands[..count], context, is_init, then);
+        }
+        let frame = StackFrame::Prefix(self.resolved(node), count - 1);
+        if !self.in_frame(frame, &mut |evaluator| {
+            evaluator.disjunction_prefix(node, operands, count - 1, context, is_init, then)
+        })? {
+            return Ok(false);
+        }
+        self.choose(count as u32 - 1, true, &mut |evaluator| {
+            evaluator.walk(operands[count - 1], context, is_init, then)
+        })
+    }
+
+    fn walk_node(
         &mut self,
         node: NodeId,
         context: &Context,
@@ -164,8 +352,12 @@ impl<'ir> Evaluator<'ir> {
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
         match self.kind(node) {
-            NodeKind::And(operands) => self.conjunction(operands, true, context, is_init, then),
-            NodeKind::Or(operands) => self.disjunction(operands, context, is_init, then),
+            NodeKind::And(operands) => {
+                self.conjunction_prefix(node, operands, operands.len(), context, is_init, then)
+            }
+            NodeKind::Or(operands) => {
+                self.disjunction_prefix(node, operands, operands.len(), context, is_init, then)
+            }
             NodeKind::Exists { bounds, body } => {
                 let mut is_in_order = true;
                 for bound in bounds {
@@ -216,11 +408,9 @@ impl<'ir> Evaluator<'ir> {
                 }
             }
             NodeKind::Let {
-                instances,
-                definitions,
-                body,
+                definitions, body, ..
             } => {
-                let inner = self.bind_let(*instances, definitions, context)?;
+                let inner = self.bind_let(definitions, context)?;
                 self.walk(*body, &inner, is_init, then)
             }
             NodeKind::Unchanged(expression) => {
@@ -233,7 +423,27 @@ impl<'ir> Evaluator<'ir> {
                 let subscript = *subscript;
                 self.walk(*action, context, is_init, &mut |evaluator| {
                     let now = evaluator.evaluate(subscript, context)?;
-                    let after = evaluator.evaluate(subscript, &context.primed(true))?;
+                    // TLC's `Tool#enabled` names the fairness condition where A leaves a variable
+                    // of v unassigned (`toUnspecifiedSubscriptError`), unlike TLC 1.7.4.
+                    let after = evaluator
+                        .evaluate(subscript, &context.primed(true))
+                        .or_else(|error| {
+                            match error.reason.strip_prefix(PRIMED_UNASSIGNED) {
+                                Some(variable) if evaluator.is_enabling && !evaluator.is_174() => {
+                                    fail_with(
+                                        error.reason.clone(),
+                                        TlcMessage {
+                                            text: format!(
+                                            "The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable {variable} occurring in the state formula v.\n"
+                                        ),
+                                            code: Some(2148),
+                                            is_eval_exception: false,
+                                        },
+                                    )
+                                }
+                                _ => Err(error),
+                            }
+                        })?;
                     if equals(&now, &after)? {
                         Ok(true)
                     } else {
@@ -258,9 +468,23 @@ impl<'ir> Evaluator<'ir> {
                 let Some((bound, body, base)) = self.walked_function(*function, context)? else {
                     return self.guard(node, context, then);
                 };
-                // The argument once, as TLC evaluates it, then the body walked at it.
+                // The function first, its domain in its frame, as TLC builds the FcnLambdaValue;
+                // then the argument once, and the body walked at it.
+                let frame = StackFrame::Node(self.resolved(*function));
+                let set =
+                    self.in_frame(frame, &mut |evaluator| evaluator.evaluate(bound.set, &base));
+                // A function a LET or a definition defines is built in the frame of its
+                // definition too, which the replay doesn't record.
+                if set.is_err()
+                    && matches!(self.kind(*function), NodeKind::Identifier(_))
+                    && let Some(stack) = &mut self.call_stack
+                {
+                    stack
+                        .unfollowed
+                        .get_or_insert("the domain of a function a definition defines");
+                }
+                let set = set?;
                 let argument = self.evaluate(args[0], context)?;
-                let set = self.evaluate(bound.set, &base)?;
                 if !is_member(&argument, &set)? {
                     return fail("applied a function outside its domain");
                 }
@@ -284,8 +508,9 @@ impl<'ir> Evaluator<'ir> {
                     None
                 };
                 if let Some(variable) = variable {
-                    // A variable assigned already is tested, as the conjunct's value.
-                    if self.targets(is_init)[variable as usize].is_some() {
+                    // A variable assigned already is tested: against the value of x' = e, as
+                    // `proceedWithValue` does, and otherwise as the conjunct's value.
+                    if operator != "=" && self.targets(is_init)[variable as usize].is_some() {
                         return self.guard(node, context, then);
                     }
                     return match operator {
@@ -296,10 +521,32 @@ impl<'ir> Evaluator<'ir> {
                         "\\in" => {
                             let set = self.evaluate(args[1], context)?;
                             let is_in_order = self.is_in_normalized_order(args[1], context, 0)?;
+                            let effects = self.effects();
                             for (position, element) in elements(&set)?.iter().enumerate() {
-                                if !self.choose(position as u32, is_in_order, &mut |evaluator| {
-                                    evaluator.assign(variable, element.clone(), is_init, then)
-                                })? {
+                                let chosen =
+                                    self.choose(position as u32, is_in_order, &mut |evaluator| {
+                                        evaluator.assign(variable, element.clone(), is_init, then)
+                                    });
+                                // What the walk prints, draws or does to a register comes in
+                                // the order TLC streams the set in, which is its own for a set
+                                // it keeps lazy.
+                                if !is_in_order
+                                    && matches!(set, Value::Lazy(_))
+                                    && self.effects() != effects
+                                {
+                                    return fail(
+                                        "an effect under an assignment from a set TLC streams",
+                                    );
+                                }
+                                if chosen.is_err()
+                                    && !is_in_order
+                                    && let Some(stack) = &mut self.call_stack
+                                {
+                                    stack
+                                        .unfollowed
+                                        .get_or_insert("an assignment from a set TLC streams");
+                                }
+                                if !chosen? {
                                     return Ok(false);
                                 }
                             }
@@ -359,7 +606,12 @@ impl<'ir> Evaluator<'ir> {
             return then(self);
         };
         self.walk(body, first, is_init, &mut |evaluator| {
-            if is_init && !rest.is_empty() && evaluator.is_complete(true) {
+            // TLC puts the other bindings at the front of the conjuncts left, so the shortcut past
+            // assigned conjuncts applies to them as it does to a conjunction's.
+            if (is_init || evaluator.ir.model.is_warning_enabled)
+                && !rest.is_empty()
+                && evaluator.is_complete(is_init)
+            {
                 for context in rest {
                     if !evaluator.boolean(body, context)? {
                         return Ok(true);
@@ -369,6 +621,16 @@ impl<'ir> Evaluator<'ir> {
             }
             evaluator.walk_each(body, rest, is_init, then)
         })
+    }
+
+    // What tells whether the walk printed, drew or read or set a register.
+    fn effects(&self) -> (usize, usize, usize, Option<u64>) {
+        (
+            self.printed.len(),
+            self.register_reads,
+            self.register_writes,
+            self.random.as_ref().map(JavaRandom::state),
+        )
     }
 
     // Walks on with a choice made, at a position in TLC's order or, `!is_in_order`, in this
@@ -389,8 +651,8 @@ impl<'ir> Evaluator<'ir> {
     // Whether TLC enumerates the set an expression gives in normalized order, as this evaluator
     // does: a set enumeration, an interval, a variable of the current state (whose values TLC
     // normalized when it fingerprinted the state), a constant or a definition TLC evaluates at
-    // startup (which it normalizes). TLC streams any other set, such as a union or SUBSET built
-    // during the walk, in an order of its own.
+    // startup and deep-normalizes (`processConstantDefns`). TLC streams any other set, such as a
+    // union or SUBSET built during the walk, in an order of its own.
     fn is_in_normalized_order(
         &mut self,
         node: NodeId,
@@ -407,14 +669,35 @@ impl<'ir> Evaluator<'ir> {
             {
                 return Ok(true);
             }
+            // TLC streams [S -> T] over S normalized, the last argument varying fastest through
+            // T's own order, which is the order of the functions where T's is.
+            NodeKind::FunctionSet { range, .. } => {
+                return self.is_in_normalized_order(*range, context, depth + 1);
+            }
+            // The domain of a variable's value, which TLC normalized as it fingerprinted the state.
+            NodeKind::Apply { name, args }
+                if !name.is_local && args.len() == 1 && self.name(name.text) == "DOMAIN" =>
+            {
+                if let NodeKind::Identifier(operand) = self.kind(args[0])
+                    && !operand.is_local
+                    && matches!(operand.resolution, Resolution::Variable(_))
+                {
+                    return Ok(!context.is_primed);
+                }
+            }
+            // What holds a set TLC keeps lazy streams it in that set's own order.
             NodeKind::Identifier(name) if !name.is_local => match name.resolution {
-                Resolution::Variable(_) => return Ok(!context.is_primed),
-                Resolution::Constant(_) => return Ok(true),
-                Resolution::Definition(index) => {
-                    let definition = self.definition(self.ir.definitions[index as usize]);
-                    if !matches!(definition.startup, Startup::None) {
-                        return Ok(true);
-                    }
+                Resolution::Variable(_) => {
+                    return Ok(!context.is_primed && self.is_held_normalized(node, context)?);
+                }
+                Resolution::Constant(_) => return self.is_held_normalized(node, context),
+                Resolution::Definition(index)
+                    if self.ir.model.startup.definitions.contains(&index)
+                        || self.definition(self.ir.definitions[index as usize]).flags
+                            & Definition::NORMALIZED
+                            != 0 =>
+                {
+                    return self.is_held_normalized(node, context);
                 }
                 _ => {}
             },
@@ -424,6 +707,10 @@ impl<'ir> Evaluator<'ir> {
             Some((body, inner)) => self.is_in_normalized_order(body, &inner, depth + 1),
             None => Ok(false),
         }
+    }
+
+    fn is_held_normalized(&mut self, node: NodeId, context: &Context) -> Evaluated<bool> {
+        is_streamed_normalized(&self.evaluate(node, context)?)
     }
 
     fn conjunction(
@@ -452,34 +739,104 @@ impl<'ir> Evaluator<'ir> {
         })
     }
 
-    // UNCHANGED e: each variable of e assigned its current value or tested, or e' = e as a guard.
+    // UNCHANGED e, as TLC's `processUnchanged` takes it, each part in its frame: a variable assigned
+    // its current value or tested, a tuple element by element, a name through what it's bound to,
+    // and anything else compared with its value in the next state.
     fn walk_unchanged(
         &mut self,
         expression: NodeId,
         context: &Context,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        let Some(variables) = self.unchanged_variables(expression, context, 0)? else {
-            let now = self.evaluate(expression, context)?;
-            let after = self.evaluate(expression, &context.primed(true))?;
-            return if equals(&now, &after)? {
-                then(self)
-            } else {
-                Ok(true)
-            };
-        };
-        self.unchanged_from(&variables, then)
-    }
-
-    fn unchanged_from(&mut self, variables: &[u32], then: &mut Visit<'_, 'ir>) -> Evaluated<bool> {
-        let Some((&first, rest)) = variables.split_first() else {
-            return then(self);
-        };
-        let Some(value) = self.current[first as usize].clone() else {
-            return fail("variable not assigned");
-        };
-        self.assign(first, value, false, &mut |evaluator| {
-            evaluator.unchanged_from(rest, then)
+        let frame = StackFrame::Node(self.resolved(expression));
+        self.in_frame(frame, &mut |evaluator| {
+            evaluator.unchanged_node(expression, context, then)
         })
     }
+
+    fn unchanged_node(
+        &mut self,
+        expression: NodeId,
+        context: &Context,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        if let Some(variable) = self.assignable(expression, context, false, 0)? {
+            let Some(value) = self.current[variable as usize].clone() else {
+                return fail("variable not assigned");
+            };
+            return self.assign(variable, value, false, then);
+        }
+        match self.kind(expression) {
+            NodeKind::Tuple(items) => self.unchanged_items(items, context, then),
+            NodeKind::Identifier(_) => match self.resolve_action(expression, context)? {
+                Some((body, inner)) => self.walk_unchanged(body, &inner, then),
+                None => self.unchanged_value(expression, context, then),
+            },
+            _ => self.unchanged_value(expression, context, then),
+        }
+    }
+
+    fn unchanged_items(
+        &mut self,
+        items: &[NodeId],
+        context: &Context,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        let Some((&first, rest)) = items.split_first() else {
+            return then(self);
+        };
+        self.walk_unchanged(first, context, &mut |evaluator| {
+            evaluator.unchanged_items(rest, context, then)
+        })
+    }
+
+    fn unchanged_value(
+        &mut self,
+        expression: NodeId,
+        context: &Context,
+        then: &mut Visit<'_, 'ir>,
+    ) -> Evaluated<bool> {
+        let now = self.evaluate(expression, context)?;
+        let after = self.evaluate(expression, &context.primed(true))?;
+        if equals(&now, &after)? {
+            then(self)
+        } else {
+            Ok(true)
+        }
+    }
+}
+
+// Whether TLC enumerates a set a name holds in normalized order: a set it normalized, a set of
+// functions, records or tuples of such sets, which it enumerates part by part, or a union of
+// such sets whose elements, the first operand's then the second's own, come in that order. Any
+// other set TLC keeps lazy it streams in an order of its own.
+fn is_streamed_normalized(set: &Value) -> Evaluated<bool> {
+    let Value::Lazy(lazy) = set else {
+        return Ok(!matches!(set, Value::Unsorted(_)));
+    };
+    let is_normalized = |part: &Value| !matches!(part, Value::Lazy(_) | Value::Unsorted(_));
+    Ok(match &**lazy {
+        Lazy::FunctionSet(domain, range) => is_normalized(domain) && is_normalized(range),
+        Lazy::RecordSet(fields, _) => fields.iter().all(|(_, part)| is_normalized(part)),
+        Lazy::Product(parts) => parts.iter().all(is_normalized),
+        Lazy::Cup(left, right)
+            if is_streamed_normalized(left)? && is_streamed_normalized(right)? =>
+        {
+            let mut streamed = elements(left)?.to_vec();
+            for element in elements(right)?.iter() {
+                if !is_member(element, left)? {
+                    streamed.push(element.clone());
+                }
+            }
+            let normalized = elements(set)?;
+            streamed.len() == normalized.len()
+                && streamed.iter().zip(normalized.iter()).try_fold(
+                    true,
+                    |is_same_order, (streamed, normalized)| {
+                        Ok(is_same_order && equals(streamed, normalized)?)
+                    },
+                )?
+        }
+        _ => false,
+    })
 }

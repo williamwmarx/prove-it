@@ -95,6 +95,7 @@ interface EnvironmentOptions {
   print: (text: string) => void;
   files: FileSystem;
   seed?: bigint;
+  systemProperties?: ReadonlyMap<string, string>;
   // Links the modules without a model, as SANY does, so a declared constant needs no value.
   isUnconfigured?: boolean;
   isTool?: boolean;
@@ -271,6 +272,7 @@ const createOperatorTable = (name: string, arity: number, rows: [Value[], Value]
     },
     evaluateUnary: undefined,
     evaluateBinary: undefined,
+    table: rows,
   };
 };
 
@@ -322,6 +324,7 @@ export const createEnvironment = (
   );
   const standardExports = new Map<string, Symbols>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
+  runtime.properties = new Map(options.systemProperties);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
   runtime.version = options.version ?? "master";
@@ -892,7 +895,7 @@ export const createEnvironment = (
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const getKey = (definition: Definition) =>
-      parsed === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
+      unlinked === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
     const instanced = new Map<Instance, Symbols>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
     const isInstancedAfterDefinition = (nested: Module) => {

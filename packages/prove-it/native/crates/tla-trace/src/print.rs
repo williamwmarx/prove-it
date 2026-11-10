@@ -5,12 +5,17 @@
 use tla_values::print::is_field_name;
 
 use crate::sets::cardinality;
-use crate::value::{Class, Function, Lazy, Value};
+use crate::value::{Class, Function, Lazy, Value, normalize};
 
 /// The most functions TLC expands a set of functions, records or tuples into to print it.
 const MAXIMUM_EXPANDED_PRODUCT: usize = 1999;
 /// The largest base whose SUBSET TLC expands to print it.
 const MAXIMUM_EXPANDED_SUBSET_BASE: usize = 6;
+
+/// A value's text, pretty printed as TLC's messages print it.
+pub fn format_pretty(value: &Value) -> String {
+    crate::pretty::pretty_print(&format_value(value).encode_utf16().collect::<Vec<_>>())
+}
 
 /// TLC's text of a value in a state (`formatValue(value)`).
 pub fn format_value(value: &Value) -> String {
@@ -72,7 +77,10 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
         Value::Int(int) => out.push_str(&int.to_string()),
         Value::Str(text) => write_string(&text.units, out),
         Value::Model(text) => write_text(&text.units, out),
-        Value::Set(elements) => write_joined(elements, "{", "}", is_strict, is_normalized, out),
+        Value::Set(elements) | Value::Unsorted(elements) => {
+            normalize(value);
+            write_joined(elements, "{", "}", is_strict, is_normalized, out)
+        }
         Value::Interval(low, high) => {
             if low <= high {
                 out.push_str(&format!("{low}..{high}"));
@@ -81,6 +89,14 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
             }
         }
         Value::Lazy(lazy) => write_lazy(lazy, is_strict, is_normalized, out),
+        // `FcnLambdaValue.toString`, which can't build the function: its parameter and domain,
+        // and where its body is written.
+        Value::Lambda(lambda) => {
+            let (before, after) = lambda.text();
+            out.push_str(before);
+            write_value(lambda.domain(), is_strict, false, out);
+            out.push_str(after);
+        }
         Value::Function(function) => write_function(function, is_strict, is_normalized, out),
     }
 }
@@ -88,7 +104,14 @@ fn write_value(value: &Value, is_strict: bool, is_normalized: bool, out: &mut St
 // The set TLC expands a lazy one into to print it, if any (`getExpandedLazySet`).
 fn expand(lazy: &Lazy) -> Option<Vec<Value>> {
     let size = match lazy {
-        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) => return None,
+        Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Any => {
+            return None;
+        }
+        // TLC prints the set it enumerates, and the operation where it can't (`toString` with
+        // `TLCGlobals.expand`, swallowing the failure).
+        Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..) | Lazy::Union(_) | Lazy::Filter(..) => {
+            return crate::sets::enumerate(lazy).ok();
+        }
         Lazy::Subset(base) => {
             return (cardinality(base).ok()? <= MAXIMUM_EXPANDED_SUBSET_BASE)
                 .then(|| crate::sets::enumerate(lazy).ok())
@@ -134,6 +157,7 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
     let format = |value: &Value, out: &mut String| write_value(value, is_strict, false, out);
     match lazy {
         Lazy::Nat => out.push_str("Nat"),
+        Lazy::Any => out.push_str("ANY"),
         Lazy::Int => out.push_str("Int"),
         Lazy::Real => out.push_str("Real"),
         Lazy::Strings => out.push_str("STRING"),
@@ -143,7 +167,15 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
             out.push(')');
         }
         Lazy::Subset(base) => {
-            if matches!(base, Value::Interval(..)) {
+            // A `ParenthesizedSubset` operand, whatever its text.
+            let is_parenthesized = match base {
+                Value::Interval(..) => true,
+                Value::Lazy(lazy) => {
+                    matches!(**lazy, Lazy::Cap(..) | Lazy::Cup(..) | Lazy::Diff(..))
+                }
+                _ => false,
+            };
+            if is_parenthesized {
                 out.push_str("SUBSET (");
                 format(base, out);
                 out.push(')');
@@ -182,6 +214,37 @@ fn write_lazy(lazy: &Lazy, is_strict: bool, is_normalized: bool, out: &mut Strin
             }
             out.push(')');
         }
+        Lazy::Filter(base, predicate) => {
+            let (before, after) = predicate.text();
+            out.push_str(before);
+            format(base, out);
+            out.push_str(after);
+        }
+        Lazy::Union(sets) => {
+            out.push_str("UNION(");
+            format(sets, out);
+            out.push(')');
+        }
+        Lazy::Cap(left, right) | Lazy::Cup(left, right) | Lazy::Diff(left, right) => {
+            let operator = match lazy {
+                Lazy::Cap(..) => " \\cap ",
+                Lazy::Cup(..) => " \\cup ",
+                _ => " \\ ",
+            };
+            // `toStringForCupCapDiff`: an `EnumerableValue` operand in parentheses.
+            let operand = |value: &Value, out: &mut String| {
+                if crate::value::is_enumerable(value) {
+                    out.push('(');
+                    format(value, out);
+                    out.push(')');
+                } else {
+                    format(value, out);
+                }
+            };
+            operand(left, out);
+            out.push_str(operator);
+            operand(right, out);
+        }
     }
 }
 
@@ -208,12 +271,7 @@ fn write_function(function: &Function, is_strict: bool, is_normalized: bool, out
             .domain
             .iter()
             .all(|key| matches!(key, Value::Str(text) if is_field_name(&text.units)));
-    let written = function.written.borrow();
-    let order: Vec<usize> = match (&*written, is_normalized || !is_record) {
-        // `written[i]` is where the i-th key written sits in the domain.
-        (Some(written), false) => written.iter().map(|&position| position as usize).collect(),
-        _ => (0..function.domain.len()).collect(),
-    };
+    let order = print_order(function, is_normalized || !is_record);
     let (open, arrow, separator, close) = if is_record {
         ("[", " |-> ", ", ", "]")
     } else {
@@ -238,6 +296,23 @@ fn write_function(function: &Function, is_strict: bool, is_normalized: bool, out
         );
     }
     out.push_str(close);
+}
+
+/// The positions of a function's keys in the order TLC prints them: as written until TLC sorts the
+/// function, unless `is_sorted`.
+pub(crate) fn print_order(function: &Function, is_sorted: bool) -> Vec<usize> {
+    match (&*function.written.borrow(), is_sorted) {
+        // `written[i]` is where the i-th key written sits in the domain.
+        (Some(written), false) => written.iter().map(|&position| position as usize).collect(),
+        _ => (0..function.domain.len()).collect(),
+    }
+}
+
+/// A text's units as a string.
+pub(crate) fn text_string(units: &[u16]) -> String {
+    let mut out = String::new();
+    write_text(units, &mut out);
+    out
 }
 
 #[cfg(test)]

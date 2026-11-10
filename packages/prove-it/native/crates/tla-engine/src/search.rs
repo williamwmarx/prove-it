@@ -4,28 +4,32 @@
 //! error, a feature it doesn't implement) ends the run with a checkpoint, from which the reference
 //! interpreter goes on.
 
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use tla_ir::{Ir, LiveTerm, Model};
+use tla_ir::{Ir, LiveTerm, Model, PredicateForm};
 use tla_live::{Event, Liveness, Term, Verdict};
-use tla_values::fingerprint::{Carried, Fingerprints, Parent};
-use tla_values::store::Outcome;
+use tla_values::fingerprint::{Dense, Entries, Fingerprints, Overlaid, Parent, SharedFingerprints};
+use tla_values::random::JavaRandom;
+use tla_values::store::{KIND_SET, Outcome, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
 use crate::compile::{CompileError, Compiler, DISTINCT_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT, Options};
 use crate::context::{
-    EngineContext, count_possible, first_failing, first_failing_changed, holds_all,
-    holds_all_changed,
+    Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing_changed,
+    holds_all, holds_all_changed,
 };
-use crate::live::{LiveGraph, Table, answer_atoms};
-use crate::machine::{Machine, Printed, Step, UNASSIGNED};
-use crate::symmetry::Canonicalizer;
+use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atoms};
+use crate::machine::{Eval, Machine, Printed, Registers, Step, UNASSIGNED};
+use crate::symmetry::{
+    Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
+};
 
 pub const OUT_DEGREE_BUCKETS: usize = 32;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(60);
@@ -58,6 +62,8 @@ pub struct Settings {
     /// PROVE_IT_WORKERS: how many threads expand a level of states, at most as many as the
     /// machine runs at once.
     pub threads: usize,
+    /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
+    pub workers: usize,
     /// PROVE_IT_SHARED_LEVEL: the fewest states a level shares between the threads, below which
     /// one thread expands it, since a short level isn't worth the threads' start.
     pub minimum_shared_level: usize,
@@ -89,6 +95,7 @@ impl Default for Settings {
             is_live_checked: false,
             is_violation_reported: false,
             threads: 1,
+            workers: 1,
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
@@ -110,6 +117,33 @@ pub trait Reporter {
     fn liveness_finished(&mut self) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
     fn print(&mut self, store: &Store, values: &[Id]);
+    /// What Print or PrintT printed while TLC started: as the substitutes and constant
+    /// definitions were evaluated, before [`Reporter::startup_done`], then as the assumptions
+    /// were. The interpreter printed it already where it handed the search over.
+    fn startup_print(&mut self, _store: &Store, _values: &[Id]) {}
+    /// The sets the symmetry permutes that hold fewer than two elements, by name, which TLC warns
+    /// about once it has evaluated the symmetry (2300, `TLC_SYMMETRY_SET_TOO_SMALL`). The
+    /// interpreter warned already where it handed the search over.
+    fn symmetry_sets_too_small(&mut self, _names: &[String]) {}
+    /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
+    /// what it prints itself before it checks the assumptions.
+    fn startup_done(&mut self) {}
+    /// Checks the assumption at this position of the IR's assumptions, which the engine can't
+    /// evaluate (AssertError, which compares TLC's message for a failure), after those before it
+    /// held, and reports what it prints. `Err` declines the model.
+    fn check_assumption(&mut self, _position: u32) -> Result<Delegated, String> {
+        Err(DELEGATED_ASSUMPTION.into())
+    }
+}
+
+/// Why the engine leaves an assumption to its caller.
+pub const DELEGATED_ASSUMPTION: &str = "unsupported: AssertError";
+
+/// What the caller found of an assumption the engine left to it.
+pub struct Delegated {
+    pub holds: bool,
+    /// The state it leaves TLC's generator in.
+    pub random: u64,
 }
 
 /// The counts TLC reports of a search, so far or in all.
@@ -145,6 +179,31 @@ pub struct Checkpoint {
     /// What each `_POSSIBLE` predicate counted before the expansion the interpreter goes on
     /// from, or -1 where it wasn't evaluated.
     pub possible: Vec<i64>,
+    /// The value TLC computed at startup of each of the model's startup definitions, as one row,
+    /// unless one is a value the encoding has no tag for, such as a function TLC keeps lazy.
+    pub startup: Option<SharedStates>,
+    /// The state of the generator the startup left (`JavaRandom::state`).
+    pub startup_random: u64,
+    /// The symmetry group the search reduced by, if any.
+    pub symmetry: Option<NamedGroup>,
+}
+
+/// TLC's registers once the search completes, which a postcondition reads, with the store their
+/// ids are of.
+pub struct FinalRegisters {
+    pub registers: Registers,
+    pub store: Store,
+}
+
+// TLC's registers once the search is over, where TLCSet set any, which takes the store: only
+// what follows the search reads them.
+fn take_registers(machine: &mut Machine<'_>) -> Option<Box<FinalRegisters>> {
+    (!machine.registers.is_empty()).then(|| {
+        Box::new(FinalRegisters {
+            registers: std::mem::take(&mut machine.registers),
+            store: std::mem::replace(&mut machine.store, Store::new()),
+        })
+    })
 }
 
 /// The steps of a search (`EngineGraph`): for each of the first `expanded` states, how many
@@ -166,8 +225,18 @@ pub struct GraphCheckpoint {
 }
 
 pub enum SearchOutcome {
-    /// The engine doesn't take the model, for this reason, before producing any state.
+    /// The engine doesn't take the model, for this reason, before producing any state or
+    /// reporting anything.
     Declined(String),
+    /// The assumption TLC reports by this name is false (2104).
+    AssumptionViolated { name: String },
+    /// A constant definition the configuration names has a value TLC rejects, with TLC's
+    /// configuration error, after the startup reported what the constant definitions printed.
+    ConfigError { message: String },
+    /// The assumption at this position of the IR's assumptions failed to evaluate (2105), after
+    /// the startup reported what it printed, the assumptions before it included. Only where
+    /// `Settings::is_violation_reported`; elsewhere the engine declines.
+    AssumptionFailed { position: u32 },
     Complete {
         counts: Box<Counts>,
         /// With temporal properties, the whole search for the interpreter to print a
@@ -179,6 +248,9 @@ pub enum SearchOutcome {
         /// that takes it to the next state of the lasso (from the last, the cycle's first), or
         /// `None` where none does or it stutters; empty without a lasso or a walk of the actions.
         lasso_actions: Vec<Option<u32>>,
+        /// The lasso's states and the actions of its steps, where the caller reports the
+        /// violation itself and the search labelled every step TLC labels.
+        violation: Option<Box<Violation>>,
         /// TLC's fingerprint of each state's key, in the order found.
         fingerprints: Vec<u64>,
         value_count: usize,
@@ -188,6 +260,8 @@ pub enum SearchOutcome {
         collisions: u64,
         /// What each `_POSSIBLE` predicate counted, or -1 where it wasn't evaluated.
         possible: Vec<i64>,
+        /// TLC's registers once the search completes, where TLCSet set any.
+        registers: Option<Box<FinalRegisters>>,
     },
     /// The search stopped, with a checkpoint unless it stopped computing the initial states, as
     /// the TypeScript engine computes them before the part of its search that hands over a
@@ -211,22 +285,206 @@ pub struct Violation {
     /// `store`.
     pub states: Vec<Vec<Id>>,
     /// For each step of the trace, the position in the model's actions of the first of TLC's
-    /// actions that takes it.
-    pub labels: Vec<u32>,
+    /// actions that takes it, or `None` where the search didn't find it, as under SYMMETRY or a
+    /// VIEW, whose stored states aren't the ones TLC prints.
+    pub labels: Vec<Option<u32>>,
     /// The counts TLC reports after the trace.
     pub counts: StopCounts,
     pub store: Store,
+    /// The value TLC computed at startup of each of the model's startup definitions, ids of
+    /// `store`.
+    pub startup: Vec<Id>,
+    /// The state of the generator the startup left (`JavaRandom::state`).
+    pub startup_random: u64,
+    /// The state of the generator where an invariant of the last state stopped the search, which
+    /// TLC's worker goes on drawing from as it finds that state again.
+    pub random: Option<u64>,
+    /// The symmetry group the search reduced by, if any.
+    pub symmetry: Option<NamedGroup>,
+    /// TLC's registers as the search left them, ids of `store`.
+    pub registers: Registers,
+    /// Each `_POSSIBLE` predicate's count as the search left it, which TLC checks with the
+    /// postconditions after it reports the violation.
+    pub possible: Vec<i64>,
+    /// After an invariant that fails to evaluate past the initial states, TLC's set of
+    /// fingerprints when it stopped, sorted, the failing state's among them where TLC added it:
+    /// TLC replays the expansion and skips each successor in the set. Empty for any other stop.
+    pub fingerprints: Vec<u64>,
+}
+
+/// A path to a tableau node that accepts every behavior: its states, as a `Violation`'s, whose
+/// actions the caller finds, and the positions of the properties TLC names.
+pub struct AcceptedTrace {
+    pub states: Vec<Vec<Id>>,
+    pub violated: Vec<usize>,
 }
 
 pub enum ViolationKind {
     /// An initial state violates an invariant: its position in the model's invariants, then
     /// past them in its properties checked as invariants.
     InitialInvariant(usize),
+    /// An initial state violates the state predicate of a property at this position in the
+    /// model's initial predicates.
+    InitialPredicate(usize),
     /// The last state of the trace violates an invariant, as an `InitialInvariant` names it.
     Invariant(usize),
-    /// The last state of the trace has no successors.
-    Deadlock,
+    /// The last state of the trace has no successors. TLC adds it to the behavior graphs after it
+    /// reports the deadlock, where it may reach a tableau node that accepts every behavior, which
+    /// it reports next, as on its Github710d.
+    Deadlock {
+        accepted: Option<Box<AcceptedTrace>>,
+    },
+    /// The trace is a lasso whose cycle starts at the state at `loop_start` and goes back to it,
+    /// by the action at `loop_label` in the model's actions; `None` where the cycle is the last
+    /// state alone, which stutters.
+    Lasso {
+        loop_start: usize,
+        loop_label: Option<u32>,
+        /// What the atoms printed as TLC found the properties the lasso violates, once it had
+        /// rebuilt the lasso: each print's values, ids of the violation's store.
+        printed: Vec<Vec<Id>>,
+    },
+    /// The last state of the trace reaches a tableau node that accepts every behavior, which TLC
+    /// stops at as it adds the state: the positions of the properties it names.
+    Accepted { violated: Vec<usize> },
+    /// The model has initial states and no next-state relation to take their steps by; the
+    /// violation has no states.
+    NoNextState,
+    /// Evaluating the model failed where TLC fails (an assertion, a value of the wrong kind, a
+    /// function applied outside its domain): the states lead to where, as `ErrorSite` says.
+    Error { site: ErrorSite },
 }
+
+/// Where a search failed evaluating the model, as `tla_trace::Site` names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorSite {
+    /// Computing the initial states; the violation's states are empty.
+    Init,
+    /// Computing the successors of the trace's last state.
+    Next,
+    /// Evaluating the invariant at this position of the model's invariants on the trace's last
+    /// state, a successor of the state before it.
+    Invariant(u32),
+    /// Evaluating the constraint at this position of the model's constraints on an initial state,
+    /// the violation's one state.
+    InitialConstraint(u32),
+    /// Evaluating the invariant at this position of the model's invariants on an initial state,
+    /// the violation's one state.
+    InitialInvariant(u32),
+    /// Evaluating the predicate at this position of the IR's `model.initial_predicates`, which
+    /// TLC checks of an initial state after the invariants (its implied inits), on the
+    /// violation's one state.
+    InitialPredicate(u32),
+    /// Evaluating the atom at this position of the IR's `model.atoms` as TLC adds the trace's
+    /// last state to the behavior graphs: on that state, or, `is_extra`, on the state after it in
+    /// the violation's states, which isn't the trace's: a state predicate's state, or an action's
+    /// step's next state.
+    Atom { atom: u32, is_extra: bool },
+    /// Evaluating the atom at this position of the IR's `model.atoms` as TLC adds an initial
+    /// state, the violation's one state, to the behavior graphs, before it checks the state.
+    InitialAtom(u32),
+}
+
+// The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
+// support, what it won't build, what its search and printing can't reproduce, and the violations
+// the search reports otherwise.
+const SUCCESSOR_CHECK_FAILED: &str =
+    "a constraint, a VIEW or an action property that fails on a successor";
+const INITIAL_VIEW_FAILED: &str = "a VIEW that fails on an initial state";
+
+fn is_engine_limit(reason: &str) -> bool {
+    !TLC_FAILURES.contains(&reason)
+}
+
+// The reasons a search stops for that are failures TLC reports evaluating the model. Every other
+// reason is the engine's own limit, for the interpreter to take over from, so a model the engine
+// can't follow never reports a failure TLC doesn't. Enumerating an infinite set is among the
+// limits: the engine enumerates some sets TLC keeps lazy. So is comparing a record with a
+// function, which fails in TLC only where it built the value as a record.
+const TLC_FAILURES: &[&str] = &[
+    "@@ of non-functions",
+    "BagCardinality of a non-bag",
+    "CHOOSE found no element",
+    "CHOOSE from a non-set",
+    "DOMAIN of a non-function",
+    "EXCEPT on a non-function",
+    "Head of an empty sequence",
+    "IsFiniteSet of a non-set",
+    "RandomElement of the empty set",
+    "SortSeq of a non-sequence",
+    "SubBag of a non-bag",
+    "SubSeq of a non-sequence",
+    "SubSeq outside the sequence's domain",
+    "TLCModelValue of a value that isn't a string",
+    "Tail of an empty sequence",
+    "a CASE condition that isn't a boolean",
+    "a SelectSeq test that isn't a boolean",
+    "a SelectSeq test that isn't an operator",
+    "a conjunct that isn't a boolean",
+    "a count that isn't a number",
+    "a function over a non-set",
+    "a function set of non-sets",
+    crate::compile::lazy::INFINITE_DOMAIN,
+    "a function set over a non-set domain",
+    "a guard that isn't a boolean",
+    "a membership in SUBSET of a non-set",
+    "a mistyped membership in Int",
+    "a mistyped membership in Nat",
+    "a mistyped membership in STRING",
+    "a mistyped membership in Seq",
+    "a mistyped membership in a set of functions",
+    "a mistyped membership in a set of records",
+    "a mistyped membership in a set of tuples",
+    "a mistyped membership in an infinite set",
+    "a predicate that isn't a boolean",
+    "a product of a non-set",
+    "a record set of a non-set",
+    "a set with too many elements for TLC 1.7.4",
+    "a successor that isn't complete",
+    "a symmetry function of values that aren't model values",
+    "a symmetry that isn't a set of functions",
+    "a symmetry value that isn't a function",
+    "a tuple pattern that doesn't match",
+    "action composition",
+    "an IF condition that isn't a boolean",
+    "an action quantified over a non-set",
+    "an assertion failed",
+    "an initial state that isn't complete",
+    "an operator's table applied outside its rows",
+    "an unbounded CHOOSE",
+    "applied a function outside its domain",
+    "applied a non-function",
+    "applied a recursive function outside its domain",
+    "concatenation of a string and a sequence",
+    "differently typed model values",
+    "division by zero",
+    "drew from a value that isn't a set",
+    "enumerated a filter of an infinite set",
+    "enumerated a non-set",
+    crate::compile::INFINITE_BOUND,
+    "equality of values TLC can't compare",
+    "expected a bag",
+    "expected a boolean",
+    "expected a function",
+    "expected a sequence",
+    "expected a set",
+    "expected an integer",
+    "filtered a non-set",
+    "integer overflow",
+    "mapped a non-set",
+    "membership in a non-set",
+    "membership of a value TLC can't compare",
+    "modulus by a non-positive number",
+    "negative exponent",
+    "no CASE arm holds",
+    "primed variable not assigned",
+    "quantified over a non-set",
+    "the left side of => isn't a boolean",
+    "values TLC can't compare",
+    "variable not assigned",
+    "zero to the power of zero",
+    crate::compile::lazy::SUBSET_OVERFLOW,
+];
 
 /// The counts of a search that stopped, as TLC reports them.
 #[derive(Clone, Copy, Default)]
@@ -235,6 +493,9 @@ pub struct StopCounts {
     pub distinct: u64,
     pub queued: u64,
     pub depth: u64,
+    /// After an invariant that fails to evaluate, the expansions' out-degrees, the one TLC was
+    /// running among them with the new states it had found, as TLC prints them.
+    pub out_degrees: [u64; OUT_DEGREE_BUCKETS],
 }
 
 // What a search found stopping it, before it hands over the store: the state found that is the
@@ -243,15 +504,34 @@ struct Found {
     kind: ViolationKind,
     parent: Option<usize>,
     last: Option<Vec<Id>>,
+    // TLC's fingerprint of the last state, where TLC added it to its set before the stop.
+    fingerprint: Option<u64>,
+    // The state of the generator where a successor's invariant stopped the search.
+    random: Option<u64>,
     counts: StopCounts,
 }
+
+const EXIT_UNFOLLOWED: &str = "unsupported: TLCSet(\"exit\", TRUE) outside an invariant";
+const LAZY_FUNCTION_HELD: Bail = Bail("unsupported: a state holding a function TLC keeps lazy");
+/// Where an atom sets or reads TLC's registers, the search answers the atoms as TLC evaluates
+/// them, which it follows only so far.
+const ONLINE_DECLINED: &str = "the liveness checker declined as the search went";
+const ONLINE_INITIAL: &str = "TLC's registers in atoms of the initial states";
+const ONLINE_LATE: &str = "a late node where the atoms use TLC's registers";
+const ONLINE_ACCEPTED: &str = "an accepting node where the atoms use TLC's registers";
+const NO_NEXT_STATE: &str = "initial states and no next-state relation";
+const GRAPH_TOO_LARGE: &str = "a state graph too large to keep";
+
+/// Where TLC may fail evaluating an atom of the temporal properties as it adds a state.
+const ATOM_FAILED: &str = "an atom of the temporal properties that may fail to evaluate";
 
 /// What PROVE_IT_LIVE_CHECK finds when TLC's actions take other steps than the next-state relation.
 const OTHER_STEPS: &str = "the actions took other steps than the next-state relation";
 
-// Past this many states the search hands its graph over and the interpreter goes on, since the
-// interpreter checks temporal properties on the graph as it grows and may find a violation early
-// in a state space the engine would search without end.
+// Past this many states a search that doesn't check the temporal properties as it goes, where TLC
+// would, hands its graph over and the interpreter goes on, since the interpreter checks them on the
+// graph as it grows and may find a violation early in a state space the engine would search
+// without end; and a hand-over past it starts the interpreter from scratch.
 const MAXIMUM_GRAPH_STATES: usize = 4_000_000;
 
 // The steps recorded so far.
@@ -440,7 +720,11 @@ impl States {
     fn encode(&self, store: &Store, ids: &[Id], width: usize, count: usize) -> EncodedStates {
         let mut encoder = StateEncoder::new();
         for index in 0..count {
-            encoder.encode(store, &ids[index * width..(index + 1) * width]);
+            encoder
+                .encode(store, &ids[index * width..(index + 1) * width])
+                .expect(
+                    "a state compute_key let the search keep, which holds only values that encode",
+                );
         }
         encoder.finish()
     }
@@ -448,7 +732,11 @@ impl States {
     fn share(&self, store: &Store, ids: &[Id], width: usize, count: usize) -> SharedStates {
         let mut encoder = SharedEncoder::new(store);
         for index in 0..count {
-            encoder.encode(store, &ids[index * width..(index + 1) * width]);
+            encoder
+                .encode(store, &ids[index * width..(index + 1) * width])
+                .expect(
+                    "a state compute_key let the search keep, which holds only values that encode",
+                );
         }
         encoder.finish()
     }
@@ -508,7 +796,7 @@ impl Reached for States {
 }
 
 // The search's state besides the machine, which the walks' continuations update.
-struct Search<'r, T> {
+struct Search<'r, T, E = Dense> {
     states: T,
     reporter: &'r mut dyn Reporter,
     is_distinct_read: bool,
@@ -526,9 +814,7 @@ struct Search<'r, T> {
     expansion_epoch: u64,
     level_id: Id,
     next_level_id: Id,
-    fingerprints: Fingerprints,
-    // The fingerprints the threads of the last level shared computed of the values they made.
-    carried: Carried,
+    fingerprints: Fingerprints<E>,
     // The state being expanded, whose successors' fingerprints follow from its own when the key is
     // the state.
     parent: Parent,
@@ -541,6 +827,9 @@ struct Search<'r, T> {
     // Whether a successor is checked once the walk reaches the next, when nothing the search
     // evaluates can tell: then the probe of its fingerprint, read ahead, doesn't wait on memory.
     is_pipelined: bool,
+    // Whether the spec may build a function TLC keeps lazy, which no state may hold: TLC can't
+    // fingerprint one.
+    is_lambda_built: bool,
     // The violation the search stops at, when it knows what TLC reports for it.
     violation: Option<Found>,
     // The successor waiting to be checked, and its fingerprint.
@@ -552,15 +841,17 @@ struct Search<'r, T> {
     // With temporal properties, what the search printed computing the initial states and then
     // expanding each state, held until the liveness checker's atoms have printed between them.
     held: Option<Vec<Vec<Printed>>>,
+    // Whether TLCSet("exit", TRUE) ran in an invariant, where the search follows it.
+    is_exit_followed: bool,
 }
 
-impl<'r, T: Reached> Search<'r, T> {
+impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     fn new(
         states: T,
         reporter: &'r mut dyn Reporter,
         is_distinct_read: bool,
         is_pipelined: bool,
-    ) -> Search<'r, T> {
+    ) -> Search<'r, T, E> {
         let width = states.order().len().max(1);
         Search {
             states,
@@ -579,19 +870,20 @@ impl<'r, T: Reached> Search<'r, T> {
             expansion_epoch: 0,
             level_id: 0,
             next_level_id: 0,
-            fingerprints: Fingerprints::new(),
-            carried: Carried::default(),
+            fingerprints: Fingerprints::default(),
             parent: Parent::default(),
             canonicalizer: None,
             graph: None,
             action: 0,
             checked: None,
             is_pipelined,
+            is_lambda_built: false,
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
             possible: Vec::new(),
             held: None,
+            is_exit_followed: false,
         }
     }
 
@@ -626,6 +918,16 @@ impl<'r, T: Reached> Search<'r, T> {
         context: &EngineContext,
         is_successor: bool,
     ) -> Outcome<u64> {
+        // Where the key is a VIEW, the state itself isn't fingerprinted, which would refuse it;
+        // every state the search keeps is one the transfer encoding can write.
+        if (self.is_lambda_built || context.view.is_some())
+            && machine
+                .current()
+                .iter()
+                .any(|&value| machine.store.holds_lazy_function(value))
+        {
+            return Err(LAZY_FUNCTION_HELD);
+        }
         if self.states.key_width().is_none() {
             let (store, order) = (&machine.store, self.states.order());
             return Ok(if is_successor {
@@ -635,9 +937,10 @@ impl<'r, T: Reached> Search<'r, T> {
                     &self.current,
                     &self.successor,
                     order,
-                )
+                )?
             } else {
-                self.fingerprints.get_state(store, machine.current(), order)
+                self.fingerprints
+                    .get_state(store, machine.current(), order)?
             });
         }
         self.key.clear();
@@ -659,9 +962,8 @@ impl<'r, T: Reached> Search<'r, T> {
             self.key.clear();
             self.key.push(value);
         }
-        Ok(self
-            .fingerprints
-            .get_state(&machine.store, &self.key, self.states.order()))
+        self.fingerprints
+            .get_state(&machine.store, &self.key, self.states.order())
     }
 
     fn visit_initial(&mut self, machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<()> {
@@ -681,12 +983,34 @@ impl<'r, T: Reached> Search<'r, T> {
         }
         self.generated += 1;
         self.initial_generated += 1;
-        let is_in_model = holds_all_changed_none(machine, context)?;
+        let mut is_in_model = true;
+        for (position, constraint) in context.constraints.iter().enumerate() {
+            match crate::context::holds(machine, &constraint.eval) {
+                Ok(true) => {}
+                Ok(false) => {
+                    is_in_model = false;
+                    break;
+                }
+                Err(bail) => {
+                    let site = ErrorSite::InitialConstraint(context.constraint_owners[position]);
+                    let distinct = self.states.count() as u64;
+                    return Err(self.note_initial_error(machine, site, distinct, bail));
+                }
+            }
+        }
         if is_in_model {
             count_possible(machine, &context.possible, false, &mut self.possible)?;
         }
         let found = if is_in_model {
-            let fingerprint = self.compute_key(machine, context, false)?;
+            // TLC reports a VIEW that fails on an initial state as it fingerprints the state
+            // (DoInitFunctor.addElement), which no site here stands for.
+            let fingerprint = self.compute_key(machine, context, false).map_err(|bail| {
+                if is_engine_limit(bail.0) {
+                    bail
+                } else {
+                    Bail(INITIAL_VIEW_FAILED)
+                }
+            })?;
             let key = self
                 .states
                 .key_width()
@@ -699,19 +1023,55 @@ impl<'r, T: Reached> Search<'r, T> {
             if is_in_model {
                 self.set_distinct(machine, self.states.count() + 1)?;
             }
-            if let Some(failing) = first_failing(machine, &context.initial_invariants)? {
+            let mut failing = None;
+            for (position, invariant) in context.initial_invariants.iter().enumerate() {
+                match crate::context::holds(machine, invariant) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        failing = Some(position);
+                        break;
+                    }
+                    Err(bail) => {
+                        let owner = context.initial_invariant_owners[position] as u32;
+                        let distinct = (self.states.count() + usize::from(is_in_model)) as u64;
+                        let site = ErrorSite::InitialInvariant(owner);
+                        return Err(self.note_initial_error(machine, site, distinct, bail));
+                    }
+                }
+            }
+            if let Some(failing) = failing {
                 self.violation = Some(Found {
                     kind: ViolationKind::InitialInvariant(
                         context.initial_invariant_owners[failing],
                     ),
                     parent: None,
                     last: Some(machine.current().to_vec()),
+                    fingerprint: None,
+                    random: None,
                     counts: StopCounts::default(),
                 });
                 return Err(Bail("an invariant violated in an initial state"));
             }
-            if !holds_all(machine, &context.initial_predicates)? {
-                return Err(Bail("a property violated in an initial state"));
+            for (position, predicate) in context.initial_predicates.iter().enumerate() {
+                match crate::context::holds(machine, predicate) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.violation = Some(Found {
+                            kind: ViolationKind::InitialPredicate(position),
+                            parent: None,
+                            last: Some(machine.current().to_vec()),
+                            fingerprint: None,
+                            random: None,
+                            counts: StopCounts::default(),
+                        });
+                        return Err(Bail("a property violated in an initial state"));
+                    }
+                    Err(bail) => {
+                        let distinct = (self.states.count() + usize::from(is_in_model)) as u64;
+                        let site = ErrorSite::InitialPredicate(position as u32);
+                        return Err(self.note_initial_error(machine, site, distinct, bail));
+                    }
+                }
             }
             if let Some((fingerprint, Err(slot))) = found {
                 self.states
@@ -760,7 +1120,7 @@ impl<'r, T: Reached> Search<'r, T> {
             &self.current,
             machine.next(),
             self.states.order(),
-        );
+        )?;
         self.states.touch(fingerprint);
         self.check_pending(machine, context)?;
         self.pending.clear();
@@ -782,6 +1142,14 @@ impl<'r, T: Reached> Search<'r, T> {
         result
     }
 
+    // Where TLCSet("exit", TRUE) ran outside an invariant, TLC's progress then isn't followed.
+    fn check_exit_followed(&self, machine: &Machine<'_>) -> Outcome<()> {
+        if machine.registers.is_exit && !self.is_exit_followed {
+            return Err(Bail(EXIT_UNFOLLOWED));
+        }
+        Ok(())
+    }
+
     // Checks the successor that is the machine's next state; its fingerprint is `known` when the
     // pipeline computed it already.
     fn check_successor(
@@ -793,6 +1161,26 @@ impl<'r, T: Reached> Search<'r, T> {
         if machine.next().contains(&UNASSIGNED) {
             return Err(Bail("a successor that isn't complete"));
         }
+        // TLC reports a constraint, a VIEW or an action property that fails to evaluate with the
+        // successor in its trace (Worker.addElement), which no site here stands for: the failure
+        // of an invariant is noted where it is found.
+        self.check_complete_successor(machine, context, known)
+            .map_err(|bail| {
+                if self.violation.is_none() && !is_engine_limit(bail.0) {
+                    Bail(SUCCESSOR_CHECK_FAILED)
+                } else {
+                    bail
+                }
+            })
+    }
+
+    fn check_complete_successor(
+        &mut self,
+        machine: &mut Machine<'_>,
+        context: &EngineContext,
+        known: Option<u64>,
+    ) -> Outcome<()> {
+        self.check_exit_followed(machine)?;
         if let Some(checked) = &self.checked
             && checked.get(self.successors as usize).map(Vec::as_slice) != Some(machine.next())
         {
@@ -817,17 +1205,20 @@ impl<'r, T: Reached> Search<'r, T> {
             }
             Ok(is_state_in_model)
         });
-        let fingerprint = match is_state_in_model {
-            Ok(true) => match known {
-                Some(fingerprint) => Ok(Some(fingerprint)),
-                None => self.compute_key(machine, context, true).map(Some),
-            },
-            Ok(false) => Ok(None),
-            Err(bail) => Err(bail),
-        };
         self.swap_successor(machine, self.expansion_epoch, self.level_id);
-        let (is_state_in_model, fingerprint) = (is_state_in_model?, fingerprint?);
-        let is_in_model = is_state_in_model && holds_all(machine, &context.action_constraints)?;
+        let is_in_model = is_state_in_model? && holds_all(machine, &context.action_constraints)?;
+        // TLC fingerprints a successor, which evaluates the VIEW, only where it is in the model
+        // (Worker.addElement).
+        let fingerprint = match known {
+            Some(fingerprint) => Some(fingerprint),
+            None if is_in_model => {
+                self.swap_successor(machine, successor_epoch, self.next_level_id);
+                let fingerprint = self.compute_key(machine, context, true);
+                self.swap_successor(machine, self.expansion_epoch, self.level_id);
+                Some(fingerprint?)
+            }
+            None => None,
+        };
         if is_in_model {
             count_possible(machine, &context.possible, true, &mut self.possible)?;
         }
@@ -845,11 +1236,17 @@ impl<'r, T: Reached> Search<'r, T> {
         if is_new {
             self.set_distinct(machine, self.states.count() + 1)?;
         }
+        self.check_exit_followed(machine)?;
         if !is_in_model || is_new {
             self.swap_successor(machine, successor_epoch, self.next_level_id);
             let failing =
                 first_failing_changed(machine, &context.invariants, &self.successor, &self.current);
             self.swap_successor(machine, self.expansion_epoch, self.level_id);
+            // TLC's main thread, woken by the stop, may print its progress as the worker goes
+            // on, or not, as the threads race: the binary prints none.
+            if machine.registers.is_exit {
+                self.is_exit_followed = true;
+            }
             let failed = match failing {
                 Ok(None) => None,
                 Ok(Some(failing)) => {
@@ -858,6 +1255,8 @@ impl<'r, T: Reached> Search<'r, T> {
                         kind: ViolationKind::Invariant(context.invariant_owners[failing]),
                         parent: Some(self.expanding),
                         last: Some(self.successor.clone()),
+                        fingerprint: None,
+                        random: Some(machine.random.state()),
                         counts: StopCounts {
                             generated: self.generated,
                             distinct: count + u64::from(is_new),
@@ -867,11 +1266,45 @@ impl<'r, T: Reached> Search<'r, T> {
                             } else {
                                 self.depth
                             },
+                            ..StopCounts::default()
                         },
                     });
                     Some(Bail("an invariant violated"))
                 }
-                Err(bail) => Some(bail),
+                Err((failing, bail)) => {
+                    if !is_engine_limit(bail.0) {
+                        let count = self.states.count() as u64;
+                        self.violation = Some(Found {
+                            kind: ViolationKind::Error {
+                                site: ErrorSite::Invariant(
+                                    context.invariant_owners[failing] as u32,
+                                ),
+                            },
+                            parent: Some(self.expanding),
+                            last: Some(self.successor.clone()),
+                            fingerprint: fingerprint.filter(|_| is_new),
+                            random: None,
+                            counts: StopCounts {
+                                generated: self.generated,
+                                distinct: count + u64::from(is_new),
+                                queued: count - self.expanding as u64 - 1,
+                                depth: if is_new {
+                                    self.depth.max(self.level + 1)
+                                } else {
+                                    self.depth
+                                },
+                                // TLC counts the new state before it checks the invariants. The
+                                // search loop adds the expansions it completed.
+                                out_degrees: std::array::from_fn(|bucket| {
+                                    let new_states = self.new_states + u64::from(is_new);
+                                    let failing = (new_states as usize).min(OUT_DEGREE_BUCKETS - 1);
+                                    u64::from(bucket == failing)
+                                }),
+                            },
+                        });
+                    }
+                    Some(bail)
+                }
             };
             if let Some(bail) = failed {
                 let is_deferred = is_new
@@ -920,7 +1353,7 @@ impl<'r, T: Reached> Search<'r, T> {
     }
 }
 
-impl<T: Reached> Search<'_, T> {
+impl<T: Reached, E: Entries> Search<'_, T, E> {
     // Takes the steps of the state `current` holds, the state `expanding` names, whose
     // fingerprint is given: through the next-state relation, or through each of TLC's actions.
     fn expand(
@@ -950,20 +1383,22 @@ impl<T: Reached> Search<'_, T> {
                 self.states.order(),
                 fingerprint,
                 &mut self.parent,
-            );
+            )?;
         }
         match actions {
             None => {
-                let walked = (context.next)(machine, &mut |machine: &mut Machine<'_>| {
+                let next = context.next.as_ref().expect("a next-state relation");
+                let walked = next(machine, &mut |machine: &mut Machine<'_>| {
                     self.visit_successor(machine, context)
                 });
                 self.check_pending(machine, context)?;
-                walked?;
+                walked.map_err(|bail| self.note_next_error(bail))?;
             }
             Some(actions) => {
                 if is_live_checked {
                     let mut checked = Vec::new();
-                    (context.next)(machine, &mut |machine: &mut Machine<'_>| {
+                    let next = context.next.as_ref().expect("a next-state relation");
+                    next(machine, &mut |machine: &mut Machine<'_>| {
                         checked.push(machine.next().to_vec());
                         Ok(())
                     })?;
@@ -975,7 +1410,7 @@ impl<T: Reached> Search<'_, T> {
                         self.visit_successor(machine, context)
                     });
                     self.check_pending(machine, context)?;
-                    walked?;
+                    walked.map_err(|bail| self.note_next_error(bail))?;
                 }
                 if let Some(checked) = self.checked.take()
                     && checked.len() as u64 != self.successors
@@ -987,19 +1422,77 @@ impl<T: Reached> Search<'_, T> {
         if self.successors == 0 && check_deadlock {
             let count = self.states.count() as u64;
             self.violation = Some(Found {
-                kind: ViolationKind::Deadlock,
+                kind: ViolationKind::Deadlock { accepted: None },
                 parent: Some(self.expanding),
                 last: None,
+                fingerprint: None,
+                random: None,
                 counts: StopCounts {
                     generated: self.generated,
                     distinct: count,
                     queued: count - self.expanding as u64 - 1,
                     depth: self.depth.max(1),
+                    ..StopCounts::default()
                 },
             });
             return Err(Bail("deadlock"));
         }
         Ok(())
+    }
+}
+
+impl<T: Reached, E: Entries> Search<'_, T, E> {
+    // A failure computing the successors of the state being expanded, which TLC reports with the
+    // path to that state, unless the search already found what stopped it.
+    // A failure evaluating a constraint or an invariant on an initial state, which TLC reports
+    // with the state and the counts so far, the state counted as generated.
+    fn note_initial_error(
+        &mut self,
+        machine: &Machine<'_>,
+        site: ErrorSite,
+        distinct: u64,
+        bail: Bail,
+    ) -> Bail {
+        if self.violation.is_none() && !is_engine_limit(bail.0) {
+            self.violation = Some(Found {
+                kind: ViolationKind::Error { site },
+                parent: None,
+                last: Some(machine.current().to_vec()),
+                fingerprint: None,
+                random: None,
+                counts: StopCounts {
+                    generated: self.generated,
+                    distinct,
+                    queued: distinct,
+                    depth: 1,
+                    ..StopCounts::default()
+                },
+            });
+        }
+        bail
+    }
+
+    fn note_next_error(&mut self, bail: Bail) -> Bail {
+        if self.violation.is_none() && !is_engine_limit(bail.0) {
+            let count = self.states.count() as u64;
+            self.violation = Some(Found {
+                kind: ViolationKind::Error {
+                    site: ErrorSite::Next,
+                },
+                parent: Some(self.expanding),
+                last: None,
+                fingerprint: None,
+                random: None,
+                counts: StopCounts {
+                    generated: self.generated,
+                    distinct: count,
+                    queued: count - self.expanding as u64 - 1,
+                    depth: self.depth.max(1),
+                    ..StopCounts::default()
+                },
+            });
+        }
+        bail
     }
 }
 
@@ -1110,7 +1603,7 @@ impl Reached for Candidates<'_> {
 #[repr(align(128))]
 struct Worker<'p> {
     machine: Machine<'p>,
-    fingerprints: Fingerprints,
+    fingerprints: Fingerprints<Overlaid>,
     canonicalizer: Option<Canonicalizer>,
     // The store's count of values when the overlay was last laid on it: its own ids start there.
     bound: Id,
@@ -1119,9 +1612,10 @@ struct Worker<'p> {
 }
 
 impl Worker<'_> {
-    fn attach(&mut self, store: &Arc<Store>, carried: &Carried) {
+    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints) {
         self.machine.forget_from(self.bound);
-        self.fingerprints.forget_from_carried(self.bound, carried);
+        self.fingerprints
+            .attach(fingerprints, store.value_count() as Id);
         if let Some(canonicalizer) = &mut self.canonicalizer {
             canonicalizer.forget_from(self.bound);
         }
@@ -1286,15 +1780,16 @@ impl Search<'_, States> {
             level,
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
+        let fingerprints = self.fingerprints.share();
         let expanded: Vec<Expanded> = std::thread::scope(|scope| {
             let threads: Vec<_> = workers
                 .iter_mut()
                 .map(|worker| {
-                    let (shared, store, carried) = (&shared, &store, &self.carried);
+                    let (shared, store, fingerprints) = (&shared, &store, &fingerprints);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
-                            worker.attach(store, carried);
+                            worker.attach(store, fingerprints);
                             expand_claimed(worker, shared)
                         })
                         .expect("a thread for the search")
@@ -1311,8 +1806,10 @@ impl Search<'_, States> {
         });
         for worker in workers.iter_mut() {
             worker.machine.store.detach();
+            worker.fingerprints.detach();
         }
         machine.store = Arc::into_inner(store).expect("the store, once the threads let go of it");
+        self.fingerprints.take_back(fingerprints);
         let mut stop = level.stop.load(Ordering::Relaxed);
         let mut owners = vec![None; (level.end - level.start).div_ceil(level.chunk)];
         for (thread, found) in expanded.iter().enumerate() {
@@ -1405,13 +1902,11 @@ impl Search<'_, States> {
             machine.is_past_walk |= found.is_past_walk;
         }
         self.expanding = stop;
-        // The fingerprints each thread computed of the values it made that are now the store's,
-        // for every thread to keep at the next level.
-        self.carried.reset(workers[0].bound);
+        // The fingerprints each thread computed, of the store's values and of the values it made
+        // that are now the store's, for every thread to read at the next level.
         for worker in workers.iter() {
-            worker
-                .fingerprints
-                .carry(&worker.imported, &mut self.carried);
+            self.fingerprints
+                .absorb(&worker.fingerprints, &worker.imported);
         }
         if let Some(bail) = violated {
             return Err(bail);
@@ -1445,36 +1940,261 @@ fn describe(error: CompileError) -> String {
     }
 }
 
+// What TLC's startup printed as it evaluated the substitutes, the constant definitions and the
+// symmetry, the symmetry's group and the sets it warns about, then what it printed as it evaluated
+// the assumptions, and the assumption it found false.
+struct Started {
+    printed: Vec<Vec<Id>>,
+    /// The sets the symmetry permutes that TLC warns hold fewer than two elements, by name.
+    small_sets: Vec<String>,
+    group: Option<Group>,
+    assumed: Vec<Vec<Id>>,
+    violated: Option<String>,
+    /// The assumption that failed to evaluate, by its position, and why.
+    failed: Option<(u32, Bail)>,
+    /// The configuration error a constant definition's value gave, which ends the startup.
+    config_error: Option<String>,
+    /// The assumption the engine left to its caller, by its position.
+    // The assumption left to the caller, and why the engine didn't evaluate it.
+    delegated: Option<(u32, Bail)>,
+}
+
+// TLC's startup: it evaluates the substitutes and the constant definitions, then the assumptions
+// until one is false. What they print is kept until all of it is evaluated, so a model the engine
+// can't take prints nothing.
+// `is_native`: the native checker reports an assumption the engine fails to evaluate however it
+// fails, since its evaluator of failures words TLC's error or finds none, which keeps the run
+// from being native; otherwise one the engine can't follow is the interpreter's, as is a
+// substitute that fails.
+fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) -> Outcome<Started> {
+    let take = |machine: &mut Machine<'_>| {
+        std::mem::take(&mut machine.output)
+            .into_iter()
+            .filter_map(|printed| match printed {
+                Printed::Values(values) => Some(values),
+                Printed::InitialStates(_) => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // The front end rejects a substitute TLC checks and finds failing (`processConstantDefns`), so
+    // one that fails here is one the native checker leaves to fail where it is used, as TLC does.
+    for evaluate in &startup.substitutes {
+        let result = evaluate(machine);
+        if !is_native {
+            result?;
+        }
+    }
+    // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps it as
+    // an operator, which evaluates it again, with its effects, at every use, where the engine
+    // would keep the first value it computes.
+    for evaluate in &startup.definitions {
+        if evaluate(machine).is_err() {
+            return Err(Bail(
+                "unsupported: a definition TLC computes at startup that fails there",
+            ));
+        }
+    }
+    // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
+    for (evaluate, form, kind, name) in &startup.predicates {
+        let value = match evaluate(machine) {
+            Ok(value) => value,
+            Err(bail) if is_engine_limit(bail.0) => return Err(bail),
+            Err(_) => continue,
+        };
+        // The store forgets how TLC built some values, whose text then depends on it.
+        let format = |machine: &Machine<'_>| {
+            if tla_values::print::is_printable(&machine.store, value) {
+                tla_values::print::format_value(&machine.store, value)
+            } else {
+                Err(Bail(
+                    "unsupported: printing a value whose text depends on how TLC built it",
+                ))
+            }
+        };
+        let message = match form {
+            PredicateForm::Predicate if value == TRUE => continue,
+            PredicateForm::Predicate => {
+                format!("The {kind} of {name} is equal to {}", format(machine)?)
+            }
+            PredicateForm::Definition => format!("The {kind} {name} cannot be a constant."),
+            PredicateForm::Specification => {
+                format!("The value of {name} is equal to {}", format(machine)?)
+            }
+        };
+        return Ok(Started {
+            printed: take(machine),
+            small_sets: Vec::new(),
+            group: None,
+            assumed: Vec::new(),
+            violated: None,
+            failed: None,
+            config_error: Some(message),
+            delegated: None,
+        });
+    }
+    let (group, small_sets) = match &startup.symmetry {
+        Some(symmetry) => symmetry_group(machine, symmetry)?,
+        None => (None, Vec::new()),
+    };
+    let printed = take(machine);
+    let assumed = check_assumptions(machine, startup, 0, is_native)?;
+    Ok(Started {
+        printed,
+        small_sets,
+        group,
+        assumed: take(machine),
+        violated: assumed.violated,
+        failed: assumed.failed,
+        config_error: None,
+        delegated: assumed.delegated,
+    })
+}
+
+struct Assumed {
+    violated: Option<String>,
+    failed: Option<(u32, Bail)>,
+    // The assumption left to the caller, and why the engine didn't evaluate it.
+    delegated: Option<(u32, Bail)>,
+}
+
+// The assumptions from `from` on, until one is false, fails, or is left to the caller.
+fn check_assumptions(
+    machine: &mut Machine<'_>,
+    startup: &Startup,
+    from: usize,
+    is_native: bool,
+) -> Outcome<Assumed> {
+    let mut assumed = Assumed {
+        violated: None,
+        failed: None,
+        delegated: None,
+    };
+    for (position, (evaluate, name)) in startup.assumptions.iter().enumerate().skip(from) {
+        match crate::context::holds(machine, evaluate) {
+            Ok(true) => {}
+            Ok(false) => {
+                assumed.violated = Some(name.clone());
+                break;
+            }
+            // One the engine stops at a limit of is the caller's too, whose evaluator follows
+            // TLC further, as where TLC compares two sets it can't enumerate part by part. So
+            // is one that enumerates a set the engine takes for one TLC can't enumerate, which
+            // TLC fails at only where it enumerates such a set itself: it compares two sets of
+            // functions over Nat by their parts, and enumerates `Nat \cap S` by S.
+            Err(bail)
+                if is_native
+                    && (is_engine_limit(bail.0)
+                        || [
+                            crate::compile::lazy::INFINITE_DOMAIN,
+                            crate::compile::INFINITE_BOUND,
+                        ]
+                        .contains(&bail.0)) =>
+            {
+                assumed.delegated = Some((position as u32, bail));
+                break;
+            }
+            Err(bail) if is_engine_limit(bail.0) && !is_native => return Err(bail),
+            Err(bail) => {
+                assumed.failed = Some((position as u32, bail));
+                break;
+            }
+        }
+    }
+    Ok(assumed)
+}
+
+// The group of the SYMMETRY definition's value as `Tool.getSymmetryPerms` builds it, none where
+// it has no permutation but the identity, and the sets it permutes that TLC warns hold fewer than
+// two elements: all of them where there are as many as permutations, or else each set TLC checks
+// that holds no model value the group moves.
+fn symmetry_group(
+    machine: &mut Machine<'_>,
+    symmetry: &StartupSymmetry,
+) -> Outcome<(Option<Group>, Vec<String>)> {
+    let value = (symmetry.definition)(machine)?;
+    let permutations = get_permutations(&mut machine.store, value)?;
+    let names = |sets: Vec<&(String, Option<Eval>)>| {
+        sets.into_iter().map(|(name, _)| name.clone()).collect()
+    };
+    if symmetry.permuted_sets.len() >= permutations.len() {
+        return Ok((None, names(symmetry.permuted_sets.iter().collect())));
+    }
+    let group = close_group(permutations);
+    let moved: HashSet<Id> = group
+        .iter()
+        .flat_map(|permutation| permutation.values().copied())
+        .collect();
+    let mut small = Vec::new();
+    for set in &symmetry.permuted_sets {
+        let Some(operand) = &set.1 else { continue };
+        let value = operand(machine)?;
+        let store = &machine.store;
+        if store.kind_of(value) == KIND_SET
+            && !(0..store.size_of(value))
+                .any(|index| moved.contains(&store.element_at(value, index)))
+        {
+            small.push(set);
+        }
+    }
+    Ok(((!group.is_empty()).then_some(group), names(small)))
+}
+
+// The values the startup definitions computed, which reading them again gives without effects.
+fn startup_values(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<Vec<Id>> {
+    context
+        .startup
+        .definitions
+        .iter()
+        .map(|evaluate| evaluate(machine))
+        .collect()
+}
+
+// The startup definitions' values as one row of shared states.
+fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<SharedStates> {
+    let values = startup_values(machine, context)?;
+    let mut encoder = SharedEncoder::new(&machine.store);
+    encoder.encode(&machine.store, &values)?;
+    Ok(encoder.finish())
+}
+
 /// Searches the model the IR describes. It runs compiled closures, which recurse with the
 /// expressions and values, so its caller runs it on a thread with a deep stack.
 pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> SearchOutcome {
     let model = &ir.model;
-    let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
-        .iter()
-        .map(|text| text.encode_utf16().collect())
+    let ranked: Vec<Vec<u16>> = (0..ir.ranked_count)
+        .map(|text| ir.get_text_units(text))
         .collect();
     let mut store = Store::new();
     store.reset(ranked.iter().map(Vec::as_slice));
     store.freeze_string_order();
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
+    compiler.workers = settings.workers;
+    compiler.is_native = settings.is_violation_reported;
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
     // A search that ranked strings may start over in the interpreter, which would print again
-    // what the search printed.
-    if compiler.is_printing && compiler.is_ranking {
+    // what the search printed; the native checker never starts over.
+    if compiler.is_printing && compiler.is_ranking && !settings.is_violation_reported {
         return SearchOutcome::Declined("unsupported: Print with ToString".into());
+    }
+    // The liveness checker evaluates its atoms in an order of its own.
+    if compiler.is_cached && settings.is_live_checked {
+        return SearchOutcome::Declined("unsupported: TLCCache with a liveness check".into());
     }
     let is_distinct_read = compiler.is_distinct_read;
     let is_printing = compiler.is_printing;
     // Checking a successor once the walk reaches the next reorders nothing anyone can see where
-    // nothing prints, reads the count of distinct states, or fingerprints a VIEW or symmetry's
-    // representative, which the walk would then interleave with.
+    // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
+    // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
+    let is_lambda_built = compiler.is_lambda_built;
     let is_pipelined = !is_printing
+        && !is_lambda_built
+        && !compiler.is_cached
         && !is_distinct_read
         && context.view.is_none()
-        && model.symmetry.is_none()
+        && model.startup.symmetry.is_none()
         && !settings.is_live_checked;
     // A level's states are shared between threads where the order of the steps across states
     // shows nowhere but in the states found: nothing prints or reads the count of distinct states,
@@ -1487,25 +2207,135 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let is_shared = thread_count > 1
         && !compiler.is_ranking
         && !compiler.is_printing
+        && !is_lambda_built
+        && !compiler.is_cached
         && !is_distinct_read
         && !model.is_recording_graph
         && !settings.is_live_checked
         && context.possible.is_empty();
+    // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings
+    // or TLCCache caches: TLC keeps one cache for the run, which the search's machine holds, and
+    // fills it in the order it first evaluates each expression.
+    let atom_threads = if compiler.is_ranking || is_lambda_built || compiler.is_tlc_cache_used {
+        1
+    } else {
+        thread_count
+    };
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
-    let canonicalizer = model.symmetry.as_ref().map(|group| {
-        let units = |text: u32| ir.texts[text as usize].encode_utf16().collect::<Vec<u16>>();
-        let group: Vec<Vec<(Vec<u16>, Vec<u16>)>> = group
-            .iter()
-            .map(|pairs| {
-                pairs
+    // TLCGet("level") is 0 while TLC starts.
+    let startup = machine.store.int(0).and_then(|zero| {
+        machine.set_slot(LEVEL_SLOT, zero);
+        run_startup(
+            &mut machine,
+            &context.startup,
+            settings.is_violation_reported,
+        )
+    });
+    let group = match startup {
+        Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
+        Ok(Started {
+            failed: Some((_, Bail(reason))),
+            ..
+        }) if !settings.is_violation_reported => return SearchOutcome::Declined(reason.into()),
+        Ok(started) => {
+            let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
+                printed
                     .iter()
-                    .map(|&(name, image)| (units(name), units(image)))
-                    .collect()
-            })
-            .collect();
+                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            };
+            report(reporter, &started.printed);
+            if let Some(message) = started.config_error {
+                return SearchOutcome::ConfigError { message };
+            }
+            if !started.small_sets.is_empty() {
+                reporter.symmetry_sets_too_small(&started.small_sets);
+            }
+            reporter.startup_done();
+            report(reporter, &started.assumed);
+            let mut assumed = Assumed {
+                violated: started.violated,
+                failed: started.failed,
+                delegated: started.delegated,
+            };
+            // The caller checks each assumption the engine leaves to it, and the engine goes on
+            // from the generator's state it leaves.
+            while let Some((position, bail)) = assumed.delegated {
+                let delegated = match reporter.check_assumption(position) {
+                    Ok(delegated) => delegated,
+                    Err(reason) if bail.0 == DELEGATED_ASSUMPTION => {
+                        return SearchOutcome::Declined(reason);
+                    }
+                    // Where the caller can't check one the engine stopped at a limit of, TLC may
+                    // fail there, which the caller reports as it does any that fails.
+                    Err(_) => {
+                        assumed = Assumed {
+                            violated: None,
+                            failed: Some((position, bail)),
+                            delegated: None,
+                        };
+                        break;
+                    }
+                };
+                if !delegated.holds {
+                    let name = context.startup.assumptions[position as usize].1.clone();
+                    return SearchOutcome::AssumptionViolated { name };
+                }
+                machine.random = JavaRandom::from_state(delegated.random);
+                assumed = match check_assumptions(
+                    &mut machine,
+                    &context.startup,
+                    position as usize + 1,
+                    settings.is_violation_reported,
+                ) {
+                    Ok(assumed) => assumed,
+                    Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
+                };
+                let printed = std::mem::take(&mut machine.output)
+                    .into_iter()
+                    .filter_map(|printed| match printed {
+                        Printed::Values(values) => Some(values),
+                        Printed::InitialStates(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                printed
+                    .iter()
+                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            }
+            if let Some(name) = assumed.violated {
+                return SearchOutcome::AssumptionViolated { name };
+            }
+            if let Some((position, _)) = assumed.failed {
+                return SearchOutcome::AssumptionFailed { position };
+            }
+            if context.is_diameter_searched || context.is_view_search_read {
+                return SearchOutcome::Stopped {
+                    reason: if context.is_diameter_searched {
+                        crate::context::DIAMETER_SEARCHED
+                    } else {
+                        crate::context::VIEW_SEARCH_READ
+                    }
+                    .into(),
+                    checkpoint: None,
+                    collisions: 0,
+                    violation: None,
+                };
+            }
+            started.group
+        }
+    };
+    // The initial states draw on from where the startup left the generator.
+    let startup_random = machine.random.state();
+    machine.startup_random = startup_random;
+    // The group by the names of the model values each permutation moves, for the interpreter and
+    // the trace, which read the search's states by another store.
+    let named_group = group
+        .as_ref()
+        .map(|group| name_group(&machine.store, group));
+    let is_symmetric = group.is_some();
+    let canonicalizer = group.map(|group| {
         let order = ir.tlc_order.iter().map(|&index| index as usize).collect();
-        Canonicalizer::new(&mut machine.store, &group, order)
+        Canonicalizer::new(&machine.store, group, order)
     });
     let width = context.width;
     let order: Vec<usize> = if context.view.is_some() {
@@ -1518,7 +2348,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         key_width: if context.view.is_some() {
             Some(1)
         } else {
-            model.symmetry.as_ref().map(|_| width)
+            is_symmetric.then_some(width)
         },
         ids: Vec::new(),
         keys: Vec::new(),
@@ -1532,6 +2362,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut search = Search::new(states, reporter, is_distinct_read, is_pipelined);
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
+    search.is_lambda_built = is_lambda_built;
     search.held = (model.is_recording_graph && is_printing).then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
@@ -1543,6 +2374,36 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         reals: search.states.key_width.map(|_| Vec::new()),
         ..Graph::default()
     });
+    // Where an atom sets or reads TLC's registers, the checker adds each state as the search
+    // expands it and asks the atoms then, as TLC evaluates them.
+    let mut online = None;
+    // Why the checker declined as the search went, if it did.
+    let mut online_declined: Option<String> = None;
+    if settings.is_violation_reported && search.graph.is_some() && context.is_live_registered {
+        let properties: Vec<Vec<Term>> = model
+            .live_properties
+            .iter()
+            .map(|property| to_terms(&property.formula))
+            .collect();
+        let property_terms: Vec<&[Term]> = properties.iter().map(Vec::as_slice).collect();
+        let checker = tla_live::Online::new(&to_terms(&model.live_formula), &property_terms);
+        let declined = match &checker {
+            Err(declined) => Some(declined.0.as_str()),
+            Ok(_) if search.states.key_width.is_some() || is_symmetric => {
+                Some("TLC's registers in the atoms under SYMMETRY or a VIEW")
+            }
+            Ok(_) if context.diameter_atoms.contains(&true) => {
+                Some("TLC's registers and TLCGet(\"diameter\") in the atoms")
+            }
+            Ok(_) => None,
+        };
+        if let Some(reason) = declined {
+            return SearchOutcome::Declined(reason.into());
+        }
+        // What the search and the atoms print comes out in TLC's order as it is.
+        search.held = None;
+        online = checker.ok();
+    }
     // The actions take each state's steps when the search labels them for ENABLED.
     let actions = context
         .actions
@@ -1598,8 +2459,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             &context.atoms,
             settings.is_live_checked,
             context.is_live_printing,
-            &context.diameter_atoms,
-            last_diameter,
+            &Diameters {
+                atoms: &context.diameter_atoms,
+                last: last_diameter,
+            },
+            &mut (0..atom_threads)
+                .filter(|_| atom_threads > 1)
+                .map(|_| Machine::new(&program, Store::new()))
+                .collect::<Vec<_>>(),
         )
     };
     // The most threads a level was shared between.
@@ -1609,6 +2476,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // without the states the search reached but didn't store, prints or TLC's diameter.
     let is_periodic = settings.is_liveness_periodic
         && model.is_recording_graph
+        && online.is_none()
         && search.states.key_width.is_none()
         && search.held.is_none()
         && !context.is_live_printing
@@ -1618,6 +2486,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut periodic_size = 1usize;
     let mut periodic_time = Duration::ZERO;
     let mut test_live_check_at = settings.test_live_check_at.filter(|_| is_periodic);
+    // Where the engine doesn't check as the graph grows, or a check couldn't decide, it hands a
+    // large graph to the interpreter, which checks as it grows and, even under `-lncheck final`,
+    // stops at a state whose tableau node accepts every behavior.
+    let is_graph_bounded = Cell::new(model.is_recording_graph && !is_periodic);
     // What the check that found a counterexample answered and found, and the states it took.
     let mut periodic_lasso: Option<(Vec<Table>, Liveness, usize)> = None;
     let result = (|| -> Outcome<()> {
@@ -1637,12 +2509,80 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         })?;
         search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
+        // TLC stops before it expands a state, at a time of its threads' choosing.
+        if machine.registers.is_exit {
+            return Err(Bail(
+                "unsupported: TLCSet(\"exit\", TRUE) as TLC starts or computes the initial states",
+            ));
+        }
+        // TLC adds each initial state to the behavior graphs as it finds it, and stops where an
+        // atom fails to evaluate. It then replays the initial states, checking each again and
+        // adding those after the one it failed at, which the engine follows where there is but
+        // the one.
+        if settings.is_violation_reported
+            && search.graph.is_some()
+            && online.is_none()
+            && search.states.key_width.is_none()
+            && search.held.is_none()
+            && !context.is_live_printing
+            && !context.diameter_atoms.contains(&true)
+        {
+            let count = search.states.count();
+            let tables = graph_tables(&mut machine, &search, 0, count, None, None).map_err(Bail)?;
+            if let Some(unanswered) = unanswered_at(model, &search, &tables, 0, count) {
+                search.violation = (initial_states == (1, 1)).then(|| Found {
+                    kind: ViolationKind::Error {
+                        site: ErrorSite::InitialAtom(unanswered.atom),
+                    },
+                    parent: None,
+                    last: Some(search.states.state(unanswered.state).to_vec()),
+                    fingerprint: None,
+                    random: None,
+                    counts: StopCounts {
+                        generated: 1,
+                        distinct: 1,
+                        queued: 1,
+                        depth: 1,
+                        ..StopCounts::default()
+                    },
+                });
+                return Err(Bail(ATOM_FAILED));
+            }
+        }
         if search.held.is_none() {
             search
                 .reporter
                 .initial_states(initial_states.0, initial_states.1);
         }
         is_past_initial = true;
+        if let Some(online) = &mut online {
+            // TLC evaluates an atom of an initial state as it finds the state, among the initial
+            // predicate's own evaluations, which the search doesn't follow.
+            if online.asks_initial_states() && search.states.count() > 0 {
+                return Err(Bail(ONLINE_INITIAL));
+            }
+            for state in 0..search.states.count() as u32 {
+                add_online(
+                    &mut machine,
+                    &context,
+                    &search,
+                    online,
+                    (state, true),
+                    &mut online_declined,
+                )?;
+            }
+        }
+        if context.next.is_none() && search.states.count() > 0 {
+            search.violation = Some(Found {
+                kind: ViolationKind::NoNextState,
+                parent: None,
+                last: None,
+                fingerprint: None,
+                random: None,
+                counts: StopCounts::default(),
+            });
+            return Err(Bail(NO_NEXT_STATE));
+        }
 
         // --- next states ---
         // The initial states are the first level, which starts as the loop does, so that it too
@@ -1679,10 +2619,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 let liveness =
                     check_liveness(model, search, &tables, None, false, &context.diameter_atoms);
                 periodic_time += at.elapsed();
-                // Whatever the checker leaves undecided, the check of the complete graph decides.
+                // Whatever the checker leaves undecided, the check of the complete graph decides,
+                // and the graph is bounded again for the interpreter, which checks as it grows.
                 let (Some(branches), Verdict::Holds | Verdict::Lasso { .. }) =
                     (liveness.branches, &liveness.verdict)
                 else {
+                    is_graph_bounded.set(true);
                     return Ok(());
                 };
                 search.reporter.liveness_started(
@@ -1735,7 +2677,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         workers = (0..thread_count)
                             .map(|_| Worker {
                                 machine: Machine::new(&program, Store::new()),
-                                fingerprints: Fingerprints::new(),
+                                fingerprints: Fingerprints::default(),
                                 canonicalizer: search
                                     .canonicalizer
                                     .as_ref()
@@ -1797,22 +2739,47 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             if Some(expanding) == settings.stop_at {
                 return Err(Bail("stopped where PROVE_IT_STOP_AT asked"));
             }
-            if search.graph.is_some() && search.states.count() > MAXIMUM_GRAPH_STATES {
-                return Err(Bail("a state graph too large to keep"));
+            if is_graph_bounded.get() && search.states.count() > MAXIMUM_GRAPH_STATES {
+                return Err(Bail(GRAPH_TOO_LARGE));
+            }
+            // The search numbers its states and its graph's steps in 32 bits.
+            if search.states.count() >= i32::MAX as usize
+                || search
+                    .graph
+                    .as_ref()
+                    .is_some_and(|graph| graph.edges.len() >= i32::MAX as usize)
+            {
+                return Err(Bail(GRAPH_TOO_LARGE));
             }
             search.current.clear();
             search
                 .current
                 .extend_from_slice(&search.states.ids[expanding * width..(expanding + 1) * width]);
             let fingerprint = search.states.fingerprints[expanding];
-            search.expand(
+            let expanded = search.expand(
                 &mut machine,
                 &context,
                 fingerprint,
                 actions.map(Vec::as_slice),
                 is_live_checked,
                 model.check_deadlock,
-            )?;
+            );
+            if let Err(bail) = expanded {
+                if let Some(Found {
+                    kind:
+                        ViolationKind::Error {
+                            site: ErrorSite::Invariant(_),
+                        },
+                    counts,
+                    ..
+                }) = &mut search.violation
+                {
+                    for (count, completed) in counts.out_degrees.iter_mut().zip(out_degrees) {
+                        *count += completed;
+                    }
+                }
+                return Err(bail);
+            }
             if let Some(graph) = &mut search.graph {
                 graph.successor_counts.push(search.successors as u32);
                 graph.new_counts.push(search.new_states as u32);
@@ -1821,6 +2788,18 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             }
             out_degrees[(search.new_states as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
             search.flush(&mut machine);
+            search.check_exit_followed(&machine)?;
+            if let Some(online) = &mut online {
+                add_online(
+                    &mut machine,
+                    &context,
+                    &search,
+                    online,
+                    (expanding as u32, false),
+                    &mut online_declined,
+                )?;
+                search.flush(&mut machine);
+            }
             if test_live_check_at.is_some_and(|at| expanding + 1 >= at) {
                 test_live_check_at = None;
                 check_periodically(&mut machine, &mut search)?;
@@ -1839,6 +2818,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 );
             }
             search.expanding += 1;
+            // TLC's worker finishes the state, then finds the queue finished (`stop`).
+            if search.is_exit_followed {
+                if search.graph.is_some() || online.is_some() {
+                    return Err(Bail(
+                        "unsupported: TLCSet(\"exit\", TRUE) with temporal properties",
+                    ));
+                }
+                break;
+            }
         }
         Ok(())
     })();
@@ -1885,6 +2873,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 tables,
             }),
             possible,
+            startup: share_startup(machine, &context).ok(),
+            startup_random,
+            symmetry: named_group.clone(),
         }
     };
     let outcome = match result {
@@ -1934,15 +2925,31 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 initial_distinct: initial_states.1,
                 out_degrees,
             };
+            let violation = match &liveness.verdict {
+                Verdict::Lasso {
+                    path, loop_start, ..
+                } if settings.is_violation_reported => to_lasso(
+                    &mut machine,
+                    &context,
+                    &search,
+                    (path, *loop_start),
+                    &lasso_actions,
+                    Vec::new(),
+                    &counts,
+                ),
+                _ => None,
+            };
             SearchOutcome::Complete {
                 counts: Box::new(counts),
                 checkpoint: Some(Box::new(checkpoint)),
                 liveness: Some(liveness),
                 lasso_actions,
+                violation,
                 value_count: machine.store.value_count(),
                 threads: threads_used,
                 collisions,
                 possible: search.possible.clone(),
+                registers: None,
                 fingerprints: search.states.fingerprints,
             }
         }
@@ -1965,7 +2972,34 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
             // to check them again.
-            let (checkpoint, liveness, lasso_actions) = match search.graph {
+            // TLC rebuilds a counterexample's states before it evaluates the properties on it, each
+            // with what it sets, which the engine doesn't follow.
+            let online_liveness = match &mut online {
+                None => None,
+                Some(online) => {
+                    let verdict = with_online(&mut machine, &context, &search, |source| {
+                        online.finish(source)
+                    });
+                    if verdict != Ok(Verdict::Holds) {
+                        return SearchOutcome::Stopped {
+                            reason: "a counterexample where the atoms use TLC's registers".into(),
+                            checkpoint: None,
+                            collisions,
+                            violation: None,
+                        };
+                    }
+                    Some(Liveness {
+                        branches: Some(online.branches()),
+                        verdict: Verdict::Holds,
+                        events: Vec::new(),
+                        unanswered: None,
+                    })
+                }
+            };
+            let (checkpoint, liveness, lasso_actions, lasso_printed) = match search.graph {
+                Some(_) if online_liveness.is_some() => {
+                    (None, online_liveness, Vec::new(), Vec::new())
+                }
                 Some(_) => {
                     // Under SYMMETRY or a VIEW, the checker may ask about the steps from states the
                     // search reached but didn't store, which the engine takes and checks again.
@@ -2021,6 +3055,34 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             }
                         }
                     };
+                    // An atom TLC evaluates as it adds a state, which the engine didn't answer:
+                    // where TLC fails evaluating it, it stops there.
+                    if let Some(unanswered) = liveness.unanswered.filter(|_| {
+                        settings.is_violation_reported
+                            && reals.is_none()
+                            && !is_late_printed
+                            && !context.diameter_atoms.contains(&true)
+                            && search
+                                .held
+                                .as_ref()
+                                .is_none_or(|held| held.iter().all(|printed| printed.is_empty()))
+                            && tables.iter().all(|table| table.prints.is_empty())
+                    }) && let Some(found) =
+                        to_atom_failure(&context, &search, initial_states, unanswered)
+                    {
+                        return SearchOutcome::Stopped {
+                            reason: ATOM_FAILED.into(),
+                            checkpoint: None,
+                            collisions,
+                            violation: to_violation(
+                                found,
+                                &mut machine,
+                                &context,
+                                &mut search,
+                                false,
+                            ),
+                        };
+                    }
                     if let Some(held) = search.held.take() {
                         let order = (!is_late_printed && !settings.is_live_checked)
                             .then(|| {
@@ -2028,7 +3090,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                     &held,
                                     &tables,
                                     &liveness,
-                                    context.is_invariant_printing || is_distinct_read,
+                                    context.is_invariant_printing
+                                        || is_distinct_read
+                                        || model.actions.len() > 1,
                                 )
                             })
                             .flatten();
@@ -2063,6 +3127,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             }
                         }
                     }
+                    let lasso_printed: Vec<Vec<Id>> = liveness
+                        .events
+                        .iter()
+                        .skip_while(|&&event| event != Event::Lasso)
+                        .flat_map(|event| match *event {
+                            Event::Atom { atom, slot } => tables[atom as usize].printed(slot),
+                            _ => &[],
+                        })
+                        .filter_map(|printed| match printed {
+                            Printed::Values(values) => Some(values.clone()),
+                            Printed::InitialStates(_) => None,
+                        })
+                        .collect();
                     let checkpoint = (liveness.verdict != Verdict::Holds
                         || settings.is_live_checked)
                         .then(|| {
@@ -2098,14 +3175,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             .unwrap_or_default(),
                         _ => Vec::new(),
                     };
-                    (checkpoint, Some(liveness), lasso_actions)
+                    (checkpoint, Some(liveness), lasso_actions, lasso_printed)
                 }
-                None => (None, None, Vec::new()),
+                None => (None, None, Vec::new(), Vec::new()),
             };
             let counts = Counts {
                 generated: search.generated,
                 distinct: count as u64,
-                queued: 0,
+                // None but where TLCSet("exit", TRUE) stopped the search.
+                queued: (count - search.expanding) as u64,
                 depth: if search.generated == 0 {
                     0
                 } else {
@@ -2115,23 +3193,107 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 initial_distinct: initial_states.1,
                 out_degrees,
             };
+            let value_count = machine.store.value_count();
+            // Under SYMMETRY or a VIEW the lasso's states are the stored ones, from which the
+            // caller rebuilds those TLC prints.
+            let violation = match liveness.as_ref().map(|liveness| &liveness.verdict) {
+                Some(Verdict::Lasso {
+                    path, loop_start, ..
+                }) if settings.is_violation_reported => to_lasso(
+                    &mut machine,
+                    &context,
+                    &search,
+                    (path, *loop_start),
+                    &lasso_actions,
+                    lasso_printed,
+                    &counts,
+                ),
+                Some(Verdict::Accepted {
+                    state,
+                    path,
+                    violated,
+                }) if settings.is_violation_reported
+                    && search.states.key_width.is_none()
+                    && !is_symmetric =>
+                {
+                    to_accepted(
+                        &mut machine,
+                        &context,
+                        &mut search,
+                        initial_states,
+                        *state,
+                        path,
+                        violated.clone(),
+                    )
+                }
+                _ => None,
+            };
             SearchOutcome::Complete {
                 counts: Box::new(counts),
                 checkpoint,
                 liveness,
                 lasso_actions,
-                value_count: machine.store.value_count(),
+                violation,
+                value_count,
                 threads: threads_used,
                 collisions,
                 possible: search.possible.clone(),
+                registers: None,
                 fingerprints: search.states.fingerprints,
             }
         }
         Err(bail) if !is_past_initial => {
+            if search.violation.is_none() && !is_engine_limit(bail.0) {
+                let count = search.states.count() as u64;
+                search.violation = Some(Found {
+                    kind: ViolationKind::Error {
+                        site: ErrorSite::Init,
+                    },
+                    parent: None,
+                    last: None,
+                    fingerprint: None,
+                    random: None,
+                    counts: StopCounts {
+                        generated: search.generated,
+                        distinct: count,
+                        queued: count,
+                        // TLC's depth is 1 once it has written a state.
+                        depth: u64::from(count > 0),
+                        ..StopCounts::default()
+                    },
+                });
+            }
+            // TLC adds each initial state to the behavior graphs before it checks it, and fails
+            // where an atom fails to evaluate, which the engine leaves to the interpreter.
             let violation = search
                 .violation
                 .take()
-                .filter(|_| settings.is_violation_reported);
+                .filter(|_| settings.is_violation_reported)
+                .filter(|found| {
+                    // Where TLC evaluates atoms that use the registers as it adds an initial
+                    // state, the search follows it only up to the first state it would add.
+                    let is_before_states = search.states.count() == 0
+                        && (found.last.is_none()
+                            || matches!(
+                                found.kind,
+                                ViolationKind::Error {
+                                    site: ErrorSite::InitialConstraint(_)
+                                }
+                            ));
+                    match &online {
+                        Some(online) => !online.asks_initial_states() || is_before_states,
+                        None => {
+                            search.graph.is_none()
+                                || matches!(
+                                    found.kind,
+                                    ViolationKind::Error {
+                                        site: ErrorSite::InitialAtom(_)
+                                    }
+                                )
+                                || answers_initial_atoms(&mut machine, &context, &search, found)
+                        }
+                    }
+                });
             // Otherwise the interpreter starts from scratch and prints it all again.
             if violation.is_some() {
                 for printed in search.held.take().iter().flatten().flatten() {
@@ -2143,8 +3305,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 reason: bail.0.to_string(),
                 checkpoint: None,
                 collisions,
-                violation: violation
-                    .and_then(|found| to_violation(found, &mut machine, &context, &mut search)),
+                violation: violation.and_then(|found| {
+                    to_violation(found, &mut machine, &context, &mut search, is_printing)
+                }),
             }
         }
         Err(bail) => {
@@ -2183,8 +3346,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     }),
                     graph: None,
                     possible: checkpoint_possible.clone(),
+                    startup: share_startup(&mut machine, &context).ok(),
+                    startup_random,
+                    symmetry: named_group.clone(),
                 }))
-            } else if !is_kept || search.states.key_width.is_some() || search.held.is_some() {
+            } else if !is_kept
+                || search.states.key_width.is_some()
+                || search.held.is_some()
+                || online.is_some()
+            {
                 // The interpreter searches a graph too large to keep from the start, since its
                 // liveness checker may stop in the first states, before it has taken all of them
                 // over; under SYMMETRY or a VIEW, since its replay of the graph would give its
@@ -2206,20 +3376,162 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     Err(reason) => return SearchOutcome::Invariant(reason.into()),
                 }
             };
-            // The search finds a trace's actions only where nothing it evaluates for them prints
-            // and the states it keeps are those TLC prints.
-            let is_traced = settings.is_violation_reported
+            let is_traced = settings.is_violation_reported;
+            let found = search.violation.take().filter(|_| is_traced);
+            // TLC adds each state it expands to the behavior graphs, even under -lncheck final, the
+            // deadlocked state too after it reports the deadlock, and stops at the first whose
+            // tableau node accepts every behavior (`LiveCheck#addNextState`): the search reports
+            // its violation where TLC wouldn't, and a deadlock with the path to the node the
+            // deadlocked state reaches, as on TLC's Github710d.
+            let found = match found {
+                // TLC adds a deadlocked state to the behavior graphs once it has reported the
+                // deadlock, with what its atoms set, which the engine doesn't follow.
+                Some(found) if online.is_some() => {
+                    (!matches!(found.kind, ViolationKind::Deadlock { .. })).then_some(found)
+                }
+                // TLC runs Next again from a state it adds a tableau node of late, printing
+                // again what Next prints, which the search doesn't place before its stop.
+                Some(_)
+                    if search.graph.is_some()
+                        && search.held.as_ref().is_some_and(|held| {
+                            held.iter().skip(1).any(|printed| !printed.is_empty())
+                        }) =>
+                {
+                    None
+                }
+                Some(mut found) if search.graph.is_some() => {
+                    let mut expanded = search.expanding;
+                    let is_deadlock = matches!(found.kind, ViolationKind::Deadlock { .. });
+                    if is_deadlock {
+                        let graph = search.graph.as_mut().expect("a graph");
+                        graph.edge_offsets.push(graph.edges.len() as u32);
+                        expanded += 1;
+                    }
+                    let tables =
+                        graph_tables(&mut machine, &search, expanded, count, None, None).ok();
+                    // TLC had added the initial states and each state before the one it was
+                    // expanding, and stopped at the first whose atom failed to evaluate.
+                    let unanswered = tables
+                        .as_ref()
+                        .filter(|tables| {
+                            search.states.key_width.is_none()
+                                && !is_symmetric
+                                && !context.diameter_atoms.contains(&true)
+                                && search.held.as_ref().is_none_or(|held| {
+                                    held.iter().all(|printed| printed.is_empty())
+                                })
+                                && tables.iter().all(|table| table.prints.is_empty())
+                        })
+                        .and_then(|tables| unanswered_at(model, &search, tables, expanded, count))
+                        .filter(|unanswered| {
+                            unanswered.is_initial || (unanswered.state as usize) < search.expanding
+                        });
+                    // The tables leave unanswered what the checker asks of no finished search,
+                    // such as ENABLED of a state not yet expanded, as well as what fails: TLC
+                    // stopped at the atom only where evaluating it fails as TLC fails.
+                    let unanswered = unanswered.and_then(|unanswered| {
+                        let failure = atom_failure(&mut machine, &context, &search, unanswered);
+                        machine.output.clear();
+                        match failure {
+                            Some(Ok(_)) => None,
+                            Some(Err(bail)) if !is_engine_limit(bail.0) => Some(Some(unanswered)),
+                            _ => Some(None),
+                        }
+                    });
+                    let verdict = tables.and_then(|tables| {
+                        accepted_at(model, &context, &search, &tables, expanded, count)
+                    });
+                    match verdict {
+                        _ if unanswered.is_some() => unanswered.flatten().and_then(|unanswered| {
+                            to_atom_failure(&context, &search, initial_states, unanswered)
+                        }),
+                        Some(None) => Some(found),
+                        // TLC stops at the first state whose tableau node accepts every
+                        // behavior, which is the deadlocked one only where that is the last it
+                        // added.
+                        Some(Some(Verdict::Accepted {
+                            state,
+                            path,
+                            violated,
+                        })) if is_deadlock && state as usize == search.expanding => {
+                            found.kind = ViolationKind::Deadlock {
+                                accepted: Some(Box::new(AcceptedTrace {
+                                    states: path
+                                        .iter()
+                                        .map(|&index| search.states.state(index).to_vec())
+                                        .collect(),
+                                    violated,
+                                })),
+                            };
+                            Some(found)
+                        }
+                        _ => None,
+                    }
+                }
+                found => found,
+            };
+            // What the search printed comes before the violation, as TLC prints as it checks each
+            // successor once it has it (`Worker.addElement`): that of the expansion it stopped in
+            // too, and what it held back for the liveness checker's atoms to print between, unless
+            // an atom printed.
+            if found.is_some() && !(search.held.is_some() && context.is_live_printing) {
+                if let Some(held) = search.held.take()
+                    && let Some((initial, expansions)) = held.split_first()
+                {
+                    for printed in initial {
+                        report_printed(search.reporter, &machine.store, printed);
+                    }
+                    search
+                        .reporter
+                        .initial_states(initial_states.0, initial_states.1);
+                    for printed in expansions.iter().flatten() {
+                        report_printed(search.reporter, &machine.store, printed);
+                    }
+                }
+                search.flush(&mut machine);
+            }
+            let mut violation = found.and_then(|found| {
+                to_violation(found, &mut machine, &context, &mut search, is_printing)
+            });
+            // Past the states the search keeps, TLC's may have stopped at a tableau node that
+            // accepts every behavior, as on its Github710b, whose x grows without bound. The
+            // path is of the states the search keeps, which are those TLC prints where nothing
+            // printed and no SYMMETRY or VIEW reduced them.
+            if is_traced
+                && bail.0 == GRAPH_TOO_LARGE
+                && online.is_none()
                 && !is_printing
-                && search.graph.is_none()
                 && search.states.key_width.is_none()
-                && model.symmetry.is_none();
-            let violation = search
-                .violation
-                .take()
-                .filter(|_| is_traced)
-                .and_then(|found| to_violation(found, &mut machine, &context, &mut search));
+                && !is_symmetric
+            {
+                let expanded = search.expanding;
+                let accepted = graph_tables(&mut machine, &search, expanded, count, None, None)
+                    .ok()
+                    .and_then(|tables| {
+                        accepted_at(model, &context, &search, &tables, expanded, count)
+                    })
+                    .flatten();
+                if let Some(Verdict::Accepted {
+                    state,
+                    path,
+                    violated,
+                }) = accepted
+                {
+                    violation = to_accepted(
+                        &mut machine,
+                        &context,
+                        &mut search,
+                        initial_states,
+                        state,
+                        &path,
+                        violated,
+                    );
+                }
+            }
             SearchOutcome::Stopped {
-                reason: bail.0.to_string(),
+                reason: online_declined
+                    .take()
+                    .map_or_else(|| bail.0.to_string(), |why| format!("{}: {why}", bail.0)),
                 checkpoint,
                 collisions,
                 violation,
@@ -2250,6 +3562,31 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             checkpoint: None,
             collisions,
             violation: None,
+        },
+        SearchOutcome::Complete {
+            counts,
+            checkpoint,
+            liveness,
+            lasso_actions,
+            violation,
+            fingerprints,
+            value_count,
+            threads,
+            collisions,
+            possible,
+            registers: _,
+        } => SearchOutcome::Complete {
+            counts,
+            checkpoint,
+            liveness,
+            lasso_actions,
+            violation,
+            fingerprints,
+            value_count,
+            threads,
+            collisions,
+            possible,
+            registers: take_registers(&mut machine),
         },
         outcome => outcome,
     }
@@ -2468,13 +3805,14 @@ fn label_path(
     Ok(labels)
 }
 
-// The violation a search found, with the store its states are in, or nothing when the engine can't
-// find the action of each step of its trace.
+// The violation a search found, with the store its states are in, or nothing where the search
+// ranked strings.
 fn to_violation(
     found: Found,
     machine: &mut Machine<'_>,
     context: &EngineContext,
     search: &mut Search<'_, States>,
+    is_printing: bool,
 ) -> Option<Box<Violation>> {
     let path = found
         .parent
@@ -2484,8 +3822,13 @@ fn to_violation(
         .map(|&index| search.states.state(index).to_vec())
         .collect();
     states.extend(found.last.iter().cloned());
-    let labels = if path.is_empty() {
-        Vec::new()
+    // The search finds the steps' actions where it keeps the states TLC prints and nothing it
+    // evaluates for them prints. Elsewhere, or where it can't, the caller's rebuild of the trace
+    // finds them, as TLC does.
+    let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
+    let unlabelled = vec![None; states.len().saturating_sub(1)];
+    let labels = if path.is_empty() || is_reduced || is_printing {
+        unlabelled
     } else {
         label_path(
             machine,
@@ -2495,20 +3838,445 @@ fn to_violation(
             found.last.as_deref(),
             false,
         )
-        .ok()?
-        .into_iter()
-        .skip(1)
-        .collect::<Option<Vec<u32>>>()?
+        .ok()
+        .filter(|labels| !labels.is_empty())
+        .map_or(unlabelled, |labels| labels.into_iter().skip(1).collect())
     };
+    let startup = startup_values(machine, context).ok()?;
+    let symmetry = search
+        .canonicalizer
+        .as_ref()
+        .map(|canonicalizer| name_group(&machine.store, canonicalizer.group()));
     // The store goes with the violation, so whether the search, or finding the actions, ranked
     // strings is read here, as for the search's outcome.
-    (labels.len() + 1 == states.len() && !machine.store.has_unordered_strings()).then(|| {
+    let is_shaped = labels.len() + 1 == states.len()
+        || matches!(
+            found.kind,
+            ViolationKind::NoNextState
+                | ViolationKind::Error {
+                    site: ErrorSite::Init
+                }
+        ) && states.is_empty();
+    let fingerprints = match found.kind {
+        ViolationKind::Error {
+            site: ErrorSite::Invariant(_),
+        } => {
+            let mut fingerprints = search.states.fingerprints.clone();
+            fingerprints.extend(found.fingerprint);
+            fingerprints.sort_unstable();
+            fingerprints
+        }
+        _ => Vec::new(),
+    };
+    (is_shaped && !machine.store.has_unordered_strings()).then(|| {
         Box::new(Violation {
             kind: found.kind,
             states,
             labels,
             counts: found.counts,
             store: std::mem::replace(&mut machine.store, Store::new()),
+            startup,
+            startup_random: machine.startup_random,
+            random: found.random,
+            symmetry,
+            registers: std::mem::take(&mut machine.registers),
+            possible: search.possible.clone(),
+            fingerprints,
+        })
+    })
+}
+
+// Where TLC's search, adding the states the search expanded to the behavior graphs, stops at a
+// tableau node that accepts every behavior: `Verdict::Accepted`, none, or `None` where the engine
+// can't tell.
+fn accepted_at(
+    model: &Model,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    tables: &[Table],
+    expanded: usize,
+    count: usize,
+) -> Option<Option<Verdict>> {
+    // TLC evaluates the atoms as it adds each state, and fails where the engine couldn't answer
+    // one: a state predicate on any state, an ENABLED on an expanded one, as on TLC's
+    // InitialLivenessEvaluationError, whose ENABLED reads an x' it never assigns. An action the
+    // checker asks of no step it leaves unanswered.
+    let is_answered = context.atoms.iter().zip(tables).all(|(atom, table)| {
+        table.unknown.is_none()
+            && match atom {
+                Atom::State(_) => !table.answers[..count].contains(&UNKNOWN),
+                Atom::Enabled { .. } => !table.answers[..expanded].contains(&UNKNOWN),
+                Atom::Action { .. } | Atom::Unknown(_) => true,
+            }
+    });
+    if !is_answered || context.is_live_printing || context.diameter_atoms.contains(&true) {
+        return None;
+    }
+    let graph = search.graph.as_ref().expect("a graph");
+    let answers: Vec<Option<&[u8]>> = tables
+        .iter()
+        .map(|table| table.unknown.is_none().then_some(&table.answers[..]))
+        .collect();
+    let properties: Vec<Vec<Term>> = model
+        .live_properties
+        .iter()
+        .map(|property| to_terms(&property.formula))
+        .collect();
+    let property_terms: Vec<&[Term]> = properties.iter().map(Vec::as_slice).collect();
+    tla_live::find_accepted(
+        &to_terms(&model.live_formula),
+        &property_terms,
+        &tla_live::Graph {
+            parents: &search.states.parents[..count],
+            edge_offsets: &graph.edge_offsets[..=expanded],
+            edges: &graph.edges,
+            fingerprints: &search.states.fingerprints[..count],
+            reals: None,
+            diameters: None,
+        },
+        &answers,
+    )
+    .ok()
+}
+
+// Runs the checker of a search that answers the atoms as it goes on the search's graph so far,
+// with the atoms' answers as the machine gives them now.
+fn with_online<T>(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    run: impl FnOnce(&tla_live::Source<'_>) -> T,
+) -> T {
+    let graph = search.graph.as_ref().expect("a graph");
+    let count = search.states.count();
+    let live = tla_live::Graph {
+        parents: &search.states.parents[..count],
+        edge_offsets: &graph.edge_offsets,
+        edges: &graph.edges,
+        fingerprints: &search.states.fingerprints[..count],
+        reals: None,
+        diameters: None,
+    };
+    let answers = LiveAnswers {
+        machine: std::cell::RefCell::new(machine),
+        atoms: &context.atoms,
+        states: &search.states.ids,
+        width: context.width,
+        edges: &graph.edges,
+    };
+    run(&tla_live::Source {
+        graph: &live,
+        answers: &answers,
+    })
+}
+
+// Adds a state to TLC's behavior graphs as TLC does once it has found an initial state or
+// expanded a state: the atoms it evaluates then are evaluated on the machine as it is. Where the
+// checker declines, into `declined` goes why.
+fn add_online(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    online: &mut tla_live::Online,
+    (state, is_initial): (u32, bool),
+    declined: &mut Option<String>,
+) -> Outcome<()> {
+    let added = with_online(machine, context, search, |source| {
+        if is_initial {
+            online.add_initial_state(source, state).map(|()| None)
+        } else {
+            online.add_state(source, state)
+        }
+    });
+    // TLC runs Next again from a state it adds a node of late, with what Next sets.
+    let is_late = online
+        .take_events()
+        .iter()
+        .any(|event| matches!(event, Event::Late(_)));
+    match added {
+        Err(reason) => {
+            *declined = Some(reason.0);
+            Err(Bail(ONLINE_DECLINED))
+        }
+        Ok(Some(_)) => Err(Bail(ONLINE_ACCEPTED)),
+        Ok(None) if is_late => Err(Bail(ONLINE_LATE)),
+        Ok(None) => Ok(()),
+    }
+}
+
+// Whether every atom of a state evaluates on each initial state the search found before it
+// stopped among them, the one it stopped at included, and prints nothing.
+fn answers_initial_atoms(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    found: &Found,
+) -> bool {
+    let unassigned = vec![UNASSIGNED; context.width];
+    let states: Vec<Vec<Id>> = (0..search.states.count() as u32)
+        .map(|index| search.states.state(index).to_vec())
+        .chain(found.last.clone())
+        .collect();
+    !context.is_live_printing
+        && states.iter().all(|state| {
+            let epoch = machine.next_epoch();
+            machine.set_current(state, epoch);
+            machine.set_next(&unassigned);
+            context.atoms.iter().all(|atom| match atom {
+                Atom::State(eval) | Atom::Enabled { run: Ok(eval), .. } => eval(machine).is_ok(),
+                Atom::Action { .. } => true,
+                Atom::Enabled { run: Err(_), .. } | Atom::Unknown(_) => false,
+            })
+        })
+}
+
+// What evaluating an atom the tables left unanswered gives, or `None` where the engine has no
+// evaluation of it.
+fn atom_failure(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    unanswered: tla_live::Unanswered,
+) -> Option<Outcome<Id>> {
+    let edges = search.graph.as_ref()?.edges.len() as u32;
+    let slot = match context.atoms.get(unanswered.atom as usize)? {
+        Atom::Action { .. } if unanswered.slot >= edges => {
+            tla_live::Slot::Stutter(unanswered.slot - edges)
+        }
+        Atom::Action { .. } => tla_live::Slot::Step {
+            state: unanswered.state,
+            edge: unanswered.slot,
+        },
+        _ => tla_live::Slot::State(unanswered.slot),
+    };
+    let atoms = &context.atoms;
+    let graph = search.graph.as_ref()?;
+    LiveAnswers {
+        machine: std::cell::RefCell::new(machine),
+        atoms,
+        states: &search.states.ids,
+        width: context.width,
+        edges: &graph.edges,
+    }
+    .evaluate(unanswered.atom, slot)
+    .ok()
+}
+
+// The first atom the engine didn't answer that TLC evaluates as it adds the states the search
+// expanded to the behavior graphs.
+fn unanswered_at(
+    model: &Model,
+    search: &Search<'_, States>,
+    tables: &[Table],
+    expanded: usize,
+    count: usize,
+) -> Option<tla_live::Unanswered> {
+    let graph = search.graph.as_ref()?;
+    let answers: Vec<Option<&[u8]>> = tables
+        .iter()
+        .map(|table| table.unknown.is_none().then_some(&table.answers[..]))
+        .collect();
+    tla_live::find_unanswered(
+        &to_terms(&model.live_formula),
+        &tla_live::Graph {
+            parents: &search.states.parents[..count],
+            edge_offsets: &graph.edge_offsets[..=expanded],
+            edges: &graph.edges,
+            fingerprints: &search.states.fingerprints[..count],
+            reals: None,
+            diameters: None,
+        },
+        &answers,
+    )
+}
+
+// Where TLC evaluates an atom the engine didn't answer as it adds a state to the behavior graphs,
+// the failure the caller evaluates again, with the counts of TLC's search then: what it generated
+// and found up to that state, and the out-degrees of the states it expanded.
+fn to_atom_failure(
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    initial_states: (u64, u64),
+    unanswered: tla_live::Unanswered,
+) -> Option<Found> {
+    let graph = search.graph.as_ref()?;
+    let state = unanswered.state as usize;
+    let slot = unanswered.slot as usize;
+    // TLC fails adding an initial state before it reports the initial states, where the search
+    // looks for it.
+    if unanswered.is_initial {
+        return None;
+    }
+    // The state the atom reads besides the one TLC adds: a successor's state predicate, or the
+    // next state of one of the added state's steps.
+    let extra = match context.atoms.get(unanswered.atom as usize)? {
+        Atom::State(_) => (slot != state).then_some(slot),
+        Atom::Enabled { .. } => {
+            if slot != state {
+                return None;
+            }
+            None
+        }
+        Atom::Action { .. } => {
+            let edges = graph.edges.len();
+            let next = if slot < edges {
+                let range =
+                    graph.edge_offsets[state] as usize..graph.edge_offsets[state + 1] as usize;
+                if !range.contains(&slot) {
+                    return None;
+                }
+                graph.edges[slot] as usize
+            } else if slot - edges == state {
+                state
+            } else {
+                return None;
+            };
+            Some(next)
+        }
+        Atom::Unknown(_) => return None,
+    };
+    let sum = |counts: &[u32]| {
+        counts[..=state]
+            .iter()
+            .map(|&count| u64::from(count))
+            .sum::<u64>()
+    };
+    let distinct = initial_states.1 + sum(&graph.new_counts);
+    let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
+    for &count in &graph.new_counts[..=state] {
+        out_degrees[(count as usize).min(OUT_DEGREE_BUCKETS - 1)] += 1;
+    }
+    Some(Found {
+        kind: ViolationKind::Error {
+            site: ErrorSite::Atom {
+                atom: unanswered.atom,
+                is_extra: extra.is_some(),
+            },
+        },
+        parent: Some(state),
+        last: extra.map(|extra| search.states.state(extra as u32).to_vec()),
+        fingerprint: None,
+        random: None,
+        counts: StopCounts {
+            generated: initial_states.0 + sum(&graph.successor_counts),
+            distinct,
+            queued: distinct - state as u64 - 1,
+            depth: u64::from(graph.diameters[state]),
+            out_degrees,
+        },
+    })
+}
+
+// A path to a node that accepts every behavior as a violation the caller prints, with the counts of
+// TLC's search when it stops as it adds `state`: what it generated and found by then, as the graph
+// records them.
+fn to_accepted(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &mut Search<'_, States>,
+    initial_states: (u64, u64),
+    state: u32,
+    path: &[u32],
+    violated: Vec<usize>,
+) -> Option<Box<Violation>> {
+    let mut labels = label_path(machine, context, search, path, None, false).ok()?;
+    if labels.len() != path.len() || machine.store.has_unordered_strings() {
+        return None;
+    }
+    labels.remove(0);
+    let startup = startup_values(machine, context).ok()?;
+    let graph = search.graph.as_ref()?;
+    let state = state as usize;
+    let sum = |counts: &[u32]| {
+        counts[..=state]
+            .iter()
+            .map(|&count| u64::from(count))
+            .sum::<u64>()
+    };
+    let distinct = initial_states.1 + sum(&graph.new_counts);
+    let counts = StopCounts {
+        generated: initial_states.0 + sum(&graph.successor_counts),
+        distinct,
+        queued: distinct - state as u64 - 1,
+        depth: u64::from(graph.diameters[state]),
+        ..StopCounts::default()
+    };
+    Some(Box::new(Violation {
+        kind: ViolationKind::Accepted { violated },
+        states: path
+            .iter()
+            .map(|&index| search.states.state(index).to_vec())
+            .collect(),
+        labels,
+        counts,
+        store: std::mem::replace(&mut machine.store, Store::new()),
+        startup,
+        startup_random: machine.startup_random,
+        random: None,
+        symmetry: None,
+        registers: std::mem::take(&mut machine.registers),
+        possible: search.possible.clone(),
+        fingerprints: Vec::new(),
+    }))
+}
+
+// A lasso as a violation the caller prints: its states, and the action of each step, which every
+// step but a stuttering last one has.
+fn to_lasso(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    (path, loop_start): (&[u32], usize),
+    actions: &[Option<u32>],
+    printed: Vec<Vec<Id>>,
+    counts: &Counts,
+) -> Option<Box<Violation>> {
+    // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and the caller's rebuild
+    // finds the steps' actions, the step back into the cycle's too, as TLC does.
+    let is_reduced = search.states.key_width.is_some() || search.canonicalizer.is_some();
+    let (labels, loop_label) = if is_reduced {
+        (vec![None; path.len().saturating_sub(1)], None)
+    } else {
+        let (&loop_label, steps) = actions.split_last()?;
+        let is_stuttering = loop_start + 1 == path.len();
+        let is_labelled = actions.len() == path.len() && (is_stuttering || loop_label.is_some());
+        if !is_labelled {
+            return None;
+        }
+        (steps.to_vec(), loop_label)
+    };
+    let startup = startup_values(machine, context).ok()?;
+    let symmetry = search
+        .canonicalizer
+        .as_ref()
+        .map(|canonicalizer| name_group(&machine.store, canonicalizer.group()));
+    (!machine.store.has_unordered_strings()).then(|| {
+        Box::new(Violation {
+            kind: ViolationKind::Lasso {
+                loop_start,
+                loop_label,
+                printed,
+            },
+            states: path
+                .iter()
+                .map(|&index| search.states.state(index).to_vec())
+                .collect(),
+            labels,
+            counts: StopCounts {
+                generated: counts.generated,
+                distinct: counts.distinct,
+                queued: counts.queued,
+                depth: counts.depth,
+                ..StopCounts::default()
+            },
+            store: std::mem::replace(&mut machine.store, Store::new()),
+            startup,
+            startup_random: machine.startup_random,
+            random: None,
+            symmetry,
+            registers: std::mem::take(&mut machine.registers),
+            possible: search.possible.clone(),
+            fingerprints: Vec::new(),
         })
     })
 }
@@ -2583,6 +4351,8 @@ fn order_printed<'p>(
     let mut is_initial = false;
     for event in &liveness.events {
         match *event {
+            // What TLC prints from here on follows the check's start.
+            Event::Lasso => break,
             Event::Initial(_) => is_initial = true,
             Event::Expanded(state) => {
                 is_initial = false;
@@ -2594,9 +4364,10 @@ fn order_printed<'p>(
             }
             // TLC runs Next again from a stored state it adds a node of late, and prints what
             // the search printed expanding it.
-            // TLC checks no invariant then, and the count of distinct states has grown since, so
-            // where an invariant may print among Next's prints or anything reads that count, the
-            // interpreter checks from the start.
+            // TLC checks no invariant then, the count of distinct states has grown since, and
+            // it runs Next action by action with the atoms of each action's successors between,
+            // so where an invariant may print among Next's prints, anything reads that count or
+            // Next has several actions, the interpreter checks from the start.
             Event::Late(state) => {
                 if let Some(printed) = expansions.get(state as usize) {
                     if is_replay_inexact && !printed.is_empty() {
@@ -2713,7 +4484,7 @@ fn expand_reals(
     let total = reals.states.len() / width;
     let walks: Vec<&Step> = match (&reals.labels, &context.actions) {
         (Some(_), Some(actions)) => actions.iter().collect(),
-        _ => vec![&context.next],
+        _ => context.next.iter().collect(),
     };
     let unassigned = vec![UNASSIGNED; width];
     for state in first..total {
@@ -2772,6 +4543,24 @@ fn expand_reals(
 }
 
 // Checks the temporal properties on a complete search's graph from the answers to the atoms.
+fn to_terms(terms: &[LiveTerm]) -> Vec<Term> {
+    terms
+        .iter()
+        .map(|&term| match term {
+            LiveTerm::Boolean(value) => Term::Boolean(value),
+            LiveTerm::State(atom) => Term::State(atom),
+            LiveTerm::Enabled(atom) => Term::Enabled(atom),
+            LiveTerm::Action { atom, enabled } => Term::Action { atom, enabled },
+            LiveTerm::Not => Term::Not,
+            LiveTerm::Always => Term::Always,
+            LiveTerm::Eventually => Term::Eventually,
+            LiveTerm::Next => Term::Next,
+            LiveTerm::And(count) => Term::And(count),
+            LiveTerm::Or(count) => Term::Or(count),
+        })
+        .collect()
+}
+
 fn check_liveness(
     model: &Model,
     search: &Search<'_, States>,
@@ -2781,23 +4570,6 @@ fn check_liveness(
     diameter_atoms: &[bool],
 ) -> Liveness {
     let graph = search.graph.as_ref().expect("a graph");
-    let to_terms = |terms: &[LiveTerm]| -> Vec<Term> {
-        terms
-            .iter()
-            .map(|&term| match term {
-                LiveTerm::Boolean(value) => Term::Boolean(value),
-                LiveTerm::State(atom) => Term::State(atom),
-                LiveTerm::Enabled(atom) => Term::Enabled(atom),
-                LiveTerm::Action { atom, enabled } => Term::Action { atom, enabled },
-                LiveTerm::Not => Term::Not,
-                LiveTerm::Always => Term::Always,
-                LiveTerm::Eventually => Term::Eventually,
-                LiveTerm::Next => Term::Next,
-                LiveTerm::And(count) => Term::And(count),
-                LiveTerm::Or(count) => Term::Or(count),
-            })
-            .collect()
-    };
     // Under SYMMETRY or a VIEW, TLC names the violated properties from the trace it rebuilds, of
     // states the graph doesn't hold, so the checker names none.
     let properties: Vec<Vec<Term>> = model
@@ -2834,6 +4606,24 @@ fn check_liveness(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn takes_only_tlc_failures_for_failures_tlc_reports() {
+        // A run-time decline, such as a Print of a value the engine can't print as TLC does, is
+        // the engine's own limit; a failed Assert is TLC's.
+        assert!(is_engine_limit(
+            "printing a value whose text depends on how TLC built it"
+        ));
+        assert!(is_engine_limit("unsupported: Print"));
+        assert!(is_engine_limit("a power set too large to build"));
+        assert!(!is_engine_limit("an assertion failed"));
+        assert!(!is_engine_limit("a mistyped membership in Nat"));
+        // suite/test202's assumption, which TLC evaluates without enumerating Nat.
+        assert!(is_engine_limit("enumerated Nat"));
+        // TLC fails only where a value it built as a record meets a function, which the store,
+        // knowing a value by its domain, can't tell from a function over strings.
+        assert!(is_engine_limit("record compared with a function"));
+    }
 
     fn verified_states() -> States {
         States {

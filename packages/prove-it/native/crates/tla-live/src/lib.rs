@@ -74,6 +74,88 @@ impl Graph<'_> {
     }
 }
 
+/// Where the checker asks an atom: of a state, of the step at a position of the graph's edges, from
+/// its state, or of a state's stuttering step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    State(u32),
+    Step { state: u32, edge: u32 },
+    Stutter(u32),
+}
+
+/// The engine's answers to the atoms, each asked as TLC evaluates it, with TLC's diameter then.
+pub trait Answers {
+    /// The atom's answer, or why the engine doesn't answer it.
+    fn answer(&self, atom: u32, slot: Slot, diameter: u32) -> Result<bool, Declined>;
+
+    /// Where the answer is among the atom's, as the evaluations logged and an unanswered atom
+    /// name it.
+    fn position(&self, atom: u32, slot: Slot, diameter: u32) -> usize;
+
+    /// Whether the ENABLED atom of an action's fairness is known false of the state, where the
+    /// checker asks about no step from it.
+    fn is_disabled(&self, _enabled: u32, _state: u32) -> bool {
+        false
+    }
+}
+
+/// What the checker reads as it adds a state: the search's graph so far, and the atoms' answers.
+#[derive(Clone, Copy)]
+pub struct Source<'s> {
+    pub graph: &'s Graph<'s>,
+    pub answers: &'s dyn Answers,
+}
+
+/// The answers of a search that is over, one table per atom (`None` for an atom the engine doesn't
+/// answer): a state predicate's or ENABLED's answer per state, an action's per step and then per
+/// state for its stuttering step, 0 or 1, and for an atom that reads TLCGet("diameter") the
+/// answers for each diameter one after another.
+struct Tables<'t> {
+    tables: &'t [Option<&'t [u8]>],
+    graph: &'t Graph<'t>,
+}
+
+impl Answers for Tables<'_> {
+    fn answer(&self, atom: u32, slot: Slot, diameter: u32) -> Result<bool, Declined> {
+        let position = self.position(atom, slot, diameter);
+        let answer = self
+            .tables
+            .get(atom as usize)
+            .copied()
+            .map(|table| table.map(|answers| answers.get(position).copied()));
+        match answer {
+            Some(Some(Some(0))) => Ok(false),
+            Some(Some(Some(1))) => Ok(true),
+            Some(Some(_)) => Err(Declined::from(
+                "a predicate the engine leaves to the interpreter",
+            )),
+            _ => Err(Declined::from("an atom the engine doesn't answer")),
+        }
+    }
+
+    fn position(&self, atom: u32, slot: Slot, diameter: u32) -> usize {
+        let position = match slot {
+            Slot::State(state) => state as usize,
+            Slot::Step { edge, .. } => edge as usize,
+            Slot::Stutter(state) => self.graph.edges.len() + state as usize,
+        };
+        match &self.graph.diameters {
+            Some(diameters) if diameters.atoms.get(atom as usize) == Some(&true) => {
+                let length = self.tables[atom as usize].map_or(0, <[u8]>::len);
+                length / diameters.last as usize * (diameter as usize - 1) + position
+            }
+            _ => position,
+        }
+    }
+
+    fn is_disabled(&self, enabled: u32, state: u32) -> bool {
+        matches!(
+            self.tables.get(enabled as usize),
+            Some(Some(table)) if table.get(state as usize) == Some(&0)
+        )
+    }
+}
+
 /// What the check found, and how many solutions of the formula TLC checks, which it calls branches,
 /// unless it declined before it knew, with the evaluations of the atoms where they have effects.
 #[derive(Debug, PartialEq, Eq)]
@@ -81,6 +163,20 @@ pub struct Liveness {
     pub branches: Option<usize>,
     pub verdict: Verdict,
     pub events: Vec<Event>,
+    /// Where the checker declined at an atom the engine didn't answer as it added a state the
+    /// search expanded, that atom: TLC evaluates it there, and may fail.
+    pub unanswered: Option<Unanswered>,
+}
+
+/// An atom the engine didn't answer, at the position `slot` in its table, which TLC evaluates as
+/// it adds `state` to the behavior graphs: as an initial state, `is_initial`, or once the search
+/// expanded it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unanswered {
+    pub state: u32,
+    pub atom: u32,
+    pub slot: u32,
+    pub is_initial: bool,
 }
 
 /// Where the atoms' evaluations have effects, such as what Print prints, TLC has them each time it
@@ -96,6 +192,127 @@ pub enum Event {
     Late(u32),
     /// TLC evaluates an atom: on the state at the position in its table, or on the step.
     Atom { atom: u32, slot: usize },
+    /// TLC has a lasso, and evaluates each property on it to find those it violates
+    /// (`Liveness.findViolatedProperties`): the evaluations follow.
+    Lasso,
+}
+
+/// Adds the states the search expanded to the behavior graphs, as TLC does as it searches even
+/// under `-lncheck final`: the first whose tableau node accepts every behavior, which stops TLC's
+/// search there, as a `Verdict::Accepted`.
+pub fn find_accepted(
+    formula: &[Term],
+    properties: &[&[Term]],
+    graph: &Graph<'_>,
+    tables: &[Option<&[u8]>],
+) -> Result<Option<Verdict>, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    let properties = properties
+        .iter()
+        .map(|property| read_formula(&mut terms, property))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut checker = checker::Checker::new(terms, root)?;
+    let answers = Tables { tables, graph };
+    let source = Source {
+        graph,
+        answers: &answers,
+    };
+    checker::find_accepted(&mut checker, &source)?
+        .map(|(state, path)| checker::accepted(&checker, &source, &properties, state, path))
+        .transpose()
+}
+
+/// TLC's behavior graphs as a search builds them: each state added once the search has expanded
+/// it, where TLC evaluates its atoms, whose effects the rest of the search sees, such as the
+/// registers they set. The atoms are asked each time TLC evaluates them.
+pub struct Online {
+    checker: checker::Checker,
+    properties: Vec<TermId>,
+}
+
+impl Online {
+    pub fn new(formula: &[Term], properties: &[&[Term]]) -> Result<Online, Declined> {
+        let mut terms = Terms::default();
+        let root = read_formula(&mut terms, formula)?;
+        let properties = properties
+            .iter()
+            .map(|property| read_formula(&mut terms, property))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut checker = checker::Checker::new(terms, root)?;
+        checker.log_effects();
+        Ok(Online {
+            checker,
+            properties,
+        })
+    }
+
+    /// How many solutions TLC checks, which it calls branches.
+    pub fn branches(&self) -> usize {
+        self.checker.branches()
+    }
+
+    /// Whether TLC evaluates an atom as it adds an initial state.
+    pub fn asks_initial_states(&self) -> bool {
+        self.checker.asks_initial_states()
+    }
+
+    /// Adds an initial state as TLC does as it finds it.
+    pub fn add_initial_state(&mut self, source: &Source<'_>, state: u32) -> Result<(), Declined> {
+        self.checker.add_one(source, state, true).map(|_| ())
+    }
+
+    /// Adds a state the search has expanded, with its steps: the path to a tableau node that
+    /// accepts every behavior, where TLC stops at one.
+    pub fn add_state(
+        &mut self,
+        source: &Source<'_>,
+        state: u32,
+    ) -> Result<Option<Vec<u32>>, Declined> {
+        self.checker.add_one(source, state, false)
+    }
+
+    /// What TLC did since the last call: the states it added, and the atoms it evaluated.
+    pub fn take_events(&mut self) -> Vec<Event> {
+        self.checker.drain_events()
+    }
+
+    /// The first atom the engine didn't answer as TLC added a state.
+    pub fn unanswered(&self) -> Option<Unanswered> {
+        self.checker.unanswered.get()
+    }
+
+    /// TLC's check of the graphs once the search is over.
+    pub fn finish(&mut self, source: &Source<'_>) -> Result<Verdict, Declined> {
+        checker::finish(
+            &mut self.checker,
+            source,
+            &self.properties,
+            &mut Vec::new(),
+            true,
+        )
+    }
+}
+
+/// The first atom the engine didn't answer that TLC evaluates as it adds the states the search
+/// expanded to the behavior graphs, where it may fail, unless TLC stops first at a node that
+/// accepts every behavior.
+pub fn find_unanswered(
+    formula: &[Term],
+    graph: &Graph<'_>,
+    tables: &[Option<&[u8]>],
+) -> Option<Unanswered> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula).ok()?;
+    let mut checker = checker::Checker::new(terms, root).ok()?;
+    let answers = Tables { tables, graph };
+    checker::find_unanswered(
+        &mut checker,
+        &Source {
+            graph,
+            answers: &answers,
+        },
+    )
 }
 
 /// What the check found.
@@ -113,8 +330,12 @@ pub enum Verdict {
         violated: Vec<usize>,
     },
     /// A tableau node that accepts every behavior, which TLC reports as it adds `state` to the
-    /// graph, with the path of states to it.
-    Accepted { state: u32, path: Vec<u32> },
+    /// graph, with the path of states to it and the positions of the properties it violates.
+    Accepted {
+        state: u32,
+        path: Vec<u32>,
+        violated: Vec<usize>,
+    },
     /// The checker needs the steps from the states past the stored ones that `reals` names and the
     /// graph doesn't expand yet: the engine expands them and checks again.
     Unexpanded,
@@ -167,6 +388,160 @@ fn read_formula(terms: &mut Terms, formula: &[Term]) -> Result<TermId, Declined>
     Ok(root)
 }
 
+/// The positions of the properties a lasso of `length` states, whose cycle starts at
+/// `loop_start`, violates (`Liveness.findViolatedProperties`, `evaluateOnLasso`): each property
+/// evaluated from its first state, an atom by `answer` of its atom term, the position of the state
+/// and that of the next, which for the last state is the cycle's first.
+pub fn violated_on_lasso(
+    properties: &[&[Term]],
+    length: usize,
+    loop_start: usize,
+    answer: &mut dyn FnMut(Term, usize, usize) -> Result<bool, Declined>,
+) -> Result<Vec<usize>, Declined> {
+    let mut lasso = Lasso {
+        length,
+        loop_start,
+        answer,
+    };
+    let mut violated = Vec::new();
+    for (position, terms) in properties.iter().enumerate() {
+        if !lasso.evaluate(terms, 0, 0)? {
+            violated.push(position);
+        }
+    }
+    Ok(violated)
+}
+
+struct Lasso<'a> {
+    length: usize,
+    loop_start: usize,
+    answer: &'a mut dyn FnMut(Term, usize, usize) -> Result<bool, Declined>,
+}
+
+impl Lasso<'_> {
+    fn next(&self, position: usize) -> usize {
+        if position + 1 < self.length {
+            position + 1
+        } else {
+            self.loop_start
+        }
+    }
+
+    /// The term at `at` and those of its operands: where the next term starts.
+    fn skip(terms: &[Term], at: usize) -> usize {
+        let mut at = at;
+        let mut pending = 1usize;
+        while pending > 0 {
+            pending -= 1;
+            pending += match terms[at] {
+                Term::Not | Term::Always | Term::Eventually | Term::Next => 1,
+                Term::And(count) | Term::Or(count) => count as usize,
+                _ => 0,
+            };
+            at += 1;
+        }
+        at
+    }
+
+    fn evaluate(&mut self, terms: &[Term], at: usize, position: usize) -> Result<bool, Declined> {
+        let Some(&term) = terms.get(at) else {
+            return Err(Declined::from("a formula that ends early"));
+        };
+        // The states from the earlier of this one and the cycle's first, which the lasso
+        // repeats from then on.
+        let future = position.min(self.loop_start)..self.length;
+        match term {
+            Term::Boolean(value) => Ok(value),
+            Term::State(_) | Term::Enabled(_) | Term::Action { .. } => {
+                let next = self.next(position);
+                (self.answer)(term, position, next)
+            }
+            Term::Not => Ok(!self.evaluate(terms, at + 1, position)?),
+            Term::Next => {
+                let next = self.next(position);
+                self.evaluate(terms, at + 1, next)
+            }
+            Term::Always | Term::Eventually => {
+                let is_always = term == Term::Always;
+                for future in future {
+                    if self.evaluate(terms, at + 1, future)? != is_always {
+                        return Ok(!is_always);
+                    }
+                }
+                Ok(is_always)
+            }
+            Term::And(count) | Term::Or(count) => {
+                let is_and = matches!(term, Term::And(_));
+                let mut operand = at + 1;
+                for _ in 0..count {
+                    if self.evaluate(terms, operand, position)? != is_and {
+                        return Ok(!is_and);
+                    }
+                    operand = Self::skip(terms, operand);
+                }
+                Ok(is_and)
+            }
+        }
+    }
+}
+
+/// How many solutions of a formula TLC checks, which it calls branches and reports as it builds
+/// its liveness checker ("Implied-temporal checking--satisfiability problem has N branches.").
+pub fn count_branches(formula: &[Term]) -> Result<usize, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    Ok(terms.solutions(root)?.len())
+}
+
+/// The atoms of a formula, in the order TLC's liveness checker asks about them (`atoms` of
+/// `createLivenessChecker`): the state and ENABLED atoms of each solution's checks and then of its
+/// tableau's nodes, as `collectAtoms` meets them, then the rest the checks ask of, as
+/// `collectQuestions` does. An atom is its position in `formula`'s terms, each term standing for
+/// itself; a tautology, which has no solutions, declines.
+pub fn atom_order(formula: &[Term]) -> Result<Vec<u32>, Declined> {
+    let mut terms = Terms::default();
+    let root = read_formula(&mut terms, formula)?;
+    let solutions = terms.solutions(root)?;
+    let mut order = Vec::new();
+    let mut add = |atom: u32| {
+        if !order.contains(&atom) {
+            order.push(atom);
+        }
+    };
+    let collect = |term: TermId, is_question: bool, add: &mut dyn FnMut(u32)| {
+        let mut pending = vec![term];
+        while let Some(term) = pending.pop() {
+            match terms.kind(term) {
+                tableau::Kind::State(atom) | tableau::Kind::Enabled(atom) => add(atom),
+                tableau::Kind::Action { atom, .. } if is_question => add(atom),
+                tableau::Kind::Action {
+                    enabled: Some(enabled),
+                    ..
+                } => add(enabled),
+                tableau::Kind::Next if !is_question => {}
+                tableau::Kind::Action { .. } | tableau::Kind::Boolean(_) => {}
+                _ => pending.extend(terms.children(term).iter().rev()),
+            }
+        }
+    };
+    for solution in &solutions {
+        for &predicate in solution.state_checks.iter().chain(&solution.action_checks) {
+            collect(predicate, false, &mut add);
+        }
+        for node in solution.tableau.iter().flat_map(|tableau| &tableau.nodes) {
+            for &predicate in &node.state_predicates {
+                collect(predicate, false, &mut add);
+            }
+        }
+    }
+    for solution in &solutions {
+        for &predicate in solution.state_checks.iter().chain(&solution.action_checks) {
+            collect(predicate, true, &mut add);
+        }
+    }
+    Ok(order)
+}
+
 /// Checks the formula, the fairness and the negated properties as `createLivenessChecker` joins
 /// them, on a search's graph, from the engine's answers to each atom (`None` for an atom
 /// it doesn't answer), and finds which of the properties a counterexample violates. Where the
@@ -180,6 +555,7 @@ pub fn check(
 ) -> Liveness {
     let mut branches = None;
     let mut events = Vec::new();
+    let mut unanswered = None;
     let mut run = || {
         if graph.edge_offsets.is_empty() {
             return Err(Declined::from("a graph without its steps"));
@@ -190,12 +566,19 @@ pub fn check(
             .iter()
             .map(|property| read_formula(&mut terms, property))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut checker = checker::Checker::new(terms, root, graph, tables)?;
+        let mut checker = checker::Checker::new(terms, root)?;
         branches = Some(checker.branches());
         if is_effectful {
             checker.log_effects();
         }
-        checker::check(&mut checker, &properties, &mut events)
+        let answers = Tables { tables, graph };
+        let source = Source {
+            graph,
+            answers: &answers,
+        };
+        let verdict = checker::check(&mut checker, &source, &properties, &mut events);
+        unanswered = verdict.is_err().then(|| checker.unanswered.get()).flatten();
+        verdict
     };
     let verdict = run().unwrap_or_else(|declined| {
         if declined.0 == UNEXPANDED {
@@ -208,5 +591,6 @@ pub fn check(
         branches,
         verdict,
         events,
+        unanswered,
     }
 }

@@ -66,6 +66,39 @@ had then. The interpreter replays the engine's graph for those counts only, with
 liveness checker, and at that state reports the native checker's path: Github1389Counting, the
 one corpus model this reaches.
 
+The native binary reports it itself (`ViolationKind::Accepted`). TLC's counts at that state come
+from the graph: the initial states plus each expanded state's successors and new states up to it,
+and its depth then. TLC adds the states to the behavior graphs as it searches even under
+`-lncheck final`, so the engine adds them as TLC would where its search stops anyway:
+- Past `MAXIMUM_GRAPH_STATES`, before it hands the graph over: TLC's Github710b, whose x grows
+  without bound, stops at its third state, which the binary now reports.
+- At a deadlock or an invariant violation, the deadlocked state included, which TLC adds after it
+  reports the deadlock. Where no state reaches an accepting node, TLC reports the violation, which
+  the binary prints. Where the deadlocked state reaches one (Github710d), TLC reports the deadlock
+  and then the node's counterexample, with the deadlock's counts: the deadlock carries the path
+  (`AcceptedTrace`), which the binary rebuilds from the same store and prints after the
+  deadlock's trace. It hands over where a postcondition would check the traces, and where an
+  invariant violation's state reaches one.
+
+Where no tableau node of a model with no PEM conditions accepts every behavior (`hasEmptyPEM`),
+TLC can't stop this way and the checker evaluates nothing. It still hands over where TLC would fail
+evaluating an atom the engine couldn't answer, a state predicate on any state or ENABLED on an
+expanded one, as on InitialLivenessEvaluationError.
+
+## An atom that fails to evaluate (as built)
+
+TLC evaluates the atoms as it adds each state to the behavior graphs, and stops at the first that
+fails, reporting it as an error in the next states, with the call stack first
+(`Worker#doNextCheckLiveness`): Github607, tla-rs liveness_error. The engine answers an atom it
+can't evaluate as UNKNOWN, so the checker records the first unanswered atom it reads as it adds
+an expanded state (`Liveness::unanswered`), in TLC's order. The engine reports it as
+`ErrorSite::Atom`: the path to the state being added, then the successor or the step's next state
+the atom reads, with the counts and out-degrees the graph holds up to that state. The binary
+evaluates the atom again with `tla-trace`, and prints TLC's report where it fails as TLC does, or
+isn't native where it holds. TLC's call stack records no node for the `<<A>>_v` of `WF_v(A)`,
+which the front writes at A, and ENABLED names the fairness condition where A leaves a variable of
+v unassigned (2148).
+
 ## Temporal formulas inside a predicate (as built)
 
 A liveness atom can be an operator whose body holds a temporal formula in a branch the run never
@@ -102,6 +135,13 @@ checker declines, or under `PROVE_IT_LIVE_CHECK=1`, the interpreter searches aga
 On the 26 corpus models with temporal properties under SYMMETRY or a VIEW, all 26 are decided
 natively (23 lassos, 3 hold); their outputs match TLC's recordings, and under
 `PROVE_IT_LIVE_CHECK=1` the verdicts, lassos, branches and labels match the interpreter's.
+
+The native binary prints such a lasso itself. The engine hands it the stored states, unlabelled,
+and `tla-trace` rebuilds those TLC prints as it does a reduced safety trace, the step back into the
+cycle with them: the stored path with the cycle's first state once more, whose last step's action
+is the loop's. TLC then names the properties the rebuilt lasso violates
+(`Liveness.findViolatedProperties`), which `tla_live::violated_on_lasso` evaluates on it, each atom
+by `Rebuilder::answer_atom` on the rebuilt states.
 
 ## Print while checking the temporal properties (as built)
 
@@ -171,3 +211,184 @@ under `PROVE_IT_LIVE_CHECK=1`, or where an atom reads TLC's diameter. Whatever a
 undecided, the check of the complete graph decides. `PROVE_IT_TEST_LIVE_CHECK_AT=n` makes the first
 check after `n` states for the engine and the interpreter alike, for the tests, since the time a
 check happens at isn't deterministic.
+
+Where it checks this way, the search keeps its graph however large it grows. Past 4 million states
+(`MAXIMUM_GRAPH_STATES`) the engine still hands the graph over where it doesn't check this way, or
+where a check part way through couldn't decide, say on an atom the engine doesn't answer: the
+interpreter checks as the graph grows, and even under `-lncheck final` TLC stops at the first state
+whose tableau node accepts every behavior (TLC's Github710b, whose x grows without bound, stops at
+its third state), which the engine finds only once the search is done. TokenRing at N = 8, M = 7
+(5.8 million states, 41 million steps) checks natively in 91 s at 2.6 GB peak on 4 cores, where the
+interpreter took 135 s and 9.1 GB on Depot's 16 and TLC 149 s and 2.75 GB; 49 s of it answers
+WF_vars(Next)'s action on each step, as TLC does. Under `-lncheck final` the engine hands it over.
+
+With PROVE_IT_WORKERS above one, `answer_atoms` answers the state and action atoms on that many
+threads, each a run of the states over the search's store, as a parallel search's threads expand a
+level: an evaluation that neither prints, draws nor reads TLC's diameter is the same on any thread.
+Each extra thread's overlay copies the store's values, as the search's do, so each costs about the
+store's size in memory. TokenRing at N = 8, its graph kept, checks on 4 threads in 51 s rather than
+81 s, its atoms in about 19 s rather than 49, at 5.0 GB peak rather than 2.6. Sharing the store
+instead slows a search on one thread by 9 to 18 %, so the parallel atoms stay opt-in: the engine
+answers them on one thread unless PROVE_IT_WORKERS asks for more.
+
+## Speed against TLC (measured)
+
+`scripts/bench-liveness.json` lists the liveness models: the 13 corpus models with temporal
+properties that both checkers finish in seconds, and the scaled models in `benchmarks/liveness`,
+which TLC takes a minute or more to check. The Benchmark workflow runs them with
+`suite = bench-liveness.json`, and the scaled models on `runner = depot-ubuntu-24.04-16`.
+
+Depot run rghnhzfvg3 (16 cores, 3 runs, `--checkers tlc,prove-it-rust`, Prove It at 48ef0dd), median
+wall seconds and peak resident memory. Rust agreed with TLC on all 16 models and is 11.5x faster
+in wall time (geometric mean).
+
+| Model | Distinct states | TLC | Rust |
+| --- | ---: | ---: | ---: |
+| StarkMutex (pcal) | 23,168 | 2.64 s, 1214 MB | 0.18 s, 105 MB |
+| TokenRing (ewd426) | 46,656 | 1.15 s, 651 MB | 0.18 s, 95 MB |
+| nbacg_guer01 | 24,922 | 2.04 s, 1207 MB | 0.12 s, 83 MB |
+| MCDisruptor_SPMC | 8,496 | 0.88 s, 625 MB | 0.10 s, 86 MB |
+| MacroQuicksort (pcal) | 31,092 | 5.50 s, 1489 MB | 0.12 s, 87 MB |
+| ReadersWriters | 21,527 | 1.40 s, 724 MB | 0.11 s, 83 MB |
+| cf1s_folklore | 10,016 | 1.34 s, 471 MB | 0.09 s, 81 MB |
+| SingleLaneBridge | 3,605 | 2.81 s, 1190 MB | 0.10 s, 85 MB |
+| FastMutexWithGoto2 (pcal) | 15,900 | 0.83 s, 484 MB | 0.07 s, 80 MB |
+| Dijkstra1 (pcal) | 5,510 | 0.60 s, 354 MB | 0.05 s, 75 MB |
+| Euclid (pcal) | 6,352 | 0.49 s, 236 MB | 0.04 s, 75 MB |
+| Barriers | 29,279 | 2.07 s, 1258 MB | 0.33 s, 136 MB |
+| bcastByz | 14,424 | 8.23 s, 1582 MB | 0.39 s, 153 MB |
+| StarkMutex, N = 4 | 399,763 | 75.0 s, 1987 MB | 4.73 s, 654 MB |
+| Barriers, N = 8 | 536,319 | 44.5 s, 1701 MB | 6.18 s, 508 MB |
+| TokenRing, N = 8, M = 7 | 5,764,801 | 149 s, 2750 MB | 135 s, 9098 MB (interpreter) |
+
+The scaled models check in time and memory proportional to their states, but for TokenRing at N = 8.
+There the engine handed over at the start, and the interpreter checked the model. The initial
+predicate draws from a set of 5.8 million functions, past the 1e6 bound the engine had copied from
+the TypeScript engine, and past 4 million states (`MAXIMUM_GRAPH_STATES`) the engine hands its graph
+over anyway, so that the interpreter checks the properties as the graph grows, as TLC does. The
+suite now scales TokenRing to N = 7, M = 8 (2.1 million states) instead, which the engine checks
+itself with its bound on enumerated sets at 2^24. bcastByz at N = 5 (1.07 million states) is out of
+the suite: TLC didn't finish it in 1500 s, and Rust took 284 s, nearly all of it on one action atom,
+Receive's `\E` over `SUBSET sent`, evaluated on each of 38 million steps.
+
+## Atoms that use TLC's registers (as built)
+
+TLC evaluates the atoms as it adds each state it expanded to the behavior graphs
+(`Worker#doNextCheckLiveness`), between the expansions, so an atom that sets or reads a register
+(TLCSet, TLCGet of a number or a name) and a next-state relation that does see each other's
+effects in that order: TLC's Test2 counts 20 evaluations of Next over 5 states, one in the search
+and three in WF's ENABLED and action for each. Answering the atoms in tables once the search is
+over can't give that, so the native checker answers them as the search goes:
+
+- `tla-live`'s checker no longer borrows the graph and the tables: each call takes a `Source`, the
+  graph so far and the atoms' `Answers`. `Answers::answer(atom, slot, diameter)` is asked each
+  time the checker reads an atom, at a `Slot` (a state, a step from a state by its edge, or a
+  state's stuttering step); `Tables` is its implementation for a search that is over, with the
+  position of an answer in an atom's table, which the logged events and `Unanswered` still name.
+- `tla_live::Online` is the checker driven state by state, with the effects on, so it asks each
+  atom each time TLC evaluates it: `add_initial_state`, `add_state` once the search expanded a
+  state, `take_events`, `finish` for TLC's check of the graphs at the end.
+- `tla-engine`'s `LiveAnswers` evaluates an atom when asked, on the machine as it is then:
+  `<<A>>_v` as TLC's `LNAction#eval` does, v of each state and A only where they differ.
+- The search runs this way where it reports violations itself (the native binary) and an atom
+  uses the registers (`EngineContext::is_live_registered`): after each expansion it adds the
+  state (`add_online`), and what the search and the atoms print comes out as it is printed, with
+  nothing held. It makes no check part way through the search.
+
+Verified against TLC d8fb231 on models whose registers are a running hash of every evaluation
+(branching steps, two initial states, WF and SF, an atom that prints): the registers a
+POSTCONDITION prints are TLC's.
+
+It declines, each with its reason, where it doesn't follow TLC: under SYMMETRY or a VIEW; with an
+atom that reads TLCGet("diameter"); where TLC evaluates an atom as it finds an initial state (a
+tableau whose initial nodes have state predicates, `Online::asks_initial_states`), which would
+come between the initial predicate's own evaluations; where TLC runs Next again for a late node
+(`Event::Late`); at a node that accepts every behavior; at a counterexample, whose states TLC
+rebuilds, with what Next sets, before it evaluates the properties on it; at a deadlock, whose
+state TLC adds after it reports it; and where an atom doesn't evaluate. The interpreter and the
+TypeScript engine's path are as before: there such an atom is one the engine doesn't answer.
+
+## Handoff (liveness session, 2026-11-09)
+
+Done on native-parity:
+- A deadlocked state that also violates a temporal property: the deadlock, then the property's
+  counterexample (Github710d).
+- A property an initial state violates (2108, DoInitFunctorProperty). The IR carries each
+  initial predicate's name.
+- An atom that fails as TLC adds a state to the behavior graphs (Github607, tla-rs
+  liveness_error): `Liveness::unanswered`, `ErrorSite::Atom`, `Site::Atom`. ENABLED names the
+  fairness condition whose action leaves a variable unassigned (2148).
+- Optional Next (tm/AS): `EngineContext.next` is an `Option<Step>`. With initial states and no
+  next-state relation the search stops with `ViolationKind::NoNextState`, which the binary
+  prints as 2115 with no statistics, exit 75; with no initial states it completes. It declines
+  with temporal properties, a POSTCONDITION or `_POSSIBLE`, which TLC never reaches there.
+- Scoped properties (tm/Github1161): `Conjunct::Scoped`, checked whole, and
+  `Compiler::compile_scoped` for the invariants, action properties and implied inits of an
+  instance; tla-trace's `check_violation` reads each in `scope_context(scope)`, and
+  `evaluate_failure` declines an implied init in a scope that fails to evaluate.
+- A lasso whose atoms print (UserModuleOverrideAnnotation): TLC evaluates each property on the
+  lasso it rebuilt (`Liveness.findViolatedProperties`), each atom anew. `tla-live` logs those
+  evaluations after `Event::Lasso`, the engine carries what they printed in
+  `ViolationKind::Lasso::printed`, and the binary prints it before the violation.
+- An atom that fails as TLC adds an initial state (InitialLivenessEvaluationError): TLC adds
+  each initial state to the behavior graphs before it checks it or reports the initial states
+  (`DoInitFunctor`), so the search asks `tla_live::find_unanswered` of the initial states before
+  it reports them, and stops with `ErrorSite::InitialAtom`. TLC then replays the initial states,
+  which the engine follows only where there is one; with more it declines. A violation found
+  among the initial states is reported only where every atom evaluates on them
+  (`answers_initial_atoms`). At a safety stop, the first atom unanswered on a state TLC had
+  added by then (`unanswered_at`) is reported as at the search's end, but only where evaluating
+  it fails as TLC fails (`atom_failure`): the tables of a search that stopped also leave
+  unanswered what the checker asks of states not yet expanded, which TLC evaluates without
+  failing, and there the violation the search found stands (ACP_NB_WRONG_TLC, SDP_Attack_Spec).
+- A lasso a check part way through the search finds: the search builds the violation with
+  `to_lasso` and the counts so far, and the binary prints it after the check's start, which the
+  search reported as the check began.
+- Test2: atoms that use TLC's registers are answered as the search goes (the section above).
+- YoYoAllGraphs: without the community modules' Java overrides TLC fails computing the initial
+  states, quantifying over Seq(S). A quantifier fails at the first bound TLC only tests for
+  membership (`INFINITE_BOUND`, as `Tool.contexts` takes every bound's enumerator first);
+  `tla-trace` follows a filter TLC kept lazy into the comparison that enumerates it
+  (`follow_lazy_filter`); the binary reports a failure among the initial states of a model with
+  temporal properties, which the search hands over only where the atoms of the initial states
+  evaluate; and the call stack's first frame is the list a definition wrote, as both front ends
+  keep a definition that is a state predicate whole as one of the specification's initial
+  predicates (`gaps.md`, "The specification's initial predicates, as TLC keeps them").
+- TraceMultiNodeReads: without the Java overrides its CONSTRAINT chooses from
+  [STRING -> STRING] on the first initial state. Enumerating a set of functions whose domain
+  TLC can't enumerate is one of TLC's failures (`INFINITE_DOMAIN`); `tla-trace` marks a failed
+  enumeration by CHOOSE as one in a value's method, and for a constraint of an initial state
+  gives TLC's report: the error with the state, then the FingerprintException of TLC's replay
+  of the initial states, with the initial predicate's frames and the constraint's
+  (`Site::InitialConstraint`); the binary reports a failure among the initial states whatever
+  the ALIAS and the postconditions, which TLC doesn't reach there. Where an atom uses the
+  registers and TLC would evaluate it of an initial state, the search now declines only once
+  it has an initial state to add, so a failure before the first one is reported.
+
+Declined after the pre-PR review (infinite-sets session, 2026-11-10), each with a test in
+`prove-it-cli/tests/cli.rs`:
+- A stop, a deadlock or an invariant, in a model with behavior graphs where an expansion
+  printed: TLC runs Next again from a state it adds a tableau node of late, printing again what
+  Next prints, which the search doesn't place before its stop.
+- A late node's prints where Next has several actions: TLC runs it action by action there, with
+  the atoms of each action's successors between (`LiveCheck.addNextState`); `order_printed`
+  places them only where Next is one action.
+- A lasso whose last state is its cycle's first and which isn't the stuttering shape: TLC ends
+  it "State N+1: Stuttering" (`LiveWorker.printTrace`), which the binary doesn't follow.
+- Fixed with them: an atom that fails adding a state exits by the error's own status (255, 14
+  for an assertion, 151 for an undefined identifier), one that fails on the initial state is
+  followed by the statistics, and the brackets of `<<A>>_v` have no frame.
+The TypeScript checker differs from TLC on the second and third alone: see `gaps.md`.
+
+Open, with what is known:
+- The front names a property an instance exports by the definition's own name (`Safe`) where
+  TLC names it as the configuration's property refers to it (`A!Safe`, `opNode.getName()` in
+  `SpecProcessor#processConfigProps`), in both front ends, scoped or not. No corpus model
+  reports such an invariant violated. Reported to the coordinator for the front's owner.
+- MCEWD687a (both copies) is the infinite-sets session's: see `gaps.md`. The scoped properties
+  it needed are in; what is left is TLC's failure enumerating the filter of Seq(S), the
+  property invariant's failure site and its replay.
+- Where the atoms use TLC's registers, the cases the search declines (the section above): the
+  next would be an atom TLC evaluates on an initial state, which needs the checker called from
+  `visit_initial` with the machine's state kept around the atom, and a late node, where Next's
+  walk from the state runs again for what it sets.

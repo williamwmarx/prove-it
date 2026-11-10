@@ -4,7 +4,9 @@
 //! `src/transfer.ts`'s encoding of states.
 
 pub mod fingerprint;
+pub mod json;
 pub mod print;
+pub mod random;
 pub mod store;
 pub mod trace;
 pub mod transfer;

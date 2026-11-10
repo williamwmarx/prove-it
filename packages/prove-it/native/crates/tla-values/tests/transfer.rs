@@ -23,8 +23,10 @@ fn writes_what_create_state_encoder_writes() {
     let set = store.set_of(&[two, one]).unwrap();
     let empty = store.tuple_of(&[]);
     let mut encoder = StateEncoder::new();
-    encoder.encode(&store, &[record, function, tuple, set, empty]);
-    encoder.encode(&store, &[a, model, one, b, TRUE]);
+    encoder
+        .encode(&store, &[record, function, tuple, set, empty])
+        .unwrap();
+    encoder.encode(&store, &[a, model, one, b, TRUE]).unwrap();
     let encoded = encoder.finish();
     #[rustfmt::skip]
     let words = vec![
@@ -54,14 +56,14 @@ fn reads_states_back_as_the_same_values() {
     let set = store.set_of(&[record, long, ids[3]]).unwrap_or(ids[3]);
     let state = [record, long, set, TRUE];
     let mut encoder = StateEncoder::new();
-    encoder.encode(&store, &state);
+    encoder.encode(&store, &state).unwrap();
     let encoded = encoder.finish();
     assert_eq!(decode_states(&mut store, &encoded, 4), Ok(state.to_vec()));
     // Into another store, where the same values get ids of their own.
     let mut other = Store::new();
     let decoded = decode_states(&mut other, &encoded, 4).unwrap();
     let mut again = StateEncoder::new();
-    again.encode(&other, &decoded);
+    again.encode(&other, &decoded).unwrap();
     assert_eq!(again.finish(), encoded);
 }
 
@@ -93,8 +95,8 @@ fn shares_values_and_interns_them_as_the_states_would() {
     let mut encoder = StateEncoder::new();
     let mut shared = SharedEncoder::new(&store);
     for state in &states {
-        encoder.encode(&store, state);
-        shared.encode(&store, state);
+        encoder.encode(&store, state).unwrap();
+        shared.encode(&store, state).unwrap();
     }
     let (encoded, shared) = (encoder.finish(), shared.finish());
     // The long tuple is written once, rather than in three of the states.
@@ -111,7 +113,7 @@ fn shares_values_and_interns_them_as_the_states_would() {
     assert_eq!(other.value_count(), one.value_count());
     let mut again = StateEncoder::new();
     for state in decoded.chunks(3) {
-        again.encode(&other, state);
+        again.encode(&other, state).unwrap();
     }
     assert_eq!(again.finish(), encoded);
 }

@@ -69,7 +69,7 @@ fn get_infix(text: &str) -> Option<InfixOperator> {
     }
 }
 
-fn is_infix(text: &str) -> bool {
+pub fn is_infix(text: &str) -> bool {
     get_infix(text).is_some()
 }
 
@@ -286,6 +286,10 @@ struct Parser {
     proof_levels: Vec<i64>,
     mode: Mode,
     version: TlcVersion,
+    /// The errors of SANY's semantic analysis that the parser finds, when it collects them
+    /// rather than failing at the first: a DEF clause entry that isn't a definition, which SANY
+    /// leaves out, and a HIDE of what isn't a fact.
+    sany_errors: Option<Vec<SanyError>>,
 }
 
 fn location_of(token: &Token) -> Location {
@@ -581,6 +585,10 @@ impl Parser {
 
     fn parse_subscript(&mut self) -> Parsed<Expression> {
         let token = self.peek(0);
+        // SANY's FairnessExpr reads WF_B(A)(Act) with the subscript B(A).
+        if token.kind == TokenKind::Identifier && self.is_application_subscript_ahead() {
+            return self.parse_primary(None);
+        }
         if token.kind == TokenKind::Identifier {
             let start = self.index;
             let location = self.peek_location();
@@ -607,6 +615,30 @@ impl Parser {
             "Expected a subscript but found {}",
             self.describe(&token)
         )))
+    }
+
+    fn is_application_subscript_ahead(&self) -> bool {
+        let mut offset = 1;
+        while self.is_at("!", offset) && self.peek_kind(offset + 1) == TokenKind::Identifier {
+            offset += 2;
+        }
+        if !self.is_at("(", offset) {
+            return false;
+        }
+        let mut depth = 0;
+        loop {
+            if self.peek_kind(offset) == TokenKind::End {
+                return false;
+            }
+            depth += usize::from(self.is_at("(", offset));
+            if self.is_at(")", offset) {
+                depth -= 1;
+                if depth == 0 {
+                    return self.is_at("(", offset + 1);
+                }
+            }
+            offset += 1;
+        }
     }
 
     fn is_definition_ahead(&self, operator_line: u32) -> bool {
@@ -1378,7 +1410,14 @@ impl Parser {
                         DefinitionUnit::Definition(definition) => definitions.push(definition),
                     }
                 }
-                self.recursive_scopes.pop();
+                let declared = self.recursive_scopes.pop().unwrap_or_default();
+                if declared.iter().any(|name| {
+                    definitions
+                        .iter()
+                        .all(|definition: &Rc<Definition>| definition.name != *name)
+                }) {
+                    self.current_module().has_undefined_let_recursive = true;
+                }
                 let body = Rc::new(self.parse_expression(0)?);
                 Ok(located(
                     ExpressionKind::Let {
@@ -2115,31 +2154,57 @@ impl Parser {
 
     fn parse_defs(&mut self) -> Parsed<Vec<Fact>> {
         let defs = self.separated(Self::parse_fact)?;
-        if self.mode == Mode::Tlc {
-            let invalid = defs.iter().find_map(|def| match def {
-                Fact::Expression(expression) => match &expression.kind {
-                    ExpressionKind::Identifier { name, .. }
-                        if self
-                            .proof_scopes
-                            .iter()
-                            .any(|scope| scope.contains(&**name))
-                            || self.is_module_symbol(name, false) =>
-                    {
-                        Some(expression.location.clone())
-                    }
-                    _ => None,
-                },
-                Fact::Module { .. } => None,
-            });
-            if let Some(location) = invalid {
-                return Err(self.error_at(
-                    "DEF clause entry should describe a defined operator",
-                    location.line,
-                    location.column,
-                ));
+        if self.mode != Mode::Tlc {
+            return Ok(defs);
+        }
+        let is_invalid = |def: &Fact| match def {
+            Fact::Expression(expression) => match &expression.kind {
+                ExpressionKind::Identifier { name, .. } => {
+                    self.proof_scopes
+                        .iter()
+                        .any(|scope| scope.contains(&**name))
+                        || self.is_module_symbol(name, false)
+                }
+                _ => false,
+            },
+            Fact::Module { .. } => false,
+        };
+        let (invalid, valid): (Vec<Fact>, Vec<Fact>) = defs.into_iter().partition(is_invalid);
+        let Some(Fact::Expression(first)) = invalid.first() else {
+            return Ok(valid);
+        };
+        let Some(errors) = &mut self.sany_errors else {
+            return Err(self.error_at(
+                "DEF clause entry should describe a defined operator",
+                first.location.line,
+                first.location.column,
+            ));
+        };
+        for def in &invalid {
+            if let Fact::Expression(expression) = def
+                && let Some(range) = &expression.location.range
+            {
+                errors.push(SanyError {
+                    location: format_range(range),
+                    message: "DEF clause entry should describe a defined operator.".to_owned(),
+                });
             }
         }
-        Ok(defs)
+        Ok(valid)
+    }
+
+    /// SANY reports a BY, USE or HIDE that the DEF clause entries it leaves out leave empty.
+    fn check_empty(&mut self, facts: &[Fact], defs: &[Fact], start: usize, message: &str) {
+        if !facts.is_empty() || !defs.is_empty() {
+            return;
+        }
+        let range = self.get_range(start);
+        if let Some(errors) = &mut self.sany_errors {
+            errors.push(SanyError {
+                location: format_range(&range),
+                message: message.to_owned(),
+            });
+        }
     }
 
     fn parse_facts(&mut self) -> Parsed<(Vec<Fact>, Vec<Fact>)> {
@@ -2163,6 +2228,7 @@ impl Parser {
         let is_only = !is_hide && self.accept("ONLY");
         let keyword_range = self.get_range(start);
         let (facts, defs) = self.parse_facts()?;
+        self.check_empty(&facts, &defs, start, "Empty USE or HIDE statement.");
         if is_hide && self.mode == Mode::Tlc {
             let errors: Vec<SanyError> = facts
                 .iter()
@@ -2182,8 +2248,10 @@ impl Parser {
                     }
                 })
                 .collect();
-            if !errors.is_empty() {
-                return Err(SyntaxError::sany(errors));
+            match &mut self.sany_errors {
+                Some(collected) => collected.extend(errors),
+                None if !errors.is_empty() => return Err(SyntaxError::sany(errors)),
+                None => {}
             }
         }
         let mut location = location_of(&keyword);
@@ -2409,14 +2477,20 @@ impl Parser {
             };
             return Err(self.error_at(message, step.line, step.column));
         }
-        if Self::get_step_level(&step.text) < 0 && self.get_step_name(&step.text).is_some() {
-            return Err(self.error_at(
-                "<*> and <+> cannot be used for a named step",
-                step.line,
-                step.column,
-            ));
-        }
+        let is_named_unnumbered =
+            Self::get_step_level(&step.text) < 0 && self.get_step_name(&step.text).is_some();
         self.index += 1;
+        // SANY's generator rejects it at the step, a semantic error.
+        if is_named_unnumbered && self.mode == Mode::Tlc {
+            let error = SanyError {
+                location: format_range(&self.get_range(start)),
+                message: "<*> and <+> cannot be used for a named step.".to_owned(),
+            };
+            match &mut self.sany_errors {
+                Some(errors) => errors.push(error),
+                None => return Err(SyntaxError::sany(vec![error])),
+            }
+        }
         let name = self.get_step_name(&step.text);
         let mut location = location_of(&self.tokens[start]);
         let statement_start = self.index;
@@ -2469,11 +2543,13 @@ impl Parser {
     fn parse_proof_body(&mut self) -> Parsed<Proof> {
         let location = self.peek_location();
         if self.is_at("BY", 0) || (self.is_at("PROOF", 0) && self.is_at("BY", 1)) {
+            let start = self.index;
             self.accept("PROOF");
             self.advance()?;
             let keyword = self.get_range(self.index - 1);
             let is_only = self.accept("ONLY");
             let (facts, defs) = self.parse_facts()?;
+            self.check_empty(&facts, &defs, start, "Empty BY");
             return Ok(Proof {
                 kind: ProofKind::By {
                     is_only,
@@ -2648,6 +2724,7 @@ impl Parser {
             theorems: Vec::new(),
             uses: Vec::new(),
             units: Vec::new(),
+            has_undefined_let_recursive: false,
         });
         self.recursive_scopes.push(FastSet::default());
         if self.accept("EXTENDS") {
@@ -2819,6 +2896,16 @@ fn parse(
     tokens: Option<&[Token]>,
     version: TlcVersion,
 ) -> Parsed<Module> {
+    parse_collecting(source, mode, tokens, version, false).map(|parsed| parsed.0)
+}
+
+fn parse_collecting(
+    source: &str,
+    mode: Mode,
+    tokens: Option<&[Token]>,
+    version: TlcVersion,
+    is_collecting: bool,
+) -> Parsed<(Module, Vec<SanyError>)> {
     let tokens = match tokens {
         Some(tokens) => tokens.to_vec(),
         None => tokenize(source)?,
@@ -2851,6 +2938,7 @@ fn parse(
         proof_levels: Vec::new(),
         mode,
         version,
+        sany_errors: is_collecting.then(Vec::new),
     };
     let module = parser.parse_module_body()?;
     // SANY's lexer marks where each definition begins before its parser runs, which can split a
@@ -2863,11 +2951,21 @@ fn parse(
             sany: None,
         });
     }
-    Ok(module)
+    Ok((module, parser.sany_errors.unwrap_or_default()))
 }
 
 pub fn parse_module(source: &str) -> Parsed<Module> {
     parse(source, Mode::Tlc, None, TlcVersion::Master)
+}
+
+/// Parses a module as `parse_module_tokens` does, and collects the errors of SANY's semantic
+/// analysis that the parser finds, for SANY's messages.
+pub fn parse_module_for_sany(
+    source: &str,
+    tokens: &[Token],
+    version: TlcVersion,
+) -> Parsed<(Module, Vec<SanyError>)> {
+    parse_collecting(source, Mode::Tlc, Some(tokens), version, true)
 }
 
 /// Parses a module the caller has tokenized already, as SANY in a version of TLC does.

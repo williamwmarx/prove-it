@@ -132,6 +132,25 @@ describe("the engine IR", () => {
     ]);
   });
 
+  it("names the definitions of a module a Java class overrides by their names", async () => {
+    // test-model/UserModuleOverride: the override copies the root module, whose definitions are
+    // still the spec's own, not an instance's.
+    process.env.PROVE_IT_ENGINE_BACKEND = "ts";
+    const dump = join(directory, "overridden.ir");
+    process.env.PROVE_IT_IR_DUMP = dump;
+    const overrides = join(import.meta.dirname, "../fixtures/overrides");
+    await check({
+      source:
+        "---- MODULE Overrides ----\nVARIABLE x\nFlag == FALSE\nInit == x = Flag\nNext == x' = x\nSpec == Init /\\ [][Next]_x\nProp == []x\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+      loadClass: (name) =>
+        name === "Overrides" ? readFileSync(join(overrides, "Overrides.class")) : undefined,
+    });
+    expect(readIr(readFileSync(dump)).texts.filter((text) => text.endsWith("@Overrides"))).toEqual(
+      [],
+    );
+  });
+
   it("labels TLC's actions as a trace names them", async () => {
     const dump = join(directory, "actions.ir");
     await checkCommit(dump);

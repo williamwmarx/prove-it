@@ -53,11 +53,26 @@ impl SyntaxError {
     }
 }
 
+/// How TLC begins its report of a RuntimeException it didn't expect (`UNEXPECTED_EXCEPTION`).
+pub const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
+
+/// How TLC begins its report of an EvalException it didn't expect (`UNEXPECTED_EVAL_EXCEPTION`).
+pub const UNEXPECTED_EVAL_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a tlc2.tool.EvalException\n: ";
+
 /// `formatRange`.
 pub fn format_range(range: &crate::ast::SourceRange) -> String {
     format!(
         "line {}, col {} to line {}, col {} of module {}",
         range.start.line, range.start.column, range.end.line, range.end.column, range.module
+    )
+}
+
+/// `describeRange`: where an expression is written, which TLC's messages print.
+pub fn describe_range(expression: &crate::ast::Expression) -> String {
+    let location = &expression.location;
+    location.range.as_ref().map_or_else(
+        || format!("line {}, column {}", location.line, location.column),
+        format_range,
     )
 }
 
@@ -71,6 +86,9 @@ pub enum FrontError {
     Evaluation(String),
     /// `TlaConfigError`.
     Config(String),
+    /// `TlaStackOverflowError`: TLC overflows its stack, as it does expanding a formula whose
+    /// substitutions lead back to it.
+    StackOverflow,
     /// What the Rust front end doesn't cover yet.
     NotYet(String),
 }

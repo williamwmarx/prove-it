@@ -5,8 +5,13 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
 import { check } from "../../src";
+import { getNativeAddon } from "../../src/engine/native";
+import { getEngineBackend } from "../../src/engine/settings";
 
 const setting = process.env.PROVE_IT_ENGINE;
+
+// Whether the native engine checks first, which it does wherever its addon loads.
+const isNative = getEngineBackend() !== "ts" && typeof getNativeAddon() !== "string";
 
 afterEach(() => {
   if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
@@ -17,7 +22,7 @@ const run = async (body: string, config: string, engine: string) => {
   process.env.PROVE_IT_ENGINE = engine;
   const printed: string[] = [];
   const lines: string[] = [];
-  // The TypeScript engine's lines. The native engine's, with PROVE_IT_ENGINE_BACKEND=rust, come
+  // The TypeScript engine's lines. The native engine's, where it checks first, come
   // first.
   const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
     if (
@@ -215,8 +220,6 @@ describe("the engine's Print, PrintT and TLCGet", () => {
       // TLC evaluates an operator's argument where the operator uses it, and caches it.
       "Twice(e) == e /\\ e\nP == Twice(Print(x, TRUE))",
       "P == LET e == Print(x, TRUE) IN e /\\ e",
-      "P == IF \\E z \\in {x, 5} : Print(z, z = 5) THEN TRUE ELSE FALSE",
-      "P == {Print(z, z) : z \\in {x, 5}} # {}",
       "P == [z \\in {x, 5} |-> Print(z, z)][x] = x",
       "P == Print(Print(x, 1), TRUE)",
     ];
@@ -226,6 +229,24 @@ describe("the engine's Print, PrintT and TLCGet", () => {
       expect([print, lines]).toEqual([
         print,
         [expect.stringMatching(/handed over .*: unsupported: Print/)],
+      ]);
+    }
+    // TLC maps the elements of a set, and quantifies over them, in its normalized order, as the
+    // native engine does; the TypeScript engine hands the search over.
+    const ordered = [
+      "P == {Print(z, z) : z \\in {x, 5}} # {}",
+      "P == IF \\E z \\in {x, 5} : Print(z, z = 5) THEN TRUE ELSE FALSE",
+    ];
+    for (const print of ordered) {
+      const body = `EXTENDS Naturals, TLC\nVARIABLE x\n${print}\nInit == x = 0\nNext == x < 2 /\\ P /\\ x' = x + 1`;
+      const { lines } = await checkBoth(body, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE");
+      expect([print, lines]).toEqual([
+        print,
+        [
+          isNative
+            ? expect.stringMatching(CHECKED)
+            : expect.stringMatching(/handed over .*: unsupported: Print/),
+        ],
       ]);
     }
   });
@@ -244,9 +265,10 @@ describe("the engine's Print, PrintT and TLCGet", () => {
         body,
         `INIT Init\nNEXT Next\n${check}\nCHECK_DEADLOCK FALSE`,
       );
+      // The native engine stops only where ENABLED evaluates the Print.
       expect([check, lines]).toEqual([
         check,
-        [expect.stringMatching(/handed over .*: unsupported: Print/)],
+        [expect.stringMatching(/handed over .*: (unsupported: Print|Print inside ENABLED)/)],
       ]);
     }
   });
@@ -261,7 +283,7 @@ describe("the engine's Print, PrintT and TLCGet", () => {
       "INIT Init\nNEXT Next\nPROPERTY Live\nCHECK_DEADLOCK FALSE",
     );
     expect(lines).toEqual([
-      process.env.PROVE_IT_ENGINE_BACKEND === "rust"
+      isNative
         ? expect.stringMatching(/the interpreter prints the counterexample/)
         : expect.stringMatching(/handed over .*: unsupported: Print/),
     ]);
@@ -284,6 +306,26 @@ describe("the engine's Print, PrintT and TLCGet", () => {
       const { lines } = await checkBoth(body, "INIT Init\nNEXT Next");
       expect([value, lines]).toEqual([value, [expect.stringMatching(CHECKED)]]);
     }
+  });
+
+  it("evaluates Assert's message where the assertion holds, as TLC does", async () => {
+    const body = `EXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ Assert(TRUE, PrintT(<<"msg", x>>)) /\\ x' = x + 1`;
+    const { printed } = await checkBoth(body, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE");
+    expect(printed).toEqual(['<<"msg", 0>>', '<<"msg", 1>>']);
+  });
+
+  it("hands over printing Nat, Int or STRING, which the interpreter's encoding lacks", async () => {
+    // What TLC prints: Nat and Int by name. The native engine hands over as it prints {Int}, which
+    // the TypeScript engine never builds.
+    const body = `EXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ PrintT(<<x, {Int}>>) /\\ x' = x + 1`;
+    const { printed, lines } = await checkBoth(body, "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE");
+    expect(printed).toEqual(["<<0, {Int}>>", "<<1, {Int}>>"]);
+    const reason = isNative
+      ? "unsupported: handing over a function TLC keeps lazy, or Nat, Int or STRING"
+      : "enumerated Int";
+    expect(lines).toEqual([
+      expect.stringMatching(new RegExp(`^\\[engine\\] handed over .*: ${reason}$`)),
+    ]);
   });
 
   it("reports the initial states it computed after what the initial predicate printed", async () => {

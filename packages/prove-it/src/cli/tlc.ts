@@ -7,8 +7,8 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { arch, availableParallelism, release, tmpdir, type } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { arch, availableParallelism, EOL, release, tmpdir, type } from "node:os";
+import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getHeapStatistics } from "node:v8";
 
@@ -844,6 +844,14 @@ const checkSpec = async (
         workers,
         livenessCheck: ["final", "seqfinal", "off"].includes(livenessCheck) ? "final" : "default",
         seed: BigInt(seed),
+        // What a JVM sets of the platform, then what the launch sets.
+        systemProperties: new Map([
+          ["file.separator", sep],
+          ["path.separator", delimiter],
+          ["line.separator", EOL],
+          ["user.dir", process.cwd()],
+          ...java.properties,
+        ]),
         dump: dumpValues && getStateDump(dumpValues),
         isTool: printer.isTool,
         isContinued: args.has("-continue"),

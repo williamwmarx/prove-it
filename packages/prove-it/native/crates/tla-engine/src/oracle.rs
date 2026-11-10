@@ -180,15 +180,13 @@ pub fn answer_requests<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<Stri
                     None => Err(Bail("no such value")),
                 };
                 match elements {
-                    Ok(elements) => {
-                        let mut answer = "elements".to_string();
-                        for element in elements {
-                            let fingerprint =
-                                fingerprints.get_state(&machine.store, &[element], &[0]);
-                            answer.push_str(&format!(" {}", fingerprint as i64));
-                        }
-                        answer
-                    }
+                    Ok(elements) => elements
+                        .into_iter()
+                        .map(|element| fingerprints.get_state(&machine.store, &[element], &[0]))
+                        .try_fold("elements".to_string(), |answer, fingerprint| {
+                            Ok(format!("{answer} {}", fingerprint? as i64))
+                        })
+                        .unwrap_or_else(|bail: Bail| format!("!{}", bail.0)),
                     Err(bail) => format!("!{}", bail.0),
                 }
             }

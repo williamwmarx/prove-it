@@ -4,6 +4,7 @@
 use tla_ir::{NodeId, NodeKind};
 use tla_values::store::{
     KIND_FUNCTION, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome,
+    is_tested_set_kind,
 };
 use tla_values::{Bail, Id};
 
@@ -21,6 +22,22 @@ const MAXIMUM_FUNCTIONS: f64 = (1u64 << 24) as f64;
 
 /// TLC fails to test a value other than a model value for membership in a set of another kind:
 /// an untyped model value isn't a member, and anything else, a typed model value included, fails.
+/// Membership in Nat, Int or STRING (`IntValue`'s and `StringValue`'s `member`), which fails for
+/// a value of another kind but an untyped model value.
+pub(crate) fn is_in_named(machine: &Machine<'_>, name: &str, element: Id) -> Outcome<bool> {
+    let kind = machine.store.kind_of(element);
+    match (name, kind) {
+        ("Nat", KIND_INT) => Ok(machine.store.int_of(element) >= 0),
+        ("Int", KIND_INT) | ("STRING", KIND_STRING) => Ok(true),
+        ("Nat", _) => not_in(machine, element, "a mistyped membership in Nat"),
+        ("Int", _) => not_in(machine, element, "a mistyped membership in Int"),
+        ("STRING", _) => not_in(machine, element, "a mistyped membership in STRING"),
+        _ => Err(Bail(
+            "unsupported: membership in an infinite set by its name alone",
+        )),
+    }
+}
+
 pub(crate) fn not_in(machine: &Machine<'_>, element: Id, reason: &'static str) -> Outcome<bool> {
     if machine.store.kind_of(element) == KIND_MODEL && machine.store.get_model_type(element) == 0 {
         Ok(false)
@@ -85,7 +102,18 @@ fn enumerate_function_set(machine: &mut Machine<'_>, domain: Id, range: Id) -> O
 }
 
 // Every combination of one element from each set, the first set's turning slowest.
-fn combinations(machine: &Machine<'_>, sets: &[Id]) -> Vec<Vec<Id>> {
+fn combinations(machine: &Machine<'_>, sets: &[Id]) -> Outcome<Vec<Vec<Id>>> {
+    // An empty set empties the whole, however large the others are.
+    if sets.iter().any(|&set| machine.store.size_of(set) == 0) {
+        return Ok(Vec::new());
+    }
+    let total: f64 = sets
+        .iter()
+        .map(|&set| f64::from(machine.store.size_of(set)))
+        .product();
+    if total > super::lazy::MAXIMUM_ELEMENTS {
+        return Err(Bail("a lazy set too large to enumerate"));
+    }
     let mut partial: Vec<Vec<Id>> = vec![Vec::new()];
     for &set in sets {
         let mut next = Vec::new();
@@ -98,7 +126,7 @@ fn combinations(machine: &Machine<'_>, sets: &[Id]) -> Vec<Vec<Id>> {
         }
         partial = next;
     }
-    partial
+    Ok(partial)
 }
 
 const NO_PARTS: fn(&mut Machine<'_>) -> Outcome<()> = |_| Ok(());
@@ -122,32 +150,15 @@ impl Compiler<'_> {
             });
         }
         match set.infinite {
-            Some("Nat") => member(|machine, element| {
-                if machine.store.kind_of(element) == KIND_INT {
-                    Ok(machine.store.int_of(element) >= 0)
-                } else {
-                    not_in(machine, element, "a mistyped membership in Nat")
-                }
-            }),
-            Some("Int") => member(|machine, element| {
-                if machine.store.kind_of(element) == KIND_INT {
-                    Ok(true)
-                } else {
-                    not_in(machine, element, "a mistyped membership in Int")
-                }
-            }),
-            Some(_) => member(|machine, element| {
-                if machine.store.kind_of(element) == KIND_STRING {
-                    Ok(true)
-                } else {
-                    not_in(machine, element, "a mistyped membership in STRING")
-                }
-            }),
+            Some(name @ ("Nat" | "Int")) => {
+                member(move |machine, element| is_in_named(machine, name, element))
+            }
+            Some(_) => member(|machine, element| is_in_named(machine, "STRING", element)),
             None => {
                 let evaluate = set.eval.clone();
                 member(move |machine, element| {
                     let id = evaluate(machine)?;
-                    if machine.store.kind_of(id) != KIND_SET {
+                    if !is_tested_set_kind(machine.store.kind_of(id)) {
                         return Err(Bail("membership in a non-set"));
                     }
                     machine.store.is_member(element, id)
@@ -191,13 +202,32 @@ impl Compiler<'_> {
         kind: &NodeKind,
         context: &Context,
     ) -> Compiling<Compiled> {
-        match kind {
+        let set = match kind {
             NodeKind::FunctionSet { domain, range } => {
                 self.compile_function_set(*domain, *range, context)
             }
             NodeKind::RecordSet(fields) => self.compile_record_set(fields, context),
             NodeKind::Product(factors) => self.compile_product(factors, context),
             _ => unreachable!("a lazy set of another kind"),
+        }?;
+        // Where a part may be a set TLC can't enumerate, TLC's own enumeration decides: it finds
+        // the set empty, or its one function of an empty domain, before it asks that part.
+        let is_lazy = set.has_infinite_part;
+        Ok(Self::enumerated_lazily(set, is_lazy))
+    }
+
+    // A set of functions, records or tuples whose value is TLC's enumeration of it where
+    // `is_lazy`, which asks nothing of a part it doesn't need.
+    fn enumerated_lazily(set: Compiled, is_lazy: bool) -> Compiled {
+        let Some(reference) = set.reference.clone().filter(|_| is_lazy) else {
+            return set;
+        };
+        Compiled {
+            eval: eval(move |machine| {
+                let elements = reference(machine)?.enumerate(machine)?;
+                machine.store.set_of(&elements)
+            }),
+            ..set
         }
     }
 
@@ -215,11 +245,15 @@ impl Compiler<'_> {
         let (domain_eval, range_eval) = (domain.eval.clone(), range.eval.clone());
         let member_domain = domain.eval.clone();
         let member_parts = set_parts.clone();
-        Ok(Compiled {
+        // A part TLC keeps lazy, as SUBSET S, isn't built to find the one function of an empty
+        // domain.
+        let is_part_lazy = !domain.is_normalized || !range.is_normalized;
+        let set = Compiled {
             is_costly: true,
             // TLC enumerates [S -> T] in its own order, which the reference gives.
             is_normalized: false,
             is_in_order: range.is_in_order,
+            has_infinite_part: domain.may_be_infinite() || range.may_be_infinite(),
             reference: combine_references(&[&domain, &range], |_, mut sets| {
                 let range = sets.pop().expect("a range");
                 let domain = sets.pop().expect("a domain");
@@ -256,7 +290,8 @@ impl Compiler<'_> {
                 }),
                 footprint,
             )
-        })
+        };
+        Ok(Self::enumerated_lazily(set, is_part_lazy))
     }
 
     fn compile_record_set(
@@ -304,6 +339,7 @@ impl Compiler<'_> {
             is_costly: true,
             is_normalized: false,
             is_in_order: fields.iter().all(|field| field.is_in_order),
+            has_infinite_part: fields.iter().any(|field| field.may_be_infinite()),
             reference: combine_references(&fields, move |_, sets| {
                 Ok(Lazy::RecordSet(reference_keys.clone(), sets))
             }),
@@ -340,7 +376,7 @@ impl Compiler<'_> {
                     for &set in &values {
                         expect_set(machine, set, "a record set of a non-set")?;
                     }
-                    let records: Vec<Id> = combinations(machine, &values)
+                    let records: Vec<Id> = combinations(machine, &values)?
                         .iter()
                         .map(|combination| machine.store.function_of_sorted(&keys, combination))
                         .collect();
@@ -373,11 +409,23 @@ impl Compiler<'_> {
             is_costly: true,
             is_normalized: false,
             is_in_order: factors.iter().all(|factor| factor.is_in_order),
+            has_infinite_part: components.iter().any(|factor| factor.may_be_infinite()),
             reference: combine_references(&components, |_, sets| Ok(Lazy::Product(sets))),
             parts: Some(set_parts),
             member: Some(member(move |machine, element| {
                 machine.run_parts(&member_parts)?;
-                if machine.store.kind_of(element) != KIND_TUPLE {
+                // A function that isn't a tuple, with integers for its domain, is in no set of
+                // tuples (`SetOfTuplesValue.member`); any other value fails.
+                let kind = machine.store.kind_of(element);
+                if kind == KIND_FUNCTION
+                    && (0..machine.store.size_of(element)).all(|index| {
+                        let key = machine.store.get_key(element, index);
+                        machine.store.kind_of(key) == KIND_INT
+                    })
+                {
+                    return Ok(false);
+                }
+                if kind != KIND_TUPLE {
                     return not_in(machine, element, "a mistyped membership in a set of tuples");
                 }
                 if machine.store.size_of(element) as usize != members.len() {
@@ -400,7 +448,7 @@ impl Compiler<'_> {
                         let set = set(machine)?;
                         values.push(expect_set(machine, set, "a product of a non-set")?);
                     }
-                    let tuples: Vec<Id> = combinations(machine, &values)
+                    let tuples: Vec<Id> = combinations(machine, &values)?
                         .iter()
                         .map(|combination| machine.store.tuple_of(combination))
                         .collect();

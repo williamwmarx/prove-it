@@ -4,9 +4,10 @@
 
 use std::sync::Arc;
 
-use tla_values::store::{EMPTY_SET, KIND_INT, KIND_SET, Outcome};
+use tla_values::store::{EMPTY_SET, KIND_INT, Outcome, is_tested_set_kind};
 use tla_values::{Bail, Id};
 
+use super::lazy_function;
 use super::nodes::{assign_bound, evaluate_set};
 use super::predicate::{self, Predicate, Test};
 use super::{Compiled, Filter, Shape, bool_id, eval, leaf};
@@ -57,39 +58,56 @@ pub(crate) fn interval(machine: &mut Machine<'_>, low: &Eval, high: &Eval) -> Ou
 /// ForallInterval and ExistsInterval: `\A x \in a..b : P`, a name over an interval at each level,
 /// counted through without building the interval, its body's predicate walked in the loop.
 pub(crate) fn quantify_intervals(
-    levels: Vec<(u32, (Eval, Eval))>,
+    levels: Vec<(u32, (Eval, Eval), bool)>,
     body: Predicate,
     is_forall: bool,
 ) -> Eval {
     let levels = Arc::new(levels);
     let body = body.build();
-    eval(move |machine| quantify_level(machine, &levels, 0, &body, is_forall).map(bool_id))
+    eval(move |machine| quantify_levels(machine, &levels, &body, is_forall).map(bool_id))
 }
 
-fn quantify_level(
+// Each level's bounds once, in the order written (`Tool.contexts`), a level that shares the set of
+// the one before as `a, b \in 1..n` does taking its bounds, and then the bindings with the first
+// name varying fastest (`ContextEnumerator`), until one decides the quantifier.
+fn quantify_levels(
     machine: &mut Machine<'_>,
-    levels: &[(u32, (Eval, Eval))],
-    level: usize,
+    levels: &[(u32, (Eval, Eval), bool)],
     body: &Test,
     is_forall: bool,
 ) -> Outcome<bool> {
-    let (slot, (low, high)) = &levels[level];
-    let Some((low, high)) = interval_bounds(machine, low, high)? else {
+    let mut bounds: Vec<Option<(i32, i32)>> = Vec::with_capacity(levels.len());
+    for (_, (low, high), is_shared) in levels {
+        let level = match bounds.last() {
+            Some(&last) if *is_shared => last,
+            _ => interval_bounds(machine, low, high)?,
+        };
+        bounds.push(level);
+    }
+    let Some(bounds) = bounds.into_iter().collect::<Option<Vec<(i32, i32)>>>() else {
         return Ok(is_forall);
     };
-    let is_last = level + 1 == levels.len();
-    for value in low..=high {
-        machine.locals[*slot as usize] = machine.store.int(i64::from(value))?;
-        let holds = if is_last {
-            body(machine)?
-        } else {
-            quantify_level(machine, levels, level + 1, body, is_forall)?
-        };
-        if holds != is_forall {
+    let mut current: Vec<i32> = bounds.iter().map(|&(low, _)| low).collect();
+    loop {
+        for ((slot, ..), &value) in levels.iter().zip(&current) {
+            machine.locals[*slot as usize] = machine.store.int(i64::from(value))?;
+        }
+        if body(machine)? != is_forall {
             return Ok(!is_forall);
         }
+        let mut level = 0;
+        loop {
+            let Some(&(low, high)) = bounds.get(level) else {
+                return Ok(is_forall);
+            };
+            if current[level] < high {
+                current[level] += 1;
+                break;
+            }
+            current[level] = low;
+            level += 1;
+        }
     }
-    Ok(is_forall)
 }
 
 /// `f[e]`, and ApplyVar: `f[i]` with `f` a variable and `i` a bound name, read straight from the
@@ -134,7 +152,7 @@ pub(crate) fn apply(function: &Compiled, argument: &Compiled, footprint: Footpri
         eval(move |machine| {
             let function = function(machine)?;
             let key = argument(machine)?;
-            machine.store.apply(function, key)
+            lazy_function::apply(machine, function, key)
         }),
         footprint,
     )
@@ -161,7 +179,7 @@ pub(crate) fn member_const(element: &Compiled, set: &Compiled, is_in: bool) -> O
     Some(eval(move |machine| {
         let element = machine.locals[slot as usize];
         let set = set(machine)?;
-        if machine.store.kind_of(set) != KIND_SET {
+        if !is_tested_set_kind(machine.store.kind_of(set)) {
             return Err(Bail("membership in a non-set"));
         }
         Ok(bool_id(machine.store.is_member(element, set)? == is_in))

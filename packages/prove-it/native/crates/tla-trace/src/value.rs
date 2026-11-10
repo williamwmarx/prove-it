@@ -6,19 +6,75 @@
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use tla_values::Store;
-use tla_values::store::{KIND_BOOL, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING, KIND_TUPLE, TRUE};
 
-/// Why an evaluation failed, as TLC would have, or where the evaluator can't follow it.
+use crate::Unsupported;
+use crate::print::format_pretty;
+use tla_values::store::{
+    INT, KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT, KIND_MODEL, KIND_SET, KIND_STRING,
+    KIND_TUPLE, NAT, STRINGS, TRUE,
+};
+
+/// Why an evaluation failed, as TLC would have, or where the evaluator can't follow it: the
+/// evaluator's reason, and TLC's message where the failure gives TLC's text.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EvalError(pub String);
+pub struct EvalError {
+    pub reason: String,
+    pub message: Option<TlcMessage>,
+}
+
+/// TLC's message for an error: its text, the code of TLC's message it is where it is one of
+/// `tlc2.output.MP`'s, and whether TLC raises it as an EvalException rather than a
+/// RuntimeException.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TlcMessage {
+    pub text: String,
+    pub code: Option<u32>,
+    pub is_eval_exception: bool,
+}
 
 pub type Evaluated<T> = Result<T, EvalError>;
 
 pub fn fail<T>(reason: impl Into<String>) -> Evaluated<T> {
-    Err(EvalError(reason.into()))
+    Err(EvalError {
+        reason: reason.into(),
+        message: None,
+    })
+}
+
+/// A failure TLC raises as a RuntimeException with a message of no code.
+pub fn fail_runtime<T>(reason: impl Into<String>, text: String) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(TlcMessage {
+            text,
+            code: None,
+            is_eval_exception: false,
+        }),
+    })
+}
+
+/// A failure with TLC's message for it.
+pub fn fail_with<T>(reason: impl Into<String>, message: TlcMessage) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(message),
+    })
+}
+
+/// A failure TLC raises as an EvalException with the message of this code.
+pub fn fail_coded<T>(reason: impl Into<String>, code: u32, text: String) -> Evaluated<T> {
+    Err(EvalError {
+        reason: reason.into(),
+        message: Some(TlcMessage {
+            text,
+            code: Some(code),
+            is_eval_exception: true,
+        }),
+    })
 }
 
 /// A string or a model value's name, with TLC's rank of it: the order TLC interned the text in,
@@ -61,9 +117,24 @@ pub struct Function {
     pub range: Vec<Value>,
     pub class: Cell<Class>,
     pub written: RefCell<Option<Vec<u32>>>,
+    /// How TLC searches the function's keys, where the evaluator knows.
+    pub search: Cell<Search>,
     /// The interval the function was built over, which DOMAIN gives back, as TLC keeps a
     /// tuple's or a function's over `a..b` (`getDomainInterval`); `None` for any other domain.
     pub interval: Option<(i32, i32)>,
+}
+
+/// How TLC searches a function's keys for an argument, which decides its message where two
+/// can't compare.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Search {
+    /// TLC holds the keys in the order it built them, which the evaluator doesn't keep.
+    Unknown,
+    /// A function TLC built and sorted (`FcnRcdValue.select` with `isNorm`), as it sorts a
+    /// constant definition's value as it starts and a state's as it fingerprints it.
+    Sorted,
+    /// A function TLC keeps lazy, over a set it has sorted: `SetEnumValue.member`.
+    SortedDomain,
 }
 
 /// The sets TLC keeps lazily, and the infinite ones.
@@ -79,6 +150,40 @@ pub enum Lazy {
     RecordSet(Vec<(Rc<Text>, Value)>, Vec<u32>),
     Product(Vec<Value>),
     Seq(Value),
+    /// `S \cap T`, `S \cup T` and `S \ T` where TLC keeps them lazy (`SetCapValue`,
+    /// `SetCupValue`, `SetDiffValue`): neither operand is a set enumeration or an interval, or
+    /// for `\cup` one is and the other isn't, which TLC puts first.
+    Cap(Value, Value),
+    Cup(Value, Value),
+    Diff(Value, Value),
+    /// `TLC!Any`, the `UserValue` of `AnySet`: every value is in it, and TLC can't say whether
+    /// it is empty.
+    Any,
+    /// `UNION S` where some element of S isn't a set enumeration (`UnionValue`).
+    Union(Value),
+    /// `{x \in S : P}` of an S TLC can't enumerate, or an infinite one (`SetPredValue`): the
+    /// evaluator tests its members, and TLC fails to enumerate it as it fails S.
+    Filter(Value, Rc<crate::eval::Predicate>),
+}
+
+impl Lazy {
+    /// Whether TLC holds the set as a `UserValue` its module overrides (Nat, Int, Real, STRING,
+    /// Seq(S)), which isn't `Enumerable` and compares only with another.
+    pub fn is_overridden(&self) -> bool {
+        matches!(
+            self,
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Seq(_) | Lazy::Any
+        )
+    }
+}
+
+/// Whether TLC's value of a set is `Enumerable`, which it may try to enumerate, even where the
+/// set is infinite.
+pub fn is_enumerable(value: &Value) -> bool {
+    match value {
+        Value::Lazy(lazy) => !lazy.is_overridden(),
+        _ => value.is_set() || matches!(value, Value::Unsorted(_)),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -89,10 +194,16 @@ pub enum Value {
     Model(Rc<Text>),
     /// A set enumeration, its elements distinct and in TLC's order.
     Set(Rc<Vec<Value>>),
+    /// A set enumeration TLC fails to normalize, its elements as written: TLC keeps it as it is
+    /// until it fingerprints or prints it, which then fails.
+    Unsorted(Rc<Vec<Value>>),
     /// `low..high`, an `IntervalValue`.
     Interval(i32, i32),
     Function(Rc<Function>),
     Lazy(Rc<Lazy>),
+    /// `[x \in S |-> e]` over an S TLC can't enumerate or an infinite one, which TLC keeps lazy
+    /// (`FcnLambdaValue`): the evaluator applies it.
+    Lambda(Rc<crate::eval::Lambda>),
 }
 
 impl Value {
@@ -106,6 +217,7 @@ impl Value {
             range,
             class: Cell::new(class),
             written: RefCell::new(None),
+            search: Cell::new(Search::Unknown),
             interval: None,
         }))
     }
@@ -118,6 +230,7 @@ impl Value {
             range,
             class: Cell::new(class),
             written: RefCell::new(None),
+            search: Cell::new(Search::Unknown),
             interval: Some((low, high)),
         }))
     }
@@ -154,7 +267,7 @@ impl Value {
             Value::Int(_) => "integer",
             Value::Str(_) => "string",
             Value::Model(_) => "model value",
-            Value::Function(_) => "function",
+            Value::Function(_) | Value::Lambda(_) => "function",
             _ => "set",
         }
     }
@@ -198,6 +311,7 @@ pub fn written_function(keys: Vec<Value>, values: Vec<Value>, class: Class) -> E
         range,
         class: Cell::new(class),
         written: RefCell::new(written),
+        search: Cell::new(Search::Unknown),
         interval: None,
     })))
 }
@@ -223,20 +337,143 @@ fn compare_texts(left: &Text, right: &Text) -> Ordering {
     }
 }
 
-fn check_model_types(left: &Text, right: &Text) -> Evaluated<()> {
-    let (left_type, right_type) = (left.model_type(), right.model_type());
+fn check_model_types(left: &Value, right: &Value, is_equality: bool) -> Evaluated<()> {
+    let (Value::Model(left_text), Value::Model(right_text)) = (left, right) else {
+        return Ok(());
+    };
+    let (left_type, right_type) = (left_text.model_type(), right_text.model_type());
     if left_type != 0 && right_type != 0 && left_type != right_type {
-        return fail("differently typed model values");
+        return typed_model_failure(left, right, is_equality);
     }
     Ok(())
 }
 
+// TLC's error for a typed model value compared with a value of another type, as
+// `checkModelValueTypes` in `src/values.ts` words it.
+fn typed_model_failure<T>(left: &Value, right: &Value, is_equality: bool) -> Evaluated<T> {
+    let action = if is_equality {
+        "check equality of"
+    } else {
+        "compare"
+    };
+    let (reason, text) = match (left, right) {
+        (Value::Model(_), Value::Model(_)) => (
+            "differently typed model values",
+            format!(
+                "Attempted to {action} the differently-typed model values {} and {}",
+                format_pretty(left),
+                format_pretty(right)
+            ),
+        ),
+        (Value::Model(_), _) => (
+            "typed model value",
+            format!(
+                "Attempted to {action}{} typed model value {} and non-model value\n{}",
+                if is_equality { "" } else { " the" },
+                format_pretty(left),
+                format_pretty(right)
+            ),
+        ),
+        _ => (
+            "typed model value",
+            format!(
+                "Attempted to {action} the typed model value {} and the non-model value\n{}",
+                format_pretty(right),
+                format_pretty(left)
+            ),
+        ),
+    };
+    fail_runtime(reason, text)
+}
+
+thread_local! {
+    // The sets a replay built that TLC holds unnormalized still, by address, each with its
+    // elements in the order TLC built it. Each entry holds its set, so that no other set takes
+    // its address while the entry lasts.
+    static UNNORMALIZED: RefCell<HashMap<usize, Unnormalized>> = RefCell::new(HashMap::new());
+}
+
+// A set TLC holds unnormalized, with its elements as TLC built it.
+type Unnormalized = (Rc<Vec<Value>>, Vec<Value>);
+
+/// Records a set a replay built as TLC holds it unnormalized (`SetEnumValue` with `isNorm`
+/// false), with its elements as TLC built it.
+pub(crate) fn mark_unnormalized(set: &Value, written: Vec<Value>) {
+    if let Value::Set(elements) = set {
+        UNNORMALIZED.with(|sets| {
+            sets.borrow_mut().insert(
+                Rc::as_ptr(elements) as usize,
+                (Rc::clone(elements), written),
+            )
+        });
+    }
+}
+
+/// The elements of a set TLC holds unnormalized, as TLC built it.
+pub(crate) fn unnormalized(set: &Value) -> Option<Vec<Value>> {
+    let Value::Set(elements) = set else {
+        return None;
+    };
+    UNNORMALIZED.with(|sets| {
+        sets.borrow()
+            .get(&(Rc::as_ptr(elements) as usize))
+            .map(|entry| entry.1.clone())
+    })
+}
+
+/// Forgets the sets the last replay built.
+pub(crate) fn clear_unnormalized() {
+    UNNORMALIZED.with(|sets| sets.borrow_mut().clear());
+}
+
+// TLC normalizes a set to enumerate, compare or print it.
+pub(crate) fn normalize(value: &Value) {
+    if let Value::Set(elements) = value {
+        UNNORMALIZED.with(|sets| {
+            let mut sets = sets.borrow_mut();
+            if !sets.is_empty() {
+                sets.remove(&(Rc::as_ptr(elements) as usize));
+            }
+        });
+    }
+}
+
+/// `IntervalValue.size`: an interval of more than 2^31 - 1 elements has no int size.
+pub fn interval_size(low: i32, high: i32) -> Evaluated<usize> {
+    let size = (i64::from(high) - i64::from(low) + 1).max(0);
+    if size > i64::from(i32::MAX) {
+        return fail_runtime(
+            "an interval too large to size",
+            format!(
+                "Size of interval value exceeds the maximum representable size (32bits): {}.",
+                format_pretty(&Value::Interval(low, high))
+            ),
+        );
+    }
+    Ok(size as usize)
+}
+
+/// The most elements of an interval the evaluator builds.
+const MAXIMUM_INTERVAL: usize = 1 << 24;
+
 /// The elements of a set TLC can enumerate, in TLC's order.
 pub fn elements(value: &Value) -> Evaluated<Rc<Vec<Value>>> {
+    normalize(value);
     match value {
         Value::Set(elements) => Ok(Rc::clone(elements)),
+        // An interval TLC walks without building it, which the evaluator builds, up to a size.
+        Value::Interval(low, high)
+            if i64::from(*high) - i64::from(*low) >= MAXIMUM_INTERVAL as i64 =>
+        {
+            interval_size(*low, *high)?;
+            fail("an interval too large to build")
+        }
         Value::Interval(low, high) => Ok(Rc::new((*low..=*high).map(Value::Int).collect())),
+        // TLC finds a set its parts empty to be empty before it enumerates any of them.
+        Value::Lazy(_) if crate::sets::is_empty_by_argument(value) => Ok(Rc::new(Vec::new())),
         Value::Lazy(lazy) => crate::sets::enumerate(lazy).map(Rc::new),
+        // `SetEnumValue.Enumerator` normalizes the set first.
+        Value::Unsorted(values) => Err(unsorted_failure(values)),
         _ => fail(format!("expected a set, not a {}", value.kind_name())),
     }
 }
@@ -255,29 +492,53 @@ fn sort(function: &Function) {
 
 /// TLC's `compareTo`, as the store's `compare`: an error where TLC can't compare the two.
 pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
+    normalize(left);
+    normalize(right);
     match (left, right) {
         (Value::Int(left), Value::Int(right)) => Ok(left.cmp(right)),
         (Value::Bool(left), Value::Bool(right)) => Ok(left.cmp(right)),
         (Value::Str(left), Value::Str(right)) => Ok(compare_texts(left, right)),
-        (Value::Model(left), Value::Model(right)) => {
-            check_model_types(left, right)?;
-            Ok(compare_texts(left, right))
+        (Value::Model(left_text), Value::Model(right_text)) => {
+            check_model_types(left, right, false)?;
+            Ok(compare_texts(left_text, right_text))
         }
         (Value::Model(model), _) => {
             if model.model_type() == 0 {
                 Ok(Ordering::Less)
             } else {
-                fail("typed model value")
+                typed_model_failure(left, right, false)
             }
         }
+        // `UserValue.compareTo` puts any model value first.
+        (Value::Lazy(lazy), Value::Model(_)) if lazy.is_overridden() => Ok(Ordering::Greater),
         (_, Value::Model(model)) => {
             if model.model_type() == 0 {
                 Ok(Ordering::Greater)
             } else {
-                fail("typed model value")
+                typed_model_failure(left, right, false)
             }
         }
         (Value::Function(left), Value::Function(right)) => compare_functions(left, right),
+        (Value::Lambda(lambda), _) | (Value::Function(_), Value::Lambda(lambda)) => {
+            lambda_as_function(lambda)
+        }
+        (Value::Lazy(lazy), _) if lazy.is_overridden() => compare_overridden(left, lazy, right),
+        // `SubsetValue.compareTo`: by the sets.
+        (Value::Lazy(left_lazy), Value::Lazy(right_lazy))
+            if matches!(
+                (&**left_lazy, &**right_lazy),
+                (Lazy::Subset(_), Lazy::Subset(_))
+            ) =>
+        {
+            let (Lazy::Subset(base), Lazy::Subset(other_base)) = (&**left_lazy, &**right_lazy)
+            else {
+                unreachable!("two power sets")
+            };
+            compare(base, other_base)
+        }
+        (_, Value::Lazy(lazy)) if lazy.is_overridden() && left.is_set() => {
+            incomparable(left, right, false)
+        }
         _ if left.is_set() && right.is_set() => {
             let (left, right) = (elements(left)?, elements(right)?);
             if left.len() != right.len() {
@@ -291,27 +552,94 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
             }
             Ok(Ordering::Equal)
         }
-        _ => fail("values TLC can't compare"),
+        _ => incomparable(left, right, false),
     }
 }
 
 fn compare_functions(left: &Rc<Function>, right: &Rc<Function>) -> Evaluated<Ordering> {
     sort(left);
     sort(right);
-    let size = left.domain.len();
-    if size != right.domain.len() {
-        if size > 0 && !right.domain.is_empty() && is_record(left) != is_record(right) {
-            return fail("record compared with a function");
+    match left.class.get() {
+        // `RecordValue.compareTo`: the other as a record, by its fields' names, then their values.
+        Class::Record if !is_record_like(right) => non_record(
+            &Value::Function(Rc::clone(left)),
+            &Value::Function(Rc::clone(right)),
+            false,
+        ),
+        // `TupleValue.compareTo`: the other as a tuple, by its elements.
+        Class::Tuple if is_tuple_like(right) => {
+            let size = left.range.len();
+            if size != right.range.len() {
+                return Ok(size.cmp(&right.range.len()));
+            }
+            compare_all(&left.range, &right.range)
         }
-        return Ok(size.cmp(&right.domain.len()));
-    }
-    for (left, right) in left.domain.iter().zip(&right.domain) {
-        let comparison = compare(left, right)?;
-        if comparison != Ordering::Equal {
-            return Ok(comparison);
+        Class::Record => {
+            let size = left.domain.len();
+            if size != right.domain.len() {
+                return Ok(size.cmp(&right.domain.len()));
+            }
+            match compare_all(&left.domain, &right.domain)? {
+                Ordering::Equal => compare_all(&left.range, &right.range),
+                comparison => Ok(comparison),
+            }
         }
+        _ => compare_function_records(left, right),
     }
-    for (left, right) in left.range.iter().zip(&right.range) {
+}
+
+// `FcnRcdValue.compareTo`, the other as a function: their sizes, then the keys of one over an
+// interval as integers against the other's (`compareToInterval`, `compareOtherInterval`), then
+// their values.
+fn compare_function_records(left: &Function, right: &Function) -> Evaluated<Ordering> {
+    let size = left.range.len();
+    if size != right.range.len() {
+        return Ok(size.cmp(&right.range.len()));
+    }
+    let integer_key = |key: &Value, separator: &str| match key {
+        Value::Int(int) => Ok(i64::from(*int)),
+        _ => fail_runtime(
+            "a function over an interval compared with one over other keys",
+            format!(
+                "Attempted to compare integer with non-integer{separator}\n{}.",
+                format_pretty(key)
+            ),
+        ),
+    };
+    let keys = match (function_interval(left), function_interval(right)) {
+        (Some(_), _) if size == 0 => return Ok(Ordering::Equal),
+        (Some(low), Some(other)) => low.cmp(&other),
+        (Some(low), None) => {
+            let mut comparison = Ordering::Equal;
+            for (index, key) in right.domain.iter().enumerate() {
+                comparison = (i64::from(low) + index as i64).cmp(&integer_key(key, ":")?);
+                if comparison != Ordering::Equal {
+                    break;
+                }
+            }
+            comparison
+        }
+        (None, Some(other)) => {
+            let mut comparison = Ordering::Equal;
+            for (index, key) in left.domain.iter().enumerate() {
+                comparison = integer_key(key, "")?.cmp(&(i64::from(other) + index as i64));
+                if comparison != Ordering::Equal {
+                    break;
+                }
+            }
+            comparison
+        }
+        (None, None) => compare_all(&left.domain, &right.domain)?,
+    };
+    match keys {
+        Ordering::Equal => compare_all(&left.range, &right.range),
+        comparison => Ok(comparison),
+    }
+}
+
+// The first of the comparisons of two lists of values, element by element, that isn't equal.
+fn compare_all(left: &[Value], right: &[Value]) -> Evaluated<Ordering> {
+    for (left, right) in left.iter().zip(right) {
         let comparison = compare(left, right)?;
         if comparison != Ordering::Equal {
             return Ok(comparison);
@@ -320,30 +648,69 @@ fn compare_functions(left: &Rc<Function>, right: &Rc<Function>) -> Evaluated<Ord
     Ok(Ordering::Equal)
 }
 
+// The low end of the interval TLC holds a function over, as `toFcnRcd` makes it: a tuple's 1..n.
+fn function_interval(function: &Function) -> Option<i32> {
+    match function.class.get() {
+        Class::Tuple => Some(1),
+        _ => function.interval.map(|(low, _)| low),
+    }
+}
+
+// Whether `toRcd` gives a record of a function: a record, the empty tuple, and a function over
+// strings TLC holds without an interval.
+fn is_record_like(function: &Function) -> bool {
+    match function.class.get() {
+        Class::Record => true,
+        Class::Tuple => function.domain.is_empty(),
+        _ => function.interval.is_none() && is_record(function),
+    }
+}
+
+// Whether `toTuple` gives a tuple of a function: a tuple, the empty record, and a function over
+// 1..n.
+fn is_tuple_like(function: &Function) -> bool {
+    match function.class.get() {
+        Class::Tuple => true,
+        Class::Record => function.domain.is_empty(),
+        _ => match function.interval {
+            Some((low, _)) => low == 1 || function.domain.is_empty(),
+            None => function.domain.iter().enumerate().all(
+                |(index, key)| matches!(key, Value::Int(int) if *int as i64 == index as i64 + 1),
+            ),
+        },
+    }
+}
+
 /// TLC's `equals`, as the store's: values of kinds TLC can't compare fail, but a model value
 /// without a type is unequal to anything else.
 pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
+    normalize(left);
+    normalize(right);
     match (left, right) {
         (Value::Int(left), Value::Int(right)) => Ok(left == right),
         (Value::Bool(left), Value::Bool(right)) => Ok(left == right),
         (Value::Str(left), Value::Str(right)) => Ok(left.units == right.units),
-        (Value::Model(left), Value::Model(right)) => {
-            check_model_types(left, right)?;
-            Ok(left.units == right.units)
+        (Value::Model(left_text), Value::Model(right_text)) => {
+            check_model_types(left, right, true)?;
+            Ok(left_text.units == right_text.units)
         }
+        // `UserValue.equals` compares, which puts any model value first.
+        (Value::Lazy(lazy), Value::Model(_)) if lazy.is_overridden() => Ok(false),
         (Value::Model(model), _) | (_, Value::Model(model)) => {
             if model.model_type() == 0 {
                 Ok(false)
             } else {
-                fail("typed model value")
+                typed_model_failure(left, right, true)
             }
         }
-        (Value::Function(left), Value::Function(right)) => {
+        (Value::Function(left_function), Value::Function(right_function)) => {
+            let (left_value, right_value) = (left, right);
+            let (left, right) = (left_function, right_function);
             sort(left);
             sort(right);
             let size = left.domain.len();
             if size > 0 && !right.domain.is_empty() && is_record(left) != is_record(right) {
-                return fail("record compared with a function");
+                return non_record(left_value, right_value, true);
             }
             if size != right.domain.len() {
                 return Ok(false);
@@ -359,6 +726,21 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
                 }
             }
             Ok(true)
+        }
+        (Value::Lambda(lambda), _) | (Value::Function(_), Value::Lambda(lambda)) => {
+            lambda_as_function(lambda)
+        }
+        // `UserValue.equals` is its `compareTo`.
+        (Value::Lazy(lazy), _) if lazy.is_overridden() => {
+            Ok(compare_overridden(left, lazy, right)? == Ordering::Equal)
+        }
+        (_, Value::Lazy(lazy)) if lazy.is_overridden() && left.is_set() => {
+            incomparable(left, right, true)
+        }
+        (Value::Lazy(left_lazy), Value::Lazy(right_lazy))
+            if is_same_construction(left_lazy, right_lazy) =>
+        {
+            equal_constructions(left, left_lazy, right, right_lazy)
         }
         _ if left.is_set() && right.is_set() => {
             if let (Value::Interval(low, high), Value::Interval(other_low, other_high)) =
@@ -382,8 +764,218 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
             }
             Ok(true)
         }
-        _ => fail("equality of values TLC can't compare"),
+        _ => incomparable(left, right, true),
     }
+}
+
+fn is_same_construction(left: &Lazy, right: &Lazy) -> bool {
+    matches!(
+        (left, right),
+        (Lazy::Subset(_), Lazy::Subset(_))
+            | (Lazy::FunctionSet(..), Lazy::FunctionSet(..))
+            | (Lazy::RecordSet(..), Lazy::RecordSet(..))
+            | (Lazy::Product(..), Lazy::Product(..))
+    )
+}
+
+// `equals` of `SetOfFcnsValue`, `SetOfRcdsValue` and `SetOfTuplesValue` with another of their
+// class: by emptiness, then by the sets they're built from, without enumerating them.
+fn equal_constructions(
+    left: &Value,
+    left_lazy: &Lazy,
+    right: &Value,
+    right_lazy: &Lazy,
+) -> Evaluated<bool> {
+    use crate::eval::is_empty;
+    // `SubsetValue.equals`: by the sets.
+    if let (Lazy::Subset(base), Lazy::Subset(other_base)) = (left_lazy, right_lazy) {
+        return equals(base, other_base);
+    }
+    if let (Lazy::FunctionSet(domain, range), Lazy::FunctionSet(other_domain, other_range)) =
+        (left_lazy, right_lazy)
+    {
+        let is_unit = is_empty(domain)?;
+        let is_other_unit = is_empty(other_domain)?;
+        if is_unit || is_other_unit {
+            return Ok(is_unit == is_other_unit);
+        }
+        let is_empty_range = is_empty(range)?;
+        let is_other_empty_range = is_empty(other_range)?;
+        if is_empty_range || is_other_empty_range {
+            return Ok(is_empty_range == is_other_empty_range);
+        }
+        return Ok(equals(domain, other_domain)? && equals(range, other_range)?);
+    }
+    let is_empty_left = is_empty(left)?;
+    if is_empty_left {
+        return is_empty(right);
+    }
+    if is_empty(right)? {
+        return Ok(false);
+    }
+    match (left_lazy, right_lazy) {
+        (Lazy::RecordSet(fields, _), Lazy::RecordSet(other_fields, _)) => {
+            if fields.len() != other_fields.len() {
+                return Ok(false);
+            }
+            for ((name, set), (other_name, other_set)) in fields.iter().zip(other_fields) {
+                if name.units != other_name.units || !equals(set, other_set)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Lazy::Product(factors), Lazy::Product(other_factors)) => {
+            if factors.len() != other_factors.len() {
+                return Ok(false);
+            }
+            for (factor, other_factor) in factors.iter().zip(other_factors) {
+                if !equals(factor, other_factor)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        _ => unreachable!("the same construction"),
+    }
+}
+
+// A record compared with a function that isn't one: `RecordValue`'s failure where the record is
+// the left operand, and otherwise the evaluator's limit.
+fn non_record<T>(left: &Value, right: &Value, is_equality: bool) -> Evaluated<T> {
+    let reason = "record compared with a function";
+    let Value::Function(function) = left else {
+        return fail(reason);
+    };
+    if function.class.get() != Class::Record {
+        return fail(reason);
+    }
+    let verb = if is_equality {
+        "check equality of"
+    } else {
+        "compare"
+    };
+    fail_runtime(
+        reason,
+        format!(
+            "Attempted to {verb} record:\n{}\nwith non-record\n{}",
+            format_pretty(left),
+            format_pretty(right)
+        ),
+    )
+}
+
+/// `FcnLambdaValue.toFcnRcd`, which a comparison or a membership in a set of functions builds:
+/// a domain TLC overrides fails as `UserValue.size` does, and any other the evaluator declines.
+pub fn lambda_as_function<T>(lambda: &crate::eval::Lambda) -> Evaluated<T> {
+    match lambda.domain() {
+        Value::Lazy(lazy) if lazy.is_overridden() => fail_runtime(
+            "built a function over a set TLC doesn't enumerate",
+            format!(
+                "Attempted to compute the number of elements in the overridden value {}.",
+                format_pretty(lambda.domain())
+            ),
+        ),
+        _ => fail("built a function over an infinite set"),
+    }
+}
+
+/// `FcnLambdaValue.toTuple`, which a membership in a set of tuples or sequences takes: a domain
+/// TLC's module overrides has no set enumeration, and the evaluator declines any other.
+pub fn lambda_as_tuple<T>(lambda: &crate::eval::Lambda) -> Evaluated<T> {
+    match lambda.domain() {
+        Value::Lazy(lazy)
+            if matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Strings | Lazy::Seq(_)) =>
+        {
+            fail_runtime(
+                "made a tuple of a function over a set TLC doesn't enumerate",
+                "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable."
+                    .into(),
+            )
+        }
+        _ => fail("made a tuple of a function over an infinite set"),
+    }
+}
+
+// `UserValue.compareTo`: an overridden set compares with another by its module's `compareTo`
+// (Nat before Int, Seq(S) by its range), and with nothing else.
+fn compare_overridden(left: &Value, lazy: &Lazy, right: &Value) -> Evaluated<Ordering> {
+    let shown = || format_pretty(left);
+    let Value::Lazy(other) = right else {
+        return fail_runtime(
+            "compared an overridden set with another value",
+            format!(
+                "Attempted to compare overridden value {} with non-overridden value:\n{}",
+                shown(),
+                format_pretty(right)
+            ),
+        );
+    };
+    if !other.is_overridden() {
+        return fail_runtime(
+            "compared an overridden set with another value",
+            format!(
+                "Attempted to compare overridden value {} with non-overridden value:\n{}",
+                shown(),
+                format_pretty(right)
+            ),
+        );
+    }
+    match (lazy, &**other) {
+        (Lazy::Nat, Lazy::Nat) | (Lazy::Int, Lazy::Int) | (Lazy::Strings, Lazy::Strings) => {
+            Ok(Ordering::Equal)
+        }
+        (Lazy::Nat, Lazy::Int) => Ok(Ordering::Less),
+        (Lazy::Int, Lazy::Nat) => Ok(Ordering::Greater),
+        // Both unbounded: by the range.
+        (Lazy::Seq(range), Lazy::Seq(other_range)) => compare(range, other_range),
+        (Lazy::Real, _) | (_, Lazy::Real) => fail("compared Real"),
+        _ => fail_coded(
+            "compared overridden sets of different modules",
+            COMPARE_VALUE,
+            format!(
+                "Attempted to compare {} with the value\n{}",
+                shown(),
+                format_pretty(right)
+            ),
+        ),
+    }
+}
+
+/// `EC.TLC_MODULE_COMPARE_VALUE`.
+const COMPARE_VALUE: u32 = 2155;
+
+// TLC's error for two values of kinds it can't compare, worded by the class of the left operand.
+// A set compares as `toSetEnum` enumerates it.
+fn incomparable<T>(left: &Value, right: &Value, is_equality: bool) -> Evaluated<T> {
+    let reason = if is_equality {
+        "equality of values TLC can't compare"
+    } else {
+        "values TLC can't compare"
+    };
+    let (subject, other) = match left {
+        Value::Int(_) => ("integer", "non-integer:"),
+        Value::Bool(_) => ("boolean", "non-boolean:"),
+        Value::Str(_) => ("string", "non-string:"),
+        _ if left.is_set() => ("the set", "the value:"),
+        _ => return fail(reason),
+    };
+    let verb = match left {
+        Value::Bool(_) if is_equality => "compare equality of",
+        _ if is_equality => "check equality of",
+        _ => "compare",
+    };
+    let shown = match left {
+        Value::Interval(..) | Value::Lazy(_) => format_pretty(&Value::Set(elements(left)?)),
+        _ => format_pretty(left),
+    };
+    fail_runtime(
+        reason,
+        format!(
+            "Attempted to {verb} {subject} {shown} with {other}\n{}",
+            format_pretty(right)
+        ),
+    )
 }
 
 /// A set of elements in any order and with duplicates, sorted into TLC's order.
@@ -410,12 +1002,89 @@ pub fn set_of(mut elements: Vec<Value>) -> Evaluated<Value> {
     Ok(Value::Set(Rc::new(distinct)))
 }
 
-/// The position of a key in a function's domain, by binary search in TLC's order.
+/// The failure of normalizing a set enumeration TLC keeps unnormalized.
+pub fn unsorted_failure(elements: &[Value]) -> EvalError {
+    normalize_failure(elements).unwrap_or_else(|| EvalError {
+        reason: "normalized a set enumeration that sorts".into(),
+        message: None,
+    })
+}
+
+/// Where TLC fails to normalize a set enumeration: the first comparison that fails as
+/// `ValueVec.sort` inserts each element, in the order written, into those it sorted before it.
+pub fn normalize_failure(elements: &[Value]) -> Option<EvalError> {
+    let mut sorted: Vec<&Value> = Vec::with_capacity(elements.len());
+    for element in elements {
+        let (mut low, mut high) = (0, sorted.len());
+        let mut is_duplicate = false;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            match compare(element, sorted[middle]) {
+                Err(error) => return Some(error),
+                Ok(Ordering::Equal) => {
+                    is_duplicate = true;
+                    break;
+                }
+                Ok(Ordering::Less) => high = middle,
+                Ok(Ordering::Greater) => low = middle + 1,
+            }
+        }
+        if !is_duplicate {
+            sorted.insert(low, element);
+        }
+    }
+    None
+}
+
+/// From how many keys TLC searches a sorted function's domain by halves
+/// (`FcnRcdValue.LINEAR_SEARCH_THRESHOLD`).
+const BINARY_SEARCH_KEYS: usize = 32;
+
+/// The position of a key in a function's domain, as TLC searches for it. `FcnRcdValue.select`
+/// searches a sorted domain of 32 keys or more with Java's `Arrays.binarySearch`, which asks the
+/// key in the middle to compare itself with the argument, and a shorter one key by key, asking
+/// each whether it equals the argument. A function TLC keeps lazy asks its bound's set, which
+/// asks the argument to compare itself with the element in the middle (`ValueVec.search`).
+/// Where two can't compare, TLC's message is the one of the question asked, and names them in
+/// that order. TLC searches what it hasn't sorted in the order it built it, which the evaluator
+/// doesn't keep, as it doesn't a record's or a tuple's search: there a failure to compare has no
+/// message.
 pub fn find_key(function: &Function, key: &Value) -> Evaluated<Option<usize>> {
+    let is_function = matches!(function.class.get(), Class::Plain | Class::Lambda);
+    let search = if is_function && function.interval.is_none() {
+        function.search.get()
+    } else {
+        Search::Unknown
+    };
+    if search == Search::Sorted {
+        if function.domain.len() >= BINARY_SEARCH_KEYS {
+            let (mut low, mut high) = (0, function.domain.len() - 1);
+            while low <= high {
+                let middle = (low + high) / 2;
+                match compare(&function.domain[middle], key)? {
+                    Ordering::Equal => return Ok(Some(middle)),
+                    Ordering::Less => low = middle + 1,
+                    Ordering::Greater if middle == 0 => break,
+                    Ordering::Greater => high = middle - 1,
+                }
+            }
+            return Ok(None);
+        }
+        for (position, own) in function.domain.iter().enumerate() {
+            if equals(own, key)? {
+                return Ok(Some(position));
+            }
+        }
+        return Ok(None);
+    }
     let (mut low, mut high) = (0, function.domain.len());
     while low < high {
         let middle = low + (high - low) / 2;
-        match compare(key, &function.domain[middle])? {
+        let order = compare(key, &function.domain[middle]).map_err(|error| EvalError {
+            reason: error.reason,
+            message: error.message.filter(|_| search == Search::SortedDomain),
+        })?;
+        match order {
             Ordering::Equal => return Ok(Some(middle)),
             Ordering::Less => high = middle,
             Ordering::Greater => low = middle + 1,
@@ -424,13 +1093,38 @@ pub fn find_key(function: &Function, key: &Value) -> Evaluated<Option<usize>> {
     Ok(None)
 }
 
+/// Notes that TLC has sorted a value, a constant definition's as it starts
+/// (`SpecProcessor.evalConstantDefn`): each function in it that the evaluator holds sorted too.
+pub fn note_sorted(value: &Value) {
+    match value {
+        // TLC normalizes what it computes at startup, as it fingerprints it.
+        Value::Set(elements) => {
+            normalize(value);
+            elements.iter().for_each(note_sorted);
+        }
+        Value::Function(function) => {
+            if function.written.borrow().is_none() {
+                function.search.set(Search::Sorted);
+            }
+            function.domain.iter().for_each(note_sorted);
+            function.range.iter().for_each(note_sorted);
+        }
+        _ => {}
+    }
+}
+
 /// TLC's fingerprint of a value as a trace rebuilds a state: it sorts each function it reaches
 /// and turns a lambda into the function it enumerates, as `settleRecoveredState` does.
 pub fn settle(value: &Value) {
     match value {
-        Value::Set(elements) => elements.iter().for_each(settle),
+        // Fingerprinting normalizes a set (`SetEnumValue.fingerPrint`).
+        Value::Set(elements) => {
+            normalize(value);
+            elements.iter().for_each(settle);
+        }
         Value::Function(function) => {
             sort(function);
+            function.search.set(Search::Sorted);
             if function.class.get() == Class::Lambda {
                 function.class.set(Class::Plain);
             }
@@ -446,7 +1140,12 @@ pub fn settle(value: &Value) {
             }
             Lazy::RecordSet(fields, _) => fields.iter().for_each(|(_, set)| settle(set)),
             Lazy::Product(factors) => factors.iter().for_each(settle),
-            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings => {}
+            Lazy::Union(sets) | Lazy::Filter(sets, _) => settle(sets),
+            Lazy::Cap(left, right) | Lazy::Cup(left, right) | Lazy::Diff(left, right) => {
+                settle(left);
+                settle(right);
+            }
+            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Any => {}
         },
         _ => {}
     }
@@ -460,9 +1159,22 @@ pub fn matches(store: &Store, id: u32, value: &Value) -> bool {
         Value::Int(int) => kind == KIND_INT && store.int_of(id) == *int,
         Value::Str(text) => kind == KIND_STRING && *store.text_of(id) == *text.units,
         Value::Model(text) => kind == KIND_MODEL && *store.text_of(id) == *text.units,
+        Value::Lazy(lazy) if matches!(**lazy, Lazy::Nat | Lazy::Int | Lazy::Strings) => {
+            kind == KIND_INFINITE_SET
+                && store.infinite_name_of(id)
+                    == match **lazy {
+                        Lazy::Nat => NAT,
+                        Lazy::Int => INT,
+                        _ => STRINGS,
+                    }
+        }
         Value::Function(function) => {
             let size = function.domain.len();
-            if kind == KIND_SET || kind <= KIND_MODEL || store.size_of(id) as usize != size {
+            if kind == KIND_SET
+                || kind <= KIND_MODEL
+                || kind == KIND_INFINITE_SET
+                || store.size_of(id) as usize != size
+            {
                 return false;
             }
             (0..size).all(|index| {
@@ -590,8 +1302,9 @@ pub fn is_same(left: &Value, right: &Value) -> bool {
 }
 
 /// The value an id of the store holds, as TLC holds it normalized: a tuple as a tuple, a function
-/// of strings as a record.
-pub fn from_store(store: &Store, id: u32) -> Value {
+/// of strings as a record. A function the engine kept lazy is the machine's that built it, which
+/// the store alone can't give.
+pub fn from_store(store: &Store, id: u32) -> Result<Value, Unsupported> {
     let text = || {
         Rc::new(Text {
             units: store.text_of(id).into(),
@@ -599,27 +1312,32 @@ pub fn from_store(store: &Store, id: u32) -> Value {
         })
     };
     let size = store.size_of(id);
-    match store.kind_of(id) {
+    Ok(match store.kind_of(id) {
         KIND_BOOL => Value::Bool(id == TRUE),
         KIND_INT => Value::Int(store.int_of(id)),
         KIND_STRING => Value::Str(text()),
         KIND_MODEL => Value::Model(text()),
+        KIND_INFINITE_SET => Value::Lazy(Rc::new(match store.infinite_name_of(id) {
+            NAT => Lazy::Nat,
+            INT => Lazy::Int,
+            _ => Lazy::Strings,
+        })),
         KIND_SET => Value::Set(Rc::new(
             (0..size)
                 .map(|index| from_store(store, store.element_at(id, index)))
-                .collect(),
+                .collect::<Result<_, _>>()?,
         )),
-        kind => {
+        kind @ (KIND_FUNCTION | KIND_TUPLE) => {
             let range = (0..size)
                 .map(|index| from_store(store, store.get_range_value(id, index)))
-                .collect();
+                .collect::<Result<_, _>>()?;
             if kind == KIND_TUPLE {
-                return Value::tuple(range);
+                return Ok(Value::tuple(range));
             }
             let domain: Vec<Value> = (0..size)
                 .filter_map(|index| store.peek_key(id, index))
                 .map(|key| from_store(store, key))
-                .collect();
+                .collect::<Result<_, _>>()?;
             let class = if store.is_record(id) {
                 Class::Record
             } else {
@@ -627,7 +1345,12 @@ pub fn from_store(store: &Store, id: u32) -> Value {
             };
             Value::function(domain, range, class)
         }
-    }
+        _ => {
+            return Err(Unsupported(
+                "a value the search left holding a function TLC keeps lazy".into(),
+            ));
+        }
+    })
 }
 
 /// A value with its model values renamed by a permutation of a symmetry set, as TLC's `permute`
@@ -656,6 +1379,7 @@ pub fn permute(value: &Value, permutation: &[(Rc<Text>, Rc<Text>)]) -> Evaluated
                     .collect::<Evaluated<_>>()?,
                 class: function.class.clone(),
                 written: RefCell::new(None),
+                search: Cell::new(Search::Unknown),
                 interval: function.interval,
             }))
         }

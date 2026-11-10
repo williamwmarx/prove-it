@@ -2,24 +2,15 @@
 //! stops partway, and the path to each of its last states, from the checkpoint's parents, must
 //! rebuild to states equal to the search's.
 
-use tla_engine::search::{Reporter, SearchOutcome, Settings, search};
-use tla_trace::{Ending, Rebuilder, Unsupported, format_value};
-use tla_values::transfer::decode_shared_states;
-use tla_values::{Id, Store};
+mod common;
 
-struct Quiet;
-
-impl Reporter for Quiet {
-    fn initial_states_started(&mut self) {}
-    fn initial_states_progress(&mut self, _count: u64) {}
-    fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
-    fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _store: &Store, _values: &[Id]) {}
-}
-
-fn ir_directory() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/conformance/ir")
-}
+use common::{Quiet, ir_directory, path_to, stop_search};
+use tla_engine::search::{SearchOutcome, Settings, ViolationKind, search};
+use tla_trace::{
+    Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Stats, Trace, TraceState,
+    Unsupported, Value, Verdict, add_actions, format_value,
+};
+use tla_values::Id;
 
 fn golden_irs(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
     let mut entries: Vec<_> = std::fs::read_dir(directory)
@@ -34,59 +25,6 @@ fn golden_irs(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) 
             found.push(path);
         }
     }
-}
-
-/// The search's states up to where it stopped, in a store of their own, with their parents, why
-/// it stopped and the state it was expanding.
-struct Stopped {
-    store: Store,
-    states: Vec<Vec<Id>>,
-    parents: Vec<i32>,
-    reason: String,
-    expanding: usize,
-}
-
-fn stop_search(ir: &tla_ir::Ir, stop_at: Option<usize>) -> Option<Stopped> {
-    let settings = Settings {
-        stop_at,
-        ..Settings::default()
-    };
-    let SearchOutcome::Stopped {
-        reason,
-        checkpoint: Some(checkpoint),
-        ..
-    } = search(ir, &settings, &mut Quiet)
-    else {
-        return None;
-    };
-    let width = ir.variables.len();
-    let mut store = Store::new();
-    let ranked: Vec<Vec<u16>> = ir.texts[..ir.ranked_count as usize]
-        .iter()
-        .map(|text| text.encode_utf16().collect())
-        .collect();
-    store.reset(ranked.iter().map(Vec::as_slice));
-    let ids = decode_shared_states(&mut store, &checkpoint.states, width).ok()?;
-    let states = if width == 0 {
-        Vec::new()
-    } else {
-        ids.chunks(width).map(<[Id]>::to_vec).collect()
-    };
-    Some(Stopped {
-        store,
-        states,
-        parents: checkpoint.parents.clone(),
-        reason,
-        expanding: checkpoint.expanding as usize,
-    })
-}
-
-fn path_to(parents: &[i32], index: usize) -> Vec<usize> {
-    let mut path = vec![index];
-    while parents[path[0]] >= 0 {
-        path.insert(0, parents[path[0]] as usize);
-    }
-    path
 }
 
 // Rebuilds the paths to the last few states the search kept, and says what failed.
@@ -104,6 +42,12 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
         Ok(rebuilder) => rebuilder,
         Err(Unsupported(reason)) => return Err(reason),
     };
+    rebuilder
+        .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+        .expect("startup values");
+    if let Some(group) = &stopped.symmetry {
+        rebuilder.set_symmetry(group);
+    }
     let count = stopped.states.len();
     let mut rebuilt = 0;
     for index in count.saturating_sub(3)..count {
@@ -122,15 +66,26 @@ fn check(path: &std::path::Path) -> Result<usize, String> {
             .map_err(|Unsupported(reason)| format!("state {index}: {reason}"))?;
         assert_eq!(trace.states.len(), states.len());
         // A violation's last state is found by its value, even where VIEW or SYMMETRY would take
-        // another state for it, so it rebuilds only as the search's own.
-        rebuilder
-            .rebuild(
-                &stopped.store,
-                &states,
-                &vec![None; states.len() - 1],
-                Ending::Violation,
-            )
-            .map_err(|Unsupported(reason)| format!("state {index} as a violation: {reason}"))?;
+        // another state for it, so it rebuilds only as the search's own. TLC draws the step to
+        // a violating successor of an initial state from the generator its search left, which a
+        // path the search didn't stop at gives none of.
+        match rebuilder.rebuild(
+            &stopped.store,
+            &states,
+            &vec![None; states.len() - 1],
+            Ending::Violation,
+        ) {
+            Err(Unsupported(reason))
+                if states.len() == 2
+                    && reason.ends_with(
+                        "a random draw where the evaluator doesn't follow TLC's generator",
+                    ) => {}
+            violation => {
+                violation.map_err(|Unsupported(reason)| {
+                    format!("state {index} as a violation: {reason}")
+                })?;
+            }
+        }
         let last = &trace.states[states.len() - 1];
         let text: Vec<String> = last.values.iter().map(format_value).collect();
         assert!(!text.is_empty() || ir.variables.is_empty());
@@ -212,11 +167,20 @@ fn tlc_labels(trace: &str) -> Vec<String> {
 }
 
 // A rebuilt trace's states, without whitespace, and, where the IR carries TLC's actions, the label
-// of each, from the action the evaluator found for its step.
-fn deadlock_trace(path: &str) -> (Vec<String>, Option<Vec<String>>) {
+// of each, from the action the evaluator found for its step. With `is_split`, the actions are
+// those the trace evaluator splits the next-state relation into, as for an IR the front end
+// lowers, in place of those check.ts wrote.
+fn deadlock_trace(path: &str, is_split: bool) -> (Vec<String>, Option<Vec<String>>) {
     let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
-    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let written = tla_ir::decode(&bytes).expect("an IR that decodes");
     tla_values::on_nesting_stack(|| {
+        let ir = if is_split {
+            let mut stripped = written.clone();
+            stripped.model.actions.clear();
+            add_actions(&stripped).expect("actions the evaluator splits")
+        } else {
+            written.clone()
+        };
         let stopped =
             tla_engine::on_nesting_stack(|| stop_search(&ir, None)).expect("a search that stops");
         assert_eq!(stopped.reason, "deadlock");
@@ -227,6 +191,12 @@ fn deadlock_trace(path: &str) -> (Vec<String>, Option<Vec<String>>) {
             .collect();
         let trace = Rebuilder::new(&ir)
             .and_then(|mut rebuilder| {
+                rebuilder
+                    .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+                    .expect("startup values");
+                if let Some(group) = &stopped.symmetry {
+                    rebuilder.set_symmetry(group);
+                }
                 rebuilder.rebuild(
                     &stopped.store,
                     &states,
@@ -270,10 +240,12 @@ fn rebuilds_deadlock_traces_as_tlc_prints_them() {
     ] {
         // The IR carries TLC's actions only where nothing the spec evaluates has an effect, which
         // TLCGet has, so TLCGetLevel's trace is checked without its labels.
-        let (states, labels) = deadlock_trace(path);
-        assert_eq!(states, tlc_states(expected), "{path}");
-        if let Some(labels) = labels {
-            assert_eq!(labels, tlc_labels(expected), "{path}");
+        for is_split in [false, true] {
+            let (states, labels) = deadlock_trace(path, is_split);
+            assert_eq!(states, tlc_states(expected), "{path}");
+            if let Some(labels) = labels {
+                assert_eq!(labels, tlc_labels(expected), "{path}");
+            }
         }
     }
 }
@@ -282,7 +254,304 @@ fn rebuilds_deadlock_traces_as_tlc_prints_them() {
 fn sorts_the_records_of_built_lambdas_under_view_and_symmetry() {
     // TLC permutes the state under SYMMETRY, which builds each lambda into the function it
     // enumerates, and deep-normalizes it under the VIEW, so the records within print sorted.
-    let (states, _) =
-        deadlock_trace("raft/specifications/standard-raft/RaftWithReconfigJointConsensus");
+    let (states, _) = deadlock_trace(
+        "raft/specifications/standard-raft/RaftWithReconfigJointConsensus",
+        false,
+    );
     assert_eq!(states[0], tlc_states(RAFT_RECONFIG_INITIAL_STATE)[0]);
+}
+
+#[test]
+fn sorts_the_records_tlc_permutes_under_symmetry() {
+    // TLC permutes the state under SYMMETRY, which sorts each record it permutes, so a state it
+    // finds the least of its orbit prints its records sorted.
+    let (states, _) = deadlock_trace("mongodb-txns/MultiShardTxn/Storage", false);
+    assert_eq!(states[..2], tlc_states(STORAGE_TRACE_START));
+}
+
+// Rebuilds the trace of the violation the search stops at, and hands it to `then` with the
+// rebuilder and the start of a lasso's cycle.
+fn rebuild_violation<T: Send>(
+    path: &str,
+    then: impl FnOnce(
+        &tla_ir::Ir,
+        &mut Rebuilder,
+        &tla_trace::Trace,
+        Option<usize>,
+    ) -> Result<T, Unsupported>
+    + Send,
+) -> Result<T, Unsupported> {
+    let bytes = std::fs::read(ir_directory().join(format!("{path}.ir"))).expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    tla_values::on_nesting_stack(|| {
+        let SearchOutcome::Stopped {
+            violation: Some(violation),
+            ..
+        } = tla_engine::on_nesting_stack(|| {
+            let settings = Settings {
+                is_violation_reported: true,
+                ..Settings::default()
+            };
+            search(&ir, &settings, &mut Quiet)
+        })
+        else {
+            panic!("{path}: a search that stops at a violation");
+        };
+        let (ending, cycle_start) = match violation.kind {
+            ViolationKind::Deadlock { .. } => (Ending::Kept, None),
+            ViolationKind::Invariant(_)
+            | ViolationKind::InitialInvariant(_)
+            | ViolationKind::InitialPredicate(_) => (Ending::Violation, None),
+            ViolationKind::Lasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
+            ViolationKind::Accepted { .. } => (Ending::Lasso, None),
+            ViolationKind::NoNextState | ViolationKind::Error { .. } => {
+                panic!("{path}: a stop with no trace")
+            }
+        };
+        let states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
+        let mut rebuilder = Rebuilder::new(&ir)?;
+        rebuilder.set_startup(
+            &violation.store,
+            &violation.startup,
+            violation.startup_random,
+        )?;
+        let trace = rebuilder.rebuild(&violation.store, &states, &violation.labels, ending)?;
+        then(&ir, &mut rebuilder, &trace, cycle_start)
+    })
+}
+
+#[test]
+fn draws_random_elements_and_subsets_as_tlc_does() {
+    // TLC draws in the initial predicate from the generator startup left, and in each step from
+    // one seeded with the predecessor's fingerprint.
+    for (name, expected) in [
+        ("RandomElement", RANDOM_ELEMENT_TRACE),
+        ("RandomElementXandY", RANDOM_ELEMENT_X_AND_Y_TRACE),
+        ("RandomSubset", RANDOM_SUBSET_TRACE),
+        ("RandomSubsetNextTuples", RANDOM_SUBSET_NEXT_TUPLES_TRACE),
+    ] {
+        let states = rebuild_violation(
+            &format!("tlc/tlatools/org.lamport.tlatools/test-model/{name}"),
+            |ir, _, trace, _| {
+                Ok(trace
+                    .states
+                    .iter()
+                    .map(|state| rebuilt_state(ir, &state.values))
+                    .collect::<Vec<_>>())
+            },
+        );
+        assert_eq!(states, Ok(tlc_states(expected)), "{name}");
+    }
+}
+
+// Each state of the trace the search stops with, through the ALIAS, as TLC prints it without
+// whitespace: the alias record's fields in order, or the state's variables where it gives none.
+fn aliased_trace(path: &str) -> Result<Vec<String>, Unsupported> {
+    rebuild_violation(path, |ir, rebuilder, trace, cycle_start| {
+        let aliases = rebuilder
+            .alias(trace, cycle_start, false)?
+            .expect("a model with an ALIAS");
+        let text = |fields: Vec<(String, String)>| {
+            fields
+                .into_iter()
+                .map(|(name, value)| format!("/\\{name}={value}"))
+                .collect::<String>()
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect()
+        };
+        Ok(aliases
+            .into_iter()
+            .zip(&trace.states)
+            .map(|(alias, state)| match alias {
+                Alias::Record(fields) => text(
+                    fields
+                        .into_iter()
+                        .map(|(name, value)| (name, format_value(&value)))
+                        .collect(),
+                ),
+                Alias::State => text(
+                    ir.tlc_order
+                        .iter()
+                        .map(|&position| {
+                            (
+                                ir.texts[ir.variables[position as usize] as usize].to_string(),
+                                format_value(&state.values[position as usize]),
+                            )
+                        })
+                        .collect(),
+                ),
+            })
+            .collect())
+    })
+}
+
+#[test]
+fn prints_a_state_through_the_alias_record_in_the_order_written() {
+    // Github746's alias reads the next state, which for the initial state that violates the
+    // invariant is the state itself.
+    assert_eq!(
+        aliased_trace("tlc/tlatools/org.lamport.tlatools/test-model/Github746"),
+        Ok(vec!["/\\i=1/\\foo=\"bar\"/\\j=TRUE".to_string()])
+    );
+}
+
+#[test]
+fn checks_a_postcondition_on_the_counter_example() {
+    // Github1389Counting's postcondition reads the states and steps of the stuttering lasso TLC
+    // prints: x alternating from FALSE over ten states, each step Next. It holds there, and not
+    // on a trace one state short.
+    let bytes = std::fs::read(
+        ir_directory().join("tlc/tlatools/org.lamport.tlatools/test-model/Github1389Counting.ir"),
+    )
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let check = |count: usize| {
+        let trace = Trace {
+            states: (0..count)
+                .map(|position| TraceState {
+                    values: vec![Value::Bool(position % 2 == 1)],
+                    action: (position > 0).then_some(0),
+                    printed: Vec::new(),
+                })
+                .collect(),
+            trace_output: Vec::new(),
+        };
+        Rebuilder::new(&ir)?.postcondition(
+            0,
+            &PostconditionInputs {
+                possible: &[],
+                stats: Stats {
+                    queue: 0,
+                    distinct: 2,
+                    initial: 1,
+                    generated: 5,
+                    diameter: 2,
+                    duration: 0,
+                },
+                counter_example: Some(CounterExample {
+                    trace: &trace,
+                    cycle: None,
+                }),
+            },
+        )
+    };
+    let verdict = |count| check(count).map(|checked| checked.verdict);
+    assert_eq!(verdict(10), Ok(Verdict::Holds));
+    assert_eq!(verdict(9), Ok(Verdict::False));
+}
+
+#[test]
+fn records_the_parameters_of_the_counter_examples_actions() {
+    // AsyncTerminationDetection's postcondition is the lasso TLC finds: SendMsg(3, 3), then
+    // RcvMsg(3) back into the initial state, each step's action recorded with the values of its
+    // parameters.
+    let bytes = std::fs::read(ir_directory().join(
+        "tlc/tlatools/org.lamport.tlatools/test-model/examples/ewd998/AsyncTerminationDetection.ir",
+    ))
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let action = |name: &str| {
+        ir.model
+            .actions
+            .iter()
+            .position(|action| ir.texts[action.label as usize].starts_with(name))
+            .expect("the action") as u32
+    };
+    let (send, receive, terminate) = (
+        action("SendMsg(3,3) "),
+        action("RcvMsg(3) "),
+        action("Terminate(3) "),
+    );
+    let verdict = tla_values::on_nesting_stack(|| {
+        let stopped = tla_engine::on_nesting_stack(|| stop_search(&ir, Some(400)))
+            .expect("a search that stops");
+        let mut rebuilder = Rebuilder::new(&ir)?;
+        rebuilder
+            .set_startup(&stopped.store, &stopped.startup, stopped.startup_random)
+            .expect("startup values");
+        // TLC's lasso starts in the initial state where only node 3 is active.
+        let active = ir
+            .variables
+            .iter()
+            .position(|&name| &*ir.texts[name as usize] == "active")
+            .expect("the variable");
+        let trace = (1..stopped.states.len())
+            .filter(|&index| {
+                let parent = stopped.parents[index];
+                parent >= 0 && stopped.parents[parent as usize] == -1
+            })
+            .find_map(|index| {
+                let parent = stopped.parents[index] as usize;
+                rebuilder
+                    .rebuild(
+                        &stopped.store,
+                        &[&stopped.states[parent], &stopped.states[index]],
+                        &[None],
+                        Ending::Kept,
+                    )
+                    .ok()
+                    .filter(|trace| {
+                        trace.states[1].action == Some(send)
+                            && format_value(&trace.states[0].values[active])
+                                == "(0 :> FALSE @@ 1 :> FALSE @@ 2 :> FALSE @@ 3 :> TRUE)"
+                    })
+            })
+            .expect("the step SendMsg(3, 3)");
+        let mut check = |closing| {
+            rebuilder
+                .postcondition(
+                    0,
+                    &PostconditionInputs {
+                        possible: &[],
+                        stats: Stats {
+                            queue: 0,
+                            distinct: 0,
+                            initial: 0,
+                            generated: 0,
+                            diameter: 0,
+                            duration: 0,
+                        },
+                        counter_example: Some(CounterExample {
+                            trace: &trace,
+                            cycle: Some((0, Some(closing))),
+                        }),
+                    },
+                )
+                .map(|checked| checked.verdict)
+        };
+        Ok::<_, Unsupported>((check(receive)?, check(terminate)?))
+    });
+    assert_eq!(verdict, Ok((Verdict::Holds, Verdict::False)));
+}
+
+#[test]
+fn reads_the_possible_counts_in_a_postcondition() {
+    // PossibleCountsTest's postcondition holds where TLC counted each _POSSIBLE predicate once.
+    let bytes = std::fs::read(
+        ir_directory().join("tlc/tlatools/org.lamport.tlatools/test-model/PossibleCountsTest.ir"),
+    )
+    .expect("a golden IR");
+    let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+    let verdict = |at_one: i64| {
+        Rebuilder::new(&ir)?
+            .postcondition(
+                0,
+                &PostconditionInputs {
+                    possible: &[("AtOne".to_string(), at_one), ("WrapAround".to_string(), 1)],
+                    stats: Stats {
+                        queue: 0,
+                        distinct: 3,
+                        initial: 1,
+                        generated: 4,
+                        diameter: 3,
+                        duration: 0,
+                    },
+                    counter_example: None,
+                },
+            )
+            .map(|checked| checked.verdict)
+    };
+    assert_eq!(verdict(1), Ok(Verdict::Holds));
+    assert_eq!(verdict(2), Ok(Verdict::False));
 }
