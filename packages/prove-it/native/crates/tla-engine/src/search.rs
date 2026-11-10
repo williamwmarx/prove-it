@@ -96,6 +96,9 @@ pub struct Settings {
     /// `-continue`: the search reports each invariant violated to [`Reporter::continued`] and goes
     /// on, on one thread, in the order TLC's worker finds them.
     pub is_continued: bool,
+    /// Whether the search also hands [`Reporter::dumped`] the steps it took, for `-dump dot`. It
+    /// then expands each level on one thread and takes each of TLC's actions' steps apart.
+    pub is_step_dumped: bool,
     /// What the caller tells the system of a large region of memory the search has just allocated
     /// and not yet touched, its address and length in bytes: the state table, from 32 MB, whose
     /// probes land anywhere in it. The CLI asks Linux to back it with huge pages.
@@ -140,6 +143,7 @@ impl Default for Settings {
             test_progress_at: None,
             is_dumped: false,
             is_continued: false,
+            is_step_dumped: false,
             large_region_advice: None,
             is_file_system: true,
         }
@@ -196,9 +200,17 @@ pub trait Reporter {
     }
     /// Every state the search found, in the order it found them, `width` ids of `store` each, as
     /// TLC's `-dump` writes them (`StateWriter`): once, as the search ends, where
-    /// `Settings::is_dumped`. A search that ends without calling it, such as one stopped computing
-    /// its initial states, leaves the dump to its caller.
-    fn dumped(&mut self, _store: &Store, _states: &[Id], _width: usize) {}
+    /// `Settings::is_dumped`, with the steps where `Settings::is_step_dumped`. A search that ends
+    /// without calling it, such as one stopped computing its initial states, leaves the dump to
+    /// its caller.
+    fn dumped(
+        &mut self,
+        _store: &Store,
+        _states: &[Id],
+        _width: usize,
+        _steps: Option<&DumpedSteps<'_>>,
+    ) {
+    }
     /// Under `-continue`, a violation the search goes on past, as TLC reports it when it finds
     /// it.
     fn continued(&mut self, _trace: ContinuedTrace<'_>) {}
@@ -229,6 +241,27 @@ pub enum Continued {
     Invariant(usize),
     /// A step violates the action property at this position in the model's action properties.
     ActionProperty(usize),
+}
+
+/// The steps a search took, as TLC's `-dump dot` writes them (`DotStateWriter`): of each state
+/// dumped, by its index, TLC's fingerprint and its parent's index, -1 for an initial state, and
+/// each step from a state to a successor in the model, in the order TLC takes them.
+pub struct DumpedSteps<'a> {
+    pub fingerprints: &'a [u64],
+    pub parents: &'a [i32],
+    pub steps: &'a [DumpedStep],
+    /// Whether each step names its action: the search walks TLC's actions apart where it compiled
+    /// each, and the next-state relation whole otherwise.
+    pub is_labelled: bool,
+}
+
+/// A step from the dumped state at one index to the dumped state at another.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DumpedStep {
+    pub from: u32,
+    pub to: u32,
+    /// The position of TLC's action that took it, where the steps are labelled.
+    pub action: u32,
 }
 
 /// Why the engine leaves an assumption to its caller.
@@ -1094,6 +1127,8 @@ struct Search<'r, T, E = Dense> {
     held: Option<Vec<Vec<Printed>>>,
     // Whether TLCSet("exit", TRUE) ran in an invariant, where the search follows it.
     is_exit_followed: bool,
+    // Under `Settings::is_step_dumped`, the steps taken so far.
+    steps: Option<Vec<DumpedStep>>,
 }
 
 impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
@@ -1140,6 +1175,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             possible: Vec::new(),
             held: None,
             is_exit_followed: false,
+            steps: None,
         }
     }
 
@@ -1553,6 +1589,17 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             _ => None,
         };
         let is_new = matches!(found, Some(Err(_)));
+        // TLC writes the step as it adds the successor to its set, before it checks it.
+        if let (Some(steps), Some(found)) = (&mut self.steps, found) {
+            steps.push(DumpedStep {
+                from: self.expanding as u32,
+                to: match found {
+                    Ok(slot) => self.states.index(slot),
+                    Err(_) => self.states.count() as u32,
+                },
+                action: self.action,
+            });
+        }
         if is_new {
             self.set_distinct(machine, self.states.count() + 1)?;
         }
@@ -3062,6 +3109,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // held prints come out between them: neither may meet a level the threads share.
         && !(model.is_recording_graph && (context.is_live_registered || compiler.is_printing))
         && !settings.is_live_checked
+        && !settings.is_step_dumped
         && context.possible.is_empty()
         // Under a VIEW or symmetry a thread waits to report an invariant a new state violates
         // until no other thread found its key first, but an action property is of the step, which
@@ -3123,7 +3171,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         parents: Vec::new(),
         fingerprints: Vec::new(),
         set: FingerprintSet::new(
-            settings.is_fingerprint_verified || model.is_recording_graph,
+            settings.is_fingerprint_verified || model.is_recording_graph || settings.is_step_dumped,
             settings.large_region_advice,
         ),
         order,
@@ -3142,6 +3190,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     search.canonicalizer = canonicalizer;
     search.is_lambda_built = is_lambda_built;
     search.held = (model.is_recording_graph && is_printing).then(Vec::new);
+    search.steps = settings.is_step_dumped.then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
         labels: context
@@ -3194,7 +3243,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let actions = context
         .actions
         .as_ref()
-        .filter(|_| model.is_recording_graph && model.is_labelled);
+        .filter(|_| (model.is_recording_graph && model.is_labelled) || settings.is_step_dumped);
     let is_live_checked = settings.is_live_checked && actions.is_some();
     let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
     let mut checkpoint_count = 0usize;
@@ -3814,9 +3863,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 );
             }
             if settings.is_dumped {
-                search
-                    .reporter
-                    .dumped(&machine.store, &search.states.ids[..count * width], width);
+                report_dumped(&mut machine, &mut search, None, actions.is_some());
             }
             let lasso_actions = match &liveness.verdict {
                 Verdict::Lasso {
@@ -3888,9 +3935,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 );
             }
             if settings.is_dumped {
-                search
-                    .reporter
-                    .dumped(&machine.store, &search.states.ids[..count * width], width);
+                report_dumped(&mut machine, &mut search, None, actions.is_some());
             }
             // The temporal properties are checked here, and the interpreter takes the graph over
             // only to print a counterexample, to check them itself, or under PROVE_IT_LIVE_CHECK
@@ -4256,17 +4301,18 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 // TLC writes a state as it adds it to its set: the states the stopping expansion
                 // found too, and the state that stopped it where TLC counted that one as found.
                 let found = search.states.count();
-                let mut states = search.states.ids[..found * width].to_vec();
-                if let Some(Found {
-                    last: Some(last),
-                    counts,
-                    ..
-                }) = &search.violation
-                    && counts.distinct == found as u64 + 1
-                {
-                    states.extend_from_slice(last);
-                }
-                search.reporter.dumped(&machine.store, &states, width);
+                let last = match &search.violation {
+                    Some(Found {
+                        last: Some(last),
+                        parent,
+                        counts,
+                        ..
+                    }) if counts.distinct == found as u64 + 1 => {
+                        Some((last.clone(), parent.map_or(-1, |parent| parent as i32)))
+                    }
+                    _ => None,
+                };
+                report_dumped(&mut machine, &mut search, last, actions.is_some());
             }
             let checkpoint = if search.graph.is_none() {
                 let states = &search.states;
@@ -5500,6 +5546,47 @@ fn get_depths(parents: &[i32]) -> Vec<i64> {
         });
     }
     depths
+}
+
+// Hands the reporter every state found, with the state that stopped the search where TLC counted
+// it, and its parent, and under `Settings::is_step_dumped` the steps taken.
+fn report_dumped(
+    machine: &mut Machine<'_>,
+    search: &mut Search<'_, States>,
+    last: Option<(Vec<Id>, i32)>,
+    is_labelled: bool,
+) {
+    let states = &search.states;
+    let width = states.width;
+    let found = states.count();
+    let mut ids = states.ids[..found * width].to_vec();
+    let mut fingerprints = states.fingerprints[..found].to_vec();
+    let mut parents = states.parents[..found].to_vec();
+    let mut is_fingerprinted = true;
+    if let Some((last, parent)) = last {
+        match search
+            .fingerprints
+            .get_state(&machine.store, &last, &search.states.order)
+        {
+            Ok(fingerprint) => fingerprints.push(fingerprint),
+            Err(_) => is_fingerprinted = false,
+        }
+        ids.extend_from_slice(&last);
+        parents.push(parent);
+    }
+    let steps = search
+        .steps
+        .as_deref()
+        .filter(|_| is_fingerprinted)
+        .map(|steps| DumpedSteps {
+            fingerprints: &fingerprints,
+            parents: &parents,
+            steps,
+            is_labelled,
+        });
+    search
+        .reporter
+        .dumped(&machine.store, &ids, width, steps.as_ref());
 }
 
 fn real_states(search: &Search<'_, States>, width: usize) -> Option<Reals> {

@@ -1,0 +1,25 @@
+strict digraph DiskGraph {
+node [shape=box,style=rounded]
+nodesep=0.35;
+subgraph cluster_graph {
+color="white";
+609737673425276830 [label="/\\ b = FALSE\n/\\ x = 0",style = filled]
+6816998822487979083 [label="/\\ b = TRUE\n/\\ x = 0",style = filled]
+609737673425276830 -> 8671809759910816123 [label="",color="black",fontcolor="black"];
+8671809759910816123 [label="/\\ b = TRUE\n/\\ x = 1",tooltip="/\\ b = TRUE\n/\\ x = 1"];
+609737673425276830 -> 1377963776297717291 [label="",color="black",fontcolor="black"];
+1377963776297717291 [label="/\\ b = TRUE\n/\\ x = 2",tooltip="/\\ b = TRUE\n/\\ x = 2"];
+6816998822487979083 -> 609737673425276830 [label="",color="black",fontcolor="black"];
+8671809759910816123 -> 3365478001808954030 [label="",color="black",fontcolor="black"];
+3365478001808954030 [label="/\\ b = FALSE\n/\\ x = 1",tooltip="/\\ b = FALSE\n/\\ x = 1"];
+1377963776297717291 -> 5040481953810085374 [label="",color="black",fontcolor="black"];
+5040481953810085374 [label="/\\ b = FALSE\n/\\ x = 2",tooltip="/\\ b = FALSE\n/\\ x = 2"];
+3365478001808954030 -> 1377963776297717291 [label="",color="black",fontcolor="black"];
+3365478001808954030 -> 6816998822487979083 [label="",color="black",fontcolor="black"];
+5040481953810085374 -> 6816998822487979083 [label="",color="black",fontcolor="black"];
+5040481953810085374 -> 8671809759910816123 [label="",color="black",fontcolor="black"];
+{rank = same; 6816998822487979083;609737673425276830;}
+{rank = same; 1377963776297717291;8671809759910816123;}
+{rank = same; 5040481953810085374;3365478001808954030;}
+}
+}

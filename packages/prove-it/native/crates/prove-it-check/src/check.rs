@@ -8,8 +8,8 @@ use tla_engine::Prints;
 use tla_engine::clock::Instant;
 
 use tla_engine::search::{
-    Continued, ContinuedTrace, Delegated, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome,
-    Settings, Violation, ViolationKind, search,
+    Continued, ContinuedTrace, Delegated, DumpedSteps, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter,
+    SearchOutcome, Settings, Violation, ViolationKind, search,
 };
 use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, is_printable_normalized, write_value};
@@ -17,6 +17,7 @@ use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::coverage;
+use crate::dot::{DotOptions, get_snapshot_path, write_graph};
 use crate::dump_trace::{TraceDumps, is_writable, write};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
@@ -339,6 +340,8 @@ pub(crate) struct Relay<'ir> {
     /// Whether `-dump` writes each state the search found, as TLC's `StateWriter` does: the relay
     /// sends the text in parts (`Event::Dumped`) for the host to write.
     is_dumped: bool,
+    /// Under `-dump dot`, its options.
+    dot: Option<DotOptions>,
     /// Whether the dump holds every state, or why it doesn't, once the search handed them over.
     dumped: Option<Result<(), &'static str>>,
     ir: &'ir tla_ir::Ir,
@@ -385,6 +388,7 @@ impl<'ir> Relay<'ir> {
             is_coverage_reached: false,
             is_declined: false,
             is_dumped: false,
+            dot: None,
             dumped: None,
             ir,
             is_tool,
@@ -657,11 +661,30 @@ impl Reporter for Relay<'_> {
 
     // TLC writes "State N:", from 1, then the state as it prints it (`TLCStateMut.toString`) and
     // a blank line.
-    fn dumped(&mut self, store: &Store, states: &[Id], width: usize) {
+    fn dumped(
+        &mut self,
+        store: &Store,
+        states: &[Id],
+        width: usize,
+        steps: Option<&DumpedSteps<'_>>,
+    ) {
         if !self.is_dumped {
             return;
         }
         let ir = self.ir;
+        if let Some(options) = self.dot {
+            let sender = &self.sender;
+            self.dumped = Some(
+                steps
+                    .ok_or("-dump dot of a state the search didn't fingerprint")
+                    .and_then(|steps| {
+                        write_graph(ir, options, store, states, steps, &mut |text| {
+                            let _ = sender.send(Event::Dumped(text));
+                        })
+                    }),
+            );
+            return;
+        }
         if width == 0 || width != ir.variables.len() {
             self.dumped = Some(Err("-dump of states other than the variables' values"));
             return;
@@ -833,24 +856,43 @@ fn check_spec(
         Some(simulation) => print_banner(printer, simulation.seed, workers),
         None => print_startup_banner(printer, fingerprint_index, seed, workers),
     }
-    // TLC opens the file before it reads the configuration, and names it with a suffix of .dump
-    // unless it has one.
-    let dump = match dump {
+    // TLC opens the file before it reads the configuration, and names it with a suffix of .dump,
+    // or .dot for a graph, unless it has one. It writes a graph's header then.
+    let (file, dot) = match dump {
+        None => (None, None),
+        Some([file]) => (Some(file), None),
+        Some([format, file]) => match DotOptions::parse(format) {
+            Ok(options) => (Some(file), Some(options)),
+            Err(reason) => return report_not_native(printer, reason),
+        },
+        Some(_) => return report_not_native(printer, "-dump"),
+    };
+    let dump = match file {
         None => None,
-        Some([file]) if !file.starts_with("${metadir}") => {
-            let path = if file.ends_with(".dump") {
+        Some(file) if !file.starts_with("${metadir}") => {
+            let suffix = if dot.is_some() { ".dot" } else { ".dump" };
+            let path = if file.ends_with(suffix) {
                 file.clone()
             } else {
-                format!("{file}.dump")
+                format!("{file}{suffix}")
             };
-            if !printer.host.write_file(Path::new(&path), b"", false) {
+            let header = dot.map(|options| options.header()).unwrap_or_default();
+            if !printer
+                .host
+                .write_file(Path::new(&path), header.as_bytes(), false)
+            {
                 return report_not_native(printer, "-dump into a file it can't create");
             }
             Some(path)
         }
-        Some([_]) => return report_not_native(printer, "-dump into the meta directory"),
-        Some(_) => return report_not_native(printer, "-dump dot"),
+        Some(_) => return report_not_native(printer, "-dump into the meta directory"),
     };
+    // Under `snapshot`, TLC copies the graph to a file of its own after each state it writes, so
+    // the last copy is the graph.
+    let snapshot = dump
+        .as_deref()
+        .filter(|_| dot.is_some_and(|options| options.is_snapshot))
+        .map(get_snapshot_path);
     // -config keeps its name with `.cfg` added; TLC reads the CONFIG section of a module named
     // `.tla` (`MonolithSpecExtractor.getConfig`).
     if args
@@ -1108,7 +1150,8 @@ fn check_spec(
         return report_not_native(printer, "-dump under SYMMETRY or a VIEW");
     }
     // TLC writes each state again as it adds the state's stuttering step to the behavior graph
-    // (`Worker.doNextCheckLiveness`).
+    // (`Worker.doNextCheckLiveness`), and the graph a stuttering step too, and the behavior graph
+    // to a file of its own (`DotLivenessStateWriter`).
     if is_dumped && !ir.model.live_formula.is_empty() {
         return report_not_native(printer, "-dump with temporal properties");
     }
@@ -1151,6 +1194,10 @@ fn check_spec(
             return report_not_native(printer, reason);
         }
     }
+    // TLC labels a state of the graph with the ALIAS's value.
+    if dot.is_some() && ir.model.alias.is_some() {
+        return report_not_native(printer, "-dump dot with an ALIAS");
+    }
     let settings = Settings {
         is_violation_reported: true,
         workers,
@@ -1176,6 +1223,7 @@ fn check_spec(
             .and_then(|evaluations| evaluations.parse().ok()),
         is_dumped,
         is_continued,
+        is_step_dumped: dot.is_some(),
         large_region_advice: printer.host.large_region_advice(),
         is_file_system: printer.host.is_file_system(),
         ..Settings::default()
@@ -1194,6 +1242,7 @@ fn check_spec(
     let mut is_coverage_reached = false;
     let mut is_dump_unwritten = false;
     let mut declined = None;
+    let mut is_snapshot_begun = false;
     let is_periodic = config.periodic.is_some();
     let ir_ref = &ir;
     let (outcome, assumed_printed, dumped) = alongside(
@@ -1210,6 +1259,7 @@ fn check_spec(
             relay.is_periodic = is_periodic;
             relay.is_dumped = is_dumped;
             relay.coverage_countdown = coverage::get_countdown(args);
+            relay.dot = dot;
             let outcome = search(ir, &settings, &mut relay);
             (outcome, relay.assumed_printed, relay.dumped)
         },
@@ -1286,6 +1336,19 @@ fn check_spec(
                     Event::Dumped(text) => {
                         let path = Path::new(dump.as_deref().unwrap_or_default());
                         is_dump_unwritten |= !printer.host.write_file(path, text.as_bytes(), true);
+                        if let Some(snapshot) = &snapshot {
+                            let header = dot.map(|options| options.header());
+                            let (text, is_appended) = match header.filter(|_| !is_snapshot_begun) {
+                                Some(header) => (header + &text, false),
+                                None => (text, true),
+                            };
+                            is_snapshot_begun = true;
+                            is_dump_unwritten |= !printer.host.write_file(
+                                Path::new(snapshot),
+                                text.as_bytes(),
+                                is_appended,
+                            );
+                        }
                     }
                 }
             }

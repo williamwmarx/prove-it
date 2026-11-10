@@ -2,7 +2,7 @@
 //! `tests/conformance/expected.json`: the counts of a model it completes, or where it stops. The
 //! models are the small ones, which a debug build searches in a moment.
 
-use tla_engine::search::{Reporter, SearchOutcome, Settings, search};
+use tla_engine::search::{DumpedStep, DumpedSteps, Reporter, SearchOutcome, Settings, search};
 
 struct Quiet;
 
@@ -459,11 +459,13 @@ fn stops_on_any_number_of_threads_where_one_thread_stops() {
     }
 }
 
-// What a search hands its reporter for -dump: how often, and each state it found as printed.
+// What a search hands its reporter for -dump: how often, each state it found as printed, and for
+// -dump dot each state's fingerprint and parent and the steps.
 #[derive(Default)]
 struct Dumped {
     calls: usize,
     states: Vec<String>,
+    steps: Option<(Vec<u64>, Vec<i32>, Vec<DumpedStep>)>,
 }
 
 impl Reporter for Dumped {
@@ -472,16 +474,33 @@ impl Reporter for Dumped {
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
     fn print(&mut self, _store: &tla_values::Store, _prints: &tla_engine::Prints) {}
-    fn dumped(&mut self, store: &tla_values::Store, states: &[tla_values::Id], width: usize) {
+    fn dumped(
+        &mut self,
+        store: &tla_values::Store,
+        states: &[tla_values::Id],
+        width: usize,
+        steps: Option<&DumpedSteps<'_>>,
+    ) {
         self.calls += 1;
         self.states = states
             .chunks(width)
             .map(|state| format_values(store, state))
             .collect();
+        self.steps = steps.map(|steps| {
+            (
+                steps.fingerprints.to_vec(),
+                steps.parents.to_vec(),
+                steps.steps.to_vec(),
+            )
+        });
     }
 }
 
 fn dump(path: &str, threads: usize) -> (String, Dumped) {
+    dump_with(path, threads, false)
+}
+
+fn dump_with(path: &str, threads: usize, is_step_dumped: bool) -> (String, Dumped) {
     let bytes = std::fs::read(format!(
         "{}/../../../tests/conformance/ir/{path}.ir",
         env!("CARGO_MANIFEST_DIR")
@@ -492,6 +511,7 @@ fn dump(path: &str, threads: usize) -> (String, Dumped) {
         threads,
         minimum_shared_level: 1,
         is_dumped: true,
+        is_step_dumped,
         // As the binary does, which reports the violation itself.
         is_violation_reported: true,
         ..Settings::default()
@@ -516,4 +536,30 @@ fn hands_the_dump_every_state_found_in_order_on_any_number_of_threads() {
         assert_eq!(four.calls, 1, "{path}");
         assert_eq!(four.states, one.states, "{path}");
     }
+}
+
+#[test]
+fn hands_the_dump_each_step_in_the_order_tlc_takes_them() {
+    // TCommit's 34 states, one initial, and the 93 steps TLC takes between them (those generated
+    // past the initial state), on one thread whatever the threads asked for.
+    let path = "examples/specifications/transaction_commit/TCommit";
+    let (outcome, one) = dump_with(path, 1, true);
+    assert_eq!(outcome, "complete: 94 generated, 34 distinct, depth 7");
+    let (fingerprints, parents, steps) = one.steps.clone().expect("the steps");
+    assert_eq!((fingerprints.len(), parents.len()), (34, 34));
+    assert_eq!(steps.len(), 93);
+    assert!(steps.windows(2).all(|pair| pair[0].from <= pair[1].from));
+    // Each state past the initial ones is found by the first step to it, from its parent.
+    let mut found = parents.iter().take_while(|&&parent| parent < 0).count() as u32;
+    for step in &steps {
+        if step.to == found {
+            assert_eq!(parents[step.to as usize], step.from as i32);
+            found += 1;
+        }
+        assert!(step.to < found);
+    }
+    assert_eq!(found, 34);
+    let (_, four) = dump_with(path, 4, true);
+    assert_eq!(four.steps, one.steps);
+    assert_eq!(dump(path, 1).1.steps, None);
 }
