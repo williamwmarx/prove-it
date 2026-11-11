@@ -988,3 +988,90 @@ fn names_a_substituted_initial_predicate_of_an_extended_module_as_tlc() {
         "{text}"
     );
 }
+
+// An initial predicate an extended module defines LOCAL is the module's own definition, which TLC
+// labels as it is written.
+#[test]
+fn labels_a_local_initial_predicate_of_an_extended_module_as_tlc() {
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-simulate-local-init-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("Base.tla"),
+        "---- MODULE Base ----\nEXTENDS Naturals\nVARIABLE x\nLOCAL In == x = 7\nNext == x < 3 /\\ x' = x + 1\nSpec == In /\\ [][Next]_x\n====\n",
+    )
+    .expect("a module");
+    std::fs::write(
+        directory.join("Loc.tla"),
+        "---- MODULE Loc ----\nEXTENDS Base\n====\n",
+    )
+    .expect("a spec");
+    std::fs::write(directory.join("Loc.cfg"), "SPECIFICATION Spec\n").expect("a configuration");
+    let output = run(
+        &directory,
+        &[
+            "-noTE",
+            "-seed",
+            "1",
+            "-simulate",
+            "num=1",
+            "-depth",
+            "10",
+            "Loc",
+        ],
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(11), "{text}");
+    assert!(
+        text.contains("State 1: <In line 4, col 13 to line 4, col 17 of module Base>\nx = 7\n"),
+        "{text}"
+    );
+}
+
+// A record or set an alias derives from Trace's records, or from a set an action binds a
+// parameter to, may print as TLC holds it, sorted by another read or as an interval: it
+// declines.
+#[test]
+fn declines_an_alias_that_derives_values_from_trace() {
+    for (next, alias, reason) in [
+        (
+            "\\E s \\in {1, 2} : A(s)",
+            "[x |-> x, a |-> (Trace[1] = Trace[1]), d |-> [Trace[1] EXCEPT !._action = 0]]",
+            "an ALIAS that reads Trace more than once and sorts its records",
+        ),
+        (
+            "\\E s \\in {1..2, {3, 1}, 0..0} : A(s)",
+            "LET r == Trace[Len(Trace)]._action IN IF \"context\" \\notin DOMAIN r THEN [x |-> x] ELSE [x |-> x, c |-> DOMAIN [e \\in r.context.s |-> e]]",
+            "Trace whose actions bind a parameter to a record or a set",
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Der ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLES x, y\nA(s) == x < 3 /\\ x' = x + 1 /\\ y' = y\nNext == {next}\nInv == x < 2\nAl == {alias}\nSpec == x = 0 /\\ y = 0 /\\ [][Next]_<<x, y>>\n====\n"
+        );
+        let (output, directory) = run_named(
+            "simulate-derived",
+            "Der",
+            (&spec, "SPECIFICATION Spec\nINVARIANT Inv\nALIAS Al\n"),
+            &[
+                "-noTE",
+                "-seed",
+                "1",
+                "-simulate",
+                "num=1",
+                "-depth",
+                "10",
+                "Der",
+            ],
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+        assert_eq!(output.status.code(), Some(1), "{alias}");
+        assert!(
+            stderr(&output).contains(reason),
+            "{alias}: {}",
+            stderr(&output)
+        );
+    }
+}
