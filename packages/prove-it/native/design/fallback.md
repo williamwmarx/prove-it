@@ -308,6 +308,12 @@ value:\n{}", {} \in {Nat})`. The membership alone fails with TLC's text, so the 
 compares with is another. `tests/unit/strings.test.ts` checks `tests/fixtures/strings/OverriddenSets`
 with the TypeScript check until the engine matches.
 
+A module instantiated by the name of a module nested in an EXTENDed module fails to parse where
+SANY finds it: with `Holder.tla` holding `---- MODULE Held ----` nested, `EXTENDS Holder` then
+`J == INSTANCE Held` stops with "Cannot find source file for module Held imported in module M."
+(exit 150), where TLC checks the spec. `tests/unit/modules.test.ts` ("sees the nested modules of
+an extended module") checks it with the TypeScript check until the front end matches.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
