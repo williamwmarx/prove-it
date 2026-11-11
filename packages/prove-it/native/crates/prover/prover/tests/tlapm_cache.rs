@@ -83,6 +83,14 @@ fn marshal_refuses_what_is_cut_short_or_not_marshaled() {
         assert!(read_marshaled(&input[..cut], 0).is_err(), "cut at {cut}");
     }
     assert!(read_marshaled(&[0; 24], 0).is_err());
+    // A shared reference to no value before it: distance 0, or past the first value.
+    for data in [[0x04, 0x00], [0x04, 0x01], [0x05, 0x00]] {
+        let mut input = from_hex("8495a6be000000020000000000000000000000000000");
+        input[7] = data.len() as u8;
+        input.truncate(20);
+        input.extend(data);
+        assert!(read_marshaled(&input, 0).is_err(), "{data:?}");
+    }
 }
 
 #[test]

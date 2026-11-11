@@ -103,7 +103,7 @@ impl Reader<'_> {
         self.objects
             .len()
             .checked_sub(distance)
-            .and_then(|index| self.objects[index].clone())
+            .and_then(|index| self.objects.get(index).cloned().flatten())
             .ok_or_else(corrupted)
     }
 
