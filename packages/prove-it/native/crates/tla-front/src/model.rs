@@ -147,11 +147,7 @@ pub fn lower_front_ranking_of(
     let Ok(ir) = tla_ir::decode(&lowered.ir) else {
         return Ok(lowered);
     };
-    // A text Rust can't hold as a string ends the ranks, which stay TLC's up to it.
-    let startup_texts: Vec<Rc<str>> = get_startup_texts(&ir, &startup, interned)
-        .iter()
-        .map_while(|units| String::from_utf16(units).ok().map(Rc::from))
-        .collect();
+    let startup_texts = get_startup_texts(&ir, &startup, interned);
     if startup_texts.is_empty() {
         return Ok(lowered);
     }
@@ -162,7 +158,7 @@ fn lower_ranked(
     sources: &ModelSources,
     config_text: &str,
     options: &ModelOptions,
-    startup_texts: &[Rc<str>],
+    startup_texts: &[Box<[u16]>],
 ) -> Result<(LoweredModel, Vec<tla_ir::Index>, usize), FrontError> {
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = sources.source;
@@ -183,10 +179,29 @@ fn lower_ranked(
     let order = TlcOrder::new(source, load, version)?;
     // TLC computes the constant definitions after SANY and before it builds its checker.
     let sany = order.get_sany_string_order(&config)?;
+    // A text with a lone surrogate, which a `str` can't hold, as `Tail("😀a")` makes, ranks by a
+    // name of its own and keeps its units for the IR's wide texts.
+    let mut wide: FastMap<Rc<str>, Box<[u16]>> = FastMap::default();
+    let startup: Vec<String> = startup_texts
+        .iter()
+        .map(|units| {
+            String::from_utf16(units).unwrap_or_else(|_| {
+                let name: String = std::iter::once('\u{FFFF}')
+                    .chain(
+                        units
+                            .iter()
+                            .flat_map(|unit| format!("{unit:04x}").chars().collect::<Vec<_>>()),
+                    )
+                    .collect();
+                wide.insert(Rc::from(name.as_str()), units.clone());
+                name
+            })
+        })
+        .collect();
     let texts: Vec<Rc<str>> = get_unique(
         sany.iter()
             .map(String::as_str)
-            .chain(startup_texts.iter().map(|text| &**text))
+            .chain(startup.iter().map(String::as_str))
             .chain(get_checker_strings(&config)),
     )
     .into_iter()
@@ -220,6 +235,7 @@ fn lower_ranked(
             RankedTexts {
                 texts: &texts,
                 ranks: ranks.clone(),
+                wide: &wide,
             },
         );
         lowering.evaluator = Some(&evaluator);

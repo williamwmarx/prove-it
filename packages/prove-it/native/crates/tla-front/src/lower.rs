@@ -50,6 +50,8 @@ fn get_expression_image(expression: &Expression) -> String {
 pub struct RankedTexts<'a> {
     pub texts: &'a [Rc<str>],
     pub ranks: FastMap<Rc<str>, u32>,
+    /// The units of each ranked text with a lone surrogate, by the name it ranks by.
+    pub wide: &'a FastMap<Rc<str>, Box<[u16]>>,
 }
 
 /// `isStartupDefinition`: a constant definition without parameters the configuration doesn't
@@ -1485,7 +1487,16 @@ impl<'a> Lowering<'a> {
         let ir = Ir {
             ranked_count: self.ranked.texts.len() as u32,
             texts,
-            wide_texts: std::collections::BTreeMap::new(),
+            wide_texts: self
+                .ranked
+                .texts
+                .iter()
+                .enumerate()
+                .filter_map(|(id, text)| {
+                    let units = self.ranked.wide.get(text)?;
+                    Some((id as TextId, units.clone()))
+                })
+                .collect(),
             variables,
             tlc_order: self.tlc_order,
             builtins: self.builtins,

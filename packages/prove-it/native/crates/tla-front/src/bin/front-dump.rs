@@ -281,6 +281,7 @@ fn write_lowered(out: &mut String, source: &str, path: &Path, library: Option<&P
             RankedTexts {
                 texts: &[],
                 ranks: Default::default(),
+                wide: &Default::default(),
             },
         )
     });
@@ -330,6 +331,7 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
                 RankedTexts {
                     texts: &texts,
                     ranks,
+                    wide: &Default::default(),
                 },
             )
         });
