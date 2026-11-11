@@ -644,7 +644,9 @@ fn print_incomplete(
     };
     for (position, step) in states.into_iter().chain([successor]).enumerate() {
         printer.state(position + 1, &step.label, step.variables);
-        printer.recorded_trace.record_state(position + 1, step.values);
+        printer
+            .recorded_trace
+            .record_state(position + 1, step.values);
     }
     // TLC counts the incomplete successor as generated, which the search stopped before counting.
     let statistics = Statistics {

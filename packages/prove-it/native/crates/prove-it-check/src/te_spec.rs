@@ -684,7 +684,11 @@ mod tests {
             .find(|path| path.to_string_lossy().contains("_TTrace_"))
             .expect("the spec TLC wrote");
         let text = std::fs::read_to_string(&path).expect("the spec");
-        let name = path.file_stem().expect("a stem").to_string_lossy().into_owned();
+        let name = path
+            .file_stem()
+            .expect("a stem")
+            .to_string_lossy()
+            .into_owned();
         let date = text
             .rsplit_once("\\* Generated on ")
             .expect("the date")
@@ -706,7 +710,10 @@ mod tests {
             module: module.into(),
             name,
             directory: ".".into(),
-            variables: variables.iter().map(|variable| variable.to_string()).collect(),
+            variables: variables
+                .iter()
+                .map(|variable| variable.to_string())
+                .collect(),
             constants: Vec::new(),
             model_values: Vec::new(),
             unsupported: None,
