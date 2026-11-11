@@ -503,6 +503,14 @@ impl Parsed {
             .map(|(_, values)| values.as_slice())
     }
 
+    /// The values of each time the option is given, in order.
+    pub fn get_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a [String]> + 'a {
+        self.options
+            .iter()
+            .filter(move |(option, _)| option == name)
+            .map(|(_, values)| values.as_slice())
+    }
+
     pub fn first(&self, name: &str) -> Option<&str> {
         self.get(name)?.first().map(String::as_str)
     }

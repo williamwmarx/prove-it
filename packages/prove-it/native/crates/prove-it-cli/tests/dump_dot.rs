@@ -147,3 +147,22 @@ fn declines_a_state_graph_tlc_writes_otherwise() {
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
+
+// TLC keeps writing a graph once any -dump asks for one, so `-dump dot g -dump plain` writes the
+// graph into plain.dump.
+#[test]
+fn declines_a_dump_after_a_dump_dot() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====\n";
+    let (output, directory) = run_spec_with(
+        "dot-then-plain",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
+        &["-dump", "dot", "graph", "-dump", "plain"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        stderr(&output),
+        "prove-it: not native yet: -dump after -dump dot\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
