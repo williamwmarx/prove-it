@@ -13,6 +13,7 @@ use tla_trace::{
 };
 use tla_values::{Id, Store};
 
+use crate::dump_trace::{DumpedFile, TraceDumps};
 use crate::stack::on_search_stack;
 use tla_trace::pretty_print;
 
@@ -23,6 +24,8 @@ pub struct PrintedTrace {
     pub trace_output: Vec<String>,
     /// What the postconditions found on the trace, when the caller asked for them.
     pub postconditions: Option<Postconditions>,
+    /// The files -dumpTrace's postconditions write, which TLC checks before the configuration's.
+    pub dumped: Vec<DumpedFile>,
     /// Under SYMMETRY or a VIEW, the action of a lasso's step back into its cycle, as TLC finds it
     /// from the last state it rebuilt, and the positions of the properties TLC finds the rebuilt
     /// lasso violates.
@@ -35,6 +38,14 @@ pub struct PostconditionRun {
     /// Each `_POSSIBLE` predicate's name and count, -1 where TLC evaluated it on none.
     pub possible: Vec<(String, i64)>,
     pub stats: Stats,
+}
+
+/// The postconditions TLC checks on a violation's trace: -dumpTrace's first, then, where the
+/// caller asks for them, the configuration's with what TLCGet reads.
+#[derive(Clone, Copy)]
+pub struct TraceChecks<'a> {
+    pub dumps: &'a TraceDumps,
+    pub run: Option<&'a PostconditionRun>,
 }
 
 /// What TLC printed as it evaluated the postconditions, each print as one line, and the first one
@@ -81,7 +92,7 @@ impl<'v> From<&'v Violation> for Recorded<'v> {
 pub fn rebuild_trace(
     ir: &Ir,
     violation: &Violation,
-    postconditions: Option<&PostconditionRun>,
+    checks: TraceChecks,
     is_tool: bool,
 ) -> Result<PrintedTrace, String> {
     rebuild(
@@ -90,7 +101,7 @@ pub fn rebuild_trace(
         &violation.kind,
         &violation.states,
         violation.labels.clone(),
-        postconditions,
+        Some(checks),
         is_tool,
     )
 }
@@ -141,9 +152,11 @@ fn rebuild(
     kind: &ViolationKind,
     states: &[Vec<Id>],
     mut labels: Vec<Option<u32>>,
-    postconditions: Option<&PostconditionRun>,
+    checks: Option<TraceChecks>,
     is_tool: bool,
 ) -> Result<PrintedTrace, String> {
+    let dumps = checks.map(|checks| checks.dumps);
+    let postconditions = checks.and_then(|checks| checks.run);
     on_search_stack(|| {
         let mut states: Vec<&[Id]> = states.iter().map(Vec::as_slice).collect();
         // Under SYMMETRY or a VIEW the lasso's states are the stored ones: TLC rebuilds
@@ -254,6 +267,27 @@ fn rebuild(
                 }
                 _ => None,
             };
+            // TLC holds an invariant's violation for the postconditions as it found it, the
+            // trace before it rebuilt again (`Worker.doPostCondition`).
+            let dumped = match dumps.filter(|dumps| !dumps.is_empty()) {
+                Some(dumps) => {
+                    let held = match kind {
+                        ViolationKind::Invariant(_)
+                        | ViolationKind::ActionProperty(_)
+                        | ViolationKind::InitialInvariant(_)
+                        | ViolationKind::InitialPredicate(_) => Some(
+                            rebuilder.rebuild_counter_example(recorded.store, &states, &labels)?,
+                        ),
+                        _ => None,
+                    };
+                    let counter_example = CounterExample {
+                        trace: held.as_ref().unwrap_or(&trace),
+                        cycle,
+                    };
+                    dumps.dump(ir, &mut rebuilder, &counter_example)?
+                }
+                None => Vec::new(),
+            };
             let checked = postconditions
                 .map(|run| {
                     check(
@@ -267,12 +301,13 @@ fn rebuild(
                     )
                 })
                 .transpose()?;
-            Ok((trace, aliases, checked, loop_action, violated))
+            Ok((trace, aliases, checked, dumped, loop_action, violated))
         });
         rebuilt
             .map(
-                |(trace, aliases, postconditions, loop_action, violated)| PrintedTrace {
+                |(trace, aliases, postconditions, dumped, loop_action, violated)| PrintedTrace {
                     postconditions,
+                    dumped,
                     loop_action,
                     violated,
                     states: trace

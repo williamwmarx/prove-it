@@ -256,9 +256,61 @@ Still to do:
 TLC dumps a violation's counterexample with postconditions of its trace modules, which it parses
 with the spec: `_TLCTrace` for `-dumpTrace tlc` and the trace exploration spec's
 `<Spec>_TTrace_<epoch>.bin`, `_JsonTrace` for `-dumpTrace json`. Each writes
-`[counterexample |-> CounterExample, vars |-> vars]`. `tla-trace` writes both files; the binary
-doesn't call it yet (its arguments, SANY's report of the extra modules, and the postconditions'
-order are the binary's).
+`[counterexample |-> CounterExample, vars |-> vars]`.
+
+The binary (`prove-it-check`'s `dump_trace.rs`) does what TLC does with `-dumpTrace tlc <file>` and
+`-dumpTrace json <file>`:
+
+- `args.rs` reads `-dumpTrace <format> <file>` as `handleParameters` does: the flag and the format
+  in any case, any number of times, the two arguments after the flag whatever they are, with TLC's
+  messages for a missing pair and an unknown format. `tla`, `tlcplain`, `tlcTESpec`, `tlcaction`,
+  `dot` and `cbor` stay not native: their modules import the CommunityModules
+  (`checkDumpTraceModules`).
+- TLC adds each format's module to the root module's EXTENDS in the order of the options, and the
+  trace exploration spec's `_TLCTrace` after them where it records the trace
+  (`ParameterizedSpecObj`). The binary gives tla-front the same list (`Files::root_extendees`,
+  `ModelOptions::root_extendees`), so SANY's report, the order TLC interns strings in, and Integers'
+  methods over Naturals' are TLC's. `_JsonTrace` brings `Json` and its modules as TLC lists them.
+- The postconditions run where the binary already checks the configuration's after a violation, and
+  before them (`getPostConditionSpecs`): after an invariant's or an action property's violation, a
+  deadlock, a temporal property's lasso, after the step back into its cycle, and an initial state's
+  violation of an invariant or a property, after the state. TLC builds the counterexample as
+  `Worker.doPostCondition` does (`Rebuilder::rebuild_counter_example` for a violation it holds).
+  Each writes its file in argument order, relative to the working directory, and prints
+  `"CounterExample written: <file>"`, as PrintT does, plain and with -tool. A run without a
+  counterexample writes and prints nothing more.
+- The modules share their constant (`_TLCTraceFile`, `_JsonTraceFile`), which TLC sets for each
+  postcondition in turn (`processConstantsForModule`), so each option of a format writes, and
+  names, the file of the last of that format: `-dumpTrace tlc a.bin -dumpTrace tlc b.bin` writes
+  `b.bin` twice and never `a.bin`.
+- `to_tlc` takes the configuration's model values (`ModelConfig::get_model_values`).
+
+Not native: where TLC also records the trace (its default without `-tool`, `-noTE` or
+`-continue`), a counterexample, whose `.bin` the trace exploration spec's postcondition writes with
+the same constant; a failure evaluating the spec past the initial states, after which TLC may check
+the postconditions on a trace it can't find again; a spec that draws RandomElement or
+RandomSubset, whose trace TLC may not find again, writing nothing; a deadlock that violates a
+temporal property; a file name that isn't printable ASCII or holds a quote or a backslash; a file
+in a directory that doesn't exist; `-dumpTrace` with `-continue`; a module of the user's that a
+trace module uses, such as a `Json.tla` beside the spec, which SANY loads in place of the standard
+one, failing TLC's run in `_JsonTrace`'s analysis ("Unknown operator: `JsonSerialize'.") where
+it lacks what `_JsonTrace` uses (SANY's report of the extra modules declines it as it does for the
+trace exploration spec's `_TLCTrace`); and what `dump_trace` declines.
+
+`tests/dump_trace.rs` holds the binary to what the jar (tlaplus d8fb231) printed and wrote, with
+`-tool` and without, both orders of the two formats: an invariant violation, a deadlock, a lasso, an
+initial state's violation and a run without a counterexample (`tests/dump-trace`).
+
+Swept (2026-11-11) over the 721 corpus models whose recorded TLC run with -tool took at most 10 s,
+each run by the jar and the binary from a working directory of its own with
+`-tool -modelcheck -dumpTrace tlc A.bin -dumpTrace json A.json`: stdout normalised, the JSON byte for
+byte and the `.bin` but for its tokens. 609 match (71 of them writing both files), 110 decline, 2
+differ as they do without -dumpTrace (a jar path TLCGet reads, and TLC's stack overflowing), and
+none differ otherwise. The declines: a substitute made again (45), a failure evaluating the spec
+(25), an argument or a LET definition made again (24), an ALIAS (7), a random draw (5), an action's
+parameter (3), and a deadlock that violates a temporal property (1). Without -tool and with
+`-dumpTrace json` first, over the 174 that stop at a counterexample: 88 match, 85 decline, 1
+differs as it does without -dumpTrace.
 
 - `Rebuilder::dump_trace(&CounterExample) -> Result<TraceDump, Unsupported>` builds the value, with
   `Rebuilder::rebuild_counter_example(store, states, labels)` giving an invariant violation's trace
@@ -289,6 +341,14 @@ order are the binary's).
   the configuration doesn't make. The sharing follows the evaluator's, which these specs check; where
   TLC's state queue spilled the held state to disk and read it back, TLC's literals are new
   objects, which the dump doesn't follow.
+- The corpus sweep found where the evaluator's sharing wasn't TLC's, now followed:
+  `[S -> T]` enumerates a lazy `T` once for each element of `S` (`SetOfFcnsValue.Enumerator`), so
+  no two arguments share a value; SubSeq and SelectSeq give TLC's one empty sequence
+  (`TupleValue.EmptyTuple`) and `\o` gives back the other operand where one is empty; DOMAIN of a
+  record makes new strings (`RecordValue.getDomain`). And where it isn't, declined
+  (`Evaluator::unshared`): an argument or a LET definition evaluated again to a value with an
+  identity, which TLC keeps for a next state (`LazyValue`), and a constant the configuration
+  substitutes a definition for, which TLC evaluates at each use while the evaluator keeps one value.
 
 ## Specs TLC stops at before the search
 
@@ -364,11 +424,12 @@ order are the binary's).
 `args.rs` reads the arguments as `TLC.handleParameters` does, in order, and stops at the first one
 TLC rejects with TLC's message (1102 and the usage line, marked only where `-tool` came before it):
 an option TLC doesn't know, a missing or malformed value of `-seed`, `-workers`, `-fp`, `-config`,
-`-lncheck` or `-metadir`, and, on the `tlc2.TLC` form, a second module or none. Each message was
+`-lncheck` or `-metadir`, a `-dumpTrace` without a format and a file or with a format TLC doesn't
+know, and, on the `tlc2.TLC` form, a second module or none. Each message was
 compared with a TLC built from the clone at d8fb231.
 
 It models `-config` (with or without `.cfg`, as TLC), `-continue`, `-deadlock`, `-dump`,
-`-fp`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
+`-dumpTrace tlc` and `-dumpTrace json` (below), `-fp`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
 trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`,
 `-noGenerateSpecTEBin`/`-noTEBin`). Every other option TLC reads (`-simulate`, `-difftrace`,
 `-coverage`, `-maxSetSize`, `-dfid`, ...) is not native, as are the shapes where TLC

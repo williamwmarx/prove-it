@@ -15,6 +15,7 @@ use tla_values::print::{is_printable, is_printable_normalized, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
+use crate::dump_trace::{TraceDumps, is_writable, write};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
@@ -27,8 +28,8 @@ use crate::summary::{
 };
 use crate::time::format_duration;
 use crate::trace::{
-    PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
-    format_texts, rebuild_accepted, rebuild_continued, rebuild_trace,
+    PostconditionRun, Postconditions, PrintedTrace, TraceChecks, check_postconditions,
+    format_print, format_texts, rebuild_accepted, rebuild_continued, rebuild_trace,
 };
 use crate::xml_exporter::run_xml_exporter;
 use tla_front::TlcVersion;
@@ -745,7 +746,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             } else {
                 format!("{file}.dump")
             };
-            if !printer.host.write_file(Path::new(&path), "", false) {
+            if !printer.host.write_file(Path::new(&path), b"", false) {
                 return report_not_native(printer, "-dump into a file it can't create");
             }
             Some(path)
@@ -791,6 +792,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         None => return report_not_native(printer, "a configuration file the front end rejects"),
     };
+    let dumps = TraceDumps::new(args, &config, is_trace_recorded(args));
     let front = match read_front(
         spec_path,
         config_text.as_deref().unwrap_or_default(),
@@ -802,7 +804,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             metadir: args.first("-metadir"),
             jar: java.class_path.as_deref().and_then(get_tools_jar),
             is_174: false,
-            is_trace_recorded: is_trace_recorded(args),
+            root_extendees: &dumps.get_root_extendees(),
         },
         printer.host,
         printer.is_tool,
@@ -917,6 +919,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             Some("-continue under SYMMETRY or a VIEW")
         } else if !model.postconditions.is_empty() {
             Some("-continue with a POSTCONDITION")
+        } else if !dumps.is_empty() {
+            Some("-continue with -dumpTrace")
         } else if is_built_in(&["Print", "PrintT", "TLCSet"]) {
             // TLC prints what the spec prints as it evaluates, before the violation it then
             // reports, and sets its registers again as it rebuilds each trace (`printTrace`),
@@ -1053,7 +1057,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     }
                     Event::Dumped(text) => {
                         let path = Path::new(dump.as_deref().unwrap_or_default());
-                        is_dump_unwritten |= !printer.host.write_file(path, &text, true);
+                        is_dump_unwritten |= !printer.host.write_file(path, text.as_bytes(), true);
                     }
                 }
             }
@@ -1161,7 +1165,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         &config,
                         &violation,
                         is_lasso.then_some((&liveness, checking)),
-                        Some(&run),
+                        TraceChecks {
+                            dumps: &dumps,
+                            run: Some(&run),
+                        },
                         start,
                     )
                     .unwrap_or_else(|why| {
@@ -1307,20 +1314,22 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 // check the state for deadlock, having generated no successor of it
                 // (`Worker.run`): which the search's counts say only of the first state expanded.
                 // TLC reports a failure among the initial states with the state as it is, and
-                // ends there, with no postcondition checked (`ModelChecker#doInit`).
+                // ends there, with no postcondition checked (`ModelChecker#doInit`). With
+                // -dumpTrace TLC's worker may check them on a trace it fails to find again.
                 ViolationKind::Error { site }
                     if !is_initial_site(site)
-                        && !config.postconditions.is_empty()
-                        && match site {
-                            ErrorSite::Invariant(_) => false,
-                            ErrorSite::Next => {
-                                ir.model.check_deadlock
-                                    && violation.counts.generated != initial_generated
-                            }
-                            _ => true,
-                        } =>
+                        && (!dumps.is_empty()
+                            || !config.postconditions.is_empty()
+                                && match site {
+                                    ErrorSite::Invariant(_) => false,
+                                    ErrorSite::Next => {
+                                        ir.model.check_deadlock
+                                            && violation.counts.generated != initial_generated
+                                    }
+                                    _ => true,
+                                }) =>
                 {
-                    Err("a failure with a POSTCONDITION".to_string())
+                    Err("a failure with a POSTCONDITION or -dumpTrace".to_string())
                 }
                 ViolationKind::Error { site }
                     if config.alias.is_some()
@@ -1407,8 +1416,19 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         initial_generated,
                         start,
                     );
-                    print_violation(printer, &ir, &config, &violation, None, Some(&run), start)
-                        .map_err(str::to_string)
+                    print_violation(
+                        printer,
+                        &ir,
+                        &config,
+                        &violation,
+                        None,
+                        TraceChecks {
+                            dumps: &dumps,
+                            run: Some(&run),
+                        },
+                        start,
+                    )
+                    .map_err(str::to_string)
                 }
             };
             return printed.unwrap_or_else(|why| {
@@ -1556,9 +1576,10 @@ fn print_violation(
     config: &ModelConfig,
     violation: &Violation,
     liveness: Option<(&Liveness, Option<Instant>)>,
-    postconditions: Option<&PostconditionRun>,
+    checks: TraceChecks,
     start: Instant,
 ) -> Result<i32, &'static str> {
+    let postconditions = checks.run;
     let started = liveness.and_then(|(_, started)| started);
     let liveness = liveness.map(|(liveness, _)| liveness);
     // TLC reports a _POSSIBLE predicate the search didn't witness before it stopped, which the
@@ -1570,17 +1591,25 @@ fn print_violation(
     // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
     // rebuild as TLC built it keeps the run not native.
     let checked = postconditions.filter(|_| !ir.model.postconditions.is_empty());
-    let trace = match rebuild_trace(ir, violation, checked, printer.is_tool) {
+    let checks = TraceChecks {
+        run: checked,
+        ..checks
+    };
+    let trace = match rebuild_trace(ir, violation, checks, printer.is_tool) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
+    if !is_writable(printer.host, &trace.dumped) {
+        return Err("-dumpTrace into a directory that doesn't exist");
+    }
+    let dumped_lines: Vec<String> = trace.dumped.iter().map(|file| file.get_line()).collect();
     // TLC adds a deadlocked state to the behavior graphs after it reports the deadlock, and
     // reports the tableau node that accepts every behavior it reaches next.
     let accepted = match &violation.kind {
         ViolationKind::Deadlock {
             accepted: Some(accepted),
         } => {
-            if checked.is_some() {
+            if checked.is_some() || !checks.dumps.is_empty() {
                 return Err("a postcondition after a deadlock that violates a temporal property");
             }
             match rebuild_accepted(ir, violation, accepted, printer.is_tool) {
@@ -1711,6 +1740,15 @@ fn print_violation(
         }
         let state = &trace.states.first().ok_or(NOT_IN_IR)?.text;
         printer.print(code, Level::Error, &format!("{text}\n{state}"));
+        if !write(printer.host, &trace.dumped) {
+            return Ok(report_not_native(
+                printer,
+                "-dumpTrace into a file it can't write",
+            ));
+        }
+        for line in &dumped_lines {
+            printer.line(line);
+        }
         print_finished(printer, start);
         return Ok(exit_code);
     }
@@ -1765,13 +1803,22 @@ fn print_violation(
     };
     printer.print(heading_code, Level::Error, heading);
     print_states(printer, &trace, &labels);
+    // -dumpTrace's postconditions write their files as TLC checks them.
+    if !write(printer.host, &trace.dumped) {
+        return Ok(report_not_native(
+            printer,
+            "-dumpTrace into a file it can't write",
+        ));
+    }
     // TLC rebuilds a violation's trace again for the counterexample the postconditions read,
-    // so what that prints comes before what they print. TLC checks them on a lasso once it has
-    // printed where the lasso closes (`LiveWorker.printTrace`).
-    let postcondition_output = trace
-        .postconditions
-        .iter()
-        .flat_map(|checked| &checked.printed);
+    // so what that prints comes before what they print, -dumpTrace's first. TLC checks them on a
+    // lasso once it has printed where the lasso closes (`LiveWorker.printTrace`).
+    let postcondition_output = dumped_lines.iter().chain(
+        trace
+            .postconditions
+            .iter()
+            .flat_map(|checked| &checked.printed),
+    );
     if lasso.is_none() && is_counterexample {
         for line in postcondition_output.clone() {
             printer.line(line);
@@ -2234,7 +2281,7 @@ mod tests {
             is_warning_enabled: true,
             is_spec_described: true,
             random_seed: 0,
-            is_trace_recorded: false,
+            root_extendees: &[],
         };
         let bytes =
             tla_front::model::lower_model(&spec, "SPECIFICATION Spec\nPROPERTY Prop\n", &options)

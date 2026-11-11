@@ -1,0 +1,53 @@
+@!@!@STARTMSG 2262:0 @!@!@
+TLC2 Version 2026.11.11.000937
+@!@!@ENDMSG 2262 @!@!@
+@!@!@STARTMSG 2187:0 @!@!@
+Running breadth-first search Model-Checking with fp 78 and seed 8239604846440965176 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 15750] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+@!@!@ENDMSG 2187 @!@!@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Parsing file DumpInitial.tla
+Parsing file Naturals.tla
+Parsing file Sequences.tla
+Parsing file _TLCTrace.tla
+Parsing file _JsonTrace.tla
+Parsing file TLC.tla
+Parsing file TLCExt.tla
+Parsing file FiniteSets.tla
+Parsing file Integers.tla
+Parsing file Json.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module Json
+Semantic processing of module _JsonTrace
+Semantic processing of module DumpInitial
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module Json
+Linting of module _JsonTrace
+Linting of module DumpInitial
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+Starting... (2026-11-11 00:09:37)
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2189:0 @!@!@
+Computing initial states...
+@!@!@ENDMSG 2189 @!@!@
+@!@!@STARTMSG 2107:1 @!@!@
+Invariant Inv is violated by the initial state:
+x = 1
+
+@!@!@ENDMSG 2107 @!@!@
+"CounterExample written: DumpInitial.bin"
+"CounterExample written: DumpInitial.json"
+@!@!@STARTMSG 2186:0 @!@!@
+Finished in 1380ms at (2026-11-11 00:09:38)
+@!@!@ENDMSG 2186 @!@!@

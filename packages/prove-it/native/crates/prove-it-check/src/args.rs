@@ -138,7 +138,32 @@ const UNMODELLED: [&str; 26] = [
     "-fpmem",
     "-fpbits",
 ];
-const UNMODELLED_IN_ANY_CASE: [&str; 3] = ["-loadTrace", "-dumpTrace", "-postCondition"];
+const UNMODELLED_IN_ANY_CASE: [&str; 2] = ["-loadTrace", "-postCondition"];
+
+pub const DUMP_TRACE: &str = "-dumpTrace";
+
+/// The formats of -dumpTrace, as `TLC.DumpTraceFormat` names them.
+const DUMP_FORMATS: [&str; 8] = [
+    "json",
+    "tla",
+    "tlc",
+    "tlcplain",
+    "tlcTESpec",
+    "tlcaction",
+    "dot",
+    "cbor",
+];
+
+/// The formats whose files the binary writes. TLC's others are modules that import the
+/// CommunityModules, which its jar lacks (`checkDumpTraceModules`).
+const NATIVE_DUMP_FORMATS: [&str; 2] = ["tlc", "json"];
+
+/// The format -dumpTrace names, by its flag in any case (`DumpTraceFormat.of`).
+fn get_dump_format(flag: &str) -> Option<&'static str> {
+    DUMP_FORMATS
+        .into_iter()
+        .find(|format| format.eq_ignore_ascii_case(flag))
+}
 
 /// The options and specs of a check, as `TLC.handleParameters` reads them.
 #[derive(Debug, Default)]
@@ -315,6 +340,31 @@ impl Parsed {
                     parsed
                         .options
                         .push(("-noGenerateSpecTEBin".into(), Vec::new()));
+                    continue;
+                }
+                _ if arg.eq_ignore_ascii_case(DUMP_TRACE) => {
+                    // TLC takes a format and a file, and knows the format by its flag in any case.
+                    let [format, file] = args.get(index..index + 2).unwrap_or_default() else {
+                        return Err(error(
+                            "Error: A format and a file name for dumping traces required.".into(),
+                            is_tool,
+                        ));
+                    };
+                    index += 2;
+                    let Some(format) = get_dump_format(format) else {
+                        return Err(error(
+                            format!("Error: Unknown format {format} given to -dumpTrace."),
+                            is_tool,
+                        ));
+                    };
+                    if !NATIVE_DUMP_FORMATS.contains(&format) {
+                        return Err(Stop::NotNative(format!(
+                            "-dumpTrace {format}, whose module needs the CommunityModules"
+                        )));
+                    }
+                    parsed
+                        .options
+                        .push((DUMP_TRACE.into(), vec![format.into(), file.clone()]));
                     continue;
                 }
                 _ if UNMODELLED.contains(&arg)
@@ -515,6 +565,16 @@ mod tests {
                 "more than one input files: Stop and Two",
             ),
             (&["-deadlock"], "Missing input TLA+ module."),
+            (
+                &["Spec", "-dumpTrace", "tlc"],
+                "A format and a file name for dumping traces required.",
+            ),
+            (
+                &["-dumpTrace", "xml", "out", "Spec"],
+                "Unknown format xml given to -dumpTrace.",
+            ),
+            // The format and the file are the two arguments after the option, whatever they are.
+            (&["-dumpTrace", "tlc", "Spec"], "Missing input TLA+ module."),
         ] {
             assert_eq!(get_error(args), format!("Error: {message}"));
         }
@@ -540,7 +600,8 @@ mod tests {
             &["-coverage", "1", "Spec"],
             &["-maxSetSize", "10", "Spec"],
             &["-dfid", "3", "Spec"],
-            &["-DUMPTRACE", "json", "out.json", "Spec"],
+            &["-DUMPTRACE", "dot", "out.dot", "Spec"],
+            &["-dumpTrace", "TLCTESPEC", "out.tla", "Spec"],
             &["-lncheck", "OFF", "Spec"],
             &["-dump"],
             &["-dump", "class,Writer", "Spec"],
@@ -549,6 +610,28 @@ mod tests {
         ] {
             assert!(matches!(parse(args), Err(Stop::NotNative(_))), "{args:?}");
         }
+    }
+
+    #[test]
+    fn reads_each_dump_trace_in_order() {
+        let parsed = parse(&[
+            "-DumpTrace",
+            "JSON",
+            "a.json",
+            "Spec",
+            "-dumptrace",
+            "tlc",
+            "-tool",
+        ])
+        .expect("options");
+        assert_eq!(
+            parsed.options,
+            [
+                ("-dumpTrace".to_string(), strings(&["json", "a.json"])),
+                ("-dumpTrace".to_string(), strings(&["tlc", "-tool"])),
+            ]
+        );
+        assert!(!parsed.has("-tool"));
     }
 
     #[test]

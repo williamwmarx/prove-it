@@ -4,6 +4,7 @@
 
 mod args;
 mod check;
+mod dump_trace;
 mod failure;
 mod files;
 mod front;

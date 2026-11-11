@@ -21,11 +21,11 @@ use crate::spec::{
 };
 use crate::values::ValueOrder;
 
-/// What the model is checked with besides its files.
 /// The module TLC adds to the root module's EXTENDS where it records the trace for its trace
 /// exploration spec, for the post condition that writes it.
 pub const TRACE_MODULE: &str = "_TLCTrace";
 
+/// What the model is checked with besides its files.
 pub struct ModelOptions<'a> {
     /// The directories of the modules a spec reads that aren't beside it, such as the community
     /// modules, in the order TLC searches them (`-DTLA-Library`).
@@ -40,10 +40,11 @@ pub struct ModelOptions<'a> {
     pub is_spec_described: bool,
     /// The seed TLC seeds its generator with, which `-seed` gives.
     pub random_seed: u64,
-    /// Whether TLC records the trace for its trace exploration spec, its default: SANY loads
-    /// `_TLCTrace` with the spec, which interns its strings first, and TLC loads Integers' Java
-    /// methods over Naturals' (`TLC.java`'s `TraceExplorationSpec`).
-    pub is_trace_recorded: bool,
+    /// The modules of the post conditions TLC adds to the root module's EXTENDS, in its order
+    /// (`ParameterizedSpecObj`): `-dumpTrace`'s, and `_TLCTrace` where TLC records the trace for
+    /// its trace exploration spec, its default. SANY loads them with the spec, which interns their
+    /// strings, and each loads Integers, whose Java methods TLC then loads over Naturals'.
+    pub root_extendees: &'a [&'a str],
 }
 
 /// A module's text from the spec's directory, or else the first library's that has it.
@@ -188,18 +189,16 @@ fn lower_ranked(
         is_level_checked: false,
         load_class: Some(load_class),
     })?;
-    if options.is_trace_recorded {
+    // TLC loads Integers' methods over Naturals' once Integers is anywhere in the parsed closure.
+    // Every module a root extendee can be today (`_TLCTrace` and the -dumpTrace modules) reaches
+    // it through TLCExt, so any root extendee loads them; one that doesn't would need its closure.
+    if !options.root_extendees.is_empty() {
         for builtin in environment.builtins.values_mut() {
             builtin.flags &=
                 !(tla_ir::Builtin::NATURALS_GEQ | tla_ir::Builtin::NATURALS_METHOD) as u32;
         }
     }
-    let root_extendees: &[&str] = if options.is_trace_recorded {
-        &[TRACE_MODULE]
-    } else {
-        &[]
-    };
-    let order = TlcOrder::new(source, load, version)?.with_root_extendees(root_extendees);
+    let order = TlcOrder::new(source, load, version)?.with_root_extendees(options.root_extendees);
     let texts: Vec<Rc<str>> = order
         .get_string_order(&config)?
         .iter()
