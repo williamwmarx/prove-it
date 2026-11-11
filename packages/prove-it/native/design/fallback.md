@@ -294,8 +294,8 @@ copy, the front end doesn't follow TLC's lookup and unrolls the \A with the subs
 as main did; elsewhere it evaluates the sets
 so, with the substitutions of the INSTANCEs whose copies it expanded through left unbound, and
 declines a \A taken whole whose body fails, where TLC wraps the failure in
-`EC.TLC_LIVE_CANNOT_HANDLE_FORMULA`. A grid of 108 small specs
-(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 688 of its 864 runs; the others
+`EC.TLC_LIVE_CANNOT_HANDLE_FORMULA`. A grid of 112 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 720 of its 896 runs; the others
 decline, for the constant evaluator's gaps, a substituted declaration, such a \A, or a tautology
 after a state-level property, which TLC warns of first. Four name an
 INSTANCE's definition before the INSTANCE, which SANY doesn't know there.
