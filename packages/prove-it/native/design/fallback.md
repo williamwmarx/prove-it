@@ -484,7 +484,7 @@ Measured at main 8165d917, after #224 flipped the CLI, with `bun scripts/run.ts 
 - 1,887 checks. 1,386 print TLC's output natively and 501 are not native yet. None answered
   differently on one thread and four.
 - In TLC's default mode, which writes the trace exploration spec, 245 are native. The rest wait on
-  SANY's report of that spec.
+  SANY's report of that spec, which the XML session owns with the other SANY reports.
 
 What the 501 decline at, grouped by the mechanism that would make them native. "Reasons" counts the
 distinct decline messages in the group.
@@ -503,7 +503,7 @@ distinct decline messages in the group.
 | Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
 | `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
 | Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
-| SANY's report of RECURSIVE declarations | 4 | 3 | front session |
+| SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
 | Rebuilding a trace through the builtin Trace | 4 | 1 | memo session |
 | The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, an ALIAS without a definition, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 9 | 7 | unassigned |
 
