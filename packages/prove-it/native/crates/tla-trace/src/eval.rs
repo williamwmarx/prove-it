@@ -6164,19 +6164,24 @@ fn is_chosen(element: &Value, chosen: &Value) -> Option<bool> {
 
 // Whether a value holds a set TLC can't normalize.
 // A kept value as evaluating it made it: each set and function with the order TLC built it in,
-// where TLC holds it so still, taken as it was kept. A later use normalizes the object it is given,
-// as one TLC holds as built is normalized only by the uses TLC normalizes it in; so each use gets
-// a copy of its own (`Snapshot::value`), as evaluating the argument again gives, while the work of
-// evaluating it is done once.
-enum Snapshot {
+// where TLC holds it so still, taken as it was kept, each object once however often the value holds
+// it. A later use normalizes the object it is given, as one TLC holds as built is normalized only
+// by the uses TLC normalizes it in; so each use gets a copy of its own (`Snapshot::value`), with
+// the same objects shared as in the value, as evaluating the argument again gives, while the work
+// of evaluating it is done once.
+struct Snapshot {
+    parts: Vec<Part>,
+}
+
+enum Part {
     Value(Value),
     Set {
-        elements: Vec<Snapshot>,
-        written: Option<Vec<Snapshot>>,
+        elements: Vec<usize>,
+        written: Option<Vec<usize>>,
     },
     Function {
-        domain: Vec<Snapshot>,
-        range: Vec<Snapshot>,
+        domain: Vec<usize>,
+        range: Vec<usize>,
         class: Class,
         written: Option<Vec<u32>>,
         search: Search,
@@ -6185,19 +6190,43 @@ enum Snapshot {
 }
 
 impl Snapshot {
-    // The value as it is now, or `None` for a lazy value, whose sets aren't the evaluator's to
-    // copy.
+    // The value as it is now, or `None` for one holding a lazy value, whose sets aren't the
+    // evaluator's to copy.
     fn of(value: &Value) -> Option<Snapshot> {
-        let all = |values: &[Value]| values.iter().map(Snapshot::of).collect::<Option<Vec<_>>>();
-        Some(match value {
-            Value::Set(elements) => Snapshot::Set {
-                elements: all(elements)?,
-                written: match unnormalized(value) {
+        let mut snapshot = Snapshot { parts: Vec::new() };
+        snapshot.part(value, &mut HashMap::new())?;
+        Some(snapshot)
+    }
+
+    // The part for a value, the last one added being the root: each set and function once, by its
+    // address.
+    fn part(&mut self, value: &Value, seen: &mut HashMap<usize, usize>) -> Option<usize> {
+        let address = match value {
+            Value::Set(elements) => Some(Rc::as_ptr(elements) as usize),
+            Value::Function(function) => Some(Rc::as_ptr(function) as usize),
+            _ => None,
+        };
+        if let Some(address) = address
+            && let Some(&index) = seen.get(&address)
+        {
+            return Some(index);
+        }
+        let mut all = |values: &[Value]| {
+            values
+                .iter()
+                .map(|value| self.part(value, seen))
+                .collect::<Option<Vec<_>>>()
+        };
+        let part = match value {
+            Value::Set(elements) => {
+                let elements = all(elements)?;
+                let written = match unnormalized(value) {
                     Some(written) => Some(all(&written)?),
                     None => None,
-                },
-            },
-            Value::Function(function) => Snapshot::Function {
+                };
+                Part::Set { elements, written }
+            }
+            Value::Function(function) => Part::Function {
                 domain: all(&function.domain)?,
                 range: all(&function.range)?,
                 class: function.class.get(),
@@ -6206,37 +6235,52 @@ impl Snapshot {
                 interval: function.interval,
             },
             Value::Lazy(_) | Value::Lambda(_) => return None,
-            other => Snapshot::Value(other.clone()),
-        })
+            other => Part::Value(other.clone()),
+        };
+        self.parts.push(part);
+        let index = self.parts.len() - 1;
+        if let Some(address) = address {
+            seen.insert(address, index);
+        }
+        Some(index)
     }
 
     fn value(&self) -> Value {
-        let all = |snapshots: &[Snapshot]| snapshots.iter().map(Snapshot::value).collect();
-        match self {
-            Snapshot::Value(value) => value.clone(),
-            Snapshot::Set { elements, written } => {
-                let set = Value::Set(Rc::new(all(elements)));
-                if let Some(written) = written {
-                    mark_unnormalized(&set, all(written));
+        let mut made: Vec<Option<Value>> = Vec::with_capacity(self.parts.len());
+        for part in &self.parts {
+            let all = |indices: &[usize], made: &[Option<Value>]| -> Vec<Value> {
+                indices
+                    .iter()
+                    .map(|&index| made[index].clone().expect("a part made before"))
+                    .collect()
+            };
+            made.push(Some(match part {
+                Part::Value(value) => value.clone(),
+                Part::Set { elements, written } => {
+                    let set = Value::Set(Rc::new(all(elements, &made)));
+                    if let Some(written) = written {
+                        mark_unnormalized(&set, all(written, &made));
+                    }
+                    set
                 }
-                set
-            }
-            Snapshot::Function {
-                domain,
-                range,
-                class,
-                written,
-                search,
-                interval,
-            } => Value::Function(Rc::new(Function {
-                domain: all(domain),
-                range: all(range),
-                class: Cell::new(*class),
-                written: RefCell::new(written.clone()),
-                search: Cell::new(*search),
-                interval: *interval,
-            })),
+                Part::Function {
+                    domain,
+                    range,
+                    class,
+                    written,
+                    search,
+                    interval,
+                } => Value::Function(Rc::new(Function {
+                    domain: all(domain, &made),
+                    range: all(range, &made),
+                    class: Cell::new(*class),
+                    written: RefCell::new(written.clone()),
+                    search: Cell::new(*search),
+                    interval: *interval,
+                })),
+            }));
         }
+        made.pop().flatten().expect("the root")
     }
 }
 
