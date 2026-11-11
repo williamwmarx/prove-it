@@ -518,15 +518,15 @@ distinct decline messages in the group.
 | An assumption that fails to evaluate, evaluated again | 57 | 25 | front session |
 | Temporal properties and liveness | 50 | 19 | liveness session |
 | The engine stopping where TLC reports an error | 46 | 25 | memo session |
-| What the constant evaluator doesn't compute | 15 | 3 | front session |
+| What the constant evaluator doesn't compute | 14 | 3 | front session |
 | Other failures evaluated again | 29 | 18 | memo session |
-| The engine declining an operator or builtin | 19 | 15 | memo session |
+| The engine declining an operator or builtin | 20 | 15 | memo session |
 | Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
 | `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
 | Java overrides TLC loads with more than the shapes ported | 9 | 8 | unassigned |
 | SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
 | Rebuilding a trace through the builtin Trace | 4 | 1 | memo session |
-| The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, an ALIAS without a definition, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 9 | 7 | unassigned |
+| The rest: a configuration substitute with effects, an ALIAS without a definition, states TLC may take for the search's under VIEW or SYMMETRY, and a trace the search can't step | 5 | 4 | unassigned |
 
 The groups are checked in this order, so a decline counts once, in the first group that takes it.
 The constant evaluator's row and the Java overrides' row count what was left after the
@@ -534,6 +534,12 @@ front-constants branch (measured 2026-11-11 from b8121dd3, 1,452 native before a
 it made native the CHOOSE, division, equality, quantifier-bound and INIT or NEXT constant
 declines, and an annotated override and one that catches, and moved TLCGet("level") as a
 substitute to "a configuration substitute with effects" among the rest.
+The startup checks after it (measured 2026-11-11 from ee6736a4, 1,499 native before and 1,512
+after) made native the SYMMETRY definitions TLC fails on, the configuration error that shows a
+set, the successor TLC fails to find again from its generator, and the constant invariants TLC
+warns about, but one that overflows TLC's stack and one that fails as a set operation. The
+constant conjunct of the specification that draws at random moved to the engine's decline of
+RandomElement under a comparison.
 The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
 
