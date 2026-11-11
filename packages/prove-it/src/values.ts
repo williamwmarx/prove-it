@@ -2710,8 +2710,12 @@ const formatLazySet = (value: LazySetValue, isStrict: boolean): string => {
       return `[${value.names.map((name, index) => `${name}: ${format(value.sets[index])}`).join(", ")}]`;
     case "ProductSet":
       return `(${value.factors.map(format).join(" \\X ")})`;
-    case "SetOperation":
-      return `${format(value.left)} ${value.operator} ${format(value.right)}`;
+    case "SetOperation": {
+      // toStringForCupCapDiff: an Enumerable operand in parentheses.
+      const formatOperand = (operand: Value) =>
+        isTlcEnumerable(operand) ? `(${format(operand)})` : format(operand);
+      return `${formatOperand(value.left)} ${value.operator} ${formatOperand(value.right)}`;
+    }
     case "FilteredSet":
       return value.source
         ? `{${value.source.names} \\in ${format(value.base)} : <expression ${value.source.predicate}> }`

@@ -85,7 +85,8 @@ fn enumerate_function_set(machine: &mut Machine<'_>, domain: Id, range: Id) -> O
             for (index, &position) in positions.iter().enumerate() {
                 values[index] = choices[position];
             }
-            functions.push(machine.store.function_of_sorted(&keys, &values));
+            let function = machine.store.function_of_sorted(&keys, &values);
+            functions.push(machine.store.mark_built_as_function(function));
             let Some(turning) = (0..keys.len())
                 .rev()
                 .find(|&index| positions[index] + 1 < choices.len())
