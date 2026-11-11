@@ -1,11 +1,12 @@
 //! What SANY prints for a small spec. `scripts/front-differential.ts sany-text` holds the Rust text
 //! to the TypeScript one on every corpus spec.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::report::{ReportOptions, SanyText, get_sany_text};
+use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text};
 
 /// What SANY prints for the root module `source`, named Main, with no other files.
 fn get_text(name: &str, source: &str) -> String {
@@ -35,16 +36,20 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
 // tests/recursive-shapes: RECURSIVE declarations at module level, in a LET and in a LET
 // within a definition of another, against everything else that can bind or name what they declare.
 // The front end writes SANY's report of each: linking derives the messages of the shapes
-// src/recursive.rs follows, and SANY's generator those of the others. What it writes is held to
-// TLC's output by `sany-corpus.ts --recorded tests/conformance/sany-stdout/grid.json`.
+// src/recursive.rs follows, and SANY's generator those of the others. `grid.json` records what
+// TLC at d8fb231 prints for each.
 #[test]
-fn reports_every_recursive_shape() {
+fn reports_every_recursive_shape_as_sany_does() {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/recursive-shapes");
+    let recordings = get_recordings(include_str!(
+        "../../../../tests/conformance/sany-stdout/grid.json"
+    ));
     let mut paths: Vec<_> = std::fs::read_dir(&directory)
         .expect("the grid")
         .map(|entry| entry.expect("an entry").path())
         .collect();
     paths.sort();
+    assert_eq!(paths.len(), recordings.len());
     for path in paths {
         let name = path
             .file_stem()
@@ -58,12 +63,57 @@ fn reports_every_recursive_shape() {
                 load_module: &|module| {
                     std::fs::read_to_string(directory.join(format!("{module}.tla"))).ok()
                 },
-                describe_file: &|name, origin| format!("{name} {origin:?}"),
+                describe_file: &|module, origin| match origin {
+                    ModuleOrigin::Standard => format!("/tmp/tlc-_/{module}.tla"),
+                    ModuleOrigin::File | ModuleOrigin::RootFile => format!("{module}.tla"),
+                },
                 is_xml_export: false,
             },
-        );
-        assert!(report.is_ok(), "{name}: {report:?}");
+        )
+        .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        let recording = &recordings[&format!("recursive-shapes/{name}")];
+        let sany_lines: Vec<&str> = recording
+            .lines()
+            .skip_while(|line| !line.starts_with("Running "))
+            .skip(1)
+            .take_while(|line| !line.starts_with("Starting... ") && !line.starts_with("Error: "))
+            .collect();
+        assert_eq!(report.text, format!("{}\n", sany_lines.join("\n")), "{name}");
+        assert_eq!(report.is_failed, recording.starts_with("exit 150\n"), "{name}");
     }
+}
+
+/// The recorded output of each spec in a JSON object of strings, as `sany-corpus.ts` writes it.
+fn get_recordings(json: &str) -> BTreeMap<String, String> {
+    let mut strings = Vec::new();
+    let mut characters = json.chars();
+    while let Some(character) = characters.next() {
+        if character != '"' {
+            continue;
+        }
+        let mut string = String::new();
+        while let Some(character) = characters.next() {
+            match character {
+                '"' => break,
+                '\\' => match characters.next().expect("an escape") {
+                    'n' => string.push('\n'),
+                    't' => string.push('\t'),
+                    'u' => {
+                        let code: String = characters.by_ref().take(4).collect();
+                        let unit = u32::from_str_radix(&code, 16).expect("a code unit");
+                        string.push(char::from_u32(unit).expect("a character"));
+                    }
+                    other => string.push(other),
+                },
+                other => string.push(other),
+            }
+        }
+        strings.push(string);
+    }
+    strings
+        .chunks(2)
+        .map(|pair| (pair[0].clone(), pair[1].clone()))
+        .collect()
 }
 
 #[test]
@@ -182,14 +232,14 @@ fn reports_an_instance_named_as_an_expression() {
         ),
         "Parsing file Main File\nParsing file Naturals Standard\nSemantic processing of module Naturals\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 3\n\nline 4, col 6 to line 4, col 6 of module Main\n\nOperator name I is incomplete.\n\n\nline 5, col 7 to line 5, col 12 of module Main\n\nThe operator J requires 1 arguments.\n\n\nline 6, col 6 to line 6, col 6 of module Main\n\nThe operator J requires 1 arguments.\n\n\n"
     );
-    // With as many arguments as it takes, SANY analyzes them against its parameters first.
-    assert!(matches!(
-        get_report(
+    // With as many arguments as it takes, SANY generates them before it finds the name incomplete.
+    assert_eq!(
+        get_text(
             "instance-arguments",
             "---- MODULE Main ----\nJ(x) == INSTANCE Naturals\nA == J(Missing)\n====\n",
         ),
-        Err(FrontError::NotYet(_))
-    ));
+        "Parsing file Main File\nParsing file Naturals Standard\nSemantic processing of module Naturals\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 2\n\nline 3, col 8 to line 3, col 14 of module Main\n\nUnknown operator: `Missing'.\n\n\nline 3, col 6 to line 3, col 6 of module Main\n\nOperator name J is incomplete.\n\n\n"
+    );
 }
 
 // SANY's corpus ProofsTest: `processTheorem` adds a theorem whose statement is an expression to the
@@ -314,71 +364,3 @@ fn reports_a_nested_module_named_like_a_standard_module_it_extends() {
     );
 }
 
-// E4294_Module: a nested module ends the recursive section's count, so the definition after it
-// makes SANY's generator throw (`endOpDefNode`), which `SANY.parse` prints after the module's
-// "Semantic processing" line, with no messages.
-#[test]
-fn ends_with_the_exception_sanys_generator_throws_for_a_module_in_a_recursive_section() {
-    let report = get_report(
-        "exception",
-        "---- MODULE Main ----\nRECURSIVE op\n---- MODULE Inner ----\n====\nop == 0\n====\n",
-    )
-    .expect("a text");
-    let exception = "util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.";
-    assert!(report.is_failed);
-    assert_eq!(report.exception.as_deref(), Some(exception));
-    assert_eq!(
-        report.text,
-        format!("Parsing file Main File\nSemantic processing of module Main\n{exception}\n")
-    );
-    // Without a definition after the module nothing throws, and the count SANY is left with
-    // isn't followed.
-    assert!(matches!(
-        get_report(
-            "exception-undefined",
-            "---- MODULE Main ----\nRECURSIVE op\n---- MODULE Inner ----\n====\n====\n",
-        ),
-        Err(FrontError::NotYet(_))
-    ));
-}
-
-#[test]
-fn leaves_a_recursive_function_with_operator_arguments_after_a_module_not_native() {
-    // `processFunction` leaves F undefined, so its definition doesn't make the generator throw.
-    assert!(matches!(
-        get_report(
-            "exception-function",
-            "---- MODULE Main ----\nRECURSIVE F(_)\n---- MODULE Inner ----\n====\nF[x \\in {}] == 0\n====\n",
-        ),
-        Err(FrontError::NotYet(_))
-    ));
-}
-
-#[test]
-fn leaves_a_recursive_section_after_a_module_whose_declaration_sany_rejects_not_native() {
-    // SANY rejects the declaration of the constant's name, so F == 0 doesn't count down.
-    assert!(matches!(
-        get_report(
-            "exception-constant",
-            "---- MODULE Main ----\nCONSTANT F\nRECURSIVE F\n---- MODULE Inner ----\n====\nF == 0\n====\n",
-        ),
-        Err(FrontError::NotYet(_))
-    ));
-}
-
-#[test]
-fn leaves_a_let_whose_recursive_definitions_are_shaped_otherwise_not_native() {
-    // SANY gives a declared operator parameters of arity zero until its definition sets them, and
-    // an INSTANCE binds where it appears.
-    for source in [
-        "---- MODULE Main ----\nA == LET RECURSIVE F(_)\n         F[x \\in {}] == 0\n     IN 0\n====\n",
-        "---- MODULE Main ----\nA == LET RECURSIVE G(_)\n         G == 1\n     IN 0\n====\n",
-        "---- MODULE Main ----\nA == LET RECURSIVE F(_), K\n         G == F(0)\n         F(H(_)) == 0\n     IN 0\n====\n",
-        "---- MODULE Main ----\nA == LET I == INSTANCE Naturals\n         RECURSIVE I, K\n     IN I\n====\n",
-    ] {
-        assert!(
-            matches!(get_report("reshaped", source), Err(FrontError::NotYet(_))),
-            "{source}"
-        );
-    }
-}

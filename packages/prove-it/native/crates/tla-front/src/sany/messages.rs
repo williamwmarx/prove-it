@@ -87,6 +87,7 @@ const PROVEN_MESSAGES: &[&str] = &[
     "X list has both temporal formula and action as arguments.",
     "X missing for symbol c declared at line 5, col 10 to line 5, col 10 of module X ",
     "X name 'X' does not match the name 'X' of the top level module it contains.",
+    "X name X is incomplete.",
     "X name `f' already defined or declared.",
     "X name import is incomplete.",
     "X not allowed within scope of declaration in nested X/X.",
