@@ -892,6 +892,10 @@ export const checkSpecs = async (
     ...commandLine.slice(0, commandLine.length - args.length),
     ...["-config", "-metadir"].flatMap((name) => {
       const value = parsed.get(name)?.[0];
+      // TLC reports the option's missing value where it reads it, among the other options.
+      if (parsed.has(name) && value === undefined) {
+        throw new TlaUnsupportedError(`${name} without a value`);
+      }
       return value === undefined ? [] : [name, value];
     }),
   ];

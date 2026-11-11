@@ -64,6 +64,13 @@ const DUMP_PART_BYTES: usize = 1 << 20;
 
 const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
 
+/// The system properties that change what SANY's XMLExporter prints: SemanticNode's plain
+/// formulae and SANY's errors on stderr. XMLExporter reads no other property of TLC's.
+const XML_EXPORTER_PROPERTIES: [&str; 2] = [
+    "tla2sany.semantic.SemanticNode.showPlainFormulae",
+    "tla2sany.drivers.SANY.errors2stderr",
+];
+
 /// Runs the command line `args` as TLC (or SANY's XMLExporter) would, writing to `output`, and
 /// returns the exit code.
 pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
@@ -89,7 +96,12 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
             Some(property) => not_native(output, &format!("the system property {property}")),
             None => check_specs(&launch.args, &launch.java, true, output),
         },
-        "tla2sany.xml.XMLExporter" => match &launch.java.unmodelled_property {
+        "tla2sany.xml.XMLExporter" => match launch
+            .java
+            .properties
+            .iter()
+            .find(|name| XML_EXPORTER_PROPERTIES.contains(&name.as_str()))
+        {
             Some(property) => not_native(output, &format!("the system property {property}")),
             // TLC 1.7.4's XMLExporter is retired, and only master's is ported.
             None if launch.java.tlc_version == Some(TlcVersion::V1_7_4) => {

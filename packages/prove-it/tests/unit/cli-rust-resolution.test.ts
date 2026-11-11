@@ -126,3 +126,33 @@ it("finds the config -config names beside an option the binary declines", () =>
     expect(run.status).toBe(12);
     expect(run.stdout).toContain("Error: Invariant Inv is violated by the initial state:");
   }));
+
+// A property of TLC's that SANY doesn't read leaves XMLExporter's XML as it is.
+it("XMLExporter exports with a system property of TLC's that SANY doesn't read", () =>
+  useDirectory("prove-it-xml-property-", (directory) => {
+    writeFileSync(join(directory, "M.tla"), "---- MODULE M ----\nC == 1\n====\n");
+    const run = spawnSync("bun", [CLI, "-Dtlc2.foo=1", "tla2sany.xml.XMLExporter", "-o", "M.tla"], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+    expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 0, stderr: "" });
+    expect(run.stdout).toContain("<uniquename>C</uniquename>");
+  }));
+
+// TLC rejects -config without a file name where it reads it among the other options, which the
+// TypeScript check doesn't order as TLC does, so it declines rather than check another config.
+it("declines -config without a value beside an option the binary declines", () =>
+  useDirectory("prove-it-config-missing-", (directory) => {
+    writeFileSync(
+      join(directory, "Spec.tla"),
+      "---- MODULE Spec ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====\n",
+    );
+    writeFileSync(join(directory, "Spec.cfg"), "INIT Init\nNEXT Next\nVIEW x\n");
+    const run = spawnSync("bun", [CLI, "Spec", "-view", "-config"], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+    expect(run.status).toBe(255);
+    expect(run.stderr).toContain("TlaUnsupportedError: -config without a value");
+    expect(run.stdout).not.toContain("Model checking completed");
+  }));
