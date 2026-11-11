@@ -206,6 +206,34 @@ pub unsafe extern "C" fn prove_it_prove(pointer: *mut u8, length: usize) -> *mut
     }
 }
 
+/// `obligations(file, source, known, encode)`, as prove-it-host's `obligations` describes it.
+///
+/// # Safety
+///
+/// As for `prove_it_check`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prove_it_obligations(pointer: *mut u8, length: usize) -> *mut u8 {
+    unsafe {
+        call(pointer, length, |arguments| {
+            prove_it_host::obligations::obligations(&get::<4>(arguments))
+        })
+    }
+}
+
+/// `fingerprint(file, source, known)`, as prove-it-host's `obligations` describes it.
+///
+/// # Safety
+///
+/// As for `prove_it_check`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prove_it_fingerprint(pointer: *mut u8, length: usize) -> *mut u8 {
+    unsafe {
+        call(pointer, length, |arguments| {
+            prove_it_host::obligations::fingerprint(&get::<3>(arguments))
+        })
+    }
+}
+
 /// `storePerform(name, args)`.
 ///
 /// # Safety
