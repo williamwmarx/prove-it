@@ -498,7 +498,9 @@ fn get_constant_invariants(
     environment: &crate::environment::Environment,
     facts: &crate::dependencies::DefinitionFacts,
 ) -> Vec<(Rc<str>, Option<usize>)> {
-    let predicates = crate::spec::get_constant_predicates(config, environment, facts);
+    // The invariants come first among the startup predicates, before the conjuncts of the
+    // specification.
+    let predicates = crate::spec::get_constant_predicates(config, environment, facts, &[]);
     config
         .invariants
         .iter()

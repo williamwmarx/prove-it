@@ -5,7 +5,7 @@
 //! booleans, integers, strings, model values, records and finite sets of them, and returns `NotYet`
 //! for anything else, which TLC's own evaluation at startup handles.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -115,6 +115,9 @@ pub struct Evaluator<'a> {
     depth: Cell<usize>,
     /// Whether a value it couldn't compute was left to the engine's startup.
     is_deferring: Cell<bool>,
+    /// The constant conjuncts of the specification, by name, whose values it left to the
+    /// engine's startup.
+    deferred_conjuncts: RefCell<Vec<Name>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -131,6 +134,7 @@ impl<'a> Evaluator<'a> {
             is_started,
             depth: Cell::new(0),
             is_deferring: Cell::new(false),
+            deferred_conjuncts: RefCell::new(Vec::new()),
         }
     }
 
@@ -141,6 +145,16 @@ impl<'a> Evaluator<'a> {
 
     pub fn is_deferring(&self) -> bool {
         self.is_deferring.get()
+    }
+
+    /// Leaves the value of a constant conjunct of the specification to the engine's startup.
+    pub fn defer_conjunct(&self, name: Name) {
+        self.defer();
+        self.deferred_conjuncts.borrow_mut().push(name);
+    }
+
+    pub fn deferred_conjuncts(&self) -> Vec<Name> {
+        self.deferred_conjuncts.borrow().clone()
     }
 }
 

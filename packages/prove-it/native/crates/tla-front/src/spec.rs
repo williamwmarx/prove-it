@@ -752,15 +752,31 @@ fn format_config_value(
 }
 
 /// `isConstantTrue`, for a conjunct that is a constant name: TLC drops one that is TRUE, and
-/// rejects the spec for any other value.
+/// rejects the spec for any other value. The engine's startup checks a conjunct of the
+/// specification the evaluator can't compute, which a definition of the root module names.
 fn is_constant_true(
     name: &str,
     item: &Expanded,
     usage: &str,
+    environment: &Environment,
     evaluator: Option<&Evaluator>,
 ) -> Result<bool> {
     let evaluator = evaluator.ok_or_else(|| not_yet("a constant conjunct of the specification"))?;
-    match evaluator.evaluate(&item.expression, item.scope.as_ref())? {
+    let value = match evaluator.evaluate(&item.expression, item.scope.as_ref()) {
+        Err(FrontError::NotYet(_))
+            if usage == "spec"
+                && item.scope.is_none()
+                && !item.expression.is_locally_resolved()
+                && get_definition(name, environment).is_some_and(|definition| {
+                    matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                }) =>
+        {
+            evaluator.defer_conjunct(Rc::from(name));
+            return Ok(true);
+        }
+        value => value?,
+    };
+    match value {
         ConfigValue::Boolean(true) => Ok(true),
         ConfigValue::Boolean(false) => Err(FrontError::Config(format!(
             "The spec is trivially false because {name} is false."
@@ -1039,7 +1055,7 @@ pub fn get_specification(
         match &item.expression.kind {
             ExpressionKind::Identifier { name, .. }
                 if level() == Level::Constant
-                    && is_constant_true(name, &item, "spec", evaluator)? =>
+                    && is_constant_true(name, &item, "spec", environment, evaluator)? =>
             {
                 continue;
             }
@@ -1247,7 +1263,7 @@ pub fn get_properties(
             let conjunct = &item.expression;
             if let ExpressionKind::Identifier { name, .. } = &conjunct.kind
                 && level(conjunct) == Level::Constant
-                && is_constant_true(name, &item, "property", evaluator)?
+                && is_constant_true(name, &item, "property", environment, evaluator)?
             {
                 continue;
             }
@@ -1382,6 +1398,7 @@ pub fn get_constant_predicates(
     config: &crate::config::ModelConfig,
     environment: &Environment,
     facts: &DefinitionFacts,
+    conjuncts: &[Name],
 ) -> Vec<(PredicateForm, &'static str, String, Rc<Definition>)> {
     let named = |form: PredicateForm, kind: &'static str, names: &[String]| {
         names
@@ -1410,9 +1427,11 @@ pub fn get_constant_predicates(
             std::slice::from_ref(name),
         ),
     };
+    let conjuncts: Vec<String> = conjuncts.iter().map(|name| name.to_string()).collect();
     [
         named(PredicateForm::Predicate, "invariant", &config.invariants),
         specification,
+        named(PredicateForm::Conjunct, "spec", &conjuncts),
         named(PredicateForm::Predicate, "property", &config.properties),
         named(PredicateForm::Predicate, "constraint", &config.constraints),
         named(

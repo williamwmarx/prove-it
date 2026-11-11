@@ -20,7 +20,7 @@ use tla_values::fingerprint::{
     Dense, Entries, Fingerprints, Overlaid, Parent, Polynomial, SharedFingerprints,
 };
 use tla_values::random::JavaRandom;
-use tla_values::store::{KIND_SET, Outcome, ShapeJoin, TRUE};
+use tla_values::store::{FALSE, KIND_SET, Outcome, ShapeJoin, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
@@ -2510,6 +2510,13 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         let value = match evaluate(machine) {
             Ok(value) => value,
             Err(bail) if is_engine_limit(bail.0) => return Err(bail),
+            // TLC takes a conjunct of the specification it fails to compute as part of the
+            // initial predicate.
+            Err(_) if *form == PredicateForm::Conjunct => {
+                return Err(Bail(
+                    "unsupported: a constant conjunct of the specification that fails at startup",
+                ));
+            }
             Err(_) => {
                 holding.push(false);
                 continue;
@@ -2526,10 +2533,17 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
             }
         };
         let message = match form {
-            PredicateForm::Predicate if value == TRUE => {
+            PredicateForm::Predicate | PredicateForm::Conjunct if value == TRUE => {
                 holding.push(true);
                 continue;
             }
+            PredicateForm::Conjunct if value == FALSE => {
+                format!("The spec is trivially false because {name} is false.")
+            }
+            PredicateForm::Conjunct => format!(
+                "The operator {name}, which equals {},\ncannot be used as a {kind}",
+                format(machine)?
+            ),
             PredicateForm::Predicate => {
                 format!("The {kind} of {name} is equal to {}", format(machine)?)
             }

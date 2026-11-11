@@ -1169,9 +1169,15 @@ impl<'a> Lowering<'a> {
             .map(|definition| self.get_definition_index(definition))
             .collect();
         let mut predicates = Vec::new();
-        for (form, kind, name, definition) in
-            crate::spec::get_constant_predicates(config, environment, &self.facts)
-        {
+        for (form, kind, name, definition) in crate::spec::get_constant_predicates(
+            config,
+            environment,
+            &self.facts,
+            &self
+                .evaluator
+                .map(crate::eval::Evaluator::deferred_conjuncts)
+                .unwrap_or_default(),
+        ) {
             predicates.push(tla_ir::StartupPredicate {
                 form,
                 kind: self.get_text(kind),

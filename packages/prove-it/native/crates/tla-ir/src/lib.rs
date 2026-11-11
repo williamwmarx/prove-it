@@ -400,6 +400,10 @@ pub enum PredicateForm {
     Definition = 1,
     /// The SPECIFICATION: any value, as "The value of {name} is equal to {value}".
     Specification = 2,
+    /// A constant conjunct of the SPECIFICATION (`processConfigSpec`), which TLC drops where it
+    /// is TRUE: FALSE as "The spec is trivially false because {name} is false.", any other value
+    /// as "The operator {name}, which equals {value},\ncannot be used as a {kind}".
+    Conjunct = 3,
 }
 
 /// The configuration's SYMMETRY: a 0-ary definition whose value is a set of permutations of
