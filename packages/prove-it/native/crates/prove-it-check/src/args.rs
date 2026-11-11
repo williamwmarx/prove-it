@@ -68,8 +68,8 @@ pub fn get_java_launch(args: &[String]) -> Option<Launch> {
                 java,
             });
         } else if let Some(libraries) = arg.strip_prefix("-DTLA-Library=") {
-            java.libraries
-                .extend(libraries.split(PATH_DELIMITER).map(String::from));
+            // Java keeps a system property's last value.
+            java.libraries = libraries.split(PATH_DELIMITER).map(String::from).collect();
         } else if let Some(directory) = arg.strip_prefix("-Djava.io.tmpdir=") {
             java.temporary_directory = Some(directory.into());
         } else if let Some(version) = arg.strip_prefix("-Dtla-ts.tlc=") {
@@ -530,6 +530,14 @@ mod tests {
         assert_eq!(launch.main_class, "tlc2.TLC");
         assert_eq!(launch.args, strings(&["-tool", "Spec"]));
         assert_eq!(launch.java.libraries, strings(&["/a", "/b"]));
+        let last = get_java_launch(&strings(&[
+            &libraries,
+            "-DTLA-Library=/c",
+            "tlc2.TLC",
+            "Spec",
+        ]))
+        .expect("a launch");
+        assert_eq!(last.java.libraries, strings(&["/c"]));
         assert_eq!(launch.java.unmodelled_property, None);
         assert_eq!(get_java_launch(&strings(&["Spec.tla", "-tool"])), None);
         let properties = get_java_launch(&strings(&[
