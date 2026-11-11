@@ -121,6 +121,12 @@ goes on (so far: a nullary `(and)`, `(or)`, `(=)`, whose TS declaration hash rea
 sorts, matching neither Z3 nor any input tlapm writes) must reach `decide` as
 `DecideError::Declined`, so the TypeScript decides it; never as a verdict.
 
+**Reset.** `(reset)` is cmd_context::reset: the parser forgets the declarations, named terms and
+assertions and makes a new manager, whose resource limit counts from 0 while the decision's step
+limit and deadline stay (`smtlib_parser.rs`, `ResourceLimit::restart`). Z3 also forgets the logic,
+and with none set runs another solver than UFNIA's; the port runs UFNIA's on every script, with a
+logic set or not, after a reset as before. Push and pop stay unsupported.
+
 **Recursion.** Where the TS recurses on terms and relies on catching a stack overflow
 (`isStackOverflow` → unknown), the Rust counts depth and returns `SmtError::Unsupported` past a
 fixed depth, before the native stack would overflow on the decision's 256 MB thread.
