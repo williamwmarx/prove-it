@@ -51,6 +51,9 @@ pub struct ModelConfig {
     pub possible: Vec<String>,
     pub periodic: Option<String>,
     pub rl_reward: Option<String>,
+    /// Each entry of the CONSTANT sections as TLC keeps it (`getRawConstants`): its tokens' text,
+    /// one space apart.
+    pub raw_constants: Vec<String>,
 }
 
 impl ModelConfig {
@@ -358,6 +361,8 @@ struct Parser {
     index: usize,
     version: TlcVersion,
     config: ModelConfig,
+    /// The first token of the CONSTANT entry being read.
+    entry_start: Option<usize>,
 }
 
 impl Parser {
@@ -378,6 +383,18 @@ impl Parser {
 
     fn is_keyword(&self, word: &str) -> bool {
         is_keyword(word, self.version)
+    }
+
+    fn record_raw_constant(&mut self, start: usize) {
+        let entry = self.tokens[start..self.index.min(self.tokens.len())]
+            .iter()
+            .map(|token| match token.kind {
+                Kind::String => format!("\"{}\"", token.text),
+                _ => token.text.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.config.raw_constants.push(entry);
     }
 
     fn parse_value(&mut self, token: (Kind, String, u32)) -> Parsed<ConfigValue> {
@@ -452,10 +469,14 @@ impl Parser {
     /// TLC reports a malformed argument list at the line of the CONSTANT keyword.
     fn parse_constants(&mut self, keyword_line: u32) -> Parsed<(Kind, String, u32)> {
         loop {
+            if let Some(start) = self.entry_start.take() {
+                self.record_raw_constant(start);
+            }
             let first = self.advance()?;
             if first.0 == Kind::End || self.is_keyword(&first.1) {
                 return Ok(first);
             }
+            self.entry_start = Some(self.index - 1);
             let mut current = self.advance()?;
             let mut name = first.1;
             while current.1 == "!" {
@@ -610,6 +631,7 @@ pub fn parse_config(source: &str, version: TlcVersion) -> Result<ModelConfig, Co
             check_deadlock: true,
             ..ModelConfig::default()
         },
+        entry_start: None,
     };
     let mut is_deadlock_set = false;
     let mut type_keywords: Vec<String> = Vec::new();

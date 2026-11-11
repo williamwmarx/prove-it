@@ -23,6 +23,7 @@ pub mod printer;
 pub mod proof;
 pub mod ptl;
 pub mod regroup;
+pub mod ship;
 pub mod simplify;
 pub mod smt;
 pub mod source;
@@ -32,3 +33,12 @@ pub mod temporal;
 pub mod tlaps_module;
 pub mod tuples;
 pub mod zenon;
+
+/// Forgets every cache the crate keeps on this thread, as the TypeScript's modules keep theirs, so
+/// that a run after it gives what a fresh process gives.
+pub fn reset_caches() {
+    levels::reset_caches();
+    temporal::reset_caches();
+    prep::normalize::reset_caches();
+    prep::action::reset_caches();
+}

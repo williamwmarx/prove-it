@@ -71,7 +71,6 @@ import { CHECK_COMMAND, type ParsedArgs, USAGE } from "./options";
 import { getNativeSanyReport } from "./sany-text";
 import {
   createModuleLoader,
-  findModuleFile,
   getInputPaths,
   getStandardModulesUrl,
   getToolsJar,
@@ -522,6 +521,27 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
 // files.
 const getTemporaryName = (contents: string) => getTlcFingerprint([contents]).toString();
 
+// Java's File.getAbsolutePath: against the working directory, with repeated separators and a
+// trailing one dropped, and . and .. kept.
+const getJavaAbsolute = (path: string) => {
+  const collapsed = (isAbsolute(path) ? path : `${process.cwd()}/${path}`).replace(/\/{2,}/g, "/");
+  return collapsed.length > 1 ? collapsed.replace(/\/$/, "") : collapsed;
+};
+
+// A path as java.net.URI quotes it in File.toURI: each byte of a character a URI's path doesn't
+// allow as %XX, and characters beyond ASCII but control and space characters as they are.
+const quoteUriPath = (path: string) =>
+  [...path]
+    .map((character) =>
+      /^[A-Za-z0-9\-_.!~*'()/,;:$&+=@]$/.test(character) ||
+      (character > "\u007f" && !/^[\p{Cc}\p{Zs}\p{Zl}\p{Zp}]$/u.test(character))
+        ? character
+        : [...Buffer.from(character, "utf8")]
+            .map((byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)
+            .join(""),
+    )
+    .join("");
+
 // The file TLC's SANY says it parses each module from: the real path of a module's own file, or a
 // copy in a temporary directory of a module from the root module's file or from the jar on the
 // class path, followed by where TLC copied it from.
@@ -538,7 +558,24 @@ export const createFileDescriber = (
   const jar = getToolsJar(java);
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
-    if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
+    // ParseUnit names the file by its real path, and by the URI of the path its resolver made,
+    // through the directory as given, where the two differ. The resolver finds a module in the
+    // working directory, written "", by its name alone.
+    if (origin === "file") {
+      const index =
+        basename(specPath) === fileName
+          ? -1
+          : directories.findIndex((directory) => existsSync(join(directory, fileName)));
+      const given =
+        index === -1
+          ? specPath
+          : directories[index] === ""
+            ? fileName
+            : `${directories[index]}/${fileName}`;
+      const real = realpathSync(index === -1 ? specPath : join(directories[index], fileName));
+      const made = existsSync(given) ? getJavaAbsolute(given) : real;
+      return made === real ? real : `${real} (file:${quoteUriPath(made)})`;
+    }
     // TLC 1.7.4 copies a standard module into the temporary directory itself.
     if (version === "1.7.4") return join(temporaryDirectory, fileName);
     // FileUtil.createTempFile copies a module from the root module's file into the -metadir.
@@ -598,6 +635,7 @@ const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
 
 const checkSpec = async (
   specPath: string,
+  directories: string[],
   args: ParsedArgs,
   java: JavaProperties,
   printer: MessagePrinter,
@@ -701,15 +739,13 @@ const checkSpec = async (
   if (config instanceof TlaConfigError) return printFailure(config);
   if (args.has("-deadlock")) config.checkDeadlock = false;
   const directory = dirname(specPath);
-  const directories = [directory, ...java.libraries];
   const loadModule = createModuleLoader(directories);
   const isRecorded = isTraceRecorded(args, version);
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
   }
   // TLC.handleParameters: SANY names the spec as TLC's arguments do, except that TLC runs from the
-  // directory of a spec given by an absolute path, and names it by its file name. SANY looks for
-  // the spec's modules in the spec's directory and the TLA-Library directories.
+  // directory of a spec given by an absolute path, and names it by its file name.
   const isAbsoluteSpec = isAbsolute(specPath);
   const specName = isAbsoluteSpec ? fileName : specPath.replace(/\.tla$/, "");
   const jar = getToolsJar(java);
@@ -855,6 +891,16 @@ const getSpecPaths = (parsed: ParsedArgs) =>
     .map((input) => input.path);
 
 // TLC also looks for the spec itself in the library directories.
+// SimpleFilenameToStream: the directories TLC finds a spec's modules in, in its order, for the spec
+// at the path it was given. A spec given by an absolute path is found in its directory, which TLC
+// makes its working directory, then on the library path; another in the working directory, written
+// "", then in the directory it was named in, or, named without one, on the library path.
+const getModuleDirectories = (path: string, libraries: string[]) => {
+  const end = path.lastIndexOf("/") + 1;
+  if (end === 0) return ["", ...libraries];
+  return isAbsolute(path) ? [path.slice(0, end), ...libraries] : ["", path.slice(0, end)];
+};
+
 const findSpec = (path: string, java: JavaProperties) =>
   existsSync(path) || isAbsolute(path)
     ? path
@@ -885,10 +931,10 @@ export const checkNatively = async (
   const addon = getNativeAddon();
   if (typeof addon === "string") return undefined;
   const parsed = CHECK_COMMAND.parse(args);
-  const specPaths = [...new Set(getSpecPaths(parsed).map((path) => findSpec(path, java)))];
-  if (specPaths.length !== 1) return undefined;
-  const specPath = specPaths[0];
-  const directories = [dirname(specPath), ...java.libraries];
+  const specPaths = getSpecPaths(parsed);
+  if (new Set(specPaths.map((path) => findSpec(path, java))).size !== 1) return undefined;
+  const specPath = findSpec(specPaths[0], java);
+  const directories = getModuleDirectories(specPaths[0], java.libraries);
   const loadModule = createModuleLoader(directories);
   const describeFile = createFileDescriber(
     specPath,
@@ -951,11 +997,15 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
-  const paths = [...new Set(specPaths.map((path) => findSpec(path, java)))];
+  const paths = [
+    ...new Map(
+      specPaths.map((path) => [findSpec(path, java), getModuleDirectories(path, java.libraries)]),
+    ),
+  ];
   // Each spec is checked as TLC would in a process of its own, so an error in one leaves the others
   // to report. The exit code is the first that is not success.
   const exitCodes: number[] = [];
-  for (const [index, path] of paths.entries()) {
+  for (const [index, [path, directories]] of paths.entries()) {
     if (index > 0) console.log("");
     // TLC checks one spec, so tla-ts names each of several it checks.
     if (paths.length > 1)
@@ -965,7 +1015,9 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       !parsed.has("-nowarning"),
       java.tlcVersion ?? "master",
     );
-    exitCodes.push(await reportErrors(() => checkSpec(path, parsed, java, printer), printer));
+    exitCodes.push(
+      await reportErrors(() => checkSpec(path, directories, parsed, java, printer), printer),
+    );
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
 };

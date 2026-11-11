@@ -24,7 +24,7 @@ pub(crate) const ERROR: i32 = 255;
 use crate::plain::Variable;
 use crate::trace::{
     PostconditionRun, Postconditions, check, format_print, format_texts, get_field_variables,
-    get_partial_variables, get_state_variables,
+    get_partial_variables, get_state_variables, state_values,
 };
 
 /// Where the search stopped on an error: the path to the state it was expanding, as ids of
@@ -65,6 +65,7 @@ struct Report {
 struct PrintedStep {
     label: String,
     variables: Vec<Variable>,
+    values: Vec<Option<String>>,
     output: Vec<String>,
 }
 
@@ -106,6 +107,13 @@ pub fn print_failure(
     }
     if stop.site == Site::Next && stop.reason == "a successor that isn't complete" {
         return print_incomplete(printer, ir, stop, start);
+    }
+    // TLC hands an initial state it fails on to the trace exploration spec's postcondition, which
+    // fails in turn on a variable without a value.
+    if printer.is_trace_recorded && stop.reason == "an initial state that isn't complete" {
+        return Err(
+            "an incomplete initial state the trace exploration spec's postcondition reads".into(),
+        );
     }
     let report = evaluate(ir, stop, printer.is_tool, printer.host.is_plain())?;
     let failure = &report.failure;
@@ -176,6 +184,9 @@ pub fn print_failure(
                 }
             }
             printer.state(position + 1, &step.label, step.variables.clone());
+            printer
+                .recorded_trace
+                .record_state(position + 1, step.values.clone());
         }
     }
     // A successor TLC can't fingerprint fails again as TLC prints it with the trace.
@@ -548,6 +559,7 @@ fn labelled(
                 ),
                 _ => get_state_variables(ir, &state.values, is_plain),
             },
+            values: state_values(ir, &state.values.iter().map(Some).collect::<Vec<_>>()),
             output: state
                 .printed
                 .iter()
@@ -599,10 +611,11 @@ fn print_incomplete(
                 incomplete.action,
                 incomplete.missing,
                 get_partial_variables(ir, &partial, is_plain),
+                state_values(ir, &partial),
             ),
         ))
     })?;
-    let (action, missing, partial) = incomplete;
+    let (action, missing, partial, partial_values) = incomplete;
     let Some(action) = action.and_then(|action| actions.get(action as usize)) else {
         return Err("an incomplete successor of an action the IR lacks".into());
     };
@@ -638,10 +651,14 @@ fn print_incomplete(
     let successor = PrintedStep {
         label: label.to_string(),
         variables: partial,
+        values: partial_values,
         output: Vec::new(),
     };
     for (position, step) in states.into_iter().chain([successor]).enumerate() {
         printer.state(position + 1, &step.label, step.variables);
+        printer
+            .recorded_trace
+            .record_state(position + 1, step.values);
     }
     // TLC counts the incomplete successor as generated, which the search stopped before counting.
     let statistics = Statistics {

@@ -135,7 +135,7 @@ fn reports_a_missing_configuration_as_tlc_does() {
     let out = text(&get(&result, "out"));
     assert_eq!(get(&result, "exitCode"), HostValue::Number(151.0), "{out}");
     assert!(
-        out.contains("the configuration file /specs/Spec.cfg:\nFile not found."),
+        out.contains("the configuration file Spec.cfg:\nFile not found."),
         "{out}"
     );
     // TLC stops before it searches, which the library reports as the error it throws.

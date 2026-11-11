@@ -317,11 +317,13 @@ impl Context {
             }
             return LBool::Undef;
         }
-        if let Some(bool_var) = self.find_bool_var(expr) {
-            return value_of(bool_var);
-        }
+        // get_assignment(expr) answers false for false before it reads the Boolean variable that
+        // false shares with true (smt_context.cpp:1646-1648).
         if expr == m.false_expr {
             return LBool::False;
+        }
+        if let Some(bool_var) = self.find_bool_var(expr) {
+            return value_of(bool_var);
         }
         if expr == m.true_expr {
             return LBool::True;
@@ -613,6 +615,7 @@ impl Context {
         );
         for index in 0..num_args as u32 {
             let root = self.enode_arena.get_arg_root(node, index);
+            self.node_mut(root).set_is_shared(None);
             self.node_mut(root).add_parent(node);
         }
         if self.m.is_unique_value(expr) {

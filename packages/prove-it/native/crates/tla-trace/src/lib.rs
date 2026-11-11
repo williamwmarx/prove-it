@@ -11,6 +11,7 @@
 mod action;
 mod alias;
 mod coverage;
+mod deflate;
 mod dump;
 mod eval;
 mod failure;

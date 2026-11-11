@@ -1,0 +1,13 @@
+.
+-fp
+0
+-workers
+1
+-seed
+5
+-simulate
+num=1
+-depth
+10
+-noTEBin
+M

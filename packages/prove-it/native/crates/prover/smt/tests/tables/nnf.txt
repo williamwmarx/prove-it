@@ -9901,26 +9901,26 @@ fixture ENABLED_INSTANCE_nullary_op_two_vars_test-1.smt
 parsed 1 => - steps=0 asts=176
 nnf 0 => 8:28:2610036934 | (forall (2) (not (distinct (:var 0) (:var 1)))) defs=- fresh=- steps=3 asts=178
 nnf-release => - steps=3 asts=176
-pull 0 => 8:28:2610036934 | (forall (2) (not (distinct (:var 0) (:var 1)))) fresh=- steps=11 asts=178
-infer 0 => patterns=- weight=1 steps=11 asts=178
-infer-pulled 0 => patterns=- steps=11 asts=178
-sharing 0 => 6:26:175657521 | (not (exists (2) (distinct (:var 0) (:var 1)))) fresh=- steps=17 asts=178
-sharing-release => - steps=17 asts=178
-fm 0 => 4:24:2354428253 | (distinct (:var 0) (:var 1)) steps=17 asts=178
-fm-release => - steps=17 asts=178
-refs => 10 1973880121 2621579523 steps=17 asts=178
+pull 0 => 8:28:2610036934 | (forall (2) (not (distinct (:var 0) (:var 1)))) fresh=- steps=11 asts=176
+infer 0 => patterns=- weight=1 steps=11 asts=176
+infer-pulled 0 => patterns=- steps=11 asts=176
+sharing 0 => 6:26:175657521 | (not (exists (2) (distinct (:var 0) (:var 1)))) fresh=- steps=17 asts=176
+sharing-release => - steps=17 asts=176
+fm 0 => 4:24:2354428253 | (distinct (:var 0) (:var 1)) steps=17 asts=176
+fm-release => - steps=17 asts=176
+refs => 10 511489424 877464422 steps=17 asts=176
 fixture ENABLED_INSTANCE_op_with_args_test-1.smt
 parsed 1 => - steps=0 asts=176
 nnf 0 => 8:28:2610036934 | (forall (2) (not (distinct (:var 0) (:var 1)))) defs=- fresh=- steps=3 asts=178
 nnf-release => - steps=3 asts=176
-pull 0 => 8:28:2610036934 | (forall (2) (not (distinct (:var 0) (:var 1)))) fresh=- steps=11 asts=178
-infer 0 => patterns=- weight=1 steps=11 asts=178
-infer-pulled 0 => patterns=- steps=11 asts=178
-sharing 0 => 6:26:175657521 | (not (exists (2) (distinct (:var 0) (:var 1)))) fresh=- steps=17 asts=178
-sharing-release => - steps=17 asts=178
-fm 0 => 4:24:2354428253 | (distinct (:var 0) (:var 1)) steps=17 asts=178
-fm-release => - steps=17 asts=178
-refs => 10 1973880121 2621579523 steps=17 asts=178
+pull 0 => 8:28:2610036934 | (forall (2) (not (distinct (:var 0) (:var 1)))) fresh=- steps=11 asts=176
+infer 0 => patterns=- weight=1 steps=11 asts=176
+infer-pulled 0 => patterns=- steps=11 asts=176
+sharing 0 => 6:26:175657521 | (not (exists (2) (distinct (:var 0) (:var 1)))) fresh=- steps=17 asts=176
+sharing-release => - steps=17 asts=176
+fm 0 => 4:24:2354428253 | (distinct (:var 0) (:var 1)) steps=17 asts=176
+fm-release => - steps=17 asts=176
+refs => 10 511489424 877464422 steps=17 asts=176
 fixture ENABLEDaxioms_test-96.smt
 parsed 5 => - steps=0 asts=233
 nnf 0 => 46:66:488764457 defs=- fresh=smt__z!0 steps=11 asts=241
@@ -10049,7 +10049,7 @@ fm 10 => 71:91:2228680951 | (=> (smt__TLA____Mem (:var 0) smt__TLA____IntSet) (=
 fm 11 => 78:98:3938757288 | (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0))) steps=453 asts=367
 fm 12 => 105:125:2507530168 steps=453 asts=367
 fm-release => - steps=453 asts=367
-refs => 148 3368169928 962010089 steps=453 asts=367
+refs => 148 3368169928 1586318384 steps=453 asts=367
 fixture EWD998PCal_proof-475.smt
 parsed 30 => - steps=0 asts=546
 nnf 0 => 199:219:488764457 defs=- fresh=smt__z!0 steps=11 asts=554
@@ -10423,26 +10423,26 @@ fixture FingerprintVariablesParameters_test-1.smt
 parsed 1 => - steps=0 asts=176
 nnf 0 => 8:28:3776112140 | (forall (1) (not (distinct (:var 0) smt__VARIABLE__x__))) defs=- fresh=- steps=3 asts=178
 nnf-release => - steps=3 asts=176
-pull 0 => 8:28:3776112140 | (forall (1) (not (distinct (:var 0) smt__VARIABLE__x__))) fresh=- steps=11 asts=178
-infer 0 => patterns=- weight=1 steps=11 asts=178
-infer-pulled 0 => patterns=- steps=11 asts=178
-sharing 0 => 6:26:3535515615 | (not (exists (1) (distinct (:var 0) smt__VARIABLE__x__))) fresh=- steps=17 asts=178
-sharing-release => - steps=17 asts=178
-fm 0 => 4:24:1884750159 | (distinct (:var 0) smt__VARIABLE__x__) steps=17 asts=178
-fm-release => - steps=17 asts=178
-refs => 10 1973880121 2621579523 steps=17 asts=178
+pull 0 => 8:28:3776112140 | (forall (1) (not (distinct (:var 0) smt__VARIABLE__x__))) fresh=- steps=11 asts=176
+infer 0 => patterns=- weight=1 steps=11 asts=176
+infer-pulled 0 => patterns=- steps=11 asts=176
+sharing 0 => 6:26:3535515615 | (not (exists (1) (distinct (:var 0) smt__VARIABLE__x__))) fresh=- steps=17 asts=176
+sharing-release => - steps=17 asts=176
+fm 0 => 4:24:1884750159 | (distinct (:var 0) smt__VARIABLE__x__) steps=17 asts=176
+fm-release => - steps=17 asts=176
+refs => 10 511489424 877464422 steps=17 asts=176
 fixture FingerprintVariablesParameters_test-2.smt
 parsed 1 => - steps=0 asts=175
 nnf 0 => 7:27:1265546137 | (forall (1) (not (distinct (:var 0) (:var 0)))) defs=- fresh=- steps=3 asts=177
 nnf-release => - steps=3 asts=175
-pull 0 => 7:27:1265546137 | (forall (1) (not (distinct (:var 0) (:var 0)))) fresh=- steps=11 asts=177
-infer 0 => patterns=- weight=1 steps=11 asts=177
-infer-pulled 0 => patterns=- steps=11 asts=177
-sharing 0 => 5:25:2940519735 | (not (exists (1) (distinct (:var 0) (:var 0)))) fresh=- steps=17 asts=177
-sharing-release => - steps=17 asts=177
-fm 0 => 3:23:979882507 | (distinct (:var 0) (:var 0)) steps=17 asts=177
-fm-release => - steps=17 asts=177
-refs => 9 718636749 1093032469 steps=17 asts=177
+pull 0 => 7:27:1265546137 | (forall (1) (not (distinct (:var 0) (:var 0)))) fresh=- steps=11 asts=175
+infer 0 => patterns=- weight=1 steps=11 asts=175
+infer-pulled 0 => patterns=- steps=11 asts=175
+sharing 0 => 5:25:2940519735 | (not (exists (1) (distinct (:var 0) (:var 0)))) fresh=- steps=17 asts=175
+sharing-release => - steps=17 asts=175
+fm 0 => 3:23:979882507 | (distinct (:var 0) (:var 0)) steps=17 asts=175
+fm-release => - steps=17 asts=175
+refs => 9 721374400 1867269996 steps=17 asts=175
 fixture FiniteSetTheorems_proofs-238.smt
 parsed 15 => - steps=0 asts=317
 nnf 0 => 97:116:488764457 defs=- fresh=smt__z!0 steps=11 asts=325
@@ -10742,70 +10742,70 @@ pull 13 => 92:112:1769576113 | (forall (2) (=> (smt__TLA____Mem (:var 0) (:var 1
 pull 14 => 153:157:2594632369 fresh=- steps=233 asts=358
 pull 15 => 103:123:3833405146 | (forall (1) (smt__TLA____IsSetOf (smt__TLA____SetOf__1__flatnd__1 (:var 0)))) fresh=- steps=241 asts=358
 pull 16 => 107:127:1104676580 | (smt__TLA____Mem smt__CONSTANT__P__ (smt__TLA____SetOf__1__flatnd__1 smt__TLA____Anon__OPAQUE__h68829)) fresh=- steps=245 asts=358
-pull 17 => 142:154:3748160087 fresh=- steps=259 asts=360
-infer 0 => patterns=- weight=1 steps=259 asts=360
-infer-pulled 0 => patterns=- steps=259 asts=360
-infer 1 => patterns=155:155:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 156:156:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) weight=1 steps=259 asts=362
-infer-pulled 1 => patterns=155:155:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 156:156:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) steps=259 asts=362
-infer 2 => patterns=29:48:2179186224 | (pattern (smt__TLA____FunIsafcn (:var 1)) (smt__TLA____FunIsafcn (:var 0))) weight=1 steps=259 asts=360
-infer-pulled 2 => patterns=29:48:2179186224 | (pattern (smt__TLA____FunIsafcn (:var 1)) (smt__TLA____FunIsafcn (:var 0))) steps=259 asts=360
-infer 3 => patterns=157:155:3763066454 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____FunDom (:var 2)))) ; 158:156:4293083566 | (pattern (smt__TLA____FunApp (:var 2) (:var 0))) ; 159:157:4132747524 | (pattern (smt__TLA____FunApp (:var 1) (:var 0))) weight=1 steps=259 asts=363
-infer-pulled 3 => patterns=157:155:3763066454 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____FunDom (:var 2)))) ; 158:156:4293083566 | (pattern (smt__TLA____FunApp (:var 2) (:var 0))) ; 159:157:4132747524 | (pattern (smt__TLA____FunApp (:var 1) (:var 0))) steps=259 asts=363
-infer 4 => patterns=13:32:956437289 | (pattern (smt__TLA____SetExtTrigger (:var 1) (:var 0))) weight=1 steps=259 asts=360
-infer-pulled 4 => patterns=13:32:956437289 | (pattern (smt__TLA____SetExtTrigger (:var 1) (:var 0))) steps=259 asts=360
-infer 5 => patterns=38:58:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=259 asts=360
-infer-pulled 5 => patterns=38:58:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=259 asts=360
-infer 6 => patterns=38:58:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=259 asts=360
-infer-pulled 6 => patterns=38:58:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=259 asts=360
-infer 7 => patterns=48:68:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 160:155:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) weight=1 steps=259 asts=362
-infer-pulled 7 => patterns=48:68:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 160:155:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) steps=259 asts=362
-infer 8 => patterns=161:155:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=259 asts=361
-infer-pulled 8 => patterns=161:155:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) steps=259 asts=361
-infer 9 => patterns=90:110:1964851522 | (pattern (smt__TLA____Anon__h6db5c (:var 0)) (smt__TLA____SetOf__1__flatnd__1 (:var 1))) weight=1 steps=259 asts=360
-infer-pulled 9 => patterns=90:110:1964851522 | (pattern (smt__TLA____Anon__h6db5c (:var 0)) (smt__TLA____SetOf__1__flatnd__1 (:var 1))) steps=259 asts=360
-infer 10 => patterns=98:118:3016300101 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetOf__1__flatnd__1 (:var 1)))) weight=1 steps=259 asts=360
-infer-pulled 10 => patterns=98:118:3016300101 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetOf__1__flatnd__1 (:var 1)))) steps=259 asts=360
-infer 11 => patterns=155:155:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 162:156:2510853715 | (pattern (smt__TLA____Anon__h6db5c (:var 0))) weight=1 steps=259 asts=362
-infer-pulled 11 => patterns=155:155:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 162:156:2510853715 | (pattern (smt__TLA____Anon__h6db5c (:var 0))) steps=259 asts=362
-infer 12 => patterns=102:122:3297233343 | (pattern (smt__TLA____SetOf__1__flatnd__1 (:var 0))) weight=1 steps=259 asts=360
-infer-pulled 12 => patterns=102:122:3297233343 | (pattern (smt__TLA____SetOf__1__flatnd__1 (:var 0))) steps=259 asts=360
-infer 13 => patterns=163:155:4167819104 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____Anon__OPAQUE__h68829)) ; 162:156:2510853715 | (pattern (smt__TLA____Anon__h6db5c (:var 0))) weight=1 steps=259 asts=362
-infer-pulled 13 => patterns=163:155:4167819104 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____Anon__OPAQUE__h68829)) ; 162:156:2510853715 | (pattern (smt__TLA____Anon__h6db5c (:var 0))) steps=259 asts=362
-sharing 0 => 14:33:1846953448 fresh=- steps=277 asts=360
-sharing 1 => 30:49:46278733 fresh=- steps=311 asts=360
-sharing 2 => 34:53:748985693 | (forall (2) (smt__TLA____SetExtTrigger (:var 1) (:var 0))) fresh=- steps=321 asts=360
-sharing 3 => 39:59:3471565510 | (forall (1) (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0))))) fresh=- steps=331 asts=360
-sharing 4 => 42:62:3207522332 | (forall (1) (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet)) fresh=- steps=339 asts=360
-sharing 5 => 49:69:834808944 fresh=- steps=353 asts=360
-sharing 6 => 56:76:2892941244 | (forall (2) (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0)))) fresh=- steps=367 asts=360
-sharing 7 => 68:88:3467665750 | (and (and (and (= smt__STATE__TypeOK__ smt__TLA____Tt__Idv) (= smt__STATE__InvB__ smt__TLA____Tt__Idv)) (= smt__STATE__InvC__ smt__TLA____Tt__Idv)) (= smt__STATE__GFXCorrect__ smt__TLA____Tt__Idv)) fresh=- steps=381 asts=360
-sharing 8 => 70:90:1658692856 | (= smt__ACTION__Next__ smt__TLA____Tt__Idv) fresh=- steps=383 asts=360
-sharing 9 => 73:93:2202203111 | (smt__TLA____Mem smt__CONSTANT__p__ smt__CONSTANT__Proc__) fresh=- steps=385 asts=360
-sharing 10 => 75:95:2404991987 | (= (smt__ACTION__b__ smt__CONSTANT__p__) smt__TLA____Tt__Idv) fresh=- steps=389 asts=360
-sharing 11 => 77:97:422631034 | (smt__TLA____Mem smt__CONSTANT__q__ smt__CONSTANT__Proc__) fresh=- steps=391 asts=360
-sharing 12 => 85:105:2840608222 fresh=- steps=403 asts=360
-sharing 13 => 92:112:1769576113 | (forall (2) (=> (smt__TLA____Mem (:var 0) (:var 1)) (smt__TLA____Mem (smt__TLA____Anon__h6db5c (:var 0)) (smt__TLA____SetOf__1__flatnd__1 (:var 1))))) fresh=- steps=419 asts=360
-sharing 14 => 99:119:1787414844 fresh=- steps=439 asts=360
-sharing 15 => 103:123:3833405146 | (forall (1) (smt__TLA____IsSetOf (smt__TLA____SetOf__1__flatnd__1 (:var 0)))) fresh=- steps=447 asts=360
-sharing 16 => 107:127:1104676580 | (smt__TLA____Mem smt__CONSTANT__P__ (smt__TLA____SetOf__1__flatnd__1 smt__TLA____Anon__OPAQUE__h68829)) fresh=- steps=451 asts=360
-sharing 17 => 112:132:2734300308 fresh=- steps=463 asts=360
-sharing-release => - steps=463 asts=360
-fm 0 => 11:30:2893629368 | (=> (forall (1) (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1)))) (= (:var 1) (:var 0))) steps=463 asts=360
-fm 1 => 8:27:2071546011 | (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1))) steps=463 asts=360
-fm 2 => 28:47:2271610542 steps=463 asts=360
-fm 3 => 25:44:240594910 | (=> (smt__TLA____Mem (:var 0) (smt__TLA____FunDom (:var 2))) (= (smt__TLA____FunApp (:var 2) (:var 0)) (smt__TLA____FunApp (:var 1) (:var 0)))) steps=463 asts=360
-fm 4 => 12:31:873858979 | (smt__TLA____SetExtTrigger (:var 1) (:var 0)) steps=463 asts=360
-fm 5 => 37:57:3185194710 | (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0)))) steps=463 asts=360
-fm 6 => 41:61:239470523 | (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet) steps=463 asts=360
-fm 7 => 47:67:2228680951 | (=> (smt__TLA____Mem (:var 0) smt__TLA____IntSet) (= (:var 0) (smt__TLA____Cast__Int (smt__TLA____Proj__Int (:var 0))))) steps=463 asts=360
-fm 8 => 54:74:3938757288 | (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0))) steps=463 asts=360
-fm 9 => 89:109:3281957891 | (=> (smt__TLA____Mem (:var 0) (:var 1)) (smt__TLA____Mem (smt__TLA____Anon__h6db5c (:var 0)) (smt__TLA____SetOf__1__flatnd__1 (:var 1)))) steps=463 asts=360
-fm 10 => 97:117:1590575456 steps=463 asts=360
-fm 11 => 6:25:1643440767 | (smt__TLA____Mem (:var 0) (:var 2)) ; 94:114:2557225075 | (= (:var 1) (smt__TLA____Anon__h6db5c (:var 0))) steps=463 asts=360
-fm 12 => 101:121:74385135 | (smt__TLA____IsSetOf (smt__TLA____SetOf__1__flatnd__1 (:var 0))) steps=463 asts=360
-fm 13 => 108:128:1919444230 | (smt__TLA____Mem (:var 0) smt__TLA____Anon__OPAQUE__h68829) ; 109:129:300787903 | (= smt__CONSTANT__P__ (smt__TLA____Anon__h6db5c (:var 0))) steps=463 asts=360
-fm-release => - steps=463 asts=360
-refs => 164 1092486374 3076983191 steps=463 asts=360
+pull 17 => 142:154:3748160087 fresh=- steps=259 asts=358
+infer 0 => patterns=- weight=1 steps=259 asts=358
+infer-pulled 0 => patterns=- steps=259 asts=358
+infer 1 => patterns=155:153:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 156:154:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) weight=1 steps=259 asts=360
+infer-pulled 1 => patterns=155:153:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 156:154:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) steps=259 asts=360
+infer 2 => patterns=29:48:2179186224 | (pattern (smt__TLA____FunIsafcn (:var 1)) (smt__TLA____FunIsafcn (:var 0))) weight=1 steps=259 asts=358
+infer-pulled 2 => patterns=29:48:2179186224 | (pattern (smt__TLA____FunIsafcn (:var 1)) (smt__TLA____FunIsafcn (:var 0))) steps=259 asts=358
+infer 3 => patterns=157:153:3763066454 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____FunDom (:var 2)))) ; 158:154:4293083566 | (pattern (smt__TLA____FunApp (:var 2) (:var 0))) ; 159:155:4132747524 | (pattern (smt__TLA____FunApp (:var 1) (:var 0))) weight=1 steps=259 asts=361
+infer-pulled 3 => patterns=157:153:3763066454 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____FunDom (:var 2)))) ; 158:154:4293083566 | (pattern (smt__TLA____FunApp (:var 2) (:var 0))) ; 159:155:4132747524 | (pattern (smt__TLA____FunApp (:var 1) (:var 0))) steps=259 asts=361
+infer 4 => patterns=13:32:956437289 | (pattern (smt__TLA____SetExtTrigger (:var 1) (:var 0))) weight=1 steps=259 asts=358
+infer-pulled 4 => patterns=13:32:956437289 | (pattern (smt__TLA____SetExtTrigger (:var 1) (:var 0))) steps=259 asts=358
+infer 5 => patterns=38:58:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=259 asts=358
+infer-pulled 5 => patterns=38:58:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=259 asts=358
+infer 6 => patterns=38:58:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=259 asts=358
+infer-pulled 6 => patterns=38:58:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=259 asts=358
+infer 7 => patterns=48:68:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 160:153:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) weight=1 steps=259 asts=360
+infer-pulled 7 => patterns=48:68:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 160:153:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) steps=259 asts=360
+infer 8 => patterns=161:153:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=259 asts=359
+infer-pulled 8 => patterns=161:153:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) steps=259 asts=359
+infer 9 => patterns=90:110:1964851522 | (pattern (smt__TLA____Anon__h6db5c (:var 0)) (smt__TLA____SetOf__1__flatnd__1 (:var 1))) weight=1 steps=259 asts=358
+infer-pulled 9 => patterns=90:110:1964851522 | (pattern (smt__TLA____Anon__h6db5c (:var 0)) (smt__TLA____SetOf__1__flatnd__1 (:var 1))) steps=259 asts=358
+infer 10 => patterns=98:118:3016300101 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetOf__1__flatnd__1 (:var 1)))) weight=1 steps=259 asts=358
+infer-pulled 10 => patterns=98:118:3016300101 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetOf__1__flatnd__1 (:var 1)))) steps=259 asts=358
+infer 11 => patterns=155:153:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 162:154:2510853715 | (pattern (smt__TLA____Anon__h6db5c (:var 0))) weight=1 steps=259 asts=360
+infer-pulled 11 => patterns=155:153:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 162:154:2510853715 | (pattern (smt__TLA____Anon__h6db5c (:var 0))) steps=259 asts=360
+infer 12 => patterns=102:122:3297233343 | (pattern (smt__TLA____SetOf__1__flatnd__1 (:var 0))) weight=1 steps=259 asts=358
+infer-pulled 12 => patterns=102:122:3297233343 | (pattern (smt__TLA____SetOf__1__flatnd__1 (:var 0))) steps=259 asts=358
+infer 13 => patterns=163:153:4167819104 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____Anon__OPAQUE__h68829)) ; 162:154:2510853715 | (pattern (smt__TLA____Anon__h6db5c (:var 0))) weight=1 steps=259 asts=360
+infer-pulled 13 => patterns=163:153:4167819104 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____Anon__OPAQUE__h68829)) ; 162:154:2510853715 | (pattern (smt__TLA____Anon__h6db5c (:var 0))) steps=259 asts=360
+sharing 0 => 14:33:1846953448 fresh=- steps=277 asts=358
+sharing 1 => 30:49:46278733 fresh=- steps=311 asts=358
+sharing 2 => 34:53:748985693 | (forall (2) (smt__TLA____SetExtTrigger (:var 1) (:var 0))) fresh=- steps=321 asts=358
+sharing 3 => 39:59:3471565510 | (forall (1) (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0))))) fresh=- steps=331 asts=358
+sharing 4 => 42:62:3207522332 | (forall (1) (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet)) fresh=- steps=339 asts=358
+sharing 5 => 49:69:834808944 fresh=- steps=353 asts=358
+sharing 6 => 56:76:2892941244 | (forall (2) (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0)))) fresh=- steps=367 asts=358
+sharing 7 => 68:88:3467665750 | (and (and (and (= smt__STATE__TypeOK__ smt__TLA____Tt__Idv) (= smt__STATE__InvB__ smt__TLA____Tt__Idv)) (= smt__STATE__InvC__ smt__TLA____Tt__Idv)) (= smt__STATE__GFXCorrect__ smt__TLA____Tt__Idv)) fresh=- steps=381 asts=358
+sharing 8 => 70:90:1658692856 | (= smt__ACTION__Next__ smt__TLA____Tt__Idv) fresh=- steps=383 asts=358
+sharing 9 => 73:93:2202203111 | (smt__TLA____Mem smt__CONSTANT__p__ smt__CONSTANT__Proc__) fresh=- steps=385 asts=358
+sharing 10 => 75:95:2404991987 | (= (smt__ACTION__b__ smt__CONSTANT__p__) smt__TLA____Tt__Idv) fresh=- steps=389 asts=358
+sharing 11 => 77:97:422631034 | (smt__TLA____Mem smt__CONSTANT__q__ smt__CONSTANT__Proc__) fresh=- steps=391 asts=358
+sharing 12 => 85:105:2840608222 fresh=- steps=403 asts=358
+sharing 13 => 92:112:1769576113 | (forall (2) (=> (smt__TLA____Mem (:var 0) (:var 1)) (smt__TLA____Mem (smt__TLA____Anon__h6db5c (:var 0)) (smt__TLA____SetOf__1__flatnd__1 (:var 1))))) fresh=- steps=419 asts=358
+sharing 14 => 99:119:1787414844 fresh=- steps=439 asts=358
+sharing 15 => 103:123:3833405146 | (forall (1) (smt__TLA____IsSetOf (smt__TLA____SetOf__1__flatnd__1 (:var 0)))) fresh=- steps=447 asts=358
+sharing 16 => 107:127:1104676580 | (smt__TLA____Mem smt__CONSTANT__P__ (smt__TLA____SetOf__1__flatnd__1 smt__TLA____Anon__OPAQUE__h68829)) fresh=- steps=451 asts=358
+sharing 17 => 112:132:2734300308 fresh=- steps=463 asts=358
+sharing-release => - steps=463 asts=358
+fm 0 => 11:30:2893629368 | (=> (forall (1) (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1)))) (= (:var 1) (:var 0))) steps=463 asts=358
+fm 1 => 8:27:2071546011 | (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1))) steps=463 asts=358
+fm 2 => 28:47:2271610542 steps=463 asts=358
+fm 3 => 25:44:240594910 | (=> (smt__TLA____Mem (:var 0) (smt__TLA____FunDom (:var 2))) (= (smt__TLA____FunApp (:var 2) (:var 0)) (smt__TLA____FunApp (:var 1) (:var 0)))) steps=463 asts=358
+fm 4 => 12:31:873858979 | (smt__TLA____SetExtTrigger (:var 1) (:var 0)) steps=463 asts=358
+fm 5 => 37:57:3185194710 | (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0)))) steps=463 asts=358
+fm 6 => 41:61:239470523 | (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet) steps=463 asts=358
+fm 7 => 47:67:2228680951 | (=> (smt__TLA____Mem (:var 0) smt__TLA____IntSet) (= (:var 0) (smt__TLA____Cast__Int (smt__TLA____Proj__Int (:var 0))))) steps=463 asts=358
+fm 8 => 54:74:3938757288 | (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0))) steps=463 asts=358
+fm 9 => 89:109:3281957891 | (=> (smt__TLA____Mem (:var 0) (:var 1)) (smt__TLA____Mem (smt__TLA____Anon__h6db5c (:var 0)) (smt__TLA____SetOf__1__flatnd__1 (:var 1)))) steps=463 asts=358
+fm 10 => 97:117:1590575456 steps=463 asts=358
+fm 11 => 6:25:1643440767 | (smt__TLA____Mem (:var 0) (:var 2)) ; 94:114:2557225075 | (= (:var 1) (smt__TLA____Anon__h6db5c (:var 0))) steps=463 asts=358
+fm 12 => 101:121:74385135 | (smt__TLA____IsSetOf (smt__TLA____SetOf__1__flatnd__1 (:var 0))) steps=463 asts=358
+fm 13 => 108:128:1919444230 | (smt__TLA____Mem (:var 0) smt__TLA____Anon__OPAQUE__h68829) ; 109:129:300787903 | (= smt__CONSTANT__P__ (smt__TLA____Anon__h6db5c (:var 0))) steps=463 asts=358
+fm-release => - steps=463 asts=358
+refs => 164 4219096269 4208778234 steps=463 asts=358
 fixture NaturalsInduction_proofs-228.smt
 parsed 21 => - steps=0 asts=363
 nnf 0 => 143:163:488764457 defs=- fresh=smt__z!0 steps=11 asts=371
@@ -10985,109 +10985,109 @@ pull 22 => 278:243:3626046039 fresh=- steps=453 asts=474
 pull 23 => 173:192:2360249211 | (= smt__VARIABLE__pc__ smt__TLA____StrLit__a) fresh=- steps=455 asts=474
 pull 24 => 176:195:2522684370 | (= smt__VARIABLE__seq0____prime smt__VARIABLE__seq0__) fresh=- steps=457 asts=474
 pull 25 => 125:144:2996632726 | (not (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ smt__VARIABLE__U__ smt__TLA____SetEnum__0)) fresh=- steps=461 asts=474
-pull 26 => 287:281:2657062984 fresh=- steps=539 asts=485
-infer 0 => patterns=- weight=1 steps=539 asts=485
-infer-pulled 0 => patterns=- steps=539 asts=485
-infer 1 => patterns=289:282:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 290:283:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) weight=1 steps=539 asts=487
-infer-pulled 1 => patterns=289:282:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 290:283:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) steps=539 asts=487
-infer 2 => patterns=19:38:397564199 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____Cup (:var 2) (:var 1)))) weight=1 steps=539 asts=485
-infer-pulled 2 => patterns=19:38:397564199 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____Cup (:var 2) (:var 1)))) steps=539 asts=485
-infer 3 => patterns=28:47:2676376757 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetMinus (:var 2) (:var 1)))) weight=1 steps=539 asts=485
-infer-pulled 3 => patterns=28:47:2676376757 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetMinus (:var 2) (:var 1)))) steps=539 asts=485
-infer 4 => patterns=40:59:1692720587 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____IntRange (:var 2) (:var 1)))) weight=1 steps=539 asts=485
-infer-pulled 4 => patterns=40:59:1692720587 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____IntRange (:var 2) (:var 1)))) steps=539 asts=485
-infer 5 => patterns=44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) weight=1 steps=539 asts=485
-infer-pulled 5 => patterns=44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) steps=539 asts=485
-infer 6 => patterns=50:69:2699141327 | (pattern (smt__TLA____SetEnum__2 (:var 1) (:var 0))) weight=1 steps=539 asts=485
-infer-pulled 6 => patterns=50:69:2699141327 | (pattern (smt__TLA____SetEnum__2 (:var 1) (:var 0))) steps=539 asts=485
-infer 7 => patterns=55:74:1938487351 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____SetEnum__0)) weight=1 steps=539 asts=485
-infer-pulled 7 => patterns=55:74:1938487351 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____SetEnum__0)) steps=539 asts=485
-infer 8 => patterns=61:80:3675626703 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 1)))) weight=1 steps=539 asts=485
-infer-pulled 8 => patterns=61:80:3675626703 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 1)))) steps=539 asts=485
-infer 9 => patterns=68:87:1152501758 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 2) (:var 1)))) weight=1 steps=539 asts=485
-infer-pulled 9 => patterns=68:87:1152501758 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 2) (:var 1)))) steps=539 asts=485
-infer 10 => patterns=79:99:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=485
-infer-pulled 10 => patterns=79:99:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=539 asts=485
-infer 11 => patterns=79:99:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=485
-infer-pulled 11 => patterns=79:99:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=539 asts=485
-infer 12 => patterns=87:107:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 291:282:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) weight=1 steps=539 asts=487
-infer-pulled 12 => patterns=87:107:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 291:282:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) steps=539 asts=487
-infer 13 => patterns=292:282:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=487
-infer-pulled 13 => patterns=292:282:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) ; 293:283:2041597816 | (pattern (+ (:var 1) (:var 0))) steps=539 asts=489
-infer 14 => patterns=292:282:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=487
-infer-pulled 14 => patterns=292:282:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) ; 294:283:323238100 | (pattern (- (:var 1) (:var 0))) steps=539 asts=489
-infer 15 => patterns=292:282:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=487
-infer-pulled 15 => patterns=292:282:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) steps=539 asts=487
-infer 16 => patterns=110:130:158947675 | (pattern (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ (:var 1) (:var 0))) weight=1 steps=539 asts=485
-infer-pulled 16 => patterns=110:130:158947675 | (pattern (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ (:var 1) (:var 0))) steps=539 asts=485
-infer 17 => patterns=13:32:956437289 | (pattern (smt__TLA____SetExtTrigger (:var 1) (:var 0))) weight=1 steps=539 asts=485
-infer-pulled 17 => patterns=13:32:956437289 | (pattern (smt__TLA____SetExtTrigger (:var 1) (:var 0))) steps=539 asts=485
-infer 18 => patterns=299:220:1818975129 | (pattern (smt__TLA____Mem (:var 0) smt__VARIABLE__U__)) ; 300:222:3200347529 | (pattern (smt__CONSTANT__Cardinality__ (:var 0))) ; 44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) ; 301:230:3995935581 | (pattern (smt__CONSTANT__Min__ (:var 0))) ; 302:231:432684198 | (pattern (smt__CONSTANT__Max__ (:var 0))) weight=1 steps=539 asts=491
-infer-pulled 18 => patterns=299:283:1818975129 | (pattern (smt__TLA____Mem (:var 0) smt__VARIABLE__U__)) ; 300:231:3200347529 | (pattern (smt__CONSTANT__Cardinality__ (:var 0))) ; 44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) ; 301:243:3995935581 | (pattern (smt__CONSTANT__Min__ (:var 0))) ; 302:215:432684198 | (pattern (smt__CONSTANT__Max__ (:var 0))) steps=539 asts=491
-infer 19 => patterns=310:230:2771924505 ; 311:255:2143475656 | (pattern (smt__CONSTANT__Partitions__ (:var 1) (:var 0) smt__VARIABLE__seq__)) ; 312:257:496855199 | (pattern (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (:var 0))) ; 313:244:818156963 | (pattern (smt__TLA____IntPlus (:var 0) (smt__TLA____Cast__Int 1))) weight=1 steps=539 asts=492
-infer-pulled 19 => patterns=310:215:2771924505 ; 311:243:2143475656 | (pattern (smt__CONSTANT__Partitions__ (:var 1) (:var 0) smt__VARIABLE__seq__)) ; 312:222:496855199 | (pattern (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (:var 0))) ; 313:282:818156963 | (pattern (smt__TLA____IntPlus (:var 0) (smt__TLA____Cast__Int 1))) steps=539 asts=492
-infer 20 => patterns=314:215:4278596409 | (pattern (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__))) weight=1 steps=539 asts=486
-infer-pulled 20 => patterns=314:215:4278596409 | (pattern (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__))) steps=539 asts=486
-infer 21 => patterns=299:222:1818975129 | (pattern (smt__TLA____Mem (:var 0) smt__VARIABLE__U__)) ; 300:255:3200347529 | (pattern (smt__CONSTANT__Cardinality__ (:var 0))) ; 44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) ; 301:282:3995935581 | (pattern (smt__CONSTANT__Min__ (:var 0))) ; 302:220:432684198 | (pattern (smt__CONSTANT__Max__ (:var 0))) weight=1 steps=539 asts=491
-infer-pulled 21 => patterns=299:230:1818975129 | (pattern (smt__TLA____Mem (:var 0) smt__VARIABLE__U__)) ; 300:220:3200347529 | (pattern (smt__CONSTANT__Cardinality__ (:var 0))) ; 44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) ; 301:243:3995935581 | (pattern (smt__CONSTANT__Min__ (:var 0))) ; 302:283:432684198 | (pattern (smt__CONSTANT__Max__ (:var 0))) steps=539 asts=491
-infer 22 => patterns=310:231:2771924505 ; 311:257:2143475656 | (pattern (smt__CONSTANT__Partitions__ (:var 1) (:var 0) smt__VARIABLE__seq__)) ; 312:244:496855199 | (pattern (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (:var 0))) ; 313:258:818156963 | (pattern (smt__TLA____IntPlus (:var 0) (smt__TLA____Cast__Int 1))) weight=1 steps=539 asts=492
-infer-pulled 22 => patterns=310:243:2771924505 ; 311:255:2143475656 | (pattern (smt__CONSTANT__Partitions__ (:var 1) (:var 0) smt__VARIABLE__seq__)) ; 312:215:496855199 | (pattern (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (:var 0))) ; 313:282:818156963 | (pattern (smt__TLA____IntPlus (:var 0) (smt__TLA____Cast__Int 1))) steps=539 asts=492
-infer 23 => patterns=314:243:4278596409 | (pattern (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__))) weight=1 steps=539 asts=486
-infer-pulled 23 => patterns=314:243:4278596409 | (pattern (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__))) steps=539 asts=486
-sharing 0 => 14:33:1846953448 fresh=- steps=557 asts=485
-sharing 1 => 22:41:769557270 | (forall (3) (= (smt__TLA____Mem (:var 0) (smt__TLA____Cup (:var 2) (:var 1))) (or (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1))))) fresh=- steps=577 asts=485
-sharing 2 => 31:50:2031471566 fresh=- steps=599 asts=485
-sharing 3 => 41:60:1246123077 fresh=- steps=617 asts=485
-sharing 4 => 45:64:1695870060 | (forall (1) (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 0)))) fresh=- steps=625 asts=485
-sharing 5 => 51:70:2202486724 | (forall (2) (and (smt__TLA____Mem (:var 1) (smt__TLA____SetEnum__2 (:var 1) (:var 0))) (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 1) (:var 0))))) fresh=- steps=637 asts=485
-sharing 6 => 56:75:1637739353 | (forall (1) (not (smt__TLA____Mem (:var 0) smt__TLA____SetEnum__0))) fresh=- steps=645 asts=485
-sharing 7 => 62:81:3554076367 | (forall (2) (=> (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 1))) (= (:var 0) (:var 1)))) fresh=- steps=657 asts=485
-sharing 8 => 69:88:3065308942 | (forall (3) (=> (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 2) (:var 1))) (or (= (:var 0) (:var 2)) (= (:var 0) (:var 1))))) fresh=- steps=673 asts=485
-sharing 9 => 72:91:2237250423 | (smt__TLA____Mem smt__TLA____StrLit__Done smt__TLA____StrSet) fresh=- steps=675 asts=485
-sharing 10 => 74:93:4102243945 | (smt__TLA____Mem smt__TLA____StrLit__a smt__TLA____StrSet) fresh=- steps=677 asts=485
-sharing 11 => 75:94:68528727 | (distinct smt__TLA____StrLit__Done smt__TLA____StrLit__a) fresh=- steps=679 asts=485
-sharing 12 => 80:100:3471565510 | (forall (1) (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0))))) fresh=- steps=689 asts=485
-sharing 13 => 82:102:3207522332 | (forall (1) (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet)) fresh=- steps=697 asts=485
-sharing 14 => 88:108:834808944 fresh=- steps=711 asts=485
-sharing 15 => 96:116:2303557749 | (forall (2) (= (smt__TLA____IntPlus (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (smt__TLA____Cast__Int (+ (:var 1) (:var 0))))) fresh=- steps=727 asts=485
-sharing 16 => 102:122:641746493 | (forall (2) (= (smt__TLA____IntMinus (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (smt__TLA____Cast__Int (- (:var 1) (:var 0))))) fresh=- steps=743 asts=485
-sharing 17 => 107:127:2892941244 | (forall (2) (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0)))) fresh=- steps=757 asts=485
-sharing 18 => 111:131:3770744328 | (forall (2) (= (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ (:var 1) (:var 0)) (= (:var 1) (:var 0)))) fresh=- steps=767 asts=485
-sharing 19 => 112:132:1978873499 | (forall (2) (smt__TLA____SetExtTrigger (:var 1) (:var 0))) fresh=- steps=775 asts=485
-sharing 20 => 116:135:3720740087 | (= smt__STATE__Inv__ smt__TLA____Tt__Idv) fresh=- steps=777 asts=485
-sharing 21 => 122:141:377275855 | (or (= smt__ACTION__Next__ smt__TLA____Tt__Idv) (= smt__TLA____Anon__OPAQUE__h6fbaa smt__STATE__vars__)) fresh=- steps=783 asts=485
-sharing 22 => 171:190:1617493280 fresh=- steps=877 asts=485
-sharing 23 => 173:192:2360249211 | (= smt__VARIABLE__pc__ smt__TLA____StrLit__a) fresh=- steps=879 asts=485
-sharing 24 => 176:195:2522684370 | (= smt__VARIABLE__seq0____prime smt__VARIABLE__seq0__) fresh=- steps=881 asts=485
-sharing 25 => 125:144:2996632726 | (not (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ smt__VARIABLE__U__ smt__TLA____SetEnum__0)) fresh=- steps=885 asts=485
-sharing 26 => 188:207:1078399943 fresh=- steps=961 asts=485
-sharing-release => - steps=961 asts=485
-fm 0 => 11:30:2893629368 | (=> (forall (1) (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1)))) (= (:var 1) (:var 0))) steps=961 asts=485
-fm 1 => 8:27:2071546011 | (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1))) steps=961 asts=485
-fm 2 => 18:37:2499943588 | (= (smt__TLA____Mem (:var 0) (smt__TLA____Cup (:var 2) (:var 1))) (or (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1)))) steps=961 asts=485
-fm 3 => 27:46:746957897 | (= (smt__TLA____Mem (:var 0) (smt__TLA____SetMinus (:var 2) (:var 1))) (and (smt__TLA____Mem (:var 0) (:var 2)) (not (smt__TLA____Mem (:var 0) (:var 1))))) steps=961 asts=485
-fm 4 => 39:58:1154480798 steps=961 asts=485
-fm 5 => 43:62:1020032609 | (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 0))) steps=961 asts=485
-fm 6 => 47:66:1430244508 | (smt__TLA____Mem (:var 1) (smt__TLA____SetEnum__2 (:var 1) (:var 0))) ; 48:67:1845712882 | (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 1) (:var 0))) steps=961 asts=485
-fm 7 => 54:73:303422392 | (not (smt__TLA____Mem (:var 0) smt__TLA____SetEnum__0)) steps=961 asts=485
-fm 8 => 60:79:1470676645 | (=> (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 1))) (= (:var 0) (:var 1))) steps=961 asts=485
-fm 9 => 67:86:1472578495 | (=> (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 2) (:var 1))) (or (= (:var 0) (:var 2)) (= (:var 0) (:var 1)))) steps=961 asts=485
-fm 10 => 78:98:3185194710 | (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0)))) steps=961 asts=485
-fm 11 => 81:101:239470523 | (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet) steps=961 asts=485
-fm 12 => 86:106:2228680951 | (=> (smt__TLA____Mem (:var 0) smt__TLA____IntSet) (= (:var 0) (smt__TLA____Cast__Int (smt__TLA____Proj__Int (:var 0))))) steps=961 asts=485
-fm 13 => 94:114:833238700 | (= (smt__TLA____IntPlus (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (smt__TLA____Cast__Int (+ (:var 1) (:var 0)))) steps=961 asts=485
-fm 14 => 100:120:1631976988 | (= (smt__TLA____IntMinus (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (smt__TLA____Cast__Int (- (:var 1) (:var 0)))) steps=961 asts=485
-fm 15 => 105:125:3938757288 | (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0))) steps=961 asts=485
-fm 16 => 109:129:3327827553 | (= (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ (:var 1) (:var 0)) (= (:var 1) (:var 0))) steps=961 asts=485
-fm 17 => 12:31:873858979 | (smt__TLA____SetExtTrigger (:var 1) (:var 0)) steps=961 asts=485
-fm 18 => 126:145:1225845418 | (smt__TLA____Mem (:var 0) smt__VARIABLE__U__) ; 161:180:47690226 steps=961 asts=485
-fm 19 => 142:161:290670396 | (smt__TLA____Mem (:var 0) (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (smt__TLA____IntMinus (smt__CONSTANT__Max__ (:var 1)) (smt__TLA____Cast__Int 1)))) ; 158:177:889810432 steps=961 asts=485
-fm 20 => 144:163:1721927276 | (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__)) ; 156:175:1612231062 steps=961 asts=485
-fm 21 => 126:145:1225845418 | (smt__TLA____Mem (:var 0) smt__VARIABLE__U__) ; 185:204:270886504 steps=961 asts=485
-fm 22 => 142:161:290670396 | (smt__TLA____Mem (:var 0) (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (smt__TLA____IntMinus (smt__CONSTANT__Max__ (:var 1)) (smt__TLA____Cast__Int 1)))) ; 182:201:1034220685 steps=961 asts=485
-fm 23 => 144:163:1721927276 | (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__)) ; 180:199:2002304014 steps=961 asts=485
-fm-release => - steps=961 asts=485
-refs => 316 1210755634 39618224 steps=961 asts=485
+pull 26 => 287:281:2657062984 fresh=- steps=539 asts=474
+infer 0 => patterns=- weight=1 steps=539 asts=474
+infer-pulled 0 => patterns=- steps=539 asts=474
+infer 1 => patterns=289:271:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 290:272:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) weight=1 steps=539 asts=476
+infer-pulled 1 => patterns=289:271:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 290:272:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) steps=539 asts=476
+infer 2 => patterns=19:38:397564199 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____Cup (:var 2) (:var 1)))) weight=1 steps=539 asts=474
+infer-pulled 2 => patterns=19:38:397564199 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____Cup (:var 2) (:var 1)))) steps=539 asts=474
+infer 3 => patterns=28:47:2676376757 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetMinus (:var 2) (:var 1)))) weight=1 steps=539 asts=474
+infer-pulled 3 => patterns=28:47:2676376757 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetMinus (:var 2) (:var 1)))) steps=539 asts=474
+infer 4 => patterns=40:59:1692720587 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____IntRange (:var 2) (:var 1)))) weight=1 steps=539 asts=474
+infer-pulled 4 => patterns=40:59:1692720587 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____IntRange (:var 2) (:var 1)))) steps=539 asts=474
+infer 5 => patterns=44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) weight=1 steps=539 asts=474
+infer-pulled 5 => patterns=44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) steps=539 asts=474
+infer 6 => patterns=50:69:2699141327 | (pattern (smt__TLA____SetEnum__2 (:var 1) (:var 0))) weight=1 steps=539 asts=474
+infer-pulled 6 => patterns=50:69:2699141327 | (pattern (smt__TLA____SetEnum__2 (:var 1) (:var 0))) steps=539 asts=474
+infer 7 => patterns=55:74:1938487351 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____SetEnum__0)) weight=1 steps=539 asts=474
+infer-pulled 7 => patterns=55:74:1938487351 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____SetEnum__0)) steps=539 asts=474
+infer 8 => patterns=61:80:3675626703 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 1)))) weight=1 steps=539 asts=474
+infer-pulled 8 => patterns=61:80:3675626703 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 1)))) steps=539 asts=474
+infer 9 => patterns=68:87:1152501758 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 2) (:var 1)))) weight=1 steps=539 asts=474
+infer-pulled 9 => patterns=68:87:1152501758 | (pattern (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 2) (:var 1)))) steps=539 asts=474
+infer 10 => patterns=79:99:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=474
+infer-pulled 10 => patterns=79:99:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=539 asts=474
+infer 11 => patterns=79:99:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=474
+infer-pulled 11 => patterns=79:99:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=539 asts=474
+infer 12 => patterns=87:107:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 291:271:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) weight=1 steps=539 asts=476
+infer-pulled 12 => patterns=87:107:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 291:271:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) steps=539 asts=476
+infer 13 => patterns=292:271:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=476
+infer-pulled 13 => patterns=292:271:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) ; 293:272:2041597816 | (pattern (+ (:var 1) (:var 0))) steps=539 asts=478
+infer 14 => patterns=292:271:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=476
+infer-pulled 14 => patterns=292:271:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) ; 294:272:323238100 | (pattern (- (:var 1) (:var 0))) steps=539 asts=478
+infer 15 => patterns=292:271:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=539 asts=476
+infer-pulled 15 => patterns=292:271:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) steps=539 asts=476
+infer 16 => patterns=110:130:158947675 | (pattern (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ (:var 1) (:var 0))) weight=1 steps=539 asts=474
+infer-pulled 16 => patterns=110:130:158947675 | (pattern (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ (:var 1) (:var 0))) steps=539 asts=474
+infer 17 => patterns=13:32:956437289 | (pattern (smt__TLA____SetExtTrigger (:var 1) (:var 0))) weight=1 steps=539 asts=474
+infer-pulled 17 => patterns=13:32:956437289 | (pattern (smt__TLA____SetExtTrigger (:var 1) (:var 0))) steps=539 asts=474
+infer 18 => patterns=299:274:1818975129 | (pattern (smt__TLA____Mem (:var 0) smt__VARIABLE__U__)) ; 300:275:3200347529 | (pattern (smt__CONSTANT__Cardinality__ (:var 0))) ; 44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) ; 301:276:3995935581 | (pattern (smt__CONSTANT__Min__ (:var 0))) ; 302:277:432684198 | (pattern (smt__CONSTANT__Max__ (:var 0))) weight=1 steps=539 asts=480
+infer-pulled 18 => patterns=299:272:1818975129 | (pattern (smt__TLA____Mem (:var 0) smt__VARIABLE__U__)) ; 300:277:3200347529 | (pattern (smt__CONSTANT__Cardinality__ (:var 0))) ; 44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) ; 301:273:3995935581 | (pattern (smt__CONSTANT__Min__ (:var 0))) ; 302:279:432684198 | (pattern (smt__CONSTANT__Max__ (:var 0))) steps=539 asts=480
+infer 19 => patterns=310:276:2771924505 ; 311:278:2143475656 | (pattern (smt__CONSTANT__Partitions__ (:var 1) (:var 0) smt__VARIABLE__seq__)) ; 312:280:496855199 | (pattern (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (:var 0))) ; 313:281:818156963 | (pattern (smt__TLA____IntPlus (:var 0) (smt__TLA____Cast__Int 1))) weight=1 steps=539 asts=481
+infer-pulled 19 => patterns=310:279:2771924505 ; 311:273:2143475656 | (pattern (smt__CONSTANT__Partitions__ (:var 1) (:var 0) smt__VARIABLE__seq__)) ; 312:275:496855199 | (pattern (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (:var 0))) ; 313:271:818156963 | (pattern (smt__TLA____IntPlus (:var 0) (smt__TLA____Cast__Int 1))) steps=539 asts=481
+infer 20 => patterns=314:279:4278596409 | (pattern (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__))) weight=1 steps=539 asts=475
+infer-pulled 20 => patterns=314:279:4278596409 | (pattern (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__))) steps=539 asts=475
+infer 21 => patterns=299:275:1818975129 | (pattern (smt__TLA____Mem (:var 0) smt__VARIABLE__U__)) ; 300:278:3200347529 | (pattern (smt__CONSTANT__Cardinality__ (:var 0))) ; 44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) ; 301:271:3995935581 | (pattern (smt__CONSTANT__Min__ (:var 0))) ; 302:274:432684198 | (pattern (smt__CONSTANT__Max__ (:var 0))) weight=1 steps=539 asts=480
+infer-pulled 21 => patterns=299:276:1818975129 | (pattern (smt__TLA____Mem (:var 0) smt__VARIABLE__U__)) ; 300:274:3200347529 | (pattern (smt__CONSTANT__Cardinality__ (:var 0))) ; 44:63:3715983166 | (pattern (smt__TLA____SetEnum__1 (:var 0))) ; 301:273:3995935581 | (pattern (smt__CONSTANT__Min__ (:var 0))) ; 302:272:432684198 | (pattern (smt__CONSTANT__Max__ (:var 0))) steps=539 asts=480
+infer 22 => patterns=310:277:2771924505 ; 311:280:2143475656 | (pattern (smt__CONSTANT__Partitions__ (:var 1) (:var 0) smt__VARIABLE__seq__)) ; 312:281:496855199 | (pattern (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (:var 0))) ; 313:282:818156963 | (pattern (smt__TLA____IntPlus (:var 0) (smt__TLA____Cast__Int 1))) weight=1 steps=539 asts=481
+infer-pulled 22 => patterns=310:273:2771924505 ; 311:278:2143475656 | (pattern (smt__CONSTANT__Partitions__ (:var 1) (:var 0) smt__VARIABLE__seq__)) ; 312:279:496855199 | (pattern (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (:var 0))) ; 313:271:818156963 | (pattern (smt__TLA____IntPlus (:var 0) (smt__TLA____Cast__Int 1))) steps=539 asts=481
+infer 23 => patterns=314:273:4278596409 | (pattern (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__))) weight=1 steps=539 asts=475
+infer-pulled 23 => patterns=314:273:4278596409 | (pattern (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__))) steps=539 asts=475
+sharing 0 => 14:33:1846953448 fresh=- steps=557 asts=474
+sharing 1 => 22:41:769557270 | (forall (3) (= (smt__TLA____Mem (:var 0) (smt__TLA____Cup (:var 2) (:var 1))) (or (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1))))) fresh=- steps=577 asts=474
+sharing 2 => 31:50:2031471566 fresh=- steps=599 asts=474
+sharing 3 => 41:60:1246123077 fresh=- steps=617 asts=474
+sharing 4 => 45:64:1695870060 | (forall (1) (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 0)))) fresh=- steps=625 asts=474
+sharing 5 => 51:70:2202486724 | (forall (2) (and (smt__TLA____Mem (:var 1) (smt__TLA____SetEnum__2 (:var 1) (:var 0))) (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 1) (:var 0))))) fresh=- steps=637 asts=474
+sharing 6 => 56:75:1637739353 | (forall (1) (not (smt__TLA____Mem (:var 0) smt__TLA____SetEnum__0))) fresh=- steps=645 asts=474
+sharing 7 => 62:81:3554076367 | (forall (2) (=> (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 1))) (= (:var 0) (:var 1)))) fresh=- steps=657 asts=474
+sharing 8 => 69:88:3065308942 | (forall (3) (=> (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 2) (:var 1))) (or (= (:var 0) (:var 2)) (= (:var 0) (:var 1))))) fresh=- steps=673 asts=474
+sharing 9 => 72:91:2237250423 | (smt__TLA____Mem smt__TLA____StrLit__Done smt__TLA____StrSet) fresh=- steps=675 asts=474
+sharing 10 => 74:93:4102243945 | (smt__TLA____Mem smt__TLA____StrLit__a smt__TLA____StrSet) fresh=- steps=677 asts=474
+sharing 11 => 75:94:68528727 | (distinct smt__TLA____StrLit__Done smt__TLA____StrLit__a) fresh=- steps=679 asts=474
+sharing 12 => 80:100:3471565510 | (forall (1) (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0))))) fresh=- steps=689 asts=474
+sharing 13 => 82:102:3207522332 | (forall (1) (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet)) fresh=- steps=697 asts=474
+sharing 14 => 88:108:834808944 fresh=- steps=711 asts=474
+sharing 15 => 96:116:2303557749 | (forall (2) (= (smt__TLA____IntPlus (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (smt__TLA____Cast__Int (+ (:var 1) (:var 0))))) fresh=- steps=727 asts=474
+sharing 16 => 102:122:641746493 | (forall (2) (= (smt__TLA____IntMinus (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (smt__TLA____Cast__Int (- (:var 1) (:var 0))))) fresh=- steps=743 asts=474
+sharing 17 => 107:127:2892941244 | (forall (2) (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0)))) fresh=- steps=757 asts=474
+sharing 18 => 111:131:3770744328 | (forall (2) (= (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ (:var 1) (:var 0)) (= (:var 1) (:var 0)))) fresh=- steps=767 asts=474
+sharing 19 => 112:132:1978873499 | (forall (2) (smt__TLA____SetExtTrigger (:var 1) (:var 0))) fresh=- steps=775 asts=474
+sharing 20 => 116:135:3720740087 | (= smt__STATE__Inv__ smt__TLA____Tt__Idv) fresh=- steps=777 asts=474
+sharing 21 => 122:141:377275855 | (or (= smt__ACTION__Next__ smt__TLA____Tt__Idv) (= smt__TLA____Anon__OPAQUE__h6fbaa smt__STATE__vars__)) fresh=- steps=783 asts=474
+sharing 22 => 171:190:1617493280 fresh=- steps=877 asts=474
+sharing 23 => 173:192:2360249211 | (= smt__VARIABLE__pc__ smt__TLA____StrLit__a) fresh=- steps=879 asts=474
+sharing 24 => 176:195:2522684370 | (= smt__VARIABLE__seq0____prime smt__VARIABLE__seq0__) fresh=- steps=881 asts=474
+sharing 25 => 125:144:2996632726 | (not (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ smt__VARIABLE__U__ smt__TLA____SetEnum__0)) fresh=- steps=885 asts=474
+sharing 26 => 188:207:1078399943 fresh=- steps=961 asts=474
+sharing-release => - steps=961 asts=474
+fm 0 => 11:30:2893629368 | (=> (forall (1) (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1)))) (= (:var 1) (:var 0))) steps=961 asts=474
+fm 1 => 8:27:2071546011 | (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1))) steps=961 asts=474
+fm 2 => 18:37:2499943588 | (= (smt__TLA____Mem (:var 0) (smt__TLA____Cup (:var 2) (:var 1))) (or (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1)))) steps=961 asts=474
+fm 3 => 27:46:746957897 | (= (smt__TLA____Mem (:var 0) (smt__TLA____SetMinus (:var 2) (:var 1))) (and (smt__TLA____Mem (:var 0) (:var 2)) (not (smt__TLA____Mem (:var 0) (:var 1))))) steps=961 asts=474
+fm 4 => 39:58:1154480798 steps=961 asts=474
+fm 5 => 43:62:1020032609 | (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 0))) steps=961 asts=474
+fm 6 => 47:66:1430244508 | (smt__TLA____Mem (:var 1) (smt__TLA____SetEnum__2 (:var 1) (:var 0))) ; 48:67:1845712882 | (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 1) (:var 0))) steps=961 asts=474
+fm 7 => 54:73:303422392 | (not (smt__TLA____Mem (:var 0) smt__TLA____SetEnum__0)) steps=961 asts=474
+fm 8 => 60:79:1470676645 | (=> (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__1 (:var 1))) (= (:var 0) (:var 1))) steps=961 asts=474
+fm 9 => 67:86:1472578495 | (=> (smt__TLA____Mem (:var 0) (smt__TLA____SetEnum__2 (:var 2) (:var 1))) (or (= (:var 0) (:var 2)) (= (:var 0) (:var 1)))) steps=961 asts=474
+fm 10 => 78:98:3185194710 | (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0)))) steps=961 asts=474
+fm 11 => 81:101:239470523 | (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet) steps=961 asts=474
+fm 12 => 86:106:2228680951 | (=> (smt__TLA____Mem (:var 0) smt__TLA____IntSet) (= (:var 0) (smt__TLA____Cast__Int (smt__TLA____Proj__Int (:var 0))))) steps=961 asts=474
+fm 13 => 94:114:833238700 | (= (smt__TLA____IntPlus (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (smt__TLA____Cast__Int (+ (:var 1) (:var 0)))) steps=961 asts=474
+fm 14 => 100:120:1631976988 | (= (smt__TLA____IntMinus (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (smt__TLA____Cast__Int (- (:var 1) (:var 0)))) steps=961 asts=474
+fm 15 => 105:125:3938757288 | (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0))) steps=961 asts=474
+fm 16 => 109:129:3327827553 | (= (smt__TLA____TrigEq__Setdollarsign__Idvdollarsign__ (:var 1) (:var 0)) (= (:var 1) (:var 0))) steps=961 asts=474
+fm 17 => 12:31:873858979 | (smt__TLA____SetExtTrigger (:var 1) (:var 0)) steps=961 asts=474
+fm 18 => 126:145:1225845418 | (smt__TLA____Mem (:var 0) smt__VARIABLE__U__) ; 161:180:47690226 steps=961 asts=474
+fm 19 => 142:161:290670396 | (smt__TLA____Mem (:var 0) (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (smt__TLA____IntMinus (smt__CONSTANT__Max__ (:var 1)) (smt__TLA____Cast__Int 1)))) ; 158:177:889810432 steps=961 asts=474
+fm 20 => 144:163:1721927276 | (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__)) ; 156:175:1612231062 steps=961 asts=474
+fm 21 => 126:145:1225845418 | (smt__TLA____Mem (:var 0) smt__VARIABLE__U__) ; 185:204:270886504 steps=961 asts=474
+fm 22 => 142:161:290670396 | (smt__TLA____Mem (:var 0) (smt__TLA____IntRange (smt__CONSTANT__Min__ (:var 1)) (smt__TLA____IntMinus (smt__CONSTANT__Max__ (:var 1)) (smt__TLA____Cast__Int 1)))) ; 182:201:1034220685 steps=961 asts=474
+fm 23 => 144:163:1721927276 | (smt__TLA____Mem (:var 0) (smt__CONSTANT__Partitions__ (:var 2) (:var 1) smt__VARIABLE__seq__)) ; 180:199:2002304014 steps=961 asts=474
+fm-release => - steps=961 asts=474
+refs => 316 1878697913 1629005600 steps=961 asts=474
 fixture Sets-174.smt
 parsed 12 => - steps=0 asts=324
 nnf 0 => 120:140:488764457 defs=- fresh=smt__z!0 steps=11 asts=332
@@ -11597,52 +11597,52 @@ pull 10 => 58:77:3875181003 | (smt__TLA____Mem smt__CONSTANT__w__ smt__CONSTANT_
 pull 11 => 60:79:1193310755 | (smt__TLA____Mem smt__CONSTANT__b__ smt__TLA____NatSet) fresh=- steps=138 asts=319
 pull 12 => 62:81:2636598543 | (smt__TLA____Mem smt__CONSTANT__c__ smt__TLA____NatSet) fresh=- steps=140 asts=319
 pull 13 => 107:117:320018364 fresh=- steps=168 asts=319
-pull 14 => 105:115:343751753 fresh=- steps=188 asts=324
-infer 0 => patterns=- weight=1 steps=188 asts=324
-infer-pulled 0 => patterns=- steps=188 asts=324
-infer 1 => patterns=108:116:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 109:117:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) weight=1 steps=188 asts=326
-infer-pulled 1 => patterns=108:116:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 109:117:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) steps=188 asts=326
-infer 2 => patterns=24:43:2704437225 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____NatSet)) ; 37:57:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 110:116:909227751 | (pattern (smt__TLA____IntLteq (smt__TLA____Cast__Int 0) (:var 0))) weight=1 steps=188 asts=325
-infer-pulled 2 => patterns=24:43:2704437225 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____NatSet)) ; 37:57:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 110:116:909227751 | (pattern (smt__TLA____IntLteq (smt__TLA____Cast__Int 0) (:var 0))) steps=188 asts=325
-infer 3 => patterns=29:49:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=188 asts=324
-infer-pulled 3 => patterns=29:49:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=188 asts=324
-infer 4 => patterns=29:49:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=188 asts=324
-infer-pulled 4 => patterns=29:49:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=188 asts=324
-infer 5 => patterns=37:57:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 111:116:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) weight=1 steps=188 asts=326
-infer-pulled 5 => patterns=37:57:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 111:116:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) steps=188 asts=326
-infer 6 => patterns=112:116:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=188 asts=326
-infer-pulled 6 => patterns=112:116:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) steps=188 asts=326
-infer 7 => patterns=113:116:1503831972 | (pattern (smt__TLA____Mem (:var 0) smt__CONSTANT__Quorum__)) weight=1 steps=188 asts=325
-infer-pulled 7 => patterns=113:116:1503831972 | (pattern (smt__TLA____Mem (:var 0) smt__CONSTANT__Quorum__)) steps=188 asts=325
-infer 8 => patterns=109:116:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) ; 114:117:1088852880 | (pattern (smt__STATE__VotedFor__ (:var 0) smt__CONSTANT__c__ smt__CONSTANT__w__)) weight=1 steps=188 asts=326
-infer-pulled 8 => patterns=109:116:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) ; 114:117:1088852880 | (pattern (smt__STATE__VotedFor__ (:var 0) smt__CONSTANT__c__ smt__CONSTANT__w__)) steps=188 asts=326
-sharing 0 => 14:33:1846953448 fresh=- steps=206 asts=324
-sharing 1 => 25:44:1549430769 fresh=- steps=222 asts=324
-sharing 2 => 30:50:3471565510 | (forall (1) (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0))))) fresh=- steps=232 asts=324
-sharing 3 => 32:52:3207522332 | (forall (1) (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet)) fresh=- steps=240 asts=324
-sharing 4 => 38:58:834808944 fresh=- steps=254 asts=324
-sharing 5 => 45:65:2892941244 | (forall (2) (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0)))) fresh=- steps=268 asts=324
-sharing 6 => 49:68:3490003621 | (= smt__STATE__TypeOK__ smt__TLA____Tt__Idv) fresh=- steps=270 asts=324
-sharing 7 => 51:70:2587531587 | (= smt__STATE__VInv1__ smt__TLA____Tt__Idv) fresh=- steps=272 asts=324
-sharing 8 => 53:72:3064146329 | (= smt__STATE__VInv2__ smt__TLA____Tt__Idv) fresh=- steps=274 asts=324
-sharing 9 => 56:75:1012688046 | (smt__TLA____Mem smt__CONSTANT__v__ smt__CONSTANT__Value__) fresh=- steps=276 asts=324
-sharing 10 => 58:77:3875181003 | (smt__TLA____Mem smt__CONSTANT__w__ smt__CONSTANT__Value__) fresh=- steps=278 asts=324
-sharing 11 => 60:79:1193310755 | (smt__TLA____Mem smt__CONSTANT__b__ smt__TLA____NatSet) fresh=- steps=280 asts=324
-sharing 12 => 62:81:2636598543 | (smt__TLA____Mem smt__CONSTANT__c__ smt__TLA____NatSet) fresh=- steps=282 asts=324
-sharing 13 => 76:95:3542647933 fresh=- steps=310 asts=324
-sharing 14 => 77:96:1394518569 fresh=- steps=312 asts=324
-sharing-release => - steps=312 asts=324
-fm 0 => 11:30:2893629368 | (=> (forall (1) (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1)))) (= (:var 1) (:var 0))) steps=312 asts=324
-fm 1 => 8:27:2071546011 | (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1))) steps=312 asts=324
-fm 2 => 23:42:2057712191 | (= (smt__TLA____Mem (:var 0) smt__TLA____NatSet) (and (smt__TLA____Mem (:var 0) smt__TLA____IntSet) (smt__TLA____IntLteq (smt__TLA____Cast__Int 0) (:var 0)))) steps=312 asts=324
-fm 3 => 28:48:3185194710 | (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0)))) steps=312 asts=324
-fm 4 => 31:51:239470523 | (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet) steps=312 asts=324
-fm 5 => 36:56:2228680951 | (=> (smt__TLA____Mem (:var 0) smt__TLA____IntSet) (= (:var 0) (smt__TLA____Cast__Int (smt__TLA____Proj__Int (:var 0))))) steps=312 asts=324
-fm 6 => 43:63:3938757288 | (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0))) steps=312 asts=324
-fm 7 => 69:88:176847776 | (smt__TLA____Mem (:var 0) smt__CONSTANT__Quorum__) ; 73:92:44709099 | (forall (1) (=> (smt__TLA____Mem (:var 0) (:var 1)) (= (smt__STATE__VotedFor__ (:var 0) smt__CONSTANT__c__ smt__CONSTANT__w__) smt__TLA____Tt__Idv))) steps=312 asts=324
-fm 8 => 72:91:561087553 | (=> (smt__TLA____Mem (:var 0) (:var 1)) (= (smt__STATE__VotedFor__ (:var 0) smt__CONSTANT__c__ smt__CONSTANT__w__) smt__TLA____Tt__Idv)) steps=312 asts=324
-fm-release => - steps=312 asts=324
-refs => 115 2054572575 3648797043 steps=312 asts=324
+pull 14 => 105:115:343751753 fresh=- steps=188 asts=319
+infer 0 => patterns=- weight=1 steps=188 asts=319
+infer-pulled 0 => patterns=- steps=188 asts=319
+infer 1 => patterns=108:111:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 109:112:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) weight=1 steps=188 asts=321
+infer-pulled 1 => patterns=108:111:3107267803 | (pattern (smt__TLA____Mem (:var 0) (:var 2))) ; 109:112:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) steps=188 asts=321
+infer 2 => patterns=24:43:2704437225 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____NatSet)) ; 37:57:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 110:111:909227751 | (pattern (smt__TLA____IntLteq (smt__TLA____Cast__Int 0) (:var 0))) weight=1 steps=188 asts=320
+infer-pulled 2 => patterns=24:43:2704437225 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____NatSet)) ; 37:57:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 110:111:909227751 | (pattern (smt__TLA____IntLteq (smt__TLA____Cast__Int 0) (:var 0))) steps=188 asts=320
+infer 3 => patterns=29:49:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=188 asts=319
+infer-pulled 3 => patterns=29:49:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=188 asts=319
+infer 4 => patterns=29:49:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) weight=1 steps=188 asts=319
+infer-pulled 4 => patterns=29:49:2161696998 | (pattern (smt__TLA____Cast__Int (:var 0))) steps=188 asts=319
+infer 5 => patterns=37:57:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 111:111:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) weight=1 steps=188 asts=321
+infer-pulled 5 => patterns=37:57:2269596448 | (pattern (smt__TLA____Mem (:var 0) smt__TLA____IntSet)) ; 111:111:324184431 | (pattern (smt__TLA____Proj__Int (:var 0))) steps=188 asts=321
+infer 6 => patterns=112:111:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) weight=1 steps=188 asts=321
+infer-pulled 6 => patterns=112:111:3678631600 | (pattern (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) steps=188 asts=321
+infer 7 => patterns=113:111:1503831972 | (pattern (smt__TLA____Mem (:var 0) smt__CONSTANT__Quorum__)) weight=1 steps=188 asts=320
+infer-pulled 7 => patterns=113:111:1503831972 | (pattern (smt__TLA____Mem (:var 0) smt__CONSTANT__Quorum__)) steps=188 asts=320
+infer 8 => patterns=109:111:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) ; 114:112:1088852880 | (pattern (smt__STATE__VotedFor__ (:var 0) smt__CONSTANT__c__ smt__CONSTANT__w__)) weight=1 steps=188 asts=321
+infer-pulled 8 => patterns=109:111:3461110076 | (pattern (smt__TLA____Mem (:var 0) (:var 1))) ; 114:112:1088852880 | (pattern (smt__STATE__VotedFor__ (:var 0) smt__CONSTANT__c__ smt__CONSTANT__w__)) steps=188 asts=321
+sharing 0 => 14:33:1846953448 fresh=- steps=206 asts=319
+sharing 1 => 25:44:1549430769 fresh=- steps=222 asts=319
+sharing 2 => 30:50:3471565510 | (forall (1) (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0))))) fresh=- steps=232 asts=319
+sharing 3 => 32:52:3207522332 | (forall (1) (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet)) fresh=- steps=240 asts=319
+sharing 4 => 38:58:834808944 fresh=- steps=254 asts=319
+sharing 5 => 45:65:2892941244 | (forall (2) (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0)))) fresh=- steps=268 asts=319
+sharing 6 => 49:68:3490003621 | (= smt__STATE__TypeOK__ smt__TLA____Tt__Idv) fresh=- steps=270 asts=319
+sharing 7 => 51:70:2587531587 | (= smt__STATE__VInv1__ smt__TLA____Tt__Idv) fresh=- steps=272 asts=319
+sharing 8 => 53:72:3064146329 | (= smt__STATE__VInv2__ smt__TLA____Tt__Idv) fresh=- steps=274 asts=319
+sharing 9 => 56:75:1012688046 | (smt__TLA____Mem smt__CONSTANT__v__ smt__CONSTANT__Value__) fresh=- steps=276 asts=319
+sharing 10 => 58:77:3875181003 | (smt__TLA____Mem smt__CONSTANT__w__ smt__CONSTANT__Value__) fresh=- steps=278 asts=319
+sharing 11 => 60:79:1193310755 | (smt__TLA____Mem smt__CONSTANT__b__ smt__TLA____NatSet) fresh=- steps=280 asts=319
+sharing 12 => 62:81:2636598543 | (smt__TLA____Mem smt__CONSTANT__c__ smt__TLA____NatSet) fresh=- steps=282 asts=319
+sharing 13 => 76:95:3542647933 fresh=- steps=310 asts=319
+sharing 14 => 77:96:1394518569 fresh=- steps=312 asts=319
+sharing-release => - steps=312 asts=319
+fm 0 => 11:30:2893629368 | (=> (forall (1) (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1)))) (= (:var 1) (:var 0))) steps=312 asts=319
+fm 1 => 8:27:2071546011 | (= (smt__TLA____Mem (:var 0) (:var 2)) (smt__TLA____Mem (:var 0) (:var 1))) steps=312 asts=319
+fm 2 => 23:42:2057712191 | (= (smt__TLA____Mem (:var 0) smt__TLA____NatSet) (and (smt__TLA____Mem (:var 0) smt__TLA____IntSet) (smt__TLA____IntLteq (smt__TLA____Cast__Int 0) (:var 0)))) steps=312 asts=319
+fm 3 => 28:48:3185194710 | (= (:var 0) (smt__TLA____Proj__Int (smt__TLA____Cast__Int (:var 0)))) steps=312 asts=319
+fm 4 => 31:51:239470523 | (smt__TLA____Mem (smt__TLA____Cast__Int (:var 0)) smt__TLA____IntSet) steps=312 asts=319
+fm 5 => 36:56:2228680951 | (=> (smt__TLA____Mem (:var 0) smt__TLA____IntSet) (= (:var 0) (smt__TLA____Cast__Int (smt__TLA____Proj__Int (:var 0))))) steps=312 asts=319
+fm 6 => 43:63:3938757288 | (= (smt__TLA____IntLteq (smt__TLA____Cast__Int (:var 1)) (smt__TLA____Cast__Int (:var 0))) (<= (:var 1) (:var 0))) steps=312 asts=319
+fm 7 => 69:88:176847776 | (smt__TLA____Mem (:var 0) smt__CONSTANT__Quorum__) ; 73:92:44709099 | (forall (1) (=> (smt__TLA____Mem (:var 0) (:var 1)) (= (smt__STATE__VotedFor__ (:var 0) smt__CONSTANT__c__ smt__CONSTANT__w__) smt__TLA____Tt__Idv))) steps=312 asts=319
+fm 8 => 72:91:561087553 | (=> (smt__TLA____Mem (:var 0) (:var 1)) (= (smt__STATE__VotedFor__ (:var 0) smt__CONSTANT__c__ smt__CONSTANT__w__) smt__TLA____Tt__Idv)) steps=312 asts=319
+fm-release => - steps=312 asts=319
+refs => 115 19287410 939543461 steps=312 asts=319
 fixture WellFoundedInduction_proofs-226.smt
 parsed 7 => - steps=0 asts=201
 nnf 0 => 9:26:3850735223 | (= (smt__CONSTANT__IsWellFoundedOn__ smt__CONSTANT__R__ smt__CONSTANT__S__) smt__TLA____Tt__Idv) defs=- fresh=- steps=0 asts=201

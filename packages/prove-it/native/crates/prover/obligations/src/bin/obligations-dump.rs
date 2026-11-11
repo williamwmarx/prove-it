@@ -2,6 +2,11 @@
 //! `scripts/obligation-differential.ts` to compare with the TypeScript ones: each result's name,
 //! summary and obligations, the warnings in order, and the error that stopped it, if any.
 //!
+//! With `--encode`, it writes for `scripts/encoder-differential.ts` what Prep.ship makes of each
+//! obligation instead: its fingerprint, its methods, the text each method's backend receives or the
+//! error, and each result's theory of the Isabelle proofs, as if every Isabelle method proved.
+//! With `--reset-caches`, each module starts from empty caches, as in a fresh process.
+//!
 //! `obligations-dump --library <json>` reads `{"modules": {name: path}, "standard": directory}`
 //! and finds a module as `readModule` in `scripts/proof-records.ts` does: beside the module, then
 //! in `modules`, then in `standard`.
@@ -14,8 +19,14 @@ use std::process::ExitCode;
 
 use prove_obligations::errors::ObligationError;
 use prove_obligations::expression::{Channel, ObligationWarning};
-use prove_obligations::index::{ObligationSource, format_summary, get_obligations};
+use prove_obligations::index::{
+    ModuleObligations, ObligationSource, format_summary, get_obligations,
+};
+use prove_obligations::prep::fingerprint::get_fingerprint;
+use prove_obligations::prep::methods::find_methods;
 use prove_obligations::proof::{ObligationKind, Omission};
+use prove_obligations::ship::{ProofAttempt, encode_for_backend, encode_proof_theory};
+use prove_obligations::smt::rewrite::EncodingSession;
 use tla_front::json::{write_js_number, write_js_string};
 
 /// The JSON the library file holds: strings and objects, and nothing else that it reads.
@@ -222,8 +233,96 @@ fn write_error(out: &mut String, error: &ObligationError) {
     out.push('}');
 }
 
-/// `writeModule` of the differential script.
-fn write_module(out: &mut String, library: &Library, path: &str) {
+/// A text, or the error that stopped it.
+fn write_outcome(out: &mut String, outcome: &Result<String, ObligationError>) {
+    match outcome {
+        Ok(text) => write_js_string(out, text),
+        Err(error) => write_error(out, error),
+    }
+}
+
+/// `writeModule` of the encoder differential: one run per result, as `prove-it tlapm` proves
+/// each, so the SMT encoder counts its CASE errors across the result's obligations in order.
+fn write_encodings(out: &mut String, results: &[ModuleObligations]) {
+    for (index, result) in results.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"name\":");
+        write_js_string(out, &result.name);
+        out.push_str(",\"obligations\":[");
+        let mut session = EncodingSession::default();
+        let mut attempts = Vec::new();
+        for (position, obligation) in result.obligations.iter().enumerate() {
+            if position > 0 {
+                out.push(',');
+            }
+            let _ = write!(out, "{{\"id\":{},\"fingerprint\":", obligation.id);
+            write_outcome(out, &get_fingerprint(&obligation.sequent));
+            out.push_str(",\"methods\":");
+            let mut proved = Vec::new();
+            match find_methods(&obligation.sequent, obligation.method.as_ref()) {
+                Err(error) => {
+                    write_error(out, &error);
+                    out.push_str(",\"encodings\":[]");
+                }
+                Ok(methods) => {
+                    out.push('[');
+                    for (order, method) in methods.provers.iter().enumerate() {
+                        if order > 0 {
+                            out.push(',');
+                        }
+                        out.push('[');
+                        write_js_string(out, &method.prover);
+                        out.push(',');
+                        write_js_number(out, method.time_limit_ms);
+                        out.push(',');
+                        match method.rlimit {
+                            Some(rlimit) => {
+                                let _ = write!(out, "{rlimit}");
+                            }
+                            None => out.push_str("null"),
+                        }
+                        out.push(',');
+                        write_optional_string(out, method.tactic.as_deref());
+                        out.push(']');
+                    }
+                    out.push_str("],\"encodings\":[");
+                    for (order, method) in methods.provers.iter().enumerate() {
+                        if order > 0 {
+                            out.push(',');
+                        }
+                        let encoding = encode_for_backend(obligation, &method.prover, &mut session);
+                        if method.prover == "isabelle" && encoding.is_ok() {
+                            proved.push(ProofAttempt {
+                                method: method.clone(),
+                                is_proved: true,
+                                is_reused: false,
+                            });
+                        }
+                        out.push('[');
+                        write_js_string(out, &method.prover);
+                        out.push(',');
+                        write_outcome(out, &encoding);
+                        out.push(']');
+                    }
+                    out.push(']');
+                }
+            }
+            attempts.push(proved);
+            out.push('}');
+        }
+        out.push_str("],\"theory\":");
+        write_outcome(
+            out,
+            &encode_proof_theory(&result.name, &attempts, &result.obligations),
+        );
+        out.push('}');
+    }
+}
+
+/// `writeModule` of the differential scripts.
+fn write_module(out: &mut String, library: &Library, path: &str, is_encoded: bool) {
     let mut warnings: Vec<ObligationWarning> = Vec::new();
     let outcome = match read_text(Path::new(path)) {
         None => Err(ObligationError::Syntax(format!("cannot read {path}"))),
@@ -238,6 +337,16 @@ fn write_module(out: &mut String, library: &Library, path: &str) {
         ),
     };
     out.push_str("{\"results\":[");
+    if is_encoded {
+        write_encodings(out, outcome.as_deref().unwrap_or_default());
+        out.push_str("],\"error\":");
+        match &outcome {
+            Ok(_) => out.push_str("null"),
+            Err(error) => write_error(out, error),
+        }
+        out.push('}');
+        return;
+    }
     for (index, result) in outcome.iter().flatten().enumerate() {
         if index > 0 {
             out.push(',');
@@ -302,7 +411,11 @@ fn run() -> Result<(), String> {
         .iter()
         .position(|argument| argument == "--library")
         .and_then(|index| arguments.get(index + 1))
-        .ok_or("usage: obligations-dump --library <json>")?;
+        .ok_or("usage: obligations-dump --library <json> [--encode] [--reset-caches]")?;
+    let is_encoded = arguments.iter().any(|argument| argument == "--encode");
+    let is_reset = arguments
+        .iter()
+        .any(|argument| argument == "--reset-caches");
     let library = read_library(library_path)?;
     let mut input = String::new();
     stdin()
@@ -311,7 +424,10 @@ fn run() -> Result<(), String> {
     let mut output = stdout().lock();
     for path in input.lines().filter(|line| !line.is_empty()) {
         let mut line = String::new();
-        write_module(&mut line, &library, path);
+        if is_reset {
+            prove_obligations::reset_caches();
+        }
+        write_module(&mut line, &library, path, is_encoded);
         line.push('\n');
         output
             .write_all(line.as_bytes())

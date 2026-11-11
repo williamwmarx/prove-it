@@ -329,6 +329,11 @@ normalized set's (`(SUBSET {2}) \cup {{1}}` through a variable, a constant via a
 name or a LET named twice), and a variable bound by `\in` to a set enumeration's lazy first
 element (`Next == s' \in {UNION {1..2, 2..3}} /\ y' \in s'`: TLC 17, native 13).
 
+Outside the counts, SANY's report differs on an INSTANCE of a module with semantic errors: for
+`I == INSTANCE Other` with `Other.tla` holding `Op(n) == n - 1` and no EXTENDS, TLC prints
+`*** Errors: 2` for module Spec, while the binary prints `*** Errors: 3`, adding `Substitution error,
+probably due to error in module being instantiated.` at the INSTANCE (exit 150 in both).
+
 #### Every reason
 
 Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so the counts follow
@@ -684,11 +689,15 @@ declines TLC 1.7.4's jar and a manifest it can't read with certainty. Of the 117
 now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator.
 
 Since #250 the binary prints SANY's report of the trace exploration spec too, and checks TLC's
-default natively until TLC would write the trace's files: after any error it printed a behavior for,
-a counterexample or not, it declines with "the trace exploration spec TLC writes for a
-counterexample". On the 733 corpus models in TLC's default, against TLC's recordings of that mode,
-529 print TLC's output, 202 decline so, and 2 differ as they do with `-noGenerateSpecTE`, by TLC's
-runtime (a Java stack overflow, and where TLC is installed).
+default natively. After an error trace of two states or more it writes the spec TLC writes,
+`<Spec>_TTrace_<epoch>.tla`, and its path after `Finished in` (`te_spec.rs`). It still declines
+where TLC writes the trace's file, `<Spec>_TTrace_<epoch>.bin`, for a counterexample: TLC gzips it
+with Java's Deflater, whose compressed bytes the binary doesn't reproduce, and writes each string's
+token in TLC's run. An error after a behavior, as an Assert that fails in an action, has no trace
+file and is native. On the 733 corpus models in TLC's default, against TLC's recordings of that
+mode, 569 print and write what TLC does, 161 decline at the trace file, and 3 differ as they do
+with `-noGenerateSpecTE`, by TLC's runtime (a Java stack overflow, where TLC is installed, and a
+NullPointerException in TLC).
 
 ### The public API afterwards
 

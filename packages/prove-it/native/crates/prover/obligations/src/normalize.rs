@@ -50,6 +50,8 @@ struct Expander<'pipeline, 'sink, 'warn> {
     salts: &'pipeline Counter,
     latest_modules: &'pipeline HashMap<String, Rc<Mule>>,
     on_warning: &'pipeline RefCell<&'sink mut Warn<'warn>>,
+    // The modules whose instantiated body is being expanded, innermost last.
+    instantiating: Vec<String>,
 }
 
 impl AnonymizerHost for Expander<'_, '_, '_> {
@@ -80,6 +82,7 @@ fn split<'pipeline, 'sink, 'warn>(
             salts: &pipeline.salts,
             latest_modules: &pipeline.latest_modules,
             on_warning: &pipeline.on_warning,
+            instantiating: Vec::new(),
         },
     )
 }
@@ -798,7 +801,16 @@ fn instantiate(
             })
             .collect::<Vec<_>>(),
     )?;
-    let (_, lambdified) = lambdify_units(anonymizer, expander, &instance_scope, &body)?;
+    // The body of a module whose body is being expanded reaches the same INSTANCE again, so tlapm
+    // recurses until its stack overflows, as it does on a module that extends itself. Substitutes
+    // are no part of the body: an INSTANCE of the module inside one expands once.
+    if expander.instantiating.contains(&instance.module) {
+        return Err(ObligationError::bug("Stack overflow"));
+    }
+    expander.instantiating.push(instance.module.clone());
+    let lambdified = lambdify_units(anonymizer, expander, &instance_scope, &body);
+    expander.instantiating.pop();
+    let (_, lambdified) = lambdified?;
     localize_axioms(localize(
         expander,
         apply_parameters(lambdified, &anonymized)?,
