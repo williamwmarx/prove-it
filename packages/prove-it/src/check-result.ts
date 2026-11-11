@@ -14,6 +14,7 @@ import { TlaEvaluationError, UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } f
 import { prettyPrint } from "./pretty-print";
 import {
   getFailureHeadline,
+  getMessageHeadline,
   getViolationHeadline,
   type Headline,
   isInitialViolation,
@@ -279,6 +280,10 @@ export const fromSearchResult = (
   const reported = failure
     ? [
         toViolation(getFailureHeadline(failure, isTool), failure.trace, isTool),
+        // TLC fails again as it rebuilds the trace, which it reports after the trace.
+        ...(failure.traceFailure
+          ? [toViolation(getMessageHeadline(failure.traceFailure, isTool), [], isTool)]
+          : []),
         ...(failure.postcondition
           ? [
               toViolation(
