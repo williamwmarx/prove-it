@@ -2185,7 +2185,7 @@ impl<'ir> Evaluator<'ir> {
         Ok(())
     }
 
-    fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
+    pub(crate) fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let definition = self.definition(node);
         let key = (node, context.is_primed);
         if let Some(value) = self.cache.get(&key) {
@@ -3404,7 +3404,7 @@ impl<'ir> Evaluator<'ir> {
 
     // `FcnLambdaValue.apply`: the value of the last EXCEPT at the key, or else the body on a key
     // in the domain, in the states the function was built in.
-    fn apply_lambda(&mut self, lambda: &Lambda, key: &Value) -> Evaluated<Value> {
+    pub(crate) fn apply_lambda(&mut self, lambda: &Lambda, key: &Value) -> Evaluated<Value> {
         for (except, value) in lambda.excepts.iter().rev() {
             if equals(except, key)? {
                 return Ok(value.clone());
@@ -4222,7 +4222,7 @@ impl<'ir> Evaluator<'ir> {
         Ok(pretty_print(&text.encode_utf16().collect::<Vec<_>>()))
     }
 
-    fn builtin(
+    pub(crate) fn builtin(
         &mut self,
         index: Index,
         operands: &[Operand],
@@ -5287,7 +5287,7 @@ impl Combined {
 
 /// An argument of a builtin: an expression as written, or a value an operator argument is
 /// applied to.
-enum Operand {
+pub(crate) enum Operand {
     Node(NodeId, Context),
     Value(Value),
 }

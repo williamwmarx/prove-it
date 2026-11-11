@@ -4,6 +4,7 @@
 
 mod args;
 mod check;
+mod coverage;
 mod failure;
 mod files;
 mod front;

@@ -110,7 +110,7 @@ pub enum Stop {
 }
 
 /// The options TLC reads that the binary doesn't model. TLC reads the last three in any case.
-const UNMODELLED: [&str; 26] = [
+const UNMODELLED: [&str; 25] = [
     "-simulate",
     "-generate",
     "-difftrace",
@@ -127,7 +127,6 @@ const UNMODELLED: [&str; 26] = [
     "-teSpecOutDir",
     "-help",
     "-h",
-    "-coverage",
     "-checkpoint",
     "-depth",
     "-aril",
@@ -260,6 +259,30 @@ impl Parsed {
                         }
                     }
                     vec![workers]
+                }
+                // `Integer.parseInt(minutes) * 60 * 1000`, which overflows as Java's ints do.
+                "-coverage" => {
+                    let minutes = take(
+                        args,
+                        &mut index,
+                        "coverage report interval required.",
+                        is_tool,
+                    )?;
+                    let Ok(number) = minutes.parse::<i32>() else {
+                        return Err(error(
+                            format!(
+                                "Error: An integer for coverage report interval required. But encountered {minutes}"
+                            ),
+                            is_tool,
+                        ));
+                    };
+                    if number.wrapping_mul(60).wrapping_mul(1000) < 0 {
+                        return Err(error(
+                            "Error: expect a nonnegative integer for -coverage option.".into(),
+                            is_tool,
+                        ));
+                    }
+                    vec![minutes]
                 }
                 "-fp" => {
                     let polynomial = take(
@@ -452,6 +475,8 @@ mod tests {
             "Model",
             "-workers",
             " AUTO ",
+            "-coverage",
+            "+3",
         ])
         .expect("options");
         assert_eq!(parsed.positionals, strings(&["Spec.tla"]));
@@ -463,6 +488,9 @@ mod tests {
         assert!(parsed.has("-noGenerateSpecTE") && parsed.has("-noGenerateSpecTEBin"));
         assert_eq!(parsed.first("-config"), Some("Model.cfg"));
         assert!(parsed.first("-workers").is_some_and(is_auto));
+        assert_eq!(parsed.first("-coverage"), Some("+3"));
+        // 71583 minutes overflow into a positive int, which TLC takes.
+        assert!(parse(&["-coverage", "71583", "Spec"]).is_ok());
         let dotted = parse(&["Spec", "-config", "Model.cfg", "-dump", "dot"]).expect("options");
         assert_eq!(dotted.first("-config"), Some("Model.cfg"));
         assert_eq!(dotted.get("-dump"), Some(strings(&["dot"]).as_slice()));
@@ -510,6 +538,23 @@ mod tests {
                 "expect a strategy such as final for -lncheck option.",
             ),
             (&["-metadir"], "need to specify the metadata directory."),
+            (&["-coverage"], "coverage report interval required."),
+            (
+                &["-coverage", "x", "Spec"],
+                "An integer for coverage report interval required. But encountered x",
+            ),
+            (
+                &["-coverage", "-1", "Spec"],
+                "expect a nonnegative integer for -coverage option.",
+            ),
+            (
+                &["-coverage", "40000", "Spec"],
+                "expect a nonnegative integer for -coverage option.",
+            ),
+            (
+                &["-coverage", "2147483648", "Spec"],
+                "An integer for coverage report interval required. But encountered 2147483648",
+            ),
             (
                 &["Stop.tla", "Two"],
                 "more than one input files: Stop and Two",
@@ -537,7 +582,6 @@ mod tests {
         for args in [
             &["-difftrace", "Spec"][..],
             &["-simulate", "Spec"],
-            &["-coverage", "1", "Spec"],
             &["-maxSetSize", "10", "Spec"],
             &["-dfid", "3", "Spec"],
             &["-DUMPTRACE", "json", "out.json", "Spec"],
