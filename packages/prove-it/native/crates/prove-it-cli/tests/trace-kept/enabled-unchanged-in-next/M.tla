@@ -1,7 +1,7 @@
 ---- MODULE M ----
-EXTENDS Naturals, TLC, FiniteSets
-VARIABLE x
-Init == x = 0
-F(S) == Cardinality(S) = 3 /\ UNCHANGED ("a" \in S)
-Next == x' = 1 - x /\ ENABLED (x' = 1 /\ F({x, 10, 20}))
+EXTENDS Naturals, TLC, FiniteSets, Sequences
+VARIABLE x, y
+Init == x = 0 /\ y = 0
+G(S) == ENABLED (Cardinality(S) = 3 /\ x' = 1 - x /\ y' = y /\ UNCHANGED Len(<<S>>) /\ "a" \in S)
+Next == x' = 1 - x /\ y' = y /\ G({y, 10, 20})
 ====

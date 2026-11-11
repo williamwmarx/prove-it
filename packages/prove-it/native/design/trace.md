@@ -490,44 +490,30 @@ sets").
 TLC binds each operator argument, and each definition of a LET in an expression, to a
 `LazyValue` (`getOpContext` binds every argument cachable at each call site in `Tool`, and
 `Tool.java:1856` a LET's definitions) that keeps its value once evaluated, for the states and
-control it evaluated it in (`LazyValue.getValue`). A LET of an action or the initial predicate
-binds none and is evaluated at each use (`Tool.java:482-487`, `937-941`), as is an instance's
-substitution here.
+control it evaluated it in (`LazyValue.getCachedValue`), and reuses it where each variable those
+states assigned holds an equal value still and the control is the same. A LET of an action or
+the initial predicate binds none (`Tool.java:482-487`, `937-941`).
 
-The trace evaluator keeps such a binding's value (`Binding::Thunk`'s `kept`) with what TLC's
-cache keeps it with, and reuses it only where TLC would (`LazyValue.getCachedValue`), checking in
-TLC's order:
-
-- each variable the current, then the next, state assigned when it was evaluated holds an equal
-  value still (`TLCState.isSubset`), compared in TLC's order of the variables (`Ir::tlc_order`) and
-  stopping at the first that differs. As `Objects.equals(value, kept)`: the same object is equal
-  untouched, otherwise the state's value is compared first, so normalized first, and a comparison
-  that fails ends the check. So a value kept in one disjunct of the initial predicate is evaluated
-  again in another whose partial state differs, and a set the comparison normalizes is normalized
-  as TLC's is;
-- the evaluation's control is the same: primed or not, and in ENABLED or not
-  (`EvalControl.semanticallyEquivalent` ignores only KeepLazy, Init and Const);
-- where TLC has no next state, as it evaluates a prime, UNCHANGED's second operand, a subscript of
-  `[A]_e` or `<<A>>_e`, or a prime inside ENABLED, it evaluates the argument again and keeps nothing
-  (`Tool.evalAppl`, `s1 == null`), and so does the trace evaluator in a primed evaluation;
-- the unprimed side of UNCHANGED e, `[A]_e` and `<<A>>_e` TLC evaluates with an empty next state
-  (`Tool.verifyUnchanged`, `evalAppl`, `enabledUnchanged`), so a value is kept and found there
-  by an empty next state (`evaluate_before`);
-- a draw is kept apart, as before (`drawn`).
-
-`equals` fails for a set TLC can't normalize before it normalizes the other operand, as
-`SetEnumValue.equals` normalizes itself first.
-
-A reuse tells what encloses it whether evaluating it read the state or built a lazy value holding
-it, as evaluating it again would. What it printed, or read of a register, is kept with it, so it
-prints once, as TLC prints it.
+The trace evaluator keeps such a value only while it checks an assumption (`Kept`,
+`Rebuilder::assuming`). TLC checks an assumption with empty states and plain control throughout
+(`Tool.isValidAssumption`, `Tool.java:3627`), and an assumption is of constant level, so TLC's
+cache holds and is found at every later use there; the trace evaluator does the same, so what an
+argument prints there it prints once, and an argument used twice in a recursion is evaluated
+once. Elsewhere TLC's cache depends on the states and control each `eval` call passes: an empty
+next state on the unprimed side of UNCHANGED and of a subscript, none at all under a prime, an
+empty one again on the primed side of `<<A>>_e` as a step and of UNCHANGED in ENABLED, each
+overwriting the one entry the cache holds. Four rounds of inputs built to break a replay that
+followed it found a case each time where it reused a set TLC evaluates again unnormalized, so in
+a replay the trace evaluator evaluates an argument again at each use, as before, as main matched
+TLC on every such input. A reuse tells what encloses it whether evaluating the argument read the
+state or built a lazy value holding it, as evaluating it again would.
 
 A zero-arity definition TLC doesn't compute at startup is cached only where it read no state and
-built no lazy value holding the states, so `D == [i \in Nat |-> x']` is applied in each
-successor's states. `prove-it-cli/tests/trace-kept/` holds a spec for each clause, and for an
-argument passed through operators, a recursive operator, a LAMBDA, a filter and a CHOOSE, with
-TLC's output. Evaluating an argument again at each use made TransitiveClosure's first assumption
-take 154 s where TLC takes 1.4 s, and printed twice what TLC prints once.
+built no lazy function or filter holding the states, so `D == [i \in Nat |-> x']` is applied in
+each successor's states. `prove-it-cli/tests/trace-kept/` holds the inputs of those rounds whose
+output this changes or could, each with TLC's output. Evaluating an argument again at each use
+made TransitiveClosure's first assumption take 154 s where TLC takes 1.4 s, and printed twice
+what TLC prints once.
 
 ## Sets TLC holds unnormalized
 

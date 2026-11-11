@@ -68,63 +68,22 @@ enum Binding {
     },
 }
 
-/// The value of an argument or an expression's LET definition once evaluated, which TLC keeps
-/// (`LazyValue`'s cache) and reuses where each variable the states it was evaluated in assigned
-/// holds an equal value still (`TLCState.isSubset`) and the evaluation's control is the same,
-/// primed and in ENABLED or not (`EvalControl.semanticallyEquivalent`), in that order. Where TLC
-/// has no next state, as it evaluates a prime, UNCHANGED's or a subscript's second operand, it
-/// evaluates the argument again and keeps nothing (`Tool.evalAppl`). A LET of an action or the
-/// initial predicate binds none (`Tool#getNextStates`).
+/// The value of an argument or an expression's LET definition once evaluated, while the evaluator
+/// checks an assumption: TLC keeps it (`LazyValue`'s cache) for the states and control it evaluated
+/// it in, which in an assumption are the empty states and plain control throughout
+/// (`Tool.isValidAssumption`), so it reuses it at every later use there. Elsewhere TLC's cache
+/// depends on the states and control each of its `eval` calls passes, which the trace evaluator
+/// doesn't follow, so it evaluates the argument again at each use, as before. A LET of an action
+/// or the initial predicate binds none (`Tool#getNextStates`).
 type Kept = Rc<std::cell::RefCell<Option<KeptValue>>>;
 
 struct KeptValue {
-    is_primed: bool,
-    is_enabling: bool,
-    current: Vec<Option<Value>>,
-    next: Vec<Option<Value>>,
     /// Whether evaluating it read the state, a register or the generator, and whether it built a
     /// lazy value holding the states, which a reuse tells what encloses it, as evaluating it again
     /// would.
     is_read: bool,
     is_captured: bool,
     value: Value,
-}
-
-// Whether each variable `kept` assigns holds an equal value in `state`, as `TLCState.isSubset`
-// asks `Objects.equals(value, kept)` in TLC's order of the variables (`order`), stopping at the
-// first that differs: the same object is equal untouched, and otherwise the state's value is
-// compared, and so normalized, first. A comparison that fails gives `None`, which TLC takes as a
-// reason not to reuse the value, comparing nothing further.
-fn is_kept_state(kept: &[Option<Value>], state: &[Option<Value>], order: &[i32]) -> Option<bool> {
-    for &position in order {
-        let Some(kept) = &kept[position as usize] else {
-            continue;
-        };
-        let Some(value) = &state[position as usize] else {
-            return Some(false);
-        };
-        if !is_same_object(value, kept) && !equals(value, kept).ok()? {
-            return Some(false);
-        }
-    }
-    Some(true)
-}
-
-// Whether two values are the one object TLC holds, which `Objects.equals` finds equal without
-// asking either.
-fn is_same_object(left: &Value, right: &Value) -> bool {
-    match (left, right) {
-        (Value::Str(left), Value::Str(right)) | (Value::Model(left), Value::Model(right)) => {
-            Rc::ptr_eq(left, right)
-        }
-        (Value::Set(left), Value::Set(right)) | (Value::Unsorted(left), Value::Unsorted(right)) => {
-            Rc::ptr_eq(left, right)
-        }
-        (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
-        (Value::Lazy(left), Value::Lazy(right)) => Rc::ptr_eq(left, right),
-        (Value::Lambda(left), Value::Lambda(right)) => Rc::ptr_eq(left, right),
-        _ => false,
-    }
 }
 
 pub struct Operator {
@@ -483,10 +442,9 @@ pub struct Evaluator<'ir> {
     pub target: Option<Vec<Value>>,
     /// Whether a walk is ENABLED's, which TLC's `Tool#enabled` runs.
     pub(crate) is_enabling: bool,
-    /// Whether the evaluator evaluates the unprimed side of UNCHANGED e, `[A]_e` or `<<A>>_e`,
-    /// which TLC evaluates with an empty next state (`TLCState.Empty`), and so keys a kept value
-    /// by.
-    is_next_empty: bool,
+    /// Whether the evaluator checks an assumption, where an argument keeps its value once
+    /// evaluated (`Kept`).
+    pub(crate) is_assuming: bool,
     /// The function application the walk tests, and whether it walks the initial predicate:
     /// `getInitStates`, `getNextStates` and `enabled` word a non-function applied there apart.
     pub(crate) walked_application: Option<(NodeId, bool)>,
@@ -815,7 +773,7 @@ impl<'ir> Evaluator<'ir> {
             printed: Vec::new(),
             target: None,
             is_enabling: false,
-            is_next_empty: false,
+            is_assuming: false,
             walked_application: None,
             call_stack: None,
             choices: Vec::new(),
@@ -1566,7 +1524,6 @@ impl<'ir> Evaluator<'ir> {
         let next = std::mem::replace(&mut self.next, vec![None; width]);
         let target = self.target.take();
         let is_enabling = std::mem::replace(&mut self.is_enabling, true);
-        let is_next_empty = std::mem::replace(&mut self.is_next_empty, false);
         let mut is_enabled = false;
         let walked = self.walk(action, context, false, &mut |_| {
             is_enabled = true;
@@ -1575,7 +1532,6 @@ impl<'ir> Evaluator<'ir> {
         self.next = next;
         self.target = target;
         self.is_enabling = is_enabling;
-        self.is_next_empty = is_next_empty;
         walked?;
         Ok(Value::Bool(is_enabled))
     }
@@ -2062,27 +2018,9 @@ impl<'ir> Evaluator<'ir> {
 
     // `e = e'`, the current side first, as `Tool.evalAppl` evaluates UNCHANGED and `[A]_e`.
     fn unchanged(&mut self, subscript: NodeId, context: &Context) -> Evaluated<Value> {
-        let now = self.evaluate_before(subscript, context)?;
+        let now = self.evaluate(subscript, context)?;
         let then = self.evaluate(subscript, &context.primed(true))?;
         Ok(Value::Bool(equals(&now, &then)?))
-    }
-
-    // The next state a kept value is keyed by: an empty one on the unprimed side of UNCHANGED.
-    fn keyed_next(&self) -> Vec<Option<Value>> {
-        if self.is_next_empty {
-            vec![None; self.next.len()]
-        } else {
-            self.next.clone()
-        }
-    }
-
-    /// The unprimed side of UNCHANGED e, `[A]_e` or `<<A>>_e`, which TLC evaluates with an empty
-    /// next state (`Tool.verifyUnchanged`, `evalAppl`, `enabledUnchanged`).
-    pub(crate) fn evaluate_before(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
-        let is_next_empty = std::mem::replace(&mut self.is_next_empty, true);
-        let value = self.evaluate(node, context);
-        self.is_next_empty = is_next_empty;
-        value
     }
 
     fn check_fields(&self, names: impl Iterator<Item = TextId>) -> Evaluated<()> {
@@ -2155,15 +2093,9 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(value.clone());
                 }
                 let is_primed = context.is_primed || bound.is_primed;
-                // TLC has no next state to key the value by where it evaluates a prime.
-                let kept = kept.as_ref().filter(|_| !is_primed);
+                let kept = kept.as_ref().filter(|_| self.is_assuming);
                 if let Some(kept) = kept
                     && let Some(kept) = &*kept.borrow()
-                    && is_kept_state(&kept.current, &self.current, &self.ir.tlc_order) == Some(true)
-                    && is_kept_state(&kept.next, &self.keyed_next(), &self.ir.tlc_order)
-                        == Some(true)
-                    && kept.is_primed == is_primed
-                    && kept.is_enabling == self.is_enabling
                 {
                     self.reads += u64::from(kept.is_read);
                     self.captures += u64::from(kept.is_captured);
@@ -2177,10 +2109,6 @@ impl<'ir> Evaluator<'ir> {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
                 } else if let Some(kept) = kept {
                     *kept.borrow_mut() = Some(KeptValue {
-                        is_primed,
-                        is_enabling: self.is_enabling,
-                        current: self.current.clone(),
-                        next: self.keyed_next(),
                         is_read: self.reads != reads,
                         is_captured: self.captures != captures,
                         value: value.clone(),

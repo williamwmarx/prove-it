@@ -14,22 +14,29 @@ The exception was a java.lang.RuntimeException
 "a"
 Error: The behavior up to this point is:
 State 1: <Initial predicate>
-x = 0
+/\ x = 0
+/\ y = 0
 
 Error: TLC was unable to fingerprint.
 
 Fingerprint Stack Trace:
-0. Line 6, column 9 to line 6, column 56 in M
-1. Line 6, column 9 to line 6, column 18 in M
-2. Line 6, column 23 to line 6, column 56 in M
-3. Line 6, column 32 to line 6, column 55 in M
-4. Line 6, column 32 to line 6, column 37 in M
-5. Line 6, column 42 to line 6, column 55 in M
-6. Line 5, column 9 to line 5, column 51 in M
-7. Line 5, column 9 to line 5, column 26 in M
-8. Line 5, column 31 to line 5, column 51 in M
-9. Line 5, column 42 to line 5, column 50 in M
-10. Line 6, column 44 to line 6, column 54 in M
+0. Line 6, column 9 to line 6, column 46 in M
+1. Line 6, column 9 to line 6, column 28 in M
+2. Line 6, column 9 to line 6, column 18 in M
+3. Line 6, column 23 to line 6, column 28 in M
+4. Line 6, column 33 to line 6, column 46 in M
+5. Line 5, column 9 to line 5, column 97 in M
+6. Line 5, column 18 to line 5, column 96 in M
+7. Line 5, column 18 to line 5, column 83 in M
+8. Line 5, column 18 to line 5, column 59 in M
+9. Line 5, column 18 to line 5, column 49 in M
+10. Line 5, column 18 to line 5, column 35 in M
+11. Line 5, column 40 to line 5, column 49 in M
+12. Line 5, column 54 to line 5, column 59 in M
+13. Line 5, column 64 to line 5, column 83 in M
+14. Line 5, column 74 to line 5, column 83 in M
+15. Line 5, column 88 to line 5, column 96 in M
+16. Line 6, column 35 to line 6, column 45 in M
 
 
 Reason:

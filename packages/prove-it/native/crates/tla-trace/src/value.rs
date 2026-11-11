@@ -791,13 +791,6 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
 
 fn equal_values(left: &Value, right: &Value) -> Evaluated<bool> {
     normalize(left);
-    // `SetEnumValue.equals` normalizes itself first, which fails for a set TLC can't normalize
-    // before the other set is touched.
-    if let (Value::Unsorted(values), Value::Set(_) | Value::Interval(..) | Value::Unsorted(_)) =
-        (left, right)
-    {
-        return Err(unsorted_failure(values));
-    }
     normalize(right);
     match (left, right) {
         (Value::Int(left), Value::Int(right)) => Ok(left == right),
@@ -815,6 +808,10 @@ fn equal_values(left: &Value, right: &Value) -> Evaluated<bool> {
             } else {
                 typed_model_failure(left, right, true)
             }
+        }
+        // `SetEnumValue.equals` normalizes a set TLC holds unnormalized, which fails.
+        (Value::Unsorted(values), Value::Set(_) | Value::Interval(..) | Value::Unsorted(_)) => {
+            Err(unsorted_failure(values))
         }
         (Value::Function(left_function), Value::Function(right_function)) => {
             let (left_value, right_value) = (left, right);
