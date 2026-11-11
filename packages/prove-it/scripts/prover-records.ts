@@ -98,7 +98,7 @@ export const writeInputRecords = (records: Record<string, InputRecord>) =>
   );
 
 // Makes prove's decide use the TypeScript backends whatever the environment says, as the record is
-// theirs.
+// theirs, but for a backend without a TypeScript decider, which only its Rust port decides.
 export const useTypeScriptBackends = () => {
   Object.keys(process.env)
     .filter((name) => name.startsWith("PROVE_IT_PROVER"))

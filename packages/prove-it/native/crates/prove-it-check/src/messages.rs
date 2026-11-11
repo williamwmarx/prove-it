@@ -79,6 +79,8 @@ pub struct Printer<'o> {
     /// Whether the run records the trace TLC writes beside the spec for its trace exploration
     /// spec: TLC's default, where tla-front read the spec.
     pub is_trace_recorded: bool,
+    /// TLC's coverage report of the run, which comes before the statistics.
+    pub coverage: Option<Vec<tla_trace::CoverageMessage>>,
 }
 
 impl<'o> Printer<'o> {
@@ -91,6 +93,7 @@ impl<'o> Printer<'o> {
             err: &mut *output.err,
             host: output.host,
             is_trace_recorded: false,
+            coverage: None,
         }
     }
 

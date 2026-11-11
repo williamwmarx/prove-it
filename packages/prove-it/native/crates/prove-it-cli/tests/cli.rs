@@ -179,7 +179,10 @@ fn reads_the_command_line_as_tlc() {
     for (args, what) in [
         (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
         (&["-simulate", "TCommit"], "the TLC option -simulate"),
-        (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
+        (
+            &["-maxSetSize", "10", "TCommit"],
+            "the TLC option -maxSetSize",
+        ),
         (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {
@@ -1049,16 +1052,22 @@ fn compares_functions_over_intervals_with_functions_over_model_values_as_tlc() {
             None,
         ),
         // A membership, which the store answers by id only where no comparison can fail, compares
-        // and stops: TLC reports these as a FingerprintException, which the evaluator declines.
+        // and stops: TLC reports these as a FingerprintException in the set's method.
         (
             "interval-member",
             "([i \\in 0..1 |-> 1] \\in {[k \\in {m, 0} |-> j] : j \\in 1..40})",
-            None,
+            Some(
+                "Error: Attempted to compare an integer with non-integer:\nm.\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 5, column 9 to line 5, column 73 in Keys\n1. Line 5, column 14 to line 5, column 72 in Keys\n2. Line 5, column 37 to line 5, column 72 in Keys\n"
+                    .to_string(),
+            ),
         ),
         (
             "tuple-member",
             "(<<1, 1>> \\in {[k \\in {m, 0} |-> 1]})",
-            None,
+            Some(
+                "Error: Attempted to compare an integer with non-integer:\nm.\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 5, column 9 to line 5, column 49 in Keys\n1. Line 5, column 14 to line 5, column 48 in Keys\n2. Line 5, column 27 to line 5, column 48 in Keys\n"
+                    .to_string(),
+            ),
         ),
     ] {
         let spec = format!(
@@ -1694,12 +1703,12 @@ fn declines_what_the_replay_doesnt_follow_of_a_state_tlc_cant_fingerprint() {
         std::fs::remove_dir_all(directory).expect("removed");
     };
     // TLC fingerprints an initial state only where the constraints hold of it, and finds no
-    // error here.
+    // error here, where the search stopped: the replay fingerprints no state either.
     declines(
         "constrained-fingerprint",
         "---- MODULE Stop ----\nEXTENDS Integers\nVARIABLES x, y\nInit == \\/ (x = SUBSET (1..31) /\\ y = 0) \\/ (x = 0 /\\ y = 1)\nNext == UNCHANGED <<x, y>>\nC == y = 1\n====\n",
         "INIT Init\nNEXT Next\nCONSTRAINT C\n",
-        "a state TLC fingerprints only where its constraints hold",
+        "evaluating the failure again: it didn't fail",
     );
     // TLC's replay takes all of the action's successors before it fingerprints one, so it
     // reports the assertion that fails after the successor it can't fingerprint.
@@ -2159,7 +2168,7 @@ fn evaluates_a_lazy_functions_domain_as_tlc_builds_it() {
 fn tests_a_typed_model_value_against_a_lazy_domain_as_tlc_does() {
     // TLC fails to test a typed model value for membership in Nat, in DOMAIN of a function it
     // keeps lazy as anywhere, where an untyped one is simply not in it. The run stops there and
-    // must not find x FALSE.
+    // must not find x FALSE: TLC reports the FingerprintException of its replay.
     let spec = "---- MODULE Stop ----\nEXTENDS Integers\nCONSTANTS Ma, Mu\nVARIABLE x\nInit == x = (Ma \\in DOMAIN [i \\in Nat |-> 1])\nNext == UNCHANGED x\n====\n";
     let (output, directory) = run_lowered(
         "typed-domain",
@@ -2168,10 +2177,11 @@ fn tests_a_typed_model_value_against_a_lazy_domain_as_tlc_does() {
     );
     let text = stdout(&output);
     assert!(!text.contains("No error has been found"), "{text}");
+    // TLC tests it in the method of the function's domain, whose source makes the failure a
+    // FingerprintException.
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("a mistyped membership in Nat"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        text.contains("Error: Attempted to check if the typed model value a_a is an element of\nNat\nError: TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n0. Line 5, column 9 to line 5, column 45 in Stop\n1. Line 5, column 14 to line 5, column 44 in Stop\n2. Line 5, column 21 to line 5, column 44 in Stop\n"),
+        "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
     // A failing test of a domain TLC built of other sets is reported as a value TLC can't

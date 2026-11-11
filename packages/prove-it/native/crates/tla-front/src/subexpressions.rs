@@ -867,6 +867,17 @@ impl ProofContext<'_> {
                         ..symbol.clone()
                     }),
                     Assumed::AssumeProve(inner) => Assumed::AssumeProve(self.assume_prove(inner)?),
+                    Assumed::Label {
+                        name,
+                        name_range,
+                        body,
+                        location,
+                    } => Assumed::Label {
+                        name: name.clone(),
+                        name_range: name_range.clone(),
+                        body: self.assume_prove(body)?,
+                        location: location.clone(),
+                    },
                     Assumed::Expression(expression) => {
                         Assumed::Expression(self.expression(expression)?)
                     }

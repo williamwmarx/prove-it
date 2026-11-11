@@ -1183,6 +1183,11 @@ impl Source {
                         ast::Assumed::Expression(expression) => {
                             self.convert_fact_label(expression)?
                         }
+                        ast::Assumed::Label { .. } => {
+                            return Err(ObligationError::unsupported(
+                                "labeled ASSUME/PROVE in proof obligations",
+                            ));
+                        }
                     };
                     let location = expression.location.clone();
                     Ok(get_fact(

@@ -1,0 +1,27 @@
+Starting... (_)
+Computing initial states...
+Finished computing initial states: 2 distinct states generated at _.
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 1
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module Stuck>
+x = 2
+
+State 3: <Next line 5, col 9 to line 5, col 27 of module Stuck>
+x = 3
+
+The coverage statistics at _ (see https://explain.tlapl.us/module-coverage-statistics for how to interpret the following statistics).
+<x line 3, col 10 to line 3, col 10 of module Stuck>: 2
+<Init line 4, col 1 to line 4, col 4 of module Stuck>: 6:6
+  line 4, col 9 to line 4, col 20 of module Stuck: 6
+  |line 4, col 15 to line 4, col 20 of module Stuck: 3:9
+<Next line 5, col 1 to line 5, col 4 of module Stuck>: 2:7
+  line 5, col 9 to line 5, col 13 of module Stuck: 7
+  |line 5, col 9 to line 5, col 9 of module Stuck: 8
+  line 5, col 18 to line 5, col 27 of module Stuck: 7
+End of statistics.
+5 states generated, 4 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+Finished in _ at (_)
