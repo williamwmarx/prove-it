@@ -382,10 +382,7 @@ fn lower_ranked(
                     && get_definition(key, &environment)
                         .is_some_and(|copied| copied.body.location == init.location)
             });
-            let is_let = substitute.is_none()
-                && get_definition(&init.name, &environment).is_none()
-                && &*init.name != UNNAMED_ACTION;
-            if is_instanced || is_let {
+            if is_instanced || init.is_let {
                 return None;
             }
             let label = if &**name == UNNAMED_ACTION {

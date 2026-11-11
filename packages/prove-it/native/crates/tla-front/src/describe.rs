@@ -22,6 +22,8 @@ pub const UNNAMED_ACTION: &str = "UnnamedAction";
 pub struct Part {
     pub name: Name,
     pub location: Location,
+    /// Whether a LET defines the part, which TLC names by the LET and takes whole.
+    pub is_let: bool,
 }
 
 /// `SpecDescription`, without the actions, which the engine splits.
@@ -57,6 +59,7 @@ fn part(name: &str, expression: &Expr) -> Part {
     Part {
         name: Rc::from(name),
         location: expression.location.clone(),
+        is_let: false,
     }
 }
 
@@ -104,6 +107,7 @@ pub fn describe(
                 parts.push(Part {
                     name: definition.name.clone(),
                     location: definition.location.clone(),
+                    is_let: false,
                 });
             }
         }
@@ -118,6 +122,7 @@ pub fn describe(
         .map(|(name, location)| Part {
             name: name.clone(),
             location: location.clone(),
+            is_let: false,
         })
         .collect();
     Ok(describer.description)
@@ -270,7 +275,10 @@ impl Describer<'_> {
                 )) = lookup_scope(scope, &name)
                 && self.level(&thunk, thunk_scope.as_ref()) == Level::Variable
             {
-                self.description.inits.push(part(&name, &thunk));
+                self.description.inits.push(Part {
+                    is_let: true,
+                    ..part(&name, &thunk)
+                });
                 return Ok(());
             }
             return self.describe_specification(&thunk, thunk_scope.as_ref());
