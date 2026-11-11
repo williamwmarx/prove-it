@@ -1114,7 +1114,10 @@ impl ModuleGenerator<'_> {
     /// definitions and instances may come between a RECURSIVE declaration and the definition of
     /// what it declares. `kind` is the TypeScript's `type`.
     pub(super) fn check_recursive_section(&mut self, location: &Location, kind: &str) {
-        if self.state.unresolved_sum == 0 {
+        // The sum may be below zero: `checkForUndefinedRecursiveOps` takes a level's count off
+        // the sum without clearing the count, so each module around an inner module that left a
+        // RECURSIVE declaration undefined takes it off again.
+        if self.state.unresolved_sum <= 0 {
             return;
         }
         let location = get_span_location(&self.file, self.get_unit_span(location));
