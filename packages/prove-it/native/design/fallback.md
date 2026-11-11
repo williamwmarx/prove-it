@@ -302,6 +302,21 @@ it from one that printed something else. Each is outside the corpus:
 
 #### Known wrong outputs
 
+The engine and the trace evaluator test a union, an equality of sets and a membership in a UNION
+in an order other than the one in which TLC holds the sets' elements unnormalized, so a failure
+there names other elements than TLC's, and AssertError, which compares that message, answers FALSE
+where TLC answers TRUE (found by #327's adversarial round; each wrong on main alike):
+
+| Repro | TLC | Native |
+|---|---|---|
+| `AssertError("Attempted to check equality of integer 2 with non-integer:\n\"a\"", 1 \in {2, 1} \cup {"a"})` | TRUE | FALSE (the bare membership is right) |
+| `AssertError("Attempted to check equality of record:\n[a \|-> 1]\nwith non-record\n2", mv \in {[a \|-> 1]} \cup {2})`, `CONSTANT mv = mv` | TRUE | FALSE |
+| `{3, 1, 2} = {1, "a"}` | `Attempted to compare string "a" with non-string:\n1` | `Attempted to check equality of the set {1, 2, 3} with the value:\n{1, "a"}` |
+| `Cardinality(UNION {{2, 1}, {"a"}})` | `Attempted to check equality of integer 2 with non-integer:\n"a"` | `Attempted to compare integer 1 with non-integer:\n"a"` |
+| `1 \in UNION {{"a"}, {2}}` | `Attempted to check equality of string "a" with non-string:\n2` | `Attempted to compare integer 2 with non-integer:\n"a"` |
+
+The last three under AssertError, with TLC's message, answer FALSE where TLC answers TRUE.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
