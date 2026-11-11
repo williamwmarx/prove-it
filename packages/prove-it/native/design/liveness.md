@@ -237,6 +237,29 @@ state and diameter, not per state.
 UserModuleOverride and its Annotation variant, whose property prints and reads the diameter, are
 checked natively and match TLC.
 
+## TLCGet("level") in the temporal properties (as built)
+
+TLCGet("level") reads the level of the state TLC evaluates (`TLCGetSet`), which TLC set as it
+generated the state: 1 for an initial state, else one past the state it expanded. As TLC adds an
+expanded state to the behavior graphs, the state and its stuttering step are at the state's own
+level, and each successor is one past it, whatever level the search first found it at. So a step
+back to an earlier state reaches it at a level the search never gave it: `<>(TLCGet("level") = 3)`
+holds on a cycle of three states the search found at levels 1 and 2.
+
+- The engine answers such a state predicate for each state, and for each state a step reached, by
+  the step's edge (`Atom::LevelState`, `Slot::Reached`). It answers an action at its step's levels,
+  with the stuttering step's next state at the first state's level (`Atom::LevelAction`).
+- The checker keeps no consistency of a state with a tableau node across the steps that reach it,
+  as TLC keeps none.
+- TLC names the properties a lasso violates from the lasso it rebuilt, each state a successor of
+  the one before, so at its position, and the step back into the cycle at the cycle's start. The
+  binary names them so (`is_level_read`).
+- TLC keeps the first state it puts in a set of successors, so a step from a state to itself leaves
+  the stuttering step at the generated successor's level, one past the state's, which the checker
+  doesn't tell apart. The engine declines a level atom there, and in ENABLED, in a subscript, under
+  SYMMETRY or a VIEW, and where atoms print or read the diameter.
+- `lasso-grid/Level*` holds 40 specs for which the binary prints what TLC built at d8fb231 prints.
+
 ## Checks part way through the search (as built)
 
 TLC checks the temporal properties as the search goes too (`ModelChecker#doPeriodicWork`): about

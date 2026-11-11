@@ -388,6 +388,11 @@ impl Canonicalizer {
             match (is_moved, kind) {
                 (false, _) => id,
                 (true, KIND_SET) => store.set_of_range(&images)?,
+                // TLC's permutation keeps the function's class.
+                (true, _) if store.is_built_as_function(id) => {
+                    let image = store.tuple_of(&images);
+                    store.mark_built_as_function(image)
+                }
                 (true, _) => store.tuple_of(&images),
             }
         } else {

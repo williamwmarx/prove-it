@@ -992,6 +992,24 @@ pub fn syntax_error(value: &SyntaxError) -> Json {
     ])
 }
 
+/// A failure: its error, or `notYet` with what the Rust front end doesn't cover yet. TypeScript's
+/// errors carry no warnings, which TLC prints as it goes.
+fn front_error(value: &crate::errors::FrontError) -> Json {
+    use crate::errors::FrontError;
+    match value {
+        FrontError::Syntax(error) => syntax_error(error),
+        FrontError::Evaluation(message) | FrontError::Config(message) => {
+            object(vec![("error", Some(text(message)))])
+        }
+        FrontError::StackOverflow => object(vec![(
+            "error",
+            Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
+        )]),
+        FrontError::NotYet(reason) => object(vec![("notYet", Some(text(reason)))]),
+        FrontError::Warned(_, error) => front_error(error),
+    }
+}
+
 fn config_value(value: &crate::config::ConfigValue) -> Json {
     use crate::config::ConfigValue;
     let kind = |name: &str| ("kind", Some(text(name)));
@@ -1098,20 +1116,9 @@ fn facts(environment: &crate::environment::Environment) -> Json {
 pub fn environment(
     value: &Result<crate::environment::Environment, crate::errors::FrontError>,
 ) -> Json {
-    use crate::errors::FrontError;
     let environment = match value {
         Ok(environment) => environment,
-        Err(FrontError::Syntax(error)) => return syntax_error(error),
-        Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
-            return object(vec![("error", Some(text(message)))]);
-        }
-        Err(FrontError::StackOverflow) => {
-            return object(vec![(
-                "error",
-                Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
-            )]);
-        }
-        Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
+        Err(error) => return front_error(error),
     };
     let mut keys: crate::hash::FastMap<*const Definition, Name> = Default::default();
     let definitions = environment
@@ -1244,20 +1251,10 @@ fn levels(
 pub fn specification(
     value: &Result<crate::spec::Specification, crate::errors::FrontError>,
 ) -> Json {
-    use crate::errors::{FrontError, describe_range};
+    use crate::errors::describe_range;
     let specification = match value {
         Ok(specification) => specification,
-        Err(FrontError::Syntax(error)) => return syntax_error(error),
-        Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
-            return object(vec![("error", Some(text(message)))]);
-        }
-        Err(FrontError::StackOverflow) => {
-            return object(vec![(
-                "error",
-                Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
-            )]);
-        }
-        Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
+        Err(error) => return front_error(error),
     };
     let describe = |expression: &Expr| {
         Json::Array(vec![
@@ -1307,20 +1304,10 @@ pub fn specification(
 /// What `front-differential properties` compares of `getProperties`: each conjunct's name, where
 /// it is written, and whether it reads a scope.
 pub fn properties(value: &Result<crate::spec::Properties, crate::errors::FrontError>) -> Json {
-    use crate::errors::{FrontError, describe_range};
+    use crate::errors::describe_range;
     let properties = match value {
         Ok(properties) => properties,
-        Err(FrontError::Syntax(error)) => return syntax_error(error),
-        Err(FrontError::Evaluation(message) | FrontError::Config(message)) => {
-            return object(vec![("error", Some(text(message)))]);
-        }
-        Err(FrontError::StackOverflow) => {
-            return object(vec![(
-                "error",
-                Some(text(crate::tlc_messages::STACK_OVERFLOW_MESSAGE)),
-            )]);
-        }
-        Err(FrontError::NotYet(reason)) => return object(vec![("notYet", Some(text(reason)))]),
+        Err(error) => return front_error(error),
     };
     let describe = |property: &crate::spec::Property| {
         Json::Array(vec![
