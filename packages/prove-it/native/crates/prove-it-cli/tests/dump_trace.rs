@@ -222,8 +222,8 @@ fn parses_the_trace_modules_where_tlc_records_the_trace() {
         normalize(&read_fixture("DumpSuccess.default.out"))
     );
     std::fs::remove_dir_all(directory).expect("removed");
-    // A counterexample makes the trace exploration spec's postcondition write its own file, which
-    // TLC compresses with Java's Deflater, as the binary doesn't yet.
+    // A counterexample makes the trace exploration spec's postcondition write its own file to the
+    // constant the command line's `tlc` dump shares, which the binary doesn't yet.
     let (output, directory) = run(
         "default-violation",
         "DumpInvariant",
@@ -235,9 +235,7 @@ fn parses_the_trace_modules_where_tlc_records_the_trace() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        text.contains(
-            "prove-it: not native yet: the trace file of the trace exploration spec, which TLC compresses with Java's Deflater"
-        ),
+        text.contains("prove-it: not native yet: -dumpTrace with the trace exploration spec"),
         "{text}"
     );
     assert!(!directory.join("DumpInvariant.json").exists());

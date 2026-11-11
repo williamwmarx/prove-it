@@ -60,10 +60,6 @@ pub struct Postconditions {
 }
 
 pub struct PrintedState {
-    /// Each variable's text in TLC's order of the variables, as TLC records the state for its
-    /// trace exploration spec, whatever the ALIAS prints.
-    pub values: Vec<Option<String>>,
-    /// The variables as TLC prints the state, through the ALIAS where the configuration has one.
     pub variables: Vec<Variable>,
     /// The position in the model's actions of the action that took the step to the state, as
     /// TLC finds it.
@@ -385,10 +381,6 @@ fn rebuild(
                                 ),
                                 _ => get_state_variables(ir, &state.values, writing.is_plain),
                             },
-                            values: state_values(
-                                ir,
-                                &state.values.iter().map(Some).collect::<Vec<_>>(),
-                            ),
                             action: state.action,
                             output: state
                                 .printed
@@ -541,14 +533,6 @@ pub(crate) fn format_print(texts: &[String]) -> String {
 /// plain data where `is_plain`.
 pub(crate) fn get_state_variables(ir: &Ir, values: &[Value], is_plain: bool) -> Vec<Variable> {
     get_partial_variables(ir, &values.iter().map(Some).collect::<Vec<_>>(), is_plain)
-}
-
-/// A state's variables' texts in TLC's order of the variables, `None` for one unassigned.
-pub(crate) fn state_values(ir: &Ir, values: &[Option<&Value>]) -> Vec<Option<String>> {
-    ir.tlc_order
-        .iter()
-        .map(|&position| values[position as usize].map(format_value))
-        .collect()
 }
 
 /// A state some of whose variables are unassigned, which TLC prints as null.

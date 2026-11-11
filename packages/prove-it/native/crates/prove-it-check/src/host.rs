@@ -173,15 +173,8 @@ impl Host for SystemHost {
         std::env::var(name).ok()
     }
 
-    // The tests fix the clock with PROVE_IT_TEST_NOW, milliseconds since the epoch, to check
-    // what TLC writes of the time it ran.
     fn now(&self) -> SystemTime {
-        std::env::var("PROVE_IT_TEST_NOW")
-            .ok()
-            .and_then(|milliseconds| milliseconds.parse().ok())
-            .map_or_else(SystemTime::now, |milliseconds| {
-                std::time::UNIX_EPOCH + std::time::Duration::from_millis(milliseconds)
-            })
+        SystemTime::now()
     }
 
     fn zone(&self) -> &Zone {

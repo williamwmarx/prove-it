@@ -64,22 +64,6 @@
     ]
   },
   {
-    "id": "spectacle/specs/with_state_graphs/semantic_error1.cfg",
-    "mode": "te",
-    "pair": "tlc/native",
-    "reason": "TLC fails with a NullPointerException in its own code while it reports the error; Prove It reports the error itself. This is a bug in TLC, not in Prove It.",
-    "diff": [
-      "-The exception was a java.lang.NullPointerException",
-      "-: Cannot read field \"state\" because \"currentStateInfo\" is null",
-      "+The exception was a java.lang.RuntimeException",
-      "+: Attempted to enumerate S \\cup T when S:",
-      "+{6}",
-      "+and T:",
-      "+0",
-      "+are not both enumerable"
-    ]
-  },
-  {
     "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
     "mode": "default",
     "pair": "tlc/rust",

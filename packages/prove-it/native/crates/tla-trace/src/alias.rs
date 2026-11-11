@@ -6,7 +6,7 @@ use crate::eval::TracePrefix;
 use crate::failure::nested;
 use crate::print::{print_order, text_string};
 use crate::rebuild::{Rebuilder, run};
-use crate::value::{Class, EvalError, Lazy, TlcMessage, Value};
+use crate::value::{Class, EvalError, TlcMessage, Value};
 use crate::{Trace, Unsupported};
 use tla_ir::{Definition, DefinitionForm};
 
@@ -184,11 +184,6 @@ impl Rebuilder<'_> {
                 }
                 value => run(value)?,
             };
-            // TLC normalizes each set of the state as it prints it, and one it can't normalize
-            // stops the trace there with TLC's unexpected-exception report.
-            if holds_unnormalized(&value) {
-                return unsupported("with a set TLC can't normalize as it prints it");
-            }
             aliases.push(match &value {
                 Value::Function(function) if function.class.get() == Class::Record => {
                     let fields: Vec<_> = print_order(function, false)
@@ -213,32 +208,5 @@ impl Rebuilder<'_> {
             });
         }
         Ok(Some(aliases))
-    }
-}
-
-// Whether a value holds a set TLC can't normalize, in it or in the parts of a set it keeps lazy,
-// which TLC enumerates as it prints it.
-fn holds_unnormalized(value: &Value) -> bool {
-    match value {
-        Value::Unsorted(_) => true,
-        Value::Set(elements) => elements.iter().any(holds_unnormalized),
-        Value::Function(function) => function
-            .domain
-            .iter()
-            .chain(&function.range)
-            .any(holds_unnormalized),
-        Value::Lazy(lazy) => match &**lazy {
-            Lazy::Subset(set) | Lazy::Seq(set) | Lazy::Union(set) | Lazy::Filter(set, _) => {
-                holds_unnormalized(set)
-            }
-            Lazy::FunctionSet(left, right)
-            | Lazy::Cap(left, right)
-            | Lazy::Cup(left, right)
-            | Lazy::Diff(left, right) => holds_unnormalized(left) || holds_unnormalized(right),
-            Lazy::RecordSet(fields, _) => fields.iter().any(|(_, set)| holds_unnormalized(set)),
-            Lazy::Product(factors) => factors.iter().any(holds_unnormalized),
-            Lazy::Nat | Lazy::Int | Lazy::Real | Lazy::Strings | Lazy::Any => false,
-        },
-        _ => false,
     }
 }
