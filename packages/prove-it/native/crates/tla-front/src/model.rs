@@ -422,6 +422,8 @@ fn lower_ranked(
                 override_messages,
                 ir: tla_ir::encode(&ir),
                 startup_messages,
+                // TLC's `Defns`: what the root module defines and declares, which a named
+                // THEOREM or ASSUME isn't.
                 defined_names: environment
                     .definitions
                     .keys()
@@ -432,6 +434,15 @@ fn lower_ranked(
                             .iter()
                             .map(|constant| &constant.name),
                     )
+                    .filter(|name| {
+                        !matches!(
+                            environment
+                                .root_symbols
+                                .get(*name)
+                                .map(|symbol| &symbol.kind),
+                            Some(crate::resolve::SymbolKind::Theorem)
+                        )
+                    })
                     .map(|name| name.to_string())
                     .collect(),
                 initial_label,

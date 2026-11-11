@@ -1124,9 +1124,14 @@ as Integers does.
   `<Spec>_TTrace_<epoch>.bin`, which joins -dumpTrace's postconditions but which TLC gzips with
   Java's Deflater and writes with its own tokens of the strings; a date in a zone other than UTC,
   whose name Java gives it; `-teSpecOutDir`; a spec named by a path Java's `Path` would normalize,
-  such as `specs//M`; model values the spec makes with TLCModelValue; and a trace printed that the
-  binary doesn't record, as the simulator's. A spec found in a library directory is written as TLC
-  writes it, in the directory of the path it was given (`prove-it-cli/tests/spec_paths.rs`).
+  such as `specs//M`; model values the spec makes with TLCModelValue; a model value named as an
+  operator of the modules `_TLCTrace` loads, which TLC's `Defns` holds; an initial state without a
+  value for each variable, on which the postcondition fails too; the simulator's violation, whose
+  trace file the postcondition writes; and a trace printed that the binary doesn't record, as the
+  simulator's under `-noTEBin`. The simulator's lone error state at unbounded depth isn't recorded,
+  so TLC writes no spec for it, nor does the binary (`prove-it-cli/tests/te_cases.rs`). A spec found
+  in a library directory is written as TLC writes it, in the directory of the path it was given
+  (`prove-it-cli/tests/spec_paths.rs`).
 - **The TypeScript interpreter** writes neither file, and in this mode it keeps Naturals' `>=`
   wording (`getTraceSpecArithmetic`). It is retired with the interpreter (fallback.md, S4).
 

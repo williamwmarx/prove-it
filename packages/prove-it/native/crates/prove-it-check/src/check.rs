@@ -895,7 +895,7 @@ fn check_spec(
         is_trace_recorded(args, spec_path),
         Some({
             let (directory, _, name) = te_spec::get_files_place(main_file, started);
-            format!("{directory}/{name}.bin")
+            te_spec::join_place(&directory, &format!("{name}.bin"))
         }),
     );
     let directories = get_module_directories(main_file, &java.libraries);
@@ -1048,6 +1048,7 @@ fn check_spec(
                 &config,
                 &front.defined_names,
                 fingerprint_index,
+                is_trace_recorded(args, spec_path),
             ));
         }
     } else {
@@ -1115,7 +1116,7 @@ fn check_spec(
             Some("-continue under SYMMETRY or a VIEW")
         } else if !model.postconditions.is_empty() {
             Some("-continue with a POSTCONDITION")
-        } else if !dumps.is_empty() {
+        } else if dumps.has_command_line_dumps() {
             Some("-continue with -dumpTrace")
         } else if is_built_in(&["Print", "PrintT", "TLCSet"]) {
             // TLC prints what the spec prints as it evaluates, before the violation it then

@@ -41,6 +41,7 @@ pub const PROGRESS: u32 = 2200;
 pub const VERSION: u32 = 2262;
 pub const CHECKING_TEMPORAL_END: u32 = 2267;
 pub const STATE_GRAPH_OUTDEGREE: u32 = 2268;
+pub const STATE_PRINT_1: u32 = 2216;
 pub const STATE_PRINT_2: u32 = 2217;
 pub const STATE_PRINT_3: u32 = 2218;
 pub const TEMPORAL_PROPERTY_VIOLATED: u32 = 2116;
@@ -179,7 +180,9 @@ impl<'o> Printer<'o> {
         if is_warning && !self.is_warning_enabled {
             return;
         }
-        if level == Level::State {
+        // TLC's recorder takes the states of a behavior (TLC_STATE_PRINT2 and 3, and a lasso's
+        // step back), not the error state the simulator prints alone (TLC_STATE_PRINT1).
+        if level == Level::State && code != STATE_PRINT_1 {
             self.recorded_trace.note_printed();
         }
         let message = if self.is_tool {

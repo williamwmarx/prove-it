@@ -15,6 +15,10 @@ use crate::host::Host;
 
 const JSON_MODULE: &str = "_JsonTrace";
 
+/// Why the binary declines the trace's file the trace exploration spec's postcondition writes.
+pub const TRACE_FILE_DECLINE: &str =
+    "the trace file of the trace exploration spec, which TLC compresses with Java's Deflater";
+
 /// The command line's -dumpTrace options and what they need of the configuration.
 pub struct TraceDumps {
     /// Each option in the order given: whether it writes JSON, and its file.
@@ -82,6 +86,11 @@ impl TraceDumps {
         !self.dumps.is_empty()
     }
 
+    /// Whether the trace exploration spec's postcondition writes the trace's file.
+    pub fn is_trace_recorded(&self) -> bool {
+        self.is_trace_recorded
+    }
+
     pub fn is_empty(&self) -> bool {
         self.dumps.is_empty() && !self.is_trace_recorded
     }
@@ -109,9 +118,7 @@ impl TraceDumps {
             return Ok(Vec::new());
         }
         if self.is_trace_recorded {
-            return Err(Unsupported(
-                "the trace file of the trace exploration spec, which TLC compresses with Java's Deflater".into(),
-            ));
+            return Err(Unsupported(TRACE_FILE_DECLINE.into()));
         }
         // TLC finds the trace again for the postconditions, which a random draw may not find, and
         // then writes nothing.

@@ -108,6 +108,13 @@ pub fn print_failure(
     if stop.site == Site::Next && stop.reason == "a successor that isn't complete" {
         return print_incomplete(printer, ir, stop, start);
     }
+    // TLC hands an initial state it fails on to the trace exploration spec's postcondition, which
+    // fails in turn on a variable without a value.
+    if printer.is_trace_recorded && stop.reason == "an initial state that isn't complete" {
+        return Err(
+            "an incomplete initial state the trace exploration spec's postcondition reads".into(),
+        );
+    }
     let report = evaluate(ir, stop, printer.is_tool, printer.host.is_plain())?;
     let failure = &report.failure;
     if stop.replayed.is_some() && failure.fingerprint.is_some() {

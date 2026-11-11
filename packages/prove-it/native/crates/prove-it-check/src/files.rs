@@ -14,6 +14,9 @@ const STRING_VALUE: u8 = 3;
 
 pub struct FileDescriber {
     spec: PathBuf,
+    /// The spec's path as TLC was given it, or as it found it on the library path, which names the
+    /// root module's file.
+    given_spec: PathBuf,
     directories: Vec<PathBuf>,
     temporary: PathBuf,
     metadir: Option<PathBuf>,
@@ -32,6 +35,7 @@ impl FileDescriber {
             .map_or_else(std::env::temp_dir, PathBuf::from);
         FileDescriber {
             spec,
+            given_spec: files.spec.to_path_buf(),
             directories,
             temporary: std::fs::canonicalize(&temporary).unwrap_or_else(|_| resolve(&temporary)),
             metadir: files.metadir.map(|metadir| resolve(Path::new(metadir))),
@@ -54,12 +58,16 @@ impl FileDescriber {
             // ParseUnit names the file by its real path, and by the URI of the path its resolver
             // made, through the directory as given, where the two differ.
             ModuleOrigin::File => {
-                let Some(found) = self
-                    .directories
-                    .iter()
-                    .map(|directory| directory.join(&file_name))
-                    .find(|path| path.exists())
-                else {
+                let is_root = self
+                    .given_spec
+                    .file_name()
+                    .is_some_and(|file| file.to_string_lossy() == file_name);
+                let Some(found) = is_root.then(|| self.given_spec.clone()).or_else(|| {
+                    self.directories
+                        .iter()
+                        .map(|directory| directory.join(&file_name))
+                        .find(|path| path.exists())
+                }) else {
                     return real(&self.spec);
                 };
                 let resolved = real(&found);

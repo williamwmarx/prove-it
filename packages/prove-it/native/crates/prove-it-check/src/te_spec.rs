@@ -29,6 +29,33 @@ pub fn get_files_place(main_file: &str, started: SystemTime) -> (String, &str, S
     (directory, module, format!("{module}_TTrace_{epoch}"))
 }
 
+/// Whether a name is an operator of a module `_TLCTrace` loads, or one of its own.
+fn is_trace_module_name(name: &str) -> bool {
+    const TRACE_MODULES: [&str; 6] = [
+        "TLC",
+        "TLCExt",
+        "Sequences",
+        "Naturals",
+        "Integers",
+        "FiniteSets",
+    ];
+    name.starts_with("_TLCTrace")
+        || tla_front::standard_builtins::MASTER
+            .iter()
+            .filter(|module| TRACE_MODULES.contains(&module.name))
+            .flat_map(|module| module.operators)
+            .any(|operator| operator.name == name)
+}
+
+/// A file in the directory `get_files_place` names, as `Path.resolve` prints it: the root's
+/// without a second separator.
+pub fn join_place(directory: &str, file: &str) -> String {
+    match directory.strip_suffix('/') {
+        Some(directory) => format!("{directory}/{file}"),
+        None => format!("{directory}/{file}"),
+    }
+}
+
 /// What TLC knows of the run as it writes the spec, but the trace.
 pub struct TraceSpec {
     /// The checked spec's module.
@@ -65,6 +92,7 @@ impl TraceSpec {
         config: &ModelConfig,
         defined_names: &[String],
         fingerprint_index: usize,
+        is_trace_recorded: bool,
     ) -> TraceSpec {
         let (directory, module, name) = get_files_place(main_file, started);
         let texts = &ir.texts[..ir.ranked_count as usize];
@@ -84,10 +112,19 @@ impl TraceSpec {
                     polynomial.extend_byte(polynomial.value(), MODEL_VALUE),
                     token.map_or(0, |rank| rank as i32 + 1),
                 );
+                let is_defined = defined_names.iter().any(|defined| defined == name);
+                // TLC's `Defns` also holds the Java overrides of the modules `_TLCTrace` loads,
+                // which the root module doesn't see, and `_TLCTrace`'s constants.
+                if is_trace_recorded && !is_defined && is_trace_module_name(name) {
+                    unsupported = Some(
+                        "a model value named as an operator of the trace exploration spec's modules"
+                            .into(),
+                    );
+                }
                 ModelValueName {
                     name: name.to_string(),
                     hash: ((fingerprint >> 32) as i32) ^ (fingerprint as i32),
-                    is_defined: defined_names.iter().any(|defined| defined == name),
+                    is_defined,
                 }
             })
             .collect();
@@ -122,7 +159,7 @@ impl TraceSpec {
 
     /// The path of the spec's file with the extension, as TLC prints it.
     pub fn get_path(&self, extension: &str) -> String {
-        format!("{}/{}{extension}", self.directory, self.name)
+        join_place(&self.directory, &format!("{}{extension}", self.name))
     }
 }
 
@@ -214,12 +251,13 @@ pub fn write_after_finish(printer: &mut Printer) {
         return;
     };
     let trace = std::mem::take(&mut printer.recorded_trace);
+    // TLC writes the spec of a trace of two states or more.
+    if trace.printed <= 1 && trace.states.len() <= 1 {
+        return;
+    }
     if trace.printed != trace.recorded {
         printer.trace_spec_decline =
             Some("an error trace the trace exploration spec doesn't record".into());
-        return;
-    }
-    if trace.states.len() <= 1 {
         return;
     }
     if let Some(reason) = &spec.unsupported {
@@ -756,6 +794,14 @@ mod tests {
         ];
         let written = get_text(&spec("Stut", name, &["x"]), &trace, &date);
         assert_eq!(written.as_deref(), Ok(text.as_str()));
+    }
+
+    #[test]
+    fn places_a_file_as_path_resolve_prints_it() {
+        // `Paths.get("/").resolve("M.bin")` prints `/M.bin`, and `Paths.get("./sub")` adds one
+        // separator.
+        assert_eq!(join_place("/", "M.bin"), "/M.bin");
+        assert_eq!(join_place("./sub", "M.bin"), "./sub/M.bin");
     }
 
     #[test]
