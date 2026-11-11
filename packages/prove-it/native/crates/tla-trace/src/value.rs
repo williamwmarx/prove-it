@@ -364,6 +364,10 @@ pub fn sorted_function(keys: Vec<Value>, values: Vec<Value>, class: Class) -> Ev
 // TLC interns a text it makes after it starts as it makes it, after every text it interned as it
 // started: two such texts the evaluator didn't rank compare in an order it can't know.
 fn compare_texts(left: &Text, right: &Text) -> Evaluated<Ordering> {
+    // TLC interns a text once, so the same text compares equal however each was made.
+    if left.units == right.units {
+        return Ok(Ordering::Equal);
+    }
     match (left.rank, right.rank) {
         (-1, -1) => fail("an order of strings TLC made as it searched"),
         (_, -1) => Ok(Ordering::Less),

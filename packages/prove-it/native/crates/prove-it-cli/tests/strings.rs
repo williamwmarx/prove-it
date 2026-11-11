@@ -25,12 +25,20 @@ fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
 // literals, those the constant definitions make, with RecordValue's names where one builds a
 // record, Action's name where the configuration has an action, TLCGetSet's, those createConfig
 // makes, then those the assumptions make, as they make them. TLC orders the strings it makes as it
-// searches by when it makes them, which the engine doesn't follow, so it declines them.
+// searches by when it makes them, which the engine doesn't follow, so it declines them. The same
+// text TLC interns once, so the counterexample's field names TLC makes each time compare equal.
 #[test]
 fn orders_the_strings_it_makes_as_tlc() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/string-order");
     let read = |name: &str| std::fs::read_to_string(directory.join(name)).expect("a fixture");
-    for name in ["made", "reversed", "record", "constant", "searched"] {
+    for (name, exit) in [
+        ("made", 0),
+        ("reversed", 0),
+        ("record", 0),
+        ("constant", 0),
+        ("counterexample", 12),
+        ("searched", 1),
+    ] {
         let (output, run) = run_spec(
             name,
             &read(&format!("{name}.tla")),
@@ -41,6 +49,7 @@ fn orders_the_strings_it_makes_as_tlc() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        assert_eq!(output.status.code(), Some(exit), "{name}: {text}");
         if name == "searched" {
             assert!(
                 text.contains(
@@ -49,7 +58,6 @@ fn orders_the_strings_it_makes_as_tlc() {
                 "{text}"
             );
         } else {
-            assert_eq!(output.status.code(), Some(0), "{name}: {text}");
             assert!(
                 text.contains(&read(&format!("{name}.txt"))),
                 "{name}: {text}"
