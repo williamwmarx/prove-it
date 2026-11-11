@@ -75,7 +75,7 @@ impl Rebuilder<'_> {
         // liveness checker's lasso from the states.
         let aliases = match &inputs.counter_example {
             Some(counter_example) if counter_example.cycle.is_none() => {
-                self.alias(counter_example.trace, None, None, false)?
+                self.alias(counter_example.trace, None, None, false, false)?
             }
             _ => None,
         };

@@ -4,7 +4,7 @@
 
 use crate::eval::TracePrefix;
 use crate::failure::nested;
-use crate::print::{print_order, text_string};
+use crate::print::{format_pretty, print_order, text_string};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, EvalError, TlcMessage, Value};
 use crate::{Trace, Unsupported};
@@ -39,13 +39,36 @@ impl Rebuilder<'_> {
     /// An alias that fails to evaluate gives the state with TLC's message of the failure as its
     /// `_ALIASEvalError` field, marked as TLC marks a coded message under `-tool`.
     /// TLC binds the builtin Trace at each position to the trace's first states, as many as
-    /// `prefixes` says; with no `prefixes`, the alias isn't followed where it reads Trace.
+    /// `prefixes` says; with no `prefixes`, the alias isn't followed where it reads Trace. A
+    /// simulation's records carry each state's action as an `_action` field
+    /// (`TLCExt.getTrace`), which the rebuild doesn't hold: the alias is evaluated with two
+    /// stand-ins for it, and followed only where both give the same text.
     pub fn alias(
         &mut self,
         trace: &Trace,
         cycle_start: Option<usize>,
         prefixes: Option<&[usize]>,
         is_tool: bool,
+        is_simulated: bool,
+    ) -> Result<Option<Vec<Alias>>, Unsupported> {
+        if !is_simulated || prefixes.is_none() {
+            return self.alias_with(trace, cycle_start, prefixes, is_tool, None);
+        }
+        let first = self.alias_with(trace, cycle_start, prefixes, is_tool, Some("a"))?;
+        let second = self.alias_with(trace, cycle_start, prefixes, is_tool, Some("b"))?;
+        if get_texts(first.as_deref()) != get_texts(second.as_deref()) {
+            return unsupported("that reads the actions of a simulation's Trace");
+        }
+        Ok(first)
+    }
+
+    fn alias_with(
+        &mut self,
+        trace: &Trace,
+        cycle_start: Option<usize>,
+        prefixes: Option<&[usize]>,
+        is_tool: bool,
+        action: Option<&str>,
     ) -> Result<Option<Vec<Alias>>, Unsupported> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
@@ -99,7 +122,7 @@ impl Rebuilder<'_> {
         // state's variables (`RecordValue(TLCState)`).
         let mut records = Vec::new();
         for state in states.iter().filter(|_| prefixes.is_some()) {
-            let fields = ir
+            let mut fields: Vec<_> = ir
                 .tlc_order
                 .iter()
                 .map(|&variable| {
@@ -110,6 +133,12 @@ impl Rebuilder<'_> {
                     )
                 })
                 .collect();
+            if let Some(action) = action {
+                fields.push((
+                    evaluator.text_of("_action".encode_utf16().collect()),
+                    Value::Str(evaluator.text_of(action.encode_utf16().collect())),
+                ));
+            }
             records.push(run(Value::record(fields))?);
         }
         let records: std::rc::Rc<[Value]> = records.into();
@@ -219,4 +248,19 @@ impl Rebuilder<'_> {
         }
         Ok(Some(aliases))
     }
+}
+
+// The text of each state as the alias gives it.
+fn get_texts(aliases: Option<&[Alias]>) -> Vec<Vec<(String, String)>> {
+    aliases
+        .unwrap_or_default()
+        .iter()
+        .map(|alias| match alias {
+            Alias::Record(fields) => fields
+                .iter()
+                .map(|(name, value)| (name.clone(), format_pretty(value)))
+                .collect(),
+            Alias::State => Vec::new(),
+        })
+        .collect()
 }

@@ -498,21 +498,51 @@ Progress: 1 states checked, 1 traces generated (trace length: mean=0, var(x)=0, 
 }
 
 // TLC's simulation binds Trace to records that carry each state's action, `_action`
-// (`TLCExt.getTrace`), which the trace evaluator doesn't make.
+// (`TLCExt.getTrace`): an alias that reads only the states, or the records' fields, prints as TLC
+// prints it, and one whose text shows the action declines.
 #[test]
-fn declines_a_simulations_alias_that_reads_trace() {
-    let spec = "---- MODULE Dead ----\nEXTENDS Naturals, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x > 5 /\\ x' = x\nAl == [x |-> x, t |-> Trace]\n====\n";
+fn prints_a_simulations_alias_that_reads_trace_as_tlc() {
+    let spec = |alias: &str| {
+        format!(
+            "---- MODULE Tr ----\nEXTENDS Naturals, TLC, Sequences, TLCExt\nVARIABLE x\nInit == x \\in {{0, 1}}\nNext == x < 5 /\\ x' = x + 1\nInv == x < 3\nAl == [x |-> x, {alias}]\n====\n"
+        )
+    };
+    let config = "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Al\n";
+    let args = ["-seed", "3", "-simulate", "num=1", "-depth", "10"];
+    for (field, values) in [
+        ("l |-> Len(Trace)", ["l = 1", "l = 2", "l = 3", "l = 4"]),
+        ("d |-> DOMAIN Trace[1]", ["d = {\"x\", \"_action\"}"; 4]),
+    ] {
+        let (code, text) = simulate("simulate-alias-trace", "Tr", (&spec(field), config), &args);
+        assert_eq!(code, Some(12), "{text}");
+        let states: Vec<String> = values
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                let label = if position == 0 {
+                    "Init line 4, col 9 to line 4, col 20 of module Tr"
+                } else {
+                    "Next line 5, col 9 to line 5, col 27 of module Tr"
+                };
+                format!(
+                    "State {}: <{label}>\n/\\ x = {position}\n/\\ {value}\n",
+                    position + 1
+                )
+            })
+            .collect();
+        assert!(text.contains(&states.join("\n")), "{field}: {text}");
+    }
     let (output, directory) = run_named(
-        "simulate-alias-trace",
-        "Dead",
-        (spec, "INIT Init\nNEXT Next\nALIAS Al\n"),
-        &["-noTE", "-seed", "1", "-simulate", "num=1", "Dead"],
+        "simulate-alias-trace-action",
+        "Tr",
+        (&spec("t |-> Trace"), config),
+        &[&["-noTE"][..], &args, &["Tr"]].concat(),
     );
     std::fs::remove_dir_all(directory).expect("removed");
     assert_eq!(output.status.code(), Some(1));
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(
-        error.contains("a simulation's ALIAS that reads Trace"),
+        error.contains("an ALIAS that reads the actions of a simulation's Trace"),
         "{error}"
     );
 }

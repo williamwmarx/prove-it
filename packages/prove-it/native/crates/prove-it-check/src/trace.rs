@@ -93,7 +93,7 @@ impl<'v> From<&'v Violation> for Recorded<'v> {
             random: violation.random,
             symmetry: violation.symmetry.as_ref(),
             registers: &violation.registers,
-            is_simulated: false,
+            is_simulated: violation.is_simulated,
         }
     }
 }
@@ -117,29 +117,6 @@ pub fn rebuild_trace(
     rebuild(
         ir,
         &violation.into(),
-        &violation.kind,
-        &violation.states,
-        violation.labels.clone(),
-        Some(checks),
-        Writing { is_tool, is_plain },
-    )
-}
-
-/// A simulation's trace.
-pub fn rebuild_simulated(
-    ir: &Ir,
-    violation: &Violation,
-    checks: TraceChecks,
-    is_tool: bool,
-    is_plain: bool,
-) -> Result<PrintedTrace, String> {
-    let recorded = Recorded {
-        is_simulated: true,
-        ..violation.into()
-    };
-    rebuild(
-        ir,
-        &recorded,
         &violation.kind,
         &violation.states,
         violation.labels.clone(),
@@ -319,7 +296,13 @@ fn rebuild(
             let aliases = if is_alone {
                 None
             } else {
-                rebuilder.alias(&trace, cycle_start, prefixes.as_deref(), writing.is_tool)?
+                rebuilder.alias(
+                    &trace,
+                    cycle_start,
+                    prefixes.as_deref(),
+                    writing.is_tool,
+                    recorded.is_simulated,
+                )?
             };
             // CounterExample closes a lasso with its step back into the cycle. TLC's record of a
             // stuttering lasso, one whose cycle ends in its first state, closes it by the action

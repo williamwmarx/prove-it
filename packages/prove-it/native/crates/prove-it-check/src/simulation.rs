@@ -23,7 +23,7 @@ use crate::dump_trace::{TRACE_FILE_DECLINE, TraceDumps};
 use crate::failure::print_assumption_failure;
 use crate::messages::{self as code, Level, Printer};
 use crate::stack::alongside;
-use crate::trace::{TraceChecks, format_texts, format_variables, rebuild_simulated};
+use crate::trace::{TraceChecks, format_texts, format_variables, rebuild_trace};
 
 const ERROR_STATE: u32 = 2120;
 const MODE_SIMULATION: u32 = 2188;
@@ -265,16 +265,6 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
     if is_continued {
         return report_not_native(printer, "a simulation's violation under -continue");
     }
-    // A simulation binds Trace to records of its states that carry each state's action
-    // (`TLCExt.getTrace`, `RecordValue(state, action)`), which the trace evaluator doesn't make.
-    if config.alias.is_some()
-        && ir
-            .builtins
-            .iter()
-            .any(|builtin| &*ir.texts[builtin.name as usize] == "Trace")
-    {
-        return report_not_native(printer, "a simulation's ALIAS that reads Trace");
-    }
     // TLC checks the initial states before it simulates, and reports one that violates an
     // invariant as the model checker does.
     if let ViolationKind::InitialInvariant(_) = violation.kind {
@@ -418,7 +408,7 @@ fn get_state_texts(
     {
         return Err("a record of several fields, which TLC may or may not have sorted".into());
     }
-    let trace = rebuild_simulated(
+    let trace = rebuild_trace(
         ir,
         violation,
         TraceChecks { dumps, run: None },

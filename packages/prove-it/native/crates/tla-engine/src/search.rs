@@ -447,6 +447,9 @@ pub struct Violation {
     /// fingerprints when it stopped, sorted, the failing state's among them where TLC added it:
     /// TLC replays the expansion and skips each successor in the set. Empty for any other stop.
     pub fingerprints: Vec<u64>,
+    /// Whether a simulation took the trace, whose states TLC binds Trace to as records that
+    /// carry each state's action (`TLCExt.getTrace`).
+    pub is_simulated: bool,
 }
 
 /// A path to a tableau node that accepts every behavior: its states, as a `Violation`'s, whose
@@ -4958,6 +4961,7 @@ fn to_violation(
             registers: std::mem::take(&mut machine.registers),
             possible: search.possible.clone(),
             fingerprints,
+            is_simulated: false,
         })
     })
 }
@@ -5340,6 +5344,7 @@ fn to_accepted(
         registers: std::mem::take(&mut machine.registers),
         possible: search.possible.clone(),
         fingerprints: Vec::new(),
+        is_simulated: false,
     }))
 }
 
@@ -5407,6 +5412,7 @@ fn to_lasso(
             registers: std::mem::take(&mut machine.registers),
             possible: search.possible.clone(),
             fingerprints: Vec::new(),
+            is_simulated: false,
         })
     })
 }

@@ -714,8 +714,9 @@ Declined, each with its reason:
   (`TLCGlobals.continuation`) and exits with 0;
 - a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS, or
   that holds a record of several fields where the store can't print it;
-- an ALIAS in a spec that reads TLCExt's Trace: the simulation binds Trace to records of its
-  states with their actions (`TLCExt.getTrace`), which the trace evaluator doesn't make;
+- an ALIAS whose text shows the actions of TLCExt's Trace: the simulation binds Trace to records
+  of its states with each state's action as `_action` (`TLCExt.getTrace`), which the trace
+  evaluator evaluates with two stand-ins for the action, and follows where both print alike;
 - a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),
   which the simulation builds only as it checks a trace.
 
