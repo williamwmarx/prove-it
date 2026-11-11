@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { prove } from "../../src";
-import { TlaProverError } from "../../src/errors";
+import { SmtUnsupportedError, TlaProverError, TlaUnsupportedError } from "../../src/errors";
 import { type ProveOptions, proveWith } from "../../src/prover/prove";
 import type { Decision } from "../../src/prover/verdict";
 
@@ -209,6 +209,98 @@ describe("the Rust driver", () => {
       }),
     });
     expect(run.error?.class).toBe("EngineInvariantError");
+  });
+
+  // An earlier obligation's decision comes first, as the TypeScript decides in turn: here it
+  // throws, and then it proves, so the later obligation's error is the one thrown.
+  it.each(["boom1", "unsat"])(
+    "throws a decision's error in the order of the obligations when the earlier one answers %s",
+    async (earlier) => {
+      await expectSame({
+        options: { source: getModule("THEOREM 1 = 1 BY Zenon, SMT\nTHEOREM 2 = 2 BY SMT") },
+        decide: async (prover, text) => {
+          if (prover === "zenon") return { verdict: "unknown", timeUsedMs: 1, statistics: {} };
+          if (text.includes("Int 2")) throw new SmtUnsupportedError("boom2");
+          if (earlier !== "unsat") throw new SmtUnsupportedError(earlier);
+          return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
+        },
+      });
+    },
+  );
+
+  it("throws an abort before an obligation's error", async () => {
+    await expectSame({
+      options: {
+        source: getModule(
+          "VARIABLE v\nTHEOREM 1 = 1 BY SMT\nTHEOREM ENABLED TRUE BY ExpandCdot, Zenon",
+        ),
+      },
+      decide: byProver({}),
+      abortAfter: 2,
+    });
+    await expectSame({
+      options: {
+        source: getModule("VARIABLE v\nTHEOREM ENABLED TRUE BY ExpandCdot, Zenon"),
+        signal: AbortSignal.abort(new Error("pre")),
+      },
+      decide: byProver({}),
+    });
+  });
+
+  // The third method's prior has another tactic, so the TypeScript decides the text again.
+  it("decides a text again for another method of the obligation", async () => {
+    let calls = 0;
+    await expectSame({
+      options: {
+        source: getModule(
+          'PA == TRUE (*{ by (prover:"isabelle"; tactic:"auto") }*)\nPI == TRUE (*{ by (prover:"isabelle"; tactic:"force") }*)\nTHEOREM 1 = 1 BY PA, PI, PA',
+        ),
+      },
+      decide: async () => ({
+        verdict: calls++ % 3 === 2 ? "unsat" : "unknown",
+        timeUsedMs: 1,
+        statistics: {},
+      }),
+    });
+  });
+
+  // The Rust driver gives way on the module that isn't well-formed, after loading the others.
+  it("loads each module once when it gives way to the TypeScript driver", async () => {
+    const loads: string[] = [];
+    let count = 0;
+    const run = (driver: string) =>
+      proveWithDriver(driver, {
+        options: {
+          source: getModule("THEOREM X = 1 BY SMT DEF X", "Lib, TLAPS"),
+          loadModule: (name) => {
+            loads.push(name);
+            if (name === "Lib")
+              return `---- MODULE Lib ----\nEXTENDS Lib2\nX == ${++count}\n====\n`;
+            if (name === "Lib2") return '---- MODULE Lib2 ----\nY == "\uD800"\n====';
+            return undefined;
+          },
+        },
+        decide: async (_prover, text) => ({
+          verdict: text.includes("2") ? "sat" : "unsat",
+          timeUsedMs: 1,
+          statistics: {},
+        }),
+      });
+    const typescript = await run("ts");
+    const typescriptLoads = loads.splice(0);
+    count = 0;
+    expect(await run("rust")).toEqual(typescript);
+    expect(loads).toEqual(typescriptLoads);
+  });
+
+  it("skips a method whose backend can't take the text", async () => {
+    await expectSame({
+      options: { source: getModule("THEOREM 1 = 1 BY SMT, Zenon") },
+      decide: async (prover) => {
+        if (prover === "smt") throw new TlaUnsupportedError("thing");
+        return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
+      },
+    });
   });
 
   it("proves with workers as the TypeScript driver does", async () => {

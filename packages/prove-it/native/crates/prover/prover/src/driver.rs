@@ -36,11 +36,17 @@ pub struct Request {
 }
 
 /// How the caller answered a request: the backend's verdict, or the message of the
-/// `TlaProverError` it threw, which tlapm counts as a failure.
+/// `TlaProverError` it threw, which tlapm counts as a failure, or of a `TlaUnsupportedError`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Answer {
-    Decided { verdict: Verdict, time_used_ms: f64 },
+    Decided {
+        verdict: Verdict,
+        time_used_ms: f64,
+    },
     Failed(String),
+    /// The message of a `TlaUnsupportedError`: the backend couldn't take the text, which the
+    /// TypeScript counts as not tried.
+    Unsupported(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -181,11 +187,15 @@ impl Run<'_> {
     fn get_answer(
         &mut self,
         position: usize,
+        method_index: usize,
         prover: &str,
         text: String,
         time_limit_ms: f64,
     ) -> Result<Option<Answer>> {
-        let key = format!("{position}/{prover}/{time_limit_ms}/{}", get_digest(&text));
+        let key = format!(
+            "{position}/{method_index}/{prover}/{time_limit_ms}/{}",
+            get_digest(&text)
+        );
         match self.texts.get(&key) {
             // Two texts that share a key would share an answer.
             Some(known) if *known != text => return Err(ObligationError::assert_failure()),
@@ -372,7 +382,13 @@ impl Run<'_> {
             }
             let answer = match encoded {
                 Ok(text) => {
-                    match self.get_answer(position, &method.prover, text, method.time_limit_ms)? {
+                    match self.get_answer(
+                        position,
+                        index,
+                        &method.prover,
+                        text,
+                        method.time_limit_ms,
+                    )? {
                         Some(answer) => answer,
                         None => {
                             self.is_count_open |= methods.provers[index + 1..]
@@ -422,6 +438,14 @@ impl Run<'_> {
                         verdict: Some(verdict),
                         time_used_ms: Some(time_used_ms),
                     }
+                }
+                Answer::Unsupported(message) => {
+                    skip(
+                        &mut attempts,
+                        &mut failures,
+                        format!("{} can't encode {message}", method.prover),
+                    );
+                    continue;
                 }
                 Answer::Failed(message) => {
                     failures.push(MethodFailure {

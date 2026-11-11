@@ -489,25 +489,27 @@ const getAnswer = (decision: Promise<Decision>) =>
       return `${answer.verdict} ${answer.timeUsedMs}`;
     },
     (error: unknown) => {
-      if (!(error instanceof TlaProverError)) throw error;
+      if (!(error instanceof TlaProverError || error instanceof TlaUnsupportedError)) throw error;
       if (!error.message.isWellFormed())
         throw new EngineInvariantError("a backend's message isn't well-formed UTF-16");
-      return `error:${error.message}`;
+      return `${error instanceof TlaProverError ? "error" : "unsupported"}:${error.message}`;
     },
   );
 
 // prove with the Rust driver, which proves in rounds: each asks for the modules and the decisions
 // it needs, which this answers, deciding as the TypeScript driver does, in the pool when there is
 // one, and the next starts again from the beginning with them (design/prover.md, section 4c).
-// Undefined where a module isn't well-formed UTF-16, which the Rust driver's strings can't hold,
-// for the TypeScript driver to prove: that is known before any obligation is reported.
+// Where a module isn't well-formed UTF-16, which the Rust driver's strings can't hold, it returns
+// the modules it loaded, for the TypeScript driver to prove with: that is known before any
+// obligation is reported.
 const proveNatively = async (
   options: ProveOptions,
   name: string,
   native: Exclude<ReturnType<typeof getNativeAddon>, string>,
   decideWith: DecidePool["decide"] | undefined,
-): Promise<ProveResult | undefined> => {
-  if (!options.source.isWellFormed()) return undefined;
+): Promise<ProveResult | Map<string, string | undefined>> => {
+  const loaded = new Map<string, string | undefined>();
+  if (!options.source.isWellFormed()) return loaded;
   const workerCount = options.workers ?? 1;
   const pool =
     workerCount > 1 && isWorkerSupported() && decideWith === undefined
@@ -520,7 +522,8 @@ const proveNatively = async (
   const onAbort = () => pool?.terminate(options.signal?.reason);
   options.signal?.addEventListener("abort", onAbort);
   const known = new Map<string, string | undefined>();
-  const getRound = () => native.prove(`${name}.tla`, options.source, [...known]);
+  // The decisions that threw what ends the run, by key.
+  const failures = new Map<string, unknown>();
   let reportedCount = 0;
   // As the TypeScript driver does, each report waits for an abort to land first.
   const report = (reports: ProofObligation[]) =>
@@ -531,9 +534,14 @@ const proveNatively = async (
     });
   try {
     for (;;) {
-      const result = getRound();
+      const result = native.prove(`${name}.tla`, options.source, [...known]);
       if (result.kind === "error") {
-        report(result.reports ?? []);
+        // An obligation's error waits for an abort, as the TypeScript driver checks the signal at
+        // each obligation; getObligations's has no reports.
+        if (result.reports !== undefined) {
+          report(result.reports);
+          options.signal?.throwIfAborted();
+        }
         throw getDriverError(result);
       }
       report(result.reports);
@@ -544,32 +552,39 @@ const proveNatively = async (
           omittedProofCount: result.omittedProofCount,
         };
       for (const key of result.keys) {
-        const source = options.loadModule?.(key.slice("module:".length));
-        if (source !== undefined && !source.isWellFormed()) return undefined;
+        const moduleName = key.slice("module:".length);
+        const source = options.loadModule?.(moduleName);
+        loaded.set(moduleName, source);
+        if (source !== undefined && !source.isWellFormed()) return loaded;
         known.set(key, source);
       }
-      if (result.requests.length > 0) options.signal?.throwIfAborted();
-      const decided = await Promise.allSettled(
-        result.requests.map(async (request) => {
-          const answer = await getAnswer(
-            decideText(
-              request.prover,
-              request.text,
-              { timeLimitMs: request.timeLimitMs, signal: options.signal },
-              request.priority,
-            ),
-          );
-          known.set(`decide:${request.key}`, answer);
+      // A decision that threw ends the run once no earlier obligation needs a decision, as the
+      // TypeScript driver decides each obligation's in turn.
+      const failed = result.requests
+        .filter((request) => failures.has(request.key))
+        .toSorted((left, right) => left.priority - right.priority)[0];
+      const requests = result.requests.filter(
+        (request) => failed === undefined || request.priority < failed.priority,
+      );
+      if (failed !== undefined && requests.length === 0) throw failures.get(failed.key);
+      if (requests.length > 0) options.signal?.throwIfAborted();
+      await Promise.all(
+        requests.map(async (request) => {
+          try {
+            const answer = await getAnswer(
+              decideText(
+                request.prover,
+                request.text,
+                { timeLimitMs: request.timeLimitMs, signal: options.signal },
+                request.priority,
+              ),
+            );
+            known.set(`decide:${request.key}`, answer);
+          } catch (error) {
+            failures.set(request.key, error);
+          }
         }),
       );
-      const failure = decided.find((outcome) => outcome.status === "rejected");
-      if (failure !== undefined) {
-        // The obligations the other decisions settle are reported first, as they are when the
-        // TypeScript driver decides them in turn.
-        const settled = getRound();
-        if (settled.kind !== "needed" || settled.keys.length === 0) report(settled.reports ?? []);
-        throw failure.reason;
-      }
     }
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
@@ -595,12 +610,19 @@ export const proveWith = async (
   const native = options.backend === "tlapm" ? undefined : getNativeDriver();
   const proved =
     native === undefined ? undefined : await proveNatively(options, name, native, decideWith);
-  if (proved !== undefined) return proved;
+  if (proved !== undefined && !(proved instanceof Map)) return proved;
+  // The modules the Rust driver loaded before it gave way, each read once more from what it read.
+  const loadModule = (moduleName: string) => {
+    if (proved?.has(moduleName) !== true) return options.loadModule?.(moduleName);
+    const source = proved.get(moduleName);
+    proved.delete(moduleName);
+    return source;
+  };
   const modules = new Map<string, string>();
   const results = getObligations(
     [{ file: `${name}.tla`, source: options.source }],
     (moduleName) => {
-      const source = options.loadModule?.(moduleName);
+      const source = loadModule(moduleName);
       if (source !== undefined) modules.set(moduleName, source);
       const loaded = source ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
       return loaded === undefined ? undefined : { file: `${moduleName}.tla`, source: loaded };

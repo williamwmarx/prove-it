@@ -4,8 +4,9 @@
 //! - `{ kind: "needed", keys, requests, reports }`, where it reads a module it doesn't know
 //!   (`module:<name>`, which `loadModule` answers) or needs decisions. Each request is
 //!   `{ key, prover, text, timeLimitMs }`, which JavaScript decides and answers under
-//!   `decide:<key>` as `<verdict> <timeUsedMs>`, or `error:<message>` for the `TlaProverError` a
-//!   backend throws. `reports` are the obligations settled so far, in order;
+//!   `decide:<key>` as `<verdict> <timeUsedMs>`, `error:<message>` for the `TlaProverError` a
+//!   backend throws, or `unsupported:<message>` for a `TlaUnsupportedError`. `priority` is the
+//!   obligation's position, by which JavaScript decides the earliest first. `reports` are the obligations settled so far, in order;
 //! - `{ kind: "proved", reports, missingProofCount, omittedProofCount }`;
 //! - `{ kind: "error", name, message, failure, exception, reports }`, an error `getObligations` or
 //!   the driver throws, after the obligations settled before it: `failure` and `exception` only for
@@ -260,6 +261,9 @@ fn prove_round(run: &mut Run, answers: &HashMap<String, Answer>) -> HostValue {
 fn get_answer(text: &str) -> Option<Answer> {
     if let Some(message) = text.strip_prefix("error:") {
         return Some(Answer::Failed(message.to_owned()));
+    }
+    if let Some(message) = text.strip_prefix("unsupported:") {
+        return Some(Answer::Unsupported(message.to_owned()));
     }
     let (verdict, time_used_ms) = text.split_once(' ')?;
     let verdict = match verdict {
