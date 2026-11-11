@@ -185,8 +185,14 @@ constants takes 21 million steps where Z3 takes milliseconds.
 **Size.** The core stops at `MAX_SIZE` (`rlimit.rs`, prover.md 3.6) with `stop=heap`: a count of
 the expressions, the goal's formulas, the e-graph's nodes and the instances found, read at the
 context's cancel checks and where the goal and the manager grow, so that a decision that grows
-without taking steps stops at the same step on every machine. A structure that can grow that way
-without a step joins the count.
+without taking steps stops at the same step on every machine. 2^26 is a ceiling against runaway
+growth, about 9 GB, not a budget: a search that answers may hold gigabytes, as Z3's does, and
+the cap is set far above what any input of the decider corpus holds (7.3 million). A structure
+that can grow without a step joins the count. Known large-memory inputs:
+- `tests/inputs/instance-growth.smt`, a mutant of smt/706e2c3eb8dbf208 whose one E-matching run
+  finds millions of new instances past a million steps: unknown, `stop=heap`, at 1,691,188
+  steps with 4.9 GB (10.5 GB by two million steps before the cap; Z3 5.3.3 times out at 175 MB
+  with `-T:5`, 1.2 GB at 20 s, 6.7 GB at 60 s). It holds too much for the unit tests to run.
 
 **Recursion.** Where the TS recurses on terms and relies on catching a stack overflow
 (`isStackOverflow` → unknown), the Rust counts depth and returns `SmtError::Unsupported` past a
