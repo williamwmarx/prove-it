@@ -987,9 +987,13 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
-  // TLC strips one .tla where SANY reads the file of the name that remains.
-  if (specPaths.some((path) => path.endsWith(".tla.tla"))) {
+  // TLC strips one .tla, in any case, where SANY reads the file of the name that remains.
+  if (specPaths.some((path) => path.toLowerCase().endsWith(".tla.tla"))) {
     return declineNatively("a spec named with .tla twice");
+  }
+  // TLC names the module of the spec .tla by the empty name.
+  if (specPaths.some((path) => basename(path) === ".tla")) {
+    return declineNatively("a spec named .tla");
   }
   const paths = [
     ...new Map(

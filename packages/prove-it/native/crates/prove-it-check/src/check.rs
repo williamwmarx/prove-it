@@ -153,9 +153,20 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             None => format!("{path}.tla"),
         })
         .collect();
-    // TLC strips one .tla where SANY reads the file of the name that remains.
-    if spec_paths.iter().any(|path| path.ends_with(".tla.tla")) {
+    // TLC strips one .tla, in any case, where SANY reads the file of the name that remains.
+    if spec_paths
+        .iter()
+        .any(|path| path.to_ascii_lowercase().ends_with(".tla.tla"))
+    {
         return not_native(output, "a spec named with .tla twice");
+    }
+    // TLC names the module of the spec `.tla` by the empty name.
+    if spec_paths.iter().any(|path| {
+        Path::new(path)
+            .file_name()
+            .is_some_and(|name| name == ".tla")
+    }) {
+        return not_native(output, "a spec named .tla");
     }
     if spec_paths.is_empty() {
         let _ = writeln!(output.err, "{USAGE}");
