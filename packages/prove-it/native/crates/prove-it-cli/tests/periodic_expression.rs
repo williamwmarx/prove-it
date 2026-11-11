@@ -370,3 +370,22 @@ fn declines_a_periodic_it_doesnt_follow_at_its_first_progress() {
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
+
+// TLC finds the value the configuration assigns a declared constant among its definitions too,
+// and fails casting it to one as it starts (exit 255).
+#[test]
+fn declines_a_periodic_constant_the_configuration_assigns_a_value_to() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nCONSTANT Periodic\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n====\n";
+    let (output, directory) = run_spec_with(
+        "periodic-constant-assigned",
+        spec,
+        &format!("{PERIODIC_CONFIG}CONSTANT Periodic = TRUE\n"),
+        &[],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: a _PERIODIC the configuration assigns a value to\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
