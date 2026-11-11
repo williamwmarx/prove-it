@@ -5,7 +5,7 @@
 //! state it keeps, so every state but the last prints sorted. The last state of a violation is
 //! one the search didn't keep, and TLC fingerprinted it only if it satisfies the constraints.
 
-use tla_ir::{AtomKind, Definition, DefinitionForm, Ir, NodeId};
+use tla_ir::{AtomKind, Definition, DefinitionForm, Ir, NodeId, NodeKind};
 use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
@@ -68,6 +68,16 @@ impl<'ir> Rebuilder<'ir> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
         let defined = evaluator.definition(ir.definitions[definition as usize]);
+        // TLC keeps a definition whose body is a literal as the operator (`getConstantValue`).
+        if matches!(
+            evaluator.kind(defined.body),
+            NodeKind::Number(_)
+                | NodeKind::WideNumber(_)
+                | NodeKind::Decimal(_)
+                | NodeKind::String(_)
+        ) {
+            return Ok(false);
+        }
         let is_marked = defined.flags & Definition::NORMALIZED != 0
             && matches!(&defined.form, DefinitionForm::Operator(params) if params.is_empty())
             && !ir.model.startup.definitions.contains(&definition);
