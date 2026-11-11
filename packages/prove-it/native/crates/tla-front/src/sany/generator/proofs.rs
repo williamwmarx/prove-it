@@ -21,7 +21,7 @@ use crate::sany::source::{
     get_range_span, get_span_location, get_token_index, get_token_location, get_token_source,
     is_box_token, is_token,
 };
-use crate::sany::{Result, not_yet};
+use crate::sany::{Result, not_yet, not_yet_unlinkable};
 
 use super::{
     AssumeProveScope, ContextSlot, DefEntryParts, LocalContext, ModuleGenerator,
@@ -68,6 +68,17 @@ impl ModuleGenerator<'_> {
                 }
                 Fact::Expression(expression) => expression,
             };
+            // SANY's parser reads a fact `@` as a name.
+            if matches!(expression.kind, ExpressionKind::ExceptAt)
+                && !self.is_parenthesized(get_parenthesized_span(
+                    &self.file,
+                    get_expression_span(&self.file, expression),
+                ))
+            {
+                let location = self.get_location(expression);
+                nodes.push(self.report_unknown_at(&location));
+                continue;
+            }
             if !get_selector_items(expression).is_some_and(|items| is_general_id(&items)) {
                 nodes.push(self.generate_expression(expression)?);
                 continue;
@@ -388,6 +399,12 @@ impl ModuleGenerator<'_> {
         if use_or_hide.is_hide {
             for &fact in &facts {
                 let graph = &self.spec.graph;
+                // factCheck reads the kind of a fact SANY's generator left null, and throws.
+                if graph.node(fact).is_absent() {
+                    return not_yet_unlinkable(
+                        "the NullPointerException SANY throws for a HIDE fact it left null",
+                    );
+                }
                 let NodeKind::OpAppl(application) = graph.kind(fact) else {
                     continue;
                 };
@@ -850,17 +867,25 @@ impl ModuleGenerator<'_> {
             }
             let mut assume_context = LocalContext::default();
             let generated = match body {
-                StepBody::Assert { statement, .. } => Some(GeneratedStep {
-                    node: self.generate_assertion(
+                StepBody::Assert { statement, .. } => {
+                    let Some(node) = self.generate_assertion(
                         statement,
                         step,
                         is_suffices,
                         body_span,
                         &mut assume_context,
                         &mut previous_right,
-                    )?,
-                    is_pick: false,
-                }),
+                    )?
+                    else {
+                        // generateProof returns null, with the rest of the proof ungenerated and
+                        // its contexts still pushed.
+                        return Ok(self.create_absent_node());
+                    };
+                    Some(GeneratedStep {
+                        node,
+                        is_pick: false,
+                    })
+                }
                 _ => self.generate_step_body(step, body_span)?,
             };
             let Some(generated) = generated else {
@@ -1026,7 +1051,8 @@ impl ModuleGenerator<'_> {
 
     /// `generateAssertion` in `generateProof` (generator.ts 2846–2880). `previous_right` is
     /// `infixStep.previousRight`, and `assume_context` the step's `assumeContext`, which the
-    /// assertion takes for the context of an ASSUME/PROVE and gives back.
+    /// assertion takes for the context of an ASSUME/PROVE and gives back. None where generateProof
+    /// returns null, at an @ step whose operator it doesn't find.
     pub(super) fn generate_assertion(
         &mut self,
         statement: &Statement,
@@ -1035,7 +1061,7 @@ impl ModuleGenerator<'_> {
         body_span: TokenSpan,
         assume_context: &mut LocalContext,
         previous_right: &mut Option<NodeId>,
-    ) -> Result<NodeId> {
+    ) -> Result<Option<NodeId>> {
         let statement = match statement {
             Statement::AssumeProve(assume_prove) => {
                 let goal = step.name.as_ref().map(|_| is_suffices);
@@ -1047,30 +1073,52 @@ impl ModuleGenerator<'_> {
                 if let NodeKind::AssumeProve(node) = &mut self.spec.graph.node_mut(node).kind {
                     node.is_suffices = is_suffices;
                 }
-                return Ok(node);
+                return Ok(Some(node));
             }
             Statement::Expression(expression) => expression,
         };
         if is_suffices {
             let expression = self.generate_expression(statement)?;
             let location = get_span_location(&self.file, body_span);
-            return Ok(self.apply_builtin(
+            return Ok(Some(self.apply_builtin(
                 "$Suffices",
                 [expression],
                 location,
                 OpApplBinding::default(),
-            ));
+            )));
         }
+        // generateProof takes a step for infix only where its assertion isn't parenthesized, and
+        // for an @ step only where its left side is @ itself, not parenthesized.
+        let is_infix = self.is_infix_expression(statement)
+            && !self.is_parenthesized(self.get_operand_span(statement));
         let at_step = match (&statement.kind, *previous_right) {
             (ExpressionKind::Apply { operator, args, .. }, Some(previous))
-                if self.is_infix_expression(statement)
-                    && matches!(args[0].kind, ExpressionKind::ExceptAt) =>
+                if is_infix
+                    && matches!(args[0].kind, ExpressionKind::ExceptAt)
+                    && !self.is_parenthesized(self.get_operand_span(&args[0])) =>
             {
                 Some((operator, args, previous))
             }
             _ => None,
         };
         let expression = match at_step {
+            // generateGenID reports an @ step's operator it doesn't find, and generateProof the
+            // step, and gives up the rest of the proof.
+            Some((operator, ..)) if self.resolve_symbol(&resolve_synonym(operator)).is_none() => {
+                let Some(unresolved) = self.get_unresolved_operator(statement) else {
+                    return not_yet("an @ step's operator without a place");
+                };
+                let location = self.get_location(statement);
+                self.add_error(
+                    &get_token_location(&self.file, unresolved.index),
+                    format!("Could not find declaration or definition of symbol '{operator}'."),
+                );
+                self.add_error(
+                    &location,
+                    format!("Couldn't resolve infix operator symbol `{operator}'."),
+                );
+                return Ok(None);
+            }
             // SANY generates an @ step's right side before the $Nop that stands for its @.
             Some((operator, args, previous)) => {
                 let at_right = self.generate_expression(&args[1])?;
@@ -1087,12 +1135,8 @@ impl ModuleGenerator<'_> {
             NodeKind::OpAppl(application) => application.operands.get(1).copied().flatten(),
             _ => None,
         };
-        *previous_right = if self.is_infix_expression(statement) {
-            right
-        } else {
-            None
-        };
-        Ok(expression)
+        *previous_right = if is_infix { right } else { None };
+        Ok(Some(expression))
     }
 
     /// `processTheorem` (generator.ts 2934–2972).

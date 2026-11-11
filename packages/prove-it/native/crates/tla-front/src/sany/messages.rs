@@ -12,7 +12,7 @@ use crate::errors::SanyError;
 use crate::sany::generator::{GenerationOptions, generate_sany_specification};
 use crate::sany::levels::{LevelCheck, check_module_levels};
 use crate::sany::nodes::{Graph, NodeId, SanyMessage, format_sany_location};
-use crate::sany::{GENERATOR_EXCEPTION, Result, not_yet};
+use crate::sany::{GENERATOR_EXCEPTION, Result, UNLINKABLE, not_yet};
 
 /// What SANY's generator reports: each module's messages, or the index in the order of the
 /// module `Generator` throws on as it generates it.
@@ -20,6 +20,8 @@ pub enum Generated {
     Messages(Vec<ModuleMessages>),
     /// Messages one of which has a shape no recording shows: the first line of that one.
     Unproven(Vec<ModuleMessages>, String),
+    /// A shape whose messages linking would give otherwise than SANY, and why.
+    Declined(String),
     Exception(usize),
 }
 
@@ -294,6 +296,9 @@ pub fn get_generator_messages(
         Err(FrontError::NotYet(reason)) if reason == GENERATOR_EXCEPTION => {
             // The modules before the one that throws are those `on_module` saw.
             return Ok(Generated::Exception(ends.into_inner().len()));
+        }
+        Err(FrontError::NotYet(reason)) if reason.starts_with(UNLINKABLE) => {
+            return Ok(Generated::Declined(reason[UNLINKABLE.len()..].to_owned()));
         }
         generated => generated?,
     };
