@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { parseModule } from "../../src";
+import { getNativeSanyReport } from "../../src/cli/sany-text";
 import { parseConfig } from "../../src/config";
 import { createEnvironment } from "../../src/environment";
 import { checkParsed } from "../../src/parallel";
-import { getSanyReport, type SanyReportOptions } from "../../src/sany/report";
 import { createTlcOrder } from "../../src/tlc/order";
 
 const directories: string[] = [];
@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 // Writes each module to its own file, then reports on the first one, as TLC runs SANY.
-const getReport = (modules: Record<string, string>, options?: SanyReportOptions) => {
+const getReport = (modules: Record<string, string>) => {
   const directory = mkdtempSync(join(tmpdir(), "sany-readings-"));
   directories.push(directory);
   Object.entries(modules).forEach(([name, source]) =>
@@ -30,7 +30,13 @@ const getReport = (modules: Record<string, string>, options?: SanyReportOptions)
   const loadModule = (name: string) =>
     name in modules ? readFileSync(join(directory, `${name}.tla`), "utf8") : undefined;
   const root = Object.keys(modules)[0];
-  const report = getSanyReport(join(directory, `${root}.tla`), loadModule, options);
+  const report = getNativeSanyReport(join(directory, `${root}.tla`), modules[root], "master", {
+    fileName: root,
+    loadModule,
+    describeFile: () => "",
+    rootExtendees: [],
+  });
+  if ("declined" in report) throw new Error(`tla-front declined: ${report.declined}`);
   return { report, loadModule };
 };
 
@@ -65,13 +71,6 @@ describe("SANY's readings", () => {
   it("hold the module SANY's parser read from each text", () => {
     const sany = getReport({ Counter: COUNTER, Leaf: LEAF });
     expect(sany.report.isFailed).toBe(false);
-    expect(sany.report.readings.get(COUNTER)?.module).toEqual(parseModule(COUNTER));
-    expect(sany.report.readings.get(LEAF)?.module).toEqual(parseModule(LEAF));
-  });
-
-  // XMLExporter's SANY validates no PlusCal, so only the generator reads the modules.
-  it("hold what the generator read", () => {
-    const sany = getReport({ Counter: COUNTER, Leaf: LEAF }, { isXmlExport: true });
     expect(sany.report.readings.get(COUNTER)?.module).toEqual(parseModule(COUNTER));
     expect(sany.report.readings.get(LEAF)?.module).toEqual(parseModule(LEAF));
   });
