@@ -517,10 +517,10 @@ distinct decline messages in the group.
 | TLC 1.7.4 | 63 | 1 | retired: declines until the TypeScript goes |
 | An assumption that fails to evaluate, evaluated again | 57 | 25 | front session |
 | Temporal properties and liveness | 50 | 19 | liveness session |
-| The engine stopping where TLC reports an error | 46 | 25 | memo session |
+| The engine stopping where TLC reports an error | 48 | 27 | memo session |
 | What the constant evaluator doesn't compute | 14 | 3 | front session |
 | Other failures evaluated again | 29 | 18 | memo session |
-| The engine declining an operator or builtin | 20 | 15 | memo session |
+| The engine declining an operator or builtin | 14 | 11 | memo session |
 | Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
 | `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
 | Java overrides TLC loads with more than the shapes ported | 9 | 8 | unassigned |
@@ -540,6 +540,10 @@ set, the successor TLC fails to find again from its generator, and the constant 
 warns about, but one that overflows TLC's stack and one that fails as a set operation. The
 constant conjunct of the specification that draws at random moved to the engine's decline of
 RandomElement under a comparison.
+The TLCExt builtins after it (measured 2026-11-11 from 924d7cde, 1,478 native before and 1,482
+after) made native AssertEq, UNCHANGED in the initial predicate and PickSuccessor where TLC answers
+without asking, and moved TLCGetAndSet's run and the interactive PickSuccessor to the engine's
+stops.
 The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
 

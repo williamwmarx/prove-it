@@ -499,6 +499,7 @@ const TLC_FAILURES: &[&str] = &[
     "EXCEPT on a non-function",
     "Head of an empty sequence",
     "IsFiniteSet of a non-set",
+    "PickSuccessor of a successor TLC fingerprints incomplete",
     "RandomElement of the empty set",
     "SortSeq of a non-sequence",
     "SubBag of a non-bag",
@@ -1045,6 +1046,9 @@ struct Search<'r, T, E = Dense> {
     // Whether the spec may build a function TLC keeps lazy, which no state may hold: TLC can't
     // fingerprint one.
     is_lambda_built: bool,
+    // Whether PickSuccessor reads whether TLC has seen a successor as its action constraints are
+    // checked.
+    is_picking: bool,
     // The violation the search stops at, when it knows what TLC reports for it.
     violation: Option<Found>,
     // The successor waiting to be checked, its fingerprint, and the bits of the pieces the walk
@@ -1098,6 +1102,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             checked: None,
             is_pipelined,
             is_lambda_built: false,
+            is_picking: false,
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
@@ -1461,7 +1466,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         &mut self,
         machine: &mut Machine<'_>,
         context: &EngineContext,
-        known: Option<u64>,
+        mut known: Option<u64>,
     ) -> Outcome<()> {
         self.check_exit_followed(machine)?;
         if let Some(checked) = &self.checked
@@ -1489,7 +1494,26 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             Ok(is_state_in_model)
         });
         self.swap_successor(machine, self.expansion_epoch, self.level_id);
-        let is_in_model = is_state_in_model? && holds_all(machine, &context.action_constraints)?;
+        let is_in_model = is_state_in_model? && {
+            // PickSuccessor asks whether TLC has seen the successor (`theFPSet.contains`), with
+            // no VIEW or symmetry, so its fingerprint is the state's.
+            if self.is_picking {
+                self.swap_successor(machine, successor_epoch, self.next_level_id);
+                let fingerprint =
+                    known.map_or_else(|| self.compute_key(machine, context, true), Ok);
+                self.swap_successor(machine, self.expansion_epoch, self.level_id);
+                let fingerprint = fingerprint?;
+                known = Some(fingerprint);
+                let key = self
+                    .states
+                    .key_width()
+                    .map_or(&self.successor, |_| &self.key);
+                machine.is_successor_seen = Some(self.states.find(key, fingerprint).is_ok());
+            }
+            let holds = holds_all(machine, &context.action_constraints);
+            machine.is_successor_seen = None;
+            holds?
+        };
         // TLC fingerprints a successor, which evaluates the VIEW, only where it is in the model
         // (Worker.addElement).
         let fingerprint = match known {
@@ -2743,6 +2767,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
     // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
     let is_lambda_built = compiler.is_lambda_built;
+    let is_picking = compiler.is_picking;
     let is_pipelined = !is_printing
         && !is_lambda_built
         && !compiler.is_cached
@@ -2761,6 +2786,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
     let is_shared = thread_count > 1
         && !compiler.is_ranking
+        && !is_picking
         && !compiler.is_printing
         && !is_lambda_built
         && !compiler.is_cached
@@ -2948,6 +2974,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
     search.is_lambda_built = is_lambda_built;
+    search.is_picking = is_picking;
     search.held = (model.is_recording_graph && is_printing).then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],

@@ -468,8 +468,19 @@ impl<'ir> Evaluator<'ir> {
                 self.walk(*body, &inner, is_init, then)
             }
             NodeKind::Unchanged(expression) => {
+                // TLC evaluates UNCHANGED e of the initial predicate as an expression: e in the
+                // state so far, then in no state (`OPCODE_unchanged`).
                 if is_init {
-                    return fail("UNCHANGED in the initial predicate");
+                    let before = self.evaluate(*expression, context)?;
+                    let width = self.current.len();
+                    let current = std::mem::replace(&mut self.current, vec![None; width]);
+                    let after = self.evaluate(*expression, context);
+                    self.current = current;
+                    return if equals(&before, &after?)? {
+                        then(self)
+                    } else {
+                        Ok(true)
+                    };
                 }
                 self.walk_unchanged(*expression, context, then)
             }

@@ -512,6 +512,8 @@ const TLC_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCEval.
 
 const TLC_GET_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
+const PICK_SUCCESSOR: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+
 const RANDOM_SUBSET: &str = "public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
 // `reportAsJavaFailure`: a failure with TLC's message, reported as the failure of the Java method
@@ -4702,6 +4704,28 @@ impl<'ir> Evaluator<'ir> {
                     Value::Bool(true)
                 }
             }
+            // TLCExt's AssertEq, whose TLA+ definition TLC evaluates: where the arguments differ,
+            // PrintT("Assertion failed") /\ PrintT(a) /\ PrintT(b) /\ a = b. TLC reports a failure
+            // at the positions of that definition, which the IR doesn't hold.
+            "AssertEq" => {
+                arity(2)?;
+                let unfollowed = |_| EvalError {
+                    reason: "a failure within TLCExt's AssertEq".into(),
+                    message: None,
+                };
+                let left = self.operand(&operands[0]).map_err(unfollowed)?;
+                let right = self.operand(&operands[1]).map_err(unfollowed)?;
+                if equals(&left, &right).map_err(unfollowed)? {
+                    return Ok(Value::Bool(true));
+                }
+                let message = Value::Str(self.text_of("Assertion failed".encode_utf16().collect()));
+                for value in [message, left, right] {
+                    let value = self.settle(&value).map_err(unfollowed)?;
+                    check_unchecked(&value).map_err(unfollowed)?;
+                    self.printed.push(vec![format_printed(&value)]);
+                }
+                Value::Bool(false)
+            }
             "RandomElement" | "RandomSubset" => {
                 let values = operands
                     .iter()
@@ -4763,6 +4787,16 @@ impl<'ir> Evaluator<'ir> {
                         Some(position) => record.range[position].clone(),
                         None => return fail("ToTrace of a record without states"),
                     },
+                    value @ (Value::Int(_) | Value::Bool(_) | Value::Str(_) | Value::Model(_)) => {
+                        return fail_coded(
+                            "ToTrace of a value that isn't a CounterExample",
+                            ONE_ARGUMENT_ERROR,
+                            format!(
+                                "The argument of ToTrace should be a CounterExample, but instead it is:\n{}",
+                                format_pretty(value)
+                            ),
+                        );
+                    }
                     _ => return fail("ToTrace of a value that isn't a CounterExample"),
                 };
                 let states = elements(&states)?;
@@ -4977,6 +5011,77 @@ impl<'ir> Evaluator<'ir> {
                 self.reads += 1;
                 self.set_register(key, value)?;
                 Value::Bool(true)
+            }
+            // `TLCExt.pickSuccessor`, which fingerprints the successor first: where the state isn't
+            // complete, as in an invariant, TLCStateMut.fingerPrint dereferences a variable's
+            // missing value. Where it is, TLC asks whether it has seen the state, which the
+            // evaluator doesn't know. Under a VIEW or symmetry TLC fingerprints otherwise.
+            "PickSuccessor" => {
+                arity(1)?;
+                let model = &self.ir.model;
+                if self.next.iter().all(Option::is_some)
+                    || model.view.is_some()
+                    || model.startup.symmetry.is_some()
+                {
+                    return fail("PickSuccessor of a successor TLC fingerprints");
+                }
+                return as_java_failure(
+                    PICK_SUCCESSOR,
+                    fail_runtime(
+                        "PickSuccessor of a successor TLC fingerprints incomplete",
+                        "Cannot invoke \"tlc2.value.IValue.fingerPrint(long)\" because \"minVals[i]\" is null".into(),
+                    ),
+                );
+            }
+            // `TLCExt.tlcGetOrDefault`: the register's value, or the default where the key names
+            // none or none is set. TLCGetAndSet, TLA+ in TLCExt, then sets the register to
+            // Op(oldVal, val) and is oldVal. TLC reports a failure within TLCGetAndSet at the
+            // positions of its definition, which the IR doesn't hold.
+            "TLCGetOrDefault" | "TLCGetAndSet" => {
+                let is_set = name == "TLCGetAndSet";
+                arity(if is_set { 4 } else { 2 })?;
+                let unfollowed = |error| {
+                    if is_set {
+                        EvalError {
+                            reason: "a failure within TLCExt's TLCGetAndSet".into(),
+                            message: None,
+                        }
+                    } else {
+                        error
+                    }
+                };
+                let key = self.operand(&operands[0]).map_err(unfollowed)?;
+                let default = self
+                    .operand(&operands[operands.len() - 1])
+                    .map_err(unfollowed)?;
+                self.reads += 1;
+                self.register_reads += 1;
+                let old = match &key {
+                    Value::Int(index) if *index >= 0 => self
+                        .registers
+                        .numbered
+                        .get(*index as usize)
+                        .cloned()
+                        .flatten(),
+                    Value::Int(_) => return fail("TLCGetOrDefault of a negative number"),
+                    key if is_register_name(key) => self.get_named_register(key)?,
+                    _ => None,
+                }
+                .unwrap_or(default);
+                // Whether TLC's call stack gives the value a source, which words a failure that
+                // compares it, isn't followed.
+                if self.call_stack.is_some() && address(&old).is_some() {
+                    return fail("a value of TLCGetOrDefault a failure may name the source of");
+                }
+                if is_set {
+                    let operator = self.operand_operator(&operands[1]).map_err(unfollowed)?;
+                    let value = self.operand(&operands[2]).map_err(unfollowed)?;
+                    let new = self
+                        .call_with_values(&operator, &[old.clone(), value])
+                        .map_err(unfollowed)?;
+                    self.set_register(key, new).map_err(unfollowed)?;
+                }
+                old
             }
             // `TLCExt.tlcFingerprint`: TLC's fingerprint of the value, as an int.
             "TLCFP" => {

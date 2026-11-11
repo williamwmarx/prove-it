@@ -55,7 +55,7 @@ fn is_effectful(ir: &Ir) -> bool {
     ir.builtins.iter().any(|builtin| {
         matches!(
             &*ir.texts[builtin.name as usize],
-            "Print" | "PrintT" | "TLCSet"
+            "Print" | "PrintT" | "AssertEq" | "TLCSet" | "TLCGetAndSet"
         )
     })
 }
@@ -349,13 +349,7 @@ impl<'ir> Rebuilder<'ir> {
         });
         // A random draw depends on every draw before it in the expansion, as what the spec prints
         // and the registers it sets do.
-        let is_printing = is_drawing
-            || ir.builtins.iter().any(|builtin| {
-                matches!(
-                    &*ir.texts[builtin.name as usize],
-                    "Print" | "PrintT" | "TLCSet"
-                )
-            });
+        let is_printing = is_drawing || is_effectful(ir);
         // TLC's worker seeds the draws of each expansion with the fingerprint of the state it
         // expands, which is of the state itself where TLC fingerprints no other key.
         let order: Vec<usize> = ir.tlc_order.iter().map(|&index| index as usize).collect();
