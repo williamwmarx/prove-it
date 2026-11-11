@@ -1,6 +1,6 @@
 // The inputs prove sends its backends on the recorded modules, which prover-inputs.ts writes, and
-// what the TypeScript backends answered on each, which prover-differential.ts compares other ports
-// with.
+// what the backends answered on each, first the TypeScript ones and now their Rust ports, which
+// prover-differential.ts compares the backends with.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -96,12 +96,3 @@ export const writeInputRecords = (records: Record<string, InputRecord>) =>
       .map((key) => `${JSON.stringify(key)}: ${JSON.stringify(records[key])}`)
       .join(",\n")}\n}\n`,
   );
-
-// Makes prove's decide use the TypeScript backends whatever the environment says, as the record is
-// theirs, but for a backend without a TypeScript decider, which only its Rust port decides.
-export const useTypeScriptBackends = () => {
-  Object.keys(process.env)
-    .filter((name) => name.startsWith("PROVE_IT_PROVER"))
-    .forEach((name) => delete process.env[name]);
-  process.env.PROVE_IT_PROVER = "ts";
-};
