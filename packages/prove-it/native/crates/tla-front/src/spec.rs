@@ -284,7 +284,25 @@ impl Expansion<'_> {
                     None
                 };
                 if let Some((node, Binding::Thunk { expression, scope })) = binding {
+                    let is_let = matches!(scope, ScopeOf::Own);
                     let scope = scope.resolve(node);
+                    // TLC takes a state predicate a LET defines whole, as it does a definition's.
+                    if self.is_specification
+                        && is_let
+                        && get_level(
+                            expression,
+                            scope.as_ref(),
+                            self.environment,
+                            self.facts,
+                            &[],
+                        ) == Level::Variable
+                    {
+                        return Ok(vec![Expanded {
+                            expression: expression.clone(),
+                            scope,
+                            name: Some(written.clone()),
+                        }]);
+                    }
                     return self.expand(
                         expression,
                         scope.as_ref(),

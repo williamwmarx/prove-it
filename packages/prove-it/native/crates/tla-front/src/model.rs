@@ -378,7 +378,14 @@ fn lower_ranked(
                     && get_definition(key, &environment)
                         .is_some_and(|copied| copied.body.location == init.location)
             });
-            if is_instanced {
+            // TLC places a LET's predicate in a definition an INSTANCE copies at the INSTANCE.
+            let is_let = get_definition(name, &environment).is_none() && &**name != UNNAMED_ACTION;
+            let is_elsewhere = environment
+                .variable_locations
+                .first()
+                .and_then(|location| location.range.as_ref())
+                .is_none_or(|variable| variable.module != range.module);
+            if is_instanced || (is_let && is_elsewhere) {
                 return None;
             }
             let label = if &**name == UNNAMED_ACTION {

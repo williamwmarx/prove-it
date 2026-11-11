@@ -12,7 +12,7 @@ use crate::errors::FrontError;
 use crate::eval::Evaluator;
 use crate::resolve::Result;
 use crate::spec::{
-    Binding, Scope, bind_definitions, bind_operator_arguments, get_definition, get_level,
+    Binding, Scope, ScopeOf, bind_definitions, bind_operator_arguments, get_definition, get_level,
     lookup_scope,
 };
 
@@ -261,6 +261,13 @@ impl Describer<'_> {
         if let Some((thunk, thunk_scope)) = self.get_thunk(expression, scope) {
             // TLC names a state predicate a LET defines by its name, where it's written.
             if let Some(name) = expression.reference()
+                && let Some((
+                    _,
+                    Binding::Thunk {
+                        scope: ScopeOf::Own,
+                        ..
+                    },
+                )) = lookup_scope(scope, &name)
                 && self.level(&thunk, thunk_scope.as_ref()) == Level::Variable
             {
                 self.description.inits.push(part(&name, &thunk));
