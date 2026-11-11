@@ -22,6 +22,7 @@ import {
   type Theorem,
 } from "./ast";
 import { formatRange, type SanyError, TlaSyntaxError } from "./errors";
+import { getCanonicalName } from "./tlc/jar-data";
 
 // The kinds of symbol SANY tells apart when it binds a name twice. A parameter is also a bound name,
 // and a NEW symbol has a kind for each level.
@@ -188,7 +189,7 @@ const isBindable = (name: string, current: Binding | undefined, added: Binding, 
   if (current.kind === "Builtin") {
     unit.errors.push({
       location,
-      message: `Symbol ${name} is a built-in operator, and cannot be redefined.`,
+      message: `Symbol ${getCanonicalName(name)} is a built-in operator, and cannot be redefined.`,
     });
   } else if (
     added.kind === "Parameter" ||
@@ -844,7 +845,7 @@ const resolveDefinition = (
     report(
       definition.kind === "Function"
         ? `Function name \`${name}' already defined or declared.`
-        : `Operator ${name} already defined or declared.`,
+        : `Operator ${getCanonicalName(name)} already defined or declared.`,
     );
   }
   if (definition.kind === "Function") {

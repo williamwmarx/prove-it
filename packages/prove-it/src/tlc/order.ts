@@ -8,9 +8,9 @@ import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
 import type { SanyReading } from "../sany/source";
 import {
+  getCanonicalName,
   SANY_BUILTINS,
   SANY_NODE_NAMES,
-  SANY_OPERATOR_SYNONYMS,
   TLC_MODULE_SOURCES,
   TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
@@ -62,12 +62,6 @@ const isProofDeclaration = (tokens: Token[], index: number) => {
     ? (previous.text === "ASSUME" || previous.text === "NEW") && tokens[index - 2]?.text !== "."
     : previous?.kind === "Operator" && previous.text === ",";
 };
-
-const CANONICAL_OPERATORS = new Map(
-  SANY_OPERATOR_SYNONYMS.flatMap((synonyms) => synonyms.map((name) => [name, synonyms[0]])),
-);
-
-const getCanonicalName = (name: string) => CANONICAL_OPERATORS.get(name) ?? name;
 
 const getJavaHash = (text: string) => {
   let hash = 0;
