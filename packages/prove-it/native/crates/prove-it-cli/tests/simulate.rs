@@ -842,3 +842,20 @@ fn declines_an_alias_that_reads_trace_twice_and_sorts_it() {
         stderr(&output)
     );
 }
+
+// TLC names an initial predicate a LET defines by its name, where its definition is written.
+#[test]
+fn names_an_initial_predicate_a_let_defines_as_tlc() {
+    let spec = "---- MODULE Spec ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = x + 1 /\\ y' = y\nInv == x < 2\nAl == [x |-> x, t |-> Trace]\nSpec == LET In == Init IN In /\\ [][Next]_<<x, y>>\n====\n";
+    let (code, text) = simulate(
+        "simulate-let-init",
+        "Spec",
+        (spec, "SPECIFICATION Spec\nINVARIANT Inv\nALIAS Al\n"),
+        &["-seed", "1", "-simulate", "num=1", "-depth", "10"],
+    );
+    assert_eq!(code, Some(12), "{text}");
+    assert!(
+        text.contains("State 1: <In line 8, col 19 to line 8, col 22 of module Spec>\n/\\ x = 0\n/\\ t = <<[_action |-> [name |-> \"In\", location |-> [beginLine |-> 8, beginColumn |-> 19, endLine |-> 8, endColumn |-> 22, module |-> \"Spec\"]], x |-> 0, y |-> 0]>>\n"),
+        "{text}"
+    );
+}

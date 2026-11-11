@@ -259,6 +259,13 @@ impl Describer<'_> {
             return self.describe_specification(body, bound.as_ref());
         }
         if let Some((thunk, thunk_scope)) = self.get_thunk(expression, scope) {
+            // TLC names a state predicate a LET defines by its name, where it's written.
+            if let Some(name) = expression.reference()
+                && self.level(&thunk, thunk_scope.as_ref()) == Level::Variable
+            {
+                self.description.inits.push(part(&name, &thunk));
+                return Ok(());
+            }
             return self.describe_specification(&thunk, thunk_scope.as_ref());
         }
         let called = self.resolve_closure(expression, scope);
