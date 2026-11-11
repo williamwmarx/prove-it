@@ -74,7 +74,7 @@ const record = (prover: string, text: string, timeLimitMs: number): InputRecord 
   }
 };
 
-// A backend without a TypeScript decider, as Zenon is, is recorded from its Rust port.
+// A backend without a TypeScript decider, as Zenon, SMT and Z3 are, is recorded from its Rust port.
 if (isRecording)
   BACKENDS.filter((backend) => !hasTypeScriptDecider(backend)).forEach((backend) =>
     console.log(`${backend} has no TypeScript decider: its Rust port's answers are recorded`),
