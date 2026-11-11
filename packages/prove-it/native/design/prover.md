@@ -1275,7 +1275,9 @@ Boulanger #240 (`smt/b2ca9ee96f3db516`) is lost. Its 4 distributions are the one
 makes, all of a disjunction with one reference, and Simple needs the same kind; without any, it is
 `unsat` in 1,332,097 steps and Simple is not proved. The port's search after them takes 8,170,365
 steps and 534,764 instances where it took 1,807,047 and 94,446, which places the divergence past
-`flatten_clauses`, in the later generation of the solver. It stays open.
+`flatten_clauses`, in the later generation of the solver. Z3 4.8.9 is itself near its limit
+there: run as tlapm runs it with `-T:5` on a 4-core machine, it timed out once (rlimit 3,357,441)
+and proved it once in 3.98 s with 162,971 instances (rlimit 4,021,756). It stays open.
 
 - **A model's hold on a builtin declaration (`div0`, `mod0`, `/0`)** moves smt/0c812b0a8aa1347b,
   c0119d516427b279, f57d6baf800a11d6, 44fea97e4ee0312c and a50910e8b0798813 (all `unknown` at
