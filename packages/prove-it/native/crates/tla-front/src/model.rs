@@ -182,8 +182,10 @@ fn lower_ranked(
     let source = sources.source;
     let load = sources.load_module;
     let load_class = sources.load_class;
-    let config =
-        parse_config(config_text, version).map_err(|error| FrontError::Config(error.message))?;
+    let config = parse_config(config_text, version).map_err(|error| match error.unworded {
+        Some(reason) => FrontError::NotYet(reason.to_owned()),
+        None => FrontError::Config(error.message),
+    })?;
     // SANY's errors come from linking, before TLC's orders parse the modules again.
     let mut environment = create_environment(&EnvironmentOptions {
         source,
@@ -565,7 +567,11 @@ fn get_constant_invariants(
                 .iter()
                 .position(|(_, kind, predicate, _)| *kind == "invariant" && predicate == name);
             let is_given = environment.constants.contains_key(name.as_str());
-            (is_given || predicate.is_some()).then(|| (Rc::from(name.as_str()), predicate))
+            // TLC holds an invariant the configuration substitutes for as the definition it names,
+            // and doesn't warn of it.
+            let is_substituted = environment.substitutions.contains_key(name.as_str());
+            ((is_given || predicate.is_some()) && !is_substituted)
+                .then(|| (Rc::from(name.as_str()), predicate))
         })
         .collect()
 }

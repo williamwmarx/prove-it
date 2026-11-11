@@ -379,6 +379,9 @@ pub(crate) struct Relay<'ir> {
     /// What the trace evaluator finds they print, as TLC built the values, where the store
     /// forgot how TLC built one.
     startup_texts: Option<Option<Vec<String>>>,
+    /// Whether the configuration substitutes for a name in one module (`<-[M]`), where the frames
+    /// of a predicate TLC fails to compute at startup, and checks in the search, aren't followed.
+    pub(crate) is_scoped_substituted: bool,
 }
 
 impl<'ir> Relay<'ir> {
@@ -411,6 +414,7 @@ impl<'ir> Relay<'ir> {
             assumed_texts: None,
             startup_texts: None,
             undelegated: None,
+            is_scoped_substituted: false,
         }
     }
 
@@ -621,6 +625,15 @@ impl Reporter for Relay<'_> {
     // about the state-level properties among the properties, which a rejected value past them
     // would follow.
     fn startup_predicates(&mut self, holding: &[bool]) {
+        if self.is_scoped_substituted && holding.contains(&false) {
+            self.is_declined = true;
+            let _ = self.sender.send(Event::Declined(
+                "a predicate that fails at startup in a model the configuration substitutes for \
+                 in a module"
+                    .to_owned(),
+            ));
+            return;
+        }
         let ir = self.ir;
         let is_past_properties =
             ir.model
@@ -938,6 +951,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let config = match parsed {
         Some(Ok(config)) => config,
         Some(Err(error)) => {
+            if let Some(reason) = error.unworded {
+                return report_not_native(printer, reason);
+            }
             let Some(coded) = FrontError::Config(error.message).get_coded(printer.is_tool) else {
                 return report_not_native(printer, "a configuration file the front end rejects");
             };
@@ -1245,6 +1261,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let mut is_dump_unwritten = false;
     let mut declined = None;
     let is_periodic = config.periodic.is_some();
+    let is_scoped_substituted = config
+        .substitutions
+        .iter()
+        .any(|substitution| substitution.module.is_some());
     let ir_ref = &ir;
     let (outcome, assumed_printed, dumped) = alongside(
         move || {
@@ -1259,6 +1279,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             );
             relay.is_periodic = is_periodic;
             relay.is_dumped = is_dumped;
+            relay.is_scoped_substituted = is_scoped_substituted;
             relay.coverage_countdown = coverage::get_countdown(args);
             let outcome = search(ir, &settings, &mut relay);
             (outcome, relay.assumed_printed, relay.dumped)
@@ -1617,6 +1638,26 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         // TLC rejects the value of a constant definition the configuration names as it reads
         // the configuration.
         SearchOutcome::ConfigError { message } => {
+            // The engine's startup reports the value of a predicate it computed, which TLC holds
+            // as the definition the configuration substitutes for it, and checks as an operator.
+            let is_substituted = config.substitutions.iter().any(|substitution| {
+                let name = &substitution.name;
+                [
+                    format!(" of {name} is equal to "),
+                    format!("The operator {name}, which equals "),
+                    format!("because {name} is false."),
+                    format!(" {name} cannot be a constant."),
+                    format!("The value of {name} is equal to "),
+                ]
+                .iter()
+                .any(|subject| message.contains(subject.as_str()))
+            });
+            if is_substituted {
+                return report_not_native(
+                    printer,
+                    "a value of a predicate the configuration substitutes a definition for",
+                );
+            }
             return match FrontError::Config(message).get_coded(printer.is_tool) {
                 Some(coded) => print_coded_failure(printer, &coded, start),
                 None => report_not_native(printer, "a configuration error without TLC's code"),

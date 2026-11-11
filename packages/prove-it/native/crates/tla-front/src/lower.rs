@@ -93,6 +93,16 @@ fn reaches_shown_effect(
     environment: &Environment,
     cached: Option<&Rc<Definition>>,
 ) -> bool {
+    reaches_effect(definition, environment, cached, &SHOWN_EFFECTS)
+}
+
+/// Whether a definition reaches one of these builtins, past `cached`.
+fn reaches_effect(
+    definition: &Rc<Definition>,
+    environment: &Environment,
+    cached: Option<&Rc<Definition>>,
+    effects: &[&str],
+) -> bool {
     let mut seen: FastSet<usize> = cached
         .map(|cached| Rc::as_ptr(cached) as usize)
         .into_iter()
@@ -102,7 +112,7 @@ fn reaches_shown_effect(
         if let Some(name) = expression.reference()
             && !expression.is_locally_resolved()
         {
-            if SHOWN_EFFECTS.contains(&&*name) && !environment.definitions.contains_key(&name) {
+            if effects.contains(&&*name) && !environment.definitions.contains_key(&name) {
                 return true;
             }
             let target = environment.substitutions.get(&name).unwrap_or(&name);
@@ -115,6 +125,56 @@ fn reaches_shown_effect(
         pending.extend(expression.children());
     }
     false
+}
+
+/// Whether the model reads a definition by its name: the configuration names it, or a
+/// definition or an assumption refers to it.
+fn is_read(name: &str, config: &crate::config::ModelConfig, environment: &Environment) -> bool {
+    let named = [
+        &config.invariants,
+        &config.properties,
+        &config.constraints,
+        &config.action_constraints,
+        &config.postconditions,
+        &config.possible,
+    ]
+    .into_iter()
+    .flatten()
+    .chain(
+        [
+            &config.init,
+            &config.next,
+            &config.specification,
+            &config.symmetry,
+            &config.view,
+            &config.alias,
+            &config.periodic,
+            &config.rl_reward,
+        ]
+        .into_iter()
+        .flatten(),
+    )
+    .any(|named| named == name);
+    let mut pending: Vec<Expr> = environment
+        .definitions
+        .values()
+        .map(|definition| definition.body.clone())
+        .chain(
+            environment
+                .assumptions
+                .iter()
+                .map(|assumption| assumption.expression.clone()),
+        )
+        .collect();
+    let mut is_referred = false;
+    while let Some(expression) = pending.pop() {
+        is_referred |= !expression.is_locally_resolved()
+            && expression
+                .reference()
+                .is_some_and(|reference| &*reference == name);
+        pending.extend(expression.children());
+    }
+    named || is_referred
 }
 
 pub struct Lowering<'a> {
@@ -1147,21 +1207,77 @@ impl<'a> Lowering<'a> {
                      {name} <- {target}"
                 )));
             }
-            // TLC computes the substitute for a definition it replaces where that definition is,
-            // as well as where its own is, unless the first computed it (`processConstantDefns`).
-            if !is_constant
-                && environment.definitions.contains_key(name)
-                && reaches_shown_effect(definition, environment, None)
-                && environment
-                    .create_level_analyzer(&["TLCGet", "Trace", "CounterExample"])
-                    .analyze_definition(definition, &crate::levels::Scope::default())?
-                    .data
-                    .level
-                    == 0
+            // TLC keeps the value of a constant TLCEval, which the engine computes again where it
+            // checks a POSTCONDITION the configuration substitutes it for.
+            if config.postconditions.contains(&name.to_string())
+                && matches!(
+                    &definition.body.kind,
+                    ExpressionKind::Apply { operator, args, .. } if &**operator == "TLCEval" && args.len() == 1
+                )
+                && reaches_effect(definition, environment, None, &["Print", "PrintT"])
             {
                 return Err(FrontError::NotYet(format!(
-                    "a configuration substitute with effects for a definition: {name} <- {target}"
+                    "a POSTCONDITION the configuration substitutes a printing TLCEval for: \
+                     {name} <- {target}"
                 )));
+            }
+            // TLC computes the substitute for a definition it replaces where that definition is,
+            // and again where its own is unless it computed it already (`processConstantDefns`).
+            // The IR computes it once, where its own is: alike only where the replaced definition
+            // comes first, with no other effects between the two.
+            // Setting a register again to a value that reads none sets it alike, and TLC keeps
+            // the value of a constant TLCEval (`tlcEvalConst`).
+            let is_effectful = |definition: &Rc<Definition>| -> Result<bool> {
+                let is_parameterless = matches!(
+                    &definition.kind,
+                    DefinitionKind::Operator { params, .. } if params.is_empty()
+                );
+                let is_evaluated_once = matches!(
+                    &definition.body.kind,
+                    ExpressionKind::Apply { operator, args, .. } if &**operator == "TLCEval" && args.len() == 1
+                );
+                Ok(is_parameterless
+                    && !is_evaluated_once
+                    && reaches_effect(
+                        definition,
+                        environment,
+                        None,
+                        &SHOWN_EFFECTS
+                            .into_iter()
+                            .filter(|effect| *effect != "TLCSet")
+                            .collect::<Vec<_>>(),
+                    )
+                    && environment
+                        .create_level_analyzer(&["TLCGet", "Trace", "CounterExample"])
+                        .analyze_definition(definition, &crate::levels::Scope::default())?
+                        .data
+                        .level
+                        == 0)
+            };
+            if let Some(replaced) = environment.definitions.get(name).filter(|_| !is_constant)
+                && is_effectful(definition)?
+            {
+                let startup = &environment.startup_definitions;
+                let position = |wanted: &Rc<Definition>| {
+                    startup.iter().position(|other| Rc::ptr_eq(other, wanted))
+                };
+                let is_alike = match (position(replaced), position(definition)) {
+                    // TLC computes it again wherever the model reads the replaced name.
+                    _ if is_read(name, config, environment) => false,
+                    (Some(first), Some(last)) if first < last => {
+                        let mut between = false;
+                        for other in &startup[first + 1..last] {
+                            between |= is_effectful(other)?;
+                        }
+                        !between
+                    }
+                    _ => false,
+                };
+                if !is_alike {
+                    return Err(FrontError::NotYet(format!(
+                        "a configuration substitute with effects for a definition: {name} <- {target}"
+                    )));
+                }
             }
             let is_checked = is_constant
                 && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())

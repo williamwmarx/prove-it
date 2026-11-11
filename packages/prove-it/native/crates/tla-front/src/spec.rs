@@ -694,9 +694,7 @@ fn get_constant_value(
         // The engine's startup checks what the evaluator can't compute (`Startup::predicates`).
         // TLC rejects any value of a definition that isn't a predicate, which the front end then
         // can't tell from one that fails to evaluate.
-        Err(FrontError::NotYet(_))
-            if is_deferrable && !environment.substitutions.contains_key(name) =>
-        {
+        Err(FrontError::NotYet(_)) if is_deferrable => {
             evaluator.defer();
             Ok(None)
         }
@@ -786,7 +784,6 @@ fn is_constant_true(
     let value = match evaluator.evaluate(&item.expression, item.scope.as_ref()) {
         Err(FrontError::NotYet(_) | FrontError::Evaluation(_))
             if usage == "spec"
-                && !environment.substitutions.contains_key(name)
                 && item.scope.is_none()
                 && !item.expression.is_locally_resolved()
                 && get_definition(name, environment).is_some_and(|definition| {
@@ -795,11 +792,6 @@ fn is_constant_true(
         {
             evaluator.defer_conjunct(Rc::from(name));
             return Ok(true);
-        }
-        Err(FrontError::Evaluation(_)) if environment.substitutions.contains_key(name) => {
-            return Err(not_yet(
-                "a conjunct the configuration substitutes a definition that fails for",
-            ));
         }
         value => value?,
     };
@@ -1224,15 +1216,6 @@ fn get_config_predicate<'a>(
     };
     match value {
         None => Ok(definition),
-        // TLC warns of a constant invariant it holds the value of, but not of one it holds as
-        // the definition the configuration substitutes for it.
-        Some(ConfigValue::Boolean(true))
-            if kind == "invariant" && environment.substitutions.contains_key(name) =>
-        {
-            Err(not_yet(
-                "an invariant the configuration substitutes a TRUE definition for",
-            ))
-        }
         Some(ConfigValue::Boolean(true)) => Ok(None),
         Some(value) => Err(FrontError::Config(format!(
             "The {kind} of {name} is equal to {}",

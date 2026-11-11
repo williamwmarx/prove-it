@@ -83,6 +83,8 @@ impl ModelConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigError {
     pub message: String,
+    /// Why the front end can't word TLC's error here, where it can't.
+    pub unworded: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -339,6 +341,7 @@ impl Tokenizer<'_> {
 fn syntax_error(line: u32, problem: &str) -> ConfigError {
     ConfigError {
         message: format!("TLC found an error in the configuration file at line {line}\n{problem}"),
+        unworded: None,
     }
 }
 
@@ -350,6 +353,8 @@ type Parsed<T> = Result<T, ConfigError>;
 
 struct Parser {
     tokens: Vec<ConfigToken>,
+    /// Whether the source ends a line with a carriage return alone.
+    has_lone_return: bool,
     index: usize,
     version: TlcVersion,
     config: ModelConfig,
@@ -365,6 +370,7 @@ impl Parser {
                     "TLC found an error in the configuration file:\n{}",
                     token.text
                 ),
+                unworded: None,
             });
         }
         Ok((token.kind, token.text.clone(), token.line))
@@ -385,6 +391,7 @@ impl Parser {
                 message: format!(
                     "TLC found an error in the configuration file:\nescape sequences are not supported in strings at line {line}"
                 ),
+                unworded: get_unworded_string(&text, self.has_lone_return),
             });
         }
         if kind == Kind::String {
@@ -566,6 +573,22 @@ fn get_list(keyword: &str) -> Option<fn(&mut ModelConfig) -> &mut Vec<String>> {
     })
 }
 
+/// Why the front end can't word TLC's error for a backslash in a string of the configuration:
+/// TLC's lexer stops at a backslash before any character but those of an escape sequence, and
+/// counts a lone carriage return as the end of a line.
+fn get_unworded_string(text: &str, has_lone_return: bool) -> Option<&'static str> {
+    let mut characters = text.chars();
+    while let Some(character) = characters.next() {
+        if character == '\\'
+            && !matches!(characters.next(), Some('n' | 't' | 'r' | 'f' | '\\' | '"'))
+        {
+            return Some("a backslash in a configuration's string before no escape sequence");
+        }
+    }
+    has_lone_return
+        .then_some("a backslash in a string of a configuration with lone carriage returns")
+}
+
 /// `parseConfig`.
 pub fn parse_config(source: &str, version: TlcVersion) -> Result<ModelConfig, ConfigError> {
     let tokens = Tokenizer {
@@ -578,6 +601,9 @@ pub fn parse_config(source: &str, version: TlcVersion) -> Result<ModelConfig, Co
     .run();
     let mut parser = Parser {
         tokens,
+        has_lone_return: source
+            .char_indices()
+            .any(|(index, character)| character == '\r' && !source[index + 1..].starts_with('\n')),
         index: 0,
         version,
         config: ModelConfig {
