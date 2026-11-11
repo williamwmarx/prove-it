@@ -19,9 +19,10 @@ const INPUTS = [
   ["ls4", read("conformance/ptl/equivalence-of-boxes.ls4")],
 ] as const;
 
-// What the TypeScript decider answered on the Zenon input with no limits, before it was deleted, as
-// tests/fixtures/zenon/decisions.txt records it too.
+// What the TypeScript decider answered on the Zenon and PTL inputs with no limits, before it was
+// deleted, as tests/fixtures/zenon/decisions.txt records Zenon's too.
 const RECORDED: Record<string, Decision> = {
+  ls4: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 5 } },
   zenon: {
     verdict: "unsat",
     timeUsedMs: 0,
