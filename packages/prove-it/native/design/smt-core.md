@@ -123,15 +123,32 @@ sorts, matching neither Z3 nor any input tlapm writes) must reach `decide` as
 
 **Reset.** `(reset)` is cmd_context::reset: the parser forgets the declarations, named terms and
 assertions and makes a new manager, whose resource limit counts from 0 and the step limit with it,
-as Z3 checks rlimit against the new count; the deadline stays (`smtlib_parser.rs`, `ResourceLimit::restart`). Z3 also forgets the logic,
-and with none set runs another solver than UFNIA's; the port runs UFNIA's on every script, with a
-logic set or not, after a reset as before. Push, pop, `(reset-assertions)`, check-sat-assuming and check-sat-using are unsupported.
-Where Z3 prints an error before the first check-sat the port fails with `DecideError::Prover`: a
-second set-logic, set-logic after an assertion, `:produce-proofs`, `:produce-unsat-cores` or
-`:produce-unsat-assumptions` after one, and get-model, get-value, get-assignment, get-proof and
-get-unsat-core; `(exit)` ends the script. Z3's declaration errors (a name declared twice with the
-same signature, an ambiguous overloaded constant, a `:named` name already in use) and the
-options that change its search are not ported: the port answers where Z3 also prints an error.
+as Z3 checks rlimit against the new count; the deadline stays (`smtlib_parser.rs`,
+`ResourceLimit::restart`). Z3 also forgets the logic, and with none set runs another solver than
+UFNIA's; the port runs UFNIA's on every script, with a logic set or not, after a reset as before.
+
+**Commands.** The port reads a script as Z3 reads it, a command at a time, up to the first
+check-sat or `(exit)`, and answers what Z3 answers to that check-sat. A reference to a `:named`
+term expands to the term. Push, pop, `(reset-assertions)`, check-sat-assuming and check-sat-using
+are unsupported (unknown, `stop=unsupported`). Where Z3 prints an error before the first check-sat,
+which tlapm counts as a failure, the port fails with `DecideError::Prover` in these cases: a
+syntax error, an unknown name or sort, a malformed or second set-logic, set-logic after an
+assertion, `:produce-proofs`, `:produce-unsat-cores` or `:produce-unsat-assumptions` after one,
+`(exit)` with arguments, `(reset)` with arguments, naming a term with free variables, and eval,
+get-model, get-value, get-assignment, get-proof, get-unsat-core and get-unsat-assumptions.
+
+Z3's other errors before the first check-sat are not ported, and on them the port answers where
+Z3 prints the error and then answers (`tests/smt.rs` records none of them):
+- declarations: a name declared twice with the same signature, a sort declared twice, an
+  ambiguous overloaded constant, a `:named` name already in use, a builtin redeclared;
+- options: any other option set after the manager is made (`:produce-assertions`,
+  `:interactive-mode`, `:global-declarations`), a value of the wrong kind (`:produce-proofs foo`),
+  and an unknown parameter; options Z3 accepts are ignored, including those that change its search
+  (`:smt.mbqi false`, `:rlimit`);
+- get-assertions, which Z3 refuses outside interactive mode;
+- the sorts and theories a logic allows (`(set-logic QF_UF)` refuses `Int`, `UFNIA` refuses
+  `Real`);
+- an unknown command, for which Z3 prints `unsupported` and reads on, as the port reads on.
 
 **Size.** The core stops at `MAX_SIZE` (`context.rs`, prover.md 3.6) with `stop=heap`: a count of
 the expressions, e-graph nodes and instances found, so that a search that grows without taking
