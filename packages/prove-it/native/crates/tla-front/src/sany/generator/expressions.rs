@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use crate::ast::{
     Bound, BoundPattern, Declaration, Definition, DefinitionKind, ExceptPathStep, Expr,
-    ExpressionKind, Instance, Location, OperatorParam, Position, Quantifier, SourceRange,
+    ExpressionKind, Instance, Location, Name, OperatorParam, Position, Quantifier, SourceRange,
 };
 use crate::lexer::TokenKind;
 use crate::sany::nodes::{Decimal, Label, LetIn, NodeId, NodeKind, SanyLocation};
@@ -1006,7 +1006,30 @@ impl ModuleGenerator<'_> {
         else {
             return not_yet("Expected a label");
         };
+        let file = self.file.clone();
+        let param_indexes = find_name_tokens(
+            &file,
+            get_expression_span(&file, expression).start,
+            get_expression_span(&file, body).start,
+            params,
+        );
         let location = self.get_location(expression);
+        self.generate_labeled(name, params, &param_indexes, location, false, |generator| {
+            generator.generate_expression(body)
+        })
+    }
+
+    /// `generateLabel` for a label whose parameters are the tokens at `param_indexes`, and whose
+    /// body, an ASSUME/PROVE when `is_assume_prove`, `generate_body` generates.
+    pub(super) fn generate_labeled(
+        &mut self,
+        name: &Name,
+        params: &[Name],
+        param_indexes: &[usize],
+        location: SanyLocation,
+        is_assume_prove: bool,
+        generate_body: impl FnOnce(&mut Self) -> Result<NodeId>,
+    ) -> Result<NodeId> {
         let Some(scope) = self.label_scopes.len().checked_sub(1) else {
             self.add_error(&location, "Label not in definition or proof step.");
             return Ok(self.create_null_node());
@@ -1035,15 +1058,9 @@ impl ModuleGenerator<'_> {
             return Ok(self.create_null_node());
         }
         self.push_label_scope();
-        let body_node = self.generate_expression(body)?;
+        let body_node = generate_body(self)?;
         let labels = self.pop_labels();
         let file = self.file.clone();
-        let param_indexes = find_name_tokens(
-            &file,
-            get_expression_span(&file, expression).start,
-            get_expression_span(&file, body).start,
-            params,
-        );
         let param_nodes: Vec<NodeId> = params
             .iter()
             .enumerate()
@@ -1070,7 +1087,7 @@ impl ModuleGenerator<'_> {
                 params: param_nodes.clone(),
                 body: body_node,
                 labels,
-                is_assume_prove: false,
+                is_assume_prove,
                 location: location.clone(),
             }),
         );
