@@ -1886,12 +1886,69 @@ impl<'ir> Evaluator<'ir> {
         let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
         for index in substitutes.chain(definitions.iter().copied()) {
             let node = ir.definitions[index as usize];
+            // A definition that can neither make a text nor change what a later one computes adds
+            // no rank, however long TLC takes to compute it, as the CHOOSE of a ring of nodes.
+            if !evaluator.may_rank_texts(node) {
+                continue;
+            }
             // TLC swallows what a constant definition throws, having interned what it made.
             evaluator
                 .evaluate(evaluator.definition(node).body, &Context::default())
                 .ok();
         }
         evaluator.startup_ranked.unwrap_or_default()
+    }
+
+    /// Whether evaluating a definition may make a text `made_text` ranks, or draw from the
+    /// generator or set a register that a later startup definition reads: whether it reaches, as
+    /// written or through the definitions it names, an operator that does. Tail, SubSeq and `\o`
+    /// of a tuple written in place make a tuple.
+    fn may_rank_texts(&self, definition: NodeId) -> bool {
+        let get_operator = |name: &Name| match name.resolution {
+            Resolution::Builtin(index) => Some(self.name(self.ir.builtins[index as usize].name)),
+            _ => None,
+        };
+        let is_tuple = |node: &NodeId| matches!(self.kind(*node), NodeKind::Tuple(_));
+        let mut visited = HashSet::new();
+        let mut pending = vec![definition];
+        while let Some(node) = pending.pop() {
+            let (node, kind) = self.node(node);
+            if !visited.insert(node) {
+                continue;
+            }
+            let name = match kind {
+                NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => Some(name),
+                NodeKind::Apply { name, args } => {
+                    let is_tuple_made = match (get_operator(name), args.as_slice()) {
+                        (Some("\\o"), operands) => operands.iter().any(is_tuple),
+                        (Some("Tail" | "SubSeq"), [sequence, ..]) => is_tuple(sequence),
+                        _ => false,
+                    };
+                    (!is_tuple_made).then_some(name)
+                }
+                // A subexpression names what the walk doesn't follow.
+                NodeKind::Subexpression(_) => return true,
+                _ => None,
+            };
+            if let Some(name) = name {
+                if let Some(
+                    "Tail" | "\\o" | "SubSeq" | "ToString" | "RandomElement" | "RandomSubset"
+                    | "TLCSet",
+                ) = get_operator(name)
+                {
+                    return true;
+                }
+                if let Resolution::Definition(index) = name.resolution {
+                    pending.push(self.ir.definitions[index as usize]);
+                }
+            }
+            // `children` leaves out the set a filter's bound ranges over.
+            if let NodeKind::SetFilter { bound, .. } = kind {
+                pending.push(bound.set);
+            }
+            pending.extend(kind.children());
+        }
+        false
     }
 
     /// The startup, with the generator left where its draws left it, for the assumptions.
