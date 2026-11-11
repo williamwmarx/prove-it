@@ -507,8 +507,9 @@ const proveNatively = async (
   name: string,
   native: Exclude<ReturnType<typeof getNativeAddon>, string>,
   decideWith: DecidePool["decide"] | undefined,
-): Promise<ProveResult | Map<string, string | undefined>> => {
-  const loaded = new Map<string, string | undefined>();
+): Promise<ProveResult | Map<string, (string | undefined)[]>> => {
+  // What loadModule gave for each module, in the order it read it.
+  const loaded = new Map<string, (string | undefined)[]>();
   if (!options.source.isWellFormed()) return loaded;
   const workerCount = options.workers ?? 1;
   const pool =
@@ -526,12 +527,15 @@ const proveNatively = async (
   const failures = new Map<string, unknown>();
   let reportedCount = 0;
   // As the TypeScript driver does, each report waits for an abort to land first.
-  const report = (reports: ProofObligation[]) =>
-    reports.slice(reportedCount).forEach((obligation) => {
+  const report = async (reports: ProofObligation[]) => {
+    for (const obligation of reports.slice(reportedCount)) {
       options.signal?.throwIfAborted();
       reportedCount++;
       options.onObligation?.(obligation);
-    });
+      // HACK: the driver runs synchronously, so yield to let an abort land, as the TypeScript does.
+      await new Promise((resolve) => setTimeout(resolve));
+    }
+  };
   try {
     for (;;) {
       const result = native.prove(`${name}.tla`, options.source, [...known]);
@@ -539,25 +543,28 @@ const proveNatively = async (
         // An obligation's error waits for an abort, as the TypeScript driver checks the signal at
         // each obligation; getObligations's has no reports.
         if (result.reports !== undefined) {
-          report(result.reports);
+          await report(result.reports);
           options.signal?.throwIfAborted();
         }
         throw getDriverError(result);
       }
-      report(result.reports);
+      await report(result.reports);
       if (result.kind === "proved")
         return {
           obligations: result.reports,
           missingProofCount: result.missingProofCount,
           omittedProofCount: result.omittedProofCount,
         };
-      // A module two others extend is asked for once.
-      for (const key of new Set(result.keys)) {
-        const moduleName = key.slice("module:".length);
+      // Only the first module it needs, as the TypeScript reads the next one only once it has
+      // read this one, and stops at one that doesn't parse.
+      const [key] = result.keys;
+      if (key !== undefined) {
+        const moduleName = key.slice("module:".length, key.lastIndexOf("#"));
         const source = options.loadModule?.(moduleName);
-        loaded.set(moduleName, source);
+        loaded.set(moduleName, [...(loaded.get(moduleName) ?? []), source]);
         if (source !== undefined && !source.isWellFormed()) return loaded;
         known.set(key, source);
+        continue;
       }
       // A decision that threw ends the run once no earlier obligation needs a decision, as the
       // TypeScript driver decides each obligation's in turn.
@@ -618,12 +625,12 @@ export const proveWith = async (
   const proved =
     native === undefined ? undefined : await proveNatively(options, name, native, decideWith);
   if (proved !== undefined && !(proved instanceof Map)) return proved;
-  // The modules the Rust driver loaded before it gave way, each read once more from what it read.
+  // The modules the Rust driver read before it gave way, each read again from what it read.
   const loadModule = (moduleName: string) => {
-    if (proved?.has(moduleName) !== true) return options.loadModule?.(moduleName);
-    const source = proved.get(moduleName);
-    proved.delete(moduleName);
-    return source;
+    const reads = proved?.get(moduleName);
+    return reads !== undefined && reads.length > 0
+      ? reads.shift()
+      : options.loadModule?.(moduleName);
   };
   const modules = new Map<string, string>();
   const results = getObligations(

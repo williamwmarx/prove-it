@@ -343,6 +343,47 @@ describe("the Rust driver", () => {
     expect(await getLoads("rust")).toEqual(await getLoads("ts"));
   });
 
+  // An abort on a timer lands between reports.
+  it("stops when the signal aborts on a timer", async () => {
+    const run = async (driver: string) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new Error("timer")));
+      return proveWithDriver(driver, {
+        options: {
+          source: getModule("THEOREM 1 = 1 BY Trivial\nTHEOREM 2 = 2 BY Trivial"),
+          signal: controller.signal,
+        },
+        decide: byProver({}),
+      });
+    };
+    expect(await run("rust")).toEqual(await run("ts"));
+  });
+
+  // The TypeScript reads a module named like a standard one, or a missing one, again for each
+  // module citing it, and stops at a module that doesn't parse.
+  it.each([
+    ["a standard module", "Naturals, Lib, TLAPS", { Lib: "EXTENDS Naturals\nX == 1" }],
+    ["a missing module", "A2, B2, TLAPS", { A2: "EXTENDS X", B2: "EXTENDS X" }],
+    ["a module that doesn't parse", "A, B, TLAPS", { A: "X == == 1", B: "Y == 1" }],
+  ])("reads %s as the TypeScript driver does", async (_name, extended, modules) => {
+    const getReads = async (driver: string) => {
+      const reads: string[] = [];
+      const run = await proveWithDriver(driver, {
+        options: {
+          source: getModule("THEOREM 1 + 1 = 2 BY SMT", extended),
+          loadModule: (name) => {
+            reads.push(name);
+            const body = (modules as Record<string, string>)[name];
+            return body === undefined ? undefined : `---- MODULE ${name} ----\n${body}\n====\n`;
+          },
+        },
+        decide: byProver({}),
+      });
+      return { run, reads };
+    };
+    expect(await getReads("rust")).toEqual(await getReads("ts"));
+  });
+
   it("proves with workers as the TypeScript driver does", async () => {
     const source = loadFixture("HourClock") ?? "";
     const setting = process.env.PROVE_IT_PROVER_DRIVER;

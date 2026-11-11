@@ -2,7 +2,8 @@
 //! Rust driver, which reads what JavaScript holds through `Sources` and returns one of:
 //!
 //! - `{ kind: "needed", keys, requests, reports }`, where it reads a module it doesn't know
-//!   (`module:<name>`, which `loadModule` answers) or needs decisions. Each request is
+//!   (`module:<name>#<n>`, the n-th time it reads it, which `loadModule` answers) or needs
+//!   decisions. Each request is
 //!   `{ key, prover, text, timeLimitMs }`, which JavaScript decides and answers under
 //!   `decide:<key>` as `<verdict> <timeUsedMs>`, `error:<message>` for the `TlaProverError` a
 //!   backend throws, or `unsupported:<message>` for a `TlaUnsupportedError`. `priority` is the
@@ -158,11 +159,16 @@ fn load_run(
 ) -> Result<Run, HostValue> {
     // A run gives what a fresh process gives, whatever ran on this thread before.
     reset_caches();
+    // Each time getObligations reads a module is its own key, as the TypeScript reads a module
+    // named like a standard one, or a missing one, again for each module citing it.
+    let mut reads: HashMap<String, usize> = HashMap::new();
     let modules = get_obligations(
         &[ObligationSource { file, source }],
         &mut |name| {
+            let read = reads.entry(name.to_owned()).or_default();
+            *read += 1;
             let source = sources
-                .get(format!("module:{name}"))
+                .get(format!("module:{name}#{read}"))
                 .or_else(|| (name == "TLAPS").then(|| TLAPS_MODULE.to_owned()))?;
             Some(ObligationSource {
                 file: format!("{name}.tla"),
