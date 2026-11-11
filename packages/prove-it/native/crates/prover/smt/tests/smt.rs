@@ -1,13 +1,6 @@
 //! `tests/unit/smt.test.ts`, case for case, on `decide` and `check_smt`: each test asserts what the
 //! TypeScript test asserts, on the same inputs under `tests/fixtures/smt`.
 //!
-//! The arithmetic theory (`core::theory_lra`) is still a stub, and `decide` declines every input
-//! whose search reaches it, so that the TypeScript decides it. Each case whose input needs the
-//! theory asserts that it is declined, with the TypeScript's expectation beside it, so that it
-//! fails once the theory lands and is then flipped to that expectation: the fixtures in
-//! `DECLINED_FIXTURES`, the inputs of `assert_declined` and `assert_lines_declined`, and
-//! `check_smt` on Barriers-63.
-//!
 //! The TypeScript gives each decision 5 seconds; these give none and a step limit far above what
 //! any case takes, so that they are deterministic. Each runs on a thread with the stack the binding
 //! gives a decision.
@@ -18,35 +11,12 @@ use std::sync::Arc;
 
 use prove_decide::{Cancel, DecideError, Decision, Limits, Statistic, Verdict};
 use prove_smt::core::solver::check_smt;
-use prove_smt::core::theory_lra::NOT_PORTED;
-use prove_smt::util::error::SmtError;
 use prove_smt::util::rlimit::ResourceLimit;
 
 const STEP_LIMIT: u64 = 50_000_000;
 /// The step limit of `scripts/smt-decide-reference.ts`.
 const REFERENCE_STEP_LIMIT: u64 = 5_000_000;
 const DECIDE_STACK_BYTES: usize = 256 * 1024 * 1024;
-
-/// The fixtures whose search reaches the arithmetic theory. Z3 proves each of them, and so does
-/// the TypeScript.
-const DECLINED_FIXTURES: [&str; 16] = [
-    "Barriers-63.smt",
-    "CRDT_proof-49.smt",
-    "Dekker-146.smt",
-    "DieHard_proof-46.smt",
-    "EWD840_proof-49.smt",
-    "FiniteSetTheorems_proofs-238.smt",
-    "FiniteSetsExtTheorems_proofs-202.smt",
-    "FunctionTheorems_proofs-779.smt",
-    "GFX_test-729.smt",
-    "NaturalsInduction_proofs-228.smt",
-    "Quicksort-149.smt",
-    "Sets-174.smt",
-    "Sets-3.smt",
-    "SnapShot_test-1731.smt",
-    "WellFoundedInduction_proofs-317.smt",
-    "clean_proof-39.smt",
-];
 
 struct Recorded {
     name: String,
@@ -118,19 +88,6 @@ fn decide(text: &str) -> Result<Verdict, DecideError> {
     decide_with(text, None).map(|decision| decision.verdict)
 }
 
-fn declined() -> Result<Verdict, DecideError> {
-    Err(DecideError::Declined(NOT_PORTED.into()))
-}
-
-/// An input that needs the arithmetic theory: the TypeScript answers `expected`.
-fn assert_declined(text: &str, expected: Verdict) {
-    assert_eq!(
-        decide(text),
-        declined(),
-        "the TypeScript answers {expected:?}"
-    );
-}
-
 // (g x) is f applied depth times to x, and (g 0) is not: unsat after one instance.
 fn get_deep_problem(depth: usize) -> String {
     let nest = |term: &str| format!("{}{term}{}", "(f ".repeat(depth), ")".repeat(depth));
@@ -151,26 +108,13 @@ fn decide_lines(lines: &[&str]) -> Result<Verdict, DecideError> {
     decide(&[lines, &["(check-sat)"]].concat().join("\n"))
 }
 
-fn assert_lines_declined(lines: &[&str], expected: Verdict) {
-    assert_eq!(
-        decide_lines(lines),
-        declined(),
-        "the TypeScript answers {expected:?}"
-    );
-}
-
 // decideSmt proves what Z3 proves.
 #[test]
 fn proves_what_z3_proves() {
     for recorded in get_recorded("unsat") {
-        let expected = if DECLINED_FIXTURES.contains(&recorded.name.as_str()) {
-            declined()
-        } else {
-            Ok(Verdict::Unsat)
-        };
         assert_eq!(
             decide(&read(&recorded.name)),
-            expected,
+            Ok(Verdict::Unsat),
             "proves {}",
             recorded.source
         );
@@ -181,11 +125,6 @@ fn proves_what_z3_proves() {
 #[test]
 fn does_not_prove_what_z3_refutes() {
     for recorded in get_recorded("sat") {
-        assert!(
-            !DECLINED_FIXTURES.contains(&recorded.name.as_str()),
-            "{} is declined",
-            recorded.name
-        );
         let verdict = decide(&read(&recorded.name));
         assert!(verdict.is_ok(), "{}: {verdict:?}", recorded.source);
         assert_ne!(
@@ -208,9 +147,9 @@ fn answers_the_same_way_with_the_same_instances_when_run_twice() {
     };
     let first = check();
     let second = check();
-    // The TypeScript: first.numInstances > 0, and second equals first.
-    assert_eq!(first, Err(SmtError::Unsupported(NOT_PORTED.into())));
-    assert_eq!(second, first);
+    let first = first.expect("a check");
+    assert!(first.num_instances > 0);
+    assert_eq!(second, Ok(first));
 }
 
 #[test]
@@ -225,14 +164,16 @@ fn gives_up_when_the_signal_aborts() {
 
 #[test]
 fn proves_a_problem_whose_terms_are_nested_thousands_deep() {
-    // The TypeScript: unsat.
-    assert_declined(&get_deep_problem(2500), Verdict::Unsat);
+    assert_eq!(decide(&get_deep_problem(2500)), Ok(Verdict::Unsat));
 }
 
 #[test]
 fn answers_instead_of_throwing_when_a_recursion_exhausts_the_stack() {
-    // The TypeScript: unsat or unknown.
-    assert_declined(&get_deep_problem(20000), Verdict::Unknown);
+    let verdict = decide(&get_deep_problem(20000));
+    assert!(
+        [Ok(Verdict::Unsat), Ok(Verdict::Unknown)].contains(&verdict),
+        "{verdict:?}"
+    );
 }
 
 // Doubles round 2^53 + 1 to 2^53 and 2^54 + 3 to 2^54 + 4, which flips each verdict.
@@ -245,7 +186,7 @@ fn tells_apart_numerals_past_2_53() {
         "(check-sat)",
     ]
     .join("\n");
-    assert_declined(&problem, Verdict::Sat);
+    assert_eq!(decide(&problem), Ok(Verdict::Sat));
 }
 
 #[test]
@@ -271,7 +212,7 @@ fn relates_a_numeral_to_the_arithmetic_once_a_product_has_used_it() {
         "(check-sat)",
     ]
     .join("\n");
-    assert_declined(&problem, Verdict::Unsat);
+    assert_eq!(decide(&problem), Ok(Verdict::Unsat));
 }
 
 // Z3 answers both without the smt tactic, since the preprocessing decides them.
@@ -298,25 +239,25 @@ fn rejects_an_ill_sorted_application() {
 
 #[test]
 fn finds_a_real_strictly_between_0_and_1() {
-    assert_lines_declined(
-        &[
+    assert_eq!(
+        decide_lines(&[
             "(declare-fun x () Real)",
             "(assert (< 0.0 x))",
             "(assert (< x 1.0))",
-        ],
-        Verdict::Sat,
+        ]),
+        Ok(Verdict::Sat)
     );
 }
 
 #[test]
 fn finds_no_integer_strictly_between_0_and_1() {
-    assert_lines_declined(
-        &[
+    assert_eq!(
+        decide_lines(&[
             "(declare-fun x () Int)",
             "(assert (< 0 x))",
             "(assert (< x 1))",
-        ],
-        Verdict::Unsat,
+        ]),
+        Ok(Verdict::Unsat)
     );
 }
 
@@ -328,10 +269,10 @@ fn solves_x_plus_y_is_1_and_x_minus_y_is_0_with_x_one_half() {
         "(assert (= (+ x y) 1.0))",
         "(assert (= (- x y) 0.0))",
     ];
-    assert_lines_declined(&lines, Verdict::Sat);
-    assert_lines_declined(
-        &[&lines[..], &["(assert (not (= x (/ 1 2))))"]].concat(),
-        Verdict::Unsat,
+    assert_eq!(decide_lines(&lines), Ok(Verdict::Sat));
+    assert_eq!(
+        decide_lines(&[&lines[..], &["(assert (not (= x (/ 1 2))))"]].concat()),
+        Ok(Verdict::Unsat)
     );
 }
 
@@ -342,9 +283,9 @@ fn rounds_to_int_down() {
         decide_lines(&[&lines[..], &["(assert (< x 2.0))"]].concat()),
         Ok(Verdict::Unsat)
     );
-    assert_lines_declined(
-        &[&lines[..], &["(assert (> x 2.5))", "(assert (< x 3.0))"]].concat(),
-        Verdict::Sat,
+    assert_eq!(
+        decide_lines(&[&lines[..], &["(assert (> x 2.5))", "(assert (< x 3.0))"]].concat()),
+        Ok(Verdict::Sat)
     );
     assert_eq!(
         decide_lines(&["(assert (not (= (to_int (- 1.5)) (- 2))))"]),
@@ -359,22 +300,22 @@ fn decides_is_int() {
         "(assert (< 1.0 x))",
         "(assert (< x 2.0))",
     ];
-    assert_lines_declined(
-        &[&lines[..], &["(assert (is_int x))"]].concat(),
-        Verdict::Unsat,
+    assert_eq!(
+        decide_lines(&[&lines[..], &["(assert (is_int x))"]].concat()),
+        Ok(Verdict::Unsat)
     );
-    assert_lines_declined(
-        &[&lines[..], &["(assert (not (is_int x)))"]].concat(),
-        Verdict::Sat,
+    assert_eq!(
+        decide_lines(&[&lines[..], &["(assert (not (is_int x)))"]].concat()),
+        Ok(Verdict::Sat)
     );
-    assert_lines_declined(
-        &[
+    assert_eq!(
+        decide_lines(&[
             "(declare-fun x () Real)",
             "(assert (> (* 3.0 x) 1.0))",
             "(assert (< (* 3.0 x) 2.0))",
             "(assert (is_int x))",
-        ],
-        Verdict::Unsat,
+        ]),
+        Ok(Verdict::Unsat)
     );
 }
 
@@ -385,48 +326,48 @@ fn keeps_strict_bounds_strict() {
         decide_lines(&[&lines[..], &["(assert (<= (* 10.0 x) 2.0))"]].concat()),
         Ok(Verdict::Unsat)
     );
-    assert_lines_declined(
-        &[&lines[..], &["(assert (<= (* 10.0 x) 2.5))"]].concat(),
-        Verdict::Sat,
+    assert_eq!(
+        decide_lines(&[&lines[..], &["(assert (<= (* 10.0 x) 2.5))"]].concat()),
+        Ok(Verdict::Sat)
     );
 }
 
 #[test]
 fn refutes_an_infeasible_linear_system() {
-    assert_lines_declined(
-        &[
+    assert_eq!(
+        decide_lines(&[
             "(declare-fun a () Real)",
             "(declare-fun b () Real)",
             "(assert (= (+ (* 3.0 a) (* 2.0 b)) 7.0))",
             "(assert (= (- (* 6.0 a) (* 4.0 b)) 2.0))",
             "(assert (< a 1.0))",
-        ],
-        Verdict::Unsat,
+        ]),
+        Ok(Verdict::Unsat)
     );
 }
 
 #[test]
 fn coerces_int_terms_of_real_positions() {
-    assert_lines_declined(
-        &[
+    assert_eq!(
+        decide_lines(&[
             "(declare-fun i () Int)",
             "(declare-fun y () Real)",
             "(assert (= (+ i y) 2.5))",
             "(assert (= y 0.25))",
-        ],
-        Verdict::Unsat,
+        ]),
+        Ok(Verdict::Unsat)
     );
 }
 
 #[test]
 fn finds_a_model_of_a_nonlinear_real_problem() {
-    assert_lines_declined(
-        &[
+    assert_eq!(
+        decide_lines(&[
             "(declare-fun x () Real)",
             "(declare-fun y () Real)",
             "(assert (= (* x y) 2.0))",
-        ],
-        Verdict::Sat,
+        ]),
+        Ok(Verdict::Sat)
     );
 }
 
@@ -443,12 +384,12 @@ fn finds_no_integer_x_with_x_times_x_plus_1_below_0() {
 
 #[test]
 fn finds_a_real_x_with_x_times_x_plus_1_below_0() {
-    assert_lines_declined(
-        &[
+    assert_eq!(
+        decide_lines(&[
             "(declare-fun x () Real)",
             "(assert (not (>= (* x (+ x 1.0)) 0.0)))",
-        ],
-        Verdict::Sat,
+        ]),
+        Ok(Verdict::Sat)
     );
 }
 
@@ -462,15 +403,15 @@ fn refutes_a_negative_square() {
 
 #[test]
 fn refutes_a_factorization_of_a_prime() {
-    assert_lines_declined(
-        &[
+    assert_eq!(
+        decide_lines(&[
             "(declare-fun x () Int)",
             "(declare-fun y () Int)",
             "(assert (= (* x y) 7))",
             "(assert (> x 1))",
             "(assert (> y 1))",
-        ],
-        Verdict::Unsat,
+        ]),
+        Ok(Verdict::Unsat)
     );
 }
 
@@ -489,42 +430,25 @@ fn get_decision_text(decision: &Decision) -> String {
 
 // The decider differential in miniature: `tests/tables/decide.txt`, which
 // `scripts/smt-decide-reference.ts` writes, holds decideSmt's verdict and statistics on every
-// fixture under the same step limit and no deadline (`ts`), and the same with the arithmetic theory
-// made as inert as its stub here (`inert`). On every fixture it does not decline, the port answers
-// `ts`'s verdict with `inert`'s statistics: the same search, step for step, but for the steps of
-// the theory. Once theory_lra lands, the table is re-recorded without `inert`, and the port answers
-// `ts` on every fixture.
+// fixture under the same step limit and no deadline. The port answers each with the same verdict
+// and the same statistics: the same search, step for step.
 #[test]
 fn decides_every_fixture_as_the_typescript_does() {
     let table =
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/tables/decide.txt"))
             .expect("the table");
-    let mut declined_fixtures = Vec::new();
+    let mut count = 0;
     for line in table.lines() {
-        let (name, rest) = line.split_once(" ts=").expect("a fixture and its verdict");
-        let (ts, inert) = rest
-            .split_once(" inert=")
-            .expect("the inert theory's verdict");
+        let (name, expected) = line.split_once(' ').expect("a fixture and its decision");
         let decision = on_deep_stack(|| {
             prove_smt::decide(
                 &read(name),
                 &Limits::new(f64::INFINITY, Some(REFERENCE_STEP_LIMIT), None),
             )
-        });
-        match decision {
-            Ok(decision) => {
-                assert_eq!(
-                    decision.verdict.name(),
-                    ts.split(' ').next().unwrap_or_default(),
-                    "{name}"
-                );
-                assert_eq!(get_decision_text(&decision), inert, "{name}");
-            }
-            Err(error) => {
-                assert_eq!(error, DecideError::Declined(NOT_PORTED.into()), "{name}");
-                declined_fixtures.push(name);
-            }
-        }
+        })
+        .map(|decision| get_decision_text(&decision));
+        assert_eq!(decision, Ok(expected.into()), "{name}");
+        count += 1;
     }
-    assert_eq!(declined_fixtures, DECLINED_FIXTURES);
+    assert_eq!(count, 45);
 }

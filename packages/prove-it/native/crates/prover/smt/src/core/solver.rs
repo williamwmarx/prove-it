@@ -4,12 +4,6 @@
 //!
 //! `decideSmt` records the calls the arithmetic theory makes into lp when `PROVE_IT_LP_TRACE` is
 //! set (`recordLpTrace`); that recording only serves the port of lp, and is not ported.
-//!
-//! While the arithmetic theory (`theory_lra.rs`) is a stub, a search that reaches one of its
-//! unported methods fails with `SmtError::Unsupported(theory_lra::NOT_PORTED)`. `decide_smt` does
-//! not answer unknown on that error, as it does on the TypeScript's `SmtUnsupportedError`, but
-//! returns it, and `crate::decide` declines the input, so that the TypeScript decides it: no
-//! verdict comes from a search that reached the stub.
 
 use prove_decide::{Decision, Limits, Statistic, Verdict};
 
@@ -18,7 +12,6 @@ use crate::core::ast::AstManager;
 use crate::core::context::{Context, SmtParams};
 use crate::core::quant_tactics::apply_ufnia_tactic;
 use crate::core::smtlib_parser::parse_smtlib;
-use crate::core::theory_lra::NOT_PORTED;
 use crate::util::error::SmtError;
 use crate::util::lbool::LBool;
 use crate::util::rlimit::ResourceLimit;
@@ -103,9 +96,7 @@ fn set_statistic(
 /// Input outside the subset the solver supports is unknown, and so is a search that runs past the
 /// time or step limit or that another thread cancels. The statistics are the steps of Z3's
 /// resource limit, the quantifier instances, and what stopped a search that gave up, in the order
-/// the TypeScript writes them. A search that reaches the stubbed arithmetic theory fails with its
-/// `SmtError::Unsupported` (the module header), and every other error the TypeScript rethrows
-/// fails as well.
+/// the TypeScript writes them. Every other error, which the TypeScript rethrows, fails as well.
 pub fn decide_smt(text: &str, limits: &Limits) -> Result<Decision, SmtError> {
     let limit = ResourceLimit::new(limits);
     let mut statistics = Vec::new();
@@ -119,7 +110,7 @@ pub fn decide_smt(text: &str, limits: &Limits) -> Result<Decision, SmtError> {
             check.verdict
         }
         Err(SmtError::Canceled) => Verdict::Unknown,
-        Err(SmtError::Unsupported(message)) if message != NOT_PORTED => {
+        Err(SmtError::Unsupported(_)) => {
             set_statistic(
                 &mut statistics,
                 "stop",

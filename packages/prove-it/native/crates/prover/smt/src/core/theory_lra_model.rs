@@ -1,14 +1,10 @@
 //! Ported from Z3 (src/smt/theory_lra.cpp), MIT license, see z3-license.txt, through
 //! `theory-lra-model.ts`. The model of theory_lra: the values of its variables, and the equalities
 //! between shared terms with equal values that it assumes.
-//!
-//! nlsat's model (`nla.is_using_nra_model`) is read through nra-solver, which the lp port has not
-//! ported yet: its checks decline, so nla never uses that model, and the paths that would read it
-//! decline too, with `SmtError::Unsupported`.
 
 use std::collections::{HashMap, HashSet};
 
-use prove_num::Rational;
+use prove_num::{Int, Rational};
 
 use crate::core::ast::{
     Expr, FAMILY_ARITH, FAMILY_BASIC, OP_DIV, OP_DIV0, OP_IDIV, OP_IDIV0, OP_ITE, OP_MOD, OP_MOD0,
@@ -17,14 +13,14 @@ use crate::core::context::{Context, TrailClosure};
 use crate::core::enode::EnodeId;
 use crate::core::proto_model::ProtoModel;
 use crate::core::theory_lra_state::TheoryClosure;
+use crate::core::theory_lra_state::get_lra_mut;
 use crate::lp::lar_solver::NULL_LPVAR;
+use crate::lp::nla_core::Nla;
+use crate::lp::nra_solver::NraSolver;
 use crate::lp::numeric_pair::Impq;
 use crate::lp::random_updater::random_update;
+use crate::nlsat::algebraic::{Anum, AnumValue};
 use crate::util::error::SmtError;
-
-fn get_nra_model_error() -> SmtError {
-    SmtError::Unsupported("nlsat's model: nra-solver is not ported yet".into())
-}
 
 impl Context {
     pub(crate) fn lra_init_variable_values(&mut self) {
@@ -104,6 +100,7 @@ impl Context {
         let mut num_candidates = 0;
         let start = self.get_random_value() as usize;
         let mut by_value: HashMap<(bool, Impq), i32> = HashMap::new();
+        let mut representatives: Vec<i32> = Vec::new();
         for index in 0..num_vars {
             let th_var = ((index + start) % num_vars) as i32;
             if !self.lra_is_relevant_and_shared(self.theory_get_enode(th_var)) {
@@ -111,11 +108,23 @@ impl Context {
             }
             // m_model_eqs: with nlsat's model, the values are compared one by one.
             let key = self.lra_value_key(th_var);
-            if self.lra_is_using_nra_model() {
-                return Err(get_nra_model_error());
-            }
-            let Some(other) = by_value.get(&key).copied() else {
+            let other = if self.lra_is_using_nra_model() {
+                let mut found = None;
+                for representative in representatives.iter().copied() {
+                    if self.lra_is_int_var(representative) == self.lra_is_int_var(th_var)
+                        && self.lra_is_eq(representative, th_var)?
+                    {
+                        found = Some(representative);
+                        break;
+                    }
+                }
+                found
+            } else {
+                by_value.get(&key).copied()
+            };
+            let Some(other) = other else {
                 by_value.insert(key, th_var);
+                representatives.push(th_var);
                 continue;
             };
             if self.lra_is_equal(th_var, other) {
@@ -207,18 +216,52 @@ impl Context {
             return Ok(Some(self.lra_get_value_expr(th_var)));
         }
         // nlsat's value, zero for an integer whose value is not one.
-        Err(get_nra_model_error())
+        let anum = self.lra_with_nra_model(|nla| get_nl_value(nla, th_var))?;
+        let value = anum.value();
+        if self.lra_is_int_var(th_var) {
+            let numeral = match &*value {
+                AnumValue::Rational(value) if value.is_int() => value.num().clone(),
+                _ => Int::zero(),
+            };
+            return Ok(Some(self.m.mk_numeral(&numeral)));
+        }
+        match &*value {
+            AnumValue::Rational(value) => Ok(Some(self.m.mk_real_numeral(value))),
+            AnumValue::Cell(_) => Err(SmtError::Unsupported("an irrational model value".into())),
+        }
     }
 
     /// is_eq: whether two variables have the same value, in nlsat's model when nla uses it.
     fn lra_is_eq(&mut self, first: i32, second: i32) -> Result<bool, SmtError> {
         if self.lra_is_using_nra_model() {
-            return Err(get_nra_model_error());
+            return self.lra_with_nra_model(|nla| {
+                let first = get_nl_value(nla, first)?;
+                let second = get_nl_value(nla, second)?;
+                Ok(nla.core.nra.am().compare(&first, &second)? == 0)
+            });
         }
         let first_column = self.lra_register_var(first);
         let second_column = self.lra_register_var(second);
         let solver = &self.lra().solver;
         Ok(solver.get_value(first_column) == solver.get_value(second_column))
+    }
+
+    /// nla's view for reading nlsat's model, which `lra_is_using_nra_model` says nla has. Reading
+    /// it consults no relevancy, so the view answers none, unlike `lra_with_nla`'s.
+    fn lra_with_nra_model<T>(
+        &mut self,
+        body: impl FnOnce(&mut Nla<'_, 'static>) -> Result<T, SmtError>,
+    ) -> Result<T, SmtError> {
+        let theory = get_lra_mut(&mut self.theory);
+        let Some(core) = theory.nla.as_mut() else {
+            unreachable!("nlsat's model is nla's");
+        };
+        body(&mut Nla {
+            core,
+            lra: &mut theory.solver,
+            limit: &self.m.limit,
+            is_relevant: &|_| false,
+        })
     }
 
     fn lra_get_value(&self, th_var: i32) -> Rational {
@@ -292,4 +335,34 @@ impl Context {
             || op == OP_IDIV0
             || op == OP_MOD0
     }
+}
+
+/// nl_value: the value of a variable in nlsat's model, a term's the sum over its columns.
+fn get_nl_value(nla: &mut Nla<'_, '_>, th_var: i32) -> Result<Anum, SmtError> {
+    let column = nla.lra.external_to_local_column(th_var as usize);
+    if !nla.lra.has_term(column) {
+        return NraSolver::value(nla, column);
+    }
+    let mut result = Anum::new(Rational::zero());
+    let mut todo = vec![(column, Rational::one())];
+    while let Some(pending) = todo.pop() {
+        let entries: Vec<(usize, Rational)> = nla
+            .lra
+            .get_term(pending.0)?
+            .iter()
+            .map(|entry| (entry.0, entry.1.clone()))
+            .collect();
+        for entry in entries {
+            let coeff = entry.1.mul(&pending.1);
+            if nla.lra.has_term(entry.0) {
+                todo.push((entry.0, coeff));
+                continue;
+            }
+            let value = NraSolver::value(nla, entry.0)?;
+            let am = nla.core.nra.am();
+            let product = am.mul(&value, &Anum::new(coeff))?;
+            result = am.add(&product, &result)?;
+        }
+    }
+    Ok(result)
 }

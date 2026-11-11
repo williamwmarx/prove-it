@@ -106,6 +106,47 @@ result=-1 conflicts=102 steps=6789 instances=0 asts=260
 == real-pigeons ==
 text (declare-const a Real) (declare-const b Real) (declare-const c Real) (declare-fun f (Real) Int) (assert (and (<= 0.0 a) (<= a 1.0) (<= 0.0 b) (<= b 1.0) (<= 0.0 c) (<= c 1.0))) (assert (distinct (f a) (f b) (f c))) (assert (or (= a b) (= b c) (= a c))) (check-sat)
 result=-1 conflicts=3 steps=336 instances=0 asts=220
+== nra-shared ==
+text (declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (= (* x x) 2.0)) (assert (= (* y y) 2.0)) (assert (> (f x) (f y))) (check-sat)
+result=1 conflicts=2 steps=840 instances=0 asts=227
+stop=unsupported conflicts=2 steps=841
+== nra-shared-terms ==
+text (declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (= (* x x) 2.0)) (assert (= (* y y) 2.0)) (assert (> (f (+ x 1.0)) (f (+ y 1.0)))) (check-sat)
+result=1 conflicts=2 steps=910 instances=0 asts=233
+stop=unsupported conflicts=2 steps=911
+== nra-shared-sum ==
+text (declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (= (* x x) 2.0)) (assert (= (* y y) 2.0)) (assert (> (f (+ x y)) (f 0.0))) (check-sat)
+result=1 conflicts=0 steps=585 instances=0 asts=241
+stop=unsupported conflicts=0 steps=586
+== nra-shared-int ==
+text (declare-const x Real) (declare-const n Int) (declare-fun g (Int) Int) (assert (= (* x x x) 2.0)) (assert (> (to_real n) x)) (assert (< (to_real n) (* 2.0 x))) (assert (> (g n) (g 2))) (check-sat)
+result=-1 conflicts=4 steps=779 instances=0 asts=259
+== nra-equal-values ==
+text (declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (= (* x y) 3.0)) (assert (= (* x x) 3.0)) (assert (> x 0.0)) (assert (not (= (f x) (f y)))) (check-sat)
+result=-1 conflicts=6 steps=932 instances=0 asts=238
+== nra-model ==
+text (declare-const x Real) (declare-const y Real) (declare-const z Real) (declare-fun f (Real) Real) (assert (= (* x y z) 6.0)) (assert (> x 1.0)) (assert (> y x)) (assert (> z y)) (assert (forall ((w Real)) (> (f w) 0.0))) (assert (> (f x) (f z))) (check-sat)
+result=1 conflicts=0 steps=1288 instances=2 asts=408
+const x = (/ 773.0 512.0)#134
+const z = (/ 524288.0 262047.0)#136
+const y = (/ 1017.0 512.0)#135
+func k!0 [(/ 773.0 512.0)#134 -> (/ 773.0 512.0)#134] else (/ 524288.0 262047.0)#136
+func f!1 [(/ 524288.0 262047.0)#136 -> 1.0#28] [(/ 773.0 512.0)#134 -> 2.0#70] else 21.0#90
+func f else (f!1 (k!0 (:var 0)))#165
+modeled: steps=1288 asts=408
+== nra-model-terms ==
+text (declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (> (* x x) (* 2.0 y y))) (assert (< (* x y) 0.0)) (assert (> (+ x y) 3.0)) (assert (forall ((w Real)) (>= (f w) w))) (assert (> (f (+ x y)) (f y))) (check-sat)
+result=1 conflicts=0 steps=1036 instances=2 asts=277
+const y = (/ -1.0 2.0)#84
+const x = 4.0#83
+func f [(/ -1.0 2.0)#84 -> 0.0#29] [(/ 7.0 2.0)#88 -> 5.0#82] else (:var 0)#34
+modeled: steps=1036 asts=277
+== nra-irrational-value ==
+text (declare-const x Real) (declare-fun f (Real) Real) (assert (= (* x x) 2.0)) (assert (forall ((z Real)) (= (f z) z))) (assert (> (f x) 1.0)) (check-sat)
+stop=unsupported conflicts=0 steps=614
+== nra-irrational-int ==
+text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-fun f (Real) Real) (declare-fun g (Int) Int) (assert (= (* r r) 2.0)) (assert (= x 1)) (assert (= (g x) (g y))) (assert (> (to_real y) r)) (assert (forall ((w Real)) (>= (f w) w))) (assert (> (f r) 0.0)) (check-sat)
+stop=unsupported conflicts=0 steps=856
 == random-0 ==
 text (declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-const s Real) (assert (or (= (* (- 2) y) 3) (<= (+ (* 0.0 r) (* 3.0 s)) 2.0))) (assert (or (<= x (- 4)) (<= (* (- 2) x) 5))) (assert (>= (+ (* (- 3) x) (* (- 2) y)) (- 3))) (assert (or (= (+ (* 0 x) x) (- 5)) (not (= (* 3 x) (* 0 x))))) (assert (<= (ite (> (+ (* (- 3) x) (* (- 3) y)) 4) (+ (* (- 1) x) (* (- 1) y)) (+ (* 3 y) (* 0 y))) 5)) (assert (or (not (= (+ (* (- 2) x) y) (* (- 2) y))) (>= (+ (* (- 2) y) y) (- 4)))) (assert (or (> (* (- 3.0) r) (- 4.0)) (< (+ (* (- 3) x) (* (- 2) x)) 1))) (assert (<= (* (- 3.0) r) (- 2.0))) (assert (<= (ite (> (* 3.0 r) 2.0) s (+ (* (- 2.0) s) (* 0.0 r))) (- 2.0))) (assert (< (* (- 3) y) (- 3))) (assert (<= (* (- 1) y) 3)) (assert (<= (+ (* (- 1) x) (* (- 3) y)) (- 4))) (check-sat)
 result=1 conflicts=2 steps=887 instances=0 asts=347

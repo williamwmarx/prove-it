@@ -125,6 +125,44 @@ const PROBLEMS: [string, string][] = [
     "real-pigeons",
     "(declare-const a Real) (declare-const b Real) (declare-const c Real) (declare-fun f (Real) Int) (assert (and (<= 0.0 a) (<= a 1.0) (<= 0.0 b) (<= b 1.0) (<= 0.0 c) (<= c 1.0))) (assert (distinct (f a) (f b) (f c))) (assert (or (= a b) (= b c) (= a c)))",
   ],
+  // nlsat's model: shared terms compared by their values in it (assume_eqs, is_eq), over variables,
+  // terms and integers, and the model's values (mk_value), rational and irrational.
+  [
+    "nra-shared",
+    "(declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (= (* x x) 2.0)) (assert (= (* y y) 2.0)) (assert (> (f x) (f y)))",
+  ],
+  [
+    "nra-shared-terms",
+    "(declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (= (* x x) 2.0)) (assert (= (* y y) 2.0)) (assert (> (f (+ x 1.0)) (f (+ y 1.0))))",
+  ],
+  [
+    "nra-shared-sum",
+    "(declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (= (* x x) 2.0)) (assert (= (* y y) 2.0)) (assert (> (f (+ x y)) (f 0.0)))",
+  ],
+  [
+    "nra-shared-int",
+    "(declare-const x Real) (declare-const n Int) (declare-fun g (Int) Int) (assert (= (* x x x) 2.0)) (assert (> (to_real n) x)) (assert (< (to_real n) (* 2.0 x))) (assert (> (g n) (g 2)))",
+  ],
+  [
+    "nra-equal-values",
+    "(declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (= (* x y) 3.0)) (assert (= (* x x) 3.0)) (assert (> x 0.0)) (assert (not (= (f x) (f y))))",
+  ],
+  [
+    "nra-model",
+    "(declare-const x Real) (declare-const y Real) (declare-const z Real) (declare-fun f (Real) Real) (assert (= (* x y z) 6.0)) (assert (> x 1.0)) (assert (> y x)) (assert (> z y)) (assert (forall ((w Real)) (> (f w) 0.0))) (assert (> (f x) (f z)))",
+  ],
+  [
+    "nra-model-terms",
+    "(declare-const x Real) (declare-const y Real) (declare-fun f (Real) Real) (assert (> (* x x) (* 2.0 y y))) (assert (< (* x y) 0.0)) (assert (> (+ x y) 3.0)) (assert (forall ((w Real)) (>= (f w) w))) (assert (> (f (+ x y)) (f y)))",
+  ],
+  [
+    "nra-irrational-value",
+    "(declare-const x Real) (declare-fun f (Real) Real) (assert (= (* x x) 2.0)) (assert (forall ((z Real)) (= (f z) z))) (assert (> (f x) 1.0))",
+  ],
+  [
+    "nra-irrational-int",
+    "(declare-const x Int) (declare-const y Int) (declare-const r Real) (declare-fun f (Real) Real) (declare-fun g (Int) Int) (assert (= (* r r) 2.0)) (assert (= x 1)) (assert (= (g x) (g y))) (assert (> (to_real y) r)) (assert (forall ((w Real)) (>= (f w) w))) (assert (> (f r) 0.0))",
+  ],
 ];
 
 // Seeded random linear problems over two Int and two Real constants: conjunctions and
