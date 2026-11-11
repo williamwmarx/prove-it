@@ -5,7 +5,7 @@
 //! booleans, integers, strings, model values, records and finite sets of them, and returns `NotYet`
 //! for anything else, which TLC's own evaluation at startup handles.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -15,7 +15,7 @@ use crate::config::ConfigValue;
 use crate::environment::Environment;
 use crate::errors::{FrontError, describe_range};
 use crate::resolve::Result;
-use crate::spec::{Binding, Scope, bind_definitions, get_definition, lookup_scope};
+use crate::spec::{Binding, Scope, ScopeOf, bind_definitions, get_definition, lookup_scope};
 use crate::tlc_data::SANY_OPERATOR_SYNONYMS;
 use crate::values::{ValueOrder, get_model_value_type};
 
@@ -24,6 +24,9 @@ const MAXIMUM_ELEMENTS: i64 = 100_000;
 
 /// The deepest the evaluator nests, past which a recursion is the engine's.
 const MAXIMUM_DEPTH: usize = 400;
+
+/// Why an evaluation that leaves substitutions unbound fails where it reads one.
+const UNBOUND: &str = "a declaration whose substitution is unbound";
 
 /// The keys of TLCGet that TLC's model checker holds.
 const CHECKER_KEYS: [&str; 6] = [
@@ -95,6 +98,9 @@ pub struct Evaluator<'a> {
     depth: Cell<usize>,
     /// Whether a value it couldn't compute was left to the engine's startup.
     is_deferring: Cell<bool>,
+    /// The INSTANCEs whose substitutions it leaves unbound, as TLC's context leaves those of the
+    /// `SubstInNode`s `SpecProcessor.processConfigProps` passes through.
+    unbound: RefCell<Rc<[usize]>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -111,6 +117,7 @@ impl<'a> Evaluator<'a> {
             is_started,
             depth: Cell::new(0),
             is_deferring: Cell::new(false),
+            unbound: RefCell::new(Rc::from([])),
         }
     }
 
@@ -329,6 +336,24 @@ impl Evaluator<'_> {
                 }
                 Ok(false)
             }
+        }
+    }
+
+    /// The bindings of the bounds as `opDefEvaluator.contexts` makes them in
+    /// `SpecProcessor.processConfigProps`, with the substitutions of the INSTANCEs `unbound` left
+    /// unbound, or `None` where reading one of them fails, as reading its declaration fails in TLC.
+    pub fn get_bindings_unbound(
+        &self,
+        bounds: &[Bound],
+        scope: Option<&Rc<Scope>>,
+        unbound: &Rc<[usize]>,
+    ) -> Result<Option<Vec<Option<Rc<Scope>>>>> {
+        let outer = self.unbound.replace(unbound.clone());
+        let bindings = self.get_bindings(bounds, scope);
+        *self.unbound.borrow_mut() = outer;
+        match bindings {
+            Err(FrontError::NotYet(reason)) if reason == UNBOUND => Ok(None),
+            bindings => bindings.map(Some),
         }
     }
 
@@ -556,6 +581,15 @@ impl Evaluator<'_> {
         if self.depth.get() >= MAXIMUM_DEPTH {
             return Err(not_yet("a recursion too deep"));
         }
+        if !self.unbound.borrow().is_empty()
+            && self
+                .environment
+                .tables
+                .get_substituting_instance(expression)
+                .is_some_and(|instance| self.unbound.borrow().contains(&instance))
+        {
+            return Err(FrontError::NotYet(UNBOUND.to_owned()));
+        }
         self.depth.set(self.depth.get() + 1);
         let value = self.evaluate_expression(expression, scope);
         self.depth.set(self.depth.get() - 1);
@@ -627,13 +661,23 @@ impl Evaluator<'_> {
                     return self.apply_operator(self.get_builtin_name(&name), args, scope);
                 };
                 let mut bound = closure_scope;
+                // Where substitutions are unbound, TLC reads an operator's arguments only as the
+                // body reads them (`Tool.evalAppl`'s LazyValues), so an unread one doesn't fail.
+                let is_lazy = !self.unbound.borrow().is_empty();
                 for (param, argument) in params.iter().zip(args) {
                     if param.arity > 0 {
                         return Err(not_yet("an operator argument"));
                     }
                     bound = Some(Rc::new(Scope {
                         name: param.name.clone(),
-                        binding: Binding::Value(self.evaluate(argument, scope)?),
+                        binding: if is_lazy {
+                            Binding::Thunk {
+                                expression: argument.clone(),
+                                scope: ScopeOf::Other(scope.cloned()),
+                            }
+                        } else {
+                            Binding::Value(self.evaluate(argument, scope)?)
+                        },
                         parent: bound,
                     }));
                 }

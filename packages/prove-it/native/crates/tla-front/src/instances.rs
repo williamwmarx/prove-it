@@ -515,6 +515,7 @@ pub struct Instantiator<'a> {
     substituted_names: FastSet<Name>,
     copies: [RefCell<FastMap<Name, Name>>; 3],
     tables: &'a Tables,
+    instance: usize,
 }
 
 type Bindings = FastMap<Name, Name>;
@@ -603,9 +604,10 @@ pub fn get_enabled_variable_name(name: &str) -> Name {
 impl<'a> Instantiator<'a> {
     /// `createInstantiation`.
     pub fn new(instantiation: Instantiation<'a>, tables: &'a Tables) -> Instantiator<'a> {
+        let instance = tables.new_instance();
         let mut names = Vec::new();
         for expression in instantiation.substitutions.values() {
-            tables.add_substitution(expression);
+            tables.add_substitution(expression, instance, false);
             get_free_names(expression, &FastSet::default(), tables, &mut names);
         }
         Instantiator {
@@ -613,6 +615,7 @@ impl<'a> Instantiator<'a> {
             instantiation,
             copies: Default::default(),
             tables,
+            instance,
         }
     }
 
@@ -713,7 +716,9 @@ impl<'a> Instantiator<'a> {
                 self.substitute(child, mode, &bindings)
             })?;
             let renamed = rename_params(&mapped, &mut rename);
-            Ok(self.with_instance_params(&Rc::new(renamed), &definition.location))
+            let copy = self.with_instance_params(&Rc::new(renamed), &definition.location);
+            self.tables.add_copy(&copy, &definition, self.instance);
+            Ok(copy)
         })
     }
 
@@ -961,6 +966,7 @@ impl<'a> Instantiator<'a> {
                                     matches!(replacement.kind, ExpressionKind::Identifier { .. })
                                         && replacement.resolved.is_local.get(),
                                 );
+                                self.tables.add_substitution(&copy, self.instance, true);
                                 return Ok(copy);
                             }
                             ExpressionKind::Apply {
@@ -976,6 +982,7 @@ impl<'a> Instantiator<'a> {
                                 copy.resolved
                                     .is_local
                                     .set(replacement.resolved.is_local.get());
+                                self.tables.add_substitution(&copy, self.instance, true);
                                 return Ok(copy);
                             }
                             ExpressionKind::Lambda {
@@ -996,11 +1003,10 @@ impl<'a> Instantiator<'a> {
                                 let call =
                                     with_reference(expression, Rc::from(LAMBDA_NAME), Some(args));
                                 call.resolved.is_local.set(true);
-                                return Ok(let_expression(
-                                    vec![Rc::new(definition)],
-                                    call,
-                                    location,
-                                ));
+                                let applied =
+                                    let_expression(vec![Rc::new(definition)], call, location);
+                                self.tables.add_substitution(&applied, self.instance, true);
+                                return Ok(applied);
                             }
                             _ => {
                                 return Err(SyntaxError::new(format!(

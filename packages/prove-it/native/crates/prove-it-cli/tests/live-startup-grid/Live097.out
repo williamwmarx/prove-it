@@ -1,0 +1,12 @@
+exit 77
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Live097C
+Semantic processing of module Live097B
+Semantic processing of module Live097
+Linting of module Live097C
+Linting of module Live097B
+Linting of module Live097
+Error: Temporal formula is a tautology (its negation is unsatisfiable).

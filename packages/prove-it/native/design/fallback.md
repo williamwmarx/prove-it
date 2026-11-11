@@ -279,12 +279,17 @@ binds it to the expression's value (`Liveness.astToLive`), so TLC names the decl
 instantiated module writes it, which the front end doesn't keep: that declines wherever the part
 is, or is within, a substitute or what the front end makes of one (a LET or IF it folds, an
 operator it calls, a substitute a later INSTANCE or a renaming copies). TLC takes a property's
-label whole, and a property's \A whole where its sets read a substituted declaration, which it
-evaluates without the substitution (`SpecProcessor.processConfigProps`); so does the front end,
-which declines such a \A whose body fails, where TLC wraps the failure in
-`EC.TLC_LIVE_CANNOT_HANDLE_FORMULA`. A grid of 87 small specs
-(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 544 of its 696 runs; 24 decline
-for the constant evaluator's gaps, 96 for a substituted declaration, and 32 for such a \A. Four name an
+label whole (`SpecProcessor.processConfigProps`). It unrolls a property's \A where it can evaluate
+the sets in the property's context, which leaves unbound the substitutions of the INSTANCEs it went
+through to the \A (each `SubstInNode`'s, which it collects apart), and takes the \A whole where
+reading one fails; operator arguments are read lazily, LET definitions as they are read, and an
+INSTANCE the sets reach themselves binds its own substitutions. The front end evaluates the sets
+so, with the substitutions of the INSTANCEs whose copies it expanded through left unbound, and
+declines a \A taken whole whose body fails, where TLC wraps the failure in
+`EC.TLC_LIVE_CANNOT_HANDLE_FORMULA`. A grid of 100 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 632 of its 800 runs; the others
+decline, for the constant evaluator's gaps, a substituted declaration, such a \A, or a tautology
+after a state-level property, which TLC warns of first. Four name an
 INSTANCE's definition before the INSTANCE, which SANY doesn't know there.
 
 Nothing reaches these liveness declines, so they stay declines until a test or a model does:

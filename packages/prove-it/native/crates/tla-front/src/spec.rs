@@ -239,30 +239,17 @@ impl Expansion<'_> {
         self.environment.is_substituted(definition)
     }
 
-    // Whether evaluating the expression reads what an INSTANCE put in for a declaration: a part of
-    // it, or of a definition it names, is one.
-    fn reads_substitution(&self, expression: &Expr, visited: &mut Vec<*const Definition>) -> bool {
-        if self.environment.tables.is_substitution(expression) {
-            return true;
+    // The INSTANCEs a definition reached through `unbound` is under too.
+    fn with_copy_instances(
+        &self,
+        unbound: &Rc<[usize]>,
+        definition: &Rc<Definition>,
+    ) -> Rc<[usize]> {
+        let instances = self.environment.tables.get_copy_instances(definition);
+        if instances.is_empty() {
+            return unbound.clone();
         }
-        let definition = (!expression.is_locally_resolved())
-            .then(|| expression.reference())
-            .flatten()
-            .and_then(|reference| get_definition(&reference, self.environment));
-        if let Some(definition) = definition
-            && !visited.contains(&Rc::as_ptr(definition))
-        {
-            visited.push(Rc::as_ptr(definition));
-            if self.reads_substitution(&definition.body, visited) {
-                return true;
-            }
-        }
-        let mut is_read = false;
-        let _ = map_children(expression, &self.environment.tables, &mut |child, _| {
-            is_read = is_read || self.reads_substitution(child, visited);
-            Ok(child.clone())
-        });
-        is_read
+        unbound.iter().chain(instances.iter()).copied().collect()
     }
 
     /// `expandTemporal`.
@@ -272,6 +259,7 @@ impl Expansion<'_> {
         scope: Option<&Rc<Scope>>,
         expanding: &[*const Definition],
         is_substituted: bool,
+        unbound: &Rc<[usize]>,
         name: Option<Name>,
     ) -> Result<Vec<Expanded>> {
         match &expression.kind {
@@ -288,6 +276,7 @@ impl Expansion<'_> {
                         scope,
                         expanding,
                         is_substituted,
+                        unbound,
                         name,
                     )?);
                 }
@@ -296,13 +285,20 @@ impl Expansion<'_> {
             // TLC takes a property's label whole (`SpecProcessor.processConfigProps` has no case
             // for a LabelNode).
             ExpressionKind::Label { body, .. } if !self.is_property => {
-                return self.expand(body, scope, expanding, is_substituted, name);
+                return self.expand(body, scope, expanding, is_substituted, unbound, name);
             }
             ExpressionKind::Let {
                 definitions, body, ..
             } => {
                 let bound = bind_definitions(definitions, scope)?;
-                return self.expand(body, bound.as_ref(), expanding, is_substituted, name);
+                return self.expand(
+                    body,
+                    bound.as_ref(),
+                    expanding,
+                    is_substituted,
+                    unbound,
+                    name,
+                );
             }
             ExpressionKind::Identifier { name: written, .. } => {
                 let reference = expression.reference().unwrap_or_default();
@@ -318,6 +314,7 @@ impl Expansion<'_> {
                         scope.as_ref(),
                         expanding,
                         is_substituted,
+                        unbound,
                         name,
                     );
                 }
@@ -342,6 +339,7 @@ impl Expansion<'_> {
                         None,
                         &expanding,
                         is_substituted || self.is_substituted(definition),
+                        &self.with_copy_instances(unbound, definition),
                         // `opNode.getName()`: the name as written, `A!Safe` for an instance's.
                         Some(written.clone()),
                     )?;
@@ -387,14 +385,18 @@ impl Expansion<'_> {
                         expanding,
                         is_substituted
                             || definition.is_some_and(|definition| self.is_substituted(definition)),
+                        &definition.map_or_else(
+                            || unbound.clone(),
+                            |definition| self.with_copy_instances(unbound, definition),
+                        ),
                         // An instance copy's application is named by its key.
                         Some(expression.reference().unwrap_or_else(|| operator.clone())),
                     );
                 }
             }
-            // TLC unrolls a property's \A over constant sets, and stops at a tautology. Under an
-            // INSTANCE's substitution it evaluates the sets without it, so it takes whole a \A
-            // whose sets read a declaration the INSTANCE substitutes, which fail.
+            // TLC unrolls a property's \A over constant sets, and stops at a tautology. It
+            // evaluates the sets in a context without the substitutions of the INSTANCEs it went
+            // through, and takes the \A whole where reading one fails.
             ExpressionKind::Quantified {
                 quantifier: Quantifier::Forall,
                 bounds,
@@ -402,29 +404,28 @@ impl Expansion<'_> {
             } if self.is_property
                 && bounds
                     .iter()
-                    .all(|bound| self.level(&bound.set, scope) == Level::Constant)
-                && !(is_substituted
-                    && bounds
-                        .iter()
-                        .any(|bound| self.reads_substitution(&bound.set, &mut Vec::new()))) =>
+                    .all(|bound| self.level(&bound.set, scope) == Level::Constant) =>
             {
                 let Some(evaluator) = self.evaluator else {
                     return Err(not_yet("a property's \\A that TLC unrolls"));
                 };
-                let mut expanded = Vec::new();
-                for binding in evaluator.get_bindings(bounds, scope)? {
-                    expanded.extend(self.expand(
-                        body,
-                        binding.as_ref(),
-                        expanding,
-                        is_substituted,
-                        Some(Rc::from(describe_range(body))),
-                    )?);
+                if let Some(bindings) = evaluator.get_bindings_unbound(bounds, scope, unbound)? {
+                    let mut expanded = Vec::new();
+                    for binding in bindings {
+                        expanded.extend(self.expand(
+                            body,
+                            binding.as_ref(),
+                            expanding,
+                            is_substituted,
+                            unbound,
+                            Some(Rc::from(describe_range(body))),
+                        )?);
+                    }
+                    if expanded.is_empty() {
+                        return Err(FrontError::Evaluation(TAUTOLOGY.to_owned()));
+                    }
+                    return Ok(expanded);
                 }
-                if expanded.is_empty() {
-                    return Err(FrontError::Evaluation(TAUTOLOGY.to_owned()));
-                }
-                return Ok(expanded);
             }
             _ => {}
         }
@@ -983,7 +984,7 @@ pub fn get_specification(
     let mut init_conjuncts = Vec::new();
     let mut next_actions = Vec::new();
     let mut temporals = Vec::new();
-    for item in expansion.expand(&definition.body, None, &[], false, None)? {
+    for item in expansion.expand(&definition.body, None, &[], false, &Rc::from([]), None)? {
         let level = || {
             get_level(
                 &item.expression,
@@ -1193,7 +1194,18 @@ pub fn get_properties(
         if get_level(&definition.body, None, environment, facts, &[]) == Level::Variable {
             properties.state_level.push(name.clone());
         }
-        for item in expansion.expand(&definition.body, None, &[], false, None)? {
+        // TLC warns of a state-level property as it processes the properties, before it reports
+        // a tautology, which the front end doesn't order.
+        let expanded =
+            match expansion.expand(&definition.body, None, &[], false, &Rc::from([]), None) {
+                Err(FrontError::Evaluation(message))
+                    if message == TAUTOLOGY && !properties.state_level.is_empty() =>
+                {
+                    return Err(not_yet("a tautology after a state-level property"));
+                }
+                expanded => expanded?,
+            };
+        for item in expanded {
             let level = |expression: &Expr| {
                 get_level(expression, item.scope.as_ref(), environment, facts, &[])
             };
