@@ -379,6 +379,14 @@ impl Parser {
         if kind == Kind::Number {
             return Ok(ConfigValue::Number(text.parse().unwrap_or(f64::NAN)));
         }
+        // TLC reads a string's contents as written, and rejects a backslash in them.
+        if kind == Kind::String && text.contains('\\') {
+            return Err(ConfigError {
+                message: format!(
+                    "TLC found an error in the configuration file:\nescape sequences are not supported in strings at line {line}"
+                ),
+            });
+        }
         if kind == Kind::String {
             return Ok(ConfigValue::String(text));
         }
