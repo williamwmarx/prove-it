@@ -192,14 +192,15 @@ mod tests {
         }
     }
 
+    // The parser reads the cancel on its 256th check, which takes no step, at step 174.
     #[test]
-    fn a_canceled_decision_stops_on_the_step_that_reads_the_cancel() {
+    fn a_canceled_decision_stops_where_it_reads_the_cancel() {
         let cancel: Cancel = Arc::new(|| true);
         let decision = decide(&read("Barriers-63.smt"), None, Some(cancel));
         assert_eq!(decision.verdict, Verdict::Unknown);
         assert_eq!(
             decision.statistics,
-            [("steps", count(256)), ("stop", text("signal"))]
+            [("steps", count(174)), ("stop", text("signal"))]
         );
     }
 
