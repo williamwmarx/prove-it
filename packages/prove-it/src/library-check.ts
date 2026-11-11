@@ -73,14 +73,18 @@ const checkWithEngine = (options: CheckOptions) => {
     const path = rest.join(":");
     return kind === "text"
       ? texts.get(path)
-      : kind === "module"
-        ? BUILT_IN_MODULES.has(path)
-          ? undefined
-          : options.loadModule?.(path)
-        : kind === "class"
-          ? options.loadClass?.(path)
-          : // SANY's report names the file of each module it parses, which the result doesn't hold.
-            "";
+      : // The bytes of a tla2tools.jar a Java launch names, which the library's command line,
+        // with no launch, never does.
+        kind === "bytes"
+        ? undefined
+        : kind === "module"
+          ? BUILT_IN_MODULES.has(path)
+            ? undefined
+            : options.loadModule?.(path)
+          : kind === "class"
+            ? options.loadClass?.(path)
+            : // SANY's report names the file of each module it parses, which the result doesn't hold.
+              "";
   };
   const result = checkAllSources(
     addon,
