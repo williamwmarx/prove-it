@@ -35,6 +35,8 @@ enum Stop {
     /// A Java exception of SANY's validation of PlusCal, which it prints with its parse
     /// messages so far.
     Pcal(String),
+    /// SANY's report ends with the errors of its parsing phase, which it has printed.
+    Rejected,
     Front(FrontError),
 }
 
@@ -387,32 +389,54 @@ impl Loader<'_> {
     }
 
     /// SANY.frontEndParse: once SANY has loaded the spec, it prints the warnings of its parsing
-    /// phase. Its errors end the run, which the front end doesn't write yet.
+    /// phase, and then any errors, as `Errors.toString` writes them with the warnings again, which
+    /// end the run.
     fn report_parse_messages(&mut self, file_name: &str) -> Result<()> {
         self.print_validations();
         if self.is_parse_reported {
             return Ok(());
         }
         self.is_parse_reported = true;
-        if self
+        let (warnings, errors): (Vec<_>, Vec<_>) = self
             .parse_messages
             .iter()
-            .any(|message| !message.is_warning)
-        {
-            return Err(not_yet("SANY's errors validating PlusCal"));
-        }
-        if self.parse_messages.is_empty() {
-            return Ok(());
-        }
-        self.lines.push(format!(
-            "Warnings ({}) during syntax parsing of {file_name}:\n\n\n",
-            self.parse_messages.len()
-        ));
-        for message in &self.parse_messages {
-            self.lines.push(format!(
-                "In module {}\n\n{}\n\n\n\n",
-                message.module, message.text
+            .partition(|message| message.is_warning);
+        let format_messages = |messages: &[&ParseMessage]| {
+            messages
+                .iter()
+                .map(|message| format!("In module {}\n\n{}\n\n\n", message.module, message.text))
+                .collect::<String>()
+        };
+        let mut text = String::new();
+        if !warnings.is_empty() {
+            text.push_str(&format!(
+                "Warnings ({}) during syntax parsing of {file_name}:\n\n\n",
+                warnings.len()
             ));
+            for warning in &warnings {
+                text.push_str(&format_messages(&[warning]));
+                text.push('\n');
+            }
+        }
+        let is_rejected = !errors.is_empty();
+        if is_rejected {
+            text.push_str(&format!(
+                "*** Errors: {}\n\n{}",
+                errors.len(),
+                format_messages(&errors)
+            ));
+            if !warnings.is_empty() {
+                text.push_str(&format!(
+                    "*** Warnings: {}\n\n{}",
+                    warnings.len(),
+                    format_messages(&warnings)
+                ));
+            }
+            text.push('\n');
+        }
+        self.lines.push(text);
+        if is_rejected {
+            return Err(Stop::Rejected);
         }
         Ok(())
     }
@@ -600,6 +624,11 @@ pub fn get_sany_text_of(
             exception: loader.exception,
         }),
         Err(Stop::Front(error)) => Err(error),
+        Err(Stop::Rejected) => Ok(SanyText {
+            text: loader.lines.concat(),
+            is_failed: true,
+            exception: None,
+        }),
         // SANY.frontEndParse turns a Java exception of its validation of PlusCal into a fatal
         // error, printing the exception and its messages so far, which are warnings here.
         Err(Stop::Pcal(_)) if !loader.parse_messages.is_empty() => Err(FrontError::NotYet(
@@ -837,43 +866,64 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     } {
         return push_generator_exception(loader, &order, &root, exception);
     }
-    // SANY's messages come from linking, which reports what SANY's semantic analysis does.
-    let config =
-        parse_config("", options.version).map_err(|error| FrontError::Config(error.message))?;
-    let linked = match &undecided {
-        Some(error) => Err(error.clone()),
-        None => get_sany_messages(
-            &EnvironmentOptions {
-                source,
-                load_module: &|name| loader.read(name).0,
-                config: &config,
-                is_unconfigured: true,
-                version: options.version,
-                is_level_checked: true,
-                load_class: None,
-            },
+    // SANY's messages come from the port of SANY's generator and levelCheck, which declines the
+    // shapes of messages no recording has shown, and else from linking, which reports what SANY's
+    // semantic analysis does.
+    let generated = match options.version {
+        TlcVersion::Master => get_generator_messages(
+            &root,
+            source,
+            &|name| loader.read(name).0,
+            options.root_extendees,
             &order,
-        )
-        .map(Generated::Messages),
+        ),
+        TlcVersion::V1_7_4 => Err(FrontError::NotYet(
+            "SANY's generator of TLC 1.7.4".to_owned(),
+        )),
     };
-    // Where linking doesn't derive SANY's messages yet, SANY's generator and levelCheck give
-    // them, as they do for the TypeScript report.
-    let messages = linked.or_else(|linking| {
-        let generated = match options.version {
-            TlcVersion::Master => get_generator_messages(
-                &root,
-                source,
-                &|name| loader.read(name).0,
-                options.root_extendees,
-                &order,
-            ),
-            TlcVersion::V1_7_4 => Err(linking.clone()),
-        };
-        generated.map_err(|_| match linking {
-            FrontError::NotYet(_) => Stop::Front(linking),
-            _ => not_yet("an error that stops linking"),
-        })
-    })?;
+    let messages = match generated {
+        Ok(generated) => generated,
+        Err(_) => {
+            // Linking takes the standard modules as TLC ships them, so their messages are none,
+            // which a module of the user's named like one they read may not keep.
+            let is_standard_replaced = order.iter().any(|name| {
+                let dependencies = loader.get_dependencies(name);
+                loader.read(name).1 == ModuleOrigin::Standard
+                    && dependencies
+                        .extendees
+                        .iter()
+                        .chain(&dependencies.instancees)
+                        .any(|dependency| loader.read(dependency).1 != ModuleOrigin::Standard)
+            });
+            if is_standard_replaced {
+                return Err(not_yet(
+                    "SANY's messages of the standard modules with one of them replaced",
+                ));
+            }
+            let config = parse_config("", options.version)
+                .map_err(|error| FrontError::Config(error.message))?;
+            let linked = match undecided {
+                Some(error) => Err(error),
+                None => get_sany_messages(
+                    &EnvironmentOptions {
+                        source,
+                        load_module: &|name| loader.read(name).0,
+                        config: &config,
+                        is_unconfigured: true,
+                        version: options.version,
+                        is_level_checked: true,
+                        load_class: None,
+                    },
+                    &order,
+                ),
+            };
+            match linked {
+                Ok(linked) => Generated::Messages(linked),
+                Err(linking @ FrontError::NotYet(_)) => return Err(Stop::Front(linking)),
+                Err(_) => return Err(not_yet("an error that stops linking")),
+            }
+        }
+    };
     let messages = match messages {
         Generated::Messages(messages) => messages,
         // SANY's generator throws on the root module, the last SANY analyzes.
