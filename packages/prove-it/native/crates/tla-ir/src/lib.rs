@@ -40,7 +40,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 15;
+pub const IR_VERSION: u32 = 16;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -106,6 +106,10 @@ impl Builtin {
     /// An operator a method of `tlc2.module.Naturals` computes rather than one of
     /// `tlc2.module.Integers`, which TLC loads over it where the spec uses Integers.
     pub const NATURALS_METHOD: i32 = 32;
+    /// A TLCExt builtin the engine declines where it computes it, as it did before it checked
+    /// them: one a configuration substitute, or a constant definition or an assumption TLC
+    /// computes as it starts, reaches.
+    pub const DECLINED: i32 = 64;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -400,6 +404,10 @@ pub enum PredicateForm {
     Definition = 1,
     /// The SPECIFICATION: any value, as "The value of {name} is equal to {value}".
     Specification = 2,
+    /// A constant conjunct of the SPECIFICATION (`processConfigSpec`), which TLC drops where it
+    /// is TRUE: FALSE as "The spec is trivially false because {name} is false.", any other value
+    /// as "The operator {name}, which equals {value},\ncannot be used as a {kind}".
+    Conjunct = 3,
 }
 
 /// The configuration's SYMMETRY: a 0-ary definition whose value is a set of permutations of

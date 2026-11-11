@@ -1,0 +1,36 @@
+exit 11
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module AssertEqParameter
+Linting of module TLCExt
+Linting of module AssertEqParameter
+Computing initial states...
+"Assertion failed"
+0
+1
+"Assertion failed"
+2
+1
+"Assertion failed"
+2
+1
+"Assertion failed"
+3
+1
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 6, col 9 to line 6, col 27 of module AssertEqParameter>
+x = 1
+
+State 3: <Next line 6, col 9 to line 6, col 27 of module AssertEqParameter>
+x = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

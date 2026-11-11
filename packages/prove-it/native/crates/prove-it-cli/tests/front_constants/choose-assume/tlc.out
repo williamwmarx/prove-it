@@ -1,0 +1,7 @@
+exit 10
+Semantic processing of module M
+Linting of module M
+Error: Evaluating assumption line 3, col 8 to line 3, col 35 of module M failed.
+Attempted to compute the value of an expression of form
+CHOOSE x \in S: P, but no element of S satisfied P.
+line 3, col 9 to line 3, col 30 of module M

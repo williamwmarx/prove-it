@@ -1,0 +1,18 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module UnchangedInitDisjunct
+Linting of module UnchangedInitDisjunct
+Computing initial states...
+Error: In evaluation, the identifier x is either undefined or not an operator.
+line 5, col 31 to line 5, col 31 of module UnchangedInitDisjunct
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 5, column 31 in UnchangedInitDisjunct
+1. Line 5, column 12 to line 5, column 31 in UnchangedInitDisjunct
+2. Line 5, column 12 to line 5, column 16 in UnchangedInitDisjunct
+3. Line 5, column 21 to line 5, column 31 in UnchangedInitDisjunct
+4. Line 5, column 31 to line 5, column 31 in UnchangedInitDisjunct
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.

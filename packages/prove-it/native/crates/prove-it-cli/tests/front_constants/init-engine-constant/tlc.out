@@ -1,0 +1,4 @@
+exit 151
+Semantic processing of module M
+Linting of module M
+Error: The initial predicate Init cannot be a constant.

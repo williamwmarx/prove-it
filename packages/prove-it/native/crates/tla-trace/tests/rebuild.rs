@@ -417,6 +417,7 @@ fn checks_a_postcondition_on_the_counter_example() {
                 })
                 .collect(),
             trace_output: Vec::new(),
+            is_successor_lost: false,
         };
         Rebuilder::new(&ir)?.postcondition(
             0,
