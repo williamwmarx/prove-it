@@ -176,8 +176,11 @@ fn check_recorded_cases(cases: &str, recordings: &BTreeMap<String, String>) {
             &ReportOptions {
                 version,
                 file_name: None,
+                // TLC decodes a file's malformed UTF-8 to replacement characters.
                 load_module: &|module| {
-                    std::fs::read_to_string(case.join(format!("{module}.tla"))).ok()
+                    std::fs::read(case.join(format!("{module}.tla")))
+                        .ok()
+                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                 },
                 describe_file: &|module, origin| match origin {
                     ModuleOrigin::Standard => format!("/tmp/tlc-_/{module}.tla"),
