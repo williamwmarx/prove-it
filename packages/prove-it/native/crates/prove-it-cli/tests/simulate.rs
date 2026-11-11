@@ -542,28 +542,22 @@ fn prints_a_simulations_alias_that_reads_trace_as_tlc() {
     assert_eq!(output.status.code(), Some(1));
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(
-        error.contains("an ALIAS that reads the actions of a simulation's Trace"),
+        error.contains("an ALIAS that reads the initial predicate of a simulation's Trace"),
         "{error}"
     );
 }
 
-// The actions TLC's simulation gives Trace's records differ from state to state and are records,
-// which an alias can tell apart by type, by position or by comparing two states equal but for
-// their actions: each declines.
+// TLC's simulation gives Trace's records the actions of their steps, as records, and the initial
+// state the initial predicate's: an alias that reads a step's action prints as TLC prints it, one
+// that reads the initial predicate's declines, and `@@` sorts a record as TLC's `toFcnRcd` does.
 #[test]
-fn declines_a_simulations_alias_that_tells_trace_actions_apart() {
+fn prints_a_simulations_alias_that_reads_trace_actions_as_tlc() {
     let spec = |alias: &str| {
         format!(
-            "---- MODULE Act ----\nEXTENDS Naturals, TLC, Sequences, TLCExt\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nUp == x = 0 /\\ x' = 1 /\\ n' = n + 1\nDown == x = 1 /\\ x' = 0 /\\ n' = n + 1\nNext == Up \\/ Down\nInv == n < 4\nAl == {alias}\n====\n"
+            "---- MODULE Act ----\nEXTENDS Naturals, TLC, Sequences, TLCExt\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nUp == x = 0 /\\ x' = 1 /\\ n' = n + 1\nDown == x = 1 /\\ x' = 0 /\\ n' = n + 1\nNext == Up \\/ Down\nInv == n < 4\nAl == [x |-> x, t |-> {alias}]\n====\n"
         )
     };
-    for alias in [
-        "[x |-> x, t |-> Trace[Len(Trace)]._action = Trace[1]._action]",
-        "[x |-> x, t |-> Trace[1]._action \\in STRING]",
-        "[x |-> x, t |-> Len(ToString(Trace[1]))]",
-        "[x |-> x, t |-> Len(Trace) > 2 /\\ [Trace[1] EXCEPT !.n = 0] = [Trace[3] EXCEPT !.n = 0]]",
-        "IF Trace[1]._action = \"a\" THEN (1 :> x) ELSE (2 :> x)",
-    ] {
+    let run = |alias: &str| {
         let (output, directory) = run_named(
             "simulate-alias-actions",
             "Act",
@@ -583,11 +577,77 @@ fn declines_a_simulations_alias_that_tells_trace_actions_apart() {
             ],
         );
         std::fs::remove_dir_all(directory).expect("removed");
+        output
+    };
+    for (alias, values) in [
+        (
+            "Len(Trace) > 3 /\\ Trace[4]._action = Trace[2]._action",
+            ["FALSE", "FALSE", "FALSE", "TRUE", "TRUE"].map(String::from),
+        ),
+        (
+            "Trace[Len(Trace)]._action = Trace[1]._action",
+            ["TRUE", "FALSE", "FALSE", "FALSE", "FALSE"].map(String::from),
+        ),
+        (
+            "Len(Trace) > 2 /\\ [Trace[1] EXCEPT !.n = 0] = [Trace[3] EXCEPT !.n = 0]",
+            ["FALSE"; 5].map(String::from),
+        ),
+        (
+            "Trace[Len(Trace)]._action \\in [name : STRING, location : [beginLine : Nat, beginColumn : Nat, endLine : Nat, endColumn : Nat, module : STRING]]",
+            ["TRUE"; 5].map(String::from),
+        ),
+        (
+            "[Trace[Len(Trace)] EXCEPT !._action = 0]",
+            [0, 1, 2, 3, 4].map(|n| format!("[_action |-> 0, n |-> {n}, x |-> {}]", n % 2)),
+        ),
+        (
+            "[y |-> 1] @@ [Trace[Len(Trace)] EXCEPT !._action = 0]",
+            [0, 1, 2, 3, 4]
+                .map(|n| format!("[y |-> 1, x |-> {}, n |-> {n}, _action |-> 0]", n % 2)),
+        ),
+    ] {
+        let output = run(alias);
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.status.code(), Some(12), "{alias}: {text}");
+        let states: Vec<String> = values
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                let label = match position {
+                    0 => "Init line 4, col 9 to line 4, col 22",
+                    _ if position % 2 == 1 => "Up line 5, col 7 to line 5, col 35",
+                    _ => "Down line 6, col 9 to line 6, col 37",
+                };
+                format!(
+                    "State {}: <{label} of module Act>\n/\\ x = {}\n/\\ t = {value}\n",
+                    position + 1,
+                    position % 2
+                )
+            })
+            .collect();
+        assert!(text.contains(&states.join("\n")), "{alias}: {text}");
+    }
+    for (alias, reason) in [
+        (
+            "Trace[1]._action \\in STRING",
+            "an ALIAS that reads the initial predicate of a simulation's Trace",
+        ),
+        (
+            "Len(ToString(Trace[1]))",
+            "an ALIAS that reads the initial predicate of a simulation's Trace",
+        ),
+        (
+            "Trace[Len(Trace)]._action",
+            "an ALIAS that reads the initial predicate of a simulation's Trace",
+        ),
+        (
+            "Trace[1]._action = \"a\"",
+            "equality of values TLC can't compare",
+        ),
+    ] {
+        let output = run(alias);
         assert_eq!(output.status.code(), Some(1), "{alias}");
         let error = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            error.contains("an ALIAS that reads the actions of a simulation's Trace"),
-            "{alias}: {error}"
-        );
+        assert!(error.contains(reason), "{alias}: {error}");
     }
 }

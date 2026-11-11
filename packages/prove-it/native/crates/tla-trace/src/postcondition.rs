@@ -269,42 +269,10 @@ impl Rebuilder<'_> {
             else {
                 return unsupported("of a step whose action the trace lacks");
             };
-            // TLC records the name and location its action holds (`TLCStateInfo`).
-            let name = &ir.texts[action.name as usize];
-            let Some(range) = action.location else {
-                return unsupported("of an action without a location");
-            };
-            let location = run(record(vec![
-                ("beginLine", Value::Int(range.start_line)),
-                ("beginColumn", Value::Int(range.start_column)),
-                ("endLine", Value::Int(range.end_line)),
-                ("endColumn", Value::Int(range.end_column)),
-                ("module", text(&ir.texts[range.module as usize])),
-            ]))?;
-            let mut fields = vec![("name", text(name)), ("location", location)];
-            // TLC adds the parameters bound to values, by name and in order.
-            let bound = position.and_then(|position| parameters.get(&position));
-            if let Some(bound) = bound.filter(|bound| !bound.is_empty()) {
-                // A dump writes a value TLC wrote before as a reference to it, and TLC binds a
-                // parameter to the very value its set holds, which a state may hold too.
-                let is_shareable = |value: &Value| {
-                    !matches!(
-                        value,
-                        Value::Bool(_) | Value::Int(_) | Value::Model(_) | Value::Interval(..)
-                    )
-                };
-                if is_dumped && bound.iter().any(|(_, value)| is_shareable(value)) {
-                    return unsupported("dumped with an action's parameter TLC may share");
-                }
-                let context = bound
-                    .iter()
-                    .map(|(name, value)| (*name, value.clone()))
-                    .collect();
-                let names = bound.iter().map(|(name, _)| text(name)).collect();
-                fields.push(("context", run(record(context))?));
-                fields.push(("parameters", Value::tuple(names)));
-            }
-            run(record(fields))
+            let bound = position
+                .and_then(|position| parameters.get(&position))
+                .map_or(&[][..], Vec::as_slice);
+            action_record(evaluator, action, bound, is_dumped)
         };
         let mut steps = Vec::new();
         for position in 1..states.len() {
@@ -379,9 +347,64 @@ pub(crate) fn stats_record(evaluator: &Evaluator<'_>, stats: &Stats) -> Result<V
     ))
 }
 
+/// TLC's record of the action that took a step (`RecordValue(Action)`, as `TLCStateInfo` holds
+/// it): its name and location, and the values `bound` gives its operator's parameters, by name and
+/// in order.
+pub(crate) fn action_record(
+    evaluator: &Evaluator<'_>,
+    action: &tla_ir::Action,
+    bound: &[(&str, Value)],
+    is_dumped: bool,
+) -> Result<Value, Unsupported> {
+    let ir = evaluator.ir;
+    let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
+    let record = |fields: Vec<(&str, Value)>| {
+        Value::record(
+            fields
+                .into_iter()
+                .map(|(name, value)| (evaluator.counterexample_field(name, is_dumped), value))
+                .collect(),
+        )
+    };
+    let name = &ir.texts[action.name as usize];
+    let Some(range) = action.location else {
+        return unsupported("of an action without a location");
+    };
+    let location = run(record(vec![
+        ("beginLine", Value::Int(range.start_line)),
+        ("beginColumn", Value::Int(range.start_column)),
+        ("endLine", Value::Int(range.end_line)),
+        ("endColumn", Value::Int(range.end_column)),
+        ("module", text(&ir.texts[range.module as usize])),
+    ]))?;
+    let mut fields = vec![("name", text(name)), ("location", location)];
+    // TLC adds the parameters bound to values, by name and in order.
+    if !bound.is_empty() {
+        // A dump writes a value TLC wrote before as a reference to it, and TLC binds a parameter
+        // to the very value its set holds, which a state may hold too.
+        let is_shareable = |value: &Value| {
+            !matches!(
+                value,
+                Value::Bool(_) | Value::Int(_) | Value::Model(_) | Value::Interval(..)
+            )
+        };
+        if is_dumped && bound.iter().any(|(_, value)| is_shareable(value)) {
+            return unsupported("dumped with an action's parameter TLC may share");
+        }
+        let context = bound
+            .iter()
+            .map(|(name, value)| (*name, value.clone()))
+            .collect();
+        let names = bound.iter().map(|(name, _)| text(name)).collect();
+        fields.push(("context", run(record(context))?));
+        fields.push(("parameters", Value::tuple(names)));
+    }
+    run(record(fields))
+}
+
 // The parameters of the operator TLC splits an action from (`Action.getParameters`), with the
 // values the action's scope binds them to.
-fn action_parameters<'ir>(
+pub(crate) fn action_parameters<'ir>(
     evaluator: &mut Evaluator<'ir>,
     action: &tla_ir::Action,
 ) -> Result<Vec<(&'ir str, Value)>, Unsupported> {

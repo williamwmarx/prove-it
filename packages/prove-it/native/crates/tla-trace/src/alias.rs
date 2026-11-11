@@ -2,8 +2,9 @@
 //! alias evaluated at each state, with the state after it as the next state, and printed as the
 //! record it gives (`RecordValue.toState`).
 
-use crate::eval::TracePrefix;
+use crate::eval::{Evaluator, TracePrefix};
 use crate::failure::nested;
+use crate::postcondition::{action_parameters, action_record};
 use crate::print::{format_pretty, print_order, text_string};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, EvalError, TlcMessage, Value};
@@ -40,10 +41,11 @@ impl Rebuilder<'_> {
     /// `_ALIASEvalError` field, marked as TLC marks a coded message under `-tool`.
     /// TLC binds the builtin Trace at each position to the trace's first states, as many as
     /// `prefixes` says; with no `prefixes`, the alias isn't followed where it reads Trace. A
-    /// simulation's records carry each state's action as an `_action` field
-    /// (`TLCExt.getTrace`), which the rebuild doesn't hold: the alias is evaluated with three
-    /// stand-ins for it, one string for every state, a string for each and a number for each,
-    /// and followed only where each state's value, or failure, is the same under all three.
+    /// simulation's records carry each state's action first, as an `_action` field
+    /// (`TLCExt.getTrace`): for each step TLC's record of its action, and for the initial state,
+    /// whose action is the initial predicate the IR doesn't hold, each of two stand-ins of the
+    /// record's shape; the alias is followed only where each state's value, or failure, is the
+    /// same under both.
     pub fn alias(
         &mut self,
         trace: &Trace,
@@ -58,7 +60,7 @@ impl Rebuilder<'_> {
                 .map(|evaluated| evaluated.aliases));
         }
         let mut evaluated = Vec::new();
-        for stand_in in [StandIn::Same, StandIn::Each, StandIn::Number] {
+        for stand_in in [StandIn::First, StandIn::Second] {
             evaluated.push(self.alias_with(
                 trace,
                 cycle_start,
@@ -67,9 +69,10 @@ impl Rebuilder<'_> {
                 Some(stand_in),
             )?);
         }
-        let texts = |position: usize| evaluated[position].as_ref().map(|each| &each.texts);
-        if texts(0) != texts(1) || texts(0) != texts(2) {
-            return unsupported("that reads the actions of a simulation's Trace");
+        if evaluated[0].as_ref().map(|each| &each.texts)
+            != evaluated[1].as_ref().map(|each| &each.texts)
+        {
+            return unsupported("that reads the initial predicate of a simulation's Trace");
         }
         Ok(evaluated.swap_remove(0).map(|each| each.aliases))
     }
@@ -134,6 +137,20 @@ impl Rebuilder<'_> {
         // state's variables (`RecordValue(TLCState)`).
         let mut records = Vec::new();
         for (position, state) in states.iter().enumerate().filter(|_| prefixes.is_some()) {
+            let action = match action {
+                None => None,
+                Some(stand_in) if position == 0 => Some(initial_stand_in(evaluator, stand_in)?),
+                Some(_) => {
+                    let Some(action) = state
+                        .action
+                        .and_then(|index| ir.model.actions.get(index as usize))
+                    else {
+                        return unsupported("of a simulation's step whose action the trace lacks");
+                    };
+                    let bound = action_parameters(evaluator, action)?;
+                    Some(action_record(evaluator, action, &bound, false)?)
+                }
+            };
             let mut fields: Vec<_> = ir
                 .tlc_order
                 .iter()
@@ -145,15 +162,11 @@ impl Rebuilder<'_> {
                     )
                 })
                 .collect();
-            if let Some(stand_in) = action {
-                let value = match stand_in {
-                    StandIn::Same => Value::Str(evaluator.text_of("a".encode_utf16().collect())),
-                    StandIn::Each => Value::Str(
-                        evaluator.text_of(format!("b{position}").encode_utf16().collect()),
-                    ),
-                    StandIn::Number => Value::Int(position as i32),
-                };
-                fields.push((evaluator.text_of("_action".encode_utf16().collect()), value));
+            if let Some(action) = action {
+                fields.insert(
+                    0,
+                    (evaluator.counterexample_field("_action", false), action),
+                );
             }
             records.push(run(Value::record(fields))?);
         }
@@ -272,15 +285,32 @@ impl Rebuilder<'_> {
     }
 }
 
-// What a simulation's Trace records hold as each state's action, which the rebuild doesn't know.
+// Two records of the shape of TLC's record of an action, which no action of the IR gives, for the
+// initial predicate of a simulation's trace, which the IR doesn't hold.
 #[derive(Clone, Copy)]
 enum StandIn {
-    // The same string for every state.
-    Same,
-    // A string of each state's own.
-    Each,
-    // A number of each state's own.
-    Number,
+    First,
+    Second,
+}
+
+fn initial_stand_in(evaluator: &Evaluator<'_>, stand_in: StandIn) -> Result<Value, Unsupported> {
+    let (name, number) = match stand_in {
+        StandIn::First => ("$a", 1),
+        StandIn::Second => ("$bb", 100_000),
+    };
+    let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
+    let field = |name: &str| evaluator.counterexample_field(name, false);
+    let location = run(Value::record(vec![
+        (field("beginLine"), Value::Int(number)),
+        (field("beginColumn"), Value::Int(number)),
+        (field("endLine"), Value::Int(number)),
+        (field("endColumn"), Value::Int(number)),
+        (field("module"), text(name)),
+    ]))?;
+    run(Value::record(vec![
+        (field("name"), text(name)),
+        (field("location"), location),
+    ]))
 }
 
 // Each state of a trace as the alias gives it, and its value of the alias, or its failure, as text.
