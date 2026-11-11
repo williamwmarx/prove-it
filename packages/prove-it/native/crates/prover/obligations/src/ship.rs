@@ -74,14 +74,28 @@ fn encode_ls4_problem(
 }
 
 // The ENCODERS table.
-fn get_encoder(prover: &str) -> Option<Encoder> {
+fn get_encoder(prover: &str) -> Result<Encoder> {
     match prover {
-        "smt" | "z3" => Some(encode_smt_problem),
-        "zenon" => Some(encode_zenon_problem),
-        "isabelle" => Some(encode_isabelle_problem),
-        "ls4" => Some(encode_ls4_problem),
-        _ => None,
+        "smt" | "z3" => Ok(encode_smt_problem),
+        "zenon" => Ok(encode_zenon_problem),
+        "isabelle" => Ok(encode_isabelle_problem),
+        "ls4" => Ok(encode_ls4_problem),
+        _ => Err(ObligationError::unsupported(format!(
+            "the {prover} backend"
+        ))),
     }
+}
+
+/// The text `prover` receives for an obligation that Prep.normalize_expand has already
+/// normalized, so a driver normalizes once for every backend and fingerprint.
+pub fn encode_normalized(
+    prover: &str,
+    id: usize,
+    normalized: &Sequent,
+    method: &Method,
+    session: &mut EncodingSession,
+) -> Result<String> {
+    get_encoder(prover)?(id, normalized, method, session)
 }
 
 /// The text one backend receives for an obligation, for comparing with tlapm's. The SMT encoder
@@ -92,8 +106,7 @@ pub fn encode_for_backend(
     prover: &str,
     session: &mut EncodingSession,
 ) -> Result<String> {
-    let encode = get_encoder(prover)
-        .ok_or_else(|| ObligationError::unsupported(format!("the {prover} backend")))?;
+    get_encoder(prover)?;
     let methods = find_methods(&obligation.sequent, obligation.method.as_ref())?;
     let method = methods
         .provers
@@ -111,7 +124,7 @@ pub fn encode_for_backend(
         obligation.method.as_ref(),
         Some(&methods),
     )?;
-    encode(obligation.id, &sequent, &method, session)
+    encode_normalized(prover, obligation.id, &sequent, &method, session)
 }
 
 /// What one method concluded about an obligation, as far as the theory needs it.
