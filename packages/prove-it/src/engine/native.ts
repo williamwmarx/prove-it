@@ -111,6 +111,8 @@ export interface NativeCheckOutcome {
   queuedStates: number;
   depth: number;
   prints: string[];
+  // SANY's warnings, which the library prints before the prints (`formatSanyWarnings`).
+  sanyWarnings: string[];
   violations: {
     code: number;
     headline: string;
@@ -393,7 +395,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 19;
+const ABI_VERSION = 20;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

@@ -309,6 +309,16 @@ fn get_outcome(outcome: Outcome) -> HostValue {
                     .collect(),
             ),
         ),
+        (
+            "sanyWarnings",
+            HostValue::Array(
+                outcome
+                    .sany_warnings
+                    .iter()
+                    .map(|text| HostValue::text(text))
+                    .collect(),
+            ),
+        ),
         ("violations", HostValue::Array(violations.collect())),
     ])
 }

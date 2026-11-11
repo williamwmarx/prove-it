@@ -15,6 +15,9 @@ pub struct Outcome {
     /// What the spec printed as TLC computed its constants, checked its assumptions and searched,
     /// and as it checked the postconditions after a search that completed, each print as a line.
     pub prints: Vec<String>,
+    /// SANY's warnings, which the library's check prints before the prints where its caller
+    /// didn't print SANY's report.
+    pub sany_warnings: Vec<String>,
     pub violations: Vec<Reported>,
 }
 

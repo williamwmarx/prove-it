@@ -1144,6 +1144,9 @@ fn check_spec(
         dumps.leave_out_trace_file();
     }
     // TLC loads the classes of the modules before it computes the constant definitions.
+    if printer.host.is_plain() {
+        printer.outcome.sany_warnings = front.sany_warnings.clone();
+    }
     for message in &front.override_messages {
         print_startup_message(printer, message);
     }
