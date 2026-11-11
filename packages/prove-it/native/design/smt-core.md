@@ -125,7 +125,13 @@ sorts, matching neither Z3 nor any input tlapm writes) must reach `decide` as
 assertions and makes a new manager, whose resource limit counts from 0 while the decision's step
 limit and deadline stay (`smtlib_parser.rs`, `ResourceLimit::restart`). Z3 also forgets the logic,
 and with none set runs another solver than UFNIA's; the port runs UFNIA's on every script, with a
-logic set or not, after a reset as before. Push and pop stay unsupported.
+logic set or not, after a reset as before. Push, pop and `(reset-assertions)` are unsupported.
+Where Z3 prints an error before the first check-sat the port fails with `DecideError::Prover`: a
+second set-logic, set-logic after an assertion, `:produce-proofs`, `:produce-unsat-cores` or
+`:produce-unsat-assumptions` after one, and get-model, get-value, get-assignment, get-proof and
+get-unsat-core; `(exit)` ends the script. Z3's declaration errors (a name declared twice with the
+same signature, an ambiguous overloaded constant, a `:named` name already in use) and the
+options that change its search are not ported: the port answers where Z3 also prints an error.
 
 **Size.** The core stops at `MAX_SIZE` (`context.rs`, prover.md 3.6) with `stop=heap`: a count of
 the expressions, e-graph nodes and instances found, so that a search that grows without taking
