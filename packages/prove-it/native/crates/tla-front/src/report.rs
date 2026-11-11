@@ -228,9 +228,10 @@ impl Loader<'_> {
         };
         if let Some(parse_error) = parse_error {
             self.push_progress(parsing_line);
-            // XMLExporter gives SANY the file it is asked for, which SANY names for the root.
+            // TLC and XMLExporter give SANY the file they are asked for, which SANY names for the
+            // root.
             let file = match self.options.file_name {
-                Some(file_name) if self.options.is_xml_export && self.loaded.is_empty() => {
+                Some(file_name) if self.loaded.is_empty() => {
                     format!(
                         "{}.tla",
                         file_name.strip_suffix(".tla").unwrap_or(file_name)
