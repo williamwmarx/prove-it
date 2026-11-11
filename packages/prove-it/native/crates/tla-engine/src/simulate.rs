@@ -162,6 +162,7 @@ pub fn simulate(
                 registers: stopped.registers,
                 possible: Vec::new(),
                 fingerprints: Vec::new(),
+                added: None,
             }))
         }
         None => None,

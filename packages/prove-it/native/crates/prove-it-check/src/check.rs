@@ -733,6 +733,18 @@ fn format_printed(store: &Store, prints: &Prints) -> Option<String> {
     Some(printed.join("  "))
 }
 
+// What TLC prints as it adds the state it stopped at to the behavior graphs, where the search
+// placed it.
+fn format_added(violation: &Violation) -> Result<Vec<String>, &'static str> {
+    violation
+        .added
+        .iter()
+        .flatten()
+        .map(|prints| format_printed(&violation.store, prints))
+        .collect::<Option<Vec<_>>>()
+        .ok_or("printing a value whose text depends on how TLC built it")
+}
+
 /// The counts a Progress line reports.
 #[derive(Clone, Copy)]
 pub(crate) struct Statistics {
@@ -1591,9 +1603,15 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 {
                     Err("a failure outside the next-state relation with an ALIAS".to_string())
                 }
-                ViolationKind::Error { site } => {
+                ViolationKind::Error { site } => 'failure: {
+                    let added = match violation.added.as_ref().map(|_| format_added(&violation)) {
+                        Some(Err(why)) => break 'failure Err(why.to_string()),
+                        Some(Ok(added)) => Some(added),
+                        None => None,
+                    };
                     let counts = &violation.counts;
                     let stop = ErrorStop {
+                        added,
                         reason: &reason,
                         store: &violation.store,
                         states: violation.states.iter().map(Vec::as_slice).collect(),
@@ -2017,6 +2035,12 @@ pub(crate) fn print_violation(
         print_finished(printer, start);
         return Ok(exit_code);
     }
+    let added = format_added(violation)?;
+    // TLC reports a postcondition that fails before it adds the state it stopped at to the
+    // behavior graphs, which the printing doesn't order.
+    if !added.is_empty() && !ir.model.postconditions.is_empty() {
+        return Err("a POSTCONDITION before what TLC prints adding the stopped state");
+    }
     let lasso_printed = match &violation.kind {
         ViolationKind::Lasso { printed, .. } => printed
             .iter()
@@ -2091,11 +2115,14 @@ pub(crate) fn print_violation(
     }
     match lasso {
         None if is_counterexample => {}
+        // TLC adds the state it stopped at to the behavior graphs once it has checked the
+        // postconditions on the trace (`Worker.run`).
         None => {
             for line in trace
                 .trace_output
                 .iter()
                 .chain(postcondition_output.clone())
+                .chain(&added)
             {
                 printer.line(line);
             }

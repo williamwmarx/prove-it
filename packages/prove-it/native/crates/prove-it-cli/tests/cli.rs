@@ -1808,16 +1808,9 @@ fn declines_what_it_doesnt_follow_of_the_behavior_graphs() {
         assert!(error.contains(reason), "{}{error}", stdout(&output));
         std::fs::remove_dir_all(directory).expect("removed");
     };
-    // TLC runs Next again from a state it adds a tableau node of late, so it prints <<"n", 0>>
-    // twice before the deadlock.
-    declines(
-        "late-stop",
-        "VARIABLES x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT(<<\"n\", x>>)\nSpec == Init /\\ [][Next]_x\nProp == [](x # 1 => [](x # 7))",
-        "SPECIFICATION Spec\nPROPERTY Prop\n",
-        &[],
-        "the engine stopped: deadlock",
-    );
-    // TLC runs it action by action there, with the atoms of each action's successors between.
+    // TLC runs Next again from a state it adds a tableau node of late, action by action where
+    // Next has several, with the atoms of each action's successors between. (The deadlock this
+    // block declined, a late node where Next is one action, is native: tests/printing-stop.rs.)
     declines(
         "late-order",
         "VARIABLES x\nInit == x = 0\nA == x' = 1 - x /\\ PrintT(<<\"a\", x>>)\nB == x' = (x + 2) % 3 /\\ PrintT(<<\"b\", x>>)\nNext == A \\/ B\nSpec == Init /\\ [][Next]_x /\\ SF_x(A)\nProp == [](x # 1 => [](x # 7))",

@@ -49,6 +49,9 @@ pub struct ErrorStop<'a> {
     pub is_aliased: bool,
     /// What TLCGet reads as TLC checks the postconditions after the failure, where it does.
     pub postconditions: Option<PostconditionRun>,
+    /// Where the search placed what TLC prints adding the state it stopped at to the behavior
+    /// graphs, which comes after the trace and before the replay of the expansion.
+    pub added: Option<Vec<String>>,
 }
 
 // The failure and the trace's states as TLC prints them, each with its label and what the spec
@@ -90,15 +93,17 @@ pub fn print_failure(
             | Site::InitialPredicate(_)
             | Site::InitialAtom { .. }
     );
-    // An invariant that fails to evaluate stops TLC's worker before it adds the state it was
-    // expanding to the behavior graphs, and TLC's replay of the expansion adds nothing to them
-    // (`ModelChecker.doNext`), so the temporal properties show only in what their atoms print as
-    // TLC adds the states before it. The search reports a failure of the next-state relation in
-    // such a model only where it followed TLC's checks of the state as TLC adds it after.
+    // After an invariant that fails to evaluate, TLC's worker adds the state it was expanding to
+    // the behavior graphs, with the successors it had put in its set (`Worker.run`), and TLC's
+    // replay of the expansion adds nothing to them (`ModelChecker.doNext`), so the temporal
+    // properties show only in what their atoms print, which the search places where it holds
+    // what the spec prints. The search reports a failure of the next-state relation in such a
+    // model only where it followed TLC's checks of the state as TLC adds it after.
     let is_next = matches!(stop.site, Site::Next | Site::NextAtom { .. });
     let is_followed = is_atom
         || is_initial
         || is_next
+        || stop.added.is_some()
         || matches!(stop.site, Site::Invariant(_)) && !atoms_print(ir);
     if !ir.model.live_properties.is_empty() && !is_followed {
         return Err("a failure in a model with temporal properties".into());
@@ -501,12 +506,15 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
             }
             _ => true,
         };
+        // TLC's worker adds the state to the behavior graphs after it rebuilt the trace again,
+        // and the replay comes once the workers are done (`ModelChecker.modelCheck`).
         let after = trace
             .trace_output
             .iter()
             .filter(|_| is_rebuilt_again)
-            .chain(&failure.printed)
             .map(|print| format_print(print))
+            .chain(stop.added.iter().flatten().cloned())
+            .chain(failure.printed.iter().map(|print| format_print(print)))
             .collect();
         // TLC prints a state it was expanding alone, an initial one, as it is, and every other
         // trace through the ALIAS (`TLCTrace.printTrace`).

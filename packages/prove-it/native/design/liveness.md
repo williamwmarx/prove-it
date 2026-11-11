@@ -213,6 +213,56 @@ deadlocked initial state, as the tables left that step unanswered and the verdic
 atom; it now prints TLC's call stack there. `prove-it-cli/tests/deadlock-live.rs` holds a
 representative set.
 
+## Print at a stop (as built)
+
+Where the search stops, at a deadlock, a violated invariant or action property, or a failure of
+Next or of an invariant, in a model with temporal properties whose spec prints, TLC prints in an
+order read from `Worker.run`, `Worker#addElement`, `Worker#doNextSetErr`,
+`Worker#doNextCheckLiveness`, `LiveCheck#addNextState` and `ModelChecker.modelCheck` at d8fb231:
+
+1. As it searches, each expansion's prints, then those of the atoms as it adds the state to the
+   behavior graphs, late nodes included, up to the state s it stops in, and s's expansion up to the
+   stop.
+2. The error and the trace, with what rebuilding the trace prints (`TLCTrace.printTrace`), and,
+   where the worker reports it (`Worker#doNextSetErr`: a deadlock or a violation), the trace
+   rebuilt again for the postconditions (`doPostCondition`), whatever the postconditions.
+3. The worker goes on: an exception in `getNextStates` is caught (`doNextFailed` prints nothing
+   once the error state is set), and `doNextCheckLiveness` adds s with the successors already in
+   its `SetOfStates`, the one that violated or failed an invariant among them, since
+   `isSeenState` put it there before the invariants were checked, and the stuttering step. So TLC
+   adds s after an invariant that fails too, which TLC confirms: seven prints after the trace that
+   the model without its property doesn't print.
+4. Once the workers are done, where the error keeps its call stack, the replay of s's expansion
+   (`ModelChecker.doNext`), which prints Next's prints again, then the call stack.
+
+The engine follows it where the search held its prints (`place_stop_prints`): it adds s to the
+graph, with its steps so far marked partial, and the new successor it stopped at as a state past
+the stored ones (`Graph::stopped`, the edge `record_step` keeps). `tla_live::added_events` adds the
+states with each atom's evaluation logged; the events up to `Event::Expanded(s)` place the prints
+before the stop, as `order_printed` does for a complete search, and those after it are carried in
+`Violation::added`, which the binary prints after the trace (step 2) and before the replay's
+prints (step 4).
+
+A late node of s runs Next from s in full, checking no invariant (`LiveCheck#addNextState`). After
+a deadlock that is the expansion the search printed. After a violation or an invariant that fails,
+the engine runs Next from s again and follows it where it takes the steps the search took, so the
+late node's steps are the graph's. It declines, each with its reason:
+- a late node of a state whose next states fail: Next fails again there, and TLC reports that
+  failure after evaluating the checks a second time on a graph the first attempt changed
+  (TLC's output shows the late node's prints, then fewer prints again, then the call stack);
+- a late node of s whose full Next takes other steps than the search took (a second successor,
+  or two equal ones), with several actions, or with constraints;
+- an atom the engine doesn't answer or a node that accepts every behavior as TLC adds the states,
+  as where the fairness action is the one that fails on s (TLC reports the atom's failure, and
+  evaluates the checks twice);
+- an atom that prints as TLC adds an initial state, as for a complete search;
+- SYMMETRY or a VIEW, atoms that read TLC's diameter or level, and a POSTCONDITION where the
+  added state prints.
+
+Verified against TLC on 360 generated specs (the stop's kind and depth, prints in the action, in a disjunct, in the fairness action alone or in the property, three
+properties, WF, SF or none), each in plain, -tool, -lncheck final and both, on 1 and 4 workers:
+2880 runs, 1936 print what TLC prints, 944 decline, none differ.
+
 ## Temporal formulas inside a predicate (as built)
 
 A liveness atom can be an operator whose body holds a temporal formula in a branch the run never
@@ -506,7 +556,7 @@ Declined after the pre-PR review (infinite-sets session, 2026-11-10), each with 
 `prove-it-cli/tests/cli.rs`:
 - A stop, a deadlock or an invariant, in a model with behavior graphs where an expansion
   printed: TLC runs Next again from a state it adds a tableau node of late, printing again what
-  Next prints, which the search doesn't place before its stop.
+  Next prints, which the search doesn't place before its stop. Now placed: see "Print at a stop".
 - A late node's prints where Next has several actions: TLC runs it action by action there, with
   the atoms of each action's successors between (`LiveCheck.addNextState`); `order_printed`
   places them only where Next is one action.
