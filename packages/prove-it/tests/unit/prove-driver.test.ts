@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { getInputKey, readInputRecords } from "../../scripts/prover-records";
+import { getDigest } from "../../scripts/tlapm-digest";
 import { prove } from "../../src";
 import { TlaProverError, TlaUnsupportedError } from "../../src/errors";
 import { type ProveOptions, proveWith } from "../../src/prover/prove";
@@ -76,13 +78,26 @@ const byProver =
   };
 
 describe("the Rust driver", () => {
+  // Each decision is replayed from the record, which the backends' own tests keep true, as deciding
+  // Simple's obligation 7 runs three backends to their limits (design/prover.md, "Deviations from
+  // Z3").
   it.each(["HourClock", "Simple"])("proves %s as the TypeScript driver does", async (name) => {
-    const typescript = await proveWithDriver("ts", {
+    const records = readInputRecords();
+    const unrecorded: string[] = [];
+    const replay: Decide = async (prover, text) => {
+      const key = getInputKey(prover, getDigest(text));
+      const record = records[key];
+      if (record === undefined) unrecorded.push(key);
+      if (record?.error !== undefined) throw new TlaProverError(record.error);
+      return { verdict: record?.verdict ?? "unknown", timeUsedMs: 0, statistics: {} };
+    };
+    const run = {
       options: { source: loadFixture(name) ?? "", loadModule: loadFixture },
-    });
-    const rust = await proveWithDriver("rust", {
-      options: { source: loadFixture(name) ?? "", loadModule: loadFixture },
-    });
+      decide: replay,
+    };
+    const typescript = await proveWithDriver("ts", run);
+    const rust = await proveWithDriver("rust", run);
+    expect(unrecorded).toEqual([]);
     expect(rust).toEqual(typescript);
     expect(rust.streamed).toEqual(typescript.result?.obligations ?? []);
   });
