@@ -44,6 +44,13 @@ struct Context {
     fresh: Rc<[usize]>,
 }
 
+/// An argument or LET definition the property's walk binds, kept alive so no other expression
+/// takes its address, and the INSTANCEs whose copies hold it.
+struct Origin {
+    _expression: Expr,
+    lexical: Rc<[usize]>,
+}
+
 /// The INSTANCEs whose substitutions TLC's walk of a property collected apart, and those whose
 /// copies hold the code it walks where that's an argument written elsewhere.
 #[derive(Clone, Default)]
@@ -153,7 +160,7 @@ pub struct Evaluator<'a> {
     /// Where the evaluation with substitutions unbound is.
     context: RefCell<Context>,
     /// The INSTANCEs whose copies hold each argument and LET definition the property's walk binds.
-    origins: RefCell<FastMap<usize, (Expr, Rc<[usize]>)>>,
+    origins: RefCell<FastMap<usize, Origin>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -429,7 +436,10 @@ impl Evaluator<'_> {
     pub fn set_origin(&self, expression: &Expr, lexical: &Rc<[usize]>) {
         self.origins.borrow_mut().insert(
             Rc::as_ptr(expression) as usize,
-            (expression.clone(), lexical.clone()),
+            Origin {
+                _expression: expression.clone(),
+                lexical: lexical.clone(),
+            },
         );
     }
 
@@ -437,7 +447,7 @@ impl Evaluator<'_> {
         self.origins
             .borrow()
             .get(&(Rc::as_ptr(expression) as usize))
-            .map(|(_, lexical)| lexical.clone())
+            .map(|origin| origin.lexical.clone())
     }
 
     fn with_context<T>(&self, context: Context, run: impl FnOnce() -> T) -> T {
