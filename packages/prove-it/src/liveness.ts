@@ -466,6 +466,19 @@ export const toLiveExpression = (
         expression.operator === "=>"));
 
   const convert = (expression: Expression, scope: Scope | undefined): LiveExpression => {
+    // TLC's LNAction of <<A>>_v compares v in the two states before it evaluates A.
+    if (expression.kind === "AngleAction") {
+      return {
+        kind: "Action",
+        expression: expression.action,
+        unchanged: {
+          kind: "Unchanged",
+          expression: expression.subscript,
+          location: expression.location,
+        },
+        scope,
+      };
+    }
     const level = getLevel(expression, scope, environment);
     if (level <= ACTION_LEVEL && !isTranslatedWhole(expression)) {
       return toAtom(expression, scope, level);
