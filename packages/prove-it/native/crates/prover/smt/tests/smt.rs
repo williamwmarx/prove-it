@@ -557,12 +557,10 @@ const RESETS: [(&str, &str); 20] = [
     ),
 ];
 
-// cmd_context::reset forgets the assertions, the declarations, the named terms, the scopes and the
-// logic. Where Z3 prints an error, which tlapm counts as a failure, the port fails with
-// DecideError::Prover. Push and pop are outside the subset the port supports.
-#[test]
-fn resets_as_z3_does() {
-    for (script, z3) in RESETS {
+// The port answers what Z3 answers to the first check-sat. Where Z3 prints an error before it,
+// which tlapm counts as a failure, the port fails with DecideError::Prover. Push and pop are outside the subset the port supports.
+fn assert_answers_as_z3(scripts: &[(&str, &str)]) {
+    for (script, z3) in scripts {
         let decision = decide_with(script, None);
         if script.contains("(push") {
             assert_eq!(
@@ -570,20 +568,84 @@ fn resets_as_z3_does() {
                 Ok("unknown stop=unsupported steps=1".into()),
                 "{script}"
             );
-        } else if z3.contains("(error") {
-            assert!(
+            continue;
+        }
+        let answer = z3
+            .lines()
+            .find(|line| line.starts_with("(error") || ["sat", "unsat", "unknown"].contains(line));
+        match answer {
+            Some(line) if line.starts_with("(error") => assert!(
                 matches!(decision, Err(DecideError::Prover(_))),
                 "{script}: {decision:?}"
-            );
-        } else {
-            let verdict = if z3.is_empty() { "unknown" } else { z3 };
-            assert_eq!(
+            ),
+            answer => assert_eq!(
                 decision.map(|decision| decision.verdict.name()),
-                Ok(verdict),
+                Ok(answer.unwrap_or("unknown")),
                 "{script}"
-            );
+            ),
         }
     }
+}
+
+// cmd_context::reset forgets the assertions, the declarations, the named terms, the scopes and the
+// logic.
+#[test]
+fn resets_as_z3_does() {
+    assert_answers_as_z3(&RESETS);
+}
+
+/// Commands Z3 refuses before the first check-sat, with what Z3 5.3.3 prints, run as above.
+const COMMAND_ERRORS: [(&str, &str); 11] = [
+    (
+        "(assert true)(set-logic UFNIA)(check-sat)",
+        "(error \"line 1 column 25: logic must be set before initialization\")\nsat",
+    ),
+    (
+        "(set-logic UFNIA)(set-logic UFNIA)(check-sat)",
+        "(error \"line 1 column 29: the logic has already been set\")\nsat",
+    ),
+    (
+        "(set-logic UFNIA)(reset)(set-logic UFNIA)(assert false)(check-sat)",
+        "unsat",
+    ),
+    (
+        "(set-logic FOO)(set-logic UFNIA)(check-sat)",
+        "unsupported\nsat",
+    ),
+    (
+        "(declare-fun f (Int) Int)(set-logic UFNIA)(check-sat)",
+        "sat",
+    ),
+    (
+        "(get-model)(assert false)(check-sat)",
+        "(error \"line 1 column 11: model is not available\")\nunsat",
+    ),
+    (
+        "(declare-const x Int)(get-value (x))(check-sat)",
+        "(error \"line 1 column 36: model is not available\")\nsat",
+    ),
+    (
+        "(get-assignment)(check-sat)",
+        "(error \"line 1 column 16: model is not available\")\nsat",
+    ),
+    (
+        "(get-proof)(check-sat)",
+        "(error \"line 1 column 11: proof is not available\")\nsat",
+    ),
+    (
+        "(get-unsat-core)(check-sat)",
+        "(error \"line 1 column 16: unsat core construction is not enabled, use command \
+         (set-option :produce-unsat-cores true)\")\nsat",
+    ),
+    (
+        "(check-sat)(reset)(get-model)",
+        "sat\n(error \"line 1 column 29: model is not available\")",
+    ),
+];
+
+#[test]
+fn refuses_what_z3_refuses_before_check_sat() {
+    assert_answers_as_z3(&COMMAND_ERRORS);
 }
 
 // cmd_context::reset deletes the manager, and the next command makes a new one with its solver and

@@ -838,6 +838,28 @@ impl<'a> SmtlibParser<'a> {
     }
 }
 
+// smt_logics::supported_logic: a logic Z3 sets, where it ignores any other.
+fn is_supported_logic(name: &str) -> bool {
+    name == "ALL"
+        || name == "HO_ALL"
+        || name == "QF_FD"
+        || name == "SMTFD"
+        || name == "HORN"
+        || name == "FP"
+        || name == "QF_BVRE"
+        || name == "QF_S"
+        || name.starts_with('A')
+        || name.starts_with("QF_A")
+        || [
+            "UF", "LRA", "LIRA", "LIA", "NRA", "NTA", "NIRA", "NIA", "IDL", "RDL", "BV", "FP",
+            "DT", "FS",
+        ]
+        .iter()
+        .any(|part| name.contains(part))
+        || name == "QF_FF"
+        || name == "QF_FFA"
+}
+
 fn get_builtin_sorts<'a>() -> HashMap<&'a str, Sort> {
     HashMap::from([("Bool", SORT_BOOL), ("Int", SORT_INT), ("Real", SORT_REAL)])
 }
@@ -862,6 +884,7 @@ pub fn parse_smtlib(
     };
     let mut assertions = Vec::new();
     let mut has_check_sat = false;
+    let mut has_logic = false;
     for command in commands {
         let list = parser.expect_list(Some(command))?;
         let name = parser.expect_symbol(list.first().copied())?;
@@ -924,9 +947,27 @@ pub fn parse_smtlib(
                 parser.sorts = get_builtin_sorts();
                 parser.funcs.clear();
                 assertions.clear();
+                has_logic = false;
                 m.limit.restart();
                 *m = AstManager::new(m.limit.clone());
                 on_command(m, Command::Reset)?;
+            }
+            // cmd_context::set_logic. The solver is UFNIA's whatever the logic.
+            "set-logic" => {
+                let logic = parser.expect_symbol(list.get(1).copied())?;
+                if has_logic {
+                    return Err(SmtError::Parse("the logic has already been set".into()));
+                }
+                if !assertions.is_empty() {
+                    return Err(SmtError::Parse(
+                        "logic must be set before initialization".into(),
+                    ));
+                }
+                has_logic = is_supported_logic(logic);
+            }
+            // Before the first check-sat there is no model, proof or core to get.
+            "get-model" | "get-value" | "get-assignment" | "get-proof" | "get-unsat-core" => {
+                return Err(SmtError::Parse(format!("{name} has nothing to get")));
             }
             "check-sat" => {
                 has_check_sat = true;
