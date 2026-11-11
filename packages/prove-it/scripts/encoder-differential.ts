@@ -6,7 +6,10 @@
 // errors across the result's obligations in order.
 // With tests/conformance/prover-inputs.json, every text the Rust writes must be recorded there,
 // unless the TypeScript writes the same text, which is then a record gap: prove sends a backend
-// only the methods it tries. With --reset-caches, the Rust starts each module from empty caches.
+// only the methods it tries. Without --filter or --skip, it lists the recorded inputs no text here
+// matches, without failing: the SMT encoder numbers the CASE errors it standardizes across the
+// encodings of a run, and prove encodes only the methods it tries, so its numbers can be lower.
+// With --reset-caches, the Rust starts each module from empty caches.
 // Usage: bun scripts/encoder-differential.ts [--filter text] [--skip text] [--rust <dump>]
 //   [--reset-caches]
 
@@ -16,6 +19,7 @@ import { getObligations } from "../src/obligations";
 import { getFingerprint } from "../src/prover/prep/fingerprint";
 import { findMethods } from "../src/prover/prep/methods";
 import { encodeForBackend, encodeProofTheory, type ProofAttempt } from "../src/prover/prove";
+import { getOption } from "./corpora";
 import { type ComparedModule, compareModules, describeError } from "./obligations-dump";
 import { readModule, readProofRecords } from "./proof-records";
 import { getInputKey, PROVER_INPUTS_PATH, readInputRecords } from "./prover-records";
@@ -116,6 +120,7 @@ const records = readProofRecords();
 const inputs = existsSync(PROVER_INPUTS_PATH) ? readInputRecords() : undefined;
 const counts = new Map<string, ProverCount>();
 const obligationCounts = { obligations: 0 };
+const writtenKeys = new Set<string>();
 
 // Counts each encoding the Rust writes, and whether the record has it or the TypeScript writes the
 // same one in its place.
@@ -141,7 +146,9 @@ const countModule = (module: ComparedModule) => {
       }
       count.texts++;
       if (!inputs) return;
-      if (inputs[getInputKey(prover, getDigest(encoding[1]))]) count.recorded++;
+      const key = getInputKey(prover, getDigest(encoding[1]));
+      writtenKeys.add(key);
+      if (inputs[key]) count.recorded++;
       else if (JSON.stringify(expected[index]) === JSON.stringify(encoding)) count.gaps++;
       else count.absent.set(module.record.id, (count.absent.get(module.record.id) ?? 0) + 1);
     });
@@ -170,6 +177,15 @@ counts.forEach((count, prover) =>
   count.absent.forEach((absent, id) => console.log(`absent: ${prover} in ${id}: ${absent}`)),
 );
 const absentCount = [...counts.values()].reduce((total, count) => total + count.absent.size, 0);
+const unwritten =
+  inputs && getOption("--filter") === undefined && getOption("--skip") === undefined
+    ? Object.keys(inputs).filter((key) => !writtenKeys.has(key))
+    : [];
+if (inputs)
+  console.log(
+    `record: ${Object.keys(inputs).length} inputs, ${writtenKeys.size} distinct texts written, ${unwritten.length} inputs unwritten`,
+  );
+unwritten.forEach((key) => console.log(`unwritten: ${key}`));
 console.log(
   `encodings: ${records.length - differences.length} of ${records.length} modules match in ${Math.round((performance.now() - startedAt) / 1000)}s`,
 );
