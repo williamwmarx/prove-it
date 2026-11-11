@@ -39,7 +39,8 @@ import {
   TIME_LIMITS_PATH,
 } from "./prover-records";
 
-type Kind = "same" | "ts-proves" | "z3-proves" | "mismatch" | "z3-error";
+// contradiction: one answers sat and the other unsat, which is a soundness bug on one side.
+type Kind = "same" | "contradiction" | "ts-proves" | "z3-proves" | "mismatch" | "z3-error";
 
 interface Z3Run {
   verdict: "unsat" | "sat" | "unknown" | "timeout" | "error";
@@ -142,6 +143,11 @@ const runZ3 = (key: string, timeLimit: number | null) =>
 const getKind = (ts: InputRecord, run: Z3Run): Kind => {
   if (run.verdict === "error") return "z3-error";
   const isZ3Proved = run.verdict === "unsat";
+  if (
+    (ts.verdict === "unsat" && run.verdict === "sat") ||
+    (ts.verdict === "sat" && run.verdict === "unsat")
+  )
+    return "contradiction";
   if (ts.verdict === "unsat") return isZ3Proved ? "same" : "ts-proves";
   if (isZ3Proved) return "z3-proves";
   const z3Verdict = run.verdict === "timeout" ? "unknown" : run.verdict;
@@ -186,7 +192,7 @@ const describe = (result: Result) =>
       : `, ${result.retry.verdict} in ${result.retry.seconds} s of ${result.retry.timeLimit}`
   }${result.z3.error === undefined ? "" : ` (${result.z3.error})`}`;
 
-const KINDS: Kind[] = ["same", "ts-proves", "z3-proves", "mismatch", "z3-error"];
+const KINDS: Kind[] = ["same", "contradiction", "ts-proves", "z3-proves", "mismatch", "z3-error"];
 
 const records = readInputRecords();
 if (!existsSync(TIME_LIMITS_PATH)) throw new Error("Run prover-inputs first");
@@ -230,7 +236,12 @@ if (retry === undefined) {
     };
   });
   writeOutput(results);
-  printResults(results, KINDS, ["ts-proves", "z3-proves", "mismatch", "z3-error"], describe);
+  printResults(
+    results,
+    KINDS,
+    ["contradiction", "ts-proves", "z3-proves", "mismatch", "z3-error"],
+    describe,
+  );
 } else {
   const results: Result[] = JSON.parse(readFileSync(RESULTS_PATH, "utf8")).results;
   const retried = results.filter((result) => result.verdict === "ts-proves");
