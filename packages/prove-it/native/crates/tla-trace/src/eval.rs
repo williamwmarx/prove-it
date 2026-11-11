@@ -5000,6 +5000,12 @@ impl<'ir> Evaluator<'ir> {
                 let (Value::Function(left), Value::Function(right)) = (&left, &right) else {
                     return fail("@@ of a non-function");
                 };
+                // `RecordValue.toFcnRcd` sorts a record in place.
+                for function in [left, right] {
+                    if matches!(function.class.get(), Class::Record) {
+                        function.written.borrow_mut().take();
+                    }
+                }
                 // The keys of the left in its written order, then those only the right has.
                 let mut keys = Vec::new();
                 let mut values = Vec::new();
