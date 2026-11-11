@@ -537,6 +537,11 @@ returns the states it generated and found, which must agree with the engine's. I
 anything it doesn't follow exactly, and the run is then not native; it never prints a report TLC
 wouldn't. Each line was compared with TLC's at d8fb231.
 
+Where it can, the engine's search counts the report itself, with a counting variant of its
+compiled code over the same tree, and the binary prints the engine's counts with the pass's
+printer; elsewhere, and for a run that stops, the pass counts as above ([coverage.md](coverage.md)).
+The binary declines no more than the pass does.
+
 Not native:
 
 - more than one worker: TLC's workers share the cost model and race on it. Five runs of a model of
@@ -570,10 +575,10 @@ Past 60 s the binary declines the report.
 `PROVE_IT_TEST_COVERAGE_CUT` sets the cut in seconds for tests, so they don't depend on the
 machine's speed.
 
-The cut rests on the pass being slower than TLC. Once the cost model is counted in the engine and
-the binary runs faster than TLC, a short native run no longer bounds TLC's: the PRs that move the
-counting into the engine must revisit the rule, scaling the cut by the measured ratio of native
-to TLC time or replacing it.
+The cut rests on the pass being slower than TLC. The engine's search runs faster than TLC, so a
+report the engine counted prints only for a run of at most 10 s, scaled by the least ratio of the
+engine's time to TLC's on the perf suite (0.08); a longer run takes the pass, and the 60 s cut, as
+before ([coverage.md](coverage.md), "The 5 minutes").
 
 ### Sweep and performance
 
@@ -598,8 +603,8 @@ The other models of the suite decline: MCbtree (an EXCEPT of a function of sever
 TLCSailfish1 (INSTANCE), MCabs and BufferedRandomAccessFile (SYMMETRY), GameOfLife (a lazy set
 filter), MCMultiNode (an operator taking an operator), Detlefs and FastPaxos (SYMMETRY), StarkMutex,
 cf1s_folklore and SpanTreeRandom (temporal properties). The pass, a tree-walking replay, runs at
-about a quarter of TLC's speed. The approved follow-up counts the cost model in the engine's own
-search, which would retire the replay.
+about a quarter of TLC's speed. The engine's own search now counts the models
+[coverage.md](coverage.md) lists, and the pass remains the reference and the fallback.
 
 ## -simulate
 
