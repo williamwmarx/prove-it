@@ -4,6 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -41,6 +42,8 @@ pub struct Frame {
     name: TextId,
     binding: Binding,
     parent: Env,
+    /// Whether a thunk's value has been evaluated once.
+    is_evaluated: Cell<bool>,
 }
 
 #[derive(Clone)]
@@ -173,6 +176,7 @@ impl Context {
             name,
             binding,
             parent: self.env.clone(),
+            is_evaluated: Cell::new(false),
         }))))
     }
 
@@ -410,6 +414,9 @@ pub struct Evaluator<'ir> {
     asserting: u32,
     /// The function constructors a LET names once, found when first asked for.
     once_named: Option<HashSet<NodeId>>,
+    /// Where the evaluator made a value TLC shares with another, or shared one TLC made again,
+    /// which a dumped trace, writing each object once, would show.
+    pub(crate) unshared: Option<&'static str>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -683,6 +690,7 @@ impl<'ir> Evaluator<'ir> {
             workers: None,
             asserting: 0,
             once_named: None,
+            unshared: None,
         }
     }
 
@@ -1839,7 +1847,14 @@ impl<'ir> Evaluator<'ir> {
                 };
             }
             Resolution::Definition(index) => {
-                return self.definition_value(self.ir.definitions[index as usize], context);
+                let node = self.ir.definitions[index as usize];
+                // TLC evaluates the definition the configuration substitutes for a constant each
+                // time it reads the constant (`SpecProcessor.processConstantDefns`).
+                if self.definition(node).name != name.text {
+                    self.unshared
+                        .get_or_insert("of a value a configuration's substitute made again");
+                }
+                return self.definition_value(node, context);
             }
             Resolution::Builtin(index) if self.ir.builtins[index as usize].arity == 0 => {
                 return self.builtin(index, &[], context);
@@ -1872,6 +1887,11 @@ impl<'ir> Evaluator<'ir> {
                 let value = self.evaluate(*node, &inner)?;
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
+                }
+                // TLC keeps the value it computes for a next state, as one object.
+                if frame.is_evaluated.replace(true) && !is_scalar(&value) {
+                    self.unshared
+                        .get_or_insert("of a value an argument or a LET definition made again");
                 }
                 Ok(value)
             }
@@ -2750,9 +2770,9 @@ impl<'ir> Evaluator<'ir> {
 
     fn nested<T>(&mut self, work: impl FnOnce(&mut Self) -> Evaluated<T>) -> Evaluated<T> {
         thread_local! {
-            static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            static DEPTH: Cell<u32> = const { Cell::new(0) };
             // Where the outermost nesting's frame is, which the stack grows from.
-            static BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+            static BASE: Cell<usize> = const { Cell::new(0) };
         }
         let depth = DEPTH.get();
         // How deep the frames are depends on the build, so the stack the nesting uses is bounded
@@ -4203,6 +4223,20 @@ impl<'ir> Evaluator<'ir> {
                     Value::Lambda(lambda) => lambda.domain.clone(),
                     Value::Function(function) => match function.interval {
                         Some((low, high)) => Value::Interval(low, high),
+                        // `RecordValue.getDomain` makes a string of each field's name.
+                        None if function.class.get() == Class::Record => Value::Set(Rc::new(
+                            function
+                                .domain
+                                .iter()
+                                .map(|key| match key {
+                                    Value::Str(name) => Value::Str(Rc::new(Text {
+                                        units: name.units.clone(),
+                                        rank: name.rank,
+                                    })),
+                                    _ => key.clone(),
+                                })
+                                .collect(),
+                        )),
                         None => Value::Set(Rc::new(function.domain.clone())),
                     },
                     // `Tool`'s OPCODE_domain, whose message the application ends with where it is.
@@ -4489,8 +4523,16 @@ impl<'ir> Evaluator<'ir> {
                         .collect();
                     return Ok(Value::Str(self.made_text(units)));
                 }
-                let mut elements = sequence_of(&left)?.to_vec();
-                elements.extend(sequence_of(&right)?.iter().cloned());
+                let (left_elements, right_elements) = (sequence_of(&left)?, sequence_of(&right)?);
+                // `Sequences.Concat` gives one sequence back where the other is empty.
+                if left_elements.is_empty() && right.is_tuple_class() {
+                    return Ok(right);
+                }
+                if right_elements.is_empty() && left.is_tuple_class() {
+                    return Ok(left);
+                }
+                let mut elements = left_elements.to_vec();
+                elements.extend(right_elements.iter().cloned());
                 Value::tuple(elements)
             }
             // `Sequences.SubSeq` tests the sequence, then each bound is an integer, then each is in
@@ -4544,6 +4586,7 @@ impl<'ir> Evaluator<'ir> {
                 };
                 match &sequence {
                     Value::Str(text) => Value::Str(self.made_text(text.units[range].into())),
+                    _ if from > to => Value::empty_tuple(),
                     _ => Value::tuple(sequence_of(&sequence)?[range].to_vec()),
                 }
             }
@@ -4551,6 +4594,9 @@ impl<'ir> Evaluator<'ir> {
                 arity(2)?;
                 let sequence = self.operand(&operands[0])?;
                 let test = self.operand_operator(&operands[1])?;
+                if sequence_argument("SelectSeq", "sequence", &sequence)?.is_empty() {
+                    return Ok(Value::empty_tuple());
+                }
                 let mut kept = Vec::new();
                 for element in sequence_argument("SelectSeq", "sequence", &sequence)? {
                     let tested = self.call_with_values(&test, std::slice::from_ref(element));
@@ -5403,6 +5449,14 @@ fn empty_sequence<T>(name: &str) -> Evaluated<T> {
         format!("{name} of the empty sequence"),
         APPLY_EMPTY_SEQ,
         format!("Attempted to apply {name} to the empty sequence."),
+    )
+}
+
+// A value a dumped trace writes as it is, without an object of its own to refer back to.
+fn is_scalar(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Bool(_) | Value::Int(_) | Value::Model(_) | Value::Interval(..)
     )
 }
 

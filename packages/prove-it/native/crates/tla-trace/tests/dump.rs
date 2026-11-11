@@ -174,6 +174,14 @@ fn dumps_nested_values() {
 }
 
 #[test]
+fn dumps_values_as_tlc_makes_them_once_or_again() {
+    // A function into a record set TLC enumerates once for each argument, so no two share a
+    // record; the empty sequence SubSeq gives and `\o` passes on, which is TLC's one; and the
+    // strings DOMAIN makes of a record's fields, new each time.
+    check("DumpShared");
+}
+
+#[test]
 fn dumps_function_keys_with_unpaired_surrogates() {
     // Two keys that are each half of a different character stay apart, written as `?`, as TLC
     // keeps them as Java strings.
