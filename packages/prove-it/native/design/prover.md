@@ -1192,12 +1192,20 @@ is next.
   whose expected values come from running the TypeScript under Bun. Ported ahead of P5c, with the
   same tests: `ocaml`, the SMT encoder (`smt/`), `first_order`, the Zenon and Isabelle encoders,
   `prep/{md5, methods, fingerprint, level_comparison, enabled_axioms, normalize}` and
-  `tlaps_module`. Next (P5c): `prep/action` and the PTL encoder; Prep's context maps held per run,
-  not per thread (they keep their keys alive, where the TypeScript's `WeakMap`s let them go); the
-  encoder half of the differential (every method's text and the fingerprint, by `prover/digest`
-  against `prover-inputs.json`); then the `prove_obligations` boundary of 3.2, agreed with the
-  prover lead first.
-
+  `tlaps_module`.
+- P5c Prep and encoders: `prep/action`, the PTL encoder and `ship`, the encoding slice of
+  `prove.ts`: `encode_normalized` (one backend's text for a sequent Prep has normalized),
+  `encode_for_backend` (method selection and normalization first), `encode_proof_theory` (written
+  proof by proof, so tcp_proof peaks at 5.1 GB where the TypeScript needs 12.5 GB) and
+  `ProofAttempt`, the one record of a method's outcome P6 wraps. `reset_caches()` clears every
+  module-level cache. `scripts/encoder-differential.ts` runs `obligations-dump --encode` and the
+  TypeScript on every module of `proofs.json`: every method's text or error for every obligation
+  matches on 304 of 304, with and without a reset between modules, and every text whose key is in
+  `prover-inputs.json` is one the Rust writes. 79 recorded SMT inputs are not written, because
+  their CASE-error numbers depend on which methods `prove` tried; the script lists them. Known: a
+  `ContextMap` holds its keys weakly, but the prefix it maps a key to usually holds that key, so,
+  unlike an ephemeron `WeakMap`, entries live until `reset_caches()`; P6 resets per `prove` call,
+  which bounds memory by the run. Freeing them within a run is open.
 - P6b part 1, tlapm's state: `prove-obligations::marshal` ports `ocaml-marshal.ts` (LGPL, in its
   own file and in the notices' OCaml section), and `prove-it-prover::tlapm_cache` ports
   `cache.ts`: `load_fingerprints`, `KnownResults::new`, `KnownResults::save`, and `save_history`.

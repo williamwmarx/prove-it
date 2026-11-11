@@ -84,6 +84,15 @@ thread_local! {
         }));
 }
 
+/// Forgets the mapped contexts.
+pub(crate) fn reset_caches() {
+    for context_map in [&EXPAND_DEFINITIONS_AND_PRAGMAS, &EXPAND_DEFINITIONS] {
+        context_map.with(|shared| shared.borrow_mut().clear());
+    }
+    NORMALIZE_LET_CONTEXT.with(|shared| shared.borrow_mut().clear());
+    NORMALIZE_EXCEPT_CONTEXT.with(|shared| shared.borrow_mut().clear());
+}
+
 /// expand_defs: each visible operator definition and each pragma, whatever its visibility,
 /// substitutes into the rest of the obligation and leaves the context. Toolbox.expand_defs leaves
 /// the pragmas.

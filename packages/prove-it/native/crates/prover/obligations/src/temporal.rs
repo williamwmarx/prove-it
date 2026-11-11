@@ -241,6 +241,11 @@ thread_local! {
         RefCell::new(IdentityCache::new());
 }
 
+/// Forgets which bodies are constant.
+pub(crate) fn reset_caches() {
+    CONSTANT_BODIES.with(|cache| *cache.borrow_mut() = IdentityCache::new());
+}
+
 fn is_constant_hyp(scope: &ScopeRef, hyp: &Hyp) -> bool {
     match &hyp.core {
         HypCore::Fresh { level, .. } => *level == Level::Constant,
@@ -1024,6 +1029,24 @@ mod tests {
             defn_hyp(operator_defn("U", ix(1)), true),
         ]);
         assert!(!is_constant(&unset_scope, &ix(1)));
+    }
+
+    #[test]
+    fn judges_constant_bodies_anew_after_a_reset() {
+        let shared = ix(1);
+        let constant_scope = scope_of(&[
+            get_fresh("c", Level::Constant, 0),
+            defn_hyp(operator_defn("A", shared.clone()), false),
+        ]);
+        let state_scope = scope_of(&[
+            get_fresh("v", Level::State, 0),
+            defn_hyp(operator_defn("B", shared), false),
+        ]);
+        assert!(is_constant(&constant_scope, &ix(1)));
+        assert!(is_constant(&state_scope, &ix(1)));
+        crate::reset_caches();
+        assert!(!is_constant(&state_scope, &ix(1)));
+        assert!(!is_constant(&constant_scope, &ix(1)));
     }
 
     #[test]
