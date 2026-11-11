@@ -606,7 +606,19 @@ fn resets_as_z3_does() {
 
 /// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
 /// 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 23] = [
+const COMMAND_ERRORS: [(&str, &str); 26] = [
+    (
+        "(assert false)(exit 1)(check-sat)",
+        "(error \"line 1 column 21: invalid command, too many arguments\")\nunsat",
+    ),
+    (
+        "(assert false)(exit (x))(check-sat)",
+        "(error \"line 1 column 21: invalid command, too many arguments\")\nunsat",
+    ),
+    (
+        "(assert false)(|exit| 1)(check-sat)",
+        "(error \"line 1 column 23: invalid command, too many arguments\")\nunsat",
+    ),
     (
         "(assert true)(check-sat-using smt)(get-model)(check-sat)",
         "sat\n(\n)\nsat",

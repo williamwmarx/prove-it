@@ -987,6 +987,11 @@ pub fn parse_smtlib(
                 has_check_sat = true;
                 break;
             }
+            "exit" if list.len() > 1 => {
+                return Err(SmtError::Parse(
+                    "invalid command, too many arguments".into(),
+                ));
+            }
             // Z3 reads no further.
             "exit" => break,
             "push" | "pop" | "define-fun" | "define-sort" | "reset-assertions"
