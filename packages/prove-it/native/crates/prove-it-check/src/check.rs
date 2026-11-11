@@ -827,6 +827,26 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             &format!("TLCGet of the system property {name}, which the command line sets"),
         );
     }
+    // TLC looks an ALIAS up among the definitions, the constants and TRUE, FALSE, BOOLEAN and
+    // STRING (`SpecProcessor.processSpec`'s `defns`, `Spec.getAliasSpec`). Where the IR has no
+    // definition of it, the binary reports it as one TLC doesn't find but where the configuration
+    // assigns it as a constant or it names one of the others.
+    let is_alias_undefined_unsure = ir.model.alias.as_ref().is_some_and(|alias| {
+        let name = &*ir.texts[alias.name as usize];
+        alias.definition.is_none()
+            && (["TRUE", "FALSE", "BOOLEAN", "STRING"].contains(&name)
+                || config
+                    .constants
+                    .iter()
+                    .any(|constant| constant.name == name)
+                || config
+                    .substitutions
+                    .iter()
+                    .any(|substitution| substitution.name == name))
+    });
+    if is_alias_undefined_unsure {
+        return report_not_native(printer, "an ALIAS that names a constant");
+    }
     // TLC rejects a POSTCONDITION or an ALIAS it computed as it started (`Spec.getAlias`,
     // `getPostConditionSpecs`), which the binary doesn't report: it declines one that may be.
     let configured = ir.model.postconditions.iter().chain(&ir.model.alias);

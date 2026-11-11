@@ -5,7 +5,7 @@
 use crate::failure::nested;
 use crate::print::{print_order, text_string};
 use crate::rebuild::{Rebuilder, run};
-use crate::value::{Class, EvalError, Value};
+use crate::value::{Class, EvalError, TlcMessage, Value};
 use crate::{Trace, Unsupported};
 
 /// A state as TLC prints it through the ALIAS.
@@ -17,6 +17,9 @@ pub enum Alias {
     /// The alias gives no record, so TLC prints the state itself (`Value.toState` is null).
     State,
 }
+
+// TLC's message of a configuration naming what the spec doesn't define (`EC.TLC_CONFIG_SPECIFIED_NOT_DEFINED`).
+const SPECIFIED_NOT_DEFINED: u32 = 2229;
 
 fn unsupported<T>(reason: &str) -> Result<T, Unsupported> {
     Err(Unsupported(format!("an ALIAS {reason}")))
@@ -40,10 +43,9 @@ impl Rebuilder<'_> {
         let Some(alias) = &ir.model.alias else {
             return Ok(None);
         };
-        let Some(index) = alias.definition else {
-            return unsupported("without a definition");
-        };
-        let body = evaluator.definition(ir.definitions[index as usize]).body;
+        let body = alias
+            .definition
+            .map(|index| evaluator.definition(ir.definitions[index as usize]).body);
         let context = run(evaluator.scope_context(ir.model.scope))?;
         let states = &trace.states;
         let state = |position: usize| states[position].values.iter().cloned().map(Some).collect();
@@ -65,7 +67,22 @@ impl Rebuilder<'_> {
             evaluator.printed.clear();
             // TLC prints an alias that fails with its message as a field of the state
             // (`_ALIASEvalError`, `Tool.evalAlias`).
-            let result = evaluator.evaluate(body, &context);
+            let result = match body {
+                Some(body) => evaluator.evaluate(body, &context),
+                // TLC finds the alias by its name as it evaluates it, and fails on a name it
+                // has no definition of (`Spec.getAliasSpec`).
+                None => Err(EvalError {
+                    reason: "an ALIAS without a definition".into(),
+                    message: Some(TlcMessage {
+                        text: format!(
+                            "The alias {} specified in the configuration file\nis not defined in the specification.",
+                            ir.texts[alias.name as usize]
+                        ),
+                        code: Some(SPECIFIED_NOT_DEFINED),
+                        is_eval_exception: false,
+                    }),
+                }),
+            };
             evaluator.next_level = None;
             if !evaluator.printed.is_empty() {
                 return unsupported("that prints");
