@@ -183,6 +183,8 @@ pub struct Expanded {
     pub expression: Expr,
     pub scope: Option<Rc<Scope>>,
     pub name: Option<Name>,
+    /// Whether the conjunct is one of a state predicate a LET defines, which TLC takes whole.
+    pub is_in_let: bool,
 }
 
 /// `getSpecification`: the initial predicate, the next-state action, the scope they read, and
@@ -288,22 +290,23 @@ impl Expansion<'_> {
                     let scope = scope.resolve(node);
                     let expanded =
                         self.expand(expression, scope.as_ref(), expanding, is_substituted, name)?;
-                    // TLC takes a state predicate a LET defines whole, as it does a definition's,
-                    // which the front end follows only where none of its conjuncts is constant.
-                    let level = |expression: &Expr, scope: Option<&Rc<Scope>>| {
-                        get_level(expression, scope, self.environment, self.facts, &[])
-                    };
-                    if self.is_specification
+                    // TLC takes a state predicate a LET defines whole, as it does a definition's.
+                    let is_in_let = self.is_specification
                         && is_let
-                        && level(expression, scope.as_ref()) == Level::Variable
-                        && expanded.iter().any(|item| {
-                            level(&item.expression, item.scope.as_ref()) == Level::Constant
+                        && get_level(
+                            expression,
+                            scope.as_ref(),
+                            self.environment,
+                            self.facts,
+                            &[],
+                        ) == Level::Variable;
+                    let expanded = expanded
+                        .into_iter()
+                        .map(|item| Expanded {
+                            is_in_let: item.is_in_let || is_in_let,
+                            ..item
                         })
-                    {
-                        return Err(not_yet(
-                            "a constant conjunct of a state predicate a LET defines",
-                        ));
-                    }
+                        .collect();
                     return Ok(expanded);
                 }
                 let definition = if self.environment.constants.contains_key(&reference) {
@@ -339,6 +342,7 @@ impl Expansion<'_> {
                             expression: definition.body.clone(),
                             scope: None,
                             name: Some(written.clone()),
+                            is_in_let: false,
                         }]);
                     }
                     return Ok(expanded);
@@ -411,6 +415,7 @@ impl Expansion<'_> {
             expression: expression.clone(),
             scope: scope.cloned(),
             name,
+            is_in_let: false,
         }])
     }
 }
@@ -973,9 +978,17 @@ pub fn get_specification(
             )
         };
         match &item.expression.kind {
+            // A constant conjunct of a LET's predicate that isn't TRUE fails that predicate in
+            // TLC, which takes it whole, rather than the specification.
             ExpressionKind::Identifier { name, .. }
                 if level() == Level::Constant
-                    && is_constant_true(name, &item, "spec", evaluator)? =>
+                    && (if item.is_in_let {
+                        is_constant_true(name, &item, "spec", evaluator).map_err(|_| {
+                            not_yet("a constant conjunct of a state predicate a LET defines")
+                        })?
+                    } else {
+                        is_constant_true(name, &item, "spec", evaluator)?
+                    }) =>
             {
                 continue;
             }

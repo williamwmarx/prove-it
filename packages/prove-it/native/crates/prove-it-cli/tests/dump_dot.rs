@@ -195,6 +195,24 @@ fn declines_a_let_initial_predicate_with_a_constant_conjunct() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// TLC drops a TRUE conjunct of a LET's predicate as it would one of the specification.
+#[test]
+fn checks_a_let_initial_predicate_with_a_true_conjunct() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nNext == x' = (x + 1) % 3\nSpec == LET In == x \\in {0,1} /\\ TRUE IN In /\\ [][Next]_x\n====\n";
+    let (output, directory) = run_spec_with("let-true", spec, "SPECIFICATION Spec\n", &[]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("Finished computing initial states: 2 distinct states generated"),
+        "{text}"
+    );
+    assert!(
+        text.contains("5 states generated, 3 distinct states found, 0 states left on queue.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 // TLC's workers write the graph's states and edges in the order they reach them, which differs
 // from run to run.
 #[test]

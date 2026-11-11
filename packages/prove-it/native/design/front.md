@@ -434,7 +434,7 @@ false", and another value can't be "used as a spec". `[]P` of a state predicate 
 specification is "TLC cannot handle the temporal formula" at P.
 TLC takes a state predicate a LET defines whole, as it does a definition's, so a constant conjunct
 inside one is no conjunct of the specification; the front end, which expands the LET's
-conjuncts, declines a LET's state predicate with a constant conjunct.
+conjuncts, drops one that is TRUE, as TLC's predicate would hold it, and declines another.
 
 `live.rs` follows `toLiveExpression`'s failures:
 - "cannot handle" at a formula it can't translate;
