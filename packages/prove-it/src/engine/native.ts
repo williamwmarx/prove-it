@@ -8,6 +8,7 @@ import { EngineInvariantError } from "../errors";
 import type { ProofObligation } from "../prover/prove";
 import type { Statistics, Verdict } from "../prover/verdict";
 import type { LiveEnabled, LiveExpression } from "../tableau";
+import type { TlcVersion } from "../tlc/version";
 import {
   createStateDecoder,
   FALSE_TAG,
@@ -209,8 +210,10 @@ export interface NativeAddon extends NativeStoreHooks {
   ) => NativeCheckSources;
   sanyText: (
     root: string,
-    source: string,
+    source: string | null,
     fileName: string | undefined,
+    version: TlcVersion,
+    rootExtendees: string[],
     known: [string, string | undefined][],
   ) => NativeSanyText;
   sanyXml: (

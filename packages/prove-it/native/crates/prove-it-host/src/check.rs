@@ -31,7 +31,7 @@ use tla_engine::clock::Instant;
 use tla_front::report::ModuleOrigin;
 
 use crate::hooks::HookResult;
-use crate::sources::{Sources, get_text};
+use crate::sources::{Sources, get_strings, get_text};
 use crate::value::HostValue;
 
 /// How the binary starts the line on stderr that declines a model.
@@ -148,13 +148,6 @@ fn get_number(value: &HostValue, what: &str) -> Result<f64, String> {
     match value {
         HostValue::Number(number) => Ok(*number),
         _ => Err(format!("{what} must be a number")),
-    }
-}
-
-fn get_strings(value: &HostValue, what: &str) -> Result<Vec<String>, String> {
-    match value {
-        HostValue::Array(items) => items.iter().map(|item| get_text(item, what)).collect(),
-        _ => Err(format!("{what} must be an array of strings")),
     }
 }
 
