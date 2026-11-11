@@ -1238,18 +1238,35 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // Marks a failure in a method of a set with a source as TLC's FingerprintException, through
-    // the sets nested in it that test the element's parts, where an element was tested.
+    // the sets nested in it that test the element's parts, where an element was tested, or in the
+    // compareTo of a tested element with a source and of its parts.
     fn mark_failing_member(&mut self, received: &Value, element: Option<&Value>) {
         let Some(stack) = &mut self.call_stack else {
-            return;
-        };
-        let Some(source) = stack.source(received) else {
             return;
         };
         if stack.is_fingerprinted {
             return;
         }
         let nested = element.and_then(|element| crate::sets::failing_sets(element, received));
+        // The search of a sorted set fails in the element's `compareTo`, and in those of its parts
+        // it compares, which have sources where the evaluation gave them: the set's, which a
+        // definition TLC computed as it started has none of, is outside them. Where the failure
+        // passes through nested sets, the search is the innermost set's.
+        let (searched, searched_set) = match (&nested, element) {
+            (Some((_, inner_element, inner_set)), _) => (Some(inner_element), inner_set),
+            (None, element) => (element, received),
+        };
+        let compared: Vec<NodeId> = searched
+            .map(|searched| crate::sets::failing_search(searched, searched_set))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|value| stack.source(value))
+            .collect();
+        let source = stack.source(received);
+        if source.is_none() && compared.is_empty() {
+            return;
+        }
+        let nested = nested.map(|(sets, _, _)| sets);
         // TLC searches a set enumeration it hasn't normalized, as one an evaluation just built,
         // element by element with `equals`, which fails otherwise than the search of a sorted one.
         // The evaluator searches so the sets it records as TLC holds them unnormalized.
@@ -1261,7 +1278,7 @@ impl<'ir> Evaluator<'ir> {
             })
         });
         let sources = nested.iter().flatten().filter_map(|set| stack.source(set));
-        let sources: Vec<NodeId> = std::iter::once(source).chain(sources).collect();
+        let sources: Vec<NodeId> = source.into_iter().chain(sources).chain(compared).collect();
         stack.is_fingerprinted = true;
         stack.is_member_followed = is_followed;
         stack.fingerprinted_sources = sources;
@@ -2006,6 +2023,29 @@ impl<'ir> Evaluator<'ir> {
         }
         let reads = self.reads;
         let printed = self.printed.len();
+        // TLC computes a definition of constant level as it starts, with its plain `Tool`, whose
+        // values have no source (`processConstantDefns`). One that fails, or that holds a set it
+        // can't normalize (`evalConstantDefn`'s `deepNormalize`), it evaluates again where it is
+        // used.
+        if self.call_stack.is_some()
+            && matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+            && self.is_precomputed(node)
+        {
+            let call_stack = self.call_stack.take();
+            let computed = self.evaluate(definition.body, &context.global());
+            self.call_stack = call_stack;
+            if let Ok(value) = computed
+                && self.reads == reads
+                && self.printed.len() == printed
+                && !holds_unsorted(&value)
+            {
+                note_sorted(&value);
+                self.cache.insert(key, value.clone());
+                return Ok(value);
+            }
+            self.reads = reads;
+            self.printed.truncate(printed);
+        }
         let value = match &definition.form {
             DefinitionForm::Function(bounds) => {
                 self.defined_function(bounds, definition.body, &context.global())?
@@ -5581,6 +5621,20 @@ fn sub_bags(bounds: &[(Value, i32)]) -> Evaluated<Value> {
         });
     }
     set_of(values)
+}
+
+// Whether a value holds a set TLC can't normalize.
+fn holds_unsorted(value: &Value) -> bool {
+    match value {
+        Value::Unsorted(_) => true,
+        Value::Set(elements) => elements.iter().any(holds_unsorted),
+        Value::Function(function) => function
+            .domain
+            .iter()
+            .chain(&function.range)
+            .any(holds_unsorted),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
