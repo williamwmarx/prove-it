@@ -457,6 +457,7 @@ const TLC_FAILURES: &[&str] = &[
     "a CASE condition that isn't a boolean",
     "a SelectSeq test that isn't a boolean",
     "a SelectSeq test that isn't an operator",
+    "a SortSeq comparison that isn't a boolean",
     "a conjunct that isn't a boolean",
     "a count that isn't a number",
     "a function over a non-set",
@@ -2018,6 +2019,9 @@ impl Search<'_, States> {
             worker.fingerprints.detach();
         }
         machine.store = Arc::into_inner(store).expect("the store, once the threads let go of it");
+        for worker in workers.iter() {
+            machine.store.take_marks(&worker.machine.store);
+        }
         self.fingerprints.take_back(fingerprints);
         let mut stop = level.stop.load(Ordering::Relaxed);
         let mut owners = vec![None; (level.end - level.start).div_ceil(level.chunk)];

@@ -2470,7 +2470,8 @@ impl<'a> Compiler<'a> {
                         }
                     }
                     let values = machine.stack.split_off(at);
-                    Ok(machine.store.function_over_set(domain, &values))
+                    let function = machine.store.function_over_set(domain, &values);
+                    Ok(machine.store.mark_built_as_function(function))
                 }),
                 recursive.footprint(),
             )
