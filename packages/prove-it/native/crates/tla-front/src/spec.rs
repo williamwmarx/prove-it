@@ -725,7 +725,7 @@ fn get_config_definition(
     evaluator: Option<&Evaluator>,
 ) -> Result<()> {
     let definition = get_config_operator(kind, name, environment)?;
-    if get_constant_value(name, definition, environment, facts, evaluator, false)?.is_some() {
+    if get_constant_value(name, definition, environment, facts, evaluator, true)?.is_some() {
         return Err(FrontError::Config(format!(
             "The {kind} {name} cannot be a constant."
         )));
@@ -914,7 +914,7 @@ pub fn get_specification(
         let operator = |name: &Option<String>, description: &str| {
             name.as_deref()
                 .map(|name| {
-                    get_config_definition(description, name, environment, facts, None)
+                    get_config_definition(description, name, environment, facts, evaluator)
                         .map(|()| create_identifier(name))
                 })
                 .transpose()
