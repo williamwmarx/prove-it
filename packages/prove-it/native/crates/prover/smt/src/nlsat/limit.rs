@@ -8,7 +8,7 @@
 // The TypeScript managers share one object; here a clone shares the state behind an `Rc`, and
 // keeps a clone of the resource limit, whose clones share its count and stop reason.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
@@ -20,16 +20,16 @@ pub struct NlsatLimit(Rc<NlsatLimitState>);
 #[derive(Default)]
 struct NlsatLimitState {
     steps: Cell<u64>,
-    limit: Option<ResourceLimit>,
-    budget: Option<u64>,
+    limit: RefCell<Option<ResourceLimit>>,
+    budget: Cell<Option<u64>>,
 }
 
 impl NlsatLimit {
     pub fn new(limit: Option<&ResourceLimit>, budget: Option<u64>) -> NlsatLimit {
         NlsatLimit(Rc::new(NlsatLimitState {
             steps: Cell::new(0),
-            limit: limit.cloned(),
-            budget,
+            limit: RefCell::new(limit.cloned()),
+            budget: Cell::new(budget),
         }))
     }
 
@@ -41,9 +41,14 @@ impl NlsatLimit {
     pub fn inc(&self) -> bool {
         let state = &self.0;
         state.steps.set(state.steps.get() + 1);
-        !(state.limit.as_ref().is_some_and(|limit| !limit.inc())
+        !(state
+            .limit
+            .borrow()
+            .as_ref()
+            .is_some_and(|limit| !limit.inc())
             || state
                 .budget
+                .get()
                 .is_some_and(|budget| state.steps.get() > budget))
     }
 
@@ -54,6 +59,13 @@ impl NlsatLimit {
         } else {
             Err(SmtError::Canceled)
         }
+    }
+
+    /// The end of nla's scoped_limits and scoped_rlimit around a check: the steps taken later count
+    /// against neither the budget nor the resource limit.
+    pub fn detach(&self) {
+        self.0.limit.replace(None);
+        self.0.budget.set(None);
     }
 }
 

@@ -224,8 +224,10 @@ export class NraSolver {
   // lemma that the constraints of its core are inconsistent.
   check(maxConflicts: number, budget: number) {
     const result = this.checkInScope(maxConflicts, budget);
-    // nla's scoped_limits and scoped_rlimit end with the check, so the model's arithmetic later
-    // counts against neither.
+    // nla's check runs m_nra.check() inside scoped_limits, which pushes m_nra_lim as a child of
+    // its limit, and scoped_rlimit, which sets the budget (z3-5.3.3,
+    // src/math/lp/nla_core.cpp:1098-1103 and 1139-1145, src/util/rlimit.h:94-129). Both end with
+    // the check, so the model's arithmetic later counts against neither.
     this.solver.limit.detach();
     return result;
   }
@@ -372,7 +374,8 @@ export class NraSolver {
     return { clause: result.clause, literalConstraints };
   }
 
-  // check_assignment, in nla's scoped_limits.
+  // check_assignment, which nla runs inside scoped_limits (z3-5.3.3,
+  // src/math/lp/nla_core.cpp:1052-1054, src/util/rlimit.h:122-129).
   checkAssignment() {
     const result = this.checkAssignmentInScope();
     this.solver.limit.detach();
