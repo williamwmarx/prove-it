@@ -8,7 +8,7 @@ use crate::core::asserted_formulas::AssertedFormulas;
 use crate::core::ast::AstManager;
 use crate::core::context::{Context, SmtParams};
 use crate::core::quant_tactics::apply_ufnia_tactic;
-use crate::core::smtlib_parser::{Command, parse_smtlib};
+use crate::core::smtlib_parser::{Command, SmtProblem, parse_smtlib};
 use crate::util::error::SmtError;
 use crate::util::lbool::LBool;
 use crate::util::rlimit::ResourceLimit;
@@ -19,8 +19,11 @@ pub struct SmtCheck {
     pub num_instances: u32,
 }
 
-/// The verdict, and the number of quantifier instances the search made. `limit` is the resource
-/// limit of the manager, which the caller may keep a clone of to read its count.
+/// The verdict tlapm reads in Z3's output, and the number of quantifier instances the search made.
+/// tlapm counts an obligation proved when a line of the output starts with unsat, whatever errors
+/// Z3 printed before it, so the verdict is the first check-sat's answer, and a check-sat after one
+/// that is not unsat is unsupported. `limit` is the resource limit of the manager, which the caller
+/// may keep a clone of to read its count.
 pub fn check_smt(text: &str, limit: ResourceLimit) -> Result<SmtCheck, SmtError> {
     let mut manager = AstManager::new(limit);
     // combined_solver gives each assertion to the incremental smt kernel as well, which rewrites
@@ -45,12 +48,28 @@ pub fn check_smt(text: &str, limit: ResourceLimit) -> Result<SmtCheck, SmtError>
             Ok(())
         }
     })?;
+    if let Some(logic) = problem.logic.as_ref().filter(|logic| *logic != "UFNIA") {
+        return Err(SmtError::Unsupported(format!(
+            "the logic {logic} is not supported"
+        )));
+    }
     if !problem.has_check_sat {
         return Ok(SmtCheck {
             verdict: Verdict::Unknown,
             num_instances: 0,
         });
     }
+    let check = check_first(manager, &problem)?;
+    if problem.has_later_check_sat && check.verdict != Verdict::Unsat {
+        return Err(SmtError::Unsupported(
+            "a check-sat after one that is not unsat is not supported".into(),
+        ));
+    }
+    Ok(check)
+}
+
+// The answer to the first check-sat: the UFNIA tactic, then the smt kernel.
+fn check_first(mut manager: AstManager, problem: &SmtProblem) -> Result<SmtCheck, SmtError> {
     let goal = apply_ufnia_tactic(&mut manager, &problem.assertions)?;
     // and_then runs smt_tactic only on a goal that the preprocessing left undecided.
     if goal.is_inconsistent || goal.forms.is_empty() {

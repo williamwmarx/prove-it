@@ -51,6 +51,18 @@ pub struct SmtProblem {
     pub assertions: Vec<Expr>,
     // Z3 prints no answer for a script without check-sat.
     pub has_check_sat: bool,
+    /// Whether a check-sat follows the first one, whose answers tlapm reads too.
+    pub has_later_check_sat: bool,
+    /// The logic set-logic set, if Z3 4.8.9 supports it.
+    pub logic: Option<String>,
+    /// The errors Z3 prints, each skipping its command, in order.
+    pub errors: Vec<SmtError>,
+}
+
+// A top-level item of the script: a command, or an error Z3 reports while it reads one.
+enum Item {
+    Command(SExprId),
+    Error(&'static str),
 }
 
 // An application that parse_term is parsing: its name, its list, where its arguments start on the
@@ -113,7 +125,7 @@ fn find_byte(bytes: &[u8], byte: u8, from: usize) -> Option<usize> {
 }
 
 // The tokens, up to an error that ends them, if any.
-fn tokenize(text: &str) -> (Vec<&str>, Option<SmtError>) {
+fn tokenize(text: &str) -> (Vec<&str>, Option<&'static str>) {
     let bytes = text.as_bytes();
     let mut tokens = Vec::new();
     let mut position = 0;
@@ -128,10 +140,7 @@ fn tokenize(text: &str) -> (Vec<&str>, Option<SmtError>) {
             position += 1;
         } else if char == b'|' {
             let Some(end) = find_byte(bytes, b'|', position + 1) else {
-                return (
-                    tokens,
-                    Some(SmtError::Parse("unterminated quoted symbol".into())),
-                );
+                return (tokens, Some("unterminated quoted symbol"));
             };
             tokens.push(&text[position..end + 1]);
             position = end + 1;
@@ -154,41 +163,43 @@ fn tokenize(text: &str) -> (Vec<&str>, Option<SmtError>) {
     (tokens, None)
 }
 
-// The arena of the s-expressions, the whole commands, and the error that ends them, if any: Z3 reads
-// a command at a time, so what follows a check-sat or an exit is never read.
-fn read_sexprs<'a>(tokens: &[&'a str]) -> (Vec<SExpr<'a>>, Vec<SExprId>, Option<SmtError>) {
+// The arena of the s-expressions and the top-level items. Z3 reads a command at a time: a stray
+// parenthesis or a command the text ends inside is an error, and so is an atom, which the command
+// loop refuses.
+fn read_sexprs<'a>(
+    tokens: &[&'a str],
+    token_error: Option<&'static str>,
+) -> (Vec<SExpr<'a>>, Vec<Item>) {
     let mut nodes = Vec::new();
-    let mut stack: Vec<Vec<SExprId>> = vec![Vec::new()];
+    let mut items = Vec::new();
+    let mut stack: Vec<Vec<SExprId>> = Vec::new();
     for token in tokens {
         if *token == "(" {
             stack.push(Vec::new());
-        } else if *token == ")" {
-            if stack.len() == 1 {
-                let commands = stack.pop().unwrap_or_default();
-                return (
-                    nodes,
-                    commands,
-                    Some(SmtError::Parse("unbalanced parentheses".into())),
-                );
-            }
-            let list = stack.pop().unwrap_or_default();
-            let Some(top) = stack.last_mut() else {
-                unreachable!("the commands stay below a list");
+            continue;
+        }
+        let node = if *token == ")" {
+            let Some(list) = stack.pop() else {
+                items.push(Item::Error("invalid command, '(' expected"));
+                continue;
             };
-            top.push(nodes.len());
-            nodes.push(SExpr::List(list));
-        } else if let Some(top) = stack.last_mut() {
-            top.push(nodes.len());
-            nodes.push(match token.strip_prefix('|') {
+            SExpr::List(list)
+        } else {
+            match token.strip_prefix('|') {
                 Some(quoted) => SExpr::Quoted(&quoted[..quoted.len() - 1]),
                 None => SExpr::Symbol(token),
-            });
+            }
+        };
+        match stack.last_mut() {
+            Some(top) => top.push(nodes.len()),
+            None => items.push(Item::Command(nodes.len())),
         }
+        nodes.push(node);
     }
-    let error = (stack.len() > 1).then(|| SmtError::Parse("unbalanced parentheses".into()));
-    stack.truncate(1);
-    let commands = stack.pop().unwrap_or_default();
-    (nodes, commands, error)
+    if !stack.is_empty() || token_error.is_some() {
+        items.push(Item::Error(token_error.unwrap_or("unexpected end of file")));
+    }
+    (nodes, items)
 }
 
 fn is_digits(text: &str) -> bool {
@@ -482,7 +493,8 @@ fn get_weight(nodes: &[SExpr], value: Option<SExprId>) -> Result<i32, SmtError> 
 struct SmtlibParser<'a> {
     nodes: &'a [SExpr<'a>],
     sorts: HashMap<&'a str, Sort>,
-    funcs: HashMap<&'a str, Decl>,
+    // The declarations of each name: Z3 4.8.9's func_decls, which overload a name by signature.
+    funcs: HashMap<&'a str, Vec<Decl>>,
     // The named terms, which a reference expands to as cmd_context expands a macro.
     named: HashMap<&'a str, Expr>,
     scopes: Vec<HashMap<&'a str, Binding>>,
@@ -596,7 +608,9 @@ impl<'a> SmtlibParser<'a> {
         let decl = match self.get_symbol(Some(head)) {
             Some("true" | "false") => Some(-1),
             Some(name) if self.named.contains_key(name) => None,
-            head => head.and_then(|name| self.funcs.get(name).copied()),
+            head => head
+                .and_then(|name| self.funcs.get(name))
+                .and_then(|decls| decls.first().copied()),
         };
         if decl == Some(-1)
             || decl.is_some_and(|decl| m.func_decls[decl as usize].domain.is_empty())
@@ -758,7 +772,28 @@ impl<'a> SmtlibParser<'a> {
         {
             return Ok(*named);
         }
-        let Some(decl) = self.funcs.get(name).copied() else {
+        // cmd_context::mk_app: one declaration of the name, or the one whose domain is the sorts
+        // of the arguments.
+        let decls = self.funcs.get(name).map_or(&[][..], Vec::as_slice);
+        let decl = match decls {
+            [] => None,
+            [decl] => Some(*decl),
+            _ if args.is_empty() => {
+                return Err(SmtError::Parse(format!(
+                    "ambiguous constant reference, more than one constant with the same sort, use \
+                     a qualified expression (as <symbol> <sort>) to disambiguate {name}"
+                )));
+            }
+            _ => decls.iter().copied().find(|decl| {
+                let domain = &m.func_decls[*decl as usize].domain;
+                domain.len() == args.len()
+                    && args
+                        .iter()
+                        .zip(domain)
+                        .all(|(arg, sort)| m.sorts[*arg as usize] == *sort)
+            }),
+        };
+        let Some(decl) = decl else {
             return Err(SmtError::Parse(format!("unknown function {name}")));
         };
         mk_app(m, decl, args, None)
@@ -877,6 +912,21 @@ impl<'a> SmtlibParser<'a> {
         let name = self
             .get_identifier(name)
             .ok_or_else(|| SmtError::Parse("invalid attribute value, symbol expected".into()))?;
+        // cmd_context::insert of a macro.
+        if self.named.contains_key(name) {
+            return Err(SmtError::Parse("named expression already defined".into()));
+        }
+        let sort = m.sorts[term as usize];
+        if self.funcs.get(name).is_some_and(|decls| {
+            decls.iter().any(|decl| {
+                let decl = &m.func_decls[*decl as usize];
+                decl.domain.is_empty() && decl.range == sort
+            })
+        }) {
+            return Err(SmtError::Parse(format!(
+                "invalid named expression, declaration already defined with this name {name}"
+            )));
+        }
         m.inc_ref(term);
         m.mk_macro(name, term);
         self.named.insert(name, term);
@@ -1020,7 +1070,7 @@ pub fn parse_smtlib(
     mut on_command: impl FnMut(&mut AstManager, Command) -> Result<(), SmtError>,
 ) -> Result<SmtProblem, SmtError> {
     let (tokens, token_error) = tokenize(text);
-    let (nodes, commands, read_error) = read_sexprs(&tokens);
+    let (nodes, items) = read_sexprs(&tokens, token_error);
     let mut parser = SmtlibParser {
         nodes: &nodes,
         sorts: get_builtin_sorts(),
@@ -1030,42 +1080,158 @@ pub fn parse_smtlib(
         num_nested: 0,
         named: HashMap::new(),
     };
-    let mut assertions = Vec::new();
+    let mut state = ScriptState::default();
+    let mut errors = Vec::new();
     let mut has_check_sat = false;
-    let mut has_logic = false;
-    // has_manager: Z3 4.8.9 makes its manager at the first declaration or assertion.
-    let mut is_initialized = false;
-    let mut is_exited = false;
-    for command in commands {
-        let list = parser.expect_list(Some(command))?;
-        let name = parser.expect_symbol(list.first().copied())?;
-        if matches!(
-            name,
-            "declare-sort" | "declare-fun" | "declare-const" | "assert"
-        ) {
-            is_initialized = true;
+    let mut has_later_check_sat = false;
+    for (index, item) in items.iter().enumerate() {
+        let flow = match item {
+            Item::Error(message) => Err(SmtError::Parse((*message).into())),
+            Item::Command(command) => parser.run_command(m, &mut state, *command, &mut on_command),
+        };
+        match flow {
+            Ok(Flow::Next) => {}
+            Ok(Flow::CheckSat) => {
+                has_check_sat = true;
+                has_later_check_sat = items[index + 1..]
+                    .iter()
+                    .filter_map(|item| match item {
+                        Item::Command(command) => parser.get_command_name(*command),
+                        Item::Error(_) => None,
+                    })
+                    .take_while(|name| *name != "exit")
+                    .any(|name| name.starts_with("check-sat"));
+                break;
+            }
+            Ok(Flow::Exit) => break,
+            // The parser reports the error, skips the rest of the command and reads on
+            // (smt2::parser::operator(), sync_after_error).
+            Err(SmtError::Parse(message)) => {
+                errors.push(SmtError::Parse(message));
+                parser.scopes.clear();
+                parser.depth = 0;
+                parser.num_nested = 0;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(SmtProblem {
+        assertions: state.assertions,
+        has_check_sat,
+        has_later_check_sat,
+        logic: state.logic.map(String::from),
+        errors,
+    })
+}
+
+enum Flow {
+    Next,
+    CheckSat,
+    Exit,
+}
+
+// What the commands read so far leave for the next one.
+#[derive(Default)]
+struct ScriptState<'a> {
+    assertions: Vec<Expr>,
+    logic: Option<&'a str>,
+    // has_manager: Z3 4.8.9 makes its manager at the first declaration or assertion, and checks
+    // what follows against the logic set by then (check_logic).
+    is_initialized: bool,
+    is_checking_ufnia: bool,
+}
+
+impl<'a> SmtlibParser<'a> {
+    fn get_command_name(&self, command: SExprId) -> Option<&'a str> {
+        self.get_symbol(self.get_list(Some(command))?.first().copied())
+    }
+
+    // The builtins a declaration would shadow, which Z3 4.8.9 lets a declaration take over.
+    fn is_builtin_name(name: &str) -> bool {
+        get_op(&BUILTIN_OPS, name).is_some()
+            || get_op(&CHAINABLE_OPS, name).is_some()
+            || matches!(name, "-" | "true" | "false")
+    }
+
+    fn run_command(
+        &mut self,
+        m: &mut AstManager,
+        state: &mut ScriptState<'a>,
+        command: SExprId,
+        on_command: &mut impl FnMut(&mut AstManager, Command) -> Result<(), SmtError>,
+    ) -> Result<Flow, SmtError> {
+        let list = self.expect_list(Some(command))?;
+        let name = self.expect_symbol(list.first().copied())?;
+        if !state.is_initialized
+            && matches!(
+                name,
+                "declare-sort" | "declare-fun" | "declare-const" | "assert"
+            )
+        {
+            state.is_initialized = true;
+            state.is_checking_ufnia = state.logic == Some("UFNIA");
         }
         match name {
             "declare-sort" => {
                 if let Some(arity) = list.get(2)
-                    && parser.get_symbol(Some(*arity)) != Some("0")
+                    && self.get_symbol(Some(*arity)) != Some("0")
                 {
                     return Err(SmtError::Unsupported(
                         "parametric sorts are not supported".into(),
                     ));
                 }
-                let sort_name = parser.expect_symbol(list.get(1).copied())?;
-                parser.sorts.insert(sort_name, m.mk_sort(sort_name));
+                let sort_name = self.expect_symbol(list.get(1).copied())?;
+                if self.sorts.contains_key(sort_name) {
+                    return Err(SmtError::Parse(format!("sort already defined {sort_name}")));
+                }
+                self.sorts.insert(sort_name, m.mk_sort(sort_name));
             }
             "declare-fun" | "declare-const" => {
                 let mut domain = Vec::new();
                 if name == "declare-fun" {
-                    for sort in parser.expect_list(list.get(2).copied())? {
-                        domain.push(parser.parse_sort(Some(*sort))?);
+                    for sort in self.expect_list(list.get(2).copied())? {
+                        domain.push(self.parse_sort(Some(*sort))?);
                     }
                 }
-                let range = parser
-                    .parse_sort(list.get(if name == "declare-fun" { 3 } else { 2 }).copied())?;
+                let range =
+                    self.parse_sort(list.get(if name == "declare-fun" { 3 } else { 2 }).copied())?;
+                let func_name = self.expect_symbol(list.get(1).copied())?;
+                if state.is_checking_ufnia && (range == SORT_REAL || domain.contains(&SORT_REAL)) {
+                    return Err(SmtError::Parse("logic does not support reals".into()));
+                }
+                // cmd_context::insert: a constant of a named term's name, the same signature
+                // twice; an overload or a builtin's name, which Z3 resolves by sorts, the port
+                // does not take.
+                if domain.is_empty() && self.named.contains_key(func_name) {
+                    return Err(SmtError::Parse(format!(
+                        "invalid declaration, named expression already defined with this name {func_name}"
+                    )));
+                }
+                for existing in self.funcs.get(func_name).into_iter().flatten() {
+                    let existing = &m.func_decls[*existing as usize];
+                    if existing.domain != domain {
+                        continue;
+                    }
+                    if existing.range == range {
+                        return Err(SmtError::Parse(format!(
+                            "invalid declaration, '{func_name}' (with the given signature) already declared"
+                        )));
+                    }
+                    // A reference to a constant declared twice is ambiguous, an error; an
+                    // application picks among such declarations in the order of a hash set.
+                    if domain.is_empty() {
+                        continue;
+                    }
+                    return Err(SmtError::Unsupported(
+                        "declarations of one name and domain with two ranges are not supported"
+                            .into(),
+                    ));
+                }
+                if Self::is_builtin_name(func_name) {
+                    return Err(SmtError::Unsupported(
+                        "a declaration of a builtin's name is not supported".into(),
+                    ));
+                }
                 // builtin_signature_collides and is_transcendental_shadow_decl each apply the builtin
                 // of that name to fresh variables, which they then release.
                 for _ in 0..2 {
@@ -1081,22 +1247,25 @@ pub fn parse_smtlib(
                         m.dec_ref(domain_var)?;
                     }
                 }
-                let func_name = parser.expect_symbol(list.get(1).copied())?;
                 let decl = m.mk_func_decl(SmtSymbol::Name(func_name.into()), &domain, range, false);
-                parser.funcs.insert(func_name, decl);
-            }
-            "assert" if list.len() > 2 => {
-                return Err(SmtError::Parse(
-                    "invalid assert command, ')' expected".into(),
-                ));
+                self.funcs.entry(func_name).or_default().push(decl);
             }
             "assert" => {
                 // cmd_context::assert_expr keeps the assertion, and passes it to the solver.
-                let assertion = parser.parse_term(m, list.get(1).copied())?;
+                // parse_assert asserts the term before it looks for the closing parenthesis.
+                let assertion = self.parse_term(m, list.get(1).copied())?;
                 let assertion = expect_bool(m, assertion)?;
+                if state.is_checking_ufnia && has_reals(m, assertion) {
+                    return Err(SmtError::Parse("logic does not support reals".into()));
+                }
                 m.inc_ref(assertion);
-                assertions.push(assertion);
+                state.assertions.push(assertion);
                 on_command(m, Command::Assert(assertion))?;
+                if list.len() > 2 {
+                    return Err(SmtError::Parse(
+                        "invalid assert command, ')' expected".into(),
+                    ));
+                }
             }
             "reset" => {
                 if list.len() > 1 {
@@ -1104,41 +1273,42 @@ pub fn parse_smtlib(
                         "invalid reset command, ')' expected".into(),
                     ));
                 }
-                // cmd_context::reset forgets the declarations, the named terms and the assertions,
-                // and deletes the manager; the next command makes a new one, with its solver.
-                parser.sorts = get_builtin_sorts();
-                parser.funcs.clear();
-                parser.named.clear();
-                assertions.clear();
-                has_logic = false;
-                is_initialized = false;
+                // cmd_context::reset forgets the declarations, the named terms, the assertions and
+                // the logic, and deletes the manager; the next command makes a new one, with its
+                // solver.
+                self.sorts = get_builtin_sorts();
+                self.funcs.clear();
+                self.named.clear();
+                *state = ScriptState::default();
                 m.limit.restart();
                 *m = AstManager::new(m.limit.clone());
                 on_command(m, Command::Reset)?;
             }
-            // cmd_context::set_logic. The solver is UFNIA's whatever the logic.
+            // cmd_context::set_logic.
             "set-logic" => {
                 if list.len() > 2 {
                     return Err(SmtError::Parse(
                         "invalid command, too many arguments".into(),
                     ));
                 }
-                let logic = parser.get_identifier(list.get(1).copied()).ok_or_else(|| {
+                let logic = self.get_identifier(list.get(1).copied()).ok_or_else(|| {
                     SmtError::Parse("invalid command argument, symbol expected".into())
                 })?;
-                if has_logic {
+                if state.logic.is_some() {
                     return Err(SmtError::Parse("the logic has already been set".into()));
                 }
-                if is_initialized {
+                if state.is_initialized {
                     return Err(SmtError::Parse(
                         "logic must be set before initialization".into(),
                     ));
                 }
-                has_logic = is_supported_logic(logic);
+                if is_supported_logic(logic) {
+                    state.logic = Some(logic);
+                }
             }
             // set_option_cmd's check_not_initialized, in Z3 4.8.9.
             "set-option"
-                if is_initialized
+                if state.is_initialized
                     && [
                         ":produce-proofs",
                         ":produce-unsat-cores",
@@ -1148,7 +1318,7 @@ pub fn parse_smtlib(
                         ":global-decls",
                         ":global-declarations",
                     ]
-                    .contains(&parser.get_keyword(list.get(1).copied()).unwrap_or("")) =>
+                    .contains(&self.get_keyword(list.get(1).copied()).unwrap_or("")) =>
             {
                 return Err(SmtError::Parse(
                     "option value cannot be modified after initialization".into(),
@@ -1170,20 +1340,14 @@ pub fn parse_smtlib(
                     "check-sat with assumptions is not supported".into(),
                 ));
             }
-            "check-sat" => {
-                has_check_sat = true;
-                break;
-            }
+            "check-sat" => return Ok(Flow::CheckSat),
             "exit" if list.len() > 1 => {
                 return Err(SmtError::Parse(
                     "invalid command, too many arguments".into(),
                 ));
             }
             // Z3 reads no further.
-            "exit" => {
-                is_exited = true;
-                break;
-            }
+            "exit" => return Ok(Flow::Exit),
             "push" | "pop" | "define-fun" | "define-sort" | "reset-assertions"
             | "check-sat-assuming" | "check-sat-using" => {
                 return Err(SmtError::Unsupported(format!(
@@ -1192,17 +1356,25 @@ pub fn parse_smtlib(
             }
             _ => {}
         }
+        Ok(Flow::Next)
     }
-    if let Some(error) = token_error.or(read_error)
-        && !has_check_sat
-        && !is_exited
-    {
-        return Err(error);
+}
+
+// check_logic for a logic without reals: whether the term has a subterm of sort Real, which a
+// cast to or from a real is too.
+fn has_reals(m: &AstManager, term: Expr) -> bool {
+    let mut visited = HashSet::new();
+    let mut todo = vec![term];
+    while let Some(current) = todo.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+        if m.sorts[current as usize] == SORT_REAL {
+            return true;
+        }
+        todo.extend(m.get_arg_slice(current).iter().copied());
     }
-    Ok(SmtProblem {
-        assertions,
-        has_check_sat,
-    })
+    false
 }
 
 #[cfg(test)]
@@ -1217,7 +1389,12 @@ mod tests {
     fn parse(text: &str) -> Result<usize, SmtError> {
         let limits = Limits::new(f64::INFINITY, None, None);
         let mut manager = AstManager::new(ResourceLimit::new(&limits));
-        parse_smtlib(text, &mut manager, |_, _| Ok(())).map(|problem| problem.assertions.len())
+        // The first error the script reports, which skips its command.
+        let problem = parse_smtlib(text, &mut manager, |_, _| Ok(()))?;
+        match problem.errors.first() {
+            Some(error) => Err(error.clone()),
+            None => Ok(problem.assertions.len()),
+        }
     }
 
     fn get_nested_lets(count: usize) -> String {

@@ -227,11 +227,21 @@ fn decides_a_problem_that_the_preprocessing_reduces_to_false_or_to_nothing() {
     assert_eq!(decide_assertion("(= x x)"), Ok(Verdict::Sat));
 }
 
+// Z3 5.3.3 reports the ill-sorted application and skips its assertion: "(error "line 2 column 15:
+// unknown constant p (Bool) declared: (declare-fun p (Int) Bool) ")", then sat. With x and (not x)
+// asserted after it, the error is followed by unsat, which tlapm counts as proved.
 #[test]
-fn rejects_an_ill_sorted_application() {
+fn skips_an_ill_sorted_assertion_as_z3_does() {
     assert_eq!(
         decide("(declare-fun p (Int) Bool)\n(assert (p true))\n(check-sat)\n"),
-        Err(DecideError::Prover("ill-sorted application of p".into()))
+        Ok(Verdict::Sat)
+    );
+    assert_eq!(
+        decide(
+            "(declare-fun p (Int) Bool)(declare-const x Bool)\n(assert (p true))\n(assert x)\n\
+             (assert (not x))\n(check-sat)\n"
+        ),
+        Ok(Verdict::Unsat)
     );
 }
 
@@ -580,8 +590,9 @@ const RESETS: [(&str, &str); 20] = [
     ),
 ];
 
-// The port answers what Z3 answers to the first check-sat. Where Z3 prints an error before it,
-// which tlapm counts as a failure, the port fails with DecideError::Prover. Push, pop,
+// The port answers what tlapm makes of Z3's output (backend/prep.ml): proved, unsat, when a line
+// starts with unsat, and otherwise Z3's first answer. Z3 reports an error, skips the command and
+// reads on, so an error before the answer leaves the answer standing. Push, pop,
 // reset-assertions, check-sat-assuming and check-sat-using are outside the subset the port supports.
 fn assert_answers_as_z3(scripts: &[(&str, &str)]) {
     for (script, z3) in scripts {
@@ -604,20 +615,18 @@ fn assert_answers_as_z3(scripts: &[(&str, &str)]) {
             );
             continue;
         }
-        let answer = z3
-            .lines()
-            .find(|line| line.starts_with("(error") || ["sat", "unsat", "unknown"].contains(line));
-        match answer {
-            Some(line) if line.starts_with("(error") => assert!(
-                matches!(decision, Err(DecideError::Prover(_))),
-                "{script}: {decision:?}"
-            ),
-            answer => assert_eq!(
-                decision.map(|decision| decision.verdict.name()),
-                Ok(answer.unwrap_or("unknown")),
-                "{script}"
-            ),
-        }
+        let answer = if z3.lines().any(|line| line.starts_with("unsat")) {
+            "unsat"
+        } else {
+            z3.lines()
+                .find(|line| ["sat", "unknown"].contains(line))
+                .unwrap_or("unknown")
+        };
+        assert_eq!(
+            decision.map(|decision| decision.verdict.name()),
+            Ok(answer),
+            "{script}"
+        );
     }
 }
 
@@ -949,6 +958,93 @@ const NAMED_TERMS: [(&str, &str); 21] = [
 #[test]
 fn expands_a_reference_to_a_named_term_as_z3_does() {
     assert_answers_as_z3(&NAMED_TERMS);
+}
+
+/// Declarations, names and a logic's sorts that Z3 refuses, skipping the command, with what
+/// Z3 5.3.3 prints, run as above: an error followed by unsat counts as proved for tlapm.
+const DECLARATION_ERRORS: [(&str, &str); 9] = [
+    (
+        "(declare-const x Bool)(declare-const x Bool)(assert x)(assert (not x))(check-sat)",
+        "(error \"line 1 column 44: invalid declaration, constant 'x' (with the given signature) \
+         already declared\")\nunsat",
+    ),
+    (
+        "(declare-sort U 0)(declare-sort U 0)(declare-const u U)(assert (not (= u u)))(check-sat)",
+        "(error \"line 1 column 33: invalid sort declaration, sort already declared/defined\")\n\
+         unsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :named a))(assert (! (not x) :named a))(check-sat)",
+        "(error \"line 1 column 73: named expression already defined\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :named a))(declare-const a Bool)(assert (not a))\
+         (check-sat)",
+        "(error \"line 1 column 67: invalid declaration, named expression already defined with \
+         this name a\")\nunsat",
+    ),
+    (
+        "(declare-fun f (Int) Int)(declare-fun f (Bool) Int)(assert (= (f 1) 2))\
+         (assert (= (f true) 3))(assert (not (= (f 1) 2)))(check-sat)",
+        "unsat",
+    ),
+    (
+        "(declare-const x Bool)(declare-const x Int)(assert x)(assert (not x))(check-sat)",
+        "(error \"line 1 column 52: ambiguous constant reference, more than one constant with the \
+         same sort, use a qualified expression (as <symbol> <sort>) to disambiguate x\")\n\
+         (error \"line 1 column 67: ambiguous constant reference, more than one constant with the \
+         same sort, use a qualified expression (as <symbol> <sort>) to disambiguate x\")\nsat",
+    ),
+    (
+        "(set-logic UFNIA)(declare-const x Real)(assert (> x 0.5))(assert false)(check-sat)",
+        "(error \"line 1 column 39: logic does not support reals\")\n\
+         (error \"line 1 column 51: unknown constant x\")\nunsat",
+    ),
+    (
+        "(set-logic UFNIA)(declare-const x Int)(assert (> (to_real x) 0.5))(assert (< x 0))\
+         (assert (> x 0))(check-sat)",
+        "(error \"line 1 column 66: logic does not support reals\")\nunsat",
+    ),
+    (
+        "(set-logic UFNIA)(declare-const x Int)(assert (> (/ x 2) 0))(check-sat)",
+        "(error \"line 1 column 60: logic does not support reals\")\nsat",
+    ),
+];
+
+// cmd_context::insert and check_logic: the refused command is skipped, and the check-sat after it
+// answers.
+#[test]
+fn skips_what_z3_refuses_to_declare() {
+    assert_answers_as_z3(&DECLARATION_ERRORS);
+}
+
+// tlapm reads every answer: a later unsat proves the obligation (Z3 5.3.3 prints sat, then unsat),
+// so the port, which answers the first check-sat, declines a later one after an answer that is not
+// unsat, and answers unsat at once. A logic other than UFNIA, whose solver the port does not run,
+// is declined too.
+#[test]
+fn answers_the_first_check_sat_or_declines() {
+    let decide_text = |text: &str| {
+        decide_with(text, None).map(|decision| {
+            let text = get_decision_text(&decision);
+            text.split(" steps=")
+                .next()
+                .map(String::from)
+                .unwrap_or(text)
+        })
+    };
+    assert_eq!(
+        decide_text("(declare-const x Bool)(assert (not x))(check-sat)(assert x)(check-sat)"),
+        Ok("unknown stop=unsupported".into())
+    );
+    assert_eq!(
+        decide_text("(assert false)(check-sat)(assert true)(check-sat)"),
+        Ok("unsat instances=0".into())
+    );
+    assert_eq!(
+        decide_text("(set-logic QF_UF)(declare-const p Bool)(assert p)(assert (not p))(check-sat)"),
+        Ok("unknown stop=unsupported".into())
+    );
 }
 
 // cmd_context::reset deletes the manager, and the next command makes a new one with its solver and
