@@ -1,0 +1,5 @@
+{
+ "root": "M",
+ "version": "master",
+ "test": "reports the operator argument \"(F)\" that doesn't fit as SANY does"
+}

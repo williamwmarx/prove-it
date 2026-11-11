@@ -1,0 +1,5 @@
+{
+ "root": "Twice",
+ "version": "1.7.4",
+ "test": "reports a level error that two checks find with the same text as TLC 1.7.4's SANY does"
+}

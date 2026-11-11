@@ -1,0 +1,5 @@
+{
+ "root": "Twice",
+ "version": "1.7.4",
+ "test": "warns of a theorem named as an earlier one of the module"
+}

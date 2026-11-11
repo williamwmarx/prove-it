@@ -800,6 +800,14 @@ impl ModuleGenerator<'_> {
                 start: head_span.start + 1,
                 end: head_span.end,
             };
+            // Since 2014, SANY's generator names no step whose number is <*> or <+>.
+            let is_implicitly_numbered = file.tokens.get(step_span.start).is_some_and(|token| {
+                token.text.starts_with("<*>") || token.text.starts_with("<+>")
+            });
+            if is_implicitly_numbered && step.name.is_some() {
+                let location = get_token_location(&file, step_span.start);
+                self.add_error(&location, "<*> and <+> cannot be used for a named step.");
+            }
             let body = &step.body;
             if step.name.is_some() {
                 self.push_label_scope();
