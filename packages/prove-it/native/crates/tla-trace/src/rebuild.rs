@@ -447,6 +447,8 @@ impl<'ir> Rebuilder<'ir> {
                 .collect()
         };
         let mut steps: Vec<Option<u32>> = vec![None];
+        // Whether the walk of the step before drew from the generator.
+        let mut is_drawn = false;
         for (position, pair) in states.windows(2).enumerate() {
             // TLC recovers a state, and so fingerprints it, before it takes its step.
             settle_recovered(evaluator, &self.key, &rebuilt[position])?;
@@ -462,12 +464,17 @@ impl<'ir> Rebuilder<'ir> {
             // TLC finds the successor of an initial state it holds by its worker's generator as
             // the search left it, still seeded for that state (`TLCTrace.printTrace`,
             // `Tool.getState`, `TLCStateRandom.initialize`): where the search drew, the walk may
-            // find no such successor, and TLC fails.
-            evaluator.random = if is_initial_held {
-                violation_random.map(JavaRandom::from_state)
-            } else {
-                seeded(pair[0])?
+            // find no such successor, and TLC fails. So it finds a violating state after others,
+            // unless the walk that recovered the state before it drew, which seeds the generator
+            // for the state it walks from.
+            let is_last_held = is_first && is_held && position + 2 == states.len() && !is_drawn;
+            evaluator.random = match violation_random {
+                Some(random) if is_initial_held || is_last_held => {
+                    Some(JavaRandom::from_state(random))
+                }
+                _ => seeded(pair[0])?,
             };
+            let random = evaluator.random.as_ref().map(JavaRandom::state);
             let candidates = match actions.get(position).copied().flatten() {
                 Some(index) if !is_printing => match ir.model.actions.get(index as usize) {
                     Some(action) => vec![(action.expression, action.scope, Some(index))],
@@ -493,11 +500,12 @@ impl<'ir> Rebuilder<'ir> {
                     break;
                 }
             }
+            is_drawn = evaluator.random.as_ref().map(JavaRandom::state) != random;
             let Some(state) = found else {
-                if is_initial_held && is_drawing && violation_random.is_some() {
+                if (is_initial_held || is_last_held) && is_drawing && violation_random.is_some() {
                     // TLC prints the initial state it holds, and fails to print the successor it
-                    // didn't find, having checked nothing of it.
-                    if self.is_lost_successor_kept && !is_effectful(ir) {
+                    // didn't find, having checked nothing of it. After another state it stops.
+                    if is_initial_held && self.is_lost_successor_kept && !is_effectful(ir) {
                         evaluator.random = None;
                         evaluator.printed.clear();
                         return Ok(Some(Pass {
