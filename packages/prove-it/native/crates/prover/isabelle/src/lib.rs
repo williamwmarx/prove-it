@@ -5,6 +5,7 @@
 // Tactics, sequences and conversions are closures over closures, as in Isabelle.
 #![allow(clippy::type_complexity)]
 
+mod decide;
 pub mod error;
 pub mod isar;
 pub mod provers;
@@ -12,11 +13,4 @@ pub mod pure;
 pub mod tla;
 pub mod tools;
 
-use prove_decide::{DecideError, Decision, Limits};
-
-/// Declines every input until the port lands, so that the TypeScript backend decides it.
-pub fn decide(_text: &str, _limits: &Limits) -> Result<Decision, DecideError> {
-    Err(DecideError::Declined(
-        "Isabelle isn't ported to Rust yet".into(),
-    ))
-}
+pub use decide::decide;
