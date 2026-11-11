@@ -204,7 +204,8 @@ export type CheckProgress =
   | {
       kind: "liveness-started";
       branches: number;
-      // Whether TLC checks the complete state graph, and how many states of it each branch has.
+      // Whether TLC checks the complete state graph, and how many states its behavior graphs have,
+      // summed over the branches.
       isComplete: boolean;
       states: number;
       statistics: SearchStatistics;
@@ -2057,7 +2058,7 @@ const searchStates = (
           kind: "liveness-started",
           branches: liveness.branches,
           isComplete: true,
-          states: result.distinctStates,
+          states: liveness.branches * result.distinctStates,
           statistics: createResult("success"),
         });
         options.onProgress?.({ kind: "liveness-finished" });
@@ -2541,7 +2542,7 @@ const searchStates = (
       kind: "liveness-started",
       branches: liveness.branches,
       isComplete: false,
-      states: expanded,
+      states: liveness.getSize(),
       statistics: createResult("success"),
     });
     const lasso = liveness.findViolation();
@@ -2568,7 +2569,7 @@ const searchStates = (
         kind: "liveness-started",
         branches: liveness.branches,
         isComplete: true,
-        states: runtime.distinctStates,
+        states: liveness.branches * runtime.distinctStates,
         statistics: createResult("success"),
       });
     }
@@ -2615,7 +2616,7 @@ const searchStates = (
       kind: "liveness-started",
       branches: liveness.branches,
       isComplete: true,
-      states: runtime.distinctStates,
+      states: liveness.branches * runtime.distinctStates,
       statistics: createResult("success"),
     });
   }
