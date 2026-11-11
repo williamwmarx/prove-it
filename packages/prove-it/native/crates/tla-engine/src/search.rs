@@ -669,8 +669,9 @@ struct Graph {
     edges: Vec<u32>,
     labels: Option<Vec<u32>>,
     /// Each step's bits of the action atoms whose pieces of Next the walk that took it passed
-    /// through, kept only where an atom is made of them.
+    /// through, kept only where an atom is made of them: `piece_width` bytes a step.
     pieces: Option<Vec<u8>>,
+    piece_width: usize,
     initial_counts: Vec<u64>,
     /// Under SYMMETRY or a VIEW, the state each step reached, `width` ids each, which the liveness
     /// checker checks rather than the state stored for it.
@@ -1085,7 +1086,7 @@ struct Search<'r, T, E = Dense> {
     // that took it was in.
     pending: Vec<Id>,
     pending_fingerprint: Option<u64>,
-    pending_pieces: u8,
+    pending_pieces: u64,
     // For each _POSSIBLE predicate, how many states or steps it has held of, or -1 before TLC has
     // evaluated it.
     possible: Vec<i64>,
@@ -1642,7 +1643,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                 labels.push(self.action);
             }
             if let Some(pieces) = &mut graph.pieces {
-                pieces.push(machine.piece_bits);
+                pieces.extend_from_slice(&machine.piece_bits.to_le_bytes()[..graph.piece_width]);
             }
             if let Some(reals) = &mut graph.reals {
                 reals.extend_from_slice(&self.successor);
@@ -2124,7 +2125,8 @@ struct Shared<'s> {
 #[derive(Clone, Copy)]
 struct Recording {
     is_labelled: bool,
-    is_pieced: bool,
+    // The bytes of pieces' bits a step keeps, none where it keeps none.
+    piece_width: usize,
     is_real: bool,
 }
 
@@ -2159,7 +2161,8 @@ fn expand_claimed(
     search.graph = shared.recording.map(|recording| Graph {
         edge_offsets: vec![0],
         labels: recording.is_labelled.then(Vec::new),
-        pieces: recording.is_pieced.then(Vec::new),
+        pieces: (recording.piece_width > 0).then(Vec::new),
+        piece_width: recording.piece_width,
         reals: recording.is_real.then(Vec::new),
         ..Graph::default()
     });
@@ -2265,7 +2268,7 @@ impl Search<'_, States> {
             actions,
             recording: self.graph.as_ref().map(|graph| Recording {
                 is_labelled: graph.labels.is_some(),
-                is_pieced: graph.pieces.is_some(),
+                piece_width: graph.pieces.as_ref().map_or(0, |_| graph.piece_width),
                 is_real: graph.reals.is_some(),
             }),
         };
@@ -2563,7 +2566,9 @@ impl Search<'_, States> {
                         labels.extend_from_slice(&labels_of[steps.clone()]);
                     }
                     if let (Some(pieces), Some(pieces_of)) = (&mut graph.pieces, &steps_of.pieces) {
-                        pieces.extend_from_slice(&pieces_of[steps.clone()]);
+                        let width = graph.piece_width;
+                        pieces
+                            .extend_from_slice(&pieces_of[steps.start * width..steps.end * width]);
                     }
                     if let (Some(reals), Some(reals_of)) = (&mut graph.reals, &steps_of.reals) {
                         import(
@@ -3151,12 +3156,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             .map(|_| Vec::new()),
         // Under SYMMETRY or a VIEW the liveness checker reads the real successors, which the
         // pieces' bits don't follow.
-        pieces: context
-            .atoms
-            .iter()
-            .any(|atom| matches!(atom, Atom::Action { piece: Some(_), .. }))
+        pieces: (context.piece_width > 0)
             .then(Vec::new)
             .filter(|_| search.states.key_width.is_none()),
+        piece_width: context.piece_width,
         reals: search.states.key_width.map(|_| Vec::new()),
         ..Graph::default()
     });
@@ -3264,7 +3267,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 is_enabled_exact,
                 is_next_taken,
                 partial: graph.partial,
-                pieces: graph.pieces.as_ref().map(|pieces| &pieces[..edge_count]),
+                pieces: graph
+                    .pieces
+                    .as_ref()
+                    .map(|pieces| (&pieces[..edge_count * graph.piece_width], graph.piece_width)),
                 levels: levels.as_deref(),
             },
         };
@@ -3323,7 +3329,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         if context.atoms.iter().any(|atom| {
             matches!(
                 atom,
-                Atom::Action { is_next: true, .. } | Atom::Action { piece: Some(_), .. }
+                Atom::Action { is_next: true, .. }
+                    | Atom::Action { split: Some(_), .. }
+                    | Atom::Action { piece: Some(_), .. }
             )
         }) {
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());

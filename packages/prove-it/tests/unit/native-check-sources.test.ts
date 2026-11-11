@@ -102,6 +102,7 @@ const readKey = (directory: string, args: string[], key: string) => {
     const path = kind === "class" ? join(directory, `${name}.class`) : resolve(directory, name);
     return existsSync(path) ? new Uint8Array(readFileSync(path)) : undefined;
   }
+  if (kind !== "file") return undefined;
   const [origin, ...moduleName] = rest;
   const classPathIndex = args.indexOf("-cp");
   return createFileDescriber(

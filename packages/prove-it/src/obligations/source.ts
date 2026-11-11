@@ -82,6 +82,9 @@ const BUILTINS: Record<string, Builtin> = {
   STRING: "STRING",
 };
 
+// A name's builtin, where it is one: a TLA+ name such as toString is not, whatever objects inherit.
+const getBuiltin = (name: string) => (Object.hasOwn(BUILTINS, name) ? BUILTINS[name] : undefined);
+
 const getCanonicalName = (name: string) => lookupOperator(name).name;
 
 const STEP_PATTERN = /^<(\d+|\*|\+)>([A-Za-z0-9_]*)\.*$/;
@@ -163,7 +166,7 @@ export const createSource = (
 
   const convertOperator = (name: string, location: Locus | undefined): Expr => {
     const canonical = getCanonicalName(name);
-    const builtin = BUILTINS[canonical];
+    const builtin = getBuiltin(canonical);
     return at(builtin ? { kind: "Internal", builtin } : { kind: "Opaque", name: canonical }, {
       location,
     });
@@ -180,7 +183,7 @@ export const createSource = (
       const operator = at({ kind: "Opaque", name }, { location });
       return at({ kind: "Bang", expression: operator, selectors: [] }, { location });
     }
-    const builtin = BUILTINS[name];
+    const builtin = getBuiltin(name);
     if (builtin && args.length === 0) return at({ kind: "Internal", builtin }, { location });
     const names = name.split("!");
     if (names.length === 1) {

@@ -75,7 +75,8 @@ const getProverMethod = (
   rlimit: number | undefined,
   tactic: string | undefined,
 ): Method => {
-  const known = PROVERS[name];
+  // A prover name such as toString is not one, whatever objects inherit.
+  const known = Object.hasOwn(PROVERS, name) ? PROVERS[name] : undefined;
   if (!known) throw new TlaProverError(`Unknown prover: ${name}`);
   if (rlimit !== undefined && !known.isBudgeted)
     throw new TlaProverError(

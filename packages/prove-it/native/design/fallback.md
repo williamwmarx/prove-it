@@ -166,7 +166,9 @@ Besides the 15 declines, it does the following in the library:
 
 Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The binary writes
 `-dumpTrace tlc` and `-dumpTrace json`, and declines the other formats and the cases cli.md's
-"-dumpTrace" lists; the interpreter writes none.
+"-dumpTrace" lists; the interpreter writes none. It prints `-coverage`'s report and declines the
+cases cli.md's "-coverage" lists: its "Not native" list, the cut, `-continue` carried past a
+violation, and estimates without `-fp` that differ by polynomial.
 `src/pcal` only validates for SANY, `src/obligations` imports nothing from the interpreter, and
 `src/prover` imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
 `getParentPort`). Those move to the prover. `tlc/version.ts`, `tlc/jar-data.ts` and
@@ -304,6 +306,23 @@ Outside the counts, SANY's report differs on an INSTANCE of a module with semant
 `I == INSTANCE Other` with `Other.tla` holding `Op(n) == n - 1` and no EXTENDS, TLC prints
 `*** Errors: 2` for module Spec, while the binary prints `*** Errors: 3`, adding `Substitution error,
 probably due to error in module being instantiated.` at the INSTANCE (exit 150 in both).
+
+The binary declines a module file it finds but can't read, such as a directory or text not in
+UTF-8 (`a module's file the front end can't read`), where SANY prints `***Internal error: Unable to
+create NamedInputStream in toIStream method`. Where the TypeScript check finds the files, TLC's
+`SimpleFilenameToStream` still differs from it on:
+
+- `-config _CBORTrace.tla`, which TLC finds among its jar's standard modules and the CLI reports
+  missing (the other standard modules decline);
+- `-config` naming a resource at the root of TLC's class path, such as `pcal/PlusCal.tla`, after
+  which TLC prints a `FileNotFoundException`'s stack trace;
+- a `.class` file that isn't one (empty, truncated, `/dev/null` or a socket), which TLC rejects
+  with `Found a Java class for module M, but unable to read it`, and a user's `Naturals.class` or
+  `TLC.class`, which TLC tries to load;
+- under `PROVE_IT_ENGINE=0` alone: the configuration of a spec on the library path, read beside
+  the spec rather than where TLC's resolver finds it first; a relative `-config` with an absolute
+  spec, which TLC resolves against the spec's directory; a missing configuration named by its
+  path rather than its name; and options TLC doesn't know, which it rejects.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
@@ -687,3 +706,10 @@ check. The tests of the interpreter's own results run `checkParsed`, the TypeScr
 - A WebAssembly stack overflow becomes an error unless S2 lifts it first.
 - `-dump`, `-continue` and periodic configs are checked natively. TLC 1.7.4's output is retired.
 - The library prints what the binary prints. Today they differ only where the library hands over.
+
+## -coverage in the engine
+
+The engine's search doesn't count TLC's cost model; the replay pass in `tla-trace` does
+(cli.md, "-coverage"). Counting in the engine was built (branch `engine-coverage`) and not adopted:
+TLC with coverage runs 20 to 35 times as long as the engine's search on record-heavy specs, so the
+times of TLC's report part way through can't be bounded from the engine's.

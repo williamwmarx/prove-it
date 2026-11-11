@@ -1,6 +1,7 @@
 //! Prove It's prover: the backend each of tlapm's prover names selects, as `src/prover/deciders.ts`
 //! maps them, deciding the text tlapm would send that prover.
 
+pub mod driver;
 pub mod tlapm_cache;
 
 pub use prove_decide::{Cancel, DecideError, Decision, Limits, Statistic, Verdict};

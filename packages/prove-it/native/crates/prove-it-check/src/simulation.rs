@@ -23,7 +23,7 @@ use crate::dump_trace::{TRACE_FILE_DECLINE, TraceDumps};
 use crate::failure::print_assumption_failure;
 use crate::messages::{self as code, Level, Printer};
 use crate::stack::alongside;
-use crate::trace::{TraceChecks, format_texts, format_variables, rebuild_trace};
+use crate::trace::{TraceChecks, format_texts, format_variables, rebuild_simulated};
 
 const ERROR_STATE: u32 = 2120;
 const MODE_SIMULATION: u32 = 2188;
@@ -408,7 +408,7 @@ fn get_state_texts(
     {
         return Err("a record of several fields, which TLC may or may not have sorted".into());
     }
-    let trace = rebuild_trace(
+    let trace = rebuild_simulated(
         ir,
         violation,
         TraceChecks { dumps, run: None },

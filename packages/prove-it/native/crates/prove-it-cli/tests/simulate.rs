@@ -438,3 +438,61 @@ fn declines_a_trace_tlc_fails_to_compare() {
             .contains("a failure evaluating the model in a simulation")
     );
 }
+
+// As TLC ran them at d8fb231: TLC caches TLCGet("config") as it builds its simulator, before it
+// reads the aril, which the summary then reports.
+#[test]
+fn reads_tlcs_cached_config_aril() {
+    let spec = "---- MODULE Aril ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nInv == TLCGet(\"config\").aril = \"0\"\n====\n";
+    let (code, text) = simulate(
+        "simulate-aril",
+        "Aril",
+        (spec, INVARIANT_CONFIG),
+        &[
+            "-seed",
+            "4",
+            "-aril",
+            "2",
+            "-simulate",
+            "num=1",
+            "-depth",
+            "5",
+        ],
+    );
+    assert_eq!(code, Some(0), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Progress: 6 states checked, 1 traces generated (trace length: mean=5, var(x)=0, sd=0)
+The number of states generated: 6
+Simulation using seed 4 and aril 2"
+    );
+}
+
+// TLC's simulation prints a deadlocked initial state through the ALIAS, as it does every state
+// of its trace (`SimulationWorker`), where the model checker prints it as it is.
+#[test]
+fn prints_a_deadlocked_initial_state_through_the_alias() {
+    let spec = "---- MODULE Dead ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x > 5 /\\ x' = x\nView == [shown |-> x + 10]\n====\n";
+    let (code, text) = simulate(
+        "simulate-alias",
+        "Dead",
+        (spec, "INIT Init\nNEXT Next\nALIAS View\n"),
+        &["-seed", "4", "-simulate", "num=1"],
+    );
+    assert_eq!(code, Some(11), "{text}");
+    assert_eq!(
+        text,
+        "Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Init line 4, col 9 to line 4, col 13 of module Dead>
+shown = 10
+
+The number of states generated: 1
+Simulation using seed 4 and aril 0
+Progress: 1 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
+    );
+}

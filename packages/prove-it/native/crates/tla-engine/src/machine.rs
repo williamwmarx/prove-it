@@ -165,7 +165,7 @@ pub struct Machine<'p> {
     /// does. Then the shapes the walks joined don't cover TLC's predicate evaluation.
     pub is_membership_unsafe: bool,
     /// The bits of the action atoms whose pieces of Next the walk is in (`pieces.rs`).
-    pub(crate) piece_bits: u8,
+    pub(crate) piece_bits: u64,
     // The next states ENABLED runs its actions into, kept for the next test.
     pub(crate) spare_states: Vec<Vec<Id>>,
     /// What was printed since the search last handed it on (`tlc.output`).

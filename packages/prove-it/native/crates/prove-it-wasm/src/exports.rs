@@ -192,6 +192,20 @@ pub unsafe extern "C" fn prove_it_decide(pointer: *mut u8, length: usize) -> *mu
     }
 }
 
+/// `prove(file, source, known)`, as prove-it-host's `prove` describes it.
+///
+/// # Safety
+///
+/// As for `prove_it_check`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prove_it_prove(pointer: *mut u8, length: usize) -> *mut u8 {
+    unsafe {
+        call(pointer, length, |arguments| {
+            prove_it_host::prove::prove(&get::<3>(arguments))
+        })
+    }
+}
+
 /// `storePerform(name, args)`.
 ///
 /// # Safety

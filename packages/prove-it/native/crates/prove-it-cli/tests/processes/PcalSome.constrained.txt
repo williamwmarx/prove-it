@@ -1,0 +1,70 @@
+Implied-temporal checking--satisfiability problem has 2 branches.
+Computing initial states...
+Error: Temporal property Never was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ c = <<0, 0, 0, 0>>
+/\ pc = <<"a", "a", "a", "a">>
+
+State 2: <a(3) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<0, 0, 1, 0>>
+/\ pc = <<"a", "a", "a", "a">>
+
+State 3: <a(1) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<1, 0, 1, 0>>
+/\ pc = <<"a", "a", "a", "a">>
+
+State 4: <a(2) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<1, 1, 1, 0>>
+/\ pc = <<"a", "a", "a", "a">>
+
+State 5: <a(1) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 1, 1, 0>>
+/\ pc = <<"a", "a", "a", "a">>
+
+State 6: <a(1) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 1, 1, 0>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+State 7: <a(2) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 2, 1, 0>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+State 8: <a(3) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 2, 2, 0>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+State 9: <a(2) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 0, 2, 0>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+State 10: <a(4) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 0, 2, 1>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+State 11: <a(3) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 0, 0, 1>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+State 12: <a(4) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 0, 0, 2>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+State 13: <a(2) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 1, 0, 2>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+State 14: <a(3) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 1, 1, 2>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+State 15: <a(2) line 14, col 12 to line 19, col 31 of module PcalSome>
+/\ c = <<2, 2, 1, 2>>
+/\ pc = <<"Done", "a", "a", "a">>
+
+Back to state 7: <a(4) line 14, col 12 to line 19, col 31 of module PcalSome>
+
+406 states generated, 108 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 10.
