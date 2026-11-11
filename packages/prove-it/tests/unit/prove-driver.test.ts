@@ -395,6 +395,15 @@ describe("the Rust driver", () => {
     });
   });
 
+  // TLA+ names that objects inherit, which neither driver takes for a builtin or a prover.
+  it.each([
+    ["an identifier", "CONSTANT toString\nTHEOREM toString = toString BY SMT"],
+    ["a definition", "constructor == TRUE\nTHEOREM constructor BY Zenon DEF constructor"],
+    ["a prover", 'Mine == TRUE (*{ by (prover:"toString") }*)\nTHEOREM 1 = 1 BY Mine'],
+  ])("reads %s named like an object's property as tlapm does", async (_name, body) => {
+    await expectSame({ options: { source: getModule(body, "TLAPS") }, decide: byProver({}) });
+  });
+
   it("proves with workers as the TypeScript driver does", async () => {
     const source = loadFixture("HourClock") ?? "";
     const setting = process.env.PROVE_IT_PROVER_DRIVER;
