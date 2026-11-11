@@ -1832,6 +1832,12 @@ impl<'a> Lowering<'a> {
                 .map(crate::eval::Evaluator::deferred_conjuncts)
                 .unwrap_or_default(),
         ) {
+            // TLC computes a substitute with effects again where it checks it.
+            let definition = self
+                .repeated_reads
+                .get(name.as_str())
+                .cloned()
+                .unwrap_or(definition);
             predicates.push(tla_ir::StartupPredicate {
                 form,
                 kind: self.get_text(kind),
