@@ -4,6 +4,8 @@
 //! that make strings TLC orders by when it made them, and one whose invariant fails a few steps
 //! in, whose trace the rebuild reads the ring for: it takes the element the search chose, so the
 //! trace comes in a moment rather than as long as the evaluator's search of every function.
+//! Another's trace reads a CHOOSE whose predicate enumerates more permutations than the trace
+//! evaluator builds, which it would decline: it takes the element the search chose there too.
 //! Each cell must print what TLC printed, byte for byte, with TLC's exit code, at -workers 1
 //! and 4.
 //!
@@ -78,7 +80,7 @@ fn parse(recorded: &str) -> Vec<Cell<'_>> {
 #[test]
 fn startup_texts() {
     let cells = parse(RECORDED);
-    assert_eq!(cells.len(), 3, "the recorded cells");
+    assert_eq!(cells.len(), 4, "the recorded cells");
     for (index, cell) in cells.iter().enumerate() {
         let directory =
             std::env::temp_dir().join(format!("prove-it-startup-{}-{index}", std::process::id()));

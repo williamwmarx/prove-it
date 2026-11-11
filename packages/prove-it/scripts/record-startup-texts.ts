@@ -87,6 +87,23 @@ const COUNTED: Behavior = {
   config: ["INVARIANT Inv"],
 };
 
+// A CHOOSE whose predicate enumerates the permutations of nine numbers, more than the trace
+// evaluator builds, beside a counter whose invariant fails at the third state: the rebuild takes
+// the element the search chose.
+const PERMUTED = [
+  "Picked == CHOOSE n \\in 1..9 : \\E p \\in Permutations(1..9) : p[1] = n /\\ p[9] = 1",
+];
+
+const PICKED: Behavior = {
+  variables: "count, picked",
+  definitions: [
+    "Init == count = 0 /\\ picked = Picked",
+    "Next == count' = count + 1 /\\ picked' = picked",
+    "Inv == count < 2",
+  ],
+  config: ["INVARIANT Inv"],
+};
+
 const getCell = (name: string, definitions: string[], prints: string[], behavior = KEPT) => ({
   name,
   spec: [
@@ -111,6 +128,7 @@ const cells: Cell[] = [
   getCell("ring", RING, ["RingOfNodes"]),
   getCell("ring between strings", [BEFORE, ...RING, AFTER], ["RingOfNodes", "Before", "After"]),
   getCell("ring violation", RING, [], COUNTED),
+  getCell("permutations violation", PERMUTED, [], PICKED),
 ];
 
 const record = (cell: Cell, workers: number) => {

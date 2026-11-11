@@ -146,4 +146,54 @@ State 3: <Next line 15, col 9 to line 15, col 42 of module M>
 
 3 states generated, 3 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 3.
+### permutations violation
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, FiniteSets, TLC
+CONSTANT Node
+VARIABLE count, picked
+Picked == CHOOSE n \in 1..9 : \E p \in Permutations(1..9) : p[1] = n /\ p[9] = 1
+Init == count = 0 /\ picked = Picked
+Next == count' = count + 1 /\ picked' = picked
+Inv == count < 2
+====
+--- config
+CONSTANT Node = {n1, n2, n3, n4, n5, n6}
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ picked = 2
+/\ count = 0
+
+State 2: <Next line 7, col 9 to line 7, col 46 of module M>
+/\ picked = 2
+/\ count = 1
+
+State 3: <Next line 7, col 9 to line 7, col 46 of module M>
+/\ picked = 2
+/\ count = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+--- workers 4 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ picked = 2
+/\ count = 0
+
+State 2: <Next line 7, col 9 to line 7, col 46 of module M>
+/\ picked = 2
+/\ count = 1
+
+State 3: <Next line 7, col 9 to line 7, col 46 of module M>
+/\ picked = 2
+/\ count = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
 ### end
