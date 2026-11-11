@@ -109,7 +109,8 @@ fn find_byte(bytes: &[u8], byte: u8, from: usize) -> Option<usize> {
         .map(|offset| from + offset)
 }
 
-fn tokenize(text: &str) -> Result<Vec<&str>, SmtError> {
+// The tokens, up to an error that ends them, if any.
+fn tokenize(text: &str) -> (Vec<&str>, Option<SmtError>) {
     let bytes = text.as_bytes();
     let mut tokens = Vec::new();
     let mut position = 0;
@@ -123,8 +124,12 @@ fn tokenize(text: &str) -> Result<Vec<&str>, SmtError> {
         } else if char == b' ' || char == b'\n' || char == b'\t' || char == b'\r' {
             position += 1;
         } else if char == b'|' {
-            let end = find_byte(bytes, b'|', position + 1)
-                .ok_or_else(|| SmtError::Parse("unterminated quoted symbol".into()))?;
+            let Some(end) = find_byte(bytes, b'|', position + 1) else {
+                return (
+                    tokens,
+                    Some(SmtError::Parse("unterminated quoted symbol".into())),
+                );
+            };
             tokens.push(&text[position + 1..end]);
             position = end + 1;
         } else if char == b'"' {
@@ -143,20 +148,29 @@ fn tokenize(text: &str) -> Result<Vec<&str>, SmtError> {
             position = end;
         }
     }
-    Ok(tokens)
+    (tokens, None)
 }
 
-// The arena of the s-expressions, and the commands.
-fn read_sexprs<'a>(tokens: &[&'a str]) -> Result<(Vec<SExpr<'a>>, Vec<SExprId>), SmtError> {
+// The arena of the s-expressions, the whole commands, and the error that ends them, if any: Z3 reads
+// a command at a time, so what follows a check-sat or an exit is never read.
+fn read_sexprs<'a>(tokens: &[&'a str]) -> (Vec<SExpr<'a>>, Vec<SExprId>, Option<SmtError>) {
     let mut nodes = Vec::new();
     let mut stack: Vec<Vec<SExprId>> = vec![Vec::new()];
     for token in tokens {
         if *token == "(" {
             stack.push(Vec::new());
         } else if *token == ")" {
-            let list = stack.pop();
-            let (Some(list), Some(top)) = (list, stack.last_mut()) else {
-                return Err(SmtError::Parse("unbalanced parentheses".into()));
+            if stack.len() == 1 {
+                let commands = stack.pop().unwrap_or_default();
+                return (
+                    nodes,
+                    commands,
+                    Some(SmtError::Parse("unbalanced parentheses".into())),
+                );
+            }
+            let list = stack.pop().unwrap_or_default();
+            let Some(top) = stack.last_mut() else {
+                unreachable!("the commands stay below a list");
             };
             top.push(nodes.len());
             nodes.push(SExpr::List(list));
@@ -165,10 +179,10 @@ fn read_sexprs<'a>(tokens: &[&'a str]) -> Result<(Vec<SExpr<'a>>, Vec<SExprId>),
             nodes.push(SExpr::Symbol(token));
         }
     }
-    match stack.pop() {
-        Some(commands) if stack.is_empty() => Ok((nodes, commands)),
-        _ => Err(SmtError::Parse("unbalanced parentheses".into())),
-    }
+    let error = (stack.len() > 1).then(|| SmtError::Parse("unbalanced parentheses".into()));
+    stack.truncate(1);
+    let commands = stack.pop().unwrap_or_default();
+    (nodes, commands, error)
 }
 
 fn is_digits(text: &str) -> bool {
@@ -894,8 +908,8 @@ pub fn parse_smtlib(
     m: &mut AstManager,
     mut on_command: impl FnMut(&mut AstManager, Command) -> Result<(), SmtError>,
 ) -> Result<SmtProblem, SmtError> {
-    let tokens = tokenize(text)?;
-    let (nodes, commands) = read_sexprs(&tokens)?;
+    let (tokens, token_error) = tokenize(text);
+    let (nodes, commands, read_error) = read_sexprs(&tokens);
     let mut parser = SmtlibParser {
         nodes: &nodes,
         sorts: get_builtin_sorts(),
@@ -908,6 +922,7 @@ pub fn parse_smtlib(
     let mut assertions = Vec::new();
     let mut has_check_sat = false;
     let mut has_logic = false;
+    let mut is_exited = false;
     for command in commands {
         let list = parser.expect_list(Some(command))?;
         let name = parser.expect_symbol(list.first().copied())?;
@@ -1033,7 +1048,10 @@ pub fn parse_smtlib(
                 ));
             }
             // Z3 reads no further.
-            "exit" => break,
+            "exit" => {
+                is_exited = true;
+                break;
+            }
             "push" | "pop" | "define-fun" | "define-sort" | "reset-assertions"
             | "check-sat-assuming" | "check-sat-using" => {
                 return Err(SmtError::Unsupported(format!(
@@ -1042,6 +1060,12 @@ pub fn parse_smtlib(
             }
             _ => {}
         }
+    }
+    if let Some(error) = token_error.or(read_error)
+        && !has_check_sat
+        && !is_exited
+    {
+        return Err(error);
     }
     Ok(SmtProblem {
         assertions,

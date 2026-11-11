@@ -606,7 +606,25 @@ fn resets_as_z3_does() {
 
 /// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
 /// 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 33] = [
+const COMMAND_ERRORS: [(&str, &str); 39] = [
+    ("(assert false)(exit)(check-sat) )", ""),
+    ("(assert false)(exit)(assert |x", ""),
+    (
+        "(assert false)(check-sat))",
+        "unsat\n(error \"line 1 column 26: invalid command, '(' expected\")",
+    ),
+    (
+        "(assert false)(check-sat)(foo |bar",
+        "unsat\n(error \"line 1 column 35: unexpected end of quoted symbol\")",
+    ),
+    (
+        "(assert false)(check-sat",
+        "(error \"line 1 column 25: invalid expression, unexpected input\")",
+    ),
+    (
+        "(assert false))(check-sat)",
+        "(error \"line 1 column 15: invalid command, '(' expected\")\nunsat",
+    ),
     (
         "(set-logic UFNIA extra)(assert false)(check-sat)",
         "(error \"line 1 column 18: invalid command, too many arguments\")\nunsat",
