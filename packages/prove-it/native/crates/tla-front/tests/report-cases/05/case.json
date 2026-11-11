@@ -1,5 +1,5 @@
 {
- "root": "M",
- "version": "master",
- "test": "reports an operator where \"x == @@(1, 2)\" needs an expression"
+  "root": "M",
+  "version": "master",
+  "test": "reports an operator where \"x == @@(1, 2)\" needs an expression"
 }

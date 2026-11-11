@@ -1,5 +1,5 @@
 {
- "root": "Empty",
- "version": "master",
- "test": "reports \"USE\" with nothing after its keyword as SANY does"
+  "root": "Empty",
+  "version": "master",
+  "test": "reports \"USE\" with nothing after its keyword as SANY does"
 }
