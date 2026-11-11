@@ -32,7 +32,6 @@ import {
   getUnexpectedException,
   TlaConfigError,
   TlaError,
-  TlaSanyFatalError,
   TlaSyntaxError,
 } from "../errors";
 import { describeRange } from "../evaluate";
@@ -843,25 +842,16 @@ const checkSpec = async (
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
+    // SANY's report accepted the spec, so a syntax error the interpreter's linking raises is not
+    // one SANY reports.
+    if (error instanceof TlaSyntaxError) {
+      return declineNatively(
+        `SANY's report of a spec linking rejects: ${error.message.split("\n")[0]}`,
+      );
+    }
     if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     return printFailure(error);
   }
-};
-
-// What SANY prints about a spec it rejects: a module it can't find or parse is a fatal error, and
-// it reports the other errors as semantic errors.
-const formatSanyErrors = (error: TlaSyntaxError, specName: string) => {
-  const isFatal = error instanceof TlaSanyFatalError;
-  if (!isFatal && !error.failure)
-    return `Semantic errors:\n\n*** Errors: 1\n\n${error.message}\n\n`;
-  const report = !isFatal
-    ? `In module ${specName}\n\nCould not parse module ${specName} from file ${specName}.tla`
-    : error.location === undefined
-      ? `Unknown location\n\n${error.message}`
-      : `In module ${error.location}\n\n${error.message}`;
-  const parseError = error.failure ? `***Parse Error***\n${error.message}\n\n` : "";
-  return `${parseError}\nFatal errors while parsing TLA+ spec in file ${specName}\n\n${report}\n*** Errors: 1\n\n${report}\n\n\n`;
 };
 
 // The specs the command line names: like TLC, a spec named without an extension is the .tla file
