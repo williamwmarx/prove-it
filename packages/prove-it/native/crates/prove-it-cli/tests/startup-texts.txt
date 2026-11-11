@@ -1,0 +1,91 @@
+### ring
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, FiniteSets, TLC
+CONSTANT Node
+VARIABLE ring
+Range(f) == {f[x] : x \in DOMAIN f}
+IsSimpleCycle(S, r) ==
+  LET F[i \in 1..Cardinality(S)] ==
+        IF i = 1 THEN << CHOOSE s \in S : TRUE >>
+        ELSE LET seq == F[i-1]
+                 head == Head(seq)
+             IN << r[head] >> \o F[i-1]
+  IN Range(F[Cardinality(S)]) = S
+RingOfNodes == CHOOSE r \in [Node -> Node] : IsSimpleCycle(Node, r)
+ASSUME PrintT(RingOfNodes)
+Init == ring = RingOfNodes
+Next == ring' = ring
+====
+--- config
+CONSTANT Node = {n1, n2, n3, n4, n5, n6}
+INIT Init
+NEXT Next
+--- workers 1 exit 0
+(n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.4E-20
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+--- workers 4 exit 0
+(n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.4E-20
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+### ring between strings
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, FiniteSets, TLC
+CONSTANT Node
+VARIABLE ring
+Before == {"b" \o "x", "a" \o "x"}
+Range(f) == {f[x] : x \in DOMAIN f}
+IsSimpleCycle(S, r) ==
+  LET F[i \in 1..Cardinality(S)] ==
+        IF i = 1 THEN << CHOOSE s \in S : TRUE >>
+        ELSE LET seq == F[i-1]
+                 head == Head(seq)
+             IN << r[head] >> \o F[i-1]
+  IN Range(F[Cardinality(S)]) = S
+RingOfNodes == CHOOSE r \in [Node -> Node] : IsSimpleCycle(Node, r)
+After == {"d" \o "x", "c" \o "x"}
+ASSUME PrintT(RingOfNodes)
+ASSUME PrintT(Before)
+ASSUME PrintT(After)
+Init == ring = RingOfNodes
+Next == ring' = ring
+====
+--- config
+CONSTANT Node = {n1, n2, n3, n4, n5, n6}
+INIT Init
+NEXT Next
+--- workers 1 exit 0
+(n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+{"bx", "ax"}
+{"dx", "cx"}
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.4E-20
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+--- workers 4 exit 0
+(n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+{"bx", "ax"}
+{"dx", "cx"}
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.4E-20
+2 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+### end

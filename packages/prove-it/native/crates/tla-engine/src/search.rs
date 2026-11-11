@@ -133,9 +133,17 @@ pub trait Reporter {
     fn initial_states(&mut self, generated: u64, distinct: u64);
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64);
     /// TLC starts to check the temporal properties of its `branches` on the graph of the first
-    /// `expanded` states, part way through the search: `counts` are the states generated, the
-    /// states found and the depth so far.
-    fn liveness_started(&mut self, _branches: u64, _expanded: u64, _counts: [u64; 3]) {}
+    /// `expanded` states, part way through the search, whose behavior graphs have `states` states
+    /// summed over the branches: `counts` are the states generated, the states found and the
+    /// depth so far.
+    fn liveness_started(
+        &mut self,
+        _branches: u64,
+        _expanded: u64,
+        _states: u64,
+        _counts: [u64; 3],
+    ) {
+    }
     /// The check part way through the search found the properties hold so far.
     fn liveness_finished(&mut self) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
@@ -623,6 +631,9 @@ struct Graph {
     edge_offsets: Vec<u32>,
     edges: Vec<u32>,
     labels: Option<Vec<u32>>,
+    /// Each step's bits of the action atoms whose pieces of Next the walk that took it passed
+    /// through, kept only where an atom is made of them.
+    pieces: Option<Vec<u8>>,
     initial_counts: Vec<u64>,
     /// Under SYMMETRY or a VIEW, the state each step reached, `width` ids each, which the liveness
     /// checker checks rather than the state stored for it.
@@ -1028,9 +1039,11 @@ struct Search<'r, T, E = Dense> {
     is_lambda_built: bool,
     // The violation the search stops at, when it knows what TLC reports for it.
     violation: Option<Found>,
-    // The successor waiting to be checked, and its fingerprint.
+    // The successor waiting to be checked, its fingerprint, and the bits of the pieces the walk
+    // that took it was in.
     pending: Vec<Id>,
     pending_fingerprint: Option<u64>,
+    pending_pieces: u8,
     // For each _POSSIBLE predicate, how many states or steps it has held of, or -1 before TLC has
     // evaluated it.
     possible: Vec<i64>,
@@ -1080,6 +1093,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
+            pending_pieces: 0,
             possible: Vec::new(),
             held: None,
             is_exit_followed: false,
@@ -1342,6 +1356,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         self.pending.clear();
         self.pending.extend_from_slice(machine.next());
         self.pending_fingerprint = Some(fingerprint);
+        self.pending_pieces = machine.piece_bits;
         Ok(())
     }
 
@@ -1353,7 +1368,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             return Ok(());
         };
         std::mem::swap(&mut machine.next, &mut self.pending);
+        std::mem::swap(&mut machine.piece_bits, &mut self.pending_pieces);
         let result = self.check_successor(machine, context, Some(fingerprint));
+        std::mem::swap(&mut machine.piece_bits, &mut self.pending_pieces);
         std::mem::swap(&mut machine.next, &mut self.pending);
         result
     }
@@ -1578,6 +1595,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             });
             if let Some(labels) = &mut graph.labels {
                 labels.push(self.action);
+            }
+            if let Some(pieces) = &mut graph.pieces {
+                pieces.push(machine.piece_bits);
             }
             if let Some(reals) = &mut graph.reals {
                 reals.extend_from_slice(&self.successor);
@@ -1998,6 +2018,7 @@ struct Shared<'s> {
 #[derive(Clone, Copy)]
 struct Recording {
     is_labelled: bool,
+    is_pieced: bool,
     is_real: bool,
 }
 
@@ -2027,6 +2048,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     search.graph = shared.recording.map(|recording| Graph {
         edge_offsets: vec![0],
         labels: recording.is_labelled.then(Vec::new),
+        pieces: recording.is_pieced.then(Vec::new),
         reals: recording.is_real.then(Vec::new),
         ..Graph::default()
     });
@@ -2117,6 +2139,7 @@ impl Search<'_, States> {
             actions,
             recording: self.graph.as_ref().map(|graph| Recording {
                 is_labelled: graph.labels.is_some(),
+                is_pieced: graph.pieces.is_some(),
                 is_real: graph.reals.is_some(),
             }),
         };
@@ -2338,6 +2361,9 @@ impl Search<'_, States> {
                         }));
                     if let (Some(labels), Some(labels_of)) = (&mut graph.labels, &steps_of.labels) {
                         labels.extend_from_slice(&labels_of[steps.clone()]);
+                    }
+                    if let (Some(pieces), Some(pieces_of)) = (&mut graph.pieces, &steps_of.pieces) {
+                        pieces.extend_from_slice(&pieces_of[steps.clone()]);
                     }
                     if let (Some(reals), Some(reals_of)) = (&mut graph.reals, &steps_of.reals) {
                         import(
@@ -2870,6 +2896,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             .as_ref()
             .filter(|_| model.is_labelled)
             .map(|_| Vec::new()),
+        // Under SYMMETRY or a VIEW the liveness checker reads the real successors, which the
+        // pieces' bits don't follow.
+        pieces: context
+            .atoms
+            .iter()
+            .any(|atom| matches!(atom, Atom::Action { piece: Some(_), .. }))
+            .then(Vec::new)
+            .filter(|_| search.states.key_width.is_none()),
         reals: search.states.key_width.map(|_| Vec::new()),
         ..Graph::default()
     });
@@ -2960,6 +2994,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: reals.labels.as_deref(),
                 is_enabled_exact,
                 is_next_taken,
+                pieces: None,
                 levels: None,
             },
             None => LiveGraph {
@@ -2972,6 +3007,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
                 is_enabled_exact,
                 is_next_taken,
+                pieces: graph.pieces.as_ref().map(|pieces| &pieces[..edge_count]),
                 levels: levels.as_deref(),
             },
         };
@@ -3027,11 +3063,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         search.set_distinct(&mut machine, 0)?;
         search.reporter.initial_states_started();
         // An action atom answered from the steps needs the shapes of what the walks assign.
-        if context
-            .atoms
-            .iter()
-            .any(|atom| matches!(atom, Atom::Action { is_next: true, .. }))
-        {
+        if context.atoms.iter().any(|atom| {
+            matches!(
+                atom,
+                Atom::Action { is_next: true, .. } | Atom::Action { piece: Some(_), .. }
+            )
+        }) {
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
         }
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
@@ -3184,7 +3221,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 periodic_size = expanded;
                 let tables =
                     graph_tables(machine, search, expanded, count, None, None).map_err(Bail)?;
-                let liveness =
+                let (liveness, size) =
                     check_liveness(model, search, &tables, None, false, &context, thread_count);
                 periodic_time += at.elapsed();
                 // Whatever the checker leaves undecided, the check of the complete graph decides,
@@ -3198,6 +3235,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 search.reporter.liveness_started(
                     branches as u64,
                     expanded as u64,
+                    size,
                     [search.generated, count as u64, search.depth.max(1)],
                 );
                 if liveness.verdict == Verdict::Holds {
@@ -3642,7 +3680,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             Ok(tables) => tables,
                             Err(reason) => return SearchOutcome::Invariant(reason.into()),
                         };
-                        let mut liveness = check_liveness(
+                        let (mut liveness, _) = check_liveness(
                             model,
                             &search,
                             &tables,
@@ -5265,7 +5303,7 @@ fn check_liveness(
     is_effectful: bool,
     context: &EngineContext,
     threads: usize,
-) -> Liveness {
+) -> (Liveness, u64) {
     let (diameter_atoms, level_atoms) = (&context.diameter_atoms, &context.level_atoms);
     let graph = search.graph.as_ref().expect("a graph");
     // Under SYMMETRY or a VIEW, TLC names the violated properties from the trace it rebuilds, of

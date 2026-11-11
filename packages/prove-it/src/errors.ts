@@ -236,14 +236,6 @@ export class TlaProverError extends TlaError {
   }
 }
 
-// Zenon gives up on a .znn file the way the OCaml Zenon raises an exception and prints no proof.
-export class TlaZenonError extends TlaError {
-  constructor(message: string, cause?: unknown) {
-    super(message, cause);
-    this.name = "TlaZenonError";
-  }
-}
-
 // The exceptions Isabelle raises: ERROR for a rejected theory or a failed proof, TERM, TYPE and THM
 // for an ill-formed term, type or theorem, and Interrupt when the time limit runs out.
 type IsabelleException = "ERROR" | "TERM" | "TYPE" | "THM" | "Interrupt";

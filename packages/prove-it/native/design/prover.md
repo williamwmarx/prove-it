@@ -533,7 +533,7 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 |---|---|---|---|
 | `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`; `nlsat/` ports `src/nlsat` and `src/math/polynomial` of z3-5.3.3, limit checks included) | MIT | the Z3 section names `native/crates/prove-smt/`; `z3-license.txt` moves with the code |
 | `prove-num` | Z3's `rational`/`mpz` semantics, written fresh on JS `bigint`'s rules | MIT (Z3's where it follows `rational.ts`) | under the Z3 section |
-| `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps the `LICENSE` beside the code, as `src/prover/zenon/LICENSE` |
+| `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps Zenon's `LICENSE` beside the code (the TypeScript Zenon, which kept it too, is deleted) |
 | `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
 | `prove-isabelle` | Isabelle2025's Pure, Isar, Provers (BSD-style, Cambridge/TUM), and Isabelle/TLA+'s theories and ML setup as tlapm ships them (BSD, tlapm's licence) | BSD-3-Clause-style | the Isabelle section, and the tlapm section for the logic data and `tla/`; `LICENSE` and `LICENSE-tlapm` move with the code |
 | `prove-ptl` | tlapm's PTL backend input; the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` ports | tlapm section |
@@ -541,8 +541,8 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 | `prove-obligations` (`format`, `marshal`, the `getHash` of `action`) | OCaml's `Format` (`stdlib/format.ml`), Marshal (`runtime/intern.c`, `extern.c`), `runtime/hash.c` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust files |
 
 The package's `"license": "MIT AND LGPL-2.1-only WITH OCaml-LGPL-linking-exception"` comes from
-the four OCaml ports alone (`tlapm/ocaml-marshal.ts`, `zenon/ocaml.ts`, `obligations/format.ts`,
-`action.ts`'s `getHash`). Their Rust ports inherit it: they are translations of the same code. So
+the OCaml ports alone (`tlapm/ocaml-marshal.ts`, `obligations/format.ts`, `action.ts`'s
+`getHash`, and `zenon/ocaml.ts` until the TypeScript Zenon was deleted). Their Rust ports inherit it: they are translations of the same code. So
 `prove-zenon` and `prove-obligations` declare `license = "MIT AND BSD-3-Clause AND
 LGPL-2.1-only WITH OCaml-LGPL-linking-exception"` (the exact SPDX list fixed when the crate lands),
 and the LGPL code stays in its own modules. The linking exception is what lets those modules be
@@ -1048,12 +1048,42 @@ is next.
 - P1, PTL (#231): `prove-ptl` gives the reference LS4's verdict on the 26 formulas of
   `tests/conformance/ptl`, and on the 297 LS4 inputs of the record the TypeScript's verdict and
   step count on every one (297 same, 0 differs, declined or crash). Rust decides PTL by default.
-- P2 Zenon: `prove-zenon` ports all of `zenon/` but `encode.ts`, one module per TS file, behind
-  `PROVE_IT_PROVER`. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's tests
-  are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on each
-  fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches in
-  verdict, steps, every statistic and the proof's digest. Malformed input is declined. Next: the
-  decider differential on the corpus's `.znn` inputs, then the flip commit.
+- P2 Zenon (#227, flip in this entry's PR): `prove-zenon` ports all of `zenon/` but `encode.ts`,
+  one module per TS file. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's
+  tests are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on
+  each fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches
+  in verdict, steps, every statistic and the proof's digest. Malformed input is declined. On the
+  949 Zenon inputs of the record, `prover-differential --side rust --prover zenon` gives 949 same,
+  0 differs, unstable, declined or crash, through the addon and through WebAssembly; the TS unit
+  tests pass with `PROVE_IT_PROVER_ZENON=rust`. Rust decides Zenon by default. Size, release builds
+  on linux-x64-gnu from b736513 to fb96510: `prove-it-engine.node` 5,918,368 → 7,080,784 bytes,
+  `prove-it-engine.wasm` 4,303,223 → 5,210,377, the `prove-it` binary 5,701,384, unchanged (it
+  doesn't link the prover yet). Rust's Zenon peaks at 958 MB where the TypeScript's takes
+  1,416 MB on the input that reaches the memory limit. `conformance:prove` with Zenon in Rust and
+  in TypeScript: on every obligation both runs finished, the same status, but for two SMT
+  obligations that sit at Z3's time limit and `LamportMutex_proofs.tla` #388, which Rust's Zenon
+  proves inside tlapm's time limit and the TypeScript's doesn't. Its input
+  (`zenon/afc234afa4fc2a0a`) is `unknown` on both sides at the recorded step limit and `unsat` on
+  both with no limit, in the same 94,929 steps and the same statistics and proof. On the 4-core
+  container both runs lose a few large modules (`tcp_proof`, `BPConProof`, `CRDT_proof`) whose
+  workers the container's memory limit kills; alone, `CRDT_proof` gives the same statuses both
+  ways.
+- P2 Zenon, the TypeScript deleted (ahead of P7, by the coordinator's decision): `src/prover/
+  zenon/` is gone but `encode.ts`, which P5c owns, with `tests/unit/zenon.test.ts`,
+  `scripts/zenon-fixtures.ts` and `TlaZenonError`. What the TypeScript decided stays as recorded
+  expectations the Rust is tested against: the 949 Zenon inputs of `tests/conformance/
+  prover-inputs.json` (`prover-differential --side rust --prover zenon`) and the 103 fixture runs
+  of `tests/fixtures/zenon/decisions.txt` (`crates/prover/zenon/tests/zenon.rs`), which nothing
+  rewrites now; `deciders.test.ts` pins the TypeScript's answer on its Zenon input, through the
+  addon and through WebAssembly. In `deciders.ts` a backend without a TypeScript decider is
+  decided by its Rust port alone: `PROVE_IT_PROVER` doesn't switch it, an aborted signal answers
+  `unknown`, an input the port can't read, or declines, is a `TlaProverError` (failed, as tlapm
+  counts it; the Rust Zenon declines nothing now), and where no engine loads, the WebAssembly
+  module included, `decide` throws `EngineUnavailableError`, as `check` does. `prover-inputs
+  --record` and `prover-differential --side ts` and `--update` decide such a backend with its Rust
+  port, say so, and label those results `decider: "rust"`. `conformance:zenon` compares the native
+  Zenon with tlapm's recorded results and binary. The PTL and Isabelle deletions follow the same
+  path.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and

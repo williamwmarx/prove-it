@@ -38,6 +38,7 @@ pub fn export_xml(
             file_name: Some(file_name),
             load_module,
             describe_file: &|_, _| String::new(),
+            root_extendees: &[],
             is_xml_export: true,
         },
     )?;

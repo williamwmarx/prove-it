@@ -1,5 +1,6 @@
 // Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
 
+import { loadWasmEngine } from "../engine/native";
 import { TlaProverError, TlaUnsupportedError } from "../errors";
 import { getObligations, type PrintedObligation } from "../obligations";
 import { type Expr, getChildren, type Hyp, mapHyp, type Sequent } from "../obligations/expression";
@@ -379,6 +380,9 @@ export const proveObligations = async (
   obligations: PrintedObligation[],
   options: ObligationsOptions,
 ) => {
+  // Where there is no process.dlopen, as in a browser, the backends that only Rust decides need the
+  // engine as WebAssembly, which takes a promise to compile.
+  await loadWasmEngine();
   const workerCount = options.workers ?? 1;
   const pool =
     workerCount > 1 && isWorkerSupported() && options.decide === undefined

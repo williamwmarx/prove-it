@@ -12,12 +12,14 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use tla_ir::{Bound, Index, NodeId, NodeKind, Param, Pattern, Resolution, ScopeBinding};
 use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
+use super::lazy::{Lazy, Reference};
 use super::nodes::assign_bound;
 use super::predicate::{Leaf, Predicate, Reject, Test};
 use super::{
@@ -33,6 +35,11 @@ const FOUND: &str = "ENABLED found a successor";
 
 /// What a walk or a quantifier stops with where TLC enumerates a set it can't.
 pub(crate) const INFINITE_BOUND: &str = "enumerated a set TLC can't enumerate";
+
+/// What a walk stops with where it streams a set TLC holds as built, which may stream an element
+/// twice where the engine holds its normalized set.
+const HELD_STREAMED: &str =
+    "unsupported: streaming a lazy set a variable or a bound name holds as TLC built it";
 
 fn is_found(bail: &Bail) -> bool {
     bail.0 == FOUND
@@ -271,10 +278,12 @@ impl<'s, 't, 'a> Shared<'s, 't, 'a> {
 }
 
 /// What an assignment assigns: an expression's value, or the variable's current value, as
-/// UNCHANGED assigns it.
+/// UNCHANGED assigns it. `Held` is the value of a set TLC keeps lazy, with its reference, and
+/// whether a walk streams the variable before TLC fingerprints the state (`Machine::held`).
 #[derive(Clone)]
 enum Source {
     Value(Eval),
+    Held(Eval, Option<Reference>, Arc<AtomicBool>),
     Current,
 }
 
@@ -296,7 +305,7 @@ enum Op {
 #[inline(always)]
 fn read_source(machine: &mut Machine<'_>, source: &Source, variable: u32) -> Outcome<Id> {
     match source {
-        Source::Value(value) => value(machine),
+        Source::Value(value) | Source::Held(value, ..) => value(machine),
         Source::Current => Ok(machine.cur[variable as usize]),
     }
 }
@@ -307,6 +316,8 @@ struct Segment<const IS_INIT: bool> {
     ops: Box<[Op]>,
     // The variables the ops assign, in order, for the undo.
     assigns: Box<[u32]>,
+    // Whether an op assigns a set TLC keeps lazy, which the undo forgets (`Machine::held`).
+    is_holding: bool,
     rest: Rest,
 }
 
@@ -323,6 +334,17 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
             Op::Holds(test) => test(machine),
             Op::Assign(variable, source) => {
                 let value = read_source(machine, source, *variable)?;
+                if let Source::Held(_, reference, is_streamed) = source
+                    && is_streamed.load(Ordering::Relaxed)
+                {
+                    let lazy = match reference {
+                        Some(reference) => Some(reference(machine)?),
+                        None => None,
+                    };
+                    if lazy.as_ref().is_none_or(Lazy::may_stream_duplicates) {
+                        machine.held[*variable as usize] = Some((value, lazy));
+                    }
+                }
                 target(machine, IS_INIT)[*variable as usize] = value;
                 machine.note_assigned(*variable as usize, value);
                 machine.assigned += 1;
@@ -354,6 +376,11 @@ impl<const IS_INIT: bool> Segment<IS_INIT> {
         };
         for &variable in self.assigns[..count].iter().rev() {
             target(machine, IS_INIT)[variable as usize] = UNASSIGNED;
+            if self.is_holding
+                && let Some(held) = machine.held.get_mut(variable as usize)
+            {
+                *held = None;
+            }
         }
         machine.assigned -= count as u32;
         result
@@ -409,12 +436,25 @@ fn segment(ops: Vec<Op>, rest: Rest, is_init: bool) -> Rest {
             _ => None,
         })
         .collect();
+    let is_holding = ops
+        .iter()
+        .any(|op| matches!(op, Op::Assign(_, Source::Held(..))));
     let ops = ops.into_boxed_slice();
     Some(if is_init {
-        let segment = Segment::<true> { ops, assigns, rest };
+        let segment = Segment::<true> {
+            ops,
+            assigns,
+            is_holding,
+            rest,
+        };
         step(move |machine, on_complete| segment.run(machine, on_complete))
     } else {
-        let segment = Segment::<false> { ops, assigns, rest };
+        let segment = Segment::<false> {
+            ops,
+            assigns,
+            is_holding,
+            rest,
+        };
         step(move |machine, on_complete| segment.run(machine, on_complete))
     })
 }
@@ -440,6 +480,17 @@ fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step
         }
         Ok(())
     })
+}
+
+// Whether streaming a set TLC holds as built may yield an element twice where the engine holds
+// its normalized set: the set itself where its stream does, or else, for a set built from it,
+// where it is of a kind that may, or where the engine has no reference of it.
+fn streams_twice(machine: &mut Machine<'_>, lazy: Option<&Lazy>, is_itself: bool) -> Outcome<bool> {
+    match lazy {
+        None => Ok(true),
+        Some(lazy) if is_itself => lazy.streams_duplicates(machine),
+        Some(lazy) => Ok(lazy.may_stream_duplicates()),
+    }
 }
 
 // A deferred compile as an expression, which fails only once the walk evaluates it.
@@ -839,7 +890,7 @@ impl<'a> Compiler<'a> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let_definitions(definitions, *body, context)?;
+                let inner = self.bind_let_definitions(definitions, *body, context, false)?;
                 return self.get_assignable(*body, &inner, is_primed, depth + 1);
             }
             NodeKind::Label { body, .. } => {
@@ -1312,6 +1363,7 @@ impl<'a> Compiler<'a> {
                             Binding::Argument(Rc::new(Argument {
                                 expression: argument,
                                 is_each_use_alike: false,
+                                is_kept: false,
                                 context: argument_context.clone(),
                                 compiled: RefCell::new([None, None]),
                                 own_scope: RefCell::new(std::rc::Weak::new()),
@@ -1404,17 +1456,235 @@ impl<'a> Compiler<'a> {
             || self.has_walk(node, context, false, is_init, 0)?)
     }
 
-    // The elements of a set in the order TLC enumerates them where an action quantifies over the
-    // set or assigns a variable from it (streamed): the set itself when TLC normalizes it, else a
-    // tuple of its elements in the interpreter's order, cached like any other value.
-    fn compile_ordered(
-        &mut self,
-        node: NodeId,
-        context: &Context,
-        is_streamed: bool,
-    ) -> Compiling<Ordered> {
+    // The elements of a set in the order TLC enumerates them where an action assigns a variable
+    // from it, which streams it: the set itself when TLC normalizes it, else a tuple of its
+    // elements in the interpreter's order, cached like any other value. Where the set streams a
+    // variable the step assigned a set TLC keeps lazy, or a name bound to the first element of a
+    // set enumeration, TLC streams that set as it built it (`Machine::held`,
+    // `Compiled::unsorted_first`), which the walk follows only where it streams no element twice:
+    // the variable or name itself where its set streams none, and a set built of it where its
+    // set is of a kind that streams none.
+    fn compile_streamed(&mut self, node: NodeId, context: &Context) -> Compiling<Ordered> {
         let set = self.compile(node, context)?;
-        self.order(set, node, context, is_streamed)
+        let is_init = context.is_init;
+        let mut streamed = Vec::new();
+        let is_followed = self.stream_names(node, true, context, &mut streamed);
+        // Whether the set streams what a read names, and whether as itself.
+        let streams = |is_read: &dyn Fn(NodeId) -> bool| {
+            if !is_followed {
+                return Some(false);
+            }
+            let mut reads = streamed
+                .iter()
+                .filter(|(read, _)| is_read(*read))
+                .peekable();
+            reads.peek()?;
+            Some(reads.any(|&(_, is_itself)| is_itself))
+        };
+        let variables = if is_init {
+            &set.footprint.vars
+        } else {
+            &set.footprint.primes
+        };
+        let mut held = Vec::new();
+        for &variable in variables {
+            let Some(is_streamed) = self.held_streams.get(variable as usize) else {
+                continue;
+            };
+            let is_variable = |read: NodeId| {
+                let named = match self.node(read).1 {
+                    NodeKind::Prime(inner) if !is_init => self.node(*inner).1,
+                    kind if is_init => kind,
+                    _ => return false,
+                };
+                matches!(named, NodeKind::Identifier(name) if !name.is_local
+                    && name.resolution == Resolution::Variable(variable))
+            };
+            if let Some(is_itself) = streams(&is_variable) {
+                is_streamed.store(true, Ordering::Relaxed);
+                held.push((variable, is_itself));
+            }
+        }
+        let mut unsorted = Vec::new();
+        for slot in &set.footprint.slots {
+            let Some((first, reference)) = self.unsorted_slots.get(slot) else {
+                continue;
+            };
+            let is_slot = |read: NodeId| {
+                matches!(self.node(read).1, NodeKind::Identifier(name) if name.is_local
+                && lookup(&context.scope, name.text).is_some_and(
+                    |found| matches!(found.binding, Binding::Slot(bound) if bound == *slot),
+                ))
+            };
+            if let Some(is_itself) = streams(&is_slot) {
+                unsorted.push((*slot, is_itself, first.clone(), reference.clone()));
+            }
+        }
+        let ordered = self.order(set, node, context, true)?;
+        if held.is_empty() && unsorted.is_empty() {
+            return Ok(ordered);
+        }
+        let inner = ordered.eval;
+        Ok(Ordered {
+            eval: eval(move |machine| {
+                for &(variable, is_itself) in &held {
+                    let value = target(machine, is_init)[variable as usize];
+                    let Some((assigned, lazy)) = machine.held[variable as usize].clone() else {
+                        continue;
+                    };
+                    if assigned == value && streams_twice(machine, lazy.as_ref(), is_itself)? {
+                        return Err(Bail(HELD_STREAMED));
+                    }
+                }
+                for (slot, is_itself, first, reference) in &unsorted {
+                    let value = machine.locals[*slot as usize];
+                    let first = first(machine)?;
+                    if value != first && !machine.store.equals(value, first)? {
+                        continue;
+                    }
+                    let lazy = match reference {
+                        Some(reference) => Some(reference(machine)?),
+                        None => None,
+                    };
+                    if streams_twice(machine, lazy.as_ref(), *is_itself)? {
+                        return Err(Bail(HELD_STREAMED));
+                    }
+                }
+                inner(machine)
+            }),
+            ..ordered
+        })
+    }
+
+    // The variable whose set a guard `Cardinality(v) < e`, or another comparison of it, sizes,
+    // in the step that assigns it. TLC evaluates both sides of the comparison, and Cardinality
+    // asks the set its size (`FiniteSets.Cardinality`), which a set TLC keeps lazy answers by
+    // caching itself as its normalized set (`UnionValue.size`, `SetCupValue.size`,
+    // `SetPredValue.size`, `SetCapValue.size`, `SetDiffValue.size`).
+    fn sized_variable(&self, node: NodeId, is_init: bool) -> Option<u32> {
+        let builtin = |node: NodeId| match self.node(node).1 {
+            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => Some((self.builtin_name(index), &args[..])),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (comparison, operands) = builtin(node)?;
+        if !matches!(comparison, "=" | "#" | "<" | ">" | "<=" | ">=") {
+            return None;
+        }
+        operands.iter().find_map(|&operand| {
+            let ("Cardinality", [set]) = builtin(operand)? else {
+                return None;
+            };
+            let read = match self.node(*set).1 {
+                NodeKind::Prime(inner) if !is_init => self.node(*inner).1,
+                kind if is_init => kind,
+                _ => return None,
+            };
+            let NodeKind::Identifier(name) = read else {
+                return None;
+            };
+            match name.resolution {
+                Resolution::Variable(variable)
+                    if !name.is_local && self.held_streams.get(variable as usize).is_some() =>
+                {
+                    Some(variable)
+                }
+                _ => None,
+            }
+        })
+    }
+
+    // The reads of variables and bound names a set streams, each with whether it is the set
+    // itself, or else one it is built of: the set, a branch of an IF or CASE, an operand of a
+    // UNION, `\cup`, `\cap` or `\`, the set a filter filters, the range of a set of functions,
+    // or a set of records' or tuples' component, as TLC streams each of those it builds a set of
+    // (`UnionValue`, `SetCupValue`, `SetCapValue`, `SetDiffValue`, `SetPredValue`,
+    // `SetOfFcnsValue`, `SetOfRcdsValue`, `SetOfTuplesValue`). Whether the walk follows the set,
+    // which it doesn't through a name a LET, an argument or a definition binds.
+    fn stream_names(
+        &self,
+        node: NodeId,
+        is_itself: bool,
+        context: &Context,
+        streamed: &mut Vec<(NodeId, bool)>,
+    ) -> bool {
+        let mut parts = |nodes: &mut dyn Iterator<Item = NodeId>, is_itself: bool| {
+            for part in nodes {
+                if !self.stream_names(part, is_itself, context, streamed) {
+                    return false;
+                }
+            }
+            true
+        };
+        match self.node(node).1 {
+            NodeKind::Identifier(name) if name.is_local => {
+                let is_slot = lookup(&context.scope, name.text)
+                    .is_some_and(|found| matches!(found.binding, Binding::Slot(_)));
+                if is_slot {
+                    streamed.push((node, is_itself));
+                }
+                is_slot
+            }
+            NodeKind::Identifier(name) => match name.resolution {
+                Resolution::Variable(_) => {
+                    streamed.push((node, is_itself));
+                    true
+                }
+                Resolution::Definition(_) => false,
+                _ => true,
+            },
+            NodeKind::Prime(inner) => {
+                let is_variable = matches!(self.node(*inner).1, NodeKind::Identifier(name)
+                    if !name.is_local && matches!(name.resolution, Resolution::Variable(_)));
+                if is_variable {
+                    streamed.push((node, is_itself));
+                }
+                is_variable
+            }
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_)
+            | NodeKind::SetEnumeration(_)
+            | NodeKind::SetMap { .. }
+            | NodeKind::Tuple(_)
+            | NodeKind::Record(_)
+            | NodeKind::FunctionConstruction { .. }
+            | NodeKind::FunctionApplication { .. }
+            | NodeKind::FieldAccess { .. } => true,
+            NodeKind::If {
+                consequent,
+                alternative,
+                ..
+            } => parts(&mut [*consequent, *alternative].into_iter(), is_itself),
+            NodeKind::Case { arms, other } => parts(
+                &mut arms.iter().map(|&(_, arm)| arm).chain(*other),
+                is_itself,
+            ),
+            NodeKind::Label { body, .. } => parts(&mut std::iter::once(*body), is_itself),
+            NodeKind::SetFilter { bound, .. } => parts(&mut std::iter::once(bound.set), false),
+            NodeKind::FunctionSet { range, .. } => parts(&mut std::iter::once(*range), false),
+            NodeKind::RecordSet(fields) => {
+                parts(&mut fields.iter().map(|&(_, field)| field), false)
+            }
+            NodeKind::Product(factors) => parts(&mut factors.iter().copied(), false),
+            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => match self.builtin_name(index) {
+                    "\\cup" | "\\cap" | "\\" => parts(&mut args.iter().copied(), false),
+                    "UNION" => match self.node(args[0]).1 {
+                        NodeKind::SetEnumeration(sets) => parts(&mut sets.iter().copied(), false),
+                        _ => parts(&mut args.iter().copied(), false),
+                    },
+                    "TLCEval" => parts(&mut args.iter().copied(), is_itself),
+                    "Print" | "PrintT" => parts(&mut args.last().into_iter().copied(), is_itself),
+                    _ => true,
+                },
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     // A compiled set in the order TLC enumerates it, `node` naming it where TLC keeps it lazy.
@@ -1548,7 +1818,36 @@ impl<'a> Compiler<'a> {
             .walk_depth()
             .and_then(|()| self.walk_kind(node, context, options, known, then));
         self.depth -= 1;
-        result
+        let bits = self
+            .pieces
+            .iter()
+            .filter(|piece| piece.0 == node)
+            .fold(0, |bits, piece| bits | piece.1);
+        if bits == 0 {
+            return result;
+        }
+        // A walk through a piece of an action atom marks the steps it takes as the action's.
+        let rest = result?;
+        let address = rest.as_ref().map(step_address);
+        let wrapped = step(move |machine, on_complete| {
+            let outer = machine.piece_bits;
+            machine.piece_bits |= bits;
+            let result = run_rest(&rest, machine, on_complete);
+            machine.piece_bits = outer;
+            result
+        });
+        // The guard the walk starts with still leads it.
+        if let Some(address) = address {
+            if let Some(leading) = self.leading_guards.get(&address).map(|found| found.1) {
+                self.leading_guards
+                    .insert(step_address(&wrapped), (wrapped.clone(), leading));
+            }
+            if let Some(first) = self.first_guards.get(&address).map(|found| found.1.clone()) {
+                self.first_guards
+                    .insert(step_address(&wrapped), (wrapped.clone(), first));
+            }
+        }
+        Ok(Some(wrapped))
     }
 
     fn guard_step(
@@ -1592,8 +1891,13 @@ impl<'a> Compiler<'a> {
                 let mut inner = context.clone();
                 let mut levels = Vec::new();
                 for bound in bounds {
-                    let set = self.compile_ordered(bound.set, &inner, false)?;
+                    let set = self.compile(bound.set, &inner)?;
+                    let unsorted = set.unsorted_first.clone();
+                    let set = self.order(set, bound.set, &inner, false)?;
                     let binder = self.bind_bound(&bound.pattern, &inner);
+                    if let (Some(unsorted), false) = (unsorted, binder.tuple) {
+                        self.unsorted_slots.insert(binder.slots[0], unsorted);
+                    }
                     inner = binder.context;
                     levels.push((set, binder.slots, binder.tuple));
                 }
@@ -1617,8 +1921,13 @@ impl<'a> Compiler<'a> {
                     if !matches!(bound.pattern, Pattern::Name(_)) {
                         return unsupported("a tuple pattern in an action's \\A");
                     }
-                    let set = self.compile_ordered(bound.set, &inner, false)?;
+                    let set = self.compile(bound.set, &inner)?;
+                    let unsorted = set.unsorted_first.clone();
+                    let set = self.order(set, bound.set, &inner, false)?;
                     let binder = self.bind_bound(&bound.pattern, &inner);
+                    if let Some(unsorted) = unsorted {
+                        self.unsorted_slots.insert(binder.slots[0], unsorted);
+                    }
                     inner = binder.context;
                     levels.push((set, binder.slots[0]));
                 }
@@ -1698,7 +2007,7 @@ impl<'a> Compiler<'a> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let_definitions(definitions, *body, context)?;
+                let inner = self.bind_let_definitions(definitions, *body, context, false)?;
                 self.walk(*body, &inner, options, known, then)
             }
             NodeKind::Unchanged(expression) => {
@@ -2135,13 +2444,34 @@ impl<'a> Compiler<'a> {
                         leading = Leading::of(&compiled);
                         first_guard = compiled.predicate.as_deref().cloned();
                     }
-                    ops.push(guard(compiled));
+                    // A guard that sizes the set a variable holds caches it as its normalized set,
+                    // whether or not it holds, which the walk streams from then on, in the
+                    // branches after it too (`Machine::held`).
+                    let op = match self.sized_variable(item.node, is_init) {
+                        Some(variable) => {
+                            let inner = compiled.eval.clone();
+                            Op::Check(
+                                eval(move |machine| {
+                                    machine.held[variable as usize] = None;
+                                    inner(machine)
+                                }),
+                                "a conjunct that isn't a boolean",
+                            )
+                        }
+                        None => guard(compiled),
+                    };
+                    ops.push(op);
                 }
                 Shape::Assign(variable, value) => {
                     let variable = *variable;
                     let compiled = self.compile(*value, context)?;
                     self.is_lazy_set_held |= !compiled.is_normalized;
-                    let value = Source::Value(compiled.eval);
+                    let value = match self.held_streams.get(variable as usize) {
+                        Some(is_streamed) if !compiled.is_normalized => {
+                            Source::Held(compiled.eval, compiled.reference, Arc::clone(is_streamed))
+                        }
+                        _ => Source::Value(compiled.eval),
+                    };
                     match known.get(variable) {
                         UNSET => {
                             ops.push(Op::Assign(variable, value));
@@ -2382,7 +2712,7 @@ impl<'a> Compiler<'a> {
             let subsets = self.compile_subset(&base);
             self.order(subsets, set, context, true)?
         } else {
-            self.compile_ordered(set, context, true)?
+            self.compile_streamed(set, context)?
         };
         let guard = (state == EITHER).then(|| deferred(self.compile(guard, context)));
         let mut shared = Shared::new(then);
@@ -2610,6 +2940,7 @@ impl<'a> Compiler<'a> {
                 Binding::Argument(Rc::new(super::Argument {
                     expression: *expression,
                     is_each_use_alike: false,
+                    is_kept: false,
                     context,
                     compiled: RefCell::new([None, None]),
                     own_scope: RefCell::new(std::rc::Weak::new()),
