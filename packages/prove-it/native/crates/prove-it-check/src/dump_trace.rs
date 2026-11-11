@@ -180,10 +180,11 @@ impl TraceDumps {
 /// Whether the host can write each file: TLC writes a JSON dump into the directories it makes
 /// and a `tlc` one into the directory that holds it, and fails where it can't.
 pub fn is_writable(host: &dyn Host, files: &[DumpedFile]) -> bool {
+    let platform = host.platform();
     files.iter().all(|file| {
-        Path::new(&file.path)
-            .parent()
-            .is_none_or(|parent| parent.as_os_str().is_empty() || host.is_file(parent))
+        platform
+            .last_separator(&file.path)
+            .is_none_or(|end| host.is_file(Path::new(&file.path[..end.max(1)])))
     })
 }
 

@@ -2,6 +2,8 @@
 //! TLC would in a process of its own; the exit code is the first that is not success.
 
 use std::path::Path;
+
+use crate::host_path::Platform;
 use std::sync::mpsc;
 use std::time::Duration;
 use tla_engine::Prints;
@@ -77,11 +79,15 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
     if args.first().is_some_and(|arg| arg == "tlapm") {
         return not_native(output, "tlapm");
     }
-    let Some(mut launch) = get_java_launch(args) else {
+    let Some(mut launch) = get_java_launch(args, output.host.platform()) else {
         return check_specs(args, &Java::default(), false, output);
     };
     // Without -Dtla-ts.tlc, the jar on the class path picks the TLC to reproduce.
-    let jar = launch.java.class_path.as_deref().and_then(get_tools_jar);
+    let jar = launch
+        .java
+        .class_path
+        .as_deref()
+        .and_then(|class_path| get_tools_jar(class_path, output.host.platform()));
     if let (None, Some(jar)) = (launch.java.tlc_version, jar) {
         launch.java.tlc_version = match is_174(output.host, jar) {
             Ok(true) => Some(TlcVersion::V1_7_4),
@@ -123,13 +129,6 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
 fn not_native(output: &mut Output<'_>, what: &str) -> i32 {
     let _ = writeln!(output.err, "prove-it: not native yet: {what}");
     NOT_NATIVE
-}
-
-fn file_name(path: &str) -> String {
-    Path::new(path).file_name().map_or_else(
-        || path.to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
 }
 
 // With `is_tlc` the command line is `tlc2.TLC`'s, which names one module.
@@ -192,6 +191,7 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             "several specifications in one check of a host's sources",
         );
     }
+    let platform = output.host.platform();
     let mut exit_codes = Vec::new();
     for (index, (path, given)) in paths.iter().enumerate() {
         let mut printer = Printer::new(parsed.has("-tool"), !parsed.has("-nowarning"), output);
@@ -200,7 +200,7 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
         }
         // TLC checks one spec, so Prove It names each of several it checks.
         if paths.len() > 1 {
-            let name = file_name(path);
+            let name = platform.file_name(path).to_string();
             let stem = name.strip_suffix(".tla").unwrap_or(&name);
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
@@ -852,7 +852,7 @@ fn check_spec(
         Some([_]) => return report_not_native(printer, "-dump into the meta directory"),
         Some(_) => return report_not_native(printer, "-dump dot"),
     };
-    let directories = get_module_directories(main_file, &java.libraries);
+    let directories = get_module_directories(printer.host.platform(), main_file, &java.libraries);
     let config_path = match find_config(
         printer.host,
         args.first("-config"),
@@ -893,7 +893,7 @@ fn check_spec(
     let mut dumps = TraceDumps::new(
         args,
         &config,
-        is_trace_recorded(args, spec_path),
+        is_trace_recorded(args, spec_path, printer.host.platform()),
         Some({
             let (directory, _, name) = te_spec::get_files_place(main_file, started);
             te_spec::join_place(&directory, &format!("{name}.bin"))
@@ -909,7 +909,10 @@ fn check_spec(
             directories: &directories,
             temporary: java.temporary_directory.as_deref(),
             metadir: args.first("-metadir"),
-            jar: java.class_path.as_deref().and_then(get_tools_jar),
+            jar: java
+                .class_path
+                .as_deref()
+                .and_then(|class_path| get_tools_jar(class_path, printer.host.platform())),
             is_174: false,
             root_extendees: &dumps.get_root_extendees(),
         },
@@ -1040,8 +1043,8 @@ fn check_spec(
     }
     if let Some(sany) = &front.sany {
         print_sany(printer, sany);
-        printer.is_trace_recorded = is_trace_recorded(args, spec_path);
-        if is_trace_spec_written(args, spec_path) {
+        printer.is_trace_recorded = is_trace_recorded(args, spec_path, printer.host.platform());
+        if is_trace_spec_written(args, spec_path, printer.host.platform()) {
             printer.trace_spec = Some(TraceSpec::new(
                 main_file,
                 started,
@@ -1049,7 +1052,7 @@ fn check_spec(
                 &config,
                 &front.defined_names,
                 fingerprint_index,
-                is_trace_recorded(args, spec_path),
+                is_trace_recorded(args, spec_path, printer.host.platform()),
             ));
         }
     } else {
@@ -2529,8 +2532,8 @@ fn print_sany(printer: &mut Printer, sany: &str) {
 // Whether TLC writes a trace exploration spec after an error trace: unless -noGenerateSpecTE, -tool
 // or -continue says not to, or the spec is one it wrote (`TraceExplorationSpec.isTESpecFile`), or
 // where -generateSpecTE says to.
-fn is_trace_spec_written(args: &Parsed, spec_path: &str) -> bool {
-    let name = spec_path.rsplit('/').next().unwrap_or(spec_path);
+fn is_trace_spec_written(args: &Parsed, spec_path: &str, platform: Platform) -> bool {
+    let name = platform.file_name(spec_path);
     args.has("-generateSpecTE")
         || (!args.has("-noGenerateSpecTE")
             && !args.has("-tool")
@@ -2540,8 +2543,8 @@ fn is_trace_spec_written(args: &Parsed, spec_path: &str) -> bool {
 
 // Whether TLC records the trace in a file for its trace exploration spec too, with `_TLCTrace`'s
 // postcondition.
-fn is_trace_recorded(args: &Parsed, spec_path: &str) -> bool {
-    is_trace_spec_written(args, spec_path) && !args.has("-noGenerateSpecTEBin")
+fn is_trace_recorded(args: &Parsed, spec_path: &str, platform: Platform) -> bool {
+    is_trace_spec_written(args, spec_path, platform) && !args.has("-noGenerateSpecTEBin")
 }
 
 // A message TLC prints itself as it starts, as tla-front writes it.

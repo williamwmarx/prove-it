@@ -9,6 +9,7 @@ use tla_engine::search::Advice;
 use tla_front::report::ModuleOrigin;
 
 use crate::files::FileDescriber;
+use crate::host_path::Platform;
 use crate::resolve;
 use crate::zone::Zone;
 
@@ -55,6 +56,11 @@ pub enum FileKind {
 }
 
 pub trait Host {
+    /// The rules the host names its files by, which the engine as WebAssembly learns from
+    /// JavaScript.
+    fn platform(&self) -> Platform {
+        Platform::NATIVE
+    }
     /// What is at the path, which TLC's resolver takes for found unless it is absent.
     fn kind(&self, path: &Path) -> FileKind;
     fn is_file(&self, path: &Path) -> bool {

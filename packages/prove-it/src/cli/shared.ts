@@ -32,12 +32,13 @@ export const getInputPaths = (paths: string[]): InputPath[] =>
   );
 
 // What the native check reads of the machine's files, by the keys prove-it-host's `check` names:
-// what is at a path, a file's bytes, the path with its links followed, the working directory and
-// the temporary directory. A path the system can't follow, as a loop of links, has none, and a file
+// what is at a path, a file's bytes, the path with its links followed, the working directory, the
+// temporary directory and the platform, whose rules the engine as WebAssembly names paths by. A path the system can't follow, as a loop of links, has none, and a file
 // it can't read, as a socket, has no bytes, as the binary reads them.
 export const readFileKey = (key: string) => {
   const [kind, ...rest] = key.split(":");
   const path = rest.join(":");
+  if (kind === "platform") return process.platform;
   if (kind === "cwd") return process.cwd();
   if (kind === "tmpdir") return tmpdir();
   if (!existsSync(path)) return undefined;

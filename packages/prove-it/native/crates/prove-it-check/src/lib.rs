@@ -10,6 +10,7 @@ mod failure;
 mod files;
 mod front;
 mod host;
+pub mod host_path;
 mod inflate;
 mod jar;
 mod messages;

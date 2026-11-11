@@ -2,7 +2,9 @@
 //! XMLExporter of TLC master, which prints a spec's semantic tree as XML.
 
 use std::cell::Cell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use crate::host_path::get_stem;
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
@@ -177,18 +179,15 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
     };
     // SANY looks for each module in the working directory, then in the -I directories, which
     // XMLExporter passes in place of TLA-Library, then among its standard modules.
+    let platform = output.host.platform();
     let directories: Vec<&Path> = std::iter::once(Path::new("."))
         .chain(includes.iter().map(Path::new))
         .collect();
     let path = directories
         .iter()
-        .map(|directory| directory.join(&file_name))
+        .map(|directory| PathBuf::from(platform.join(&directory.to_string_lossy(), &file_name)))
         .find(|path| output.host.is_file(path));
-    let root = Path::new(&file_name)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or_default()
-        .to_owned();
+    let root = get_stem(platform.file_name(&file_name)).to_owned();
     let source = match &path {
         Some(path) => output
             .host

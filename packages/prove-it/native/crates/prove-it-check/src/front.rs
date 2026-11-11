@@ -14,6 +14,7 @@ use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text_of}
 use tla_front::tlc_messages::CodedError;
 
 use crate::host::{Files, Host};
+use crate::host_path::{Platform, get_stem};
 use crate::stack::on_search_stack;
 
 /// What the front end gives a run: the model to check, or where TLC stops before it searches.
@@ -97,6 +98,7 @@ pub fn read_front(
         }
         let describe = host.get_file_describer(files);
         let sany = native_sany(
+            host.platform(),
             spec_path,
             files.main_file,
             sources.as_ref(),
@@ -184,23 +186,20 @@ fn lower(
 }
 
 fn native_sany(
+    platform: Platform,
     spec_path: &str,
     main_file: &str,
     sources: Option<&ModelSources>,
     describe_file: &dyn Fn(&str, ModuleOrigin) -> String,
     root_extendees: &[&str],
 ) -> Result<SanyText, FrontError> {
-    let spec = Path::new(spec_path);
+    let root = get_stem(platform.file_name(spec_path));
     // TLC gives SANY the spec as the command line names it, without .tla, unless it's absolute.
-    let file_name = if crate::resolve::is_absolute(Path::new(main_file)) {
-        spec.file_stem().and_then(|stem| stem.to_str())
+    let file_name = if platform.is_absolute(main_file) {
+        Some(root)
     } else {
         Some(main_file)
     };
-    let root = spec
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or_default();
     let sources = sources.ok_or_else(|| FrontError::NotYet("a spec without a file".to_owned()))?;
     let options = ReportOptions {
         version: TlcVersion::Master,

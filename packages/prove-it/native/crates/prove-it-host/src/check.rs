@@ -30,6 +30,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use prove_it_check::host_path::Platform;
 use prove_it_check::resolve::{self, Config, Resolved};
 use prove_it_check::zone::{Zone, parse_rule};
 use prove_it_check::{
@@ -66,6 +67,15 @@ impl Host for SourcesHost {
     // The library names its files by the spec's name alone. The CLI answers for paths: what is
     // there, its bytes and its real path, which the check reads next of a file it finds, so they
     // come in the same round.
+    // The engine as WebAssembly runs on whatever host JavaScript does, which names its platform.
+    fn platform(&self) -> Platform {
+        if self.is_library || !cfg!(target_arch = "wasm32") {
+            return Platform::NATIVE;
+        }
+        self.get("platform".to_string())
+            .map_or(Platform::NATIVE, |name| Platform::from_node(&name))
+    }
+
     fn kind(&self, path: &Path) -> FileKind {
         let path = path.display();
         if self.is_library {
@@ -74,6 +84,7 @@ impl Host for SourcesHost {
                 None => FileKind::Absent,
             };
         }
+        let _ = self.platform();
         let _ = self.sources.get_bytes(format!("bytes:{path}"));
         let _ = self.get(format!("realpath:{path}"));
         match self.get(format!("stat:{path}")).as_deref() {
