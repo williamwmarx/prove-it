@@ -1316,8 +1316,9 @@ and the earliest divergence first within each group, since a single cause may ex
    It takes away the TypeScript's extra proofs of `fe8845daad4c648e` and `5e53b781a834c8ec`.
 2. The value of `false` in the model (cause 2), which takes away the extra proof of
    `8df9b72d29f8a626`.
-3. `1319a2956705afce` (cause 3) and `41a69bf765dd7c8b` (cause 4), once their first differing
-   events are found. Then `0c812b0a8aa1347b` once part 3 is in.
+3. The rewriter's last result released first (cause 3, `1319a2956705afce`) and the cached
+   `is_shared` of the root enode (cause 4, `41a69bf765dd7c8b`). Then `0c812b0a8aa1347b` once part 3
+   is in.
 4. The 64 step-limit cases need no decider fix. Recording step limits from Z3's `rlimit-count`
    within tlapm's time would make the record match Z3's verdicts there. That needs the step count
    to charge what Z3 charges first.
