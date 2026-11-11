@@ -93,15 +93,17 @@ fn reaches_shown_effect(
     environment: &Environment,
     cached: Option<&Rc<Definition>>,
 ) -> bool {
-    reaches_effect(definition, environment, cached, &SHOWN_EFFECTS)
+    reaches_effect(definition, environment, cached, &SHOWN_EFFECTS, false)
 }
 
-/// Whether a definition reaches one of these builtins, past `cached`.
+/// Whether a definition reaches one of these builtins, past `cached`, and, with
+/// `is_past_kept`, outside a TLCEval, whose value TLC keeps.
 fn reaches_effect(
     definition: &Rc<Definition>,
     environment: &Environment,
     cached: Option<&Rc<Definition>>,
     effects: &[&str],
+    is_past_kept: bool,
 ) -> bool {
     let mut seen: FastSet<usize> = cached
         .map(|cached| Rc::as_ptr(cached) as usize)
@@ -121,6 +123,11 @@ fn reaches_effect(
             {
                 pending.push(callee.body.clone());
             }
+        }
+        if is_past_kept
+            && matches!(&expression.kind, ExpressionKind::Apply { operator, .. } if &**operator == "TLCEval")
+        {
+            continue;
         }
         pending.extend(expression.children());
     }
@@ -175,6 +182,65 @@ fn is_read(name: &str, config: &crate::config::ModelConfig, environment: &Enviro
         pending.extend(expression.children());
     }
     named || is_referred
+}
+
+/// Whether a definition or an assumption reads a name where names are bound: in an operator with
+/// parameters, a function, or a quantifier, a set map or filter, a function, a CHOOSE or a LAMBDA.
+fn is_read_under_binder(name: &str, environment: &Environment) -> bool {
+    let is_binding = |definition: &Definition| match &definition.kind {
+        DefinitionKind::Operator { params, .. } => !params.is_empty(),
+        DefinitionKind::Function { .. } => true,
+    };
+    let mut pending: Vec<(Expr, bool)> = environment
+        .definitions
+        .values()
+        .map(|definition| (definition.body.clone(), is_binding(definition)))
+        .chain(
+            environment
+                .assumptions
+                .iter()
+                .map(|assumption| (assumption.expression.clone(), false)),
+        )
+        .collect();
+    while let Some((expression, is_bound)) = pending.pop() {
+        if is_bound
+            && !expression.is_locally_resolved()
+            && expression
+                .reference()
+                .is_some_and(|reference| &*reference == name)
+        {
+            return true;
+        }
+        if let ExpressionKind::Let {
+            definitions, body, ..
+        } = &expression.kind
+        {
+            pending.extend(
+                definitions.iter().map(|definition| {
+                    (definition.body.clone(), is_bound || is_binding(definition))
+                }),
+            );
+            pending.push((body.clone(), is_bound));
+            continue;
+        }
+        let is_binder = matches!(
+            expression.kind,
+            ExpressionKind::Lambda { .. }
+                | ExpressionKind::Quantified { .. }
+                | ExpressionKind::UnboundedQuantifier { .. }
+                | ExpressionKind::Choose { .. }
+                | ExpressionKind::SetFilter { .. }
+                | ExpressionKind::SetMap { .. }
+                | ExpressionKind::FunctionConstruction { .. }
+        );
+        pending.extend(
+            expression
+                .children()
+                .into_iter()
+                .map(|child| (child, is_bound || is_binder)),
+        );
+    }
+    false
 }
 
 pub struct Lowering<'a> {
@@ -1176,6 +1242,20 @@ impl<'a> Lowering<'a> {
     /// the assumptions that aren't axioms. SYMMETRY is `NotYet` before this.
     fn write_startup(&mut self, config: &crate::config::ModelConfig) -> Result<Startup> {
         let environment = self.environment;
+        // TLC computes the constant definitions of a module without parameters a named INSTANCE
+        // copies again as the copies (`processConstantDefns`), which repeats their effects. It
+        // computes none of a module an INSTANCE gives parameters to.
+        for (key, copy) in environment.instance_names.iter() {
+            if let Some(definition) = environment.definitions.get(key)
+                && !environment.is_substituted(definition)
+                && is_startup_definition(definition, environment, &self.facts)
+                && reaches_shown_effect(definition, environment, None)
+            {
+                return Err(FrontError::NotYet(format!(
+                    "a constant definition with effects of a module an INSTANCE copies: {copy}"
+                )));
+            }
+        }
         let mut substitutes = Vec::new();
         for (name, target) in environment.substitutions.iter() {
             let Some(definition) = environment.definitions.get(target) else {
@@ -1210,11 +1290,9 @@ impl<'a> Lowering<'a> {
             // TLC keeps the value of a constant TLCEval, which the engine computes again where it
             // checks a POSTCONDITION the configuration substitutes it for.
             if config.postconditions.contains(&name.to_string())
-                && matches!(
-                    &definition.body.kind,
-                    ExpressionKind::Apply { operator, args, .. } if &**operator == "TLCEval" && args.len() == 1
-                )
-                && reaches_effect(definition, environment, None, &["Print", "PrintT"])
+                && self.facts.is_constant_level(definition, environment)
+                && reaches_effect(definition, environment, None, &["Print", "PrintT"], false)
+                && !reaches_effect(definition, environment, None, &["Print", "PrintT"], true)
             {
                 return Err(FrontError::NotYet(format!(
                     "a POSTCONDITION the configuration substitutes a printing TLCEval for: \
@@ -1225,28 +1303,19 @@ impl<'a> Lowering<'a> {
             // and again where its own is unless it computed it already (`processConstantDefns`).
             // The IR computes it once, where its own is: alike only where the replaced definition
             // comes first, with no other effects between the two.
-            // Setting a register again to a value that reads none sets it alike, and TLC keeps
-            // the value of a constant TLCEval (`tlcEvalConst`).
+            // Setting a register again to a value that reads none sets it alike. TLC computes a
+            // TLCEval again where the model reads the name outside what it computes once.
+            let effects: Vec<_> = SHOWN_EFFECTS
+                .into_iter()
+                .filter(|effect| *effect != "TLCSet")
+                .collect();
             let is_effectful = |definition: &Rc<Definition>| -> Result<bool> {
                 let is_parameterless = matches!(
                     &definition.kind,
                     DefinitionKind::Operator { params, .. } if params.is_empty()
                 );
-                let is_evaluated_once = matches!(
-                    &definition.body.kind,
-                    ExpressionKind::Apply { operator, args, .. } if &**operator == "TLCEval" && args.len() == 1
-                );
                 Ok(is_parameterless
-                    && !is_evaluated_once
-                    && reaches_effect(
-                        definition,
-                        environment,
-                        None,
-                        &SHOWN_EFFECTS
-                            .into_iter()
-                            .filter(|effect| *effect != "TLCSet")
-                            .collect::<Vec<_>>(),
-                    )
+                    && reaches_effect(definition, environment, None, &effects, false)
                     && environment
                         .create_level_analyzer(&["TLCGet", "Trace", "CounterExample"])
                         .analyze_definition(definition, &crate::levels::Scope::default())?
@@ -1257,13 +1326,25 @@ impl<'a> Lowering<'a> {
             if let Some(replaced) = environment.definitions.get(name).filter(|_| !is_constant)
                 && is_effectful(definition)?
             {
+                let is_evaluated_once =
+                    !reaches_effect(definition, environment, None, &effects, true);
                 let startup = &environment.startup_definitions;
                 let position = |wanted: &Rc<Definition>| {
                     startup.iter().position(|other| Rc::ptr_eq(other, wanted))
                 };
                 let is_alike = match (position(replaced), position(definition)) {
-                    // TLC computes it again wherever the model reads the replaced name.
-                    _ if is_read(name, config, environment) => false,
+                    // TLC computes it again wherever the model reads the replaced name, but keeps
+                    // the value of a TLCEval it computed where no names are bound.
+                    _ if if is_evaluated_once {
+                        is_read_under_binder(name, environment)
+                    } else {
+                        is_read(name, config, environment)
+                    } =>
+                    {
+                        false
+                    }
+                    // TLC computes the substitute's TLCEval first where its own definition is.
+                    (Some(first), Some(last)) if is_evaluated_once && last < first => true,
                     (Some(first), Some(last)) if first < last => {
                         let mut between = false;
                         for other in &startup[first + 1..last] {

@@ -625,7 +625,19 @@ impl Reporter for Relay<'_> {
     // about the state-level properties among the properties, which a rejected value past them
     // would follow.
     fn startup_predicates(&mut self, holding: &[bool]) {
-        if self.is_scoped_substituted && holding.contains(&false) {
+        let ir = self.ir;
+        // TLC reports an invariant it failed to compute as it starts in the search, with the
+        // frames of the substitute.
+        let is_invariant_failed = holding.iter().enumerate().any(|(position, holds)| {
+            !holds
+                && ir
+                    .model
+                    .startup
+                    .predicates
+                    .get(position)
+                    .is_some_and(|predicate| &*ir.texts[predicate.kind as usize] == "invariant")
+        });
+        if self.is_scoped_substituted && is_invariant_failed {
             self.is_declined = true;
             let _ = self.sender.send(Event::Declined(
                 "a predicate that fails at startup in a model the configuration substitutes for \
@@ -634,7 +646,6 @@ impl Reporter for Relay<'_> {
             ));
             return;
         }
-        let ir = self.ir;
         let is_past_properties =
             ir.model
                 .startup
