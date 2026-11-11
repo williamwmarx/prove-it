@@ -69,6 +69,9 @@ pub struct ActionOptions {
 /// which stops the walk only if the walk needs it.
 type Deferred = Result<Eval, Bail>;
 
+// The first element of a set enumeration TLC leaves as built, and its reference.
+type Unsorted = (Eval, Option<Reference>);
+
 // A compile error, as the reason a walk stops at run time. The reasons are few and kept for the
 // run, as the TypeScript engine throws them where it compiles lazily.
 fn deferred(compiled: Compiling<Compiled>) -> Deferred {
@@ -1468,9 +1471,16 @@ impl<'a> Compiler<'a> {
     // set enumeration, TLC streams that set as it built it (`Machine::held`,
     // `Compiled::unsorted_first`), which the walk follows only where that streams the normalized
     // set: the variable or name itself where its set streams its elements once each and in
-    // order, and a set built of it where its set is of a kind that streams none twice.
-    fn compile_streamed(&mut self, node: NodeId, context: &Context) -> Compiling<Ordered> {
+    // order, and a set built of it where its set is of a kind that streams none twice. With it,
+    // the first element of a set enumeration, which TLC leaves as built (`ValueVec.sort`) and
+    // `x \in S` may assign.
+    fn compile_streamed(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+    ) -> Compiling<(Ordered, Option<Unsorted>)> {
         let set = self.compile(node, context)?;
+        let first = set.unsorted_first.clone();
         let is_init = context.is_init;
         let mut streamed = Vec::new();
         let is_followed = self.stream_names(node, true, context, &mut streamed);
@@ -1527,10 +1537,10 @@ impl<'a> Compiler<'a> {
         }
         let ordered = self.order(set, node, context, true)?;
         if held.is_empty() && unsorted.is_empty() {
-            return Ok(ordered);
+            return Ok((ordered, first));
         }
         let inner = ordered.eval;
-        Ok(Ordered {
+        let ordered = Ordered {
             eval: eval(move |machine| {
                 for &(variable, is_itself) in &held {
                     let value = target(machine, is_init)[variable as usize];
@@ -1558,7 +1568,8 @@ impl<'a> Compiler<'a> {
                 inner(machine)
             }),
             ..ordered
-        })
+        };
+        Ok((ordered, first))
     }
 
     // The variable whose set a guard `Cardinality(v) < e`, or another comparison of it, sizes,
@@ -2683,13 +2694,16 @@ impl<'a> Compiler<'a> {
         }
         // `x' \subseteq S` enumerates SUBSET S, which isn't empty where S is.
         let is_covered = !is_power_set && self.is_membership_covered(set, &mut HashSet::new());
-        let set = if is_power_set {
+        let (set, unsorted) = if is_power_set {
             let base = self.compile(set, context)?;
             let subsets = self.compile_subset(&base);
-            self.order(subsets, set, context, true)?
+            (self.order(subsets, set, context, true)?, None)
         } else {
             self.compile_streamed(set, context)?
         };
+        // The element of a set enumeration TLC leaves as built, which the variable holds as built
+        // where it is assigned it and a walk streams it (`Machine::held`).
+        let unsorted = unsorted.map(|unsorted| (unsorted, Arc::clone(&self.held_streams[index])));
         let guard = (state == EITHER).then(|| deferred(self.compile(guard, context)));
         let mut shared = Shared::new(then);
         let assigned = shared.call(self, &known.with(variable, SET))?;
@@ -2713,12 +2727,32 @@ impl<'a> Compiler<'a> {
             if !is_init && (size == 0 || !is_covered) {
                 machine.note_unsafe_membership();
             }
+            let held = match &unsorted {
+                Some(((first, reference), is_streamed)) if is_streamed.load(Ordering::Relaxed) => {
+                    let lazy = match reference {
+                        Some(reference) => Some(reference(machine)?),
+                        None => None,
+                    };
+                    lazy.as_ref()
+                        .is_none_or(Lazy::may_stream_duplicates)
+                        .then_some((first(machine)?, lazy))
+                }
+                _ => None,
+            };
             machine.assigned += 1;
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
                 target(machine, is_init)[index] = element;
                 machine.note_assigned(index, element);
-                run_rest(&assigned, machine, on_complete)?;
+                if let Some((first, lazy)) = &held {
+                    let is_first = element == *first || machine.store.equals(element, *first)?;
+                    machine.held[index] = is_first.then(|| (element, lazy.clone()));
+                }
+                let result = run_rest(&assigned, machine, on_complete);
+                if held.is_some() && (result.is_err() || position + 1 == size) {
+                    machine.held[index] = None;
+                }
+                result?;
             }
             target(machine, is_init)[index] = UNASSIGNED;
             machine.assigned -= 1;

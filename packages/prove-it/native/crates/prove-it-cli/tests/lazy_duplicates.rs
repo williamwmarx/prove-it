@@ -29,9 +29,9 @@ const SOURCES: [(&str, &str, &str); 10] = [
 // The configuration of a cell with no invariant.
 const PLAIN: &str = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n";
 
-const ROUTES: [&str; 14] = [
+const ROUTES: [&str; 17] = [
     "inline", "opOnce", "opAfter", "opEval", "letOnce", "letAfter", "letEval", "varCup",
-    "varPlain", "ex1", "ex2", "ex2r", "const", "constVar",
+    "varPlain", "ex1", "ex2", "ex2r", "const", "constVar", "inOne", "inFirst", "inSecond",
 ];
 
 // The spec of a cell: `x` assigned from the source through the route, in Init or in Next.
@@ -77,6 +77,15 @@ fn get_spec(source: &str, extra: &str, route: &str, is_next: bool) -> String {
         "ex1" => format!("\\E t \\in {{{source}}} : {x} \\in t"),
         "ex2" => format!("\\E t \\in {{{source}, {{42}}}} : {x} \\in t"),
         "ex2r" => format!("\\E t \\in {{{{42}}, {source}}} : {x} \\in t"),
+        "inOne" | "inFirst" | "inSecond" => {
+            variables = vec!["s", "x"];
+            let set = match route {
+                "inOne" => format!("{{{source}}}"),
+                "inFirst" => format!("{{{source}, {{42}}}}"),
+                _ => format!("{{{{42}}, {source}}}"),
+            };
+            format!("{s} \\in {set} /\\ {x} \\in {s}")
+        }
         "const" => {
             definitions.push(format!("C == {source}"));
             format!("{x} \\in C")
