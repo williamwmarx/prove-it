@@ -515,45 +515,12 @@ mod tests {
 
     use super::*;
     use crate::pure::interrupt::with_limits;
-    use crate::pure::simp_testing::{fixture_goal, get_fact, simp_logic};
+    use crate::pure::simp_testing::fixture_goal;
     use crate::pure::testing::{check_problems, parse_term};
     use crate::pure::thm::tests::many;
     use crate::pure::thm::trivial;
-
-    /// classical-setup.ts's destBinary.
-    fn dest_binary(name: &'static str) -> Box<dyn Fn(&Term) -> Res<(Term, Term)>> {
-        Box::new(move |term| {
-            term.dest_app()
-                .and_then(|(fun, right)| {
-                    fun.dest_app()
-                        .filter(|(head, _)| head.is_const_named(name))
-                        .map(|(_, left)| (left.clone(), right.clone()))
-                })
-                .ok_or_else(|| term_exn(format!("dest {name}")))
-        })
-    }
-
-    /// classical-setup.ts's getHypsubstData.
-    fn hypsubst_data() -> Rc<HypsubstData> {
-        let logic = simp_logic();
-        Rc::new(HypsubstData {
-            dest_trueprop: Box::new(|term| {
-                term.dest_app()
-                    .filter(|(fun, _)| fun.is_const_named("PredicateLogic.Trueprop"))
-                    .map(|(_, arg)| arg.clone())
-                    .ok_or_else(|| term_exn("dest_Trueprop"))
-            }),
-            dest_eq: dest_binary("PredicateLogic.eq"),
-            dest_imp: dest_binary("PredicateLogic.imp"),
-            eq_reflection: get_fact(&logic, "PredicateLogic.eq_reflection"),
-            rev_eq_reflection: get_fact(&logic, "PredicateLogic.meta_to_obj_eq"),
-            imp_intr: get_fact(&logic, "PredicateLogic.impI"),
-            rev_mp: get_fact(&logic, "PredicateLogic.rev_mp"),
-            subst: get_fact(&logic, "PredicateLogic.subst"),
-            sym: get_fact(&logic, "PredicateLogic.sym"),
-            thin_refl: get_fact(&logic, "PredicateLogic.thin_refl"),
-        })
-    }
+    use crate::tla::classical_setup::get_hypsubst_data;
+    use crate::tla::logic::load_logic;
 
     /// A term's text, or `@name`: the statement of a fixture.
     fn read_goal(field: &str) -> Term {
@@ -590,7 +557,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(256 * 1024 * 1024)
             .spawn(|| {
-                let data = hypsubst_data();
+                let data = get_hypsubst_data(&load_logic()).unwrap();
                 check_problems(
                     include_str!("../../testdata/provers/hypsubst.txt"),
                     |kind, fields| solve(&data, kind, fields),

@@ -272,9 +272,16 @@ const installTest = () => {
   run("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", ...tarballs], project);
   const cli = join(project, "node_modules/@atemp/prove-it/dist/cli.js");
   const failures = ["node", "bun"].flatMap((runtime) => {
+    // A state log leaves the check to the TypeScript check, which searches the engine IR past the
+    // binary's own check; where the log can't be created, the engine writes none.
     const result = spawnSync(runtime, [cli, "Commit.tla"], {
       cwd: join(PACKAGE_DIRECTORY, "tests/fixtures/commit"),
-      env: { ...process.env, PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_ADDON: undefined },
+      env: {
+        ...process.env,
+        PROVE_IT_ENGINE: "debug",
+        PROVE_IT_ENGINE_ADDON: undefined,
+        PROVE_IT_STATE_LOG: join("missing", "states.jsonl"),
+      },
       encoding: "utf8",
     });
     const isNative = result.status === 0 && result.stderr.includes("[engine] native: complete");

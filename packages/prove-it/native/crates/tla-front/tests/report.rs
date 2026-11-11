@@ -25,6 +25,7 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
             file_name: None,
             load_module: &|_| None,
             describe_file: &|name, origin| format!("{name} {origin:?}"),
+            root_extendees: &[],
             is_xml_export: false,
         },
     );
@@ -116,6 +117,7 @@ fn reports_only_the_recursive_shapes_it_follows() {
                     std::fs::read_to_string(directory.join(format!("{module}.tla"))).ok()
                 },
                 describe_file: &|name, origin| format!("{name} {origin:?}"),
+                root_extendees: &[],
                 is_xml_export: false,
             },
         );

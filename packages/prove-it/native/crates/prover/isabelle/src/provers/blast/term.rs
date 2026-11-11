@@ -728,53 +728,8 @@ pub fn strip_blast_imp_concl(trueprop: &str, term: &BlastTerm) -> BlastTerm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pure::consts::typargs_of;
     use crate::pure::logic::tests::show;
-    use crate::pure::term::{empty_sort, mk_abs, mk_tfree, mk_tvar, mk_type};
-    use crate::tla::logic_data::{self, logic_data};
-
-    struct Declared(Vec<TypargPosition>);
-
-    impl ConstType for Declared {
-        fn typargs(&self) -> &[TypargPosition] {
-            &self.0
-        }
-    }
-
-    fn decode_type(id: u32) -> Typ {
-        let data = logic_data();
-        match &data.types[id as usize] {
-            logic_data::TypeNode::Type { name, args } => mk_type(
-                data.strings[*name as usize].as_str(),
-                args.iter().map(|arg| decode_type(*arg)).collect(),
-            ),
-            logic_data::TypeNode::TFree { name } => {
-                mk_tfree(data.strings[*name as usize].as_str(), empty_sort())
-            }
-            logic_data::TypeNode::TVar { name, index } => {
-                mk_tvar(data.strings[*name as usize].as_str(), *index, empty_sort())
-            }
-        }
-    }
-
-    fn decode_term(id: u32) -> Term {
-        let data = logic_data();
-        let string = |name: &u32| data.strings[*name as usize].as_str();
-        match &data.terms[id as usize] {
-            logic_data::TermNode::Const { name, typ } => mk_const(string(name), decode_type(*typ)),
-            logic_data::TermNode::Free { name, typ } => mk_free(string(name), decode_type(*typ)),
-            logic_data::TermNode::Var { name, index, typ } => {
-                mk_var(string(name), *index, decode_type(*typ))
-            }
-            logic_data::TermNode::Bound { index } => mk_bound(*index),
-            logic_data::TermNode::Abs { name, typ, body } => {
-                mk_abs(string(name), decode_type(*typ), decode_term(*body))
-            }
-            logic_data::TermNode::App { function, argument } => {
-                mk_app(decode_term(*function), decode_term(*argument))
-            }
-        }
-    }
+    use crate::tla::logic::load_logic;
 
     /// Labels variables in the order a rule's lines first show them.
     struct Printer {
@@ -853,18 +808,9 @@ mod tests {
     #[test]
     fn matches_the_typescript_on_the_classical_rules() {
         const TRUEPROP: &str = "PredicateLogic.Trueprop";
-        let data = logic_data();
-        let consts: HashMap<Name, Declared> = data
-            .consts
-            .iter()
-            .map(|entry| {
-                (
-                    Name::from(entry.name.as_str()),
-                    Declared(typargs_of(&decode_type(entry.typ))),
-                )
-            })
-            .collect();
-        let claset = &data.claset;
+        let logic = load_logic();
+        let consts = &logic.consts;
+        let claset = &logic.claset;
         let rules = claset
             .safe_is
             .iter()
@@ -879,8 +825,8 @@ mod tests {
             let mut printer = Printer { labels: Vec::new() };
             let mut out = |key: &str, value: String| lines.push(format!("{number} {key}: {value}"));
 
-            let prop = decode_term(data.thms[rule.rule as usize]);
-            let term = from_term(&consts, &prop).unwrap();
+            let prop = &rule.rule.prop;
+            let term = from_term(consts, prop).unwrap();
             out("from", printer.print(&term));
             let vars = add_term_vars(&term, Vec::new());
             out("vars", printer.labels(&vars).join(" "));

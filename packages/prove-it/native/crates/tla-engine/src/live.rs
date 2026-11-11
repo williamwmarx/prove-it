@@ -26,9 +26,9 @@ const MAXIMUM_DIAMETER_ANSWERS: usize = 1 << 26;
 /// ENABLED run.
 pub const ENABLED_DIFFERS: &str = "ENABLED from the steps the search took differs from ENABLED run";
 
-/// What PROVE_IT_LIVE_CHECK finds when the next-state relation evaluated on a step the search took
-/// doesn't hold.
-pub const NEXT_DIFFERS: &str = "the next-state relation doesn't hold of a step the search took";
+/// What PROVE_IT_LIVE_CHECK finds when an action the steps the search took answer, evaluated on a
+/// step, differs.
+pub const STEPS_DIFFER: &str = "an action the steps the search took answer differs from its run";
 
 /// The states of a search and its steps: those from state i between `edge_offsets[i]` and
 /// `edge_offsets[i + 1]`, for the first `expanded` states, each labelled with the position of the
@@ -49,9 +49,60 @@ pub struct LiveGraph<'g> {
     /// The expanded state whose next states failed, whose steps are only those the next-state
     /// relation took before it failed: ENABLED is evaluated on it, not answered from them.
     pub partial: Option<usize>,
+    /// Each step's bits of the action atoms made of pieces of Next whose pieces the walks that took
+    /// it passed through, where the search recorded them.
+    pub pieces: Option<&'g [u8]>,
     /// The level TLC gives each state, where an atom reads TLCGet("level"): 1 for an initial
     /// state, else one past its parent's.
     pub levels: Option<&'g [u32]>,
+}
+
+/// What the steps the search took answer of an action atom on each step whose subscript changed:
+/// true of every step where the action is Next, or of the steps a walk through its pieces took.
+enum Taken {
+    All,
+    Steps(Vec<bool>),
+}
+
+impl Taken {
+    fn of(graph: &LiveGraph<'_>, is_next: bool, piece: Option<u8>) -> Option<Taken> {
+        if !graph.is_next_taken {
+            return None;
+        }
+        if is_next {
+            return Some(Taken::All);
+        }
+        let (bit, pieces) = (piece?, graph.pieces?);
+        // TLC evaluates the action once for each successor: it holds where any walk that took
+        // the step to that successor passed through a piece.
+        let mut answers = vec![false; graph.edges.len()];
+        let mut marked = Vec::new();
+        for index in 0..graph.expanded {
+            let steps = graph.edge_offsets[index] as usize..graph.edge_offsets[index + 1] as usize;
+            marked.clear();
+            marked.extend(
+                steps
+                    .clone()
+                    .filter(|&edge| pieces[edge] & bit != 0)
+                    .map(|edge| graph.edges[edge]),
+            );
+            if marked.is_empty() {
+                continue;
+            }
+            marked.sort_unstable();
+            for edge in steps {
+                answers[edge] = marked.binary_search(&graph.edges[edge]).is_ok();
+            }
+        }
+        Some(Taken::Steps(answers))
+    }
+
+    fn at(&self, edge: usize) -> bool {
+        match self {
+            Taken::All => true,
+            Taken::Steps(answers) => answers[edge],
+        }
+    }
 }
 
 /// The answers to one atom: for a state predicate or ENABLED, one per state; for an action, one
@@ -189,8 +240,8 @@ impl Evaluator<'_, '_, '_> {
         self.machine.store.equals(after, before)
     }
 
-    // An action on a step, false where the subscript's value is unchanged, and true where the
-    // action is the next-state relation and the step one the search took (`is_taken`).
+    // An action on a step, false where the subscript's value is unchanged, and else what the steps
+    // the search took answer of it (`taken`), where they do.
     fn action(
         &mut self,
         values: &mut [Id],
@@ -198,7 +249,7 @@ impl Evaluator<'_, '_, '_> {
         subscript: Option<&Eval>,
         index: usize,
         next: usize,
-        is_taken: bool,
+        taken: Option<bool>,
     ) -> u8 {
         if let Some(subscript) = subscript {
             match self.is_unchanged(values, subscript, index, next) {
@@ -207,8 +258,8 @@ impl Evaluator<'_, '_, '_> {
                 Err(_) => return UNKNOWN,
             }
         }
-        if is_taken {
-            return 1;
+        if let Some(taken) = taken {
+            return u8::from(taken);
         }
         self.set_current(index);
         let graph = self.graph;
@@ -318,8 +369,8 @@ impl Run<'_, '_, '_> {
         answer(eval(self.machine))
     }
 
-    // An action on a step, false where the subscript's value is unchanged, and true where the
-    // action is the next-state relation and the step one the search took. Only the states asked
+    // An action on a step, false where the subscript's value is unchanged, and else what the steps
+    // the search took answer of it, where they do. Only the states asked
     // about have their subscript evaluated, as on one thread, and an evaluation that fails leaves
     // the step unknown on either.
     fn action(
@@ -328,7 +379,7 @@ impl Run<'_, '_, '_> {
         subscript: Option<&Eval>,
         index: usize,
         next: usize,
-        is_taken: bool,
+        taken: Option<bool>,
     ) -> u8 {
         if let Some(subscript) = subscript {
             let unchanged = self.subscript_value(subscript, next).and_then(|after| {
@@ -341,8 +392,8 @@ impl Run<'_, '_, '_> {
                 Err(_) => return UNKNOWN,
             }
         }
-        if is_taken {
-            return 1;
+        if let Some(taken) = taken {
+            return u8::from(taken);
         }
         self.set_current(index);
         let graph = self.graph;
@@ -625,8 +676,9 @@ pub fn answer_atoms(
                     subscript,
                     enabled,
                     is_next,
+                    piece,
                 } if is_shared => {
-                    let is_taken = *is_next && graph.is_next_taken;
+                    let taken = Taken::of(graph, *is_next, *piece);
                     let disabled = enabled
                         .and_then(|position| tables.get(position))
                         .filter(|table: &&Table| table.answers.len() == graph.count)
@@ -648,7 +700,8 @@ pub fn answer_atoms(
                             for edge in start..end {
                                 answers.push(if is_asked(index) {
                                     let next = graph.edges[edge] as usize;
-                                    run.action(action, subscript, index, next, is_taken)
+                                    let taken = taken.as_ref().map(|taken| taken.at(edge));
+                                    run.action(action, subscript, index, next, taken)
                                 } else {
                                     UNKNOWN
                                 });
@@ -663,7 +716,7 @@ pub fn answer_atoms(
                         |_| 1,
                         |run, index, answers| {
                             answers.push(if is_asked(index) {
-                                run.action(action, subscript, index, index, false)
+                                run.action(action, subscript, index, index, None)
                             } else {
                                 UNKNOWN
                             });
@@ -681,8 +734,9 @@ pub fn answer_atoms(
                     subscript,
                     enabled,
                     is_next,
+                    piece,
                 } => {
-                    let is_taken = *is_next && graph.is_next_taken;
+                    let taken = Taken::of(graph, *is_next, *piece);
                     // The checker asks about no step from a state where the ENABLED of the action's
                     // fairness is false, and the interpreter answers any it does; where the atom
                     // prints, it evaluates the action on every step TLC does.
@@ -704,6 +758,7 @@ pub fn answer_atoms(
                         for edge in start..end {
                             let next = graph.edges[edge] as usize;
                             let subscript = subscript.as_ref();
+                            let is_taken = taken.as_ref().map(|taken| taken.at(edge));
                             let answer = evaluator.action(
                                 &mut values,
                                 action,
@@ -712,19 +767,18 @@ pub fn answer_atoms(
                                 next,
                                 is_taken,
                             );
-                            if is_taken
-                                && is_live_checked
-                                && answer == 1
-                                && evaluator.action(
+                            if is_taken.is_some() && is_live_checked {
+                                let run = evaluator.action(
                                     &mut values,
                                     action,
                                     subscript,
                                     index,
                                     next,
-                                    false,
-                                ) == 0
-                            {
-                                return Err(NEXT_DIFFERS);
+                                    None,
+                                );
+                                if run != UNKNOWN && run != answer {
+                                    return Err(STEPS_DIFFER);
+                                }
                             }
                             answers.push(answer);
                             keep_printed(evaluator.machine, &mut prints, edge);
@@ -738,7 +792,7 @@ pub fn answer_atoms(
                                 subscript.as_ref(),
                                 index,
                                 index,
-                                false,
+                                None,
                             )
                         } else {
                             UNKNOWN

@@ -7,7 +7,7 @@ use std::path::Path;
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::model::{
-    LoweredModel, ModelOptions, ModelSources, StartupMessage, lower_front_ranking_of,
+    LoweredModel, ModelOptions, ModelSources, StartupMessage, TRACE_MODULE, lower_front_ranking_of,
 };
 use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text_of};
 use tla_front::tlc_messages::CodedError;
@@ -85,11 +85,16 @@ pub fn read_front(
         }));
     }
     let describe = host.get_file_describer(files);
-    let sany =
-        native_sany(spec_path, sources.as_ref(), &*describe).map_err(|error| match error {
-            FrontError::NotYet(reason) => format!("SANY's report of {reason}"),
-            _ => "SANY's report, which tla-front doesn't write".to_owned(),
-        })?;
+    let sany = native_sany(
+        spec_path,
+        sources.as_ref(),
+        &*describe,
+        files.is_trace_recorded,
+    )
+    .map_err(|error| match error {
+        FrontError::NotYet(reason) => format!("SANY's report of {reason}"),
+        _ => "SANY's report, which tla-front doesn't write".to_owned(),
+    })?;
     if sany.is_failed {
         return Ok(Read::Failed(Failure {
             sany: sany.text,
@@ -105,6 +110,7 @@ pub fn read_front(
         is_warning_enabled,
         files.libraries,
         seed as u64,
+        files.is_trace_recorded,
     ) {
         Ok(lowered) => {
             return Ok(Read::Model(Front {
@@ -136,6 +142,7 @@ fn lower(
     is_warning_enabled: bool,
     libraries: &[String],
     random_seed: u64,
+    is_trace_recorded: bool,
 ) -> Result<LoweredModel, FrontError> {
     let sources = sources.ok_or_else(|| FrontError::Config("the spec can't be read".into()))?;
     let libraries: Vec<&Path> = libraries.iter().map(Path::new).collect();
@@ -145,6 +152,7 @@ fn lower(
         is_warning_enabled,
         is_spec_described: true,
         random_seed,
+        is_trace_recorded,
     };
     // The evaluator recurses, so it runs with the search's stack.
     let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index]| {
@@ -157,6 +165,7 @@ fn native_sany(
     spec_path: &str,
     sources: Option<&ModelSources>,
     describe_file: &dyn Fn(&str, ModuleOrigin) -> String,
+    is_trace_recorded: bool,
 ) -> Result<SanyText, FrontError> {
     let spec = Path::new(spec_path);
     // TLC gives SANY the spec as the command line names it, without .tla, unless it's absolute.
@@ -175,6 +184,11 @@ fn native_sany(
         file_name,
         load_module: sources.load_module,
         describe_file,
+        root_extendees: if is_trace_recorded {
+            &[TRACE_MODULE]
+        } else {
+            &[]
+        },
         is_xml_export: false,
     };
     get_sany_text_of(root, sources.source, &options)
