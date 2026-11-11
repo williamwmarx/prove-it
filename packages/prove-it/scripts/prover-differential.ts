@@ -2,7 +2,8 @@
 // and compares the verdict and the statistics with the TypeScript backends' recorded ones. The
 // answers must be the same, statistics included, which shows the same search was made.
 //   --side ts (the default) decides with the TypeScript backends, which checks that the recording
-//     reproduces; --side rust with the native ones.
+//     reproduces; --side rust with the native ones. Zenon has only its Rust port, so both sides
+//     decide its inputs in Rust.
 //   --prover smt|z3|zenon|isabelle|ls4 and --filter text keep the inputs of one backend, or whose
 //     key, prover/digest, contains the text. --jobs n runs n workers. --verbose lists every difference.
 //   --update, with --side ts only, writes the answer of each input that differs into the record,

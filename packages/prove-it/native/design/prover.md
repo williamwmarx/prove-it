@@ -533,7 +533,7 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 |---|---|---|---|
 | `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`; `nlsat/` ports `src/nlsat` and `src/math/polynomial` of z3-5.3.3, limit checks included) | MIT | the Z3 section names `native/crates/prove-smt/`; `z3-license.txt` moves with the code |
 | `prove-num` | Z3's `rational`/`mpz` semantics, written fresh on JS `bigint`'s rules | MIT (Z3's where it follows `rational.ts`) | under the Z3 section |
-| `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps the `LICENSE` beside the code, as `src/prover/zenon/LICENSE` |
+| `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps Zenon's `LICENSE` beside the code (the TypeScript Zenon, which kept it too, is deleted) |
 | `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
 | `prove-isabelle` | Isabelle2025's Pure, Isar, Provers (BSD-style, Cambridge/TUM), and Isabelle/TLA+'s theories and ML setup as tlapm ships them (BSD, tlapm's licence) | BSD-3-Clause-style | the Isabelle section, and the tlapm section for the logic data and `tla/`; `LICENSE` and `LICENSE-tlapm` move with the code |
 | `prove-ptl` | tlapm's PTL backend input; the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` ports | tlapm section |
@@ -541,8 +541,8 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 | `prove-obligations` (`format`, `marshal`, the `getHash` of `action`) | OCaml's `Format` (`stdlib/format.ml`), Marshal (`runtime/intern.c`, `extern.c`), `runtime/hash.c` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust files |
 
 The package's `"license": "MIT AND LGPL-2.1-only WITH OCaml-LGPL-linking-exception"` comes from
-the four OCaml ports alone (`tlapm/ocaml-marshal.ts`, `zenon/ocaml.ts`, `obligations/format.ts`,
-`action.ts`'s `getHash`). Their Rust ports inherit it: they are translations of the same code. So
+the OCaml ports alone (`tlapm/ocaml-marshal.ts`, `obligations/format.ts`, `action.ts`'s
+`getHash`, and `zenon/ocaml.ts` until the TypeScript Zenon was deleted). Their Rust ports inherit it: they are translations of the same code. So
 `prove-zenon` and `prove-obligations` declare `license = "MIT AND BSD-3-Clause AND
 LGPL-2.1-only WITH OCaml-LGPL-linking-exception"` (the exact SPDX list fixed when the crate lands),
 and the LGPL code stays in its own modules. The linking exception is what lets those modules be
@@ -1068,6 +1068,17 @@ is next.
   container both runs lose a few large modules (`tcp_proof`, `BPConProof`, `CRDT_proof`) whose
   workers the container's memory limit kills; alone, `CRDT_proof` gives the same statuses both
   ways.
+- P2 Zenon, the TypeScript deleted (ahead of P7, by the coordinator's decision): `src/prover/
+  zenon/` is gone but `encode.ts`, which P5c owns, with `tests/unit/zenon.test.ts`,
+  `scripts/zenon-fixtures.ts` and `TlaZenonError`. What the TypeScript decided stays as recorded
+  expectations the Rust is tested against: the 949 Zenon inputs of `tests/conformance/
+  prover-inputs.json` (`prover-differential --side rust --prover zenon`) and the 103 fixture runs
+  of `tests/fixtures/zenon/decisions.txt` (`crates/prover/zenon/tests/zenon.rs`), which nothing
+  rewrites now. Zenon is Rust-only in `deciders.ts`: `PROVE_IT_PROVER` doesn't switch it, an
+  aborted signal answers `unknown`, a malformed input is a `TlaProverError` (failed, as tlapm
+  counts it), and where no engine loads `decide` throws `EngineUnavailableError`, as `check` does.
+  `prover-inputs --record` and `prover-differential --side ts` decide Zenon in Rust.
+  `conformance:zenon` compares the native Zenon with tlapm's recorded results and binary.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
