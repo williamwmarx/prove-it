@@ -112,7 +112,7 @@ describe("general temporal formulas match TLC", () => {
       source: SOURCE,
       config: "SPECIFICATION WeakSpec\nPROPERTIES OftenFlipped OftenTop\n",
     });
-    expect(result.violation?.name).toBe("OftenTop");
-    expect(result.violation?.loopStart).toBeLessThan(result.violation?.trace.length ?? 0);
+    expect(result.violations[0]?.headline).toBe("Temporal property OftenTop was violated.\n");
+    expect(result.violations[0]?.loopStart).toBeLessThan(result.violations[0]?.states.length ?? 0);
   });
 });

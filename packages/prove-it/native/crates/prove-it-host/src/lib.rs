@@ -20,7 +20,7 @@ use tla_values::transfer::{EncodedStates, StateEncoder};
 
 /// The version of the contract between the loader and the addon: the exports, their arguments
 /// and the engine IR. The loader uses the TypeScript engine when it expects another.
-pub const ABI_VERSION: i32 = 15;
+pub const ABI_VERSION: i32 = 16;
 
 /// How deep the search thread's stack may grow: compiled closures recurse with the expressions
 /// and the values they evaluate. It is reserved, not committed.

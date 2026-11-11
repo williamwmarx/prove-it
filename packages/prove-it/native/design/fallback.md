@@ -550,6 +550,9 @@ no full `tlc-stdout`. Recording them is deferred.
   tests and the corpus use it; and `tla-live`'s declines, where a test or a model meets one. For
   WebAssembly's stack, see the measurement below.
 - **S3. Tests on TLC's recordings,** recorded once with a recorder script.
+- **Native progress events (a blocker for S4).** `check` hands a call with `onProgress` to the
+  TypeScript check, since the native check reports none of the points of the search at which TLC
+  prints a message. It must report them, in `CheckProgress`'s shape, before the interpreter goes.
 - **S4. Flip and delete.**
   - `check` loses the interpreter tier, `PROVE_IT_ENGINE=0` and `PROVE_IT_LIVE_CHECK`.
   - About 24,000 lines go: `evaluate`, `values`, `environment`, `successors`, `search`, the
@@ -623,10 +626,35 @@ runtime (a Java stack overflow, and where TLC is installed).
 `check` and its option, progress, result and status types, `prove` and its types, `parseConfig`,
 and the errors stay. `parseModule` and `Module` are the front end's to decide.
 
-`Value`, `formatValue` and the values in `TraceStep` and `Violation` are the interpreter's classes.
-The owner decided to break them: a trace step carries each variable as TLC prints it, from the
-native printer, and as plain decoded data with no classes. `Value` and `formatValue` go. That is its
-own change, after this one.
+`Value`, `formatValue` and the values in `TraceStep` and `Violation` were the interpreter's
+classes. The owner decided to break them, and they broke after the CLI's flip:
+
+- `check` runs `checkSources` as the CLI does, with the spec and its configuration as the files
+  `<Module>.tla` and `<Module>.cfg`, its modules through `loadModule`, and `-seed`, `-workers`,
+  `-lncheck`, `-tool`, `-nowarning` and `-continue` from its options. The Json module's operators
+  decline there, since the library answers for files through `readFile` and `writeFile`. The
+  machine's `isLibrary` says so, and only then does the check write each printed state's plain
+  data, at most 1,000,000 elements of it a variable, TLC's own bound on a set it builds; past
+  that the value is `null`. The binary and the CLI's `checkSources` write none.
+- The check records what it found as it prints (`prove-it-check`'s `outcome.rs`), and
+  `checkSources` returns it as `outcome` (ABI 16): the status, the counts of TLC's statistics, what
+  the spec printed, and each violation or error TLC reports, as its message's code and text with
+  the states TLC prints after it. A state carries each variable as TLC prints it and as plain data.
+- Where the native check declines, stops before it searches (a spec or configuration TLC rejects,
+  which the TypeScript check throws for), or the options ask for what only the TypeScript check
+  does (`onProgress`, `onPause`, `dump`, `systemProperties`, a `ModelConfig`, TLC 1.7.4), the
+  TypeScript check runs and its result converts (`src/check-result.ts`).
+- `Value` and `formatValue` are no longer exported.
+- A set or function TLC keeps lazy is `{"@lazy": text}`, with TLC's `toString` of it, which the
+  trace printer writes exactly as it writes the states (`tests/fixtures/plain-lazy` pins it against
+  TLC's output). Where the text can't be TLC's, a value is `null`: a set TLC can't normalize
+  natively, and in the interpreter a lazy function or filter it has no source for.
+- `onPrint` gets what the spec printed once the native check ends, not as it prints. What the spec
+  prints as TLC rebuilds a trace isn't in the result.
+
+Of the 387 calls of the library's `check` in `bun run test` at the change, 199 ran natively. Of
+the 188 others, 114 stopped before the search, 44 were declined and 30 asked for the TypeScript
+check. The tests of the interpreter's own results run `checkParsed`, the TypeScript check.
 
 ### What changes for users
 

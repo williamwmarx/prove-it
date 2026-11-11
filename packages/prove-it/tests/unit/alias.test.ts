@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check, formatValue, parseConfig, TlaConfigError, type TraceStep } from "../../src";
+import { check, parseConfig, TlaConfigError, type TraceStep } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/alias");
 
@@ -20,34 +20,44 @@ const checkModule = (body: string, config: string) =>
 
 const formatTrace = (trace: TraceStep[] | undefined) =>
   (trace ?? []).map((step) =>
-    Object.entries(step.state).map(([name, value]) => `${name} = ${formatValue(value)}`),
+    Object.entries(step.variables).map(([name, variable]) => `${name} = ${variable.text}`),
+  );
+
+const getValues = (step: TraceStep | undefined) =>
+  Object.fromEntries(
+    Object.entries(step?.variables ?? {}).map(([name, variable]) => [name, variable.value]),
   );
 
 describe("ALIAS matches TLC", () => {
   it("prints the alias of each state in a safety trace", async () => {
     const result = await checkAlias("Alias");
     expect(result.status).toBe("invariant-violation");
-    expect(formatTrace(result.violation?.trace)).toEqual(
-      [1, 2, 3, 4].map((stateNumber) => [
-        `yy = ${stateNumber % 2 === 0 ? "TRUE" : "FALSE"}`,
-        `x = ${stateNumber}`,
-        `a = ${stateNumber === 4 ? 0 : 1}`,
-        `b = ${stateNumber === 4 ? "TRUE" : "FALSE"}`,
-        `anim = "e1: ${stateNumber} e2: ${stateNumber % 2 === 0 ? "TRUE" : "FALSE"}"`,
-        "te = TRUE",
-        `lvl = <<${stateNumber}, ${stateNumber}>>`,
-        `trc = <<${[1, 2, 3, 4]
+    expect(formatTrace(result.violations[0]?.states)).toEqual(
+      [1, 2, 3, 4].map((stateNumber) => {
+        const records = [1, 2, 3, 4]
           .slice(0, stateNumber)
-          .map((step) => `[x |-> ${step}, y |-> ${step % 2 === 0 ? "TRUE" : "FALSE"}]`)
-          .join(", ")}>>`,
-      ]),
+          .map((step) => `[x |-> ${step}, y |-> ${step % 2 === 0 ? "TRUE" : "FALSE"}]`);
+        return [
+          `yy = ${stateNumber % 2 === 0 ? "TRUE" : "FALSE"}`,
+          `x = ${stateNumber}`,
+          `a = ${stateNumber === 4 ? 0 : 1}`,
+          `b = ${stateNumber === 4 ? "TRUE" : "FALSE"}`,
+          `anim = "e1: ${stateNumber} e2: ${stateNumber % 2 === 0 ? "TRUE" : "FALSE"}"`,
+          "te = TRUE",
+          `lvl = <<${stateNumber}, ${stateNumber}>>`,
+          // TLC's pretty printer breaks a sequence too long for its line.
+          stateNumber === 4
+            ? `trc = << ${records.join(",\n   ")} >>`
+            : `trc = <<${records.join(", ")}>>`,
+        ];
+      }),
     );
   });
 
   it("evaluates the last state of a lasso against the state it loops back to", async () => {
     const result = await checkAlias("AliasLasso");
-    expect([result.status, result.violation?.loopStart]).toEqual(["liveness-violation", 0]);
-    expect(formatTrace(result.violation?.trace).map((step) => step.slice(2, 4))).toEqual([
+    expect([result.status, result.violations[0]?.loopStart]).toEqual(["liveness-violation", 0]);
+    expect(formatTrace(result.violations[0]?.states).map((step) => step.slice(2, 4))).toEqual([
       ["a = 1", "b = FALSE"],
       ["a = 1", "b = FALSE"],
       ["a = 1", "b = FALSE"],
@@ -57,8 +67,8 @@ describe("ALIAS matches TLC", () => {
 
   it("evaluates a stuttering state against itself", async () => {
     const result = await checkAlias("AliasStuttering");
-    expect([result.status, result.violation?.loopStart]).toEqual(["liveness-violation", 0]);
-    expect(formatTrace(result.violation?.trace).map((step) => step.slice(2, 4))).toEqual([
+    expect([result.status, result.violations[0]?.loopStart]).toEqual(["liveness-violation", 0]);
+    expect(formatTrace(result.violations[0]?.states).map((step) => step.slice(2, 4))).toEqual([
       ["a = 0", "b = TRUE"],
     ]);
   });
@@ -69,7 +79,8 @@ describe("ALIAS matches TLC", () => {
       await Promise.all(
         ["Undefined", "Argument", "Constant"].map(
           async (name) =>
-            (await checkModule(next, `ALIAS ${name}`)).violation?.trace[0].state._ALIASEvalError,
+            (await checkModule(next, `ALIAS ${name}`)).violations[0]?.states[0].variables
+              ._ALIASEvalError.value,
         ),
       ),
     ).toEqual([
@@ -81,8 +92,11 @@ describe("ALIAS matches TLC", () => {
       "Next == x < 1 /\\ x' = x + 1\nAlias == [y |-> 1 \\div x]",
       "ALIAS Alias",
     );
-    expect(Object.keys(result.violation?.trace[0].state ?? {})).toEqual(["x", "_ALIASEvalError"]);
-    expect(result.violation?.trace[1].state).toEqual({ y: 1 });
+    expect(Object.keys(getValues(result.violations[0]?.states[0]))).toEqual([
+      "x",
+      "_ALIASEvalError",
+    ]);
+    expect(getValues(result.violations[0]?.states[1])).toEqual({ y: 1 });
   });
 
   it("marks the message of _ALIASEvalError as TLC does in -tool output", async () => {
@@ -91,7 +105,7 @@ describe("ALIAS matches TLC", () => {
       config: "INIT Init\nNEXT Next\nALIAS Argument",
       isTool: true,
     });
-    expect(result.violation?.trace[0].state._ALIASEvalError).toBe(
+    expect(result.violations[0]?.states[0].variables._ALIASEvalError.value).toBe(
       "@!@!@STARTMSG 2228:0 @!@!@\nTLC requires alias not to take any argument, but one was given: Argument\n@!@!@ENDMSG 2228 @!@!@",
     );
   });
@@ -101,12 +115,15 @@ describe("ALIAS matches TLC", () => {
       "Next == x < 1 /\\ x' = x + 1\nAlias == x + 100",
       "ALIAS Alias",
     );
-    expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 1 }]);
+    expect(result.violations[0]?.states.map(getValues)).toEqual([{ x: 0 }, { x: 1 }]);
   });
 
   it("prints a deadlocked initial state without the alias", async () => {
     const result = await checkModule("Next == x > 0 /\\ x' = x\nAlias == [y |-> x]", "ALIAS Alias");
-    expect([result.status, result.violation?.trace[0].state]).toEqual(["deadlock", { x: 0 }]);
+    expect([result.status, getValues(result.violations[0]?.states[0])]).toEqual([
+      "deadlock",
+      { x: 0 },
+    ]);
   });
 
   it("rejects a second ALIAS", async () => {

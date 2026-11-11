@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import { check } from "../../src";
+import { checkParsed } from "../../src/parallel";
 
 const checkAssumption = (assumption: string) =>
-  check({
+  checkParsed({
     source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nASSUME ${assumption}\n====`,
     config: "",
   });

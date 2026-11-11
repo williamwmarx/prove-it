@@ -23,7 +23,7 @@ use crate::dump_trace::TraceDumps;
 use crate::failure::print_assumption_failure;
 use crate::messages::{self as code, Level, Printer};
 use crate::stack::alongside;
-use crate::trace::{TraceChecks, format_texts, rebuild_trace};
+use crate::trace::{TraceChecks, format_texts, format_variables, rebuild_trace};
 
 const ERROR_STATE: u32 = 2120;
 const MODE_SIMULATION: u32 = 2188;
@@ -143,6 +143,7 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
         .any(|builtin| &*ir.texts[builtin.name as usize] == "TLCGet");
     let (sender, receiver) = mpsc::channel();
     let is_tool = printer.is_tool;
+    let is_plain = printer.host.is_plain();
     let mut is_misprinted = false;
     let (outcome, assumed_printed) = alongside(
         move || {
@@ -150,6 +151,7 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
                 sender,
                 ir,
                 is_tool,
+                is_plain,
                 workers,
                 false,
                 None,
@@ -412,8 +414,18 @@ fn get_state_texts(
     {
         return Err("a record of several fields, which TLC may or may not have sorted".into());
     }
-    let trace = rebuild_trace(ir, violation, TraceChecks { dumps, run: None }, is_tool)?;
-    Ok(trace.states.into_iter().map(|state| state.text).collect())
+    let trace = rebuild_trace(
+        ir,
+        violation,
+        TraceChecks { dumps, run: None },
+        is_tool,
+        false,
+    )?;
+    Ok(trace
+        .states
+        .iter()
+        .map(|state| format_variables(&state.variables))
+        .collect())
 }
 
 // Whether a value holds a record of more than one field, whose fields TLC prints in the order

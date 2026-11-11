@@ -77,6 +77,17 @@ pub trait Host {
     fn write_file(&self, _path: &Path, _bytes: &[u8], _is_appended: bool) -> bool {
         false
     }
+    /// Whether the check may read and write the machine's files, as the Json module's operators
+    /// do (`Settings::is_file_system`).
+    fn is_file_system(&self) -> bool {
+        true
+    }
+    /// Whether the caller reads the outcome (`Outcome`), as only the library's check does: then the
+    /// check keeps the spec's prints and each printed state, with its variables as plain data too.
+    /// Otherwise it keeps neither, so that a search that prints much holds none of it.
+    fn is_plain(&self) -> bool {
+        false
+    }
 }
 
 /// The file system and the process the binary runs in, and the advice the binary gives the system
