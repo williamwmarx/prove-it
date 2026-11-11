@@ -590,7 +590,7 @@ impl ModuleGenerator<'_> {
     }
 
     /// `{ ...createNullNode(), isAbsent: true }`.
-    fn create_absent_node(&mut self) -> NodeId {
+    pub(super) fn create_absent_node(&mut self) -> NodeId {
         let node = self.create_null_node();
         if let NodeKind::OpAppl(application) = &mut self.spec.graph.node_mut(node).kind {
             application.is_absent = true;

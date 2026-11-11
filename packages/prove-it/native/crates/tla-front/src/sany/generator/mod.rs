@@ -15,8 +15,8 @@ use std::sync::OnceLock;
 
 use crate::TlcVersion;
 use crate::ast::{
-    Assumed, Bound, BoundPattern, Expr, Expression, ExpressionKind, Location, Module, ModuleUnit,
-    Position, Statement, SymbolLevel,
+    Assumed, Bound, BoundPattern, DefinitionUnit, Expr, Expression, ExpressionKind, Fact, Location,
+    Module, ModuleUnit, Position, Proof, ProofKind, Statement, StepBody, SymbolLevel,
 };
 use crate::hash::{FastMap, FastSet};
 use crate::levels::TEMPORAL_LEVEL;
@@ -335,6 +335,91 @@ fn get_assumed_instances(assumed: &Assumed, found: &mut Vec<Name>) {
             get_let_instances(&assume_prove.conclusion, found);
         }
     }
+}
+
+/// The modules the proofs of the theorems of the module and of the modules within it instantiate:
+/// ParseUnit.getInstances finds them, which SANY loads and analyzes, and `getDependencies`
+/// doesn't.
+pub(crate) fn get_proof_instances(module: &Module) -> Vec<Name> {
+    fn get_fact_instances(facts: &[Fact], found: &mut Vec<Name>) {
+        for fact in facts {
+            if let Fact::Expression(expression) = fact {
+                get_let_instances(expression, found);
+            }
+        }
+    }
+    fn get_instances(proof: &Proof, found: &mut Vec<Name>) {
+        match &proof.kind {
+            ProofKind::Obvious { .. } | ProofKind::Omitted { .. } => {}
+            ProofKind::By { facts, defs, .. } => {
+                get_fact_instances(facts, found);
+                get_fact_instances(defs, found);
+            }
+            ProofKind::Steps { steps, .. } => {
+                for step in steps {
+                    match &step.body {
+                        StepBody::Instance(instance) => found.push(instance.module.clone()),
+                        StepBody::Define { definitions, .. } => {
+                            for definition in definitions {
+                                match definition {
+                                    DefinitionUnit::Instance(instance) => {
+                                        found.push(instance.module.clone())
+                                    }
+                                    DefinitionUnit::Definition(definition) => {
+                                        get_let_instances(&definition.body, found)
+                                    }
+                                }
+                            }
+                        }
+                        StepBody::UseOrHide(use_or_hide) => {
+                            get_fact_instances(&use_or_hide.facts, found);
+                            get_fact_instances(&use_or_hide.defs, found);
+                        }
+                        StepBody::Have(expression) | StepBody::Case(expression) => {
+                            get_let_instances(expression, found)
+                        }
+                        StepBody::Witness(expressions) => expressions
+                            .iter()
+                            .for_each(|expression| get_let_instances(expression, found)),
+                        StepBody::Take { bounds, .. } => bounds
+                            .iter()
+                            .for_each(|bound| get_let_instances(&bound.set, found)),
+                        StepBody::Pick { bounds, body, .. } => {
+                            bounds
+                                .iter()
+                                .for_each(|bound| get_let_instances(&bound.set, found));
+                            get_let_instances(body, found);
+                        }
+                        StepBody::Assert { statement, .. } => match statement {
+                            Statement::Expression(expression) => {
+                                get_let_instances(expression, found)
+                            }
+                            Statement::AssumeProve(assume_prove) => get_assumed_instances(
+                                &Assumed::AssumeProve(assume_prove.clone()),
+                                found,
+                            ),
+                        },
+                        StepBody::Qed => {}
+                    }
+                    if let Some(proof) = &step.proof {
+                        get_instances(proof, found);
+                    }
+                }
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for unit in &module.units {
+        if let ModuleUnit::Theorem(theorem) = unit
+            && let Some(proof) = &theorem.proof
+        {
+            get_instances(proof, &mut found);
+        }
+    }
+    for inner in &module.modules {
+        found.extend(get_proof_instances(inner));
+    }
+    found
 }
 
 /// `isInternalInstance`: SpecObj.instanceResolvesToInternalModule, SANY finds a module that the
@@ -1686,6 +1771,28 @@ impl<'a> ModuleGenerator<'a> {
         Ok(lambda)
     }
 
+    /// The operator a name resolves to, as `resolveName` finds it.
+    fn resolve_operator(&self, name: &str) -> Option<NodeId> {
+        self.resolve_symbol(&resolve_synonym(name))
+            .filter(|&op| !matches!(self.spec.graph.kind(op), NodeKind::Module(_)))
+    }
+
+    /// generateGenID reports an operator symbol it doesn't find as the source spells it, and
+    /// generateOpArg gives its nullOpArg.
+    fn report_unknown_symbol(&mut self, argument: &Expr, location: &SanyLocation) -> NodeId {
+        let file = self.file.clone();
+        let span = get_expression_span(&file, argument);
+        let spelling: String = file.tokens[span.start..=span.end]
+            .iter()
+            .map(|token| &**token.spelling.as_ref().unwrap_or(&token.text))
+            .collect();
+        self.add_error(
+            location,
+            format!("Could not find declaration or definition of symbol '{spelling}'."),
+        );
+        self.create_null_node()
+    }
+
     /// SANY's parser reads `@` as a name, which `selectorToNode` finds no operator of where an
     /// operator is required, and gives its nullOAN.
     fn report_unknown_at(&mut self, location: &SanyLocation) -> NodeId {
@@ -1730,7 +1837,11 @@ impl<'a> ModuleGenerator<'a> {
             let op = match operator {
                 None => self.generate_lambda(argument)?,
                 Some(_) => {
-                    self.resolve_name(&self.get_operator_argument_name(argument), &location)?
+                    let name = self.get_operator_argument_name(argument);
+                    match self.resolve_operator(&name) {
+                        Some(op) => op,
+                        None => return Ok(self.report_unknown_symbol(argument, &location)),
+                    }
                 }
             };
             return Ok(self.create_op_arg(op, location));
@@ -1749,7 +1860,11 @@ impl<'a> ModuleGenerator<'a> {
             return Ok(self.create_null_node());
         }
         if let ExpressionKind::OperatorReference { operator, .. } = &argument.kind {
-            let op = self.resolve_name(operator, &location)?;
+            // generateGenID reports an operator it doesn't find, and generateOpArg gives its
+            // nullOpArg.
+            let Some(op) = self.resolve_operator(operator) else {
+                return Ok(self.report_unknown_symbol(argument, &location));
+            };
             return Ok(self.create_op_arg(op, location));
         }
         let node = self.generate_selector(argument, target_arity, false, false)?;

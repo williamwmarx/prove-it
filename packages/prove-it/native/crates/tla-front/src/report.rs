@@ -16,7 +16,7 @@ use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
 use crate::recursive::check_recursive;
 use crate::sany::GENERATOR_EXCEPTION;
-use crate::sany::generator::{ModuleDependencies, get_dependencies};
+use crate::sany::generator::{ModuleDependencies, get_dependencies, get_proof_instances};
 use crate::sany::messages::{Generated, get_generator_messages};
 use crate::sany::source::get_unboxed_source;
 use crate::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
@@ -220,6 +220,17 @@ impl Loader<'_> {
         }
         let module = Rc::new(module);
         let mut dependencies = get_dependencies(&module);
+        // SANY loads the modules a proof instantiates, which the front end doesn't yet, unless
+        // the module depends on them otherwise.
+        let mut inner_names = Vec::new();
+        get_inner_names(&module, &mut inner_names);
+        if get_proof_instances(&module).iter().any(|name| {
+            !dependencies.extendees.contains(name)
+                && !dependencies.instancees.contains(name)
+                && !inner_names.contains(name)
+        }) {
+            return Err(not_yet("a proof's INSTANCE of a module SANY loads"));
+        }
         // The root module extends the modules of TLC's post conditions after its own.
         if self.loaded.is_empty() {
             for (offset, &extendee) in self.options.root_extendees.iter().enumerate() {
@@ -867,6 +878,14 @@ fn link_messages(
     }
 }
 
+/// The names of the modules within a module, at any depth.
+fn get_inner_names(module: &Module, names: &mut Vec<Rc<str>>) {
+    for inner in &module.modules {
+        names.push(inner.name.clone());
+        get_inner_names(inner, names);
+    }
+}
+
 /// The modules each parse unit extends and those it instantiates, as SANY has resolved them so far.
 type Referencees = FastMap<Rc<str>, (Vec<Rc<str>>, Vec<Rc<str>>)>;
 
@@ -1031,6 +1050,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     };
     let messages = match messages {
         Generated::Messages(messages) | Generated::Unproven(messages, _) => messages,
+        Generated::Declined(reason) => return Err(not_yet(&reason)),
         // SANY's generator throws on the root module, the last SANY analyzes.
         Generated::Exception(index) if index + 1 == order.len() => {
             return push_generator_exception(loader, &order, &root, GENERATOR_EXCEPTION);
