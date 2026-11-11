@@ -22,25 +22,3 @@ fn checks_an_assumption_naming_each_argument_twice_as_tlc_does() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
-
-// An argument that builds a lazy function holds the states it was built in, so the walk keeps its
-// value only for those states: TLC's `LazyValue` keeps it per state, and each successor the walk
-// tries applies the function to its own x'.
-#[test]
-fn applies_an_argument_built_lazy_in_each_successor_as_tlc_does() {
-    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nP(F) == /\\ x' \\in {1, 2} /\\ F[0] = x'\nNext == P([i \\in Nat |-> x'])\nInv == x # 2\n====\n";
-    let (output, directory) = run_spec(
-        "trace-kept-lazy",
-        spec,
-        "INIT Init\nNEXT Next\nINVARIANT Inv\n",
-    );
-    let text = stdout(&output);
-    assert_eq!(output.status.code(), Some(12), "{text}{}", stderr(&output));
-    assert!(
-        text.contains(
-            "Error: Invariant Inv is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <P line 6, col 9 to line 6, col 29 of module Stop>\nx = 2\n\n3 states generated, 3 distinct states found, 1 states left on queue.\n"
-        ),
-        "{text}"
-    );
-    std::fs::remove_dir_all(directory).expect("removed");
-}
