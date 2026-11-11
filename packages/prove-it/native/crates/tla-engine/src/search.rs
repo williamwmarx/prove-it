@@ -133,9 +133,17 @@ pub trait Reporter {
     fn initial_states(&mut self, generated: u64, distinct: u64);
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64);
     /// TLC starts to check the temporal properties of its `branches` on the graph of the first
-    /// `expanded` states, part way through the search: `counts` are the states generated, the
-    /// states found and the depth so far.
-    fn liveness_started(&mut self, _branches: u64, _expanded: u64, _counts: [u64; 3]) {}
+    /// `expanded` states, part way through the search, whose behavior graphs have `states` states
+    /// summed over the branches: `counts` are the states generated, the states found and the
+    /// depth so far.
+    fn liveness_started(
+        &mut self,
+        _branches: u64,
+        _expanded: u64,
+        _states: u64,
+        _counts: [u64; 3],
+    ) {
+    }
     /// The check part way through the search found the properties hold so far.
     fn liveness_finished(&mut self) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
@@ -3200,7 +3208,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 periodic_size = expanded;
                 let tables =
                     graph_tables(machine, search, expanded, count, None, None).map_err(Bail)?;
-                let liveness =
+                let (liveness, size) =
                     check_liveness(model, search, &tables, None, false, &context, thread_count);
                 periodic_time += at.elapsed();
                 // Whatever the checker leaves undecided, the check of the complete graph decides,
@@ -3214,6 +3222,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 search.reporter.liveness_started(
                     branches as u64,
                     expanded as u64,
+                    size,
                     [search.generated, count as u64, search.depth.max(1)],
                 );
                 if liveness.verdict == Verdict::Holds {
@@ -3658,7 +3667,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             Ok(tables) => tables,
                             Err(reason) => return SearchOutcome::Invariant(reason.into()),
                         };
-                        let mut liveness = check_liveness(
+                        let (mut liveness, _) = check_liveness(
                             model,
                             &search,
                             &tables,
@@ -5329,7 +5338,7 @@ fn check_liveness(
     is_effectful: bool,
     context: &EngineContext,
     threads: usize,
-) -> Liveness {
+) -> (Liveness, u64) {
     let (diameter_atoms, level_atoms) = (&context.diameter_atoms, &context.level_atoms);
     let graph = search.graph.as_ref().expect("a graph");
     // Under SYMMETRY or a VIEW, TLC names the violated properties from the trace it rebuilds, of

@@ -358,12 +358,10 @@ const printCheckProgress = (
       // TLC reports how far the search got before it checks the complete state graph.
       if (progress.isComplete) printProgress(printer, progress.statistics);
       const branches = progress.branches > 1 ? `${progress.branches} branches of ` : "";
-      // TLC counts the states of the behavior graph of each branch, without its tableau nodes.
-      const states = progress.branches * progress.states;
       print(
         MESSAGE_CODE.checkingTemporal,
         MESSAGE_LEVEL.none,
-        `Checking ${branches}temporal properties for the ${progress.isComplete ? "complete" : "current"} state space with ${states} total distinct states at (${formatTlcDate(new Date())})`,
+        `Checking ${branches}temporal properties for the ${progress.isComplete ? "complete" : "current"} state space with ${progress.states} total distinct states at (${formatTlcDate(new Date())})`,
       );
       return;
     }
@@ -1007,6 +1005,7 @@ export const checkNatively = async (
     const [kind, ...rest] = key.split(":");
     const name = rest.join(":");
     if (kind === "text") return existsSync(name) ? readFileSync(name, "utf8") : undefined;
+    if (kind === "bytes") return existsSync(name) ? new Uint8Array(readFileSync(name)) : undefined;
     if (kind === "module") return loadModule(name);
     if (kind === "class") {
       const path = join(dirname(specPath), `${name}.class`);

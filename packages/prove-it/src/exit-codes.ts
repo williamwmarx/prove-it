@@ -51,6 +51,7 @@ export const withLivenessExitCode = (
       addState: (index, state, successors, tracing) =>
         withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
       findViolation: () => withErrorExitCode(() => checker.findViolation()),
+      getSize: checker.getSize,
       getViolatedProperties: (path, cycleStart) =>
         withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),
     }

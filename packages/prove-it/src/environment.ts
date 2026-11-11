@@ -1029,7 +1029,8 @@ export const createEnvironment = (
         return;
       }
       visible.set(definition.name, symbol);
-      if (!definition.isLocal) exported.set(definition.name, symbol);
+      // SANY never makes an operator a RECURSIVE statement declares local, LOCAL or not.
+      if (!definition.isLocal || definition.isRecursive) exported.set(definition.name, symbol);
     });
     const linked = {
       module,

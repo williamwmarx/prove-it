@@ -933,20 +933,31 @@ impl<'ir> Rebuilder<'ir> {
                 replay: Replay::default(),
             });
         }
-        // A constraint that fails on an initial state in a value's method: TLC reports the error
-        // with the state, then its replay of the initial states throws the FingerprintException,
-        // whose call stack it prints.
+        // A constraint or an invariant that fails on an initial state in a value's method: TLC
+        // reports the error, with the state unless it is an EvalException, then its replay of the
+        // initial states throws the FingerprintException, whose call stack it prints.
         if call_stack.is_fingerprinted
-            && matches!(site, Site::InitialConstraint(_))
+            && matches!(site, Site::InitialConstraint(_) | Site::InitialInvariant(_))
             && let Some(message) = &error.message
-            && !message.is_eval_exception
             && !call_stack.fingerprinted_sources.is_empty()
             && let Some(values) = &checked
         {
+            // An EvalException escapes `doInit` without the state, and TLC prints it as a general
+            // error around the nested message.
+            let (code, text, tool_text, state) = if message.is_eval_exception {
+                (GENERAL, message.text.clone(), nested(message), None)
+            } else {
+                (
+                    INITIAL_STATE,
+                    message.text.clone(),
+                    nested(message),
+                    Some(values.iter().map(format_value).collect()),
+                )
+            };
             return Ok(Failure {
-                code: INITIAL_STATE,
-                message: message.text.clone(),
-                tool_message: nested(message),
+                code,
+                message: text,
+                tool_message: tool_text,
                 call_stack: Vec::new(),
                 exit_code: FAILURE_SPEC_EVAL,
                 printed,
@@ -956,7 +967,7 @@ impl<'ir> Rebuilder<'ir> {
                     tool_reason: nested(message),
                     is_replayed: true,
                 }),
-                state: Some(values.iter().map(format_value).collect()),
+                state,
                 replay: Replay::default(),
             });
         }

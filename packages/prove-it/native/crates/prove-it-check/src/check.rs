@@ -17,6 +17,7 @@ use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
+use crate::jar::{get_tools_jar, is_174};
 use crate::messages::{self as code, Level, Output, Printer};
 use crate::stack::{alongside, on_search_stack};
 use crate::summary::{
@@ -60,11 +61,19 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
     if args.first().is_some_and(|arg| arg == "tlapm") {
         return not_native(output, "tlapm");
     }
-    let Some(launch) = get_java_launch(args) else {
+    let Some(mut launch) = get_java_launch(args) else {
         return check_specs(args, &Java::default(), false, output);
     };
-    if launch.java.class_path.is_some() {
-        return not_native(output, "reading the version of a tla2tools.jar");
+    // Without -Dtla-ts.tlc, the jar on the class path picks the TLC to reproduce.
+    let jar = launch.java.class_path.as_deref().and_then(get_tools_jar);
+    if let (None, Some(jar)) = (launch.java.tlc_version, jar) {
+        launch.java.tlc_version = match is_174(output.host, jar) {
+            Ok(true) => Some(TlcVersion::V1_7_4),
+            Ok(false) => Some(TlcVersion::Master),
+            Err(reason) => {
+                return not_native(output, &format!("the version of {jar}: {reason}"));
+            }
+        };
     }
     match launch.main_class.as_str() {
         "tlc2.TLC" => match &launch.java.unmodelled_property {
@@ -74,7 +83,9 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
         "tla2sany.xml.XMLExporter" => match &launch.java.unmodelled_property {
             Some(property) => not_native(output, &format!("the system property {property}")),
             // TLC 1.7.4's XMLExporter is retired, and only master's is ported.
-            None if launch.java.is_174 => not_native(output, "TLC 1.7.4"),
+            None if launch.java.tlc_version == Some(TlcVersion::V1_7_4) => {
+                not_native(output, "TLC 1.7.4")
+            }
             None => run_xml_exporter(&launch.args, output)
                 .unwrap_or_else(|reason| not_native(output, &reason)),
         },
@@ -102,7 +113,7 @@ fn file_name(path: &str) -> String {
 
 // With `is_tlc` the command line is `tlc2.TLC`'s, which names one module.
 fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'_>) -> i32 {
-    if java.is_174 {
+    if java.tlc_version == Some(TlcVersion::V1_7_4) {
         return not_native(output, "TLC 1.7.4");
     }
     let parsed = match Parsed::parse(args, is_tlc) {
@@ -255,7 +266,7 @@ enum Event {
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
     /// TLC checks the temporal properties part way through the search: of how many branches, on
-    /// the graph of how many states.
+    /// behavior graphs of how many states in all.
     LivenessStarted(u64, u64),
     LivenessFinished,
     /// What Print or PrintT printed, or nothing when TLC's text isn't known.
@@ -450,8 +461,8 @@ impl Reporter for Relay<'_> {
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn liveness_started(&mut self, branches: u64, expanded: u64, _counts: [u64; 3]) {
-        let _ = self.sender.send(Event::LivenessStarted(branches, expanded));
+    fn liveness_started(&mut self, branches: u64, _expanded: u64, states: u64, _counts: [u64; 3]) {
+        let _ = self.sender.send(Event::LivenessStarted(branches, states));
     }
 
     fn liveness_finished(&mut self) {
@@ -759,6 +770,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             libraries: &java.libraries,
             temporary: java.temporary_directory.as_deref(),
             metadir: args.first("-metadir"),
+            jar: java.class_path.as_deref().and_then(get_tools_jar),
             is_174: false,
         },
         printer.host,
@@ -987,9 +999,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         print_progress(printer, &statistics, Some(start));
                         printer.flush();
                     }
-                    Event::LivenessStarted(branches, expanded) => {
-                        checking =
-                            Some(print_liveness_check(printer, branches, expanded, "current"));
+                    Event::LivenessStarted(branches, states) => {
+                        checking = Some(print_liveness_check(printer, branches, states, "current"));
                     }
                     Event::LivenessFinished => {
                         if let Some(checking) = checking.take() {
@@ -1425,11 +1436,18 @@ fn print_liveness_started(
 ) -> Instant {
     print_progress(printer, statistics, None);
     let branches = branches as u64;
-    print_liveness_check(printer, branches, statistics.distinct, "complete")
+    // Each branch's behavior graph has every state once the search is complete.
+    print_liveness_check(
+        printer,
+        branches,
+        branches * statistics.distinct,
+        "complete",
+    )
 }
 
-/// TLC checks the temporal properties of its branches on the graph of `states` states, of the
-/// complete or the current state space: returns when it started.
+/// TLC checks the temporal properties of its branches on behavior graphs of `states` states in
+/// all, summed over the branches, of the complete or the current state space: returns when it
+/// started.
 fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space: &str) -> Instant {
     let checking = Instant::now();
     let branch_text = if branches > 1 {
@@ -1441,8 +1459,7 @@ fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space
         code::CHECKING_TEMPORAL,
         Level::None,
         &format!(
-            "Checking {branch_text}temporal properties for the {space} state space with {} total distinct states at ({})",
-            branches * states,
+            "Checking {branch_text}temporal properties for the {space} state space with {states} total distinct states at ({})",
             printer.date()
         ),
     );
