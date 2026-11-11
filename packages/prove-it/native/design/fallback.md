@@ -61,7 +61,9 @@ code runs: SANY's report still needs the addon or the WebAssembly engine. Where 
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
 the search. The TypeScript report is deleted: what it printed, tla-front prints or declines, and
 its tests are tla-front's `tests/report-cases`, each recorded from TLC at d8fb231 or TLC 1.7.4.
-TLC 1.7.4's semantic errors decline (cases 19, 20, 22, 34 and 35), retired with 1.7.4.
+TLC 1.7.4's warnings alone match (case 22), and its semantic errors decline (cases 19, 20, 34
+and 35), which the TypeScript report printed: whether to port 1.7.4's generator differences or
+retire them with 1.7.4 is open.
 
 SANY's messages come from the port of its generator and levelCheck, which declines a message whose
 shape no recording shows, and else from linking. Linking takes the standard modules as TLC ships

@@ -1205,12 +1205,22 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         if warnings.is_empty() && errors.is_empty() {
             continue;
         }
-        // TLC 1.7.4's SANY prints the errors and warnings together.
-        if options.version == TlcVersion::V1_7_4 {
-            return Err(not_yet("TLC 1.7.4's semantic errors"));
-        }
         let format_message =
             |message: &SanyError| format!("{}\n\n{}", message.location, message.message);
+        // TLC 1.7.4's SANY prints its warnings with its semantic errors, whose messages differ
+        // from master's in ways linking doesn't follow.
+        if options.version == TlcVersion::V1_7_4 {
+            if !errors.is_empty() {
+                return Err(not_yet("TLC 1.7.4's semantic errors"));
+            }
+            let mut text = format!("Semantic errors:\n\n*** Warnings: {}\n\n", warnings.len());
+            for message in &warnings {
+                text.push_str(&format!("{}\n\n\n", format_message(message)));
+            }
+            text.push('\n');
+            loader.lines.push(text);
+            continue;
+        }
         if !warnings.is_empty() && !options.is_xml_export {
             loader
                 .lines

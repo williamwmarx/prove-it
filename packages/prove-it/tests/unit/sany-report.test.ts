@@ -601,14 +601,14 @@ Prime == PrimeTest(')
     expect(getDecline(modules, { version: "1.7.4" })).toBeDefined();
   });
 
-  // TLC 1.7.4's SANY warns of it with its semantic errors, which tla-front doesn't write.
-  it("declines a theorem named as an earlier one of the module for TLC 1.7.4", () => {
-    expect(
-      getDecline(
-        { Twice: "---- MODULE Twice ----\nTHEOREM Thm == TRUE\nTHEOREM Thm == TRUE\n====\n" },
-        { version: "1.7.4" },
-      ),
-    ).toBe("SANY's report of TLC 1.7.4's semantic errors");
+  it("warns of a theorem named as an earlier one of the module", () => {
+    const report = getReport(
+      { Twice: "---- MODULE Twice ----\nTHEOREM Thm == TRUE\nTHEOREM Thm == TRUE\n====\n" },
+      { version: "1.7.4" },
+    );
+    expect(report.text).toContain(
+      "line 3, col 1 to line 3, col 19 of module Twice\n\nMultiple declarations or definitions for symbol Thm.  \nThis duplicates the one at line 2, col 1 to line 2, col 19 of module Twice.",
+    );
   });
 
   it.each(["USE", "HIDE", "THEOREM TRUE BY", "THEOREM TRUE\n<1> USE\n<1> QED"])(
