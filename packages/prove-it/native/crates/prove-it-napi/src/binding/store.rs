@@ -26,6 +26,7 @@ use super::{
 };
 
 const NAPI_NULL: i32 = 1;
+const NAPI_BOOLEAN: i32 = 2;
 const NAPI_NUMBER: i32 = 3;
 pub(super) const NAPI_STRING: i32 = 4;
 pub(super) const NAPI_INT32_ARRAY: i32 = 5;
@@ -249,9 +250,15 @@ pub(super) unsafe fn create_int32s(env: napi_env, words: &[i32]) -> Result<napi_
     Ok(result)
 }
 
-// A value for `storePerform`'s arguments: a number, a string, an Int32Array or an array of them.
+// A value for an export's arguments: a boolean, a number, a string, an Int32Array, a Uint8Array or
+// an array of them.
 pub(super) unsafe fn get_host(env: napi_env, value: napi_value) -> Result<HostValue, Thrown> {
     match unsafe { type_of(env, value) }? {
+        NAPI_BOOLEAN => {
+            let mut flag = false;
+            status(unsafe { napi_get_value_bool(env, value, &mut flag) })?;
+            return Ok(HostValue::Bool(flag));
+        }
         NAPI_NUMBER => return Ok(HostValue::Number(unsafe { get_number(env, value) }?)),
         NAPI_STRING => return Ok(HostValue::Text(unsafe { get_text(env, value) }?)),
         _ => {}

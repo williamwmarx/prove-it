@@ -81,7 +81,7 @@ fn writes_the_report_once_it_has_the_modules_and_files_it_names() {
 #[test]
 fn declines_what_tla_front_does_not_write() {
     let (result, _) = write(
-        "---- MODULE Main ----\nTHEOREM T == ASSUME innerAP :: ASSUME TRUE PROVE TRUE PROVE TRUE\nPROOF BY T!innerAP!1\n====\n",
+        "---- MODULE Main ----\nUSE MODULE Inner\n---- MODULE Inner ----\n====\n====\n",
         |_| Some("Main.tla".to_owned()),
     );
     assert_eq!(text(&get(&result, "kind")), "declined");

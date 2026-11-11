@@ -2,8 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check, TlaConfigError } from "../../src";
+import { TlaConfigError } from "../../src";
 import { UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { checkParsed } from "../../src/parallel";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/operator-constants");
 
@@ -11,7 +12,10 @@ const SOURCE =
   "---- MODULE Op ----\nEXTENDS Naturals\nCONSTANT F(_), G(_, _), C\nVARIABLE x\nInit == x = 0\nNext == x' = F(x)\nInv == x /= 2\nInc(n) == n + 1\nAdd(a, b) == a + b\nZero == 0\n====";
 
 const checkConstants = (constants: string) =>
-  check({ source: SOURCE, config: `INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTANT ${constants}` });
+  checkParsed({
+    source: SOURCE,
+    config: `INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTANT ${constants}`,
+  });
 
 const getTrace = async (constants: string) => {
   const result = await checkConstants(constants);
@@ -20,7 +24,7 @@ const getTrace = async (constants: string) => {
 
 describe("operator constants match TLC", () => {
   it("assigns an operator constant from a table", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: readFileSync(join(DIRECTORY, "ConstantOperatorConfiguration.tla"), "utf8"),
       config: readFileSync(join(DIRECTORY, "ConstantOperatorConfiguration.cfg"), "utf8"),
     });

@@ -3,7 +3,7 @@
 // process.dlopen it runs as WebAssembly (wasm.ts). It reads the model as the engine IR and searches
 // it, or declines it before producing any state, and the interpreter checks what it declines.
 
-import type { CheckProgress } from "../check";
+import type { CheckProgress, CheckStatus } from "../check";
 import { EngineInvariantError } from "../errors";
 import type { Statistics, Verdict } from "../prover/verdict";
 import type { LiveEnabled, LiveExpression } from "../tableau";
@@ -87,16 +87,57 @@ export type NativeSanyXml =
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
-// What the native binary prints for a TLC command line, and its exit code, the keys of what the
-// check still reads, or why the binary declines the model (prove-it-host's check.rs).
+// What the native binary prints for a TLC command line, its exit code and what it found, the keys
+// of what the check still reads, or why the binary declines the model (prove-it-host's check.rs).
 export type NativeCheckSources =
-  | { kind: "checked"; exitCode: number; out: string; err: string }
+  | {
+      kind: "checked";
+      exitCode: number;
+      out: string;
+      err: string;
+      outcome: NativeCheckOutcome | undefined;
+    }
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
+// What the check found, where it searched (prove-it-check's outcome.rs): each variable of a state
+// as its name, TLC's text of its value, and the value as plain data in JSON.
+export interface NativeCheckOutcome {
+  status: CheckStatus;
+  generatedStates: number;
+  distinctStates: number;
+  queuedStates: number;
+  depth: number;
+  prints: string[];
+  violations: {
+    code: number;
+    headline: string;
+    loopStart: number | undefined;
+    states: { label: string; variables: [name: string, text: string, data: string][] }[];
+  }[];
+}
+
+// Runs checkSources to the end: each round, `read` answers the keys it asks for.
+export const checkAllSources = (
+  addon: NativeAddon,
+  args: string[],
+  machine: NativeMachine,
+  read: (key: string) => string | Uint8Array | undefined,
+) => {
+  const known = new Map<string, string | Uint8Array | undefined>();
+  const check = (): Exclude<NativeCheckSources, { kind: "needed" }> => {
+    const result = addon.checkSources(args, [...known], machine);
+    if (result.kind !== "needed") return result;
+    result.keys.forEach((key) => known.set(key, read(key)));
+    return check();
+  };
+  return check();
+};
+
 // What the check prints of the machine it runs on and of the time: `now` in milliseconds since the
-// epoch, `zone` a POSIX TZ rule, and the environment variables it reads. A tuple, since neither
-// binding reads an object.
+// epoch, `zone` a POSIX TZ rule, and the environment variables it reads; and whether the library's
+// check runs it, which answers for files itself and reads each printed state's plain data. A tuple,
+// since neither binding reads an object.
 export type NativeMachine = [
   system: string,
   release: string,
@@ -107,6 +148,7 @@ export type NativeMachine = [
   now: number,
   zone: string,
   variables: [string, string][],
+  isLibrary: boolean,
 ];
 
 // A prover backend's answer, malformed input, or why the Rust backend doesn't decide the input
@@ -313,7 +355,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 15;
+const ABI_VERSION = 16;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

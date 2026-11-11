@@ -1,11 +1,11 @@
-//! A conflict-driven clause learning SAT solver for the clauses of one tableau node: `ptl/sat.ts`.
-//! A literal is a variable number, negated when below zero. The solver keeps what it learns across
-//! calls, which add clauses or assume literals. It decides each open variable false first, so a
-//! model sets few variables, and a model holds 1 for each true variable and -1 for each false one.
-//! It gives up at the first conflict after `is_expired` turns true.
+//! A conflict-driven clause learning SAT solver for the clauses of one tableau node. A literal is a
+//! variable number, negated when below zero. The solver keeps what it learns across calls, which
+//! add clauses or assume literals. It decides each open variable false first, so a model sets few
+//! variables, and a model holds 1 for each true variable and -1 for each false one. It gives up at
+//! the first conflict after `is_expired` turns true.
 //!
-//! A clause is an index into the solver's clauses, which the watches and the reasons share, as the
-//! TypeScript shares the clause's array: moving a watch reorders the clause's literals in place.
+//! A clause is an index into the solver's clauses, which the watches and the reasons share: moving a
+//! watch reorders the clause's literals in place.
 
 /// What `solve` found.
 #[derive(Debug, PartialEq)]

@@ -2,19 +2,19 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check } from "../../src";
+import { checkParsed } from "../../src/parallel";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/bags");
 
 const checkBagsFixture = (name: string, onPrint?: (text: string) => void) =>
-  check({
+  checkParsed({
     source: readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"),
     onPrint,
   });
 
 const checkBags = (body: string) =>
-  check({
+  checkParsed({
     source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC, Bags\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
     config: "CONSTANT C = C\nINIT Init\nNEXT Next",
   });

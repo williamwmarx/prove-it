@@ -2,13 +2,13 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check } from "../../src";
+import { checkParsed } from "../../src/parallel";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
 const checkCounterExample = async (configName: string) => {
   const printed: string[] = [];
-  const result = await check({
+  const result = await checkParsed({
     source: readFileSync(join(DIRECTORY, "CounterExample.tla"), "utf8"),
     config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
     onPrint: (text) => printed.push(text),

@@ -6,7 +6,6 @@
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import { check } from "../../src";
 import { fromValue } from "../../src/engine/convert";
 import {
   getStateFingerprints,
@@ -15,6 +14,7 @@ import {
 } from "../../src/engine/fingerprint";
 import { nativeStore } from "../../src/engine/native-store";
 import { resetStore } from "../../src/engine/store";
+import { checkParsed } from "../../src/parallel";
 import { getTlcFingerprint } from "../../src/tlc/fingerprint";
 import {
   createModelValue,
@@ -163,9 +163,9 @@ describe("the fingerprints of the engine's states", () => {
     ].join("\n");
     const config = "INIT Init\nNEXT Next";
     delete process.env.PROVE_IT_ENGINE;
-    const result = await check({ source, config, onPrint: () => {} });
+    const result = await checkParsed({ source, config, onPrint: () => {} });
     process.env.PROVE_IT_ENGINE = "0";
-    const reference = await check({ source, config, onPrint: () => {} });
+    const reference = await checkParsed({ source, config, onPrint: () => {} });
     expect(result.fingerprintDistance).toBeDefined();
     expect(result).toEqual(reference);
   });
@@ -219,7 +219,7 @@ describe("the fingerprints of the engine's states", () => {
       if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
     });
     try {
-      const result = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
+      const result = await checkParsed({ source: `---- MODULE M ----\n${body}\n====`, config });
       expect(result.status).toBe("success");
       expect(result.fingerprintDistance).toBeDefined();
       expect(lines.some((line) => line.startsWith("[engine] checked"))).toBe(true);
