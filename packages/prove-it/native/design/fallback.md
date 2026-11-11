@@ -71,11 +71,11 @@ reports 24 (tests/report-cases/38), which the generator now writes. Where the ge
 such a spec, linking declines too ("SANY's messages of the standard modules with one of them
 replaced").
 
-Three adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs, then
-2,149 runs of handwritten and corpus-mutated specs, in TLC's default mode and with
-`-noGenerateSpecTE`) found the report wrong or declining for 1,239; each is a case of tla-front's
-`tests/sany-cases`, recorded in `sany-cases.json`, whose `case.json` gives the reason where the
-front end declines it. All print what TLC prints but these, which decline:
+Four adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
+2,149 runs of handwritten and corpus-mutated specs, then 1,876 more inputs, in TLC's default mode
+and with `-noGenerateSpecTE`) found the report wrong or declining for 1,388; each is a case of
+tla-front's `tests/sany-cases`, recorded in `sany-cases.json`, whose `case.json` gives the reason
+where the front end declines it. All print what TLC prints but these, which decline:
 - a definition of the postfix operator `'` (`a' == a`, `a ' == 1`), which the front end's parser
   rejects and SANY's accepts (main's binary declined, and the TypeScript report printed
   otherwise);
@@ -84,12 +84,26 @@ front end declines it. All print what TLC prints but these, which decline:
   else reports it missing, which the TypeScript report printed;
 - SANY's generator throwing on the root module after a module of the user's (main's binary
   declined);
-- a proof's INSTANCE of a module the spec doesn't otherwise depend on (68 cases), which SANY's
+- a proof's INSTANCE of a module the spec doesn't otherwise depend on (71 cases), which SANY's
   ParseUnit.getInstances loads and the front end doesn't yet;
 - a HIDE of an expression SANY's generator leaves null, such as `HIDE 1 + 1` without Naturals,
   for which SANY throws a NullPointerException (9 cases);
 - a record field named like a definition whose value applies a recursive operator, on which
-  SANY's linter overflows its stack (3 cases).
+  SANY's linter overflows its stack (4 cases);
+- `@` as a DEF clause entry, which SANY reports as an unknown operator (2 cases);
+- proofs nested more than 100 deep, where SANY's parser stops, and LETs nested 100 deep in their
+  definitions, where SANY's generator throws (4 cases);
+- brackets nested so deep that SANY's parser may overflow Java's default stack: past 1,100,
+  counting a square bracket twice, where Java overflows past about 1,500 parentheses, braces or
+  angle brackets and 900 function constructors. Other forms nested as deep, such as IF or `\A`,
+  are not counted, and may print where TLC overflows (1 case).
+
+The CLI and the binary also decline a module whose file TLC's resolver finds but SANY can't read,
+such as a directory or a broken link, and a spec named with `.tla` twice, which TLC reads as the
+file without the second. Linking declines a parameterized INSTANCE of a standard module, whose
+operators it gave no parameters (`I(p) == INSTANCE Integers` with `I(1)!Int`): main's binary
+printed that `I!Int` requires -1 arguments. Where the binary declines, the CLI falls back to the
+TypeScript engine, which still prints that error after SANY's report.
 
 A message of the generator whose shape no recording shows is printed where linking gives the same
 messages, and where linking can't give them, as the TypeScript report, a port of the same
