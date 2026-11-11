@@ -404,6 +404,28 @@ describe("the Rust driver", () => {
     await expectSame({ options: { source: getModule(body, "TLAPS") }, decide: byProver({}) });
   });
 
+  // A pragma's string is read as JSON.parse reads it, and one it can't read is tlapm's bug.
+  it.each([
+    ["an escape JSON lacks", 'THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\q") }*)'],
+    [
+      "an escape of a lone surrogate",
+      'F(x) == x (*{ by (prover:"smt"; timeout:"\\ud800") }*)\nTHEOREM 1 = 1 BY F(1)',
+    ],
+    [
+      "a tactic with an escape of a lone surrogate",
+      'THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\ud800") }*)',
+    ],
+  ])("reads a pragma's string with %s as the TypeScript driver does", async (_name, body) => {
+    await expectSame({
+      options: { source: getModule(body, "Naturals, TLAPS") },
+      decide: async (_prover, text) => ({
+        verdict: text.includes("\uFFFD") ? "unsat" : "unknown",
+        timeUsedMs: 1,
+        statistics: {},
+      }),
+    });
+  });
+
   it("proves with workers as the TypeScript driver does", async () => {
     const source = loadFixture("HourClock") ?? "";
     const setting = process.env.PROVE_IT_PROVER_DRIVER;

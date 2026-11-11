@@ -1,6 +1,8 @@
 // tlapm's method pragmas: the new (*{ by (prover:"zenon"; timeout:@) }*) after a definition, which
 // E_parser.read_new_method reads into a Bpragma, and the old (*{ by (zenon) }*) of Method_prs.
 
+import { TlapmBugError } from "../errors";
+
 type PragmaValue =
   { kind: "Default" } | { kind: "String"; value: string } | { kind: "Float"; value: number };
 
@@ -42,6 +44,29 @@ export const findPragma = (lines: string[], start: Position) => {
   return (lines[position.line] ?? "").startsWith("(*{", position.column) ? position : undefined;
 };
 
+const getSyntaxError = (message: string) =>
+  new TlapmBugError(`SyntaxError: JSON Parse error: ${message}`);
+
+// The string a literal holds, as JSON.parse reads it. One JSON can't read, with a control character
+// or an escape JSON lacks, fails as a bug in tlapm, with the same message whichever engine runs it.
+const parseString = (text: string): string => {
+  const inner = text.slice(1, -1);
+  for (let index = 0; index < inner.length; index++) {
+    if (inner.charCodeAt(index) < 0x20) throw getSyntaxError("Unterminated string");
+    if (inner[index] !== "\\") continue;
+    index++;
+    if (inner[index] === "u") {
+      if (!/^[0-9A-Fa-f]{4}$/.test(inner.slice(index + 1, index + 5)))
+        throw getSyntaxError("Invalid escape character u");
+      index += 4;
+      continue;
+    }
+    if (inner[index] === undefined || !'"\\/bfnrt'.includes(inner[index]))
+      throw getSyntaxError("Invalid escape character");
+  }
+  return JSON.parse(text);
+};
+
 const tokenizePragma = (lines: string[], start: Position) => {
   const open = findPragma(lines, start);
   if (!open) return undefined;
@@ -58,7 +83,7 @@ const tokenizePragma = (lines: string[], start: Position) => {
       const text = match[0];
       tokens.push(
         text.startsWith('"')
-          ? { kind: "String", text: JSON.parse(text) }
+          ? { kind: "String", text: parseString(text) }
           : /^\d/.test(text)
             ? { kind: "Number", text }
             : { kind: "Ident", text },

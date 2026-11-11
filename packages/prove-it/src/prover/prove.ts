@@ -499,6 +499,11 @@ const getAnswer = (decision: Promise<Decision>) =>
     },
   );
 
+// Whether the Rust driver reads a text as the TypeScript does: its strings hold only well-formed
+// UTF-16, so neither a lone surrogate nor an escape of one, as a pragma's string may hold.
+const isNativeText = (text: string) =>
+  text.isWellFormed() && !/\\u[dD][89a-fA-F][0-9a-fA-F]{2}/.test(text);
+
 // prove with the Rust driver, which proves in rounds: each asks for the modules and the decisions
 // it needs, which this answers, deciding as the TypeScript driver does, in the pool when there is
 // one, and the next starts again from the beginning with them (design/prover.md, section 4c).
@@ -513,7 +518,7 @@ const proveNatively = async (
 ): Promise<ProveResult | Map<string, (string | undefined)[]>> => {
   // What loadModule gave for each module, in the order it read it.
   const loaded = new Map<string, (string | undefined)[]>();
-  if (!options.source.isWellFormed()) return loaded;
+  if (!isNativeText(options.source)) return loaded;
   const workerCount = options.workers ?? 1;
   const pool =
     workerCount > 1 && isWorkerSupported() && decideWith === undefined
@@ -565,7 +570,7 @@ const proveNatively = async (
         const moduleName = key.slice("module:".length, key.lastIndexOf("#"));
         const source = options.loadModule?.(moduleName);
         loaded.set(moduleName, [...(loaded.get(moduleName) ?? []), source]);
-        if (source !== undefined && !source.isWellFormed()) return loaded;
+        if (source !== undefined && !isNativeText(source)) return loaded;
         known.set(key, source);
         continue;
       }
