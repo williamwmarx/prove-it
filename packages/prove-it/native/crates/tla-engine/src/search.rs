@@ -4087,7 +4087,6 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                             | Verdict::Accepted { .. }
                                     ),
                                     context.is_invariant_printing
-                                        || context.is_action_property_printing
                                         || is_distinct_read
                                         || model.actions.len() > 1,
                                 )
@@ -4395,9 +4394,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // What TLC prints as it adds the state it stopped at to the behavior graphs, where the
             // search placed it.
             let mut stop_added = None;
-            // A stop the engine doesn't place what TLC prints at is reported as main reports it,
-            // as is one it can't place where nothing but the initial states prints, and declined
-            // otherwise.
+            // Where the engine doesn't place what TLC prints at the stop, the stop is reported as
+            // main reports it where nothing but the initial states prints, or where main does
+            // (nothing past the initial states held, as a stop in the first expansion), and
+            // declined otherwise.
+            let is_held_past_initial = search
+                .held
+                .as_ref()
+                .is_some_and(|held| held.iter().skip(1).any(|printed| !printed.is_empty()));
             let mut found = found;
             if let Some(stop) = &found
                 && online.is_none()
@@ -4409,7 +4413,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 ) && bail.0 == INCOMPLETE_SUCCESSOR)
                 && search.graph.is_some()
                 && search.held.is_some()
-                && get_stop_completeness(&context, &search, stop).is_ok()
+                && (get_stop_completeness(&context, model, &search, stop).is_ok()
+                    || is_printed_past_initial(&mut machine, &context, &search, stop))
             {
                 match place_stop_prints(
                     &mut machine,
@@ -4423,7 +4428,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     },
                 ) {
                     Ok(added) => stop_added = Some(added),
-                    Err(_) if !is_printed_past_initial(&mut machine, &context, &search, stop) => {}
+                    Err(_)
+                        if !is_held_past_initial
+                            || !is_printed_past_initial(&mut machine, &context, &search, stop) => {}
                     Err(why) => {
                         online_declined = Some(why.into());
                         found = None;
@@ -5592,7 +5599,7 @@ fn place_held_prints(
         || model.actions.len() > 1;
     // What the expansion printed up to the stop.
     let stopped_output = std::mem::take(&mut machine.output);
-    let is_complete = get_stop_completeness(context, search, found)?;
+    let is_complete = get_stop_completeness(context, model, search, found)?;
     // TLC checks an invariant the configuration lists twice twice, and the search checks the
     // second's conjuncts once.
     if context.is_invariant_printing
@@ -5724,9 +5731,20 @@ fn place_held_prints(
 // node of late, where its search stopped part way through the state's steps.
 fn get_stop_completeness(
     context: &EngineContext,
+    model: &Model,
     search: &Search<'_, States>,
     found: &Found,
 ) -> Result<bool, &'static str> {
+    // A property checked as a state or step predicate may come from a \A the front end unrolls
+    // where TLC takes it whole, which main declines in a model that prints.
+    if !model.property_invariants.is_empty()
+        || !model.action_properties.is_empty()
+        || !model.initial_predicates.is_empty()
+    {
+        return Err(
+            "a stop in a model that prints, checking a property as a state or step predicate",
+        );
+    }
     let is_complete = match found.kind {
         ViolationKind::Deadlock {
             accepted: None,
