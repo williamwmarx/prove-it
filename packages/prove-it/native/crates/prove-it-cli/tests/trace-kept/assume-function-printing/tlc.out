@@ -4,12 +4,14 @@ Semantic processing of module FiniteSets
 Semantic processing of module TLC
 Semantic processing of module M
 Linting of module M
-"let"  TRUE
+1  1
+1  1
 Computing initial states...
-Finished computing initial states: 0 distinct states generated
+Finished computing initial states: 1 distinct state generated
 Model checking completed. No error has been found.
   Estimates of the probability that TLC did not check all reachable states
   because two distinct states had the same fingerprint:
-  calculated (optimistic):  val = 0.0
-0 states generated, 0 distinct states found, 0 states left on queue.
-The depth of the complete state graph search is 0.
+  calculated (optimistic):  val = 1.6E-19
+4 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).

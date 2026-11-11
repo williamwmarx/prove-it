@@ -69,19 +69,19 @@ enum Binding {
 }
 
 /// The value of an argument or an expression's LET definition once evaluated, while the evaluator
-/// checks an assumption, as a copy for each use (`Snapshot`): TLC keeps it (`LazyValue`'s cache) for the states and control it evaluated
-/// it in, which in an assumption are the empty states and plain control throughout
-/// (`Tool.isValidAssumption`), so it reuses it at every later use there. Elsewhere TLC's cache
-/// depends on the states and control each of its `eval` calls passes, which the trace evaluator
-/// doesn't follow, so it evaluates the argument again at each use, as before. A LET of an action
-/// or the initial predicate binds none (`Tool#getNextStates`).
+/// checks an assumption, where evaluating it read no state, register or generator and printed
+/// nothing, so that evaluating it again gives the same, as a copy for each use (`Snapshot`). TLC
+/// keeps it (`LazyValue`'s cache) for the states and control it evaluated it in, which in an
+/// assumption are the empty states and plain control throughout (`Tool.isValidAssumption`). Where
+/// evaluating it had an effect, TLC's keeping shows: what it keeps of a function applied first is
+/// the lazy function, whose body it evaluates again at each application (`KeepLazy`), so the trace
+/// evaluator evaluates such an argument again at each use, as before, as it does elsewhere. A LET
+/// of an action or the initial predicate binds none (`Tool#getNextStates`).
 type Kept = Rc<RefCell<Option<KeptValue>>>;
 
 struct KeptValue {
-    /// Whether evaluating it read the state, a register or the generator, and whether it built a
-    /// lazy value holding the states, which a reuse tells what encloses it, as evaluating it again
-    /// would.
-    is_read: bool,
+    /// Whether evaluating it built a lazy value holding the states, which a reuse tells what
+    /// encloses it, as evaluating it again would.
     is_captured: bool,
     value: Snapshot,
 }
@@ -2097,21 +2097,21 @@ impl<'ir> Evaluator<'ir> {
                 if let Some(kept) = kept
                     && let Some(kept) = &*kept.borrow()
                 {
-                    self.reads += u64::from(kept.is_read);
                     self.captures += u64::from(kept.is_captured);
                     return Ok(kept.value.value());
                 }
                 let inner = own_context(bound, frame, *is_self).primed(is_primed);
                 let state = self.random.as_ref().map(JavaRandom::state);
-                let (reads, captures) = (self.reads, self.captures);
+                let (reads, captures, printed) = (self.reads, self.captures, self.printed.len());
                 let value = self.evaluate(*node, &inner)?;
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
                 } else if let Some(kept) = kept
+                    && self.reads == reads
+                    && self.printed.len() == printed
                     && let Some(snapshot) = Snapshot::of(&value)
                 {
                     *kept.borrow_mut() = Some(KeptValue {
-                        is_read: self.reads != reads,
                         is_captured: self.captures != captures,
                         value: snapshot,
                     });

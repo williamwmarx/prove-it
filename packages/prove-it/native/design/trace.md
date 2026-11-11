@@ -494,31 +494,31 @@ control it evaluated it in (`LazyValue.getCachedValue`), and reuses it where eac
 states assigned holds an equal value still and the control is the same. A LET of an action or
 the initial predicate binds none (`Tool.java:482-487`, `937-941`).
 
-The trace evaluator keeps such a value only while it checks an assumption (`Kept`,
-`Rebuilder::assuming`), and gives each later use a copy of it as evaluating the argument made it
-(`Snapshot`): each set and function TLC held as built then is a new object, unnormalized as it
-was. TLC shares the one object, which the uses it normalizes in normalize; the trace evaluator
-normalizes a set in some uses TLC doesn't, such as applying a function over it and UNION, so a
-shared object would carry that to later uses, where a copy can't. A lazy value isn't kept, as its
-sets aren't the evaluator's to copy. TLC checks an assumption with empty states and plain control throughout
-(`Tool.isValidAssumption`, `Tool.java:3627`), and an assumption is of constant level, so TLC's
-cache holds and is found at every later use there; the trace evaluator does the same, so what an
-argument prints there it prints once, and an argument used twice in a recursion is evaluated
-once. Elsewhere TLC's cache depends on the states and control each `eval` call passes: an empty
-next state on the unprimed side of UNCHANGED and of a subscript, none at all under a prime, an
-empty one again on the primed side of `<<A>>_e` as a step and of UNCHANGED in ENABLED, each
-overwriting the one entry the cache holds. Four rounds of inputs built to break a replay that
-followed it found a case each time where it reused a set TLC evaluates again unnormalized, so in
-a replay the trace evaluator evaluates an argument again at each use, as before, as main matched
-TLC on every such input. A reuse tells what encloses it whether evaluating the argument read the
-state or built a lazy value holding it, as evaluating it again would.
+The trace evaluator keeps such a value only where reusing it can't differ from evaluating the
+argument again: while it checks an assumption (`Kept`, `Rebuilder::assuming`), where TLC
+evaluates with empty states and plain control throughout (`Tool.isValidAssumption`,
+`Tool.java:3627`); where evaluating it read no state, register or generator and printed nothing;
+and where its value holds no lazy function or set. Each later use gets a copy of it as
+evaluating it made it (`Snapshot`): each set and function TLC held as built then is a new object,
+unnormalized as it was, as the trace evaluator normalizes a set in some uses TLC doesn't, such as
+applying a function over it and UNION, and a shared object would carry that to later uses. An
+argument used twice in a recursion is so evaluated once.
+
+That is narrower than TLC's cache, deliberately. TLC's depends on the states and control each
+`eval` call passes: an empty next state on the unprimed side of UNCHANGED and of a subscript, none
+at all under a prime, an empty one again on the primed side of `<<A>>_e` as a step and of UNCHANGED
+in ENABLED, each overwriting the one entry it holds; and what it keeps of an argument applied as a
+function first is the lazy function (`KeepLazy`), whose body it evaluates, and prints, at each
+application. Six rounds of inputs built to break a trace evaluator that followed more of it found
+a case each time, while main, which evaluates an argument again at each use, matched TLC on every
+one. A reuse tells what encloses it whether evaluating the argument built a lazy value holding
+the states, as evaluating it again would.
 
 A zero-arity definition TLC doesn't compute at startup is cached only where it read no state and
 built no lazy function or filter holding the states, so `D == [i \in Nat |-> x']` is applied in
 each successor's states. `prove-it-cli/tests/trace-kept/` holds the inputs of those rounds whose
 output this changes or could, each with TLC's output. Evaluating an argument again at each use
-made TransitiveClosure's first assumption take 154 s where TLC takes 1.4 s, and printed twice
-what TLC prints once.
+made TransitiveClosure's first assumption take 154 s where TLC takes 1.4 s.
 
 ## Sets TLC holds unnormalized
 

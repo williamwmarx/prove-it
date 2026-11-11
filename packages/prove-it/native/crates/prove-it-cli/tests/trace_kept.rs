@@ -1,8 +1,7 @@
-//! The trace evaluator keeps an argument's value once evaluated while it checks an assumption, as
-//! TLC's `LazyValue` keeps it there, so an assumption the engine leaves to it costs what it costs
-//! TLC and prints once what TLC prints once. In a replay it evaluates an argument again at each
-//! use, as before: each spec in `trace-kept` is one that a replay keeping values got wrong, or
-//! could, with TLC's output.
+//! The trace evaluator keeps an argument's value once evaluated while it checks an assumption, where
+//! evaluating it again would give the same, so an assumption the engine leaves to it costs what it
+//! costs TLC. Each spec in `trace-kept` is one that a trace evaluator keeping more got wrong, with
+//! TLC's output.
 
 mod common;
 
