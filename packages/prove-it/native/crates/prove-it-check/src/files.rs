@@ -14,6 +14,9 @@ const STRING_VALUE: u8 = 3;
 
 pub struct FileDescriber {
     spec: PathBuf,
+    /// The spec's path as TLC was given it, or as it found it on the library path, which names the
+    /// root module's file.
+    given_spec: PathBuf,
     directories: Vec<PathBuf>,
     temporary: PathBuf,
     metadir: Option<PathBuf>,
@@ -26,13 +29,13 @@ impl FileDescriber {
     /// The temporary directory is the JVM's `java.io.tmpdir` where the launch sets it.
     pub fn new(files: &Files) -> FileDescriber {
         let spec = resolve(files.spec);
-        let mut directories = vec![spec.parent().map(Path::to_path_buf).unwrap_or_default()];
-        directories.extend(files.libraries.iter().map(PathBuf::from));
+        let directories = files.directories.iter().map(PathBuf::from).collect();
         let temporary = files
             .temporary
             .map_or_else(std::env::temp_dir, PathBuf::from);
         FileDescriber {
             spec,
+            given_spec: files.spec.to_path_buf(),
             directories,
             temporary: std::fs::canonicalize(&temporary).unwrap_or_else(|_| resolve(&temporary)),
             metadir: files.metadir.map(|metadir| resolve(Path::new(metadir))),
@@ -52,13 +55,28 @@ impl FileDescriber {
                 .to_string()
         };
         match origin {
+            // ParseUnit names the file by its real path, and by the URI of the path its resolver
+            // made, through the directory as given, where the two differ.
             ModuleOrigin::File => {
-                let found = self
-                    .directories
-                    .iter()
-                    .map(|directory| directory.join(&file_name))
-                    .find(|path| path.exists());
-                real(found.as_deref().unwrap_or(&self.spec))
+                let is_root = self
+                    .given_spec
+                    .file_name()
+                    .is_some_and(|file| file.to_string_lossy() == file_name);
+                let Some(found) = is_root.then(|| self.given_spec.clone()).or_else(|| {
+                    self.directories
+                        .iter()
+                        .map(|directory| directory.join(&file_name))
+                        .find(|path| path.exists())
+                }) else {
+                    return real(&self.spec);
+                };
+                let resolved = real(&found);
+                let made = get_java_absolute(&found);
+                if made == resolved {
+                    resolved
+                } else {
+                    format!("{resolved} (file:{})", quote_uri_path(&made))
+                }
             }
             // TLC 1.7.4 copies a standard module into the temporary directory itself.
             _ if self.is_174 => self.temporary.join(&file_name).display().to_string(),
@@ -110,6 +128,50 @@ fn temporary_name(contents: &str) -> String {
         fingerprint = polynomial.extend_byte(fingerprint, (*unit & 0xff) as u8);
     }
     fingerprint.to_string()
+}
+
+/// Java's `File.getAbsolutePath`: against the working directory, with repeated separators and a
+/// trailing one dropped, and `.` and `..` kept.
+fn get_java_absolute(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    let absolute = if path.is_absolute() {
+        text.into_owned()
+    } else {
+        format!(
+            "{}/{text}",
+            std::env::current_dir().unwrap_or_default().display()
+        )
+    };
+    let mut normalized = String::new();
+    for character in absolute.chars() {
+        if !(character == '/' && normalized.ends_with('/')) {
+            normalized.push(character);
+        }
+    }
+    if normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    normalized
+}
+
+/// A path as `java.net.URI` quotes it in `File.toURI`: each byte of a character a URI's path
+/// doesn't allow as `%XX`, and characters beyond ASCII as they are.
+fn quote_uri_path(path: &str) -> String {
+    let mut quoted = String::new();
+    for character in path.chars() {
+        let is_allowed = character.is_ascii_alphanumeric()
+            || "-_.!~*'()/,;:$&+=@".contains(character)
+            || (!character.is_ascii() && !character.is_control() && !character.is_whitespace());
+        if is_allowed {
+            quoted.push(character);
+        } else {
+            let mut bytes = [0; 4];
+            for byte in character.encode_utf8(&mut bytes).bytes() {
+                quoted.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    quoted
 }
 
 /// Node's `path.resolve`: absolute, with `.` and `..` resolved by name, not through links.

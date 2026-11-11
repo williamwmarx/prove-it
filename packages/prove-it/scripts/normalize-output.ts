@@ -35,7 +35,8 @@ export const getSteadyLines = (output: string) =>
 // - the machine and process in `Running breadth-first search ...` and `Running Random Simulation
 //   ...`: the cores, the memory, the pid, the operating system, the runtime and the kinds of
 //   fingerprint set and queue;
-// - the directory of each file SANY parses, and where TLC found it: the temporary directory a
+// - the directory of each file SANY parses, and of the path TLC's resolver made for it where that
+//   isn't the real one, which TLC prints after it as `(file:...)`; and where TLC found it: the temporary directory a
 //   standard module is copied to, /tmp on Linux and under /var/folders on macOS; the jar a standard
 //   module comes from, the path on the library path that led to a library module, or the module a
 //   copy in the metadata directory was made from;
@@ -63,9 +64,10 @@ export const normalizeOutput = (output: string) =>
           "$1_ cores with _MB heap and _MB offheap memory [pid: _] (_).",
         )
         .replace(/^(Trace exploration spec path: )\S*\/(\S+)_TTrace_\d+\.tla$/, "$1$2_TTrace__.tla")
-        .replace(/^(Parsing file \S+) \(\S+\)$/, "$1")
+        .replace(/^(Parsing file \S+) \((?!file:)\S+\)$/, "$1")
+        .replace(/^(Parsing file \S+) \(file:\S*\/(\S+)\)$/, "$1 (file:_/$2)")
         .replace(/^(Parsing file )\S*\/tlc-\d+\//, "$1/tmp/tlc-_/")
-        .replace(/^(Parsing file )(?!\/tmp\/tlc-_\/)\S*\/(\S+)$/, "$1$2")
+        .replace(/^(Parsing file )(?!\/tmp\/tlc-_\/)\S*\/(\S+)( \(file:_\/\S+\))?$/, "$1$2$3")
         .replace(
           /^((?:Loading|Failed to match) \S+ operator override from file:)\S*\/(\S+\.class )/,
           "$1$2",

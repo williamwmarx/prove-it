@@ -126,7 +126,7 @@ eval complete (f a)#34 = U!val!1#30 steps=146
 eval complete (f b)#35 = U!val!1#30 steps=150
 eval complete (f (f a))#36 = U!val!1#30 steps=158
 eval complete (g a b)#37 = U!val!0#29 steps=160
-released: steps=160 asts=209
+released: steps=160 asts=207
 == partial-theory ==
 eval partial (div x y)#25 = (ite (= 0 y) 7 (div x y))#32 steps=2
 eval partial (div x 0)#27 = 7#24 steps=4
@@ -151,7 +151,7 @@ const b = U!val!0#43
 func f [U!val!1#44 -> U!val!2#45] [U!val!0#43 -> U!val!3#46] else U!val!2#45
 universe U: U!val!2#45 U!val!1#44 U!val!0#43 U!val!3#46
 root true#1 = true#1
-root false#2 = true#1
+root false#2 = false#2
 root 1#22 = 1#22
 root 1.0#23 = 1.0#23
 root 0#24 = 0#24
@@ -205,7 +205,7 @@ const r = false#2
 const q = true#1
 const p = false#2
 root true#1 = true#1
-root false#2 = true#1
+root false#2 = false#2
 root 1#22 = 1#22
 root 1.0#23 = 1.0#23
 root 0#24 = 0#24
@@ -249,7 +249,7 @@ func P [U!val!2#52 -> true#1] [U!val!0#50 -> false#2] else true#1
 func g [U!val!0#50 U!val!1#51 -> U!val!2#52] else U!val!2#52
 universe U: U!val!2#52 U!val!1#51 U!val!0#50
 root true#1 = true#1
-root false#2 = true#1
+root false#2 = false#2
 root 1#22 = 1#22
 root 1.0#23 = 1.0#23
 root 0#24 = 0#24
@@ -308,7 +308,7 @@ func P [U!val!2#52 -> true#1] [U!val!0#50 -> false#2] [U!val!1#51 -> false#2] el
 func g [U!val!0#50 U!val!1#51 -> U!val!2#52] else U!val!2#52
 universe U: U!val!2#52 U!val!1#51 U!val!0#50
 root true#1 = true#1
-root false#2 = true#1
+root false#2 = false#2
 root 1#22 = 1#22
 root 1.0#23 = 1.0#23
 root 0#24 = 0#24

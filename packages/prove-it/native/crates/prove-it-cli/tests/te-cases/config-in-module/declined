@@ -1,0 +1,1 @@
+a configuration in a module's CONFIG section, which TLC reads from a -config ending in .tla

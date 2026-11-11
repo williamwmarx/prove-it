@@ -1,0 +1,39 @@
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Attempted to check equality of integer 0 with non-integer:
+"a"
+While working on the initial state:
+/\ x = 0
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 22 in M
+1. Line 4, column 9 to line 4, column 13 in M
+2. Line 4, column 18 to line 4, column 22 in M
+3. Line 7, column 8 to line 7, column 21 in M
+4. Line 6, column 9 to line 6, column 97 in M
+5. Line 6, column 18 to line 6, column 96 in M
+6. Line 6, column 18 to line 6, column 83 in M
+7. Line 6, column 18 to line 6, column 59 in M
+8. Line 6, column 18 to line 6, column 49 in M
+9. Line 6, column 18 to line 6, column 35 in M
+10. Line 6, column 40 to line 6, column 49 in M
+11. Line 6, column 54 to line 6, column 59 in M
+12. Line 6, column 64 to line 6, column 83 in M
+13. Line 6, column 74 to line 6, column 83 in M
+14. Line 6, column 88 to line 6, column 96 in M
+15. Line 7, column 10 to line 7, column 20 in M
+
+
+Reason:
+Attempted to check equality of integer 0 with non-integer:
+"a"
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.

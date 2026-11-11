@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -28,7 +29,12 @@ export interface CorpusModel {
 
 export const CONFORMANCE_DIRECTORY = join(import.meta.dirname, "../tests/conformance");
 
-export const CORPORA_DIRECTORY = join(CONFORMANCE_DIRECTORY, ".corpora");
+// A checkout may link its corpora from another's. The spec paths are the real ones, as the
+// recordings' are, since TLC names a module whose path isn't real by the path it was given too.
+const CORPORA_LINK = join(CONFORMANCE_DIRECTORY, ".corpora");
+export const CORPORA_DIRECTORY = existsSync(CORPORA_LINK)
+  ? realpathSync(CORPORA_LINK)
+  : CORPORA_LINK;
 
 export const EXPECTED_PATH = join(CONFORMANCE_DIRECTORY, "expected.json");
 

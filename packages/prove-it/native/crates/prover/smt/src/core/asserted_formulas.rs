@@ -626,7 +626,7 @@ impl AssertedFormulas {
     }
 
     // asserted_formulas::flatten_clauses: an ite at the top becomes two clauses, and a conjunction
-    // that occurs in one binary clause is distributed.
+    // that occurs in one binary clause and nowhere else is distributed.
     fn flatten_clauses(&mut self, m: &mut AstManager) -> Result<(), SmtError> {
         let mk_negation = |m: &mut AstManager, expr: Expr| -> Result<Expr, SmtError> {
             if m.is_not(expr) {
@@ -654,13 +654,18 @@ impl AssertedFormulas {
                     }
                 }
             }
+            // can_distribute: the conjunction (not d) is a disjunct of this one pending clause, and
+            // the negation is d's only holder. A d shared with another formula has, or gets, a
+            // literal, so distributing would copy its disjuncts next to it.
+            let can_distribute = |m: &AstManager, expr: Expr| {
+                occurrences.get(&expr) == Some(&1) && m.get_ref_count(m.get_arg(expr, 0)) == 1
+            };
             for index in self.qhead..self.formulas.len() {
                 let formula = self.formulas.items[index];
                 if m.get_op(formula) == OP_OR && m.get_num_args(formula) == 2 {
-                    let conjunction_index = [1, 0].into_iter().find(|position| {
-                        let arg = m.get_arg(formula, *position);
-                        is_conjunction(m, arg) && occurrences.get(&arg) == Some(&1)
-                    });
+                    let conjunction_index = [1, 0]
+                        .into_iter()
+                        .find(|position| can_distribute(m, m.get_arg(formula, *position)));
                     if let Some(conjunction_index) = conjunction_index {
                         let other = m.get_arg(formula, 1 - conjunction_index);
                         let disjunction = m.get_arg(m.get_arg(formula, conjunction_index), 0);
@@ -690,5 +695,61 @@ impl AssertedFormulas {
             self.swap_formulas(m, &mut formulas)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use prove_decide::Limits;
+
+    use super::AssertedFormulas;
+    use crate::core::ast::{AstManager, Expr, OP_NOT, OP_OR, SORT_BOOL};
+    use crate::util::rlimit::ResourceLimit;
+
+    fn mk_or(manager: &mut AstManager, first: Expr, second: Expr) -> Expr {
+        manager.mk_app(OP_OR, &[first, second], SORT_BOOL).unwrap()
+    }
+
+    fn mk_not(manager: &mut AstManager, expr: Expr) -> Expr {
+        manager.mk_app(OP_NOT, &[expr], SORT_BOOL).unwrap()
+    }
+
+    // flatten_clauses on (or p (not (or q r))) and, when is_shared, (or s (or q r)), which holds
+    // (or q r) as well: the manager, p, q, r, the formulas and the flattened formulas.
+    fn flatten(is_shared: bool) -> (AstManager, [Expr; 3], Vec<Expr>, Vec<Expr>) {
+        let limits = Limits::new(f64::INFINITY, None, None);
+        let mut manager = AstManager::new(ResourceLimit::new(&limits));
+        let consts: Vec<Expr> = (0..4)
+            .map(|_| manager.mk_fresh_const(None, SORT_BOOL).unwrap())
+            .collect();
+        let (p, q, r, s) = (consts[0], consts[1], consts[2], consts[3]);
+        let disjunction = mk_or(&mut manager, q, r);
+        let conjunction = mk_not(&mut manager, disjunction);
+        let mut formulas = vec![mk_or(&mut manager, p, conjunction)];
+        if is_shared {
+            formulas.push(mk_or(&mut manager, s, disjunction));
+        }
+        let mut asserted = AssertedFormulas::new(&manager);
+        for formula in formulas.iter().copied() {
+            asserted.formulas.push(&mut manager, formula);
+        }
+        asserted.flatten_clauses(&mut manager).unwrap();
+        let flattened = asserted.formulas.items;
+        (manager, [p, q, r], formulas, flattened)
+    }
+
+    #[test]
+    fn distributes_a_conjunction_whose_disjunction_nothing_else_holds() {
+        let (mut manager, [p, q, r], _, flattened) = flatten(false);
+        let not_q = mk_not(&mut manager, q);
+        let not_r = mk_not(&mut manager, r);
+        let expected = [mk_or(&mut manager, p, not_q), mk_or(&mut manager, p, not_r)];
+        assert_eq!(flattened, expected);
+    }
+
+    #[test]
+    fn keeps_a_conjunction_whose_disjunction_another_formula_holds() {
+        let (_, _, formulas, flattened) = flatten(true);
+        assert_eq!(flattened, formulas);
     }
 }

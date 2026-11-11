@@ -1,0 +1,28 @@
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Finished computing initial states: 1 distinct state generated
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 7, col 9 to line 7, col 27 of module M>
+x = 1
+
+State 3: <Next line 7, col 9 to line 7, col 27 of module M>
+x = 2
+
+State 4: <Next line 7, col 9 to line 7, col 27 of module M>
+x = 3
+
+Error: Evaluating postcondition Post at line 8, col 9 to line 8, col 20 of module M failed.
+Attempted to compare string "x" with non-string:
+2
+4 states generated, 4 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 4.

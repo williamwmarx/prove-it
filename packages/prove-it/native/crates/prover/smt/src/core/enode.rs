@@ -188,8 +188,11 @@ const IS_CGC_ENABLED: u32 = 8;
 const IS_MARKED: u32 = 16;
 const IS_MARKED2: u32 = 32;
 const IS_INTERPRETED: u32 = 64;
+/// m_is_shared, the cache of context::is_shared: whether it is known, and if so its value.
+const IS_SHARED_KNOWN: u32 = 128;
+const IS_SHARED: u32 = 256;
 /// The number of arguments, in the bits of flags above the Boolean fields.
-const NUM_ARGS_SHIFT: u32 = 7;
+const NUM_ARGS_SHIFT: u32 = 9;
 
 #[derive(Clone, Debug)]
 pub struct Enode {
@@ -288,6 +291,16 @@ impl Enode {
 
     pub fn set_is_interpreted(&mut self, value: bool) {
         self.set_flag(IS_INTERPRETED, value);
+    }
+
+    /// is_shared: the answer context::is_shared keeps in a root, `None` until it is known.
+    pub fn is_shared(&self) -> Option<bool> {
+        (self.flags & IS_SHARED_KNOWN != 0).then_some(self.flags & IS_SHARED != 0)
+    }
+
+    pub fn set_is_shared(&mut self, value: Option<bool>) {
+        self.set_flag(IS_SHARED_KNOWN, value.is_some());
+        self.set_flag(IS_SHARED, value == Some(true));
     }
 
     pub fn add_parent(&mut self, parent: EnodeId) {

@@ -1,0 +1,36 @@
+TLC2 Version 2026.11.11.072732
+Running breadth-first search Model-Checking with fp 0 and seed 8229890835762462375 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 12472] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file {root}/M.tla
+Parsing file /tmp/tlc-13042048943321279194/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-13042048943321279194/TLC.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-13042048943321279194/Sequences.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-13042048943321279194/FiniteSets.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-11 07:27:32)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-11 07:27:33.
+Error: The first argument of Assert evaluated to FALSE; the second argument was:
+"bad"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 6, col 9 to line 6, col 42 of module M>
+x = 1
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 6, column 9 to line 6, column 42 in M
+1. Line 6, column 9 to line 6, column 18 in M
+2. Line 6, column 23 to line 6, column 42 in M
+
+
+2 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+Finished in 00s at (2026-11-11 07:27:33)
+Trace exploration spec path: ./M_TTrace_1794382052.tla
