@@ -1,0 +1,25 @@
+{"c":"lar#0","m":"new","a":[{"cb":"lar#0.new.0"}]}
+{"c":"lar#0","m":"addVar","a":[0,false],"r":0}
+{"c":"lar#0","m":"addVar","a":[1,false],"r":1}
+{"c":"lar#0","m":"addTerm","a":[[[0,"1"],[1,"1/2"]],2],"r":2}
+{"c":"lar#0","m":"mkVarBound","a":[0,2,"3"],"r":0}
+{"c":"lar#0","m":"activate","a":[0]}
+{"c":"lar#0","m":"mkVarBound","a":[1,1,"0"],"r":1}
+{"c":"lar#0","m":"activate","a":[1]}
+{"c":"lar#0","m":"findFeasibleSolution","a":[],"r":2}
+{"c":"lar#0","m":"getValue","a":[2],"r":["3","1/2"]}
+{"c":"lar#0","m":"getBound","a":[0,false],"r":{"dep":{"dep":[0]},"value":"3","isStrict":false}}
+{"c":"lar#0","m":"getBound","a":[0,true]}
+{"c":"lar#0","m":"push","a":[]}
+{"w":"lar#0","p":"constraints.isAuxiliaryMode","v":true}
+{"c":"lar#0","m":"mkVarBound","a":[2,-2,"-7/3"],"r":2}
+{"c":"lar#0","m":"activate","a":[2]}
+{"w":"lar#0","p":"constraints.isAuxiliaryMode","v":false}
+{"c":"lar#0","m":"findFeasibleSolution","a":[],"r":1}
+{"cb":"lar#0.new.0","a":[],"r":false}
+{"f":"lar#0","p":"status","r":1}
+{"c":"lar#0","m":"getInfeasibilityExplanation","a":[{"expl":[]}],"o":[{"expl":[0,1,2],"pairs":[[0,"-1"],[1,"-1/2"],[2,"1"]]}]}
+{"c":"lar#0","m":"pop","a":[1]}
+{"c":"lar#0","m":"findFeasibleSolution","a":[],"r":2}
+{"c":"lar#0","m":"getTerm","a":[2],"r":{"col":2,"coeffs":[[0,"1"],[1,"1/2"]]}}
+{"c":"lar#0","m":"getTerm","a":[0],"e":"SmtInvariantError: column 0 has no term"}
