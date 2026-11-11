@@ -535,7 +535,7 @@ pub fn override_definitions(
         module
             .definitions
             .iter()
-            .filter(|definition| is_root || !definition.is_local)
+            .filter(|definition| is_root || !definition.is_hidden())
             .find(|definition| &*definition.name == name)
             .map(|definition| match &definition.kind {
                 DefinitionKind::Operator { params, .. } => params.len(),
