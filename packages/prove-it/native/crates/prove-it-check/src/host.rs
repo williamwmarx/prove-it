@@ -44,18 +44,17 @@ impl Files<'_> {
     }
 }
 
-/// The directories SANY looks for a module's file in, in order (TLC.java's resolver): where the
-/// spec's path names a directory, TLC gives SANY that directory as its only library, after the
-/// working directory, or the spec's directory where the path is absolute; otherwise the working
-/// directory and then TLA-Library's.
+/// The directories SANY looks for a module's file in, in order (TLC.java's resolver): where a
+/// relative path to the spec names a directory, TLC gives SANY that directory as its only library,
+/// after the working directory; otherwise the spec's directory, which TLC makes the user
+/// directory of a spec named by an absolute path, and then TLA-Library's.
 pub fn get_module_directories<'p>(spec: &'p Path, libraries: &'p [String]) -> Vec<&'p Path> {
-    match spec
+    let directory = spec
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        Some(directory) if spec.is_absolute() => vec![directory, directory],
-        Some(directory) => vec![Path::new("."), directory],
-        None => std::iter::once(Path::new("."))
+        .filter(|parent| !parent.as_os_str().is_empty());
+    match directory {
+        Some(directory) if !spec.is_absolute() => vec![Path::new("."), directory],
+        _ => std::iter::once(directory.unwrap_or(Path::new(".")))
             .chain(libraries.iter().map(Path::new))
             .collect(),
     }

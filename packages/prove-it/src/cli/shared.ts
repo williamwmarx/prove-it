@@ -35,15 +35,15 @@ export const findModuleFile = (directories: string[], name: string) =>
   directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
 
 // The directories TLC.java's resolver has SANY look for a module's file in, in order, absolute but
-// not normalized: where the spec's path names a directory, TLC gives SANY that directory as its
-// only library, after the working directory, or the spec's directory where the path is absolute;
-// otherwise the working directory and then TLA-Library's.
+// not normalized: where a relative path to the spec names a directory, TLC gives SANY that
+// directory as its only library, after the working directory; otherwise the spec's directory,
+// which TLC makes the user directory of a spec named by an absolute path, and then TLA-Library's.
 export const getModuleDirectories = (specPath: string, libraries: string[]) => {
   const separator = specPath.lastIndexOf("/");
   const working = process.cwd();
   if (separator === -1) return [working, ...libraries];
   const directory = specPath.slice(0, separator) || "/";
-  if (isAbsolute(specPath)) return [directory, directory];
+  if (isAbsolute(specPath)) return [directory, ...libraries];
   return [working, directory === "." ? working : `${working}/${directory}`];
 };
 
