@@ -66,9 +66,10 @@ TLC 1.7.4's semantic errors decline (cases 19, 20, 22, 34 and 35), retired with 
 SANY's messages come from the port of its generator and levelCheck, which declines a message whose
 shape no recording shows, and else from linking. Linking takes the standard modules as TLC ships
 them, which a spec that replaces one another standard module reads, such as its own Naturals
-under Sequences, may not keep: main's binary printed no errors there, where the generator finds
-Sequences' `..` undefined. That report now declines ("SANY's messages of the standard modules with
-one of them replaced") until a recording shows SANY's messages.
+under Sequences, may not keep: main's binary printed no errors for a Naturals without `..`, where SANY
+reports 24 (tests/report-cases/38), which the generator now writes. Where the generator declines
+such a spec, linking declines too ("SANY's messages of the standard modules with one of them
+replaced").
 
 The engine reads nothing itself: an export that reads what JavaScript holds, such as a spec's
 modules, names what it needs and is called again with it (`prove-it-host`'s `sources`), so the
