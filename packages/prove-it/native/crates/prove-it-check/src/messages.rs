@@ -20,6 +20,7 @@ pub const COMPUTING_INIT: u32 = 2189;
 pub const INVARIANT_VIOLATED_INITIAL: u32 = 2107;
 pub const PROPERTY_VIOLATED_INITIAL: u32 = 2108;
 pub const INVARIANT_VIOLATED_BEHAVIOR: u32 = 2110;
+pub const ACTION_PROPERTY_VIOLATED_BEHAVIOR: u32 = 2112;
 pub const DEADLOCK_REACHED: u32 = 2114;
 pub const NO_NEXT_ACTION: u32 = 2115;
 pub const BEHAVIOR_UP_TO_THIS_POINT: u32 = 2121;
@@ -75,6 +76,9 @@ pub struct Printer<'o> {
     out: BufWriter<&'o mut dyn Write>,
     err: &'o mut dyn Write,
     pub host: &'o dyn Host,
+    /// Whether the run records the trace TLC writes beside the spec for its trace exploration
+    /// spec: TLC's default, where tla-front read the spec.
+    pub is_trace_recorded: bool,
 }
 
 impl<'o> Printer<'o> {
@@ -86,6 +90,7 @@ impl<'o> Printer<'o> {
             out: BufWriter::new(&mut *output.out),
             err: &mut *output.err,
             host: output.host,
+            is_trace_recorded: false,
         }
     }
 

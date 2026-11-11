@@ -7,11 +7,9 @@
 // nlsat_simplify and the bounds of eliminated variables, which only inline_vars makes, are not
 // ported. Neither are what nra never uses: Boolean variables beyond true, transcendental
 // constraints, check(assumptions), check_limit, retract, and set_max_var, without which
-// select_witness never picks the maximal value. The search counts its steps against the resource
-// limit, but not the memory, which Z3 also bounds by max_memory.
-//
-// The TypeScript solver keeps the resource limit it was made with; here `check` and
-// `check_assignment` take it, and the search passes it down to `checkpoint`.
+// select_witness never picks the maximal value. The search and the polynomial and algebraic number
+// managers count their steps against the resource limit, but not the memory, which Z3 also bounds
+// by max_memory.
 
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -23,6 +21,7 @@ use super::atoms::{AtomTable, BoolVarHooks, FALSE_LITERAL, ScopedLiterals, TRUE_
 use super::evaluator::{Evaluator, get_assigned_value, get_literal_value};
 use super::explain::{Explain, ExplainContext};
 use super::interval_set::IntervalSet;
+use super::limit::NlsatLimit;
 use super::polynomial::{NULL_VAR, Polynomial, PolynomialCache, PolynomialManager, Var};
 use super::types::{Atom, AtomRef, Clause, ClauseRef, IneqKind, RootKind};
 use super::{
@@ -159,16 +158,17 @@ pub struct NlsatSolver {
     // max_conflicts: nra sets it before each check; None is no bound.
     pub max_conflicts: Option<u64>,
     pub stats: NlsatStats,
-    // m_rlimit: the steps of the search count against the limit, and against the budget of this
-    // solver, which Z3 sets with a scoped_rlimit on a child limit.
-    pub steps: u64,
-    budget: Option<u64>,
+    // m_rlimit, which the managers share.
+    pub limit: NlsatLimit,
 }
 
 impl NlsatSolver {
-    pub fn new(budget: Option<u64>) -> NlsatSolver {
-        let pm = PolynomialManager::new();
-        let am = AlgebraicManager::new();
+    pub fn new(limit: Option<&ResourceLimit>, budget: Option<u64>) -> NlsatSolver {
+        let limit = NlsatLimit::new(limit, budget);
+        let mut pm = PolynomialManager::new();
+        pm.set_limit(&limit);
+        let mut am = AlgebraicManager::new();
+        am.set_limit(&limit);
         let cache = PolynomialCache::new();
         let mut bool_vars = BoolVars::default();
         let atoms = AtomTable::new(Some(&mut bool_vars));
@@ -203,22 +203,15 @@ impl NlsatSolver {
             is_reordered: false,
             max_conflicts: None,
             stats: NlsatStats::default(),
-            steps: 0,
-            budget,
+            limit,
         };
         // mk_true_bvar: the clause [true], whose literal the first Boolean stage assigns.
         solver.mk_clause(&[TRUE_LITERAL], false, None);
         solver
     }
 
-    fn checkpoint(&mut self, limit: Option<&ResourceLimit>) -> Result<(), SmtError> {
-        self.steps += 1;
-        if limit.is_some_and(|limit| !limit.inc())
-            || self.budget.is_some_and(|budget| self.steps > budget)
-        {
-            return Err(SmtError::Canceled);
-        }
-        Ok(())
+    pub fn steps(&self) -> u64 {
+        self.limit.steps()
     }
 
     pub fn mk_var(&mut self, is_int: bool) -> Var {
@@ -603,17 +596,13 @@ impl NlsatSolver {
         Ok(())
     }
 
-    fn process_arith_clause(
-        &mut self,
-        clause: &ClauseRef,
-        limit: Option<&ResourceLimit>,
-    ) -> Result<bool, SmtError> {
+    fn process_arith_clause(&mut self, clause: &ClauseRef) -> Result<bool, SmtError> {
         let mut undef_count = 0;
         let mut selected = None;
         let mut selected_set = None;
         let xk_set = self.infeasible[self.xk as usize].clone();
         for (index, &literal) in clause.literals.iter().enumerate() {
-            self.checkpoint(limit)?;
+            self.limit.checkpoint()?;
             if self.value(literal)? == L_FALSE {
                 continue;
             }
@@ -676,27 +665,20 @@ impl NlsatSolver {
         Ok(true)
     }
 
-    fn process_clause(
-        &mut self,
-        clause: &ClauseRef,
-        limit: Option<&ResourceLimit>,
-    ) -> Result<bool, SmtError> {
+    fn process_clause(&mut self, clause: &ClauseRef) -> Result<bool, SmtError> {
         if self.is_clause_satisfied(clause)? {
             return Ok(true);
         }
         if self.xk == NULL_VAR {
             self.process_boolean_clause(clause)
         } else {
-            self.process_arith_clause(clause, limit)
+            self.process_arith_clause(clause)
         }
     }
 
     // The clauses watching the current Boolean variable, or the current stage's variable: the
     // first that is false, read from the live watch list as the TypeScript's for-of does.
-    fn process_clauses(
-        &mut self,
-        limit: Option<&ResourceLimit>,
-    ) -> Result<Option<ClauseRef>, SmtError> {
+    fn process_clauses(&mut self) -> Result<Option<ClauseRef>, SmtError> {
         let is_boolean = self.xk == NULL_VAR;
         let bk = self.bk as usize;
         let xk = self.xk as usize;
@@ -710,7 +692,7 @@ impl NlsatSolver {
             let Some(clause) = watches.get(index).cloned() else {
                 return Ok(None);
             };
-            if !self.process_clause(&clause, limit)? {
+            if !self.process_clause(&clause)? {
                 return Ok(Some(clause));
             }
             index += 1;
@@ -752,7 +734,7 @@ impl NlsatSolver {
         Ok(())
     }
 
-    fn search(&mut self, limit: Option<&ResourceLimit>) -> Result<LBool, SmtError> {
+    fn search(&mut self) -> Result<LBool, SmtError> {
         self.bk = 0;
         self.xk = NULL_VAR;
         loop {
@@ -771,11 +753,11 @@ impl NlsatSolver {
                 return Ok(L_TRUE);
             }
             loop {
-                self.checkpoint(limit)?;
-                let Some(conflict) = self.process_clauses(limit)? else {
+                self.limit.checkpoint()?;
+                let Some(conflict) = self.process_clauses()? else {
                     break;
                 };
-                if !self.resolve(conflict, limit)? {
+                if !self.resolve(conflict)? {
                     return Ok(L_FALSE);
                 }
                 if self
@@ -856,11 +838,11 @@ impl NlsatSolver {
     // search_check: the search, again after each model that gives an integer variable a fraction,
     // with the lemma that the variable lies outside the open interval between the integers around
     // its value.
-    fn search_check(&mut self, limit: Option<&ResourceLimit>) -> Result<LBool, SmtError> {
+    fn search_check(&mut self) -> Result<LBool, SmtError> {
         self.stats.conflicts = 0;
         self.stats.restarts = 0;
         loop {
-            let result = self.search(limit)?;
+            let result = self.search()?;
             if result != L_TRUE {
                 return Ok(result);
             }
@@ -925,7 +907,7 @@ impl NlsatSolver {
 
     // check: satisfiable, unsatisfiable or unknown once max_conflicts conflicts passed. The
     // variables are reordered for the search and restored after it.
-    pub fn check(&mut self, limit: Option<&ResourceLimit>) -> Result<LBool, SmtError> {
+    pub fn check(&mut self) -> Result<LBool, SmtError> {
         self.init_search();
         self.explain.is_full_dimensional = self.clauses.iter().all(|clause| {
             clause
@@ -940,7 +922,7 @@ impl NlsatSolver {
         for variable in 0..self.watches.len() {
             self.sort_clauses_by_degree(variable);
         }
-        let result = self.search_check(limit)?;
+        let result = self.search_check()?;
         if is_reordered {
             self.restore_order();
         }
@@ -989,11 +971,10 @@ impl NlsatSolver {
     // check(rvalues, clause): the assignment's verdict on the clauses. A falsified clause gives
     // the literal of least degree among the falsified clauses, and the lemma of the linear cell
     // around the assignment in which that literal stays false. Like Z3, only that case restores
-    // the assignment. No step is counted here, so the limit goes unused, as in the TypeScript.
+    // the assignment.
     pub fn check_assignment(
         &mut self,
         values: &[Option<Anum>],
-        _limit: Option<&ResourceLimit>,
     ) -> Result<(LBool, Vec<u32>), SmtError> {
         let saved: Vec<Option<Anum>> = self
             .assignment
@@ -1082,15 +1063,11 @@ impl NlsatSolver {
         self.marks[index] = is_marked;
     }
 
-    fn process_antecedent(
-        &mut self,
-        antecedent: u32,
-        limit: Option<&ResourceLimit>,
-    ) -> Result<(), SmtError> {
-        self.checkpoint(limit)?;
+    fn process_antecedent(&mut self, antecedent: u32) -> Result<(), SmtError> {
+        self.limit.checkpoint()?;
         let bool_var = antecedent >> 1;
         if self.get_assigned_value(antecedent) == L_UNDEF {
-            self.checkpoint(limit)?;
+            self.limit.checkpoint()?;
             if !self.is_marked(bool_var) {
                 self.set_mark(bool_var, true);
                 self.lemma.push(&mut self.atoms, antecedent);
@@ -1116,11 +1093,10 @@ impl NlsatSolver {
         &mut self,
         bool_var: Option<u32>,
         literals: &[u32],
-        limit: Option<&ResourceLimit>,
     ) -> Result<(), SmtError> {
         for &literal in literals {
             if Some(literal >> 1) != bool_var {
-                self.process_antecedent(literal, limit)?;
+                self.process_antecedent(literal)?;
             }
         }
         Ok(())
@@ -1130,10 +1106,9 @@ impl NlsatSolver {
         &mut self,
         bool_var: Option<u32>,
         clause: &ClauseRef,
-        limit: Option<&ResourceLimit>,
     ) -> Result<(), SmtError> {
         clause.is_active.set(true);
-        self.resolve_literals(bool_var, &clause.literals, limit)?;
+        self.resolve_literals(bool_var, &clause.literals)?;
         self.lemma_assumptions = mk_join(&clause.assumptions, &self.lemma_assumptions);
         Ok(())
     }
@@ -1145,7 +1120,6 @@ impl NlsatSolver {
         bool_var: u32,
         literals: &[u32],
         clauses: &[ClauseRef],
-        limit: Option<&ResourceLimit>,
     ) -> Result<(), SmtError> {
         self.lazy_clause
             .reset(&mut self.atoms, Some(&mut self.bool_vars));
@@ -1164,9 +1138,9 @@ impl NlsatSolver {
         for &literal in literals {
             self.lazy_clause.push(&mut self.atoms, literal ^ 1);
         }
-        self.checkpoint(limit)?;
+        self.limit.checkpoint()?;
         let lazy_literals = self.lazy_clause.literals.clone();
-        self.resolve_literals(Some(bool_var), &lazy_literals, limit)?;
+        self.resolve_literals(Some(bool_var), &lazy_literals)?;
         for clause in clauses {
             self.lemma_assumptions = mk_join(&clause.assumptions, &self.lemma_assumptions);
         }
@@ -1190,30 +1164,24 @@ impl NlsatSolver {
     }
 
     // resolve: learns a lemma from the conflict and backjumps. False when the lemma is empty.
-    fn resolve(
-        &mut self,
-        conflict: ClauseRef,
-        limit: Option<&ResourceLimit>,
-    ) -> Result<bool, SmtError> {
+    fn resolve(&mut self, conflict: ClauseRef) -> Result<bool, SmtError> {
         let mut conflict_clause = conflict;
         loop {
             self.stats.conflicts += 1;
             self.mark_count = 0;
             self.lemma.reset(&mut self.atoms, Some(&mut self.bool_vars));
             self.lemma_assumptions = None;
-            let outcome = match self.learn(&conflict_clause, limit) {
+            let outcome = match self.learn(&conflict_clause) {
                 Err(error) => Err(error),
                 Ok(Learned::Empty) => Ok(Some(false)),
                 Ok(Learned::Conflict) => Ok(Some(true)),
-                Ok(Learned::Clause(lemma)) => {
-                    self.process_clause(&lemma, limit).map(|is_propagated| {
-                        if is_propagated {
-                            return Some(true);
-                        }
-                        conflict_clause = lemma;
-                        None
-                    })
-                }
+                Ok(Learned::Clause(lemma)) => self.process_clause(&lemma).map(|is_propagated| {
+                    if is_propagated {
+                        return Some(true);
+                    }
+                    conflict_clause = lemma;
+                    None
+                }),
             };
             // The TypeScript's finally.
             self.release_marks();
@@ -1225,17 +1193,13 @@ impl NlsatSolver {
 
     // The body of resolve for one conflict: Empty for the empty lemma, Conflict when the conflict
     // clause itself is the lemma and now propagates, else the learned clause.
-    fn learn(
-        &mut self,
-        conflict: &ClauseRef,
-        limit: Option<&ResourceLimit>,
-    ) -> Result<Learned, SmtError> {
-        self.resolve_clause(None, conflict, limit)?;
+    fn learn(&mut self, conflict: &ClauseRef) -> Result<Learned, SmtError> {
+        self.resolve_clause(None, conflict)?;
         let mut top = self.trail.len();
         let mut is_decision = false;
         loop {
             while self.mark_count > 0 {
-                self.checkpoint(limit)?;
+                self.limit.checkpoint()?;
                 let entry = top
                     .checked_sub(1)
                     .and_then(|index| self.trail.get(index))
@@ -1256,10 +1220,10 @@ impl NlsatSolver {
                         })?;
                     match justification {
                         Justification::Clause(clause) => {
-                            self.resolve_clause(Some(bool_var), &clause, limit)?;
+                            self.resolve_clause(Some(bool_var), &clause)?;
                         }
                         Justification::Lazy { literals, clauses } => {
-                            self.resolve_lazy_justification(bool_var, &literals, &clauses, limit)?;
+                            self.resolve_lazy_justification(bool_var, &literals, &clauses)?;
                         }
                         Justification::Decision => {
                             is_decision = true;
@@ -1340,7 +1304,7 @@ impl NlsatSolver {
             self.undo_until_level(level);
         }
         if literals == conflict.literals {
-            self.process_clause(conflict, limit)?;
+            self.process_clause(conflict)?;
             return Ok(Learned::Conflict);
         }
         Ok(Learned::Clause(self.mk_clause(
@@ -1580,7 +1544,7 @@ mod tests {
     // The harness command: ca n, then int flags, one c KIND poly line per constraint, v x num den
     // per variable, and end. It prints each constraint's literal, then undef or the lemma.
     fn run_check_assignment(input: &str) -> String {
-        let mut solver = NlsatSolver::new(None);
+        let mut solver = NlsatSolver::new(None, None);
         let mut values: Vec<Option<Anum>> = Vec::new();
         let mut output: Vec<String> = Vec::new();
         let mut count = 0;
@@ -1611,9 +1575,7 @@ mod tests {
             solver.mk_external_clause(&[literal], None);
             output.push(format!("lit {literal}"));
         }
-        let (result, clause) = solver
-            .check_assignment(&values, None)
-            .expect("check_assignment");
+        let (result, clause) = solver.check_assignment(&values).expect("check_assignment");
         let literals: Vec<String> = clause
             .iter()
             .map(|&literal| {
@@ -1641,7 +1603,7 @@ mod tests {
     // and cl assumption refs per clause, a ref being a signed 1-based atom number. It prints each
     // clause's literals, the verdict, the nonzero statistics, and the model or the core.
     fn run_search(input: &str) -> String {
-        let mut solver = NlsatSolver::new(None);
+        let mut solver = NlsatSolver::new(None, None);
         let mut atoms: Vec<u32> = Vec::new();
         let mut output: Vec<String> = Vec::new();
         let header: Vec<&str> = input.split('\n').next().unwrap_or("").split(' ').collect();
@@ -1687,7 +1649,7 @@ mod tests {
                 },
             );
         }
-        let result = solver.check(None).expect("check");
+        let result = solver.check().expect("check");
         output.push(
             if result == L_TRUE {
                 "sat"

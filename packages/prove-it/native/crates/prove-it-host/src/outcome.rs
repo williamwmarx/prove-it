@@ -1,10 +1,11 @@
 //! `check(ir, settings, stateLog, report, print)`'s settings, the calls it makes as the search
 //! reports, and what it returns, as `src/engine/native.ts` reads them:
 //!
-//! - `report(kind, a, b, c, d, e)` for each thing the search reports as it runs: 0 the initial
+//! - `report(kind, a, b, c, d, e, f)` for each thing the search reports as it runs: 0 the initial
 //!   states started, 1 a count of initial states, 2 the initial states (generated, distinct), 3
 //!   progress (generated, distinct, queued, depth), 4 a check of the temporal properties part way
-//!   through the search (branches, expanded, generated, distinct, depth) and 5 its end; and
+//!   through the search (branches, expanded, generated, distinct, depth, and the states of its
+//!   behavior graphs summed over the branches) and 5 its end; and
 //!   `print(width, words, strings)` for what Print or PrintT printed, `width` values in
 //!   `transfer.ts`'s encoding.
 //! - `settings` is an Int32Array: whether the memo tables are off, whether epoch caches are
@@ -77,31 +78,33 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         test_live_check_at: usize::try_from(test_live_check_at).ok(),
         // The interpreter writes -dump itself.
         is_dumped: false,
+        // The interpreter goes on past violations itself.
+        is_continued: false,
         // The addon's tables stay on the pages its host's allocator gives.
         large_region_advice: None,
     })
 }
 
-/// The call a search's event makes: `report(kind, a, b, c, d, e)`, or `print(width, words,
+/// The call a search's event makes: `report(kind, a, b, c, d, e, f)`, or `print(width, words,
 /// strings)`.
 pub enum EventCall {
-    Report([f64; 6]),
+    Report([f64; 7]),
     Print(f64, EncodedStates),
 }
 
 pub fn get_event_call(event: Event) -> EventCall {
-    let report = |values: [u64; 6]| EventCall::Report(values.map(|value| value as f64));
+    let report = |values: [u64; 7]| EventCall::Report(values.map(|value| value as f64));
     match event {
-        Event::InitialStatesStarted => report([0; 6]),
-        Event::InitialStatesProgress(count) => report([1, count, 0, 0, 0, 0]),
-        Event::InitialStates(generated, distinct) => report([2, generated, distinct, 0, 0, 0]),
+        Event::InitialStatesStarted => report([0; 7]),
+        Event::InitialStatesProgress(count) => report([1, count, 0, 0, 0, 0, 0]),
+        Event::InitialStates(generated, distinct) => report([2, generated, distinct, 0, 0, 0, 0]),
         Event::Progress(generated, distinct, queued, depth) => {
-            report([3, generated, distinct, queued, depth, 0])
+            report([3, generated, distinct, queued, depth, 0, 0])
         }
-        Event::LivenessStarted(branches, expanded, [generated, distinct, depth]) => {
-            report([4, branches, expanded, generated, distinct, depth])
+        Event::LivenessStarted(branches, expanded, states, [generated, distinct, depth]) => {
+            report([4, branches, expanded, generated, distinct, depth, states])
         }
-        Event::LivenessFinished => report([5, 0, 0, 0, 0, 0]),
+        Event::LivenessFinished => report([5, 0, 0, 0, 0, 0, 0]),
         Event::Print(values, width) => EventCall::Print(width as f64, values),
     }
 }

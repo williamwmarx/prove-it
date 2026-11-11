@@ -2,16 +2,19 @@
 //! theory (`src/prover/smt/solver/lp-trace.ts` describes the format) against the Rust lp: the same
 //! calls in the same order, the callbacks lp makes answered from the trace, and every result,
 //! filled-in argument, field read and callback, with its arguments and its place among the calls,
-//! checked against the trace.
+//! checked against the trace. Each line must also be the text the Rust recorder's JSON writer
+//! (`prove_smt::lp::json`) writes for it, so that Rust and TypeScript traces compare textually.
 //!
 //! The traces are read from the directory `PROVE_IT_LP_TRACES` names, by default
 //! `packages/prove-it/tests/conformance/.lp-traces`, and its prover subdirectories (`smt/`, `z3/`);
-//! without it the test only says so. A trace that reaches what the Rust lp does not port yet (nra,
-//! whose stub returns `SmtError::Unsupported`, and the resource limit's inc, which only nlsat
-//! calls) is declined there, which the test reports and allows.
-
-#[path = "lp_trace/json.rs"]
-mod json;
+//! without it the test only says so. A trace that reaches what the replayer cannot drive is
+//! declined there, which the test reports and allows.
+//!
+//! NlaCore's resource limit is a `ResourceLimit`, which counts the steps of a `prove_decide::Limits`
+//! rather than calling back, so its inc (which only nlsat calls) is not answered callback by
+//! callback: each nla call gets a limit whose step limit lets inc return true as many times as the
+//! trace's answers are true, and after the call the number of incs Rust made must equal the number
+//! the trace recorded. Their order among the call's other callbacks is not checked.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -21,22 +24,24 @@ use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use json::Value;
 use prove_decide::Limits;
 use prove_num::{Int, Rational};
-use prove_smt::lp::bound_propagator::{BoundPropagator, BoundPropagatorHost, ImpliedBound};
-use prove_smt::lp::constraints::ConstraintKind;
-use prove_smt::lp::dependency::{Dependency, linearize};
+use prove_smt::lp::bound_propagator::{BoundPropagator, BoundPropagatorHost};
+use prove_smt::lp::constraints::{ConstraintKind, KIND_GE, KIND_GT, KIND_LE};
 use prove_smt::lp::explanation::Explanation;
-use prove_smt::lp::int_solver::{IntSolver, Lia, LiaMove};
+use prove_smt::lp::int_solver::{IntSolver, Lia};
+use prove_smt::lp::json::{Json, parse};
 use prove_smt::lp::lar_solver::LarSolver;
-use prove_smt::lp::lar_term::LarTerm;
-use prove_smt::lp::nla_core::{Nla, NlaCore, NlaEquality, NlaFixedEquality};
+use prove_smt::lp::nla_core::{Nla, NlaCore};
 use prove_smt::lp::nla_divisions::{Division, Divisions};
-use prove_smt::lp::nla_types::{Ineq, Lemma};
-use prove_smt::lp::numeric_pair::Impq;
+use prove_smt::lp::nra_solver::NraSolver;
 use prove_smt::lp::random_updater::random_update;
-use prove_smt::util::error::SmtError;
+use prove_smt::lp::trace::{
+    Call, LpTrace, get_anum, get_bound_explanation, get_bound_info, get_callback, get_equality,
+    get_error, get_explanation, get_fixed_equality, get_implied_bound, get_impq, get_ineq,
+    get_lbool, get_lemma, get_lia_move, get_number, get_rational, get_term,
+};
+use prove_smt::nlsat::algebraic::Anum;
 use prove_smt::util::rlimit::ResourceLimit;
 
 /// Why a trace stopped before its end.
@@ -60,8 +65,8 @@ enum Stop {
 struct ExpectedCallback {
     line: usize,
     name: String,
-    args: Vec<Value>,
-    result: Option<Value>,
+    args: Vec<Json>,
+    result: Option<Json>,
     is_throwing: bool,
 }
 
@@ -83,11 +88,11 @@ impl Callbacks {
 
     /// The trace's answer to the callback, which must be the next one queued. After a mismatch it
     /// answers false, and the call's result is not looked at.
-    fn answer(&self, name: &str, args: Vec<Value>) -> bool {
+    fn answer(&self, name: &str, args: Vec<Json>) -> bool {
         if self.stop.borrow().is_some() {
             return false;
         }
-        let got = format!("callback {name}{}", Value::Array(args.clone()));
+        let got = format!("callback {name}{}", Json::Array(args.clone()));
         let Some(expected) = self.queue.borrow_mut().pop_front() else {
             self.set_stop(Stop::Differs {
                 line: self.call_line.get(),
@@ -99,7 +104,7 @@ impl Callbacks {
         if expected.name != name || expected.args != args {
             self.set_stop(Stop::Differs {
                 line: expected.line,
-                expected: format!("callback {}{}", expected.name, Value::Array(expected.args)),
+                expected: format!("callback {}{}", expected.name, Json::Array(expected.args)),
                 got,
             });
             return false;
@@ -126,7 +131,7 @@ struct TraceHost {
 }
 
 impl TraceHost {
-    fn ask(&self, method: &str, args: Vec<Value>) -> bool {
+    fn ask(&self, method: &str, args: Vec<Json>) -> bool {
         self.callbacks
             .answer(&format!("{}.{method}", self.name), args)
     }
@@ -148,7 +153,7 @@ impl BoundPropagatorHost for TraceHost {
             "boundIsInteresting",
             vec![
                 get_number(column),
-                Value::Number(f64::from(kind)),
+                Json::Number(f64::from(kind)),
                 get_rational(value),
             ],
         )
@@ -172,166 +177,29 @@ impl BoundPropagatorHost for TraceHost {
                 get_number(first),
                 get_number(second),
                 get_explanation(explanation),
-                Value::Bool(is_fixed),
+                Json::Bool(is_fixed),
             ],
         )
     }
 }
 
-// The trace's encoding of values (lp-trace.ts): -1 for NULL_LPVAR, Rationals as strings, ...
-
-fn get_number(value: usize) -> Value {
-    Value::Number(if value == usize::MAX {
-        -1.0
-    } else {
-        value as f64
-    })
-}
-
-fn get_rational(value: &Rational) -> Value {
-    Value::String(value.to_string())
-}
-
-fn get_impq(value: &Impq) -> Value {
-    Value::Array(vec![get_rational(&value.x), get_rational(&value.y)])
-}
-
-fn get_dependency(dep: &Dependency) -> Value {
-    match dep {
-        None => Value::Null,
-        Some(_) => Value::Object(vec![(
-            "dep".into(),
-            Value::Array(
-                linearize(std::slice::from_ref(dep))
-                    .into_iter()
-                    .map(|leaf| Value::Number(f64::from(leaf)))
-                    .collect(),
-            ),
-        )]),
-    }
-}
-
-fn get_explanation(explanation: &Explanation) -> Value {
-    let mut fields = vec![(
-        "expl".into(),
-        Value::Array(explanation.iter().map(get_number).collect()),
-    )];
-    if !explanation.pairs().is_empty() {
-        fields.push((
-            "pairs".into(),
-            Value::Array(
-                explanation
-                    .pairs()
-                    .iter()
-                    .map(|pair| Value::Array(vec![get_number(pair.0), get_rational(&pair.1)]))
-                    .collect(),
-            ),
-        ));
-    }
-    Value::Object(fields)
-}
-
-fn get_term(term: &LarTerm) -> Value {
-    Value::Object(vec![
-        ("col".into(), get_number(term.column)),
-        (
-            "coeffs".into(),
-            Value::Array(
-                term.iter()
-                    .map(|entry| Value::Array(vec![get_number(entry.0), get_rational(entry.1)]))
-                    .collect(),
-            ),
-        ),
-    ])
-}
-
-fn get_implied_bound(bound: &ImpliedBound) -> Value {
-    Value::Object(vec![
-        ("column".into(), get_number(bound.column)),
-        ("bound".into(), get_rational(&bound.bound)),
-        ("isLower".into(), Value::Bool(bound.is_lower)),
-        ("isStrict".into(), Value::Bool(bound.is_strict)),
-        (
-            "explain".into(),
-            Value::Object(vec![("fn".into(), Value::Bool(true))]),
-        ),
-    ])
-}
-
-/// A LiaMove as TypeScript's `{ kind, ... }`.
-fn get_lia_move(lia_move: &LiaMove) -> Value {
-    let kind = |name: &str| ("kind".to_string(), Value::String(name.into()));
-    Value::Object(match lia_move {
-        LiaMove::Sat => vec![kind("sat")],
-        LiaMove::Undef => vec![kind("undef")],
-        LiaMove::Conflict => vec![kind("conflict")],
-        LiaMove::Continue => vec![kind("continue")],
-        LiaMove::Cut { offset, is_upper } => vec![
-            kind("cut"),
-            ("offset".into(), get_rational(offset)),
-            ("isUpper".into(), Value::Bool(*is_upper)),
-        ],
-        LiaMove::Branch { is_upper, offset } => vec![
-            kind("branch"),
-            ("isUpper".into(), Value::Bool(*is_upper)),
-            ("offset".into(), get_rational(offset)),
-        ],
-    })
-}
-
-fn get_ineq(ineq: &Ineq) -> Value {
-    Value::Object(vec![
-        ("cmp".into(), Value::Number(f64::from(ineq.cmp))),
-        ("term".into(), get_term(&ineq.term)),
-        ("rs".into(), get_rational(&ineq.rs)),
-    ])
-}
-
-fn get_lemma(lemma: &Lemma) -> Value {
-    Value::Object(vec![
-        (
-            "ineqs".into(),
-            Value::Array(lemma.ineqs.iter().map(get_ineq).collect()),
-        ),
-        ("expl".into(), get_explanation(&lemma.expl)),
-    ])
-}
-
-fn get_equality(equality: &NlaEquality) -> Value {
-    Value::Object(vec![
-        ("first".into(), get_number(equality.first)),
-        ("second".into(), get_number(equality.second)),
-        ("explanation".into(), get_explanation(&equality.explanation)),
-    ])
-}
-
-fn get_fixed_equality(equality: &NlaFixedEquality) -> Value {
-    Value::Object(vec![
-        ("lpVar".into(), get_number(equality.lp_var)),
-        ("value".into(), get_rational(&equality.value)),
-        ("explanation".into(), get_explanation(&equality.explanation)),
-    ])
-}
-
-/// The `Name: message` of the TypeScript error an SmtError stands for.
-fn get_error(error: &SmtError) -> String {
-    match error {
-        SmtError::Invariant(message) => format!("SmtInvariantError: {message}"),
-        SmtError::Canceled => "SmtCanceledError".into(),
-        other => format!("{other:?}"),
-    }
+/// An algebraic number lp returns, which the theory may pass back, and its value.
+fn keep_anum(anums: &mut Vec<Anum>, anum: Anum) -> Option<Json> {
+    let value = get_anum(&anum);
+    anums.push(anum);
+    Some(value)
 }
 
 /// What a call did: its result (None for undefined), its arguments after the call when lp fills
 /// one in, or the error it threw.
 #[derive(Default)]
 struct Outcome {
-    result: Option<Value>,
-    out: Option<Vec<Value>>,
+    result: Option<Json>,
+    out: Option<Vec<Json>>,
     error: Option<String>,
 }
 
-fn returning(value: Value) -> Outcome {
+fn returning(value: Json) -> Outcome {
     Outcome {
         result: Some(value),
         ..Outcome::default()
@@ -340,7 +208,7 @@ fn returning(value: Value) -> Outcome {
 
 /// The arguments of a call line, read in the trace's encoding.
 struct Args<'a> {
-    values: &'a [Value],
+    values: &'a [Json],
     line: usize,
 }
 
@@ -350,12 +218,12 @@ impl Args<'_> {
             line: self.line,
             message: format!(
                 "argument {index} is not {what}: {}",
-                self.values.get(index).unwrap_or(&Value::Null)
+                self.values.get(index).unwrap_or(&Json::Null)
             ),
         }
     }
 
-    fn get(&self, index: usize) -> Result<&Value, Stop> {
+    fn get(&self, index: usize) -> Result<&Json, Stop> {
         self.values
             .get(index)
             .ok_or_else(|| self.bad(index, "there"))
@@ -396,14 +264,14 @@ impl Args<'_> {
     fn reference(&self, index: usize) -> Result<&str, Stop> {
         self.get(index)?
             .get("ref")
-            .and_then(Value::as_str)
+            .and_then(Json::as_str)
             .ok_or_else(|| self.bad(index, "an lp object"))
     }
 
     fn callback(&self, index: usize) -> Result<&str, Stop> {
         self.get(index)?
             .get("cb")
-            .and_then(Value::as_str)
+            .and_then(Json::as_str)
             .ok_or_else(|| self.bad(index, "a callback"))
     }
 
@@ -439,7 +307,7 @@ impl Args<'_> {
     fn explanation(&self, index: usize) -> Result<Explanation, Stop> {
         let value = self.get(index)?;
         let mut explanation = Explanation::new();
-        if let Some(pairs) = value.get("pairs").and_then(Value::as_array) {
+        if let Some(pairs) = value.get("pairs").and_then(Json::as_array) {
             for pair in pairs {
                 let pair = Args {
                     values: pair.as_array().ok_or_else(|| self.bad(index, "pairs"))?,
@@ -452,7 +320,7 @@ impl Args<'_> {
         let inner = Args {
             values: value
                 .get("expl")
-                .and_then(Value::as_array)
+                .and_then(Json::as_array)
                 .ok_or_else(|| self.bad(index, "an explanation"))?,
             line: self.line,
         };
@@ -460,6 +328,33 @@ impl Args<'_> {
             explanation.push(inner.index(item)?);
         }
         Ok(explanation)
+    }
+
+    /// An algebraic number the theory passes: the one lp gave it with that value, else, for a
+    /// rational, which the theory makes itself, a new one. An irrational number only lp makes, so
+    /// one that none of lp's has the value of differs.
+    fn anum(&self, index: usize, anums: &[Anum]) -> Result<Anum, Stop> {
+        let value = self.get(index)?;
+        if let Some(anum) = anums.iter().rev().find(|anum| get_anum(anum) == *value) {
+            return Ok(anum.clone());
+        }
+        let number = value
+            .get("anum")
+            .ok_or_else(|| self.bad(index, "an anum"))?;
+        if let Some(rational) = parse_rational(number) {
+            return Ok(Anum::new(rational));
+        }
+        if number.get("p").is_none() {
+            return Err(self.bad(index, "an anum"));
+        }
+        Err(Stop::Differs {
+            line: self.line,
+            expected: format!("argument {index} {value}, an algebraic number lp returned"),
+            got: format!(
+                "lp returned {}",
+                Json::Array(anums.iter().map(get_anum).collect())
+            ),
+        })
     }
 
     fn division(&self, index: usize) -> Result<Division, Stop> {
@@ -484,7 +379,7 @@ impl Args<'_> {
     }
 }
 
-fn parse_rational(value: &Value) -> Option<Rational> {
+fn parse_rational(value: &Json) -> Option<Rational> {
     let text = value.as_str()?;
     let (num, den) = text.split_once('/').unwrap_or((text, "1"));
     Some(Rational::of(
@@ -528,9 +423,8 @@ struct Replay {
     bps: Vec<Propagator>,
     lias: Vec<IntegerSolver>,
     nlas: Vec<NonlinearSolver>,
-    // An unlimited resource limit: in TypeScript only nlsat calls the limit's inc, and nra is not
-    // ported, so the Rust nla never asks it; see call_nla.
-    limit: ResourceLimit,
+    // The algebraic numbers lp returned, which the theory may pass back.
+    anums: Vec<Anum>,
 }
 
 impl Replay {
@@ -657,7 +551,7 @@ impl Replay {
             "activateCheckOnEqual" => {
                 returning(get_number(lar.activate_check_on_equal(args.index(0)?)))
             }
-            "addEquality" => returning(Value::Array(
+            "addEquality" => returning(Json::Array(
                 lar.add_equality(args.index(0)?, args.index(1)?)
                     .iter()
                     .map(|constraint| get_number(*constraint))
@@ -670,24 +564,18 @@ impl Replay {
                 Outcome::default()
             }
             "constraintIsRedundant" => {
-                returning(Value::Bool(lar.constraint_is_redundant(args.index(0)?)))
+                returning(Json::Bool(lar.constraint_is_redundant(args.index(0)?)))
             }
             "externalToLocalColumn" => {
                 returning(get_number(lar.external_to_local_column(args.index(0)?)))
             }
             "findFeasibleSolution" => {
-                returning(Value::Number(f64::from(lar.find_feasible_solution())))
+                returning(Json::Number(f64::from(lar.find_feasible_solution())))
             }
             "getBound" => Outcome {
                 result: lar
                     .get_bound(args.index(0)?, args.boolean(1)?)
-                    .map(|bound| {
-                        Value::Object(vec![
-                            ("dep".into(), get_dependency(&bound.dep)),
-                            ("value".into(), get_rational(&bound.value)),
-                            ("isStrict".into(), Value::Bool(bound.is_strict)),
-                        ])
-                    }),
+                    .map(|bound| get_bound_info(&bound)),
                 ..Outcome::default()
             },
             "getExactValue" => Outcome {
@@ -714,11 +602,11 @@ impl Replay {
                 },
             },
             "getValue" => returning(get_impq(lar.get_value(args.index(0)?))),
-            "hasInfInt" => returning(Value::Bool(lar.has_inf_int())),
-            "hasTerm" => returning(Value::Bool(lar.has_term(args.index(0)?))),
-            "initModel" => returning(Value::Bool(lar.init_model())),
-            "isFeasible" => returning(Value::Bool(lar.is_feasible())),
-            "isFixed" => returning(Value::Bool(lar.is_fixed(args.index(0)?))),
+            "hasInfInt" => returning(Json::Bool(lar.has_inf_int())),
+            "hasTerm" => returning(Json::Bool(lar.has_term(args.index(0)?))),
+            "initModel" => returning(Json::Bool(lar.init_model())),
+            "isFeasible" => returning(Json::Bool(lar.is_feasible())),
+            "isFixed" => returning(Json::Bool(lar.is_fixed(args.index(0)?))),
             "mkVarBound" => returning(get_number(lar.mk_var_bound(
                 args.index(0)?,
                 args.kind(1)?,
@@ -763,15 +651,7 @@ impl Replay {
                     expected: format!("an implied bound {bound}"),
                     got: format!("{} implied bounds", propagator.propagator.ibounds.len()),
                 })?;
-            return Ok(returning(Value::Array(
-                bound
-                    .explain(lar)
-                    .iter()
-                    .map(|entry| {
-                        Value::Array(vec![get_rational(&entry.0), get_dependency(&entry.1)])
-                    })
-                    .collect(),
-            )));
+            return Ok(returning(get_bound_explanation(&bound.explain(lar))));
         }
         Ok(match method {
             "init" => {
@@ -818,7 +698,7 @@ impl Replay {
     }
 
     // NlaCore's methods, through the Nla view, with isRelevant answered from the trace once the
-    // theory wrote it.
+    // theory wrote it, and the resource limit's inc counted against the trace's.
     fn call_nla(
         &mut self,
         index: usize,
@@ -831,21 +711,35 @@ impl Replay {
             line,
             message: format!("no {owner}"),
         })?;
-        // HACK: ResourceLimit is a concrete type that counts prove_decide::Limits' steps, so the
-        // replayer cannot answer its inc from the trace. Only nlsat calls it, which is not ported.
         let inc = format!("{}.inc", nonlinear.limit_name);
-        if let Some(expected) = self
-            .callbacks
-            .queue
-            .borrow()
+        let mut incs = Vec::new();
+        self.callbacks.queue.borrow_mut().retain(|expected| {
+            let is_inc = expected.name == inc;
+            if is_inc {
+                incs.push((
+                    expected.line,
+                    expected.result.as_ref().and_then(Json::as_bool),
+                    expected.is_throwing,
+                ));
+            }
+            !is_inc
+        });
+        let true_count = incs
             .iter()
-            .find(|expected| expected.name == inc)
+            .take_while(|answer| answer.1 == Some(true))
+            .count();
+        if let Some(answer) = incs[true_count..]
+            .iter()
+            .find(|answer| answer.1 != Some(false) || answer.2)
         {
             return Err(Stop::Declined {
-                line: expected.line,
-                reason: format!("callback {inc}, the resource limit's inc"),
+                line: answer.0,
+                reason: format!("callback {inc}, whose answers are not true…true(false…)"),
             });
         }
+        // The deadline is infinite and there is no cancel, so the clock check of every 256th step
+        // never stops the work: only the step limit does.
+        let limit = ResourceLimit::new(&Limits::new(f64::INFINITY, Some(true_count as u64), None));
         let callbacks = Rc::clone(&self.callbacks);
         let is_relevant_name = format!("{owner}.isRelevant");
         let is_relevant_written = nonlinear.is_relevant_written;
@@ -855,7 +749,7 @@ impl Replay {
         let mut nla = Nla {
             core: &mut nonlinear.core,
             lra: &mut self.lars[nonlinear.lar],
-            limit: &self.limit,
+            limit: &limit,
             is_relevant: &is_relevant,
         };
         let result = match method {
@@ -865,16 +759,15 @@ impl Replay {
             }
             "check" => {
                 let level = u32::try_from(args.index(0)?).map_err(|_| args.bad(0, "a level"))?;
-                nla.check(level)
-                    .map(|result| Some(Value::Number(f64::from(result.to_i8()))))
+                nla.check(level).map(|result| Some(get_lbool(result)))
             }
             "checkBoundedDivisions" => {
                 nla.check_bounded_divisions();
                 Ok(None)
             }
-            "hasRelevantMonomial" => Ok(Some(Value::Bool(nla.has_relevant_monomial()))),
-            "incrementalPropagate" => Ok(Some(Value::Bool(nla.incremental_propagate()))),
-            "propagate" => Ok(Some(Value::Bool(nla.propagate()))),
+            "hasRelevantMonomial" => Ok(Some(Json::Bool(nla.has_relevant_monomial()))),
+            "incrementalPropagate" => Ok(Some(Json::Bool(nla.incremental_propagate()))),
+            "propagate" => Ok(Some(Json::Bool(nla.propagate()))),
             "push" => {
                 nla.push();
                 Ok(None)
@@ -895,31 +788,46 @@ impl Replay {
                 Divisions::add_divisibility(&mut nla, args.division(0)?);
                 Ok(None)
             }
+            "nra.value" => NraSolver::value(&mut nla, args.index(0)?)
+                .map(|anum| keep_anum(&mut self.anums, anum)),
+            "nra.am.add" | "nra.am.mul" | "nra.am.compare" => {
+                let first = args.anum(0, &self.anums)?;
+                let second = args.anum(1, &self.anums)?;
+                let am = nla.core.nra.am();
+                match method {
+                    "nra.am.add" => am
+                        .add(&first, &second)
+                        .map(|anum| keep_anum(&mut self.anums, anum)),
+                    "nra.am.mul" => am
+                        .mul(&first, &second)
+                        .map(|anum| keep_anum(&mut self.anums, anum)),
+                    _ => am
+                        .compare(&first, &second)
+                        .map(|result| Some(Json::Number(f64::from(result)))),
+                }
+            }
             _ => return Err(Replay::decline(line, &owner, method)),
         };
-        match result {
-            Ok(result) => Ok(Outcome {
+        if let Some(stop) = self.callbacks.stop.borrow_mut().take() {
+            return Err(stop);
+        }
+        if limit.count() != incs.len() as u64 {
+            return Err(Stop::Differs {
+                line: incs.first().map_or(line, |answer| answer.0),
+                expected: format!("{} callbacks {inc}", incs.len()),
+                got: format!("{} calls of the resource limit's inc", limit.count()),
+            });
+        }
+        Ok(match result {
+            Ok(result) => Outcome {
                 result,
                 ..Outcome::default()
-            }),
-            // The nra stub: nlsat is not ported. A mismatch before it still counts.
-            Err(SmtError::Unsupported(message)) => Err(self
-                .callbacks
-                .stop
-                .borrow_mut()
-                .take()
-                .unwrap_or(Stop::Declined {
-                    line,
-                    reason: format!(
-                        "{owner}.{method}: {message} ({} callbacks of the call left)",
-                        self.callbacks.queue.borrow().len()
-                    ),
-                })),
-            Err(error) => Ok(Outcome {
+            },
+            Err(error) => Outcome {
                 error: Some(get_error(&error)),
                 ..Outcome::default()
-            }),
-        }
+            },
+        })
     }
 
     // lp's free functions.
@@ -935,14 +843,14 @@ impl Replay {
     }
 
     // A field the theory reads, None for undefined.
-    fn read(&self, owner: &str, path: &str, line: usize) -> Result<Option<Value>, Stop> {
+    fn read(&self, owner: &str, path: &str, line: usize) -> Result<Option<Json>, Stop> {
         let declined = || Replay::decline(line, owner, path);
         let (kind, index) = parse_name(owner).ok_or_else(declined)?;
         match kind {
             "lar" => {
                 let lar = &self.lars[self.get_lar_index(owner, line)?];
                 Ok(Some(match path {
-                    "status" => Value::Number(f64::from(lar.status)),
+                    "status" => Json::Number(f64::from(lar.status)),
                     "columnsWithChangedBounds.size" => {
                         get_number(lar.columns_with_changed_bounds.size())
                     }
@@ -963,27 +871,25 @@ impl Replay {
             "nla" => {
                 let core = &self.nlas.get(index).ok_or_else(declined)?.core;
                 Ok(Some(match path {
-                    "isCheckFeasible" => Value::Bool(core.is_check_feasible),
-                    "isUsingNraModel" => Value::Bool(core.is_using_nra_model),
+                    "isCheckFeasible" => Json::Bool(core.is_check_feasible),
+                    "isUsingNraModel" => Json::Bool(core.is_using_nra_model),
                     "lemmas.length" => get_number(core.lemmas.len()),
-                    "lemmas" => Value::Array(core.lemmas.iter().map(get_lemma).collect()),
-                    "literals" => Value::Array(core.literals.iter().map(get_ineq).collect()),
-                    "fixedEqualities" => Value::Array(
+                    "lemmas" => Json::Array(core.lemmas.iter().map(get_lemma).collect()),
+                    "literals" => Json::Array(core.literals.iter().map(get_ineq).collect()),
+                    "fixedEqualities" => Json::Array(
                         core.fixed_equalities
                             .iter()
                             .map(get_fixed_equality)
                             .collect(),
                     ),
-                    "equalities" => {
-                        Value::Array(core.equalities.iter().map(get_equality).collect())
-                    }
+                    "equalities" => Json::Array(core.equalities.iter().map(get_equality).collect()),
                     _ => return Err(declined()),
                 }))
             }
             "bp" => {
                 let ibounds = &self.bps.get(index).ok_or_else(declined)?.propagator.ibounds;
                 if path == "ibounds" {
-                    return Ok(Some(Value::Array(
+                    return Ok(Some(Json::Array(
                         ibounds.iter().map(get_implied_bound).collect(),
                     )));
                 }
@@ -1006,13 +912,13 @@ impl Replay {
     }
 
     // A field the theory writes.
-    fn write(&mut self, owner: &str, path: &str, value: &Value, line: usize) -> Result<(), Stop> {
+    fn write(&mut self, owner: &str, path: &str, value: &Json, line: usize) -> Result<(), Stop> {
         if let Some(("nla", index)) = parse_name(owner)
             && path == "isRelevant"
             && index < self.nlas.len()
         {
             let expected = format!("{owner}.isRelevant");
-            if value.get("cb").and_then(Value::as_str) != Some(expected.as_str()) {
+            if value.get("cb").and_then(Json::as_str) != Some(expected.as_str()) {
                 return Err(Stop::Crash {
                     line,
                     message: format!("isRelevant is not the callback {expected}: {value}"),
@@ -1032,28 +938,28 @@ impl Replay {
     }
 
     // One line of the trace that is not a callback, with the callbacks that follow it queued.
-    fn step(&mut self, line: &Value, number: usize) -> Result<(), Stop> {
+    fn step(&mut self, line: &Json, number: usize) -> Result<(), Stop> {
         self.callbacks.call_line.set(number);
-        let differs = |expected: Option<&Value>, got: Option<&Value>| Stop::Differs {
+        let differs = |expected: Option<&Json>, got: Option<&Json>| Stop::Differs {
             line: number,
-            expected: expected.map_or("undefined".into(), Value::to_string),
-            got: got.map_or("undefined".into(), Value::to_string),
+            expected: expected.map_or("undefined".into(), Json::to_string),
+            got: got.map_or("undefined".into(), Json::to_string),
         };
-        if let Some(owner) = line.get("f").and_then(Value::as_str) {
-            let path = line.get("p").and_then(Value::as_str).unwrap_or("");
+        if let Some(owner) = line.get("f").and_then(Json::as_str) {
+            let path = line.get("p").and_then(Json::as_str).unwrap_or("");
             let got = self.read(owner, path, number)?;
             if got.as_ref() != line.get("r") {
                 return Err(differs(line.get("r"), got.as_ref()));
             }
             return Ok(());
         }
-        if let Some(owner) = line.get("w").and_then(Value::as_str) {
-            let path = line.get("p").and_then(Value::as_str).unwrap_or("");
-            return self.write(owner, path, line.get("v").unwrap_or(&Value::Null), number);
+        if let Some(owner) = line.get("w").and_then(Json::as_str) {
+            let path = line.get("p").and_then(Json::as_str).unwrap_or("");
+            return self.write(owner, path, line.get("v").unwrap_or(&Json::Null), number);
         }
         let (Some(owner), Some(method)) = (
-            line.get("c").and_then(Value::as_str),
-            line.get("m").and_then(Value::as_str),
+            line.get("c").and_then(Json::as_str),
+            line.get("m").and_then(Json::as_str),
         ) else {
             return Err(Stop::Crash {
                 line: number,
@@ -1061,7 +967,7 @@ impl Replay {
             });
         };
         let args = Args {
-            values: line.get("a").and_then(Value::as_array).unwrap_or(&[]),
+            values: line.get("a").and_then(Json::as_array).unwrap_or(&[]),
             line: number,
         };
         let outcome = self.call(owner, method, &args, number)?;
@@ -1071,11 +977,11 @@ impl Replay {
         if let Some(expected) = self.callbacks.queue.borrow_mut().pop_front() {
             return Err(Stop::Differs {
                 line: expected.line,
-                expected: format!("callback {}{}", expected.name, Value::Array(expected.args)),
+                expected: format!("callback {}{}", expected.name, Json::Array(expected.args)),
                 got: format!("no more callbacks of {owner}.{method}"),
             });
         }
-        let expected_error = line.get("e").and_then(Value::as_str);
+        let expected_error = line.get("e").and_then(Json::as_str);
         if expected_error != outcome.error.as_deref() {
             return Err(Stop::Differs {
                 line: number,
@@ -1086,7 +992,7 @@ impl Replay {
         if outcome.result.as_ref() != line.get("r") {
             return Err(differs(line.get("r"), outcome.result.as_ref()));
         }
-        let got_out = outcome.out.map(Value::Array);
+        let got_out = outcome.out.map(Json::Array);
         if got_out.as_ref() != line.get("o") {
             return Err(differs(line.get("o"), got_out.as_ref()));
         }
@@ -1103,11 +1009,21 @@ fn get_implied_bound_index(path: &str, method: &str) -> Option<usize> {
         .ok()
 }
 
-fn parse_line(text: &str, number: usize) -> Result<Value, Stop> {
-    json::parse(text).map_err(|message| Stop::Crash {
+/// A line of the trace, which the Rust recorder's JSON writer must write back as it is.
+fn parse_line(text: &str, number: usize) -> Result<Json, Stop> {
+    let line = parse(text).map_err(|message| Stop::Crash {
         line: number,
         message: format!("bad JSON: {message}"),
-    })
+    })?;
+    let written = line.to_string();
+    if written != text {
+        return Err(Stop::Differs {
+            line: number,
+            expected: text.to_string(),
+            got: format!("{written}, as Rust writes it"),
+        });
+    }
+    Ok(line)
 }
 
 /// Replays one trace: None when it all matched, with the number of lines.
@@ -1137,7 +1053,7 @@ fn replay(path: &Path, current_line: &Cell<usize>) -> (usize, Option<Stop>) {
         bps: Vec::new(),
         lias: Vec::new(),
         nlas: Vec::new(),
-        limit: ResourceLimit::new(&Limits::new(f64::INFINITY, None, None)),
+        anums: Vec::new(),
     };
     let mut count = 0;
     while let Some((number, text)) = lines.next() {
@@ -1154,12 +1070,12 @@ fn replay(path: &Path, current_line: &Cell<usize>) -> (usize, Option<Stop>) {
                     line: callback_number,
                     name: callback
                         .get("cb")
-                        .and_then(Value::as_str)
+                        .and_then(Json::as_str)
                         .unwrap_or("")
                         .to_string(),
                     args: callback
                         .get("a")
-                        .and_then(Value::as_array)
+                        .and_then(Json::as_array)
                         .unwrap_or(&[])
                         .to_vec(),
                     result: callback.get("r").cloned(),
@@ -1277,4 +1193,152 @@ fn lp_traces() {
         differs == 0 && crashes == 0,
         "{differs} lp traces differ and {crashes} crashed"
     );
+}
+
+/// The session of `tests/unit/lp-trace.test.ts`, recorded from Rust as a theory records its lp
+/// calls (`prove_smt::lp::trace`): the file must be the one the TypeScript writes, and replay.
+#[test]
+fn records_the_lar_session_as_the_typescript_does() {
+    let directory = std::env::temp_dir().join(format!("prove-it-lp-trace-{}", std::process::id()));
+    let trace = Rc::new(RefCell::new(
+        LpTrace::create(&directory, "lar-session").expect("the trace directory is writable"),
+    ));
+    let lar_id = trace
+        .borrow_mut()
+        .new_object("lar", |id| vec![get_callback(&format!("{id}.new.0"))]);
+    let is_canceled_name = format!("{lar_id}.new.0");
+    let callback_trace = Rc::clone(&trace);
+    let mut lar = LarSolver::new(Box::new(move || {
+        callback_trace.borrow_mut().callback(
+            &is_canceled_name,
+            Vec::new(),
+            Some(Json::Bool(false)),
+        );
+        false
+    }));
+    let call = |method: &str, args: Vec<Json>| trace.borrow_mut().call(&lar_id, method, args);
+    let returned = |call: Call, result: Option<Json>| trace.borrow_mut().returned(call, result);
+    let traced_add_var = |lar: &mut LarSolver<'_>, external: usize| {
+        let started = call("addVar", vec![get_number(external), Json::Bool(false)]);
+        let column = lar.add_var(external, false);
+        returned(started, Some(get_number(column)));
+        column
+    };
+    let x = traced_add_var(&mut lar, 0);
+    let y = traced_add_var(&mut lar, 1);
+    let coeffs = [
+        (x, Rational::one()),
+        (y, Rational::of(Int::from(1), Int::from(2))),
+    ];
+    let started = call(
+        "addTerm",
+        vec![
+            Json::Array(
+                coeffs
+                    .iter()
+                    .map(|entry| Json::Array(vec![get_number(entry.0), get_rational(&entry.1)]))
+                    .collect(),
+            ),
+            get_number(2),
+        ],
+    );
+    let sum = lar.add_term(&coeffs, 2);
+    returned(started, Some(get_number(sum)));
+    let traced_bound =
+        |lar: &mut LarSolver<'_>, column: usize, kind: ConstraintKind, rhs: Rational| {
+            let started = call(
+                "mkVarBound",
+                vec![
+                    get_number(column),
+                    Json::Number(f64::from(kind)),
+                    get_rational(&rhs),
+                ],
+            );
+            let index = lar.mk_var_bound(column, kind, &rhs);
+            returned(started, Some(get_number(index)));
+            let started = call("activate", vec![get_number(index)]);
+            lar.activate(index);
+            returned(started, None);
+        };
+    let traced_find = |lar: &mut LarSolver<'_>| {
+        let started = call("findFeasibleSolution", Vec::new());
+        let status = lar.find_feasible_solution();
+        returned(started, Some(Json::Number(f64::from(status))));
+        status
+    };
+    let set_auxiliary = |lar: &mut LarSolver<'_>, is_auxiliary: bool| {
+        trace.borrow_mut().write(
+            &lar_id,
+            "constraints.isAuxiliaryMode",
+            Json::Bool(is_auxiliary),
+        );
+        lar.constraints.is_auxiliary_mode = is_auxiliary;
+    };
+    traced_bound(&mut lar, x, KIND_GE, Rational::from_i64(3));
+    traced_bound(&mut lar, y, KIND_GT, Rational::zero());
+    traced_find(&mut lar);
+    let started = call("getValue", vec![get_number(sum)]);
+    returned(started, Some(get_impq(lar.get_value(sum))));
+    for is_upper in [false, true] {
+        let started = call("getBound", vec![get_number(x), Json::Bool(is_upper)]);
+        returned(
+            started,
+            lar.get_bound(x, is_upper)
+                .map(|bound| get_bound_info(&bound)),
+        );
+    }
+    let started = call("push", Vec::new());
+    lar.push();
+    returned(started, None);
+    set_auxiliary(&mut lar, true);
+    traced_bound(
+        &mut lar,
+        sum,
+        KIND_LE,
+        Rational::of(Int::from(-7), Int::from(3)),
+    );
+    set_auxiliary(&mut lar, false);
+    let status = traced_find(&mut lar);
+    trace
+        .borrow_mut()
+        .read(&lar_id, "status", Json::Number(f64::from(lar.status)));
+    assert_eq!(status, lar.status);
+    let mut explanation = Explanation::new();
+    let started = call(
+        "getInfeasibilityExplanation",
+        vec![get_explanation(&explanation)],
+    );
+    lar.get_infeasibility_explanation(&mut explanation);
+    trace
+        .borrow_mut()
+        .returned_with_out(started, vec![get_explanation(&explanation)], None);
+    let started = call("pop", vec![get_number(1)]);
+    lar.pop(1);
+    returned(started, None);
+    traced_find(&mut lar);
+    for column in [sum, x] {
+        let started = call("getTerm", vec![get_number(column)]);
+        match lar.get_term(column) {
+            Ok(term) => returned(started, Some(get_term(term))),
+            Err(error) => trace.borrow_mut().threw(started, &get_error(&error)),
+        }
+    }
+    drop(lar);
+    Rc::into_inner(trace)
+        .expect("the solver's callback is gone")
+        .into_inner()
+        .close()
+        .expect("the trace is written");
+    let path = directory.join("ef5a0fc173b80a86.lptrace");
+    let written = fs::read_to_string(&path).expect("the trace is there");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../tests/fixtures/lp-trace/lar-session.lptrace");
+    assert_eq!(
+        written,
+        fs::read_to_string(fixture).expect("the TypeScript's trace is there")
+    );
+    let outcome = replay(&path, &Cell::new(0));
+    fs::remove_dir_all(&directory).expect("the trace directory is removable");
+    assert!(outcome.1.is_none(), "the trace replays");
+    assert_eq!(outcome.0, written.lines().count());
 }

@@ -2,6 +2,7 @@
 //! them, and the Java launch `prove-it [<JVM option>]... tlc2.TLC <option>... <Spec>`
 //! that tools running TLC with Java use.
 
+use tla_front::TlcVersion;
 use tla_values::fingerprint::POLYNOMIALS;
 
 pub const USAGE: &str = "Usage: tla-ts <Spec.tla|Spec.cfg|glob>... [-config <Spec.cfg>] [-continue] [-deadlock] [-dump [<format>] <file>] [-fp <num>] [-lncheck <final|default>] [-metadir <directory>] [-nowarning] [-seed <num>] [-tool] [-workers <count|auto>]
@@ -11,7 +12,7 @@ pub const USAGE: &str = "Usage: tla-ts <Spec.tla|Spec.cfg|glob>... [-config <Spe
        tla-ts [<JVM option>]... tla2sany.xml.XMLExporter [-I <directory>]... [-o] [-t] [-r] [-u] <Module.tla>";
 
 /// What separates the directories of a path list, as Node's `path.delimiter`.
-const PATH_DELIMITER: char = if cfg!(windows) { ';' } else { ':' };
+pub const PATH_DELIMITER: char = if cfg!(windows) { ';' } else { ':' };
 
 const JAVA_MAIN_CLASSES: [&str; 2] = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 
@@ -22,7 +23,9 @@ pub struct Java {
     pub class_path: Option<String>,
     /// `java.io.tmpdir`, where TLC copies the standard modules it parses.
     pub temporary_directory: Option<String>,
-    pub is_174: bool,
+    /// The TLC to reproduce: the one `-Dtla-ts.tlc` names, or else the tla2tools.jar on the class
+    /// path is.
+    pub tlc_version: Option<TlcVersion>,
     /// The first system property of TLC's that the binary doesn't model.
     pub unmodelled_property: Option<String>,
     /// The names of the system properties the command line sets, which `TLCGet("-Dname")` reads.
@@ -70,7 +73,11 @@ pub fn get_java_launch(args: &[String]) -> Option<Launch> {
         } else if let Some(directory) = arg.strip_prefix("-Djava.io.tmpdir=") {
             java.temporary_directory = Some(directory.into());
         } else if let Some(version) = arg.strip_prefix("-Dtla-ts.tlc=") {
-            java.is_174 = version == "1.7.4";
+            java.tlc_version = Some(if version == "1.7.4" {
+                TlcVersion::V1_7_4
+            } else {
+                TlcVersion::Master
+            });
         } else if let Some(property) = arg.strip_prefix("-D") {
             let name = property.split_once('=').map_or(property, |(name, _)| name);
             if TLC_PROPERTY_NAMESPACES

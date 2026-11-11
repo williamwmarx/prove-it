@@ -11,6 +11,7 @@ pub mod evaluator;
 pub mod explain;
 pub mod interval_set;
 pub mod levelwise;
+pub mod limit;
 pub mod mpbq;
 pub mod polynomial;
 pub mod solver;

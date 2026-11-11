@@ -12,6 +12,7 @@ pub mod generate;
 pub mod index;
 pub mod isabelle;
 pub mod levels;
+pub mod marshal;
 pub mod module;
 pub mod normalize;
 pub mod ocaml;

@@ -202,6 +202,10 @@ struct Behavior {
     /// The state each late node reached, where it isn't the state stored for the node.
     node_reals: IntegerMap<u32, u32>,
     is_done: Vec<bool>,
+    /// TLC's `AbstractDiskGraph#size`: the states its node table has a key for. A graph without
+    /// a tableau has those of the nodes written, the states added; one with a tableau has those
+    /// done and those with a node recorded, such as a successor still to expand.
+    size: usize,
     error_node: Option<u32>,
 }
 
@@ -232,6 +236,9 @@ impl Behavior {
         if self.last_nodes.len() <= state {
             self.last_nodes.resize(state + 1, NO_NODE);
             self.first_nodes.resize(state + 1, NO_NODE);
+        }
+        if self.last_nodes[state] == NO_NODE && !self.is_done.get(state).is_some_and(|&done| done) {
+            self.size += 1;
         }
         match self.last_nodes[state] {
             NO_NODE => self.first_nodes[state] = node,
@@ -272,6 +279,9 @@ pub struct Checker {
     /// The state being added, with whether as an initial state, and the first atom found
     /// unanswered while adding one.
     adding: Cell<Option<(u32, bool)>>,
+    /// The edge of the step that reached the state the checker checks against a tableau node, as
+    /// TLC checks a successor, whose level is one past its source's.
+    reached: Cell<Option<u32>>,
     pub(crate) unanswered: Cell<Option<Unanswered>>,
     /// The position among all the behaviors of each this checker builds, which a checker that
     /// shares them with others builds only some of.
@@ -324,6 +334,7 @@ impl Checker {
                 next_siblings: Vec::new(),
                 node_reals: IntegerMap::default(),
                 is_done: Vec::new(),
+                size: 0,
                 error_node: None,
             });
         }
@@ -362,6 +373,7 @@ impl Checker {
             effects: RefCell::new(None),
             diameter: Cell::new(1),
             adding: Cell::new(None),
+            reached: Cell::new(None),
             unanswered: Cell::new(None),
             global,
             at: Cell::new((false, 0, 0)),
@@ -397,7 +409,10 @@ impl Checker {
             Kind::Boolean(value) => Ok(value),
             Kind::State(atom) | Kind::Enabled(atom) => {
                 let mut effects = self.effects.borrow_mut();
-                let slot = Slot::State(state);
+                let slot = match self.reached.get() {
+                    Some(edge) => Slot::Reached { state, edge },
+                    None => Slot::State(state),
+                };
                 let Some(effects) = effects.as_mut() else {
                     return self.answer(source, atom, slot);
                 };
@@ -715,6 +730,26 @@ impl Checker {
             .as_ref()
     }
 
+    // Whether the state a step reached is consistent with a tableau node, at the step: TLC checks
+    // the successor it generated, whose level is one past its source's, where the step is to
+    // another state, and the state itself for its stuttering step.
+    fn is_reached_consistent(
+        &mut self,
+        source: &Source<'_>,
+        behavior: usize,
+        node: u32,
+        step: &Step,
+    ) -> Result<bool, Declined> {
+        let edge = match step.slot {
+            Slot::Step { edge, .. } => Some(edge),
+            _ => None,
+        };
+        self.reached.set(edge);
+        let consistent = self.is_consistent(source, behavior, node, step.real);
+        self.reached.set(None);
+        consistent
+    }
+
     // Whether a reached state is consistent with a tableau node.
     fn is_consistent(
         &mut self,
@@ -728,8 +763,11 @@ impl Checker {
         };
         let slot = state as usize * tableau.nodes.len() + node as usize;
         // TLC evaluates each time, which keeping nothing matches where an atom has effects or
-        // reads TLC's diameter, which grows as the states are added.
-        let is_effectful = self.is_effectful() || source.graph.diameters.is_some();
+        // reads TLC's diameter, which grows as the states are added, or the level, which is the
+        // step's that reached the state.
+        let is_effectful = self.is_effectful()
+            || source.graph.diameters.is_some()
+            || source.graph.levels.is_some();
         if !is_effectful
             && let Some(&known) = self.behaviors[behavior].consistency.get(slot)
             && known != UNKNOWN_RESULT
@@ -818,11 +856,20 @@ impl Checker {
     }
 
     fn set_done(&mut self, behavior: usize, state: u32) {
-        let is_done = &mut self.behaviors[behavior].is_done;
-        if is_done.len() <= state as usize {
-            is_done.resize(state as usize + 1, false);
+        let graph = &mut self.behaviors[behavior];
+        let index = state as usize;
+        if graph.is_done.len() <= index {
+            graph.is_done.resize(index + 1, false);
         }
-        is_done[state as usize] = true;
+        if !graph.is_done[index]
+            && graph
+                .last_nodes
+                .get(index)
+                .is_none_or(|&last| last == NO_NODE)
+        {
+            graph.size += 1;
+        }
+        graph.is_done[index] = true;
     }
 
     fn is_accepting(&self, behavior: usize, node: u32) -> bool {
@@ -1011,6 +1058,7 @@ impl Checker {
             steps.push((first_step + position) as u32);
         }
         behavior.write_node(state, &targets, &steps);
+        behavior.size += 1;
     }
 
     fn tableau_successors(&self, behavior: usize, node: u32) -> &[u32] {
@@ -1047,7 +1095,7 @@ impl Checker {
             // In TLC's order, which decides the first atom left unanswered.
             for node in 0..node_count {
                 for (position, step) in set.iter().enumerate() {
-                    if self.is_consistent(source, behavior, node as u32, step.real)? {
+                    if self.is_reached_consistent(source, behavior, node as u32, step)? {
                         consistency[position * words + node / 64] |= 1 << (node % 64);
                     }
                 }
@@ -1183,7 +1231,7 @@ impl Checker {
             let successor_step = self.check_action(source, behavior, real, step)?;
             let is_done = self.is_done(behavior, step.target);
             for &next in &tableau_successors {
-                if !self.is_consistent(source, behavior, next, step.real)? {
+                if !self.is_reached_consistent(source, behavior, next, &step)? {
                     continue;
                 }
                 let existing = self.node_id(behavior, step.target, next);
@@ -1256,6 +1304,15 @@ impl Checker {
     /// How many solutions TLC checks, which it calls branches.
     pub fn branches(&self) -> usize {
         self.solutions.len()
+    }
+
+    /// The states of the behavior graphs, summed over the branches, which TLC reports as it
+    /// checks them (`LiveCheck.check0`).
+    pub fn size(&self) -> u64 {
+        self.behaviors
+            .iter()
+            .map(|behavior| behavior.size as u64)
+            .sum()
     }
 
     // The step from one state to another, as the first of the search's steps between them.
@@ -2188,6 +2245,11 @@ pub fn check_shared(
             })
             .collect::<Result<Vec<_>, _>>()
     })?;
+    for part in &parts {
+        for (behavior, &global) in part.checker.behaviors.iter().zip(&part.checker.global) {
+            checker.behaviors[global].size = behavior.size;
+        }
+    }
     let source = Source { graph, answers };
     let stopped = parts
         .iter()

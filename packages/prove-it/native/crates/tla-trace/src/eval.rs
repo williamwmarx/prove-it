@@ -369,6 +369,8 @@ pub struct Evaluator<'ir> {
     drawn: HashMap<usize, (Rc<Frame>, Value)>,
     /// TLCGet("level") of the current state.
     pub level: i32,
+    /// TLCGet("level") of the next state, where it isn't one past the current's.
+    pub next_level: Option<i32>,
     /// What Print and PrintT printed, each as the texts of its values.
     pub printed: Vec<Vec<String>>,
     /// The state a walk looks for, where a value that differs from it can't lead to it: a walk
@@ -376,6 +378,9 @@ pub struct Evaluator<'ir> {
     pub target: Option<Vec<Value>>,
     /// Whether a walk is ENABLED's, which TLC's `Tool#enabled` runs.
     pub(crate) is_enabling: bool,
+    /// The function application the walk tests, and whether it walks the initial predicate:
+    /// `getInitStates`, `getNextStates` and `enabled` word a non-function applied there apart.
+    pub(crate) walked_application: Option<(NodeId, bool)>,
     /// Where a replay of a failure is, as TLC's `CallStackTool` records it: each node the walks and
     /// the evaluation are in, outermost first, frozen once an evaluation fails.
     pub call_stack: Option<CallStack>,
@@ -662,9 +667,11 @@ impl<'ir> Evaluator<'ir> {
             reads: 0,
             drawn: HashMap::new(),
             level: 0,
+            next_level: None,
             printed: Vec::new(),
             target: None,
             is_enabling: false,
+            walked_application: None,
             call_stack: None,
             choices: Vec::new(),
             random: None,
@@ -1231,18 +1238,35 @@ impl<'ir> Evaluator<'ir> {
     }
 
     // Marks a failure in a method of a set with a source as TLC's FingerprintException, through
-    // the sets nested in it that test the element's parts, where an element was tested.
+    // the sets nested in it that test the element's parts, where an element was tested, or in the
+    // compareTo of a tested element with a source and of its parts.
     fn mark_failing_member(&mut self, received: &Value, element: Option<&Value>) {
         let Some(stack) = &mut self.call_stack else {
-            return;
-        };
-        let Some(source) = stack.source(received) else {
             return;
         };
         if stack.is_fingerprinted {
             return;
         }
         let nested = element.and_then(|element| crate::sets::failing_sets(element, received));
+        // The search of a sorted set fails in the element's `compareTo`, and in those of its parts
+        // it compares, which have sources where the evaluation gave them: the set's, which a
+        // definition TLC computed as it started has none of, is outside them. Where the failure
+        // passes through nested sets, the search is the innermost set's.
+        let (searched, searched_set) = match (&nested, element) {
+            (Some((_, inner_element, inner_set)), _) => (Some(inner_element), inner_set),
+            (None, element) => (element, received),
+        };
+        let compared: Vec<NodeId> = searched
+            .map(|searched| crate::sets::failing_search(searched, searched_set))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|value| stack.source(value))
+            .collect();
+        let source = stack.source(received);
+        if source.is_none() && compared.is_empty() {
+            return;
+        }
+        let nested = nested.map(|(sets, _, _)| sets);
         // TLC searches a set enumeration it hasn't normalized, as one an evaluation just built,
         // element by element with `equals`, which fails otherwise than the search of a sorted one.
         // The evaluator searches so the sets it records as TLC holds them unnormalized.
@@ -1254,7 +1278,7 @@ impl<'ir> Evaluator<'ir> {
             })
         });
         let sources = nested.iter().flatten().filter_map(|set| stack.source(set));
-        let sources: Vec<NodeId> = std::iter::once(source).chain(sources).collect();
+        let sources: Vec<NodeId> = source.into_iter().chain(sources).chain(compared).collect();
         stack.is_fingerprinted = true;
         stack.is_member_followed = is_followed;
         stack.fingerprinted_sources = sources;
@@ -1886,12 +1910,69 @@ impl<'ir> Evaluator<'ir> {
         let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
         for index in substitutes.chain(definitions.iter().copied()) {
             let node = ir.definitions[index as usize];
+            // A definition that can neither make a text nor change what a later one computes adds
+            // no rank, however long TLC takes to compute it, as the CHOOSE of a ring of nodes.
+            if !evaluator.may_rank_texts(node) {
+                continue;
+            }
             // TLC swallows what a constant definition throws, having interned what it made.
             evaluator
                 .evaluate(evaluator.definition(node).body, &Context::default())
                 .ok();
         }
         evaluator.startup_ranked.unwrap_or_default()
+    }
+
+    /// Whether evaluating a definition may make a text `made_text` ranks, or draw from the
+    /// generator or set a register that a later startup definition reads: whether it reaches, as
+    /// written or through the definitions it names, an operator that does. Tail, SubSeq and `\o`
+    /// of a tuple written in place make a tuple.
+    fn may_rank_texts(&self, definition: NodeId) -> bool {
+        let get_operator = |name: &Name| match name.resolution {
+            Resolution::Builtin(index) => Some(self.name(self.ir.builtins[index as usize].name)),
+            _ => None,
+        };
+        let is_tuple = |node: &NodeId| matches!(self.kind(*node), NodeKind::Tuple(_));
+        let mut visited = HashSet::new();
+        let mut pending = vec![definition];
+        while let Some(node) = pending.pop() {
+            let (node, kind) = self.node(node);
+            if !visited.insert(node) {
+                continue;
+            }
+            let name = match kind {
+                NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => Some(name),
+                NodeKind::Apply { name, args } => {
+                    let is_tuple_made = match (get_operator(name), args.as_slice()) {
+                        (Some("\\o"), operands) => operands.iter().any(is_tuple),
+                        (Some("Tail" | "SubSeq"), [sequence, ..]) => is_tuple(sequence),
+                        _ => false,
+                    };
+                    (!is_tuple_made).then_some(name)
+                }
+                // A subexpression names what the walk doesn't follow.
+                NodeKind::Subexpression(_) => return true,
+                _ => None,
+            };
+            if let Some(name) = name {
+                if let Some(
+                    "Tail" | "\\o" | "SubSeq" | "ToString" | "RandomElement" | "RandomSubset"
+                    | "TLCSet",
+                ) = get_operator(name)
+                {
+                    return true;
+                }
+                if let Resolution::Definition(index) = name.resolution {
+                    pending.push(self.ir.definitions[index as usize]);
+                }
+            }
+            // `children` leaves out the set a filter's bound ranges over.
+            if let NodeKind::SetFilter { bound, .. } = kind {
+                pending.push(bound.set);
+            }
+            pending.extend(kind.children());
+        }
+        false
     }
 
     /// The startup, with the generator left where its draws left it, for the assumptions.
@@ -1999,6 +2080,29 @@ impl<'ir> Evaluator<'ir> {
         }
         let reads = self.reads;
         let printed = self.printed.len();
+        // TLC computes a definition of constant level as it starts, with its plain `Tool`, whose
+        // values have no source (`processConstantDefns`). One that fails, or that holds a set it
+        // can't normalize (`evalConstantDefn`'s `deepNormalize`), it evaluates again where it is
+        // used.
+        if self.call_stack.is_some()
+            && matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+            && self.is_precomputed(node)
+        {
+            let call_stack = self.call_stack.take();
+            let computed = self.evaluate(definition.body, &context.global());
+            self.call_stack = call_stack;
+            if let Ok(value) = computed
+                && self.reads == reads
+                && self.printed.len() == printed
+                && !holds_unsorted(&value)
+            {
+                note_sorted(&value);
+                self.cache.insert(key, value.clone());
+                return Ok(value);
+            }
+            self.reads = reads;
+            self.printed.truncate(printed);
+        }
         let value = match &definition.form {
             DefinitionForm::Function(bounds) => {
                 self.defined_function(bounds, definition.body, &context.global())?
@@ -3002,10 +3106,16 @@ impl<'ir> Evaluator<'ir> {
         let function_node = function;
         let function = self.evaluate(function, context)?;
         if let Some(kind) = non_function_kind(&function) {
+            let computing = match self.walked_application {
+                Some((walked, is_init)) if walked == self.resolved(node) => {
+                    format!("In computing {}, a", self.computing(is_init))
+                }
+                _ => "A".to_string(),
+            };
             return fail_runtime(
                 "applied a non-function",
                 format!(
-                    "A non-function ({kind}) was applied as a function.\n{}",
+                    "{computing} non-function ({kind}) was applied as a function.\n{}",
                     self.describe_range(node)
                 ),
             );
@@ -3859,7 +3969,10 @@ impl<'ir> Evaluator<'ir> {
             }
             Value::Str(key) if *key.units == *"level".encode_utf16().collect::<Vec<_>>() => {
                 self.reads += 1;
-                Value::Int(self.level + i32::from(context.is_primed))
+                Value::Int(match self.next_level {
+                    Some(level) if context.is_primed => level,
+                    _ => self.level + i32::from(context.is_primed),
+                })
             }
             // Once the search is over, the run's counts, and its named registers, each
             // the tuple of one worker's value.
@@ -5565,6 +5678,20 @@ fn sub_bags(bounds: &[(Value, i32)]) -> Evaluated<Value> {
         });
     }
     set_of(values)
+}
+
+// Whether a value holds a set TLC can't normalize.
+fn holds_unsorted(value: &Value) -> bool {
+    match value {
+        Value::Unsorted(_) => true,
+        Value::Set(elements) => elements.iter().any(holds_unsorted),
+        Value::Function(function) => function
+            .domain
+            .iter()
+            .chain(&function.range)
+            .any(holds_unsorted),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

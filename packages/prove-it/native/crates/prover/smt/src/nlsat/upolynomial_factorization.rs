@@ -60,19 +60,22 @@ fn push_factor(um: &UpolynomialManager, fs: &mut UpolynomialFactors, factor: &[I
 }
 
 // factors::multiply
-fn multiply_factors(um: &UpolynomialManager, fs: &UpolynomialFactors) -> Upolynomial {
+fn multiply_factors(
+    um: &UpolynomialManager,
+    fs: &UpolynomialFactors,
+) -> Result<Upolynomial, SmtError> {
     if fs.constant.is_zero() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut result = vec![um.normalize_numeral(&fs.constant)];
     for index in 0..fs.factors.len() {
         result = if fs.degrees[index] > 1 {
-            um.mul(&result, &um.pw(&fs.factors[index], fs.degrees[index]))
+            um.mul(&result, &um.pw(&fs.factors[index], fs.degrees[index])?)?
         } else {
-            um.mul(&result, &fs.factors[index])
+            um.mul(&result, &fs.factors[index])?
         };
     }
-    result
+    Ok(result)
 }
 
 // prime_iterator: 2, 3, 5, 7, ...
@@ -322,9 +325,9 @@ fn factor_square_free_in_zp(
             for _shift in 0..prime {
                 let current = fs.factors[factor_index].clone();
                 trimmed[0] = zp.normalize_numeral(&(&trimmed[0] - Int::one()));
-                let common = zp.gcd(&trimmed, &current);
+                let common = zp.gcd(&trimmed, &current)?;
                 if common.len() != 1 && common.len() != current.len() {
-                    fs.factors[factor_index] = zp.div(&current, &common);
+                    fs.factors[factor_index] = zp.div(&current, &common)?;
                     push_factor(zp, fs, &common, 1);
                 }
                 if fs.factors.len() - first_factor == null_rank {
@@ -357,21 +360,21 @@ fn hensel_lift_once(
     b: &Int,
     r: &Int,
     polynomials: &HenselPolynomials<'_>,
-) -> LiftedFactors {
-    let zr = UpolynomialManager::new(Some(r.clone()));
+) -> Result<LiftedFactors, SmtError> {
+    let zr = UpolynomialManager::new(Some(r.clone()), z.limit.clone());
     let f = zr.set(&z.div_const(
-        &z.sub(polynomials.c, &z.mul(polynomials.a, polynomials.b)),
+        &z.sub(polynomials.c, &z.mul(polynomials.a, polynomials.b)?),
         b,
     ));
-    let division = zr.div_rem(&zr.mul(polynomials.v, &f), polynomials.a);
+    let division = zr.div_rem(&zr.mul(polynomials.v, &f)?, polynomials.a)?;
     let t = zr.add(
-        &zr.mul(polynomials.u, &f),
-        &zr.mul(polynomials.b, &division.quotient),
+        &zr.mul(polynomials.u, &f)?,
+        &zr.mul(polynomials.b, &division.quotient)?,
     );
-    LiftedFactors {
+    Ok(LiftedFactors {
         a: z.add(polynomials.a, &z.mul_const(&division.remainder, b)),
         b: z.add(polynomials.b, &z.mul_const(&t, b)),
-    }
+    })
 }
 
 // hensel_lift_quadratic: lifts C = A*B from Z_p to Z_(p^e), squaring the modulus of zpe and
@@ -384,7 +387,7 @@ fn hensel_lift_quadratic(
     b: &[Int],
     e: u32,
 ) -> Result<LiftedFactors, SmtError> {
-    let zp = UpolynomialManager::new(zpe.zp().cloned());
+    let zp = UpolynomialManager::new(zpe.zp().cloned(), z.limit.clone());
     let ext = zp.ext_gcd(a, b)?;
     let mut u = ext.u;
     let mut v = ext.v;
@@ -392,6 +395,7 @@ fn hensel_lift_quadratic(
     let mut current_b = b.to_vec();
     let mut k = 1u32;
     while k < e {
+        z.limit.checkpoint()?;
         let modulus = zpe
             .zp()
             .cloned()
@@ -407,16 +411,16 @@ fn hensel_lift_quadratic(
                 b: &current_b,
                 c,
             },
-        );
+        )?;
         let g = zpe.set(&z.div_const(
             &z.sub(
-                &z.sub(&[Int::one()], &z.mul(&lifted.a, &u)),
-                &z.mul(&lifted.b, &v),
+                &z.sub(&[Int::one()], &z.mul(&lifted.a, &u)?),
+                &z.mul(&lifted.b, &v)?,
             ),
             &modulus,
         ));
-        let division = zpe.div_rem(&zpe.mul(&g, &v), &current_a);
-        let s = zpe.add(&zpe.mul(&g, &u), &zpe.mul(&division.quotient, &current_b));
+        let division = zpe.div_rem(&zpe.mul(&g, &v)?, &current_a)?;
+        let s = zpe.add(&zpe.mul(&g, &u)?, &zpe.mul(&division.quotient, &current_b)?);
         u = z.add(&u, &z.mul_const(&s, &modulus));
         v = z.add(&v, &z.mul_const(&division.remainder, &modulus));
         zpe.square_modulus()?;
@@ -456,17 +460,17 @@ fn hensel_lift_factors(
             zp.set(&parts)
         } else {
             zp.mul_const(
-                &multiply_factors(zp, zp_fs),
+                &multiply_factors(zp, zp_fs)?,
                 &zp.normalize_numeral(&f[f.len() - 1]),
             )
         };
         zpe.set_zp(prime.clone());
-        let lifted = hensel_lift_quadratic(z, &parts, zpe, &a, &zp.div(&c, &a), e)?;
+        let lifted = hensel_lift_quadratic(z, &parts, zpe, &a, &zp.div(&c, &a)?, e)?;
         b = lifted.b;
         if index == 0 {
             parts = zpe.set(f);
         }
-        parts = zpe.div(&parts, &lifted.a);
+        parts = zpe.div(&parts, &lifted.a)?;
         zpe_fs.factors.push(lifted.a);
         zpe_fs.degrees.push(1);
     }
@@ -634,26 +638,26 @@ impl<'a> CombinationIterator<'a> {
         rest
     }
 
-    fn get_left(&self) -> Upolynomial {
+    fn get_left(&self) -> Result<Upolynomial, SmtError> {
         let mut result = self.zpe.set(&self.fs.factors[self.current[0] as usize]);
         for index in 1..self.current_size {
             result = self
                 .zpe
-                .mul(&result, &self.fs.factors[self.current[index] as usize]);
+                .mul(&result, &self.fs.factors[self.current[index] as usize])?;
         }
-        result
+        Ok(result)
     }
 
-    fn get_right(&self) -> Upolynomial {
+    fn get_right(&self) -> Result<Upolynomial, SmtError> {
         let mut result = Vec::new();
         for factor in self.get_rest() {
             result = if result.is_empty() {
                 self.zpe.set(&self.fs.factors[factor])
             } else {
-                self.zpe.mul(&result, &self.fs.factors[factor])
+                self.zpe.mul(&result, &self.fs.factors[factor])?
             };
         }
-        result
+        Ok(result)
     }
 
     // get_left_tail_coeff, get_right_tail_coeff: m times the constant terms of the side's factors.
@@ -703,13 +707,14 @@ pub fn factor_square_free(
             fs.constant = -&fs.constant;
         }
     }
-    let mut zp = UpolynomialManager::new(Some(Int::from(2)));
+    let mut zp = UpolynomialManager::new(Some(Int::from(2)), z.limit.clone());
     let mut zp_fs = mk_factors();
     let mut zp_fs_prime = Int::from(2);
     let mut degree_set = vec![true];
     let mut get_next_prime = mk_prime_iterator();
     let mut trials = 0;
     while trials <= params.prime_trials {
+        z.limit.checkpoint()?;
         let next_prime = get_next_prime();
         if next_prime > u64::from(params.max_prime) {
             push_factor(z, fs, &f_pp, k);
@@ -721,7 +726,7 @@ pub fn factor_square_free(
             continue;
         }
         let f_pp_zp = zp.set(&f_pp);
-        if !zp.is_square_free(&f_pp_zp) {
+        if !zp.is_square_free(&f_pp_zp)? {
             continue;
         }
         let mut current_fs = mk_factors();
@@ -753,7 +758,7 @@ pub fn factor_square_free(
         }
     }
     zp.set_zp(zp_fs_prime.clone());
-    let mut zpe = UpolynomialManager::new(Some(zp_fs_prime.clone()));
+    let mut zpe = UpolynomialManager::new(Some(zp_fs_prime.clone()), z.limit.clone());
     let zpe_fs = hensel_lift_factors(
         z,
         &f_pp,
@@ -770,6 +775,7 @@ pub fn factor_square_free(
     let mut is_removing = false;
     let mut counter = 0u64;
     while iterator.next(is_removing) {
+        z.limit.checkpoint()?;
         counter += 1;
         if counter > u64::from(params.max_search_size) {
             result = false;
@@ -787,9 +793,9 @@ pub fn factor_square_free(
         }
         let trial = zpe.mul_const(
             &if is_using_left {
-                iterator.get_left()
+                iterator.get_left()?
             } else {
-                iterator.get_right()
+                iterator.get_right()?
             },
             &leading,
         );
@@ -886,7 +892,7 @@ pub fn factor_upolynomial(
     fs.constant = z.get_content(p);
     let primitive = z.get_primitive(p);
     let derivative = z.derivative(&primitive);
-    let mut square = z.gcd(&primitive, &derivative);
+    let mut square = z.gcd(&primitive, &derivative)?;
     if square.len() <= 1 {
         let flipped = flip_factor_sign_if_lm_neg(&primitive, &mut fs, 1);
         let is_complete = factor_sqf_pp(z, &flipped, &mut fs, 1, params)?;
@@ -896,7 +902,8 @@ pub fn factor_upolynomial(
     let mut product = z.exact_div(&primitive, &square).ok_or_else(get_gcd_error)?;
     let mut multiplicity = 1;
     while product.len() > 1 {
-        let next = z.gcd(&product, &square);
+        z.limit.checkpoint()?;
+        let next = z.gcd(&product, &square)?;
         let factor = z.exact_div(&product, &next).ok_or_else(get_gcd_error)?;
         if factor.len() > 1 {
             let flipped = flip_factor_sign_if_lm_neg(&factor, &mut fs, multiplicity);
@@ -916,6 +923,7 @@ pub fn factor_upolynomial(
 #[cfg(test)]
 mod tests {
     use super::super::Int;
+    use super::super::limit::NlsatLimit;
     use super::super::test_util::read_fixture;
     use super::super::upolynomial::UpolynomialManager;
     use super::{DEFAULT_FACTOR_PARAMS, FactorParams, factor_upolynomial};
@@ -935,7 +943,7 @@ mod tests {
     // module's limits.
     fn run_factor_command(input: &str) -> String {
         let words: Vec<&str> = input.split(' ').collect();
-        let mut um = UpolynomialManager::new(None);
+        let mut um = UpolynomialManager::new(None, NlsatLimit::default());
         let params = if words[0] == "afactor" {
             FactorParams {
                 max_prime: 31,

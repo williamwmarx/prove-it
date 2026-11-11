@@ -20,6 +20,7 @@ fn graph() -> Graph<'static> {
         fingerprints: &FINGERPRINTS,
         reals: None,
         diameters: None,
+        levels: None,
     }
 }
 
@@ -28,7 +29,7 @@ const NOT_INFINITELY_OFTEN: [Term; 4] = [Term::Not, Term::Always, Term::Eventual
 const INFINITELY_OFTEN: [Term; 3] = [Term::Always, Term::Eventually, Term::State(0)];
 
 fn verdict(answers: Option<&[u8]>) -> Verdict {
-    let liveness = check(
+    let (liveness, _) = check(
         &NOT_INFINITELY_OFTEN,
         &[&INFINITELY_OFTEN],
         &graph(),
@@ -92,7 +93,7 @@ fn passes_by_the_states_a_check_part_way_hasnt_expanded() {
         edge_offsets: &OFFSETS[..2],
         ..graph()
     };
-    let liveness = check(
+    let (liveness, _) = check(
         &NOT_INFINITELY_OFTEN,
         &[&INFINITELY_OFTEN],
         &graph,
@@ -198,6 +199,7 @@ fn names_the_first_atom_it_leaves_unanswered_as_it_adds_the_states() {
             false,
             1,
         )
+        .0
         .unanswered
     };
     assert_eq!(unanswered(&[1, 0]), None);
@@ -230,7 +232,9 @@ impl Answers for Asked<'_> {
 
     fn position(&self, _atom: u32, slot: Slot, _diameter: u32) -> usize {
         match slot {
-            Slot::State(state) | Slot::Stutter(state) => state as usize,
+            Slot::State(state) | Slot::Reached { state, .. } | Slot::Stutter(state) => {
+                state as usize
+            }
             Slot::Step { edge, .. } => edge as usize,
         }
     }
@@ -258,6 +262,7 @@ fn asks_each_atom_as_the_search_adds_its_state() {
                 fingerprints: &FINGERPRINTS,
                 reals: None,
                 diameters: None,
+                levels: None,
             };
             let source = Source {
                 graph: &graph,
@@ -347,6 +352,7 @@ fn names_the_first_action_it_leaves_unanswered_step_by_step() {
             false,
             1,
         )
+        .0
         .unanswered
         .map(|unanswered| (unanswered.atom, unanswered.slot))
     };
@@ -385,9 +391,14 @@ fn finds_on_several_threads_what_it_finds_on_one() {
                     threads,
                 )
             };
-            let one = on(1);
+            let (one, one_size) = on(1);
+            let (two, two_size) = on(2);
             assert_eq!(one.branches, Some(2));
-            assert_eq!(on(2), one, "P {p:?}, Q {q:?}");
+            assert_eq!(two, one, "P {p:?}, Q {q:?}");
+            // Where every state was added, the graphs have as many states.
+            if matches!(one.verdict, Verdict::Holds | Verdict::Lasso { .. }) {
+                assert_eq!(two_size, one_size, "P {p:?}, Q {q:?}");
+            }
         }
     }
 }

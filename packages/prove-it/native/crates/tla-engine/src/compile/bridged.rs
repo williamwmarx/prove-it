@@ -75,12 +75,18 @@ impl Compiler<'_> {
         if operators.len() != expected {
             return unsupported(format!("{name} of an operator where it takes a value"));
         }
-        if name == "BagOfAll" && operators[0].is_literal {
-            // TLC passes an operator whose body is a literal to Bags.java as the literal.
-            return Ok(Some(leaf(
-                eval(|_| Err(Bail("BagOfAll of a literal"))),
-                footprint,
-            )));
+        if operators
+            .first()
+            .is_some_and(|operator| operator.is_literal)
+        {
+            // TLC passes an operator whose body is a literal to Bags.java and TLC.java as the
+            // literal.
+            let reason = if name == "BagOfAll" {
+                "BagOfAll of a literal"
+            } else {
+                "SortSeq of a literal"
+            };
+            return Ok(Some(leaf(eval(move |_| Err(Bail(reason))), footprint)));
         }
         Ok(Some(Compiled {
             is_costly: true,
@@ -195,7 +201,8 @@ fn sub_seq(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id>
     Ok(sub_seq_of(machine, args[0], from, to))
 }
 
-// TLC inserts each element before the first one sorted so far that it precedes.
+// TLC's `SortSeq`: an insertion sort, which moves each element back past those sorted before it
+// while it precedes them, and fails on a comparison that isn't a boolean.
 fn sort_seq(machine: &mut Machine<'_>, args: &[Id], operators: &[Applier]) -> Outcome<Id> {
     let sequence = args[0];
     if machine.store.kind_of(sequence) != KIND_TUPLE {
@@ -206,10 +213,11 @@ fn sort_seq(machine: &mut Machine<'_>, args: &[Id], operators: &[Applier]) -> Ou
     for index in 0..machine.store.size_of(sequence) {
         let element = machine.store.get_range_value(sequence, index);
         let mut position = sorted.len();
-        for (at, &existing) in sorted.iter().enumerate() {
-            if precedes.apply(machine, &[element, existing])? == TRUE {
-                position = at;
-                break;
+        while position > 0 {
+            match precedes.apply(machine, &[element, sorted[position - 1]])? {
+                TRUE => position -= 1,
+                FALSE => break,
+                _ => return Err(Bail("a SortSeq comparison that isn't a boolean")),
             }
         }
         sorted.insert(position, element);
@@ -237,7 +245,8 @@ fn permute(
     functions: &mut Vec<Id>,
 ) {
     if from == order.len() {
-        functions.push(machine.store.function_of_sorted(keys, order));
+        let function = machine.store.function_of_sorted(keys, order);
+        functions.push(machine.store.mark_built_as_function(function));
         return;
     }
     for index in from..order.len() {
@@ -367,7 +376,8 @@ fn merge_bags(machine: &mut Machine<'_>, bags: &[(Vec<Id>, Vec<Id>)]) -> Outcome
             }
         }
     }
-    machine.store.function_of(&keys, &counts)
+    let bag = machine.store.function_of(&keys, &counts)?;
+    Ok(machine.store.mark_built_as_function(bag))
 }
 
 fn bag_sum(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
@@ -403,7 +413,8 @@ fn bag_difference(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outc
             kept_counts.push(machine.store.int(count)?);
         }
     }
-    machine.store.function_of(&kept_keys, &kept_counts)
+    let bag = machine.store.function_of(&kept_keys, &kept_counts)?;
+    Ok(machine.store.mark_built_as_function(bag))
 }
 
 fn bag_union(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id> {
@@ -478,7 +489,8 @@ fn sub_bags(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<Id
     let functions: Vec<Id> = entries
         .iter()
         .map(|(entry_keys, entry_counts)| {
-            machine.store.function_of_sorted(entry_keys, entry_counts)
+            let bag = machine.store.function_of_sorted(entry_keys, entry_counts);
+            machine.store.mark_built_as_function(bag)
         })
         .collect();
     machine.store.set_of(&functions)
@@ -494,5 +506,6 @@ fn set_to_bag(machine: &mut Machine<'_>, args: &[Id], _: &[Applier]) -> Outcome<
     let elements = machine.store.set_elements(set).to_vec();
     let one = machine.store.int(1)?;
     let counts = vec![one; elements.len()];
-    Ok(machine.store.function_of_sorted(&elements, &counts))
+    let bag = machine.store.function_of_sorted(&elements, &counts);
+    Ok(machine.store.mark_built_as_function(bag))
 }

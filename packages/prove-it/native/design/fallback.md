@@ -266,6 +266,27 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
 - uncounted branches;
 - every decline of atoms that read or set TLC's registers.
 
+#### Declines to win back
+
+A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
+it from one that printed something else. Each is outside the corpus and the tests:
+- a function constructor that binds a tuple pattern over a set of functions TLC built as
+  functions, applied at once (`[<<a, b>> \in {[k \in 1..2 |-> k]} |-> a][<<1, 2>>]`). TLC applies
+  the function without building it, so it never binds the pattern; the engine builds it and
+  declines the binding, since `ContextEnumerator` binds a tuple pattern only to a `TupleValue`
+  (#245).
+
+#### Known wrong outputs
+
+These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
+with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
+
+| Shape | Repro | TLC | Native |
+|---|---|---:|---:|
+| A held SUBSET or set of functions `\cup` a set that overlaps it | `Init == s = 0 /\ x = 0`, `Next == s' = SUBSET {1} /\ x' \in s' \cup {{1}}` | 10 | 7 |
+| A constant definition normalized elsewhere, then streamed | `C == UNION {1..2, 2..3}`, `Init == s = C /\ x = 0`, `Next == s' = s /\ x' \in C` | 13 | 17 |
+| Stream order alone, with no duplicates | `Init == s = 0 /\ x = {3}`, `Next == s' = (SUBSET {2}) \cup {{1}} /\ x' \in s'`, `INVARIANT x # {1} /\ x # {2}` (states generated at the violation) | 2 | 3 |
+
 #### Every reason
 
 | Runs | Reason | Tests |
@@ -477,6 +498,40 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
 | 1 | the liveness checker declined: a late node TLC adds at another diameter | `unit/native-search.test.ts:1103` |
 | 1 | TLCGet, which the constant evaluator doesn't compute | `unit/check.test.ts:1034` |
 
+### After the CLI's flip (measured 2026-11-11)
+
+Measured at main 8165d917, after #224 flipped the CLI, with `bun scripts/run.ts check-log`:
+
+- 1,887 checks. 1,386 print TLC's output natively and 501 are not native yet. None answered
+  differently on one thread and four.
+- In TLC's default mode, which writes the trace exploration spec, 245 are native. The rest wait on
+  SANY's report of that spec, which the XML session owns with the other SANY reports.
+
+What the 501 decline at, grouped by the mechanism that would make them native. "Reasons" counts the
+distinct decline messages in the group.
+
+| Mechanism | Runs | Reasons | Owner |
+|---|---:|---:|---|
+| Values whose text depends on how TLC built them, and sets TLC keeps lazy | 82 | 12 | S1 (lazy-values, after the memo session's guard) |
+| A failure TLC words as a FingerprintException | 70 | 14 | fingerprint session |
+| TLC 1.7.4 | 63 | 1 | retired: declines until the TypeScript goes |
+| An assumption that fails to evaluate, evaluated again | 57 | 25 | front session |
+| Temporal properties and liveness | 50 | 19 | liveness session |
+| The engine stopping where TLC reports an error | 46 | 25 | memo session |
+| What the constant evaluator doesn't compute | 29 | 9 | front session |
+| Other failures evaluated again | 29 | 18 | memo session |
+| The engine declining an operator or builtin | 19 | 15 | memo session |
+| Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
+| `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
+| Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
+| SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
+| Rebuilding a trace through the builtin Trace | 4 | 1 | memo session |
+| The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, an ALIAS without a definition, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 9 | 7 | unassigned |
+
+The groups are checked in this order, so a decline counts once, in the first group that takes it.
+The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
+progress events for the library's `onProgress` (see "The public API afterwards").
+
 ### What uses it as the reference, and what replaces it
 
 | User | Replacement |
@@ -564,6 +619,11 @@ run with and without `-noGenerateSpecTE`):
 | TLC 1.7.4's output | 5 | retired: it declines until the TypeScript goes |
 | `-dump`, `-continue` | 7 | S2 |
 | the 518 of the library's `check` calls, by mechanism (above) | the rest | as staffed |
+
+Since then, the binary reads the version of the jar on the class path from its manifest, with a
+zip reader and inflater of its own (`zip.rs`, `inflate.rs`), and checks a master TLC's launch. It
+declines TLC 1.7.4's jar and a manifest it can't read with certainty. Of the 117 CLI test runs, 56
+now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator.
 
 ### The public API afterwards
 

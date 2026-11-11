@@ -49,6 +49,7 @@ interface Exports {
   prove_it_check: Call;
   prove_it_decide: Call;
   prove_it_sany_text: Call;
+  prove_it_sany_xml: Call;
   prove_it_check_sources: Call;
   prove_it_store_perform: Call;
   prove_it_store_decode: Call;
@@ -237,9 +238,17 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
           return;
         }
       },
-      prove_it_report: (kind: number, a: number, b: number, c: number, d: number, e: number) => {
+      prove_it_report: (
+        kind: number,
+        a: number,
+        b: number,
+        c: number,
+        d: number,
+        e: number,
+        f: number,
+      ) => {
         const check = running.check;
-        check?.events.push(() => check.report(kind, a, b, c, d, e));
+        check?.events.push(() => check.report(kind, a, b, c, d, e, f));
       },
       // The values are read now, while the memory holds them.
       prove_it_print: (pointer: number) => {
@@ -297,6 +306,10 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
     sanyText: (root, source, fileName, known) =>
       callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
         NativeAddon["sanyText"]
+      >,
+    sanyXml: (root, source, fileName, flags, known) =>
+      callCurrent("prove_it_sany_xml", [root, source, fileName, flags, known]) as ReturnType<
+        NativeAddon["sanyXml"]
       >,
     storePerform: (name, args) =>
       callCurrent("prove_it_store_perform", [name, args as Argument[]]) as
