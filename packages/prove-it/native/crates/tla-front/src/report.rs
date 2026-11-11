@@ -90,6 +90,32 @@ pub struct ReportOptions<'a> {
     pub is_xml_export: bool,
 }
 
+/// The deepest nesting the report writes, where a square bracket counts twice: SANY's recursive
+/// descent overflows Java's default stack between 1,500 and 1,600 parentheses, braces or angle
+/// brackets, and between 800 and 1,000 function constructors.
+const MAX_NESTING_DEPTH: usize = 1100;
+
+/// The deepest nesting of parentheses, brackets, braces and angle brackets in a module's text, a
+/// square bracket counting twice.
+fn get_nesting_depth(text: &str) -> usize {
+    let Ok(tokens) = crate::lexer::tokenize(text) else {
+        return 0;
+    };
+    let mut depth = 0usize;
+    let mut deepest = 0;
+    for token in &tokens {
+        match &*token.text {
+            "(" | "{" | "<<" => depth += 1,
+            "[" => depth += 2,
+            ")" | "}" | ">>" | ">>_" => depth = depth.saturating_sub(1),
+            "]" | "]_" => depth = depth.saturating_sub(2),
+            _ => {}
+        }
+        deepest = deepest.max(depth);
+    }
+    deepest
+}
+
 struct Loaded {
     text: String,
     module: Rc<Module>,
@@ -195,6 +221,11 @@ impl Loader<'_> {
         let Ok(module) = parsed else {
             return Err(not_yet("SANY's parse errors"));
         };
+        if get_nesting_depth(&text) > MAX_NESTING_DEPTH {
+            return Err(not_yet(
+                "brackets nested more deeply than SANY's parser can on Java's default stack",
+            ));
+        }
         if module.name != *name {
             self.push_progress(parsing_line);
             return Err(Stop::Fatal {
