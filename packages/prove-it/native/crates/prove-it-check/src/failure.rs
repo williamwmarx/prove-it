@@ -93,9 +93,13 @@ pub fn print_failure(
     // An invariant that fails to evaluate stops TLC's worker before it adds the state it was
     // expanding to the behavior graphs, and TLC's replay of the expansion adds nothing to them
     // (`ModelChecker.doNext`), so the temporal properties show only in what their atoms print as
-    // TLC adds the states before it.
-    let is_followed =
-        is_atom || is_initial || matches!(stop.site, Site::Invariant(_)) && !atoms_print(ir);
+    // TLC adds the states before it. The search reports a failure of the next-state relation in
+    // such a model only where it followed TLC's checks of the state as TLC adds it after.
+    let is_next = matches!(stop.site, Site::Next | Site::NextAtom { .. });
+    let is_followed = is_atom
+        || is_initial
+        || is_next
+        || matches!(stop.site, Site::Invariant(_)) && !atoms_print(ir);
     if !ir.model.live_properties.is_empty() && !is_followed {
         return Err("a failure in a model with temporal properties".into());
     }
@@ -147,7 +151,7 @@ pub fn print_failure(
         && !is_atom
         && !is_initial_atom
         && !failure.replay.is_failed
-        && !matches!(stop.site, Site::Next)
+        && !is_next
     {
         print_finished(printer, start);
         return Ok(ERROR);
@@ -431,7 +435,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
         } else {
             // An atom's state past the path is no state of the trace.
             let (states, actions) = match stop.site {
-                Site::Atom { is_extra: true, .. } => {
+                Site::Atom { is_extra: true, .. } | Site::NextAtom { is_extra: true, .. } => {
                     let states = &stop.states[..stop.states.len().saturating_sub(1)];
                     (states, &stop.actions[..states.len().saturating_sub(1)])
                 }
@@ -446,7 +450,9 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
         // (`Worker.run`, `Worker.addElement`).
         let is_rebuilt_again = match stop.site {
             Site::Invariant(_) => false,
-            Site::Next => ir.model.check_deadlock && !failure.replay.is_successor_generated,
+            Site::Next | Site::NextAtom { .. } => {
+                ir.model.check_deadlock && !failure.replay.is_successor_generated
+            }
             _ => true,
         };
         let after = trace

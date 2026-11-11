@@ -1325,7 +1325,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 ViolationKind::Error { site }
                     if config.alias.is_some()
                         && !is_initial_site(site)
-                        && !matches!(site, ErrorSite::Next | ErrorSite::Invariant(_)) =>
+                        && !matches!(
+                            site,
+                            ErrorSite::Next | ErrorSite::NextAtom { .. } | ErrorSite::Invariant(_)
+                        ) =>
                 {
                     Err("a failure outside the next-state relation with an ALIAS".to_string())
                 }
@@ -1350,6 +1353,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                                 Site::InitialPredicate(position)
                             }
                             ErrorSite::Atom { atom, is_extra } => Site::Atom { atom, is_extra },
+                            ErrorSite::NextAtom { atom, is_extra } => {
+                                Site::NextAtom { atom, is_extra }
+                            }
                             ErrorSite::InitialAtom { atom, replayed } => {
                                 Site::InitialAtom { atom, replayed }
                             }
