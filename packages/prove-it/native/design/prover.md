@@ -1266,6 +1266,17 @@ FiniteSetsExtTheorems_proofs #148 and #171, BagsTheorems_proofs #67, DiningPhilo
 and 3 to ones it proves with Zenon (DiningPhilosophers_proof #33, #241 and #519), and on the record
 recalibrated since, the port proves all 10 with tlapm's prover.
 
+With causes 1 and 4 as 4.8.9 has them, the record was decided again (`prover-inputs --record`), and
+each input whose search did not move, by `prover-differential` at the earlier limits, kept its
+earlier entry, so a recalibration moves only the limits of searches that moved (247 kept, two of
+them flips the clock alone made). Against tlapm's record, prove then proves 33,019 of the 33,025
+obligations tlapm proves, against 33,016 before: Simple's four `Init => Inv` come back, and
+Boulanger #240 (`smt/b2ca9ee96f3db516`) is lost. Its 4 distributions are the ones 4.8.9's source
+makes, all of a disjunction with one reference, and Simple needs the same kind; without any, it is
+`unsat` in 1,332,097 steps and Simple is not proved. The port's search after them takes 8,170,365
+steps and 534,764 instances where it took 1,807,047 and 94,446, which places the divergence past
+`flatten_clauses`, in the later generation of the solver. It stays open.
+
 - **A model's hold on a builtin declaration (`div0`, `mod0`, `/0`)** moves smt/0c812b0a8aa1347b,
   c0119d516427b279, f57d6baf800a11d6, 44fea97e4ee0312c and a50910e8b0798813 (all `unknown` at
   the step limit in the record).
