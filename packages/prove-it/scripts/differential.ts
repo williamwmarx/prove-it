@@ -179,7 +179,9 @@ const runJar = (directory: string, args: string[]) =>
 // prints, the trace it rebuilds from the file and checks again, which compares only the spec's
 // variables; then the fingerprint of the whole value the file holds (TLCExt's TLCFP), as TLC
 // deserialises it, which a module of its own named _TLCTrace makes the trace module's reader
-// reachable for, beside the spec, with its model values from its configuration. The value itself
+// reachable for, beside the spec, with its model values from its configuration, each through an
+// instance of its own, so that a spec that defines PrintT, TLCFP or _TLCTraceDeserialize itself
+// doesn't stand in for them. The value itself
 // may be too large to print, as a SUBSET of 20 elements. A file TLC can't read prints why, twice.
 const readTrace = async (model: CorpusModel, bytes: Buffer) => {
   const directory = mkdtempSync(join(tmpdir(), "prove-it-read-trace-"));
@@ -204,8 +206,11 @@ const readTrace = async (model: CorpusModel, bytes: Buffer) => {
     join(directory, "ProveItTraceValue.tla"),
     [
       "---- MODULE ProveItTraceValue ----",
-      `EXTENDS ${basename(model.specPath, ".tla")}, _TLCTrace, TLC, TLCExt`,
-      `ASSUME PrintT(TLCFP(_TLCTraceDeserialize(${JSON.stringify(tracePath)}))) /\\ FALSE`,
+      `EXTENDS ${basename(model.specPath, ".tla")}`,
+      "ProveItTLC == INSTANCE TLC",
+      "ProveItTLCExt == INSTANCE TLCExt",
+      "ProveItTrace == INSTANCE _TLCTrace",
+      `ASSUME ProveItTLC!PrintT(ProveItTLCExt!TLCFP(ProveItTrace!_TLCTraceDeserialize(${JSON.stringify(tracePath)}))) /\\ FALSE`,
       "====",
       "",
     ].join("\n"),
@@ -252,15 +257,20 @@ const dumpWithTool = async (model: CorpusModel, command: string, args: string[])
   return bytes;
 };
 
-// The models with an ALIAS whose -tool dump the binary writes and TLC reads back to something else.
+// The models with an ALIAS whose -tool dump the binary writes and TLC reads back to something else,
+// and those whose -tool dump the binary declines, which fail nothing but are reported.
 const toolDumpDifferences: string[] = [];
+const toolDumpDeclines: string[] = [];
 
 // The -tool dumps of a model with an ALIAS, the jar's and the binary's, read back by TLC; the
 // binary may decline, and writes no file then.
 const compareToolDumps = async (model: CorpusModel) => {
   if (!/\bALIAS\b/.test(readFileSync(model.configPath, "utf8"))) return;
   const native = await dumpWithTool(model, nativeBinary ?? "", []);
-  if (native === undefined) return;
+  if (native === undefined) {
+    toolDumpDeclines.push(model.id);
+    return;
+  }
   const tlc = await dumpWithTool(model, "java", ["-XX:+UseParallelGC", "-cp", tlaToolsJar ?? ""]);
   const isSame =
     tlc !== undefined && (await readTrace(model, tlc)) === (await readTrace(model, native));
@@ -572,6 +582,12 @@ if (nativeBinary) {
         `\n${toolDumpDifferences.length} -tool dumps of models with an ALIAS TLC reads back otherwise:`,
       );
       for (const id of toolDumpDifferences) console.log(`  ${id}`);
+    }
+    if (toolDumpDeclines.length > 0) {
+      console.log(
+        `\n${toolDumpDeclines.length} -tool dumps of models with an ALIAS the binary declines:`,
+      );
+      for (const id of toolDumpDeclines) console.log(`  ${id}`);
     }
     if (undamaged.length > 0) {
       console.log(`\n${undamaged.length} damaged trace files TLC read back to the same trace:`);

@@ -307,6 +307,15 @@ Outside the counts, SANY's report differs on an INSTANCE of a module with semant
 `*** Errors: 2` for module Spec, while the binary prints `*** Errors: 3`, adding `Substitution error,
 probably due to error in module being instantiated.` at the INSTANCE (exit 150 in both).
 
+TLC rejects a VIEW or a POSTCONDITION the configuration names by a definition it computed as it
+started, as it does an ALIAS, but holds a definition whose body is a number or a string as written
+and computes nothing for it (`SymbolNodeValueLookupProvider.lookup`, `Spec.getViewSpec`,
+`getPostConditionSpecs`). The binary differs on two shapes: a POSTCONDITION that is a number or a
+string, `PC == "s"`, which it rejects as a constant (exit 255) where TLC evaluates it and reports
+it not a boolean (exit 10); and a VIEW TLC computes as it starts, `V == TRUE`, `V == {1}`,
+`V == A` with `A == 5`, which TLC rejects ("The view function V cannot be a constant.", exit
+151) where the binary checks the model.
+
 The binary declines a module file it finds but can't read, such as a directory or text not in
 UTF-8 (`a module's file the front end can't read`), where SANY prints `***Internal error: Unable to
 create NamedInputStream in toIStream method`. Where the TypeScript check finds the files, TLC's
