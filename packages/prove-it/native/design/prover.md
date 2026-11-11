@@ -1248,8 +1248,8 @@ b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
     smt/f57d6baf800a11d6 gives the record again. The fixed Rust gives the fixed TypeScript's answer
     on all 10,320, the four that move included. Of the tables, only `models.txt` moves: its `partial-theory` model, which
     interprets `div0`, now leaves the declaration to its application when it is released
-    (`asts=181`, was 180). `builtin-decl-release.smt` is replayed from `tables/decide-inputs.txt`,
-    which `scripts/smt-decide-reference.ts` writes.
+    (`asts=181`, was 180). `tests/inputs/builtin-decl-release.smt` is replayed in `tests/smt.rs`,
+    which pins the TypeScript's answer on it.
   - *Audit against Z3 5.3.3: neither side is Z3.* Z3 5.3.3 from PyPI (`z3-solver==5.3.3.0`), run as
     tlapm runs it (`-smt2 AUTO_CONFIG=false smt.MBQI=true`) with `rlimit` set to the record's step
     limit, and with `trace=true` to log its instances (each `[instance]` line, keyed through its
