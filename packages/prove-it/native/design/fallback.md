@@ -898,8 +898,8 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
   does (`onProgress`, `onPause`, a `dump` as `dot`, TLC 1.7.4), the TypeScript check runs and
   its result converts (`src/check-result.ts`). A `ModelConfig` goes to the native check as the
   configuration file that holds it (`formatConfig`), and a plain `dump` as `-dump`, whose file
-  `checkSources` returns as `files` (ABI 19) for `writeFile`. The library no longer takes
-  `systemProperties`.
+  `checkSources` returns as `files` (ABI 19) for `writeFile`. `systemProperties` go to the native
+  check as a Java launch's `-D`, as the binary reads them.
 - `Value` and `formatValue` are no longer exported.
 - A set or function TLC keeps lazy is `{"@lazy": text}`, with TLC's `toString` of it, which the
   trace printer writes exactly as it writes the states (`tests/fixtures/plain-lazy` pins it against
