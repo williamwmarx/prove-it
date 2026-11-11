@@ -3,14 +3,29 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use tla_engine::search::{SearchOutcome, ViolationKind};
 use tla_ir::Ir;
 use tla_trace::{CoverageMessage, Rebuilder};
 
+use crate::args::Parsed;
 use crate::host::Host;
 use crate::messages::{Level, Printer};
 use crate::stack::on_search_stack;
+
+/// The longest native run whose report is native: the binary with coverage took at least 3.45
+/// times as long as TLC on the perf suite, so TLC's run took well under the 5 minutes past which
+/// it ends its report with 2777 (design/cli.md, "-coverage").
+pub(crate) const CUT: Duration = Duration::from_secs(60);
+
+/// With -coverage, how many progress reports TLC prints before the one it follows with a
+/// coverage report: `coverageInterval / progressInterval`, -coverage's minutes as milliseconds in
+/// a Java int over the 60 s between progress reports.
+pub(crate) fn get_countdown(args: &Parsed) -> Option<i32> {
+    let minutes: i32 = args.first("-coverage")?.parse().ok()?;
+    Some(minutes.wrapping_mul(60 * 1000) / (60 * 1000))
+}
 
 /// TLC's report of a run, none where TLC prints none, or why the binary can't print it.
 pub(crate) fn compute(
@@ -80,4 +95,29 @@ pub(crate) fn print(printer: &mut Printer, messages: &[CoverageMessage]) {
         printer.print(message.code, Level::None, &message.text);
     }
     printer.print(2202, Level::None, "End of statistics.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_countdown_of(minutes: &str) -> Option<i32> {
+        let args = [minutes, "Spec"].map(String::from);
+        get_countdown(
+            &Parsed::parse(&[&["-coverage".to_string()][..], &args].concat(), true)
+                .expect("options"),
+        )
+    }
+
+    #[test]
+    fn counts_down_the_progress_reports_before_tlc_reports_coverage() {
+        // At the first progress report for -coverage 0, the (N + 1)-th for -coverage N.
+        assert_eq!(get_countdown_of("0"), Some(0));
+        assert_eq!(get_countdown_of("1"), Some(1));
+        assert_eq!(get_countdown_of("+3"), Some(3));
+        // 71583 minutes are 4294980000 ms, which a Java int holds as 12704.
+        assert_eq!(get_countdown_of("71583"), Some(0));
+        let args = Parsed::parse(&["Spec".to_string()], true).expect("options");
+        assert_eq!(get_countdown(&args), None);
+    }
 }

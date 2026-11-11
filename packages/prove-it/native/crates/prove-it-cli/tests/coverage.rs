@@ -8,8 +8,13 @@ use std::process::{Command, Output};
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/coverage");
 
 fn run(test: &str, name: &str, args: &[&str]) -> Output {
+    run_with(test, name, args, &[])
+}
+
+fn run_with(test: &str, name: &str, args: &[&str], environment: &[(&str, &str)]) -> Output {
     let directory = copy_fixtures(test);
     let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .envs(environment.iter().copied())
         .args([
             "-workers",
             "1",
@@ -151,6 +156,32 @@ fn declines_coverage_on_more_than_one_worker() {
     assert!(
         String::from_utf8_lossy(&output.stderr).contains(
             "prove-it: not native yet: coverage on more than one worker is timing-dependent in TLC"
+        ),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn declines_coverage_tlc_reports_part_way_through_the_search() {
+    // With -coverage 0, TLC reports coverage after its first progress report, about 3 s in.
+    let output = run("endless", "Endless", &["-coverage", "0"]);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: coverage TLC reports part way through the search is timing-dependent\n",
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn declines_coverage_of_a_run_past_the_cut() {
+    // TLC ends the report of a run past 5 minutes with 2777, which a native run past the cut,
+    // here 0 s, can't rule out.
+    let output = run_with("cut", "Stuck", &[], &[("PROVE_IT_TEST_COVERAGE_CUT", "0")]);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "prove-it: not native yet: coverage of a run TLC may take more than 5 minutes over"
         ),
         "{}",
         String::from_utf8_lossy(&output.stdout)
