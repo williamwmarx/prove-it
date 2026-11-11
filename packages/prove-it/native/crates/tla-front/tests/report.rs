@@ -33,69 +33,12 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
 }
 
 // tests/recursive-shapes: RECURSIVE declarations at module level, in a LET and in a LET
-// within a definition of another, against everything else that can bind or name what they declare
-// (src/recursive.rs). The front end writes SANY's report of these, and declines the rest.
+// within a definition of another, against everything else that can bind or name what they declare.
+// The front end writes SANY's report of each: linking derives the messages of the shapes
+// src/recursive.rs follows, and SANY's generator those of the others. What it writes is held to
+// TLC's output by `sany-corpus.ts --recorded tests/conformance/sany-stdout/grid.json`.
 #[test]
-fn reports_only_the_recursive_shapes_it_follows() {
-    let reported = [
-        "RLetDefined",
-        "RLetDefinedZero",
-        "RLetExtendsOther",
-        "RLetExtendsUndefined",
-        "RLetFunction",
-        "RLetInfix",
-        "RLetMutual",
-        "RLetPrimed",
-        "RLetUndefined",
-        "RLetUndefinedTwo",
-        "RLetWrongLevel",
-        "RLetWrongLevelDeeper",
-        "RLetWrongLevelFunction",
-        "RModuleArityLess",
-        "RModuleArityMore",
-        "RModuleArityZero",
-        "RModuleAssumeInSection",
-        "RModuleBodyLevelRecursive",
-        "RModuleDefined",
-        "RModuleDefinedZero",
-        "RModuleExtendsOther",
-        "RModuleExtendsUndefined",
-        "RModuleFunction",
-        "RModuleFunctionArity",
-        "RModuleFunctionArityUndefined",
-        "RModuleInfix",
-        "RModuleInnerRecursive",
-        "RModuleInnerRecursiveUndefined",
-        "RModuleInnerUndefinedOuterUndefined",
-        "RModuleInstanceAfter",
-        "RModuleLocalDefinition",
-        "RModuleModuleAfter",
-        "RModuleModuleInSection",
-        "RModuleModuleInSectionUsed",
-        "RModuleMutual",
-        "RModuleOtherConstantInSection",
-        "RModulePrimed",
-        "RModuleSiblingLets",
-        "RModuleSiblingLetsSameName",
-        "RModuleTheoremInSection",
-        "RModuleTheoremUses",
-        "RModuleUndefined",
-        "RModuleUndefinedTwo",
-        "RModuleUseInSection",
-        "RModuleVariableInSection",
-        "RNestedDefined",
-        "RNestedDefinedZero",
-        "RNestedFunction",
-        "RNestedInfix",
-        "RNestedMutual",
-        "RNestedPrimed",
-        "RNestedUndefined",
-        "RNestedUndefinedTwo",
-        "RNestedWrongLevel",
-        "RNestedWrongLevelDeeper",
-        "RNestedWrongLevelFunction",
-        "RecursiveHelper",
-    ];
+fn reports_every_recursive_shape() {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/recursive-shapes");
     let mut paths: Vec<_> = std::fs::read_dir(&directory)
         .expect("the grid")
@@ -119,11 +62,7 @@ fn reports_only_the_recursive_shapes_it_follows() {
                 is_xml_export: false,
             },
         );
-        match report {
-            Ok(_) => assert!(reported.contains(&name), "{name} is reported"),
-            Err(FrontError::NotYet(_)) => assert!(!reported.contains(&name), "{name} declines"),
-            Err(error) => panic!("{name}: {error:?}"),
-        }
+        assert!(report.is_ok(), "{name}: {report:?}");
     }
 }
 

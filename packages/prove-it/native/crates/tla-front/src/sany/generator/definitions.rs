@@ -15,7 +15,7 @@ use crate::sany::source::{
     TokenSpan, find_token, get_expression_span, get_matching_index, get_pre_comments,
     get_span_location, get_token_location, get_token_source, is_token,
 };
-use crate::sany::{Result, not_yet};
+use crate::sany::{GENERATOR_EXCEPTION, Result, not_yet};
 
 use super::{
     ContextSlot, LocalContext, ModuleGenerator, OpApplBinding, RecursiveFunction, get_kind_name,
@@ -143,7 +143,7 @@ impl ModuleGenerator<'_> {
             node.max_levels = vec![TEMPORAL_LEVEL; count];
             node.is_leibniz_arg = Some(vec![true; count]);
             node.labels = labels;
-            self.end_op_def_node(recursive, body, location, pre_comments);
+            self.end_op_def_node(recursive, body, location, pre_comments)?;
             self.add_definition(recursive, definitions);
             return Ok(());
         }
@@ -167,7 +167,7 @@ impl ModuleGenerator<'_> {
         body: NodeId,
         location: SanyLocation,
         pre_comments: Vec<String>,
-    ) {
+    ) -> Result<()> {
         let definition = self.spec.graph.op_def_mut(node).expect("a definition");
         definition.is_defined = true;
         definition.body = Some(body);
@@ -176,7 +176,13 @@ impl ModuleGenerator<'_> {
         if definition.in_recursive {
             self.state.unresolved_count[self.state.cur_level as usize] -= 1;
             self.state.unresolved_sum -= 1;
+            // Generator.endOpDefNode throws a WrongInvocationException, which the TypeScript
+            // generator doesn't.
+            if self.state.unresolved_sum < 0 {
+                return not_yet(GENERATOR_EXCEPTION);
+            }
         }
+        Ok(())
     }
 
     /// `processFunction` (generator.ts 1898–1969). `definition` is a function definition.
@@ -282,7 +288,7 @@ impl ModuleGenerator<'_> {
                 .arity
                 == 0
             {
-                self.end_op_def_node(recursive, node, location, pre_comments);
+                self.end_op_def_node(recursive, node, location, pre_comments)?;
             }
         } else if existing.is_none()
             && let Some(definition_node) = definition_node
