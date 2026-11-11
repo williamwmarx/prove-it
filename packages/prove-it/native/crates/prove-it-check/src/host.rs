@@ -28,6 +28,8 @@ pub struct Machine {
 /// the tla2tools.jar on the class path, which TLC copies the standard modules from.
 pub struct Files<'a> {
     pub spec: &'a Path,
+    /// The spec as TLC was given it, without .tla, which it may have found on the library path.
+    pub main_file: &'a str,
     /// The directories in TLC's order (`get_module_directories`), the working directory as "".
     pub directories: &'a [String],
     pub temporary: Option<&'a str>,

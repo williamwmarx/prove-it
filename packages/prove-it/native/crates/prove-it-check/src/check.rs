@@ -926,11 +926,11 @@ fn check_spec(
     );
     let front = match read_front(
         spec_path,
-        main_file,
         config_text.as_deref().unwrap_or_default(),
         !args.has("-nowarning"),
         &Files {
             spec: Path::new(spec_path),
+            main_file,
             directories: &directories,
             temporary: java.temporary_directory.as_deref(),
             metadir: args.first("-metadir"),

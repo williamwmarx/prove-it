@@ -54,7 +54,6 @@ pub struct Front {
 /// why tla-front doesn't find either.
 pub fn read_front(
     spec_path: &str,
-    main_file: &str,
     config_text: &str,
     is_warning_enabled: bool,
     files: &Files,
@@ -99,7 +98,7 @@ pub fn read_front(
     let describe = host.get_file_describer(files);
     let sany = native_sany(
         spec_path,
-        main_file,
+        files.main_file,
         sources.as_ref(),
         &*describe,
         files.root_extendees,
