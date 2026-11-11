@@ -3,6 +3,7 @@
 
 use std::path::Path;
 use std::sync::mpsc;
+use tla_engine::Prints;
 use tla_engine::clock::Instant;
 
 use tla_engine::search::{
@@ -52,6 +53,16 @@ const CONFIG_PARSE_ERROR: i32 = 151;
 const NOT_NATIVE: i32 = 1;
 // How much of the -dump file's text the relay holds before it sends it to be written.
 const DUMP_PART_BYTES: usize = 1 << 20;
+
+/// The exit codes of a run that may stop at a counterexample: a deadlock, a violation of an
+/// invariant, an action property or a temporal property, or a failure evaluating a state.
+const COUNTEREXAMPLE_EXITS: [i32; 5] = [
+    DEADLOCK,
+    SAFETY_VIOLATION,
+    LIVENESS_VIOLATION,
+    crate::failure::FAILURE_SPEC_EVAL,
+    crate::failure::ERROR,
+];
 
 const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
 
@@ -191,7 +202,21 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             let stem = name.strip_suffix(".tla").unwrap_or(&name);
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
-        exit_codes.push(check_spec(path, &parsed, java, &mut printer));
+        let exit_code = check_spec(path, &parsed, java, &mut printer);
+        // Where TLC records the trace for its trace exploration spec, a counterexample makes it
+        // write the trace's file beside the spec (`_TLCTraceSilent`), and, for one of two or more
+        // states, the spec (`TraceExplorationSpec.generate`), which the binary doesn't yet. The
+        // other specs are checked as after any spec it declines.
+        exit_codes.push(
+            if printer.is_trace_recorded && COUNTEREXAMPLE_EXITS.contains(&exit_code) {
+                report_not_native(
+                    &mut printer,
+                    "the trace exploration spec TLC writes for a counterexample",
+                )
+            } else {
+                exit_code
+            },
+        );
     }
     exit_codes
         .into_iter()
@@ -469,15 +494,15 @@ impl Reporter for Relay<'_> {
         let _ = self.sender.send(Event::LivenessFinished);
     }
 
-    fn print(&mut self, store: &Store, values: &[Id]) {
-        self.send_print(format_printed(store, values));
+    fn print(&mut self, store: &Store, prints: &Prints) {
+        self.send_print(format_printed(store, prints));
     }
 
     // What the substitutes and constant definitions print, which the trace evaluator prints as
     // TLC built it where the store forgot, as long as it prints the same: each print the store
     // words alike, and as many.
-    fn startup_print(&mut self, store: &Store, values: &[Id]) {
-        let worded = format_printed(store, values);
+    fn startup_print(&mut self, store: &Store, prints: &Prints) {
+        let worded = format_printed(store, prints);
         let Some(worded_prints) = self.startup_worded.as_mut() else {
             let printed = self.word_assumed(worded);
             self.assumed_printed.extend(printed.clone());
@@ -611,19 +636,24 @@ impl Reporter for Relay<'_> {
     }
 }
 
-// What Print or PrintT prints of the values, unless the store has forgotten how TLC built one.
-fn format_printed(store: &Store, values: &[Id]) -> Option<String> {
-    if !values.iter().all(|&id| is_printable(store, id)) {
-        return None;
-    }
-    let printed = values
-        .iter()
-        .map(|&id| {
-            let mut text = Vec::new();
-            write_value(store, id, &mut text).ok()?;
-            Some(pretty_print(&text))
-        })
-        .collect::<Option<Vec<_>>>()?;
+// What Print or PrintT prints of the values: TLC's text of each that the engine knew, or that the
+// store words, unless the store has forgotten how TLC built one.
+fn format_printed(store: &Store, prints: &Prints) -> Option<String> {
+    let printed = match &prints.texts {
+        Some(texts) => texts.iter().map(|text| pretty_print(text)).collect(),
+        None => prints
+            .values
+            .iter()
+            .map(|&id| {
+                if !is_printable(store, id) {
+                    return None;
+                }
+                let mut text = Vec::new();
+                write_value(store, id, &mut text).ok()?;
+                Some(pretty_print(&text))
+            })
+            .collect::<Option<Vec<_>>>()?,
+    };
     Some(printed.join("  "))
 }
 
@@ -772,6 +802,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             metadir: args.first("-metadir"),
             jar: java.class_path.as_deref().and_then(get_tools_jar),
             is_174: false,
+            is_trace_recorded: is_trace_recorded(args),
         },
         printer.host,
         printer.is_tool,
@@ -834,13 +865,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
     }
     if let Some(sany) = &front.sany {
-        if is_trace_recorded(args) {
-            return report_not_native(
-                printer,
-                "SANY's report of the trace exploration spec TLC parses with the spec",
-            );
-        }
         print_sany(printer, sany);
+        printer.is_trace_recorded = is_trace_recorded(args);
     }
     // TLC loads the classes of the modules before it computes the constant definitions.
     for message in &front.override_messages {
@@ -1685,7 +1711,7 @@ fn print_violation(
     let lasso_printed = match &violation.kind {
         ViolationKind::Lasso { printed, .. } => printed
             .iter()
-            .map(|values| format_printed(&violation.store, values))
+            .map(|prints| format_printed(&violation.store, prints))
             .collect::<Option<Vec<_>>>()
             .ok_or("printing a value whose text depends on how TLC built it")?,
         _ => Vec::new(),
@@ -2179,7 +2205,7 @@ mod tests {
         fn initial_states_progress(&mut self, _count: u64) {}
         fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
         fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-        fn print(&mut self, _store: &tla_values::Store, _values: &[tla_values::Id]) {}
+        fn print(&mut self, _store: &tla_values::Store, _prints: &tla_engine::Prints) {}
     }
 
     #[test]
@@ -2202,6 +2228,7 @@ mod tests {
             is_warning_enabled: true,
             is_spec_described: true,
             random_seed: 0,
+            is_trace_recorded: false,
         };
         let bytes =
             tla_front::model::lower_model(&spec, "SPECIFICATION Spec\nPROPERTY Prop\n", &options)

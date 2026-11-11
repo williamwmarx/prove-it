@@ -1,0 +1,26 @@
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 12, column 36 to line 12, column 36 in POutRecordsIn
+1. Line 8, column 6 to line 8, column 11 in POutRecordsIn
+
+
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of record:
+[a |-> 1]
+with non-record
+0
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 10, col 9 to line 10, col 24 of module POutRecordsIn>
+x = [a |-> 1]
+
+9 states generated, 4 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 2.
+The average outdegree of the complete state graph is 2 (minimum is 0, the maximum 3 and the 95th percentile is 3).

@@ -93,6 +93,12 @@ impl<K: Hash + Eq + Clone, V> OrderedMap<K, V> {
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.iter().map(|entry| entry.1)
     }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.entries
+            .iter_mut()
+            .filter_map(|entry| entry.as_mut().map(|(_, value)| value))
+    }
 }
 
 impl<K: Hash + Eq + Clone, V> FromIterator<(K, V)> for OrderedMap<K, V> {

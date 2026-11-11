@@ -278,7 +278,8 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
 /// The IR of a model as `check.ts` lowers it, without TLC's actions, which the engine splits.
 /// What SANY prints for the spec at `path`, with each file described by its module's name and
 /// origin.
-fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
+/// With `root_extendees`, the post conditions' modules TLC adds to the root's EXTENDS.
+fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>, root_extendees: &[&str]) {
     let load_module = |name: &str| load(path, library, name);
     let describe_file = |name: &str, origin: ModuleOrigin| format!("{name}|{origin:?}");
     match get_sany_text(
@@ -288,6 +289,7 @@ fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
             file_name: None,
             load_module: &load_module,
             describe_file: &describe_file,
+            root_extendees,
             is_xml_export: false,
         },
     ) {
@@ -311,6 +313,7 @@ fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: O
         is_warning_enabled: true,
         is_spec_described: false,
         random_seed: 0,
+        is_trace_recorded: false,
     };
     write_ir(out, lower_model(spec_path, config, &options));
 }
@@ -416,7 +419,7 @@ fn main() -> ExitCode {
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
         "resolve" | "model" | "ir" | "order" | "model-ir" | "model-full" | "spec"
-        | "properties" | "sany-text" | "levels" => |_, _| {},
+        | "properties" | "sany-text" | "sany-text-trace" | "levels" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, parse_module(source)),
         "sany-ast" => |out, source| {
@@ -489,7 +492,14 @@ fn main() -> ExitCode {
                 Err(error) => dump::environment(&Err(error)).write(&mut line),
             }
         } else if mode == "sany-text" {
-            write_sany_text(&mut line, Path::new(&path), library.as_deref());
+            write_sany_text(&mut line, Path::new(&path), library.as_deref(), &[]);
+        } else if mode == "sany-text-trace" {
+            write_sany_text(
+                &mut line,
+                Path::new(&path),
+                library.as_deref(),
+                &["_TLCTrace"],
+            );
         } else if mode == "model-full" {
             write_model_full(&mut line, &source, Path::new(spec_path), library.as_deref());
         } else if mode == "model-ir" {

@@ -32,6 +32,7 @@ fn lower(test: &str, config: &str) -> Result<Vec<u8>, FrontError> {
         is_warning_enabled: true,
         is_spec_described: false,
         random_seed: 0,
+        is_trace_recorded: false,
     };
     let lowered = lower_model(&path, config, &options);
     std::fs::remove_dir_all(&directory).expect("removed");

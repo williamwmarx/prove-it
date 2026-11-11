@@ -120,6 +120,17 @@ const createLoader = (path: string) => (name: string) =>
     .filter((file) => existsSync(file))
     .map((file) => readFileSync(file, "utf8"))[0];
 
+// What SANY prints, with each file described by its module's name and origin, as front-dump
+// describes it, and with the modules TLC adds to the root module's EXTENDS.
+const writeSanyText = (path: string, rootExtendees: string[] | undefined) => {
+  const report = getSanyReport(path, createLoader(path), {
+    describeFile: (name, origin) =>
+      `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
+    rootExtendees,
+  });
+  return JSON.stringify({ text: report.text, isFailed: report.isFailed });
+};
+
 // TLC's orders of a model: its string order, the root module's variables and constants, and the
 // root module's definitions in the order TLC computes them.
 const readOrders = (source: string, _path: string, spec: string) => {
@@ -437,15 +448,9 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
       stateLevel,
     };
   }),
-  // What SANY prints, with each file described by its module's name and origin, as front-dump
-  // describes it.
-  "sany-text": (_source, path) => {
-    const report = getSanyReport(path, createLoader(path), {
-      describeFile: (name, origin) =>
-        `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
-    });
-    return JSON.stringify({ text: report.text, isFailed: report.isFailed });
-  },
+  "sany-text": (_source, path) => writeSanyText(path, undefined),
+  // SANY's report where TLC records the trace for its trace exploration spec, TLC's default.
+  "sany-text-trace": (_source, path) => writeSanyText(path, ["_TLCTrace"]),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -563,6 +568,7 @@ const isLinked = [
   "spec",
   "properties",
   "sany-text",
+  "sany-text-trace",
   "levels",
 ].includes(mode);
 if (isLinked) linkLibraryModules();

@@ -22,7 +22,7 @@ impl Reporter for Quiet {
     fn initial_states_progress(&mut self, _count: u64) {}
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _store: &Store, _values: &[Id]) {}
+    fn print(&mut self, _store: &Store, _prints: &tla_engine::Prints) {}
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -66,6 +66,7 @@ fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
             is_warning_enabled: true,
             is_spec_described: true,
             random_seed: 0,
+            is_trace_recorded: false,
         },
     )
     .expect("a model tla-front lowers");

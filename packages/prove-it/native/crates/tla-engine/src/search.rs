@@ -30,7 +30,7 @@ use crate::context::{
     holds_all, holds_all_changed,
 };
 use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atoms};
-use crate::machine::{Eval, Machine, Printed, Registers, Step, UNASSIGNED};
+use crate::machine::{Eval, Machine, Printed, Prints, Registers, Step, UNASSIGNED};
 use crate::symmetry::{
     Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
 };
@@ -147,11 +147,11 @@ pub trait Reporter {
     /// The check part way through the search found the properties hold so far.
     fn liveness_finished(&mut self) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
-    fn print(&mut self, store: &Store, values: &[Id]);
+    fn print(&mut self, store: &Store, prints: &Prints);
     /// What Print or PrintT printed while TLC started: as the substitutes and constant
     /// definitions were evaluated, before [`Reporter::startup_done`], then as the assumptions
     /// were. The interpreter printed it already where it handed the search over.
-    fn startup_print(&mut self, _store: &Store, _values: &[Id]) {}
+    fn startup_print(&mut self, _store: &Store, _prints: &Prints) {}
     /// The sets the symmetry permutes that hold fewer than two elements, by name, which TLC warns
     /// about once it has evaluated the symmetry (2300, `TLC_SYMMETRY_SET_TOO_SMALL`). The
     /// interpreter warned already where it handed the search over.
@@ -416,7 +416,7 @@ pub enum ViolationKind {
         loop_label: Option<u32>,
         /// What the atoms printed as TLC found the properties the lasso violates, once it had
         /// rebuilt the lasso: each print's values, ids of the violation's store.
-        printed: Vec<Vec<Id>>,
+        printed: Vec<Prints>,
         /// Whether the atoms read TLCGet("level"), which TLC reads of each state of the lasso it
         /// rebuilt at its position, as it names the properties the lasso violates: the caller
         /// names them so.
@@ -631,6 +631,9 @@ struct Graph {
     edge_offsets: Vec<u32>,
     edges: Vec<u32>,
     labels: Option<Vec<u32>>,
+    /// Each step's bits of the action atoms whose pieces of Next the walk that took it passed
+    /// through, kept only where an atom is made of them.
+    pieces: Option<Vec<u8>>,
     initial_counts: Vec<u64>,
     /// Under SYMMETRY or a VIEW, the state each step reached, `width` ids each, which the liveness
     /// checker checks rather than the state stored for it.
@@ -1036,9 +1039,11 @@ struct Search<'r, T, E = Dense> {
     is_lambda_built: bool,
     // The violation the search stops at, when it knows what TLC reports for it.
     violation: Option<Found>,
-    // The successor waiting to be checked, and its fingerprint.
+    // The successor waiting to be checked, its fingerprint, and the bits of the pieces the walk
+    // that took it was in.
     pending: Vec<Id>,
     pending_fingerprint: Option<u64>,
+    pending_pieces: u8,
     // For each _POSSIBLE predicate, how many states or steps it has held of, or -1 before TLC has
     // evaluated it.
     possible: Vec<i64>,
@@ -1088,6 +1093,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
+            pending_pieces: 0,
             possible: Vec::new(),
             held: None,
             is_exit_followed: false,
@@ -1350,6 +1356,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         self.pending.clear();
         self.pending.extend_from_slice(machine.next());
         self.pending_fingerprint = Some(fingerprint);
+        self.pending_pieces = machine.piece_bits;
         Ok(())
     }
 
@@ -1361,7 +1368,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             return Ok(());
         };
         std::mem::swap(&mut machine.next, &mut self.pending);
+        std::mem::swap(&mut machine.piece_bits, &mut self.pending_pieces);
         let result = self.check_successor(machine, context, Some(fingerprint));
+        std::mem::swap(&mut machine.piece_bits, &mut self.pending_pieces);
         std::mem::swap(&mut machine.next, &mut self.pending);
         result
     }
@@ -1587,6 +1596,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             if let Some(labels) = &mut graph.labels {
                 labels.push(self.action);
             }
+            if let Some(pieces) = &mut graph.pieces {
+                pieces.push(machine.piece_bits);
+            }
             if let Some(reals) = &mut graph.reals {
                 reals.extend_from_slice(&self.successor);
             }
@@ -1804,7 +1816,7 @@ impl Reporter for Quiet {
     fn initial_states_progress(&mut self, _count: u64) {}
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _store: &Store, _values: &[Id]) {}
+    fn print(&mut self, _store: &Store, _prints: &Prints) {}
 }
 
 // The states a thread found in a level that weren't found before it, in the order it found them:
@@ -2006,6 +2018,7 @@ struct Shared<'s> {
 #[derive(Clone, Copy)]
 struct Recording {
     is_labelled: bool,
+    is_pieced: bool,
     is_real: bool,
 }
 
@@ -2035,6 +2048,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     search.graph = shared.recording.map(|recording| Graph {
         edge_offsets: vec![0],
         labels: recording.is_labelled.then(Vec::new),
+        pieces: recording.is_pieced.then(Vec::new),
         reals: recording.is_real.then(Vec::new),
         ..Graph::default()
     });
@@ -2125,6 +2139,7 @@ impl Search<'_, States> {
             actions,
             recording: self.graph.as_ref().map(|graph| Recording {
                 is_labelled: graph.labels.is_some(),
+                is_pieced: graph.pieces.is_some(),
                 is_real: graph.reals.is_some(),
             }),
         };
@@ -2347,6 +2362,9 @@ impl Search<'_, States> {
                     if let (Some(labels), Some(labels_of)) = (&mut graph.labels, &steps_of.labels) {
                         labels.extend_from_slice(&labels_of[steps.clone()]);
                     }
+                    if let (Some(pieces), Some(pieces_of)) = (&mut graph.pieces, &steps_of.pieces) {
+                        pieces.extend_from_slice(&pieces_of[steps.clone()]);
+                    }
                     if let (Some(reals), Some(reals_of)) = (&mut graph.reals, &steps_of.reals) {
                         import(
                             &reals_of[steps.start * width..steps.end * width],
@@ -2424,11 +2442,11 @@ fn describe(error: CompileError) -> String {
 // symmetry, the symmetry's group and the sets it warns about, then what it printed as it evaluated
 // the assumptions, and the assumption it found false.
 struct Started {
-    printed: Vec<Vec<Id>>,
+    printed: Vec<Prints>,
     /// The sets the symmetry permutes that TLC warns hold fewer than two elements, by name.
     small_sets: Vec<String>,
     group: Option<Group>,
-    assumed: Vec<Vec<Id>>,
+    assumed: Vec<Prints>,
     violated: Option<String>,
     /// The assumption that failed to evaluate, by its position, and why.
     failed: Option<(u32, Bail)>,
@@ -2736,7 +2754,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             ..
         }) if !settings.is_violation_reported => return SearchOutcome::Declined(reason.into()),
         Ok(started) => {
-            let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
+            let report = |reporter: &mut dyn Reporter, printed: &[Prints]| {
                 printed
                     .iter()
                     .for_each(|values| reporter.startup_print(&machine.store, values));
@@ -2878,6 +2896,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             .as_ref()
             .filter(|_| model.is_labelled)
             .map(|_| Vec::new()),
+        // Under SYMMETRY or a VIEW the liveness checker reads the real successors, which the
+        // pieces' bits don't follow.
+        pieces: context
+            .atoms
+            .iter()
+            .any(|atom| matches!(atom, Atom::Action { piece: Some(_), .. }))
+            .then(Vec::new)
+            .filter(|_| search.states.key_width.is_none()),
         reals: search.states.key_width.map(|_| Vec::new()),
         ..Graph::default()
     });
@@ -2968,6 +2994,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: reals.labels.as_deref(),
                 is_enabled_exact,
                 is_next_taken,
+                pieces: None,
                 levels: None,
             },
             None => LiveGraph {
@@ -2980,6 +3007,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
                 is_enabled_exact,
                 is_next_taken,
+                pieces: graph.pieces.as_ref().map(|pieces| &pieces[..edge_count]),
                 levels: levels.as_deref(),
             },
         };
@@ -3035,11 +3063,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         search.set_distinct(&mut machine, 0)?;
         search.reporter.initial_states_started();
         // An action atom answered from the steps needs the shapes of what the walks assign.
-        if context
-            .atoms
-            .iter()
-            .any(|atom| matches!(atom, Atom::Action { is_next: true, .. }))
-        {
+        if context.atoms.iter().any(|atom| {
+            matches!(
+                atom,
+                Atom::Action { is_next: true, .. } | Atom::Action { piece: Some(_), .. }
+            )
+        }) {
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
         }
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
@@ -3753,7 +3782,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             }
                         }
                     }
-                    let lasso_printed: Vec<Vec<Id>> = liveness
+                    let lasso_printed: Vec<Prints> = liveness
                         .events
                         .iter()
                         .skip_while(|&&event| event != Event::Lasso)
@@ -4928,7 +4957,7 @@ fn to_lasso(
     search: &Search<'_, States>,
     (path, loop_start): (&[u32], usize),
     actions: &[Option<u32>],
-    printed: Vec<Vec<Id>>,
+    printed: Vec<Prints>,
     counts: &Counts,
 ) -> Option<Box<Violation>> {
     // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and where the search
