@@ -1046,13 +1046,41 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             }) if !params.is_empty()
         )
     };
-    let is_computed_at_startup = |definition: u32| {
-        Rebuilder::new(&ir).and_then(|mut rebuilder| rebuilder.is_computed_at_startup(definition))
+    // TLC holds a name the configuration assigns as its value, and one it substitutes for as the
+    // definition it names, which it computes no more as it starts (`SpecProcessor.processSpec`).
+    let is_assigned = |name: &str| {
+        config
+            .constants
+            .iter()
+            .any(|constant| constant.name == name)
+    };
+    let substituted = |name: &str| {
+        config
+            .substitutions
+            .iter()
+            .find(|substitution| substitution.name == name)
+    };
+    let is_definition_computed = |definition: u32| {
+        Rebuilder::new(&ir)
+            .and_then(|mut rebuilder| rebuilder.is_computed_at_startup(definition))
+            .map_err(drop)
+    };
+    let is_computed_at_startup = |name: &str, definition: u32| match substituted(name) {
+        Some(substitution)
+            if substitution.module.is_none()
+                && !is_assigned(&substitution.target)
+                && substituted(&substitution.target).is_none() =>
+        {
+            Ok(false)
+        }
+        Some(_) => Err(()),
+        None if is_assigned(name) => Err(()),
+        None => is_definition_computed(definition),
     };
     let alias_definition = (ir.model.alias.as_ref())
         .and_then(|alias| alias.definition)
         .filter(|&definition| !takes_arguments(definition));
-    if alias_definition.is_some_and(|definition| is_computed_at_startup(definition).is_err()) {
+    if alias_definition.is_some_and(|definition| is_definition_computed(definition).is_err()) {
         return report_not_native(printer, "an ALIAS TLC may compute as it starts");
     }
     let mut rejected_postcondition = None;
@@ -1070,7 +1098,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             ));
             break;
         }
-        match is_computed_at_startup(definition) {
+        match is_computed_at_startup(name, definition) {
             Ok(false) => {}
             Ok(true) => {
                 rejected_postcondition = Some((
