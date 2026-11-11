@@ -1569,10 +1569,20 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return ASSUMPTION_VIOLATION;
         }
         SearchOutcome::Stopped {
-            violation: Some(violation),
+            violation: Some(mut violation),
             reason,
             ..
         } => {
+            // TLC's worker fails on a POSTCONDITION it rejects as it reports a deadlock, before it
+            // adds the deadlocked state to the behavior graphs (`Worker.run`): no atom fails and
+            // no node accepts there, and nothing prints.
+            if rejected_postcondition.is_some()
+                && let ViolationKind::Deadlock { accepted, atom } = &mut violation.kind
+            {
+                *accepted = None;
+                *atom = None;
+                violation.added = None;
+            }
             let printed = match violation.kind {
                 // TLC's worker fails on a POSTCONDITION it rejects as it is to check it on the
                 // trace of a safety violation, after printing the trace, and reports nothing more

@@ -75,6 +75,30 @@ fn reports_an_atom_that_fails_on_a_deadlocked_state() {
             LIVE.to_string(),
             format!("{trace}{}", &statistics[3..]),
         ),
+        // A postcondition TLC computed as it started, which its worker rejects as it reports the
+        // deadlock, before it adds the state: the plain deadlock, whatever the postcondition's
+        // value, and where the state's node accepts every behavior too.
+        (
+            format!(
+                "Init == x = 0\n{FAIR}{NEXT}Post == TRUE\nSpec == Init /\\ [][Next]_x /\\ WF_x(Fair)\nLive == []<>(x = 0)"
+            ),
+            format!("{LIVE}POSTCONDITION Post\n"),
+            format!("{trace}{}", &statistics[3..]),
+        ),
+        (
+            format!(
+                "Init == x = 0\n{FAIR}{NEXT}Post == FALSE\nSpec == Init /\\ [][Next]_x /\\ WF_x(Fair)\nLive == []<>(x = 0)"
+            ),
+            format!("{LIVE}POSTCONDITION Post\n"),
+            format!("{trace}{}", &statistics[3..]),
+        ),
+        (
+            format!(
+                "Init == x = 0\n{FAIR}{NEXT}Post == TRUE\nSpec == Init /\\ [][Next]_x\nLive == [](x = 1 => [](x = 7))"
+            ),
+            format!("{LIVE}POSTCONDITION Post\n"),
+            format!("{trace}{}", &statistics[3..]),
+        ),
         // Every check holds: the plain deadlock.
         (
             format!(

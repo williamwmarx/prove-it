@@ -184,6 +184,11 @@ Read from `Worker.run`, `Worker#doNextCheckLiveness`, `ModelChecker#doNextSetErr
    replay runs, as `keepCallStack` is false.
 4. Where the rerun throws a FingerprintException instead (a value with a source, as `<<1>>[2]`),
    it isn't caught there, and reaches `doNextFailed` the same way: TLC prints nothing of it.
+5. Where a POSTCONDITION is a definition TLC computed as it started, such as `Post == TRUE`,
+   `Spec#getPostConditionSpecs` rejects it in step 1, after the trace, with an exception that
+   leaves the worker's loop for its catch, which prints nothing as the error state is set. The
+   worker never reaches step 2: no check fails on s and no node of s accepts, so TLC prints the
+   plain deadlock, and the binary drops what the engine found there.
 
 So TLC prints the deadlock, the trace and what the postconditions print, then the failing check's
 call stack, if any, then the statistics, and exits 11 whatever failed. Where every check holds it
