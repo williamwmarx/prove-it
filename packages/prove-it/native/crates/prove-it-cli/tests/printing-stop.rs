@@ -112,6 +112,27 @@ fn prints_as_tlc_does_at_a_stop_in_a_model_with_temporal_properties() {
             12,
             "Error: Invariant Inv is violated.\n\"init\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n\"init\"\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n",
         ),
+        // only the initial predicate prints, under strong fairness, whose atoms the engine doesn't answer at the deadlock
+        (
+            "Init == PrintT(\"i\") /\\ x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ SF_x(Next)\nP == (x = 1) ~> (x = 2)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            11,
+            "Error: Deadlock reached.\n\"i\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n\"i\"\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n",
+        ),
+        // only the initial predicate prints, and the deadlocked state's tableau node accepts every behavior
+        (
+            "Init == x = 0\nNext == x < 2 /\\ x' = x + 1\nB == x' = 10 \\div (2 - x)\nI2 == PrintT(\"i\") /\\ x = 0\nSpec == I2 /\\ [][Next]_x\nP == [](x = 2 => [](x = 7))",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            11,
+            "Error: Deadlock reached.\n\"i\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n\"i\"\n\"i\"\nError: Temporal property P was violated.\n\nError: The following behavior constitutes a counter-example:\n\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n",
+        ),
+        // each of two initial states prints, under strong fairness
+        (
+            "Init == x \\in {0, 1} /\\ PrintT(x)\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ SF_x(Next)\nP == <>(x = 2)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            11,
+            "Error: Deadlock reached.\n0\n1\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 1\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n0\n1\n4 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\n",
+        ),
     ];
     for (index, (definitions, config, code, expected)) in cases.iter().enumerate() {
         for threads in ["1", "4"] {

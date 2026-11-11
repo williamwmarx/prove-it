@@ -962,6 +962,16 @@ impl States {
         self.set.insert(slot, fingerprint, index);
     }
 
+    // Drops the states added past the first `count`, which the set doesn't hold.
+    fn truncate(&mut self, count: usize) {
+        self.ids.truncate(count * self.width);
+        if let Some(width) = self.key_width {
+            self.keys.truncate(count * width);
+        }
+        self.parents.truncate(count);
+        self.fingerprints.truncate(count);
+    }
+
     // Adds a state whose fingerprint the set holds already.
     fn push(&mut self, state: &[Id], key: &[Id], fingerprint: u64, parent: i32) {
         self.ids.extend_from_slice(state);
@@ -4376,6 +4386,42 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // What TLC prints as it adds the state it stopped at to the behavior graphs, where the
             // search placed it.
             let mut stop_added = None;
+            // Where the engine doesn't place what TLC prints at the stop, the stop is reported as
+            // where nothing prints if nothing but the initial states prints, and declined
+            // otherwise.
+            let mut found = found;
+            if let Some(stop) = &found
+                && online.is_none()
+                && !(matches!(
+                    stop.kind,
+                    ViolationKind::Error {
+                        site: ErrorSite::Next
+                    }
+                ) && bail.0 == INCOMPLETE_SUCCESSOR)
+                && search.graph.is_some()
+                && search.held.is_some()
+                && (get_stop_completeness(&context, &search, stop).is_ok()
+                    || is_printed_past_initial(&mut machine, &context, &search, stop))
+            {
+                match place_stop_prints(
+                    &mut machine,
+                    &context,
+                    model,
+                    &mut search,
+                    stop,
+                    initial_states,
+                    &|machine, search, expanded, count| {
+                        graph_tables(machine, search, expanded, count, None, None)
+                    },
+                ) {
+                    Ok(added) => stop_added = Some(added),
+                    Err(_) if !is_printed_past_initial(&mut machine, &context, &search, stop) => {}
+                    Err(why) => {
+                        online_declined = Some(why.into());
+                        found = None;
+                    }
+                }
+            }
             // TLC adds each state it expands to the behavior graphs, even under -lncheck final, the
             // deadlocked state too after it reports the deadlock, and stops at the first whose
             // tableau node accepts every behavior (`LiveCheck#addNextState`): the search reports
@@ -4405,41 +4451,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 // Where the search held what it printed for the liveness checker, TLC printed it
                 // between the states it added to the behavior graphs, and may print again as it
                 // adds the state it stopped at once it has printed the trace, even where nothing
-                // printed before: its late node of that state runs Next from it in full. Where the
-                // engine doesn't place that, and nothing but the initial states prints, the stop is
-                // reported as where nothing prints.
-                Some(found)
-                    if search.graph.is_some()
-                        && search.held.is_some()
-                        && (get_stop_completeness(&context, &search, &found).is_ok()
-                            || is_printed_past_initial(
-                                &mut machine,
-                                &context,
-                                &search,
-                                &found,
-                            )) =>
-                {
-                    match place_stop_prints(
-                        &mut machine,
-                        &context,
-                        model,
-                        &mut search,
-                        &found,
-                        initial_states,
-                        &|machine, search, expanded, count| {
-                            graph_tables(machine, search, expanded, count, None, None)
-                        },
-                    ) {
-                        Ok(added) => {
-                            stop_added = Some(added);
-                            Some(found)
-                        }
-                        Err(why) => {
-                            online_declined = Some(why.into());
-                            None
-                        }
-                    }
-                }
+                // printed before: its late node of that state runs Next from it in full.
+                Some(found) if stop_added.is_some() => Some(found),
                 Some(mut found) if search.graph.is_some() => {
                     let mut expanded = search.expanding;
                     let mut count = count;
@@ -5500,8 +5513,43 @@ type GraphTables<'t> = dyn Fn(&mut Machine<'_>, &Search<'_, States>, usize, usiz
 // the stop, adds the state it stopped at, with the successors it put in its set before it stopped
 // and the stuttering step (`Worker.run`, `Worker#doNextCheckLiveness`). Reports what TLC printed
 // before the stop, and returns what it prints adding that state, or why the engine doesn't follow
-// TLC there.
+// TLC there, leaving the search as it was.
 fn place_stop_prints(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    model: &Model,
+    search: &mut Search<'_, States>,
+    found: &Found,
+    initial_states: (u64, u64),
+    graph_tables: &GraphTables<'_>,
+) -> Result<Vec<Prints>, &'static str> {
+    let output = machine.output.clone();
+    let held = search.held.clone();
+    let count = search.states.count();
+    let graph = search.graph.as_ref().expect("a graph");
+    let (offsets, partial, stopped) = (graph.edge_offsets.len(), graph.partial, graph.stopped);
+    let placed = place_held_prints(
+        machine,
+        context,
+        model,
+        search,
+        found,
+        initial_states,
+        graph_tables,
+    );
+    if placed.is_err() {
+        machine.output = output;
+        search.held = held;
+        search.states.truncate(count);
+        let graph = search.graph.as_mut().expect("a graph");
+        graph.edge_offsets.truncate(offsets);
+        graph.partial = partial;
+        graph.stopped = stopped;
+    }
+    placed
+}
+
+fn place_held_prints(
     machine: &mut Machine<'_>,
     context: &EngineContext,
     model: &Model,
