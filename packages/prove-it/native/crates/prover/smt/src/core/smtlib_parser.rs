@@ -24,8 +24,11 @@ use crate::util::error::SmtError;
 // An s-expression: an index into the arena that read_sexprs fills.
 type SExprId = usize;
 
+// A quoted symbol, |name|, names what the plain symbol name does, but is never a keyword, a numeral,
+// a string or a parenthesis.
 enum SExpr<'a> {
     Symbol(&'a str),
+    Quoted(&'a str),
     List(Vec<SExprId>),
 }
 
@@ -130,7 +133,7 @@ fn tokenize(text: &str) -> (Vec<&str>, Option<SmtError>) {
                     Some(SmtError::Parse("unterminated quoted symbol".into())),
                 );
             };
-            tokens.push(&text[position + 1..end]);
+            tokens.push(&text[position..end + 1]);
             position = end + 1;
         } else if char == b'"' {
             let mut end = position + 1;
@@ -176,7 +179,10 @@ fn read_sexprs<'a>(tokens: &[&'a str]) -> (Vec<SExpr<'a>>, Vec<SExprId>, Option<
             nodes.push(SExpr::List(list));
         } else if let Some(top) = stack.last_mut() {
             top.push(nodes.len());
-            nodes.push(SExpr::Symbol(token));
+            nodes.push(match token.strip_prefix('|') {
+                Some(quoted) => SExpr::Quoted(&quoted[..quoted.len() - 1]),
+                None => SExpr::Symbol(token),
+            });
         }
     }
     let error = (stack.len() > 1).then(|| SmtError::Parse("unbalanced parentheses".into()));
@@ -457,6 +463,7 @@ fn get_weight(nodes: &[SExpr], value: Option<SExprId>) -> Result<i32, SmtError> 
         match current.map(|id| &nodes[id]) {
             None => break None,
             Some(SExpr::Symbol(text)) => break Some(*text),
+            Some(SExpr::Quoted(_)) => break None,
             Some(SExpr::List(list)) if list.is_empty() => break Some(""),
             Some(SExpr::List(list)) if list.len() == 1 => current = Some(list[0]),
             Some(SExpr::List(_)) => break None,
@@ -496,9 +503,51 @@ impl<'a> SmtlibParser<'a> {
     fn get_symbol(&self, sexpr: Option<SExprId>) -> Option<&'a str> {
         let nodes = self.nodes;
         match sexpr.map(|id| &nodes[id]) {
-            Some(SExpr::Symbol(text)) => Some(text),
+            Some(SExpr::Symbol(text) | SExpr::Quoted(text)) => Some(text),
             _ => None,
         }
+    }
+
+    // A keyword, :name, which a quoted symbol never is.
+    fn get_keyword(&self, sexpr: Option<SExprId>) -> Option<&'a str> {
+        let nodes = self.nodes;
+        match sexpr.map(|id| &nodes[id]) {
+            Some(SExpr::Symbol(text)) if text.starts_with(':') => Some(text),
+            _ => None,
+        }
+    }
+
+    // check_identifier: a symbol, quoted or not, and not a keyword, a numeral, a string or a
+    // bit-vector literal.
+    fn get_identifier(&self, sexpr: Option<SExprId>) -> Option<&'a str> {
+        let nodes = self.nodes;
+        match sexpr.map(|id| &nodes[id]) {
+            Some(SExpr::Quoted(text)) => Some(text),
+            Some(SExpr::Symbol(text))
+                if !text.starts_with([':', '"', '#'])
+                    && !text.starts_with(|char: char| char.is_ascii_digit()) =>
+            {
+                Some(text)
+            }
+            _ => None,
+        }
+    }
+
+    // consume_attributes: the keyword and value of each attribute of (! term attribute*).
+    fn get_attributes(
+        &self,
+        list: &'a [SExprId],
+    ) -> Result<Vec<(&'a str, Option<SExprId>)>, SmtError> {
+        let mut attributes = Vec::new();
+        for index in (2..list.len()).step_by(2) {
+            let Some(keyword) = self.get_keyword(Some(list[index])) else {
+                return Err(SmtError::Parse(
+                    "invalid attributed expression, keyword expected".into(),
+                ));
+            };
+            attributes.push((keyword, list.get(index + 1).copied()));
+        }
+        Ok(attributes)
     }
 
     fn expect_list(&self, sexpr: Option<SExprId>) -> Result<&'a [SExprId], SmtError> {
@@ -546,6 +595,7 @@ impl<'a> SmtlibParser<'a> {
         }
         let decl = match self.get_symbol(Some(head)) {
             Some("true" | "false") => Some(-1),
+            Some(name) if self.named.contains_key(name) => None,
             head => head.and_then(|name| self.funcs.get(name).copied()),
         };
         if decl == Some(-1)
@@ -606,23 +656,19 @@ impl<'a> SmtlibParser<'a> {
         let mut weight = 1;
         let mut qid = String::new();
         if let Some(annotation) = annotation {
-            let mut index = 2;
-            while index < annotation.len() {
-                let keyword = self.get_symbol(Some(annotation[index]));
-                let value = annotation.get(index + 1).copied();
+            for (keyword, value) in self.get_attributes(annotation)? {
                 match keyword {
-                    Some(":pattern") => {
+                    ":pattern" => {
                         if let Some(pattern) = self.parse_pattern(m, value)? {
                             m.inc_ref(pattern);
                             patterns.push(pattern);
                         }
                     }
-                    Some(":weight") => weight = get_weight(self.nodes, value)?,
-                    Some(":qid") => qid = self.expect_symbol(value)?.to_string(),
-                    Some(":named") => self.name_term(m, value, body)?,
+                    ":weight" => weight = get_weight(self.nodes, value)?,
+                    ":qid" => qid = self.expect_symbol(value)?.to_string(),
+                    ":named" => self.name_term(m, value, body)?,
                     _ => {}
                 }
-                index += 2;
             }
         }
         self.scopes.pop();
@@ -706,6 +752,12 @@ impl<'a> SmtlibParser<'a> {
         if let Some(op) = get_op(&BUILTIN_OPS, name) {
             return mk_app(m, op, args, None);
         }
+        // cmd_context::mk_app expands a macro first.
+        if args.is_empty()
+            && let Some(named) = self.named.get(name)
+        {
+            return Ok(*named);
+        }
         let Some(decl) = self.funcs.get(name).copied() else {
             return Err(SmtError::Parse(format!("unknown function {name}")));
         };
@@ -718,7 +770,8 @@ impl<'a> SmtlibParser<'a> {
         let nodes = self.nodes;
         match sexpr.map(|id| &nodes[id]) {
             None => Err(SmtError::Parse("expected a term".into())),
-            Some(SExpr::Symbol(text)) => self.parse_symbol(m, text),
+            Some(SExpr::Symbol(text)) => self.parse_symbol(m, text, false),
+            Some(SExpr::Quoted(text)) => self.parse_symbol(m, text, true),
             Some(SExpr::List(list)) => {
                 if self.num_nested == MAX_NESTING {
                     return Err(SmtError::Unsupported(
@@ -733,11 +786,17 @@ impl<'a> SmtlibParser<'a> {
         }
     }
 
-    fn parse_symbol(&mut self, m: &mut AstManager, text: &str) -> Result<Expr, SmtError> {
-        if is_digits(text) {
+    fn parse_symbol(
+        &mut self,
+        m: &mut AstManager,
+        text: &str,
+        is_quoted: bool,
+    ) -> Result<Expr, SmtError> {
+        if !is_quoted && is_digits(text) {
             return Ok(m.mk_numeral(&parse_int(text)?));
         }
         if let Some((integer, fraction)) = text.split_once('.')
+            && !is_quoted
             && is_digits(integer)
             && is_digits(fraction)
         {
@@ -775,10 +834,7 @@ impl<'a> SmtlibParser<'a> {
                     })
                 }
             }
-            None => match self.named.get(text) {
-                Some(named) => Ok(*named),
-                None => self.parse_app(m, text, &[]),
-            },
+            None => self.parse_app(m, text, &[]),
         }
     }
 
@@ -792,11 +848,16 @@ impl<'a> SmtlibParser<'a> {
             return self.parse_let(m, list);
         }
         let named = self.parse_term(m, list.get(1).copied())?;
-        let name_index = list
-            .iter()
-            .position(|item| self.get_symbol(Some(*item)) == Some(":named"));
-        if let Some(name_index) = name_index {
-            self.name_term(m, list.get(name_index + 1).copied(), named)?;
+        for (keyword, value) in self.get_attributes(list)? {
+            match keyword {
+                ":named" => self.name_term(m, value, named)?,
+                ":weight" | ":skolemid" | ":qid" | ":pattern" | ":no-pattern" => {
+                    return Err(SmtError::Parse(
+                        "invalid attribute, not in the scope of a quantifier".into(),
+                    ));
+                }
+                _ => {}
+            }
         }
         Ok(named)
     }
@@ -813,8 +874,10 @@ impl<'a> SmtlibParser<'a> {
                 "invalid named expression, expression contains free variables".into(),
             ));
         }
+        let name = self
+            .get_identifier(name)
+            .ok_or_else(|| SmtError::Parse("invalid attribute value, symbol expected".into()))?;
         m.inc_ref(term);
-        let name = self.expect_symbol(name)?;
         m.mk_macro(name, term);
         self.named.insert(name, term);
         Ok(())
@@ -993,17 +1056,14 @@ pub fn parse_smtlib(
             }
             // cmd_context::set_logic. The solver is UFNIA's whatever the logic.
             "set-logic" => {
-                let logic = parser.expect_symbol(list.get(1).copied())?;
                 if list.len() > 2 {
                     return Err(SmtError::Parse(
                         "invalid command, too many arguments".into(),
                     ));
                 }
-                if logic.starts_with('"') {
-                    return Err(SmtError::Parse(
-                        "invalid command argument, symbol expected".into(),
-                    ));
-                }
+                let logic = parser.get_identifier(list.get(1).copied()).ok_or_else(|| {
+                    SmtError::Parse("invalid command argument, symbol expected".into())
+                })?;
                 if has_logic {
                     return Err(SmtError::Parse("the logic has already been set".into()));
                 }
@@ -1022,7 +1082,7 @@ pub fn parse_smtlib(
                         ":produce-unsat-cores",
                         ":produce-unsat-assumptions",
                     ]
-                    .contains(&parser.get_symbol(list.get(1).copied()).unwrap_or("")) =>
+                    .contains(&parser.get_keyword(list.get(1).copied()).unwrap_or("")) =>
             {
                 return Err(SmtError::Parse(
                     "option value cannot be modified after assertions have been added".into(),

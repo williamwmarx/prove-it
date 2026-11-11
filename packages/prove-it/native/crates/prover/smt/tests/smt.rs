@@ -629,7 +629,7 @@ fn resets_as_z3_does() {
 
 /// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
 /// 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 39] = [
+const COMMAND_ERRORS: [(&str, &str); 47] = [
     ("(assert false)(exit)(check-sat) )", ""),
     ("(assert false)(exit)(assert |x", ""),
     (
@@ -750,6 +750,32 @@ const COMMAND_ERRORS: [(&str, &str); 39] = [
         "sat",
     ),
     (
+        "(set-logic |\"ALL\"|)(assert false)(check-sat)",
+        "unsupported\n; ignoring unsupported logic \"ALL\" line: 1 position: 1\nunsat",
+    ),
+    (
+        "(set-logic 5)(assert false)(check-sat)",
+        "(error \"line 1 column 12: invalid command argument, symbol expected\")\nunsat",
+    ),
+    (
+        "(set-logic :ALL)(assert false)(check-sat)",
+        "(error \"line 1 column 12: invalid command argument, symbol expected\")\nunsat",
+    ),
+    (
+        "(set-logic #b1)(assert false)(check-sat)",
+        "(error \"line 1 column 12: invalid command argument, symbol expected\")\nunsat",
+    ),
+    (
+        "(declare-const |(| Bool)(assert |(|)(assert (not |(|))(check-sat)",
+        "unsat",
+    ),
+    (
+        "(declare-const |5| Bool)(assert |5|)(assert (not |5|))(check-sat)",
+        "unsat",
+    ),
+    ("(assert |true|)(check-sat)", "sat"),
+    ("(assert (|and| true false))(check-sat)", "unsat"),
+    (
         "(get-model)(assert false)(check-sat)",
         "(error \"line 1 column 11: model is not available\")\nunsat",
     ),
@@ -783,7 +809,71 @@ fn refuses_what_z3_refuses_before_check_sat() {
 
 /// References to named terms, with what Z3 5.3.3 prints, run as above. A reset forgets the names
 /// (`RESETS`).
-const NAMED_TERMS: [(&str, &str); 7] = [
+const NAMED_TERMS: [(&str, &str); 21] = [
+    // Z3 4.8.9's cmd_context::mk_app expands a macro before it looks for a declaration of the name,
+    // so the Bool term takes the place of the Int constant and the application is ill-sorted; 5.3.3
+    // picks by sort and prints unsat, then sat.
+    (
+        "(declare-const i Int)(assert (! (> i 0) :named i))(assert (< i 0))(check-sat)",
+        "(error \"Sort mismatch\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(declare-const t Int)(assert (! x :named t))(assert (> t 0))\
+         (check-sat)",
+        "(error \"Sort mismatch\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :weight 3 :named a))(assert (not a))(check-sat)",
+        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\n\
+         (error \"line 1 column 69: unknown constant a\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :named a :pattern (x)))(assert (not a))(check-sat)",
+        "(error \"line 1 column 45: invalid attribute, not in the scope of a quantifier\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :pattern (x)))(check-sat)",
+        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :qid q))(check-sat)",
+        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :skolemid s))(check-sat)",
+        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :no-pattern (x)))(check-sat)",
+        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x |:named| a))(assert (not a))(check-sat)",
+        "(error \"line 1 column 36: invalid attributed expression, keyword expected\")\n\
+         (error \"line 1 column 61: unknown constant a\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x foo))(check-sat)",
+        "(error \"line 1 column 36: invalid attributed expression, keyword expected\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :named))(check-sat)",
+        "(error \"line 1 column 42: invalid attribute value, symbol expected\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :named a :named b))(assert (not b))(check-sat)",
+        "unsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (|!| x :named a))(assert (not a))(check-sat)",
+        "unsat",
+    ),
+    (
+        "(declare-fun f (Int) Bool)(declare-fun g (Int) Bool)(declare-const c Int)\
+         (assert (! (g c) :named a))(assert (forall ((y Int)) (! (f y) :pattern ((f y) a))))\
+         (assert (not (f 0)))(check-sat)",
+        "unsat",
+    ),
     (
         "(declare-const x Bool)(assert (! x :named a))(assert (not a))(check-sat)",
         "unsat",
