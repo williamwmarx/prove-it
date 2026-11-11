@@ -78,8 +78,16 @@ fn reports_every_recursive_shape_as_sany_does() {
             .skip(1)
             .take_while(|line| !line.starts_with("Starting... ") && !line.starts_with("Error: "))
             .collect();
-        assert_eq!(report.text, format!("{}\n", sany_lines.join("\n")), "{name}");
-        assert_eq!(report.is_failed, recording.starts_with("exit 150\n"), "{name}");
+        assert_eq!(
+            report.text,
+            format!("{}\n", sany_lines.join("\n")),
+            "{name}"
+        );
+        assert_eq!(
+            report.is_failed,
+            recording.starts_with("exit 150\n"),
+            "{name}"
+        );
     }
 }
 
@@ -363,4 +371,3 @@ fn reports_a_nested_module_named_like_a_standard_module_it_extends() {
         "Parsing file Main File\nParsing file Naturals Standard\nSemantic processing of module Naturals\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 1\n\nline 3, col 1 to line 4, col 4 of module Main\n\nMultiply-defined module 'Naturals': this definition or declaration conflicts \nwith the one at line 1, col 1 to line 36, col 77 of module Naturals.\n\n\n"
     );
 }
-
