@@ -150,8 +150,14 @@ fn rebuild(
         // the states it prints, the step back into the cycle with them, to a state whose
         // key is the stored first state of the cycle's.
         let is_reduced = recorded.symmetry.is_some() || ir.model.view.is_some();
+        // TLC names the properties a lasso violates from the states it rebuilt, which are those
+        // it prints under SYMMETRY or a VIEW, and whose levels are their positions.
         let reduced_cycle = match *kind {
-            ViolationKind::Lasso { loop_start, .. } if is_reduced => Some(loop_start),
+            ViolationKind::Lasso {
+                loop_start,
+                is_level_read,
+                ..
+            } if is_reduced || is_level_read => Some(loop_start),
             _ => None,
         };
         // A step back into the cycle the search didn't label, as under SYMMETRY or a VIEW, is
@@ -329,8 +335,14 @@ fn name_violated(
                 _ => return Err(tla_live::Declined::from("a term that isn't an atom")),
             };
             let states = &trace.states;
+            // TLC rebuilt each state as a successor of the one before, so at its position's
+            // level, and the cycle's step back reaches the state at the cycle's start.
             rebuilder
-                .answer_atom(atom, &states[position].values, &states[next].values)
+                .answer_atom(
+                    atom,
+                    (&states[position].values, position as i32 + 1),
+                    (&states[next].values, next as i32 + 1),
+                )
                 .map_err(|Unsupported(reason)| {
                     failure = Some(reason);
                     tla_live::Declined::from("an atom the rebuilder can't answer")

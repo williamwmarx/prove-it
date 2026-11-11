@@ -91,6 +91,9 @@ pub enum FrontError {
     StackOverflow,
     /// What the Rust front end doesn't cover yet.
     NotYet(String),
+    /// An error TLC reports after the warnings it prints first, as it starts the liveness
+    /// checker.
+    Warned(Vec<crate::model::StartupMessage>, Box<FrontError>),
 }
 
 impl From<SyntaxError> for FrontError {

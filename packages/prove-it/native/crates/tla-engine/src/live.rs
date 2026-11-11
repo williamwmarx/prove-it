@@ -12,7 +12,7 @@ use tla_live::{Answers, Declined, Slot};
 use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Id, NESTING_STACK_BYTES};
 
-use crate::compile::DIAMETER_SLOT;
+use crate::compile::{DIAMETER_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT};
 use crate::context::{Atom, EnabledSteps, SubscriptKey};
 use crate::machine::{Eval, Machine, Printed, UNASSIGNED};
 
@@ -46,6 +46,9 @@ pub struct LiveGraph<'g> {
     /// Whether TLC's predicate evaluation of the next-state relation holds of every step, without
     /// failing: no walk took the shortcut, and no comparison of a value a walk assigned can fail.
     pub is_next_taken: bool,
+    /// The level TLC gives each state, where an atom reads TLCGet("level"): 1 for an initial
+    /// state, else one past its parent's.
+    pub levels: Option<&'g [u32]>,
 }
 
 /// The answers to one atom: for a state predicate or ENABLED, one per state; for an action, one
@@ -112,6 +115,39 @@ impl Evaluator<'_, '_, '_> {
             self.epochs[index],
         );
         self.current = Some(index);
+    }
+
+    // An atom that reads TLCGet("level") on a state at a level, and the next state's on a step,
+    // under an epoch of its own, which caches nothing the level decides across them.
+    fn at_level(
+        &mut self,
+        index: usize,
+        next: Option<usize>,
+        levels: (u32, u32),
+        eval: &Eval,
+    ) -> u8 {
+        let graph = self.graph;
+        let epoch = self.machine.next_epoch();
+        self.machine.set_current(
+            &graph.states[index * graph.width..(index + 1) * graph.width],
+            epoch,
+        );
+        self.current = None;
+        match next {
+            Some(next) => self
+                .machine
+                .set_next(&graph.states[next * graph.width..(next + 1) * graph.width]),
+            None => self.machine.set_next(&self.unassigned),
+        }
+        let (Ok(level), Ok(next_level)) = (
+            self.machine.store.int(i64::from(levels.0)),
+            self.machine.store.int(i64::from(levels.1)),
+        ) else {
+            return UNKNOWN;
+        };
+        self.machine.set_slot(LEVEL_SLOT, level);
+        self.machine.set_slot(NEXT_LEVEL_SLOT, next_level);
+        answer(eval(self.machine))
     }
 
     fn evaluate_state(&mut self, index: usize, eval: &Eval) -> u8 {
@@ -431,6 +467,11 @@ pub fn answer_atoms(
         .labels
         .and_then(|labels| labels.iter().max())
         .map_or(1, |&last| last as usize / 64 + 1);
+    let is_self_stepped = (0..graph.expanded).any(|index| {
+        let start = graph.edge_offsets[index] as usize;
+        let end = graph.edge_offsets[index + 1] as usize;
+        graph.edges[start..end].contains(&(index as u32))
+    });
     for (position, atom) in atoms.iter().enumerate() {
         // An atom that reads TLCGet("diameter") is answered for each diameter from 1 to the last,
         // and left to the interpreter where the search isn't complete or the answers for every
@@ -470,6 +511,81 @@ pub fn answer_atoms(
             let mut values = vec![UNASSIGNED; graph.count];
             let mut prints = Vec::new();
             let table = match atom {
+                // TLC keeps the successor a step back to its state generated, one level past it, as
+                // the stuttering step's state, which the checker doesn't tell apart.
+                Atom::LevelState(_) | Atom::LevelAction { .. }
+                    if graph.levels.is_none()
+                        || is_printing
+                        || is_diameter_read
+                        || is_self_stepped =>
+                {
+                    Table {
+                        answers: Vec::new(),
+                        is_from_steps: false,
+                        unknown: Some(
+                            "TLCGet(\"level\") without the levels, or with a step to its state"
+                                .into(),
+                        ),
+                        prints,
+                    }
+                }
+                // TLC evaluates a state predicate at the level of the state it adds, and of each
+                // successor it generated, one past its source's (`TLCGet`): the states, then the
+                // states each step reached.
+                Atom::LevelState(eval) => {
+                    let levels = graph.levels.expect("the levels");
+                    let mut answers: Vec<u8> = (0..graph.count)
+                        .map(|index| {
+                            let level = levels[index];
+                            evaluator.at_level(index, None, (level, level + 1), eval)
+                        })
+                        .collect();
+                    for (index, &level) in levels[..graph.expanded].iter().enumerate() {
+                        let level = level + 1;
+                        let start = graph.edge_offsets[index] as usize;
+                        let end = graph.edge_offsets[index + 1] as usize;
+                        for edge in start..end {
+                            let next = graph.edges[edge] as usize;
+                            answers.push(evaluator.at_level(next, None, (level, level + 1), eval));
+                        }
+                    }
+                    Table {
+                        answers,
+                        is_from_steps: false,
+                        unknown: None,
+                        prints,
+                    }
+                }
+                // An action at its step's first state's level, and the next state's one past it,
+                // but for the stuttering step, whose next state is the first.
+                Atom::LevelAction { action, subscript } => {
+                    let levels = graph.levels.expect("the levels");
+                    let mut answers = Vec::with_capacity(graph.edges.len() + graph.count);
+                    let steps = (0..graph.expanded).flat_map(|index| {
+                        let start = graph.edge_offsets[index] as usize;
+                        let end = graph.edge_offsets[index + 1] as usize;
+                        (start..end).map(move |edge| (index, graph.edges[edge] as usize))
+                    });
+                    let stutters = (0..graph.count).map(|index| (index, index));
+                    for (index, next) in steps.chain(stutters) {
+                        let level = levels[index];
+                        let next_level = if index == next { level } else { level + 1 };
+                        let is_unchanged = subscript.as_ref().map(|subscript| {
+                            evaluator.is_unchanged(&mut values, subscript, index, next)
+                        });
+                        answers.push(match is_unchanged {
+                            Some(Ok(true)) => 0,
+                            Some(Err(_)) => UNKNOWN,
+                            _ => evaluator.at_level(index, Some(next), (level, next_level), action),
+                        });
+                    }
+                    Table {
+                        answers,
+                        is_from_steps: false,
+                        unknown: None,
+                        prints,
+                    }
+                }
                 Atom::Unknown(reason) => Table {
                     answers: Vec::new(),
                     is_from_steps: false,
@@ -792,7 +908,7 @@ impl Answers for LiveAnswers<'_, '_, '_> {
 
     fn position(&self, _atom: u32, slot: Slot, _diameter: u32) -> usize {
         match slot {
-            Slot::State(state) => state as usize,
+            Slot::State(state) | Slot::Reached { state, .. } => state as usize,
             Slot::Step { edge, .. } => edge as usize,
             Slot::Stutter(state) => self.edges.len() + state as usize,
         }
@@ -803,9 +919,10 @@ impl LiveAnswers<'_, '_, '_> {
     /// What evaluating the atom at the slot gives, or why the engine has no evaluation of it.
     pub fn evaluate(&self, atom: u32, slot: Slot) -> Result<Outcome<Id>, Declined> {
         Ok(match (self.atoms.get(atom as usize), slot) {
-            (Some(Atom::State(eval) | Atom::Enabled { run: Ok(eval), .. }), Slot::State(index)) => {
-                self.of_state(index, eval)
-            }
+            (
+                Some(Atom::State(eval) | Atom::Enabled { run: Ok(eval), .. }),
+                Slot::State(index) | Slot::Reached { state: index, .. },
+            ) => self.of_state(index, eval),
             (
                 Some(Atom::Action {
                     action, subscript, ..

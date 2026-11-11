@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
+import { getNativeAddon, type NativeSanyXml } from "../engine/native";
+import { reportEngine } from "../engine/settings";
 import { getErrorExitCode, TlaJavaException, TlaUnsupportedError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import type { SanySpecification } from "../sany/generator";
@@ -92,6 +94,36 @@ interface XmlExportArgs {
   error: "missing-include" | "several-files" | undefined;
 }
 
+// What SANY's XMLExporter prints, as tla-front writes it, through the native engine, which reads
+// nothing itself: it names the modules it needs, and is asked again with them. Undefined where no
+// engine loads, the root module has no text, or tla-front doesn't write the export, so that the
+// TypeScript exporter does.
+const exportNativeXml = (
+  root: string,
+  source: string | undefined,
+  fileName: string,
+  flags: string,
+  loadModule: (name: string) => string | undefined,
+) => {
+  const addon = getNativeAddon();
+  if (typeof addon === "string") {
+    reportEngine(`SANY's XMLExporter: no native engine: ${addon}`);
+    return undefined;
+  }
+  if (source === undefined) return undefined;
+  const known = new Map<string, string | undefined>();
+  const write = (): Exclude<NativeSanyXml, { kind: "needed" }> => {
+    const result = addon.sanyXml(root, source, fileName, flags, [...known]);
+    if (result.kind !== "needed") return result;
+    result.keys.forEach((key) => known.set(key, loadModule(key.slice("module:".length))));
+    return write();
+  };
+  const result = write();
+  if (result.kind === "exported") return result;
+  reportEngine(`SANY's XMLExporter: ${result.reason}`);
+  return undefined;
+};
+
 // XMLExporter reads the flags before the last argument, which names the module, and skips an
 // argument it does not know, which then counts as another module.
 const parseXmlExportArgs = (args: string[], flagNames: Set<string>): XmlExportArgs => {
@@ -136,7 +168,21 @@ export const exportXml = (args: string[]) => {
   if (path === undefined && !SANY_STANDARD_MODULES.has(fileName.slice(0, -".tla".length))) {
     printMissingFile(process.cwd(), `./${fileName}`, parsed.includes);
   }
-  const sany = getSanyReport(path ?? fileName, createModuleLoader(directories), {
+  const loadModule = createModuleLoader(directories);
+  const rootName = basename(fileName, ".tla");
+  const exported = exportNativeXml(
+    rootName,
+    path === undefined ? SANY_STANDARD_MODULES.get(rootName) : readFileSync(path, "utf8"),
+    name,
+    [...parsed.flags].map((flag) => flag.slice(1)).join(""),
+    loadModule,
+  );
+  if (exported !== undefined) {
+    process.stderr.write(exported.stderr);
+    process.stdout.write(exported.stdout);
+    return exported.exitCode;
+  }
+  const sany = getSanyReport(path ?? fileName, loadModule, {
     fileName: name,
     isXmlExport: true,
   });

@@ -6,9 +6,14 @@
 //!
 //! The traces are read from the directory `PROVE_IT_LP_TRACES` names, by default
 //! `packages/prove-it/tests/conformance/.lp-traces`, and its prover subdirectories (`smt/`, `z3/`);
-//! without it the test only says so. A trace that reaches what the Rust lp does not port yet (nra,
-//! whose stub returns `SmtError::Unsupported`, and the resource limit's inc, which only nlsat
-//! calls) is declined there, which the test reports and allows.
+//! without it the test only says so. A trace that reaches what the replayer cannot drive is
+//! declined there, which the test reports and allows.
+//!
+//! NlaCore's resource limit is a `ResourceLimit`, which counts the steps of a `prove_decide::Limits`
+//! rather than calling back, so its inc (which only nlsat calls) is not answered callback by
+//! callback: each nla call gets a limit whose step limit lets inc return true as many times as the
+//! trace's answers are true, and after the call the number of incs Rust made must equal the number
+//! the trace recorded. Their order among the call's other callbacks is not checked.
 
 #[path = "lp_trace/json.rs"]
 mod json;
@@ -34,8 +39,11 @@ use prove_smt::lp::lar_term::LarTerm;
 use prove_smt::lp::nla_core::{Nla, NlaCore, NlaEquality, NlaFixedEquality};
 use prove_smt::lp::nla_divisions::{Division, Divisions};
 use prove_smt::lp::nla_types::{Ineq, Lemma};
+use prove_smt::lp::nra_solver::NraSolver;
 use prove_smt::lp::numeric_pair::Impq;
 use prove_smt::lp::random_updater::random_update;
+use prove_smt::nlsat::algebraic::{Anum, AnumValue};
+use prove_smt::nlsat::mpbq::Mpbq;
 use prove_smt::util::error::SmtError;
 use prove_smt::util::rlimit::ResourceLimit;
 
@@ -313,13 +321,59 @@ fn get_fixed_equality(equality: &NlaFixedEquality) -> Value {
     ])
 }
 
+fn get_mpbq(value: &Mpbq) -> Value {
+    Value::Object(vec![
+        ("num".into(), Value::String(value.num.to_string())),
+        ("k".into(), Value::Number(f64::from(value.k))),
+    ])
+}
+
+/// An algebraic number as `{"anum": value}`, a cell with the fields of TypeScript's AlgebraicCell.
+fn get_anum(anum: &Anum) -> Value {
+    let value = match &*anum.value() {
+        AnumValue::Rational(value) => get_rational(value),
+        AnumValue::Cell(cell) => Value::Object(vec![
+            (
+                "p".into(),
+                Value::Array(
+                    cell.p
+                        .iter()
+                        .map(|coeff| Value::String(coeff.to_string()))
+                        .collect(),
+                ),
+            ),
+            ("lower".into(), get_mpbq(&cell.lower)),
+            ("upper".into(), get_mpbq(&cell.upper)),
+            ("isMinimal".into(), Value::Bool(cell.is_minimal)),
+            ("isSignLowerNeg".into(), Value::Bool(cell.is_sign_lower_neg)),
+            ("isNotRational".into(), Value::Bool(cell.is_not_rational)),
+            (
+                "rootIndex".into(),
+                Value::Number(f64::from(cell.root_index)),
+            ),
+        ]),
+    };
+    Value::Object(vec![("anum".into(), value)])
+}
+
+/// An algebraic number lp returns, which the theory may pass back, and its value.
+fn keep_anum(anums: &mut Vec<Anum>, anum: Anum) -> Option<Value> {
+    let value = get_anum(&anum);
+    anums.push(anum);
+    Some(value)
+}
+
 /// The `Name: message` of the TypeScript error an SmtError stands for.
 fn get_error(error: &SmtError) -> String {
-    match error {
-        SmtError::Invariant(message) => format!("SmtInvariantError: {message}"),
-        SmtError::Canceled => "SmtCanceledError".into(),
-        other => format!("{other:?}"),
-    }
+    let name = match error {
+        SmtError::Canceled => "SmtCanceledError",
+        SmtError::Unsupported(_) => "SmtUnsupportedError",
+        SmtError::Invariant(_) => "SmtInvariantError",
+        SmtError::Parse(_) => "SmtParseError",
+        SmtError::NlsatUnsupported(_) => "NlsatUnsupportedError",
+        SmtError::PddMemoryOut => "PddMemoryOutError",
+    };
+    format!("{name}: {error}")
 }
 
 /// What a call did: its result (None for undefined), its arguments after the call when lp fills
@@ -462,6 +516,33 @@ impl Args<'_> {
         Ok(explanation)
     }
 
+    /// An algebraic number the theory passes: the one lp gave it with that value, else, for a
+    /// rational, which the theory makes itself, a new one. An irrational number only lp makes, so
+    /// one that none of lp's has the value of differs.
+    fn anum(&self, index: usize, anums: &[Anum]) -> Result<Anum, Stop> {
+        let value = self.get(index)?;
+        if let Some(anum) = anums.iter().rev().find(|anum| get_anum(anum) == *value) {
+            return Ok(anum.clone());
+        }
+        let number = value
+            .get("anum")
+            .ok_or_else(|| self.bad(index, "an anum"))?;
+        if let Some(rational) = parse_rational(number) {
+            return Ok(Anum::new(rational));
+        }
+        if number.get("p").is_none() {
+            return Err(self.bad(index, "an anum"));
+        }
+        Err(Stop::Differs {
+            line: self.line,
+            expected: format!("argument {index} {value}, an algebraic number lp returned"),
+            got: format!(
+                "lp returned {}",
+                Value::Array(anums.iter().map(get_anum).collect())
+            ),
+        })
+    }
+
     fn division(&self, index: usize) -> Result<Division, Stop> {
         let value = self.get(index)?;
         let field = |name: &str| {
@@ -528,9 +609,8 @@ struct Replay {
     bps: Vec<Propagator>,
     lias: Vec<IntegerSolver>,
     nlas: Vec<NonlinearSolver>,
-    // An unlimited resource limit: in TypeScript only nlsat calls the limit's inc, and nra is not
-    // ported, so the Rust nla never asks it; see call_nla.
-    limit: ResourceLimit,
+    // The algebraic numbers lp returned, which the theory may pass back.
+    anums: Vec<Anum>,
 }
 
 impl Replay {
@@ -818,7 +898,7 @@ impl Replay {
     }
 
     // NlaCore's methods, through the Nla view, with isRelevant answered from the trace once the
-    // theory wrote it.
+    // theory wrote it, and the resource limit's inc counted against the trace's.
     fn call_nla(
         &mut self,
         index: usize,
@@ -831,21 +911,35 @@ impl Replay {
             line,
             message: format!("no {owner}"),
         })?;
-        // HACK: ResourceLimit is a concrete type that counts prove_decide::Limits' steps, so the
-        // replayer cannot answer its inc from the trace. Only nlsat calls it, which is not ported.
         let inc = format!("{}.inc", nonlinear.limit_name);
-        if let Some(expected) = self
-            .callbacks
-            .queue
-            .borrow()
+        let mut incs = Vec::new();
+        self.callbacks.queue.borrow_mut().retain(|expected| {
+            let is_inc = expected.name == inc;
+            if is_inc {
+                incs.push((
+                    expected.line,
+                    expected.result.as_ref().and_then(Value::as_bool),
+                    expected.is_throwing,
+                ));
+            }
+            !is_inc
+        });
+        let true_count = incs
             .iter()
-            .find(|expected| expected.name == inc)
+            .take_while(|answer| answer.1 == Some(true))
+            .count();
+        if let Some(answer) = incs[true_count..]
+            .iter()
+            .find(|answer| answer.1 != Some(false) || answer.2)
         {
             return Err(Stop::Declined {
-                line: expected.line,
-                reason: format!("callback {inc}, the resource limit's inc"),
+                line: answer.0,
+                reason: format!("callback {inc}, whose answers are not true…true(false…)"),
             });
         }
+        // The deadline is infinite and there is no cancel, so the clock check of every 256th step
+        // never stops the work: only the step limit does.
+        let limit = ResourceLimit::new(&Limits::new(f64::INFINITY, Some(true_count as u64), None));
         let callbacks = Rc::clone(&self.callbacks);
         let is_relevant_name = format!("{owner}.isRelevant");
         let is_relevant_written = nonlinear.is_relevant_written;
@@ -855,7 +949,7 @@ impl Replay {
         let mut nla = Nla {
             core: &mut nonlinear.core,
             lra: &mut self.lars[nonlinear.lar],
-            limit: &self.limit,
+            limit: &limit,
             is_relevant: &is_relevant,
         };
         let result = match method {
@@ -895,31 +989,46 @@ impl Replay {
                 Divisions::add_divisibility(&mut nla, args.division(0)?);
                 Ok(None)
             }
+            "nra.value" => NraSolver::value(&mut nla, args.index(0)?)
+                .map(|anum| keep_anum(&mut self.anums, anum)),
+            "nra.am.add" | "nra.am.mul" | "nra.am.compare" => {
+                let first = args.anum(0, &self.anums)?;
+                let second = args.anum(1, &self.anums)?;
+                let am = nla.core.nra.am();
+                match method {
+                    "nra.am.add" => am
+                        .add(&first, &second)
+                        .map(|anum| keep_anum(&mut self.anums, anum)),
+                    "nra.am.mul" => am
+                        .mul(&first, &second)
+                        .map(|anum| keep_anum(&mut self.anums, anum)),
+                    _ => am
+                        .compare(&first, &second)
+                        .map(|result| Some(Value::Number(f64::from(result)))),
+                }
+            }
             _ => return Err(Replay::decline(line, &owner, method)),
         };
-        match result {
-            Ok(result) => Ok(Outcome {
+        if let Some(stop) = self.callbacks.stop.borrow_mut().take() {
+            return Err(stop);
+        }
+        if limit.count() != incs.len() as u64 {
+            return Err(Stop::Differs {
+                line: incs.first().map_or(line, |answer| answer.0),
+                expected: format!("{} callbacks {inc}", incs.len()),
+                got: format!("{} calls of the resource limit's inc", limit.count()),
+            });
+        }
+        Ok(match result {
+            Ok(result) => Outcome {
                 result,
                 ..Outcome::default()
-            }),
-            // The nra stub: nlsat is not ported. A mismatch before it still counts.
-            Err(SmtError::Unsupported(message)) => Err(self
-                .callbacks
-                .stop
-                .borrow_mut()
-                .take()
-                .unwrap_or(Stop::Declined {
-                    line,
-                    reason: format!(
-                        "{owner}.{method}: {message} ({} callbacks of the call left)",
-                        self.callbacks.queue.borrow().len()
-                    ),
-                })),
-            Err(error) => Ok(Outcome {
+            },
+            Err(error) => Outcome {
                 error: Some(get_error(&error)),
                 ..Outcome::default()
-            }),
-        }
+            },
+        })
     }
 
     // lp's free functions.
@@ -1137,7 +1246,7 @@ fn replay(path: &Path, current_line: &Cell<usize>) -> (usize, Option<Stop>) {
         bps: Vec::new(),
         lias: Vec::new(),
         nlas: Vec::new(),
-        limit: ResourceLimit::new(&Limits::new(f64::INFINITY, None, None)),
+        anums: Vec::new(),
     };
     let mut count = 0;
     while let Some((number, text)) = lines.next() {
