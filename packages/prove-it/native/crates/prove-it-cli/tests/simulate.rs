@@ -496,3 +496,23 @@ Simulation using seed 4 and aril 0
 Progress: 1 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)"
     );
 }
+
+// TLC's simulation binds Trace to records that carry each state's action, `_action`
+// (`TLCExt.getTrace`), which the trace evaluator doesn't make.
+#[test]
+fn declines_a_simulations_alias_that_reads_trace() {
+    let spec = "---- MODULE Dead ----\nEXTENDS Naturals, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x > 5 /\\ x' = x\nAl == [x |-> x, t |-> Trace]\n====\n";
+    let (output, directory) = run_named(
+        "simulate-alias-trace",
+        "Dead",
+        (spec, "INIT Init\nNEXT Next\nALIAS Al\n"),
+        &["-noTE", "-seed", "1", "-simulate", "num=1", "Dead"],
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    assert_eq!(output.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("a simulation's ALIAS that reads Trace"),
+        "{error}"
+    );
+}

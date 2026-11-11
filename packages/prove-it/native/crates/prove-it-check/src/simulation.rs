@@ -265,6 +265,16 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
     if is_continued {
         return report_not_native(printer, "a simulation's violation under -continue");
     }
+    // A simulation binds Trace to records of its states that carry each state's action
+    // (`TLCExt.getTrace`, `RecordValue(state, action)`), which the trace evaluator doesn't make.
+    if config.alias.is_some()
+        && ir
+            .builtins
+            .iter()
+            .any(|builtin| &*ir.texts[builtin.name as usize] == "Trace")
+    {
+        return report_not_native(printer, "a simulation's ALIAS that reads Trace");
+    }
     // TLC checks the initial states before it simulates, and reports one that violates an
     // invariant as the model checker does.
     if let ViolationKind::InitialInvariant(_) = violation.kind {
