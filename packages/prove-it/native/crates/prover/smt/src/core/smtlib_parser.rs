@@ -462,6 +462,8 @@ struct SmtlibParser<'a> {
     nodes: &'a [SExpr<'a>],
     sorts: HashMap<&'a str, Sort>,
     funcs: HashMap<&'a str, Decl>,
+    // The named terms, which a reference expands to as cmd_context expands a macro.
+    named: HashMap<&'a str, Expr>,
     scopes: Vec<HashMap<&'a str, Binding>>,
     depth: i32,
     // The quantifiers, lets and annotations that parse_leaf is in.
@@ -603,6 +605,7 @@ impl<'a> SmtlibParser<'a> {
                     }
                     Some(":weight") => weight = get_weight(self.nodes, value)?,
                     Some(":qid") => qid = self.expect_symbol(value)?.to_string(),
+                    Some(":named") => self.name_term(m, value, body)?,
                     _ => {}
                 }
                 index += 2;
@@ -758,7 +761,10 @@ impl<'a> SmtlibParser<'a> {
                     })
                 }
             }
-            None => self.parse_app(m, text, &[]),
+            None => match self.named.get(text) {
+                Some(named) => Ok(*named),
+                None => self.parse_app(m, text, &[]),
+            },
         }
     }
 
@@ -772,16 +778,32 @@ impl<'a> SmtlibParser<'a> {
             return self.parse_let(m, list);
         }
         let named = self.parse_term(m, list.get(1).copied())?;
-        // name_expr: cmd_context keeps a named expression as a macro.
         let name_index = list
             .iter()
             .position(|item| self.get_symbol(Some(*item)) == Some(":named"));
         if let Some(name_index) = name_index {
-            m.inc_ref(named);
-            let name = self.expect_symbol(list.get(name_index + 1).copied())?;
-            m.mk_macro(name, named);
+            self.name_term(m, list.get(name_index + 1).copied(), named)?;
         }
         Ok(named)
+    }
+
+    // name_expr: cmd_context keeps a named expression as a macro.
+    fn name_term(
+        &mut self,
+        m: &mut AstManager,
+        name: Option<SExprId>,
+        term: Expr,
+    ) -> Result<(), SmtError> {
+        if m.free_var_bounds[term as usize] > 0 {
+            return Err(SmtError::Parse(
+                "invalid named expression, expression contains free variables".into(),
+            ));
+        }
+        m.inc_ref(term);
+        let name = self.expect_symbol(name)?;
+        m.mk_macro(name, term);
+        self.named.insert(name, term);
+        Ok(())
     }
 
     fn enter(
@@ -881,6 +903,7 @@ pub fn parse_smtlib(
         scopes: Vec::new(),
         depth: 0,
         num_nested: 0,
+        named: HashMap::new(),
     };
     let mut assertions = Vec::new();
     let mut has_check_sat = false;
@@ -946,6 +969,7 @@ pub fn parse_smtlib(
                 // and deletes the manager; the next command makes a new one, with its solver.
                 parser.sorts = get_builtin_sorts();
                 parser.funcs.clear();
+                parser.named.clear();
                 assertions.clear();
                 has_logic = false;
                 m.limit.restart();

@@ -710,6 +710,47 @@ fn refuses_what_z3_refuses_before_check_sat() {
     assert_answers_as_z3(&COMMAND_ERRORS);
 }
 
+/// References to named terms, with what Z3 5.3.3 prints, run as above. A reset forgets the names
+/// (`RESETS`).
+const NAMED_TERMS: [(&str, &str); 7] = [
+    (
+        "(declare-const x Bool)(assert (! x :named a))(assert (not a))(check-sat)",
+        "unsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (and (! x :named a) (not a)))(check-sat)",
+        "unsat",
+    ),
+    (
+        "(declare-const x Int)(assert (= (! (+ x 1) :named t) 0))(assert (> t 5))(check-sat)",
+        "unsat",
+    ),
+    (
+        "(declare-const x Int)(assert (! (> x 0) :named a))(assert (forall ((a Int)) (> a x)))\
+         (check-sat)",
+        "unsat",
+    ),
+    (
+        "(declare-const x Int)(assert (! (> x 0) :named a))(assert (let ((a false)) a))(check-sat)",
+        "unsat",
+    ),
+    (
+        "(declare-const x Int)(assert (! (> x 0) :named a))(assert (a 1))(check-sat)",
+        "(error \"line 1 column 63: unknown constant a (Int) \ndeclared: (declare-fun a () Bool) \")\nsat",
+    ),
+    (
+        "(declare-fun f (Int) Bool)(assert (forall ((y Int)) (! (f y) :named a)))(check-sat)",
+        "(error \"line 1 column 70: invalid named expression, expression contains free \
+         variables\")\nsat",
+    ),
+];
+
+// cmd_context names a term with a macro, which a reference expands to the term itself.
+#[test]
+fn expands_a_reference_to_a_named_term_as_z3_does() {
+    assert_answers_as_z3(&NAMED_TERMS);
+}
+
 // cmd_context::reset deletes the manager, and the next command makes a new one with its solver and
 // its resource limit, whose count starts from 0: what follows a reset is decided as a script of its
 // own, with the same ids, steps and instances. Z3 counts the same rlimit on Allocator-37 with this
