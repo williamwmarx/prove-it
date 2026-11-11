@@ -1,0 +1,39 @@
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Warning: The invariant Inv is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 0 with non-integer:
+"a"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 9, column 9 to line 9, column 22 in M
+1. Line 5, column 9 to line 8, column 42 in M
+2. Line 5, column 12 to line 5, column 17 in M
+3. Line 6, column 12 to line 6, column 29 in M
+4. Line 7, column 12 to line 7, column 17 in M
+5. Line 8, column 12 to line 8, column 42 in M
+6. Line 8, column 22 to line 8, column 42 in M
+7. Line 8, column 33 to line 8, column 41 in M
+8. Line 9, column 11 to line 9, column 21 in M
+
+
+Reason:
+Attempted to check equality of integer 0 with non-integer:
+"a"
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.

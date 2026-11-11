@@ -1035,6 +1035,7 @@ impl Context {
         self.node_mut(r2).next = saved_next;
         let r1_class_size = self.node(r1).class_size;
         self.node_mut(r2).class_size += r1_class_size;
+        self.node_mut(r2).set_is_shared(None);
         Ok(())
     }
 
@@ -1133,6 +1134,7 @@ impl Context {
         let r2 = self.root(r1);
         let r1_class_size = self.node(r1).class_size;
         self.node_mut(r2).class_size -= r1_class_size;
+        self.node_mut(r2).set_is_shared(None);
         let saved_next = self.node(r1).next;
         let r2_next = self.node(r2).next;
         self.node_mut(r1).next = r2_next;
@@ -2421,6 +2423,23 @@ mod tests {
         context.pop(1).unwrap();
         assert_eq!(context.search().unwrap(), LBool::True);
         assert_eq!(context.find_assignment(p), LBool::True);
+    }
+
+    // get_assignment answers false for false, which shares its Boolean variable with true
+    // (smt_context.cpp:1646-1648, 1685).
+    #[test]
+    fn assigns_false_to_false() {
+        let mut context = mk(2);
+        let p = mk_const(&mut context, "p", SORT_BOOL);
+        assert(&mut context, p);
+        assert_eq!(context.search().unwrap(), LBool::True);
+        let (true_expr, false_expr) = (context.m.true_expr, context.m.false_expr);
+        assert_eq!(
+            context.find_bool_var(false_expr),
+            context.find_bool_var(true_expr)
+        );
+        assert_eq!(context.find_assignment(false_expr), LBool::False);
+        assert_eq!(context.find_assignment(true_expr), LBool::True);
     }
 
     fn assert_pigeonhole(context: &mut Context, holes: usize) {

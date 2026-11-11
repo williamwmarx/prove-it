@@ -7,6 +7,16 @@ use std::collections::HashMap;
 /// Whether two gzipped dumps are the same but for their tokens, each file's tokens naming its
 /// texts one to one; otherwise the first difference, by the lines of a listing of each.
 pub fn compare_dumps(expected: &[u8], actual: &[u8]) -> Result<(), String> {
+    // The header and the length are `GZIPOutputStream`'s byte for byte; the deflate stream and the
+    // CRC follow the tokens, and tla-trace's tests compare zlib's stream with TLC's.
+    if expected.get(..10) != actual.get(..10) {
+        return Err("the gzip headers differ".into());
+    }
+    if expected.get(expected.len().saturating_sub(4)..)
+        != actual.get(actual.len().saturating_sub(4)..)
+    {
+        return Err("the gzip trailers give different lengths".into());
+    }
     let expected = Dump::read(&gunzip(expected)?)?;
     let actual = Dump::read(&gunzip(actual)?)?;
     if expected.bytes == actual.bytes {

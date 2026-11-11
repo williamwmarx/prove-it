@@ -387,6 +387,10 @@ pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
     pub(crate) state_builtins: &'static [&'static str],
+    /// Whether `can_read` bounds the level as TLC's `getLevelBound` does, for `may_reach_bound`.
+    pub(crate) is_level_bound: bool,
+    /// What `may_reach_bound` found of each definition.
+    pub(crate) level_bounds: HashMap<NodeId, bool>,
     texts: Vec<Option<Rc<Text>>>,
     /// The value of each string literal, by its node.
     literals: HashMap<NodeId, Rc<Text>>,
@@ -405,6 +409,9 @@ pub struct Evaluator<'ir> {
     pub next: Vec<Option<Value>>,
     /// How many times the evaluator read the state, so a definition that read none is cached.
     reads: u64,
+    /// How many lazy functions and filters the evaluator built, each holding the states to
+    /// evaluate later in them: a definition that built one isn't the same value in other states.
+    captures: u64,
     /// The value of each binding whose evaluation drew from the generator, by the address of the
     /// frame that binds it, which it keeps alive.
     drawn: HashMap<usize, (Rc<Frame>, Value)>,
@@ -729,6 +736,8 @@ impl<'ir> Evaluator<'ir> {
         let width = ir.variables.len();
         Evaluator {
             state_builtins: &[],
+            is_level_bound: false,
+            level_bounds: HashMap::new(),
             ir,
             texts: vec![None; ir.texts.len()],
             literals: HashMap::new(),
@@ -740,6 +749,7 @@ impl<'ir> Evaluator<'ir> {
             current: vec![None; width],
             next: vec![None; width],
             reads: 0,
+            captures: 0,
             drawn: HashMap::new(),
             level: 0,
             next_level: None,
@@ -1860,6 +1870,7 @@ impl<'ir> Evaluator<'ir> {
                     } else {
                         None
                     };
+                    self.captures += 1;
                     let predicate = Predicate {
                         pattern: bound.pattern.clone(),
                         body: *predicate,
@@ -2337,7 +2348,7 @@ impl<'ir> Evaluator<'ir> {
         {
             return fail("a value TLC computed at startup with effects");
         }
-        let reads = self.reads;
+        let (reads, captures) = (self.reads, self.captures);
         let printed = self.printed.len();
         // TLC computes a definition of constant level as it starts, with its plain `Tool`, whose
         // values have no source (`processConstantDefns`). One that fails, or that holds a set it
@@ -2377,7 +2388,13 @@ impl<'ir> Evaluator<'ir> {
             }
             DefinitionForm::Operator(_) => return fail("an operator used as a value"),
         };
-        if self.reads == reads && self.printed.len() == printed {
+        // A definition that built a lazy value holding the states reads them where it is applied,
+        // unless it is one TLC computes as it starts, of constant level and reaching none of what
+        // TLC can't read then (`processConstantDefns`), whose value holds no state.
+        if self.reads == reads
+            && self.printed.len() == printed
+            && (self.captures == captures || !self.may_reach_bound(node))
+        {
             // TLC computed the value of a definition that reads no state as it started, and
             // sorted it.
             if matches!(&definition.form, DefinitionForm::Operator(_)) {
@@ -3200,6 +3217,7 @@ impl<'ir> Evaluator<'ir> {
                     format!("[{} \\in ", self.name(name)),
                     format!(" |-> <expression {}>]", self.describe_range(body)),
                 );
+                self.captures += 1;
                 return Ok(Value::Lambda(Rc::new(Lambda {
                     name,
                     domain: set,

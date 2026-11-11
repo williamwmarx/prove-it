@@ -79,6 +79,16 @@ impl Zone {
         }
     }
 
+    /// Whether the zone is UTC at every time.
+    pub fn is_utc(&self) -> bool {
+        self.transitions.iter().all(|&(_, offset)| offset == 0)
+            && self.initial == 0
+            && self
+                .rule
+                .as_ref()
+                .is_none_or(|rule| rule.standard == 0 && rule.daylight.is_none())
+    }
+
     /// The offset east of UTC, in seconds, at a UTC second.
     pub fn offset(&self, utc: i64) -> i64 {
         let after = self.transitions.partition_point(|&(at, _)| at <= utc);

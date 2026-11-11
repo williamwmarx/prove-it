@@ -1115,8 +1115,23 @@ as Integers does.
   (`ReportOptions.root_extendees`) and for TLC's order (`TlcOrder::with_root_extendees`), and lowers
   without the Naturals flags (`ModelOptions.is_trace_recorded`). A run that ends without a
   counterexample prints TLC's output in full.
-- **What still declines:** a counterexample, for which TLC writes `<Spec>_TTrace_<epoch>.bin`, and
-  for a trace of two states or more `<Spec>_TTrace_<epoch>.tla` and its path after `Finished in`.
+- **The trace exploration spec:** after an error trace of two states or more TLC writes
+  `<Spec>_TTrace_<epoch>.tla` beside the spec and prints its path after `Finished in`. The binary
+  records the trace as TLC's `ErrorTraceMessagePrinterRecorder` does and writes the spec as
+  `TraceExplorationSpec.writeSpecTEStreams` does (`te_spec.rs`), with the variables and the model
+  values in the orders of TLC's Java hash sets and the date as `java.util.Date` writes it, in UTC.
+- **What still declines:** the trace file `_TLCTraceSilent` writes for a counterexample,
+  `<Spec>_TTrace_<epoch>.bin`, which joins -dumpTrace's postconditions but which TLC gzips with
+  Java's Deflater and writes with its own tokens of the strings; a date in a zone other than UTC,
+  whose name Java gives it; `-teSpecOutDir`; a spec named by a path Java's `Path` would normalize,
+  such as `specs//M`; model values the spec makes with TLCModelValue; a model value named as an
+  operator of the modules `_TLCTrace` loads, which TLC's `Defns` holds; an initial state without a
+  value for each variable, on which the postcondition fails too; the simulator's violation, whose
+  trace file the postcondition writes; and a trace printed that the binary doesn't record, as the
+  simulator's under `-noTEBin`. The simulator's lone error state at unbounded depth isn't recorded,
+  so TLC writes no spec for it, nor does the binary (`prove-it-cli/tests/te_cases.rs`). A spec found
+  in a library directory is written as TLC writes it, in the directory of the path it was given
+  (`prove-it-cli/tests/spec_paths.rs`).
 - **The TypeScript interpreter** writes neither file, and in this mode it keeps Naturals' `>=`
   wording (`getTraceSpecArithmetic`). It is retired with the interpreter (fallback.md, S4).
 
@@ -1159,3 +1174,21 @@ violated it, so the binary declined each such run.
   (ValueInputStream.java 110-111, 118), whose strings and record names go through
   `UniqueString.readExternal` (UniqueString.java 336-342: the token and the slot skipped as
   "invalid for the given internTbl"). The dump numbers each text in the order it first writes it.
+- The rest of the file is TLC's byte for byte. `GZIPOutputStream` compresses with the JDK's
+  `Deflater` at its default level, which is zlib's level 6 with a raw 32K window and memory level 8;
+  `deflate.rs` ports zlib 1.3's `deflate_slow` and trees.c, and writes the 156 trace files of the
+  corpus recordings as TLC did (`tests/deflate` holds some of them). That is the stream of stock
+  zlib, unchanged at that level from 1.2.x to 1.3.x, which Oracle's and Temurin's JDKs bundle and
+  Ubuntu's links. A JDK built on zlib-ng or another fork of zlib writes another stream, as valid and
+  as readable, whose bytes no one stream can match.
+- What a token is: `InternTable` numbers each new text from 1 as TLC interns it, over the whole run.
+  Matching it needs every text TLC interns before it writes the trace, in its order, where the order
+  the binary ranks strings in (tla-front's `order.rs`) is only that of the texts a spec can compare.
+  A debug InternTable on the corpus shows what it leaves out: each module's header and separators as
+  written (`------ MODULE`, the dashes and equals signs whole); `$$_void`, which SANY interns at the
+  end of the first expression it parses (`Operator.VoidOperator` in `OperatorStack.finalReduce`);
+  each infix operator's name with a dot, interned as `OperatorStack.reduceStack` reduces an
+  expression with it (`Operators.getMixfix`), in every module SANY parses; the names of the public
+  static methods of each module's Java override, in the order `getDeclaredMethods` gives them,
+  which the JVM doesn't fix (`SpecProcessor.processModuleOverrides`); and the seed, the fingerprint
+  polynomial and TLC's install location that `createConfig` interns before RecordValue's names.

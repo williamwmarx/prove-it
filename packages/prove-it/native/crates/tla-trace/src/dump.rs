@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::deflate::{crc32, deflate};
 use crate::print::{format_value, print_order};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, Text, Value, elements, set_of, settle};
@@ -312,35 +313,16 @@ impl Writer<'_> {
     }
 }
 
-/// A gzip file of `payload` as `java.util.zip.GZIPOutputStream` frames it, its deflate stream of
-/// stored blocks.
+/// A gzip file of `payload` as `java.util.zip.GZIPOutputStream` writes it: its header, zlib's
+/// deflate stream at the default level, and its trailer.
 fn gzip(payload: &[u8]) -> Vec<u8> {
     let mut out = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
-    let mut blocks = payload.chunks(0xffff).peekable();
-    if blocks.peek().is_none() {
-        out.extend([1, 0, 0, 0xff, 0xff]);
-    }
-    while let Some(block) = blocks.next() {
-        let length = block.len() as u16;
-        out.push(u8::from(blocks.peek().is_none()));
-        out.extend(length.to_le_bytes());
-        out.extend((!length).to_le_bytes());
-        out.extend(block);
-    }
+    out.extend(deflate(payload));
     out.extend(crc32(payload).to_le_bytes());
     out.extend((payload.len() as u32).to_le_bytes());
     out
 }
 
-fn crc32(bytes: &[u8]) -> u32 {
-    !bytes.iter().fold(!0u32, |crc, &byte| {
-        (0..8).fold(crc ^ u32::from(byte), |crc, _| {
-            (crc >> 1) ^ (0xedb8_8320 & (crc & 1).wrapping_neg())
-        })
-    })
-}
-
-// `Json.getNode`.
 fn json_value(value: &Value, out: &mut String) -> Result<(), Unsupported> {
     match value {
         Value::Bool(boolean) => out.push_str(if *boolean { "true" } else { "false" }),

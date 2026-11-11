@@ -7,7 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use tla_values::Store;
 
@@ -441,23 +441,31 @@ fn typed_model_failure<T>(left: &Value, right: &Value, is_equality: bool) -> Eva
 
 thread_local! {
     // The sets a replay built that TLC holds unnormalized still, by address, each with its
-    // elements in the order TLC built it. Each entry holds its set, so that no other set takes
-    // its address while the entry lasts.
+    // elements in the order TLC built it. Each entry holds its set's allocation but not the set,
+    // so that no other set takes its address while the entry lasts, and a set nothing else
+    // holds is dropped, as the entries of one are each time the map doubles.
     static UNNORMALIZED: RefCell<HashMap<usize, Unnormalized>> = RefCell::new(HashMap::new());
+    // How many entries held a set when the map last dropped those that don't.
+    static UNNORMALIZED_HELD: Cell<usize> = const { Cell::new(0) };
 }
 
 // A set TLC holds unnormalized, with its elements as TLC built it.
-type Unnormalized = (Rc<Vec<Value>>, Vec<Value>);
+type Unnormalized = (Weak<Vec<Value>>, Vec<Value>);
 
 /// Records a set a replay built as TLC holds it unnormalized (`SetEnumValue` with `isNorm`
 /// false), with its elements as TLC built it.
 pub(crate) fn mark_unnormalized(set: &Value, written: Vec<Value>) {
     if let Value::Set(elements) = set {
         UNNORMALIZED.with(|sets| {
-            sets.borrow_mut().insert(
+            let mut sets = sets.borrow_mut();
+            if sets.len() >= 2 * UNNORMALIZED_HELD.get().max(1024) {
+                sets.retain(|_, entry| entry.0.strong_count() > 0);
+                UNNORMALIZED_HELD.set(sets.len());
+            }
+            sets.insert(
                 Rc::as_ptr(elements) as usize,
-                (Rc::clone(elements), written),
-            )
+                (Rc::downgrade(elements), written),
+            );
         });
     }
 }
@@ -470,6 +478,7 @@ pub(crate) fn unnormalized(set: &Value) -> Option<Vec<Value>> {
     UNNORMALIZED.with(|sets| {
         sets.borrow()
             .get(&(Rc::as_ptr(elements) as usize))
+            .filter(|entry| entry.0.strong_count() > 0)
             .map(|entry| entry.1.clone())
     })
 }
@@ -477,6 +486,7 @@ pub(crate) fn unnormalized(set: &Value) -> Option<Vec<Value>> {
 /// Forgets the sets the last replay built.
 pub(crate) fn clear_unnormalized() {
     UNNORMALIZED.with(|sets| sets.borrow_mut().clear());
+    UNNORMALIZED_HELD.set(0);
 }
 
 // TLC normalizes a set to enumerate, compare or print it.
@@ -1550,5 +1560,18 @@ mod tests {
         let failed = failing_comparisons(|| compare(&set, &Value::Int(2)));
         assert_eq!(failed.err().map(|values| values.len()), Some(1));
         assert!(COMPARING.with_borrow(Option::is_none));
+    }
+
+    // A set a replay built unnormalized is gone once nothing else holds it.
+    #[test]
+    fn keeps_no_set_built_unnormalized_once_dropped() {
+        let elements = Rc::new(vec![Value::Int(2), Value::Int(1)]);
+        let held = Rc::downgrade(&elements);
+        let set = Value::Set(elements);
+        mark_unnormalized(&set, vec![Value::Int(2), Value::Int(1)]);
+        assert_eq!(unnormalized(&set).map(|written| written.len()), Some(2));
+        drop(set);
+        assert!(held.upgrade().is_none());
+        clear_unnormalized();
     }
 }

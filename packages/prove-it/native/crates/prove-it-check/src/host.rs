@@ -23,12 +23,13 @@ pub struct Machine {
     pub pid: u32,
 }
 
-/// What names the files of a spec's modules as TLC prints them: the spec, the libraries, the
-/// JVM's temporary directory and -metadir where the launch sets them, and the tla2tools.jar on the
-/// class path, which TLC copies the standard modules from.
+/// What names the files of a spec's modules as TLC prints them: the spec, the directories TLC
+/// finds its modules in, the JVM's temporary directory and -metadir where the launch sets them, and
+/// the tla2tools.jar on the class path, which TLC copies the standard modules from.
 pub struct Files<'a> {
     pub spec: &'a Path,
-    pub libraries: &'a [String],
+    /// The directories in TLC's order (`get_module_directories`), the working directory as "".
+    pub directories: &'a [String],
     pub temporary: Option<&'a str>,
     pub metadir: Option<&'a str>,
     pub jar: Option<&'a str>,
@@ -173,8 +174,15 @@ impl Host for SystemHost {
         std::env::var(name).ok()
     }
 
+    // The tests fix the clock with PROVE_IT_TEST_NOW, milliseconds since the epoch, to check
+    // what TLC writes of the time it ran.
     fn now(&self) -> SystemTime {
-        SystemTime::now()
+        std::env::var("PROVE_IT_TEST_NOW")
+            .ok()
+            .and_then(|milliseconds| milliseconds.parse().ok())
+            .map_or_else(SystemTime::now, |milliseconds| {
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis(milliseconds)
+            })
     }
 
     fn zone(&self) -> &Zone {
