@@ -366,15 +366,9 @@ fn reaches_effect(
     false
 }
 
-/// Whether the model reads a definition by its name: the configuration names it, or a
-/// definition or an assumption refers to it where its evaluation may reach.
-fn is_read(
-    name: &str,
-    config: &crate::config::ModelConfig,
-    environment: &Environment,
-    evaluator: Option<&crate::eval::Evaluator>,
-) -> bool {
-    let named = [
+/// Whether the configuration names a definition one of its roles reads.
+fn is_read_by_config(config: &crate::config::ModelConfig, is_named: &dyn Fn(&str) -> bool) -> bool {
+    [
         &config.invariants,
         &config.properties,
         &config.constraints,
@@ -398,7 +392,18 @@ fn is_read(
         .into_iter()
         .flatten(),
     )
-    .any(|named| named == name);
+    .any(|named| is_named(named))
+}
+
+/// Whether the model reads a definition by its name: the configuration names it, or a
+/// definition or an assumption refers to it where its evaluation may reach.
+fn is_read(
+    name: &str,
+    config: &crate::config::ModelConfig,
+    environment: &Environment,
+    evaluator: Option<&crate::eval::Evaluator>,
+) -> bool {
+    let named = is_read_by_config(config, &|named| named == name);
     let mut pending: Vec<Expr> = environment
         .definitions
         .values()
@@ -457,7 +462,36 @@ fn reaches_in(
 pub(crate) fn get_index_overrides(
     config: &crate::config::ModelConfig,
     environment: &Environment,
+    evaluator: Option<&crate::eval::Evaluator>,
 ) -> Result<Vec<Rc<Definition>>> {
+    // The engine computes another module's operator as a builtin, or as an INSTANCE's copy: the
+    // run declines where the model may read one, by its name or a copy's.
+    for identifier in &environment.foreign_overrides {
+        let copy = format!("!{identifier}");
+        let is_named = |name: &str| name == &**identifier || name.ends_with(&copy);
+        let mut pending: Vec<Expr> = environment
+            .definitions
+            .values()
+            .map(|definition| definition.body.clone())
+            .chain(
+                environment
+                    .assumptions
+                    .iter()
+                    .map(|assumption| assumption.expression.clone()),
+            )
+            .collect();
+        let mut is_read = false;
+        while let Some(expression) = pending.pop() {
+            is_read |= !expression.is_locally_resolved()
+                && expression.reference().is_some_and(|name| is_named(&name));
+            pending.extend(get_reached_children(&expression, environment, evaluator));
+        }
+        if is_read || is_read_by_config(config, &is_named) {
+            return Err(FrontError::NotYet(format!(
+                "a TLCOverrides index's Java override of another module's {identifier}"
+            )));
+        }
+    }
     let mut replaced = Vec::new();
     for (identifier, arity) in &environment.index_overrides {
         // TLC skips a method whose arity isn't the operator's.

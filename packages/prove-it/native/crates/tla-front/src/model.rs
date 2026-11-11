@@ -258,7 +258,8 @@ fn lower_ranked(
         .collect();
     let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
     let lowered = (|| {
-        let index_overrides = crate::lower::get_index_overrides(&config, &environment)?;
+        let index_overrides =
+            crate::lower::get_index_overrides(&config, &environment, Some(&evaluator))?;
         // The front end computes none of the names TLC computes as it doesn't.
         evaluator.opaque_names.borrow_mut().extend(
             crate::lower::get_repeated_reads(&environment)?

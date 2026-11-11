@@ -95,6 +95,9 @@ pub struct Environment {
     /// The root module's operators the `TLCOverrides` index TLC loads replaces with Java methods,
     /// each with the method's arity where TLC checks it.
     pub index_overrides: Vec<(Name, Option<usize>)>,
+    /// The operators of another module, a standard one or one an INSTANCE copies, the index
+    /// replaces, which the run declines where the model reads.
+    pub foreign_overrides: Vec<Name>,
 }
 
 impl Environment {
@@ -2430,6 +2433,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         symbols.map(|symbols| symbols.get(identifier).cloned())
     };
     let mut index_overrides_kept = Vec::new();
+    let mut foreign_overrides = Vec::new();
     for (module, identifier, arity) in index_overrides {
         if module == *root.name {
             index_overrides_kept.push((Name::from(identifier), arity));
@@ -2449,7 +2453,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                         .get(identifier.as_str())
                         .is_some_and(|visible| visible.key == symbol.key) =>
             {
-                index_overrides_kept.push((Name::from(identifier), arity));
+                index_overrides_kept.push((Name::from(identifier.as_str()), arity));
                 true
             }
             Some(Some(symbol)) => {
@@ -2458,9 +2462,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
             }
         };
         if !is_skipped {
-            return Err(FrontError::NotYet(
-                "a TLCOverrides index of Java overrides of another module".into(),
-            ));
+            foreign_overrides.push(Name::from(identifier));
         }
     }
     let environment = Environment {
@@ -2483,6 +2485,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         printed,
         java_overrides: linker.java_overrides.take(),
         index_overrides: index_overrides_kept,
+        foreign_overrides,
     };
     // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
     // the level bound it computes is above constant. The bound counts the operators that TLC's
