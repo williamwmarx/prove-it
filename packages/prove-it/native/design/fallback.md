@@ -237,7 +237,9 @@ plan, down from 43:
 - a failure in a model with temporal properties: an atom of the temporal properties that may fail
   to evaluate (2), and SUBSET of a non-set evaluated again after Next fails (1);
 - the search's stops in a model with temporal properties: deadlock (3), an invariant (1), a
-  division by zero (1);
+  division by zero (1). Two of the deadlocks, `tlc-replay`'s, are native now: TLC prints the call
+  stack of the check that fails as it adds the deadlocked state to the behavior graphs
+  ([liveness.md](liveness.md)). The third prints in Next, which TLC runs again for a late node;
 - a property TLC finds a tautology (3), or a constant part of a temporal formula that isn't a
   boolean (2);
 - printing where the native checker doesn't check the temporal properties (5): prints it doesn't
@@ -350,7 +352,7 @@ Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so t
 | 3 | the engine declined: unsupported: PickSuccessor | `unit/tlc-ext-operators.test.ts:11` ×2, `unit/tlc-ext-operators.test.ts:61` |
 | 3 | the engine stopped: an order of strings the search ranked | `unit/native-builtins.test.ts:279` ×2, `unit/native-builtins.test.ts:327` |
 | 3 | the engine stopped: applied a function outside its domain: evaluating the failure again: applied a function outside its domain | `unit/check.test.ts:1896`, `unit/check.test.ts:1874`, `unit/native-search.test.ts:505` |
-| 3 | the engine stopped: deadlock | `unit/tlc-replay.test.ts:185`, `unit/tlc-replay.test.ts:167`, `unit/check.test.ts:2521` |
+| 1 | the engine stopped: deadlock | `unit/check.test.ts:2521` |
 | 3 | the engine stopped: expected an integer: evaluating the failure again: expected an integer, not a string | `unit/tlc-replay.test.ts:40` ×2, `unit/exit-codes.test.ts:10` |
 | 3 | the engine stopped: record compared with a function | `unit/engine.test.ts:46` ×3 |
 | 2 | a constant part of a temporal formula that isn't a boolean | `unit/check.test.ts:5354` ×2 |

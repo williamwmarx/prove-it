@@ -17,7 +17,9 @@ use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::coverage;
-use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
+use crate::failure::{
+    ErrorStop, deadlock_atom_stack, print_assumption_failure, print_call_stack, print_failure,
+};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
 use crate::jar::{get_tools_jar, is_174};
@@ -1652,6 +1654,7 @@ fn print_violation(
     let accepted = match &violation.kind {
         ViolationKind::Deadlock {
             accepted: Some(accepted),
+            ..
         } => {
             if checked.is_some() {
                 return Err("a postcondition after a deadlock that violates a temporal property");
@@ -1662,6 +1665,17 @@ fn print_violation(
             }
         }
         _ => None,
+    };
+    // TLC adds a deadlocked state to the behavior graphs once it has reported the deadlock and
+    // checked the postconditions, and prints the call stack of an atom that fails there.
+    let atom_stack = match violation.kind {
+        ViolationKind::Deadlock {
+            atom: Some(atom), ..
+        } => match deadlock_atom_stack(ir, violation, atom) {
+            Ok(stack) => stack,
+            Err(reason) => return Ok(report_not_native(printer, &reason)),
+        },
+        _ => Vec::new(),
     };
     let model = &ir.model;
     let (code, text, exit_code) = match violation.kind {
@@ -1933,6 +1947,9 @@ fn print_violation(
         print_states(printer, &accepted, &labels);
     }
     print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
+    if !atom_stack.is_empty() {
+        print_call_stack(printer, ir, &atom_stack);
+    }
     if let Some(checking) = checking {
         print_liveness_finished(printer, checking);
     }

@@ -165,6 +165,54 @@ non-set"): TLC's Next doesn't fail there, as its `\E` over `{1} \cup SUBSET 3` s
 the engine's eager enumeration doesn't; it is the ENABLED of the fairness that fails, and its
 rerun with the call stack fails to fingerprint, so TLC replays Next for its call stack.
 
+## A deadlock in a model with temporal properties where a check fails (as built)
+
+The binary declined it ("the engine stopped: deadlock"; the `tlc-replay` test's deadlock runs).
+Read from `Worker.run`, `Worker#doNextCheckLiveness`, `ModelChecker#doNextSetErr` and
+`ModelChecker#doNextFailed` at d8fb231, and checked against TLC built there:
+
+1. `getNextStates` generates no successor of s. The worker's `doNextSetErr` sets the error state
+   with `keepCallStack` false, prints "Deadlock reached." and the trace to s, and checks the
+   postconditions on that trace.
+2. With temporal properties the worker goes on to `doNextCheckLiveness` on s, whose successors
+   are only the stuttering step from s to s, and `LiveCheck#addNextState` runs the checks of the
+   section above in the same order: each solution's `checkAction` on the stuttering step, its
+   `checkState` on s (ENABLED and the state checks), then the tableau's consistency.
+3. Where one throws an EvalException or a TLCRuntimeException, TLC runs them again with a
+   `CallStackTool` and prints that call stack where it has one (`EC.TLC_NESTED_EXPRESSION`), then
+   rethrows. The worker's `doNextFailed` finds the error state set and prints nothing, and no
+   replay runs, as `keepCallStack` is false.
+4. Where the rerun throws a FingerprintException instead (a value with a source, as `<<1>>[2]`),
+   it isn't caught there, and reaches `doNextFailed` the same way: TLC prints nothing of it.
+
+So TLC prints the deadlock, the trace and what the postconditions print, then the failing check's
+call stack, if any, then the statistics, and exits 11 whatever failed. Where every check holds it
+prints the plain deadlock. `-tool` prints the stack as message 2103, and `-lncheck final` changes
+nothing, as TLC adds each state to the behavior graphs as it searches either way. A check on s
+can fail only where it reads s alone: a state predicate of a successor is a check of the state
+before it, and a step's subscript is evaluated on both its states, so an action atom fails on the
+stuttering step only at a deadlocked initial state.
+
+The engine adds s to the graph as an expanded state with no steps, as it did for an accepting
+node (Github710d), and lets `unanswered_at` reach s too. The first atom the tables leave
+unanswered on s that fails as TLC fails becomes `ViolationKind::Deadlock::atom` (a
+`DeadlockAtom`, `is_extra` for the stuttering step); one that holds when evaluated declines, as
+one after it may fail. The binary evaluates it again with `tla-trace` (`Site::DeadlockAtom`) for
+the call stack alone, which it prints after the postconditions' report; where `tla-trace` finds
+the rerun throws a FingerprintException it prints none. It declines where the atom prints, and,
+as before, where the search or an atom prints or the search doesn't follow TLC's checks (SYMMETRY,
+a VIEW, the diameter, TLC's registers). A grid of 59 specs (ENABLED of WF and SF, state
+predicates, the stuttering step's subscript, several fairness conditions and properties,
+invariants, an ALIAS, a postcondition, a constraint, deadlocks at an initial state and later),
+each in plain, `-tool`, `-lncheck final` and both, on one thread and four, matched TLC on 424 of
+472 runs and declined the other 48: Print in Next or an atom (3 specs), a function applied
+outside its domain, whose message `tla-trace` doesn't give, and two atoms that fail on a state
+before the deadlock, or with no deadlock check, which TLC words as a FingerprintException, as
+before. The engine had printed the plain deadlock where the stuttering step's subscript fails on a
+deadlocked initial state, as the tables left that step unanswered and the verdict reads no action
+atom; it now prints TLC's call stack there. `prove-it-cli/tests/deadlock-live.rs` holds a
+representative set.
+
 ## Temporal formulas inside a predicate (as built)
 
 A liveness atom can be an operator whose body holds a temporal formula in a branch the run never

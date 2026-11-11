@@ -390,6 +390,14 @@ pub struct AcceptedTrace {
     pub violated: Vec<usize>,
 }
 
+/// The atom at this position of the IR's `model.atoms` that fails as TLC adds a deadlocked state
+/// to the behavior graphs: on the state or, `is_extra`, on its stuttering step, its only step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeadlockAtom {
+    pub atom: u32,
+    pub is_extra: bool,
+}
+
 pub enum ViolationKind {
     /// An initial state violates an invariant: its position in the model's invariants, then
     /// past them in its properties checked as invariants.
@@ -404,9 +412,11 @@ pub enum ViolationKind {
     ActionProperty(usize),
     /// The last state of the trace has no successors. TLC adds it to the behavior graphs after it
     /// reports the deadlock, where it may reach a tableau node that accepts every behavior, which
-    /// it reports next, as on its Github710d.
+    /// it reports next, as on its Github710d, or fail evaluating an atom, whose call stack it
+    /// prints after the trace.
     Deadlock {
         accepted: Option<Box<AcceptedTrace>>,
+        atom: Option<DeadlockAtom>,
     },
     /// The trace is a lasso whose cycle starts at the state at `loop_start` and goes back to it,
     /// by the action at `loop_label` in the model's actions; `None` where the cycle is the last
@@ -1732,7 +1742,10 @@ impl<T: Reached, E: Entries> Search<'_, T, E> {
         if self.successors == 0 && check_deadlock {
             let count = self.states.count() as u64;
             self.violation = Some(Found {
-                kind: ViolationKind::Deadlock { accepted: None },
+                kind: ViolationKind::Deadlock {
+                    accepted: None,
+                    atom: None,
+                },
                 parent: Some(self.expanding),
                 last: None,
                 fingerprint: None,
@@ -4161,17 +4174,22 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         .filter(|unanswered| {
                             unanswered.is_initial
                                 || (unanswered.state as usize)
-                                    < search.expanding + usize::from(is_next_failure)
+                                    < search.expanding + usize::from(is_deadlock || is_next_failure)
                         });
                     // The tables leave unanswered what the checker asks of no finished search,
                     // such as ENABLED of a state not yet expanded, as well as what fails: TLC
                     // stopped at the atom only where evaluating it fails as TLC fails. After a
-                    // failure in Next, an atom that holds may come before one that fails.
+                    // failure in Next, or on the deadlocked state, an atom that holds may come
+                    // before one that fails.
                     let unanswered = unanswered.and_then(|unanswered| {
+                        let is_stopped = is_next_failure
+                            || is_deadlock
+                                && !unanswered.is_initial
+                                && unanswered.state as usize == search.expanding;
                         let failure = atom_failure(&mut machine, &context, &search, unanswered);
                         machine.output.clear();
                         match failure {
-                            Some(Ok(_)) if !is_next_failure => None,
+                            Some(Ok(_)) if !is_stopped => None,
                             Some(Err(bail)) if !is_engine_limit(bail.0) => Some(Some(unanswered)),
                             _ => Some(None),
                         }
@@ -4182,7 +4200,23 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     match verdict {
                         _ if is_next_failure && !is_followed => None,
                         _ if unanswered.is_some() => unanswered.flatten().and_then(|unanswered| {
-                            if !is_next_failure || unanswered.state as usize != search.expanding {
+                            let is_stopped = unanswered.state as usize == search.expanding;
+                            // TLC reported the deadlock and its trace before it added the state,
+                            // and the check that fails there has no error state left to set: TLC
+                            // prints its call stack and exits as for the deadlock
+                            // (`Worker#doNextCheckLiveness`, `ModelChecker#doNextFailed`).
+                            if is_deadlock && is_stopped && !unanswered.is_initial {
+                                let extra = atom_extra(&context, &search, unanswered)?;
+                                found.kind = ViolationKind::Deadlock {
+                                    accepted: None,
+                                    atom: Some(DeadlockAtom {
+                                        atom: unanswered.atom,
+                                        is_extra: extra.is_some(),
+                                    }),
+                                };
+                                return Some(found);
+                            }
+                            if !is_next_failure || !is_stopped {
                                 return to_atom_failure(
                                     &context,
                                     &search,
@@ -4218,6 +4252,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                         .collect(),
                                     violated,
                                 })),
+                                atom: None,
                             };
                             Some(found)
                         }

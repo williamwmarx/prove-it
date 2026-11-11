@@ -4,7 +4,7 @@
 
 use tla_engine::clock::Instant;
 
-use tla_engine::search::Violation;
+use tla_engine::search::{DeadlockAtom, Violation};
 use tla_ir::{Ir, NodeId, NodeKind, SourceRange};
 use tla_trace::{
     Alias, CounterExample, Ending, Failure, Rebuilder, Registers, Site, Trace, Unsupported,
@@ -350,7 +350,44 @@ fn atoms_print(ir: &Ir) -> bool {
     false
 }
 
-fn print_call_stack(printer: &mut Printer, ir: &Ir, call_stack: &[SourceRange]) {
+/// The call stack of the atom that fails as TLC adds a deadlocked state to the behavior graphs,
+/// which TLC prints after the deadlock's trace: none where TLC's rerun with its `CallStackTool`
+/// has none, as for a failing comparison of a subscript's two values, or throws a
+/// FingerprintException (`Worker#doNextCheckLiveness`).
+pub(crate) fn deadlock_atom_stack(
+    ir: &Ir,
+    violation: &Violation,
+    atom: DeadlockAtom,
+) -> Result<Vec<SourceRange>, String> {
+    let mut states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
+    if atom.is_extra
+        && let Some(&last) = states.last()
+    {
+        states.push(last);
+    }
+    let failure = evaluate_on_search_stack(|| {
+        Rebuilder::new(ir)?.evaluate_failure(
+            &violation.store,
+            &states,
+            &violation.labels,
+            Site::DeadlockAtom {
+                atom: atom.atom,
+                is_extra: atom.is_extra,
+            },
+        )
+    })?;
+    // TLC evaluates the atoms again with its call stack, printing again what they print.
+    if !failure.printed.is_empty() {
+        return Err("an atom that prints as it fails on a deadlocked state".into());
+    }
+    match failure.fingerprint {
+        None => Ok(failure.call_stack),
+        Some(fingerprint) if fingerprint.is_replayed => Ok(Vec::new()),
+        Some(_) => Err("a state TLC fails to fingerprint as it adds a deadlocked state".into()),
+    }
+}
+
+pub(crate) fn print_call_stack(printer: &mut Printer, ir: &Ir, call_stack: &[SourceRange]) {
     printer.print(
         code::NESTED_EXPRESSION,
         Level::Error,
