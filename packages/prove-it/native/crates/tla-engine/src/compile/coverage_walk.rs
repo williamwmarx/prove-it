@@ -13,7 +13,7 @@ use tla_ir::{Definition, DefinitionForm, Ir, NodeId, NodeKind, Resolution};
 use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
-use super::coverage::Tag;
+use super::coverage::{CountedBound, Tag, enumerated};
 use super::nodes::assign_bound;
 use super::{Binding, Compiler, Compiling, Context, argument_context, lookup, operator_context};
 use crate::coverage::{Cm, NO_CM};
@@ -313,7 +313,13 @@ impl Compiler<'_> {
                 }))
             }
             NodeKind::Exists { bounds, body } => {
-                let (set, slots, tuple, scope) = self.counted_bound(bounds, &at)?;
+                let CountedBound {
+                    set,
+                    slots,
+                    tuple,
+                    scope,
+                    built,
+                } = self.counted_bound(bounds, &at)?;
                 let body = self.counted_walk(walks, *body, acts, &scope)?;
                 let set = set.eval;
                 Ok(step(move |machine, on_complete| {
@@ -323,6 +329,8 @@ impl Compiler<'_> {
                         assign_bound(machine, &slots, tuple, element)?;
                         body(machine, on_complete)?;
                     }
+                    let size = machine.store.size_of(id);
+                    enumerated(machine, built, size + 1);
                     Ok(())
                 }))
             }
@@ -443,9 +451,14 @@ impl Compiler<'_> {
                     self.counted_assigned_variable(args[0], at, walks.is_init)?
             {
                 let is_membership = builtin == "\\in";
-                if is_membership && self.tag_of(args[1], at) == Tag::Unknown {
+                let tag = self.tag_of(args[1], at);
+                if is_membership && tag == Tag::Unknown {
                     return decline("x' \\in S of a set that may carry a cost model");
                 }
+                let built = match tag {
+                    Tag::Built(wrapper) if is_membership => Some(wrapper),
+                    _ => None,
+                };
                 let value = self.compile(args[1], at)?;
                 if is_membership && !value.is_normalized {
                     return decline("x' \\in S of a set TLC keeps lazy");
@@ -473,6 +486,8 @@ impl Compiler<'_> {
                             target(machine, is_init)[variable as usize] = UNASSIGNED;
                             result?;
                         }
+                        let size = machine.store.size_of(value);
+                        enumerated(machine, built, size + 1);
                         return Ok(());
                     }
                     if super::coverage::holds_function(machine, held) {

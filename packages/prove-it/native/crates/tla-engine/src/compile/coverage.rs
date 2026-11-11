@@ -40,6 +40,16 @@ const MEMBERSHIPS: &[&str] = &["\\in", "\\notin"];
 // `toTuple` of their first operand, or of both (`\o`), which counts into a function TLC built.
 const SEQUENCES: &[&str] = &["Len", "Head", "Tail", "Append", "SubSeq", "\\o"];
 
+/// A bound TLC enumerates: its set, the slots of its names and whether they are a tuple's, the
+/// scope that binds them, and the wrapper that built the set, which the enumeration counts into.
+pub(super) struct CountedBound {
+    pub set: Compiled,
+    pub slots: Vec<u32>,
+    pub tuple: bool,
+    pub scope: Context,
+    pub built: Option<Cm>,
+}
+
 /// What the counting variant knows of what an expression's value may carry of TLC's cost model:
 /// TLC enumerates a value into the cost model of the node that built it, and converts a tuple or
 /// a record into it.
@@ -50,6 +60,9 @@ pub(super) enum Tag {
     Deep,
     /// A value that carries none, whose elements may.
     Shallow,
+    /// A value the wrapper built as the expression is evaluated, which enumerating it counts
+    /// into, whose elements may carry one.
+    Built(Cm),
     /// A value that may carry one.
     Unknown,
 }
@@ -207,20 +220,30 @@ impl Compiler<'_> {
             }
             NodeKind::Forall { bounds, body } | NodeKind::Exists { bounds, body } => {
                 let is_forall = matches!(kind, NodeKind::Forall { .. });
-                let (set, slots, tuple, scope) = self.counted_bound(bounds, &inner)?;
+                let CountedBound {
+                    set,
+                    slots,
+                    tuple,
+                    scope,
+                    built,
+                } = self.counted_bound(bounds, &inner)?;
                 let body = self.compile(*body, &scope)?;
                 let footprint = set.footprint.merge(&body.footprint.without_slots(&slots));
                 let (set, body) = (set.eval, body.eval);
                 leaf(
                     eval(move |machine| {
                         let id = set(machine)?;
+                        // `Tool.contexts` takes the next element before it binds one.
                         for position in 0..machine.store.size_of(id) {
                             let element = machine.store.element_at(id, position);
                             assign_bound(machine, &slots, tuple, element)?;
                             if boolean(machine, &body)? != is_forall {
+                                enumerated(machine, built, position + 2);
                                 return Ok(bool_id(!is_forall));
                             }
                         }
+                        let size = machine.store.size_of(id);
+                        enumerated(machine, built, size + 1);
                         Ok(bool_id(is_forall))
                     }),
                     footprint,
@@ -235,7 +258,13 @@ impl Compiler<'_> {
                     pattern: pattern.clone(),
                     set: *set,
                 }];
-                let (set, slots, tuple, scope) = self.counted_bound(&bound, &inner)?;
+                let CountedBound {
+                    set,
+                    slots,
+                    tuple,
+                    scope,
+                    built,
+                } = self.counted_bound(&bound, &inner)?;
                 let body = self.compile(*body, &scope)?;
                 let footprint = set.footprint.merge(&body.footprint.without_slots(&slots));
                 let (set, body) = (set.eval, body.eval);
@@ -246,17 +275,25 @@ impl Compiler<'_> {
                             let element = machine.store.element_at(id, position);
                             assign_bound(machine, &slots, tuple, element)?;
                             if boolean(machine, &body)? {
+                                enumerated(machine, built, position + 1);
                                 return Ok(element);
                             }
                         }
+                        let size = machine.store.size_of(id);
+                        enumerated(machine, built, size + 1);
                         Err(Bail("CHOOSE found no element"))
                     }),
                     footprint,
                 )
             }
             NodeKind::SetFilter { bound, predicate } => {
-                let (set, slots, tuple, scope) =
-                    self.counted_bound(std::slice::from_ref(bound), &inner)?;
+                let CountedBound {
+                    set,
+                    slots,
+                    tuple,
+                    scope,
+                    built,
+                } = self.counted_bound(std::slice::from_ref(bound), &inner)?;
                 let predicate = self.compile(*predicate, &scope)?;
                 let footprint = set
                     .footprint
@@ -273,13 +310,21 @@ impl Compiler<'_> {
                                 kept.push(element);
                             }
                         }
+                        let size = machine.store.size_of(id);
+                        enumerated(machine, built, size + 1);
                         machine.store.set_of(&kept)
                     }),
                     footprint,
                 )
             }
             NodeKind::SetMap { expression, bounds } => {
-                let (set, slots, tuple, scope) = self.counted_bound(bounds, &inner)?;
+                let CountedBound {
+                    set,
+                    slots,
+                    tuple,
+                    scope,
+                    built,
+                } = self.counted_bound(bounds, &inner)?;
                 let expression = self.compile(*expression, &scope)?;
                 let footprint = set
                     .footprint
@@ -294,7 +339,11 @@ impl Compiler<'_> {
                             assign_bound(machine, &slots, tuple, element)?;
                             values.push(expression(machine)?);
                         }
-                        machine.store.set_of(&values)
+                        let size = machine.store.size_of(id);
+                        enumerated(machine, built, size + 1);
+                        let set = machine.store.set_of(&values)?;
+                        check_elements(machine, set);
+                        Ok(set)
                     }),
                     footprint,
                 )
@@ -306,7 +355,13 @@ impl Compiler<'_> {
             } => {
                 // TLC builds it at once (`FcnLambdaValue.toFcnRcd`), counting each of its
                 // values into its own cost model, where the domain is a set or an interval.
-                let (set, slots, tuple, scope) = self.counted_bound(bounds, &inner)?;
+                let CountedBound {
+                    set,
+                    slots,
+                    tuple,
+                    scope,
+                    built,
+                } = self.counted_bound(bounds, &inner)?;
                 if tuple {
                     return decline("a function of a tuple of names");
                 }
@@ -324,6 +379,7 @@ impl Compiler<'_> {
                                 machine.store.element_at(id, position);
                             values.push(body(machine)?);
                         }
+                        enumerated(machine, built, size + 1);
                         machine.coverage.secondary[wrapper as usize] += u64::from(size);
                         let function = machine.store.function_over_set(id, &values);
                         Ok(machine.store.mark_built_as_function(function))
@@ -444,10 +500,21 @@ impl Compiler<'_> {
                 }
                 Self::except_of(function, compiled)
             }
-            NodeKind::SetEnumeration(_)
-            | NodeKind::Tuple(_)
-            | NodeKind::Prime(_)
-            | NodeKind::Unchanged(_) => self.compile_node(node, &inner)?,
+            NodeKind::SetEnumeration(_) => {
+                let compiled = self.compile_node(node, &inner)?;
+                let inner_eval = compiled.eval.clone();
+                Compiled {
+                    eval: eval(move |machine| {
+                        let set = inner_eval(machine)?;
+                        check_elements(machine, set);
+                        Ok(set)
+                    }),
+                    ..compiled
+                }
+            }
+            NodeKind::Tuple(_) | NodeKind::Prime(_) | NodeKind::Unchanged(_) => {
+                self.compile_node(node, &inner)?
+            }
             _ => return decline(format!("expression {}", super::nodes::kind_name(kind))),
         };
         Ok(counting(&[wrapper], compiled))
@@ -633,7 +700,7 @@ impl Compiler<'_> {
         &mut self,
         bounds: &[Bound],
         context: &Context,
-    ) -> Compiling<(Compiled, Vec<u32>, bool, Context)> {
+    ) -> Compiling<CountedBound> {
         let [bound] = bounds else {
             return decline("several bounds");
         };
@@ -662,7 +729,17 @@ impl Compiler<'_> {
             },
             ..set
         };
-        Ok((set, binder.slots, binder.tuple, binder.context))
+        let built = match tag {
+            Tag::Built(wrapper) => Some(wrapper),
+            _ => None,
+        };
+        Ok(CountedBound {
+            set,
+            slots: binder.slots,
+            tuple: binder.tuple,
+            scope: binder.context,
+            built,
+        })
     }
 
     // What an expression's value may carry of TLC's cost model.
@@ -678,17 +755,33 @@ impl Compiler<'_> {
                     return match &found.binding {
                         Binding::Slot(slot) if self.deep_slots.contains(slot) => Tag::Deep,
                         Binding::Value { lazy: None, .. } => Tag::Deep,
-                        Binding::Argument(argument) => {
+                        Binding::Argument(argument) if argument.cell.is_some() => {
                             self.tag_of(argument.expression, &super::argument_context(argument))
                         }
+                        Binding::Argument(argument) => self.tag_of_applied(
+                            node,
+                            argument.expression,
+                            super::argument_context(argument),
+                            context,
+                        ),
                         _ => Tag::Unknown,
                     };
                 }
                 match name.resolution {
                     Resolution::Constant(_) | Resolution::Builtin(_) => Tag::Deep,
                     Resolution::Definition(index) => {
+                        let definition = self.definition(self.ir.definitions[index as usize]);
                         if self.is_computed_at_startup(name.text, index) {
                             Tag::Deep
+                        } else if matches!(&definition.form, DefinitionForm::Operator(params)
+                            if params.is_empty())
+                        {
+                            self.tag_of_applied(
+                                node,
+                                definition.body,
+                                context.global(false),
+                                context,
+                            )
                         } else {
                             Tag::Unknown
                         }
@@ -719,7 +812,41 @@ impl Compiler<'_> {
                 _ => Tag::Unknown,
             },
             NodeKind::Forall { .. } | NodeKind::Exists { .. } => Tag::Deep,
+            NodeKind::SetEnumeration(_) | NodeKind::SetMap { .. } | NodeKind::SetFilter { .. } => {
+                match self
+                    .sany(node)
+                    .and_then(|sany| self.wrapper(context.cm, sany))
+                {
+                    Ok(wrapper) if context.cm != NO_CM => Tag::Built(wrapper),
+                    Ok(_) => Tag::Deep,
+                    Err(_) => Tag::Unknown,
+                }
+            }
             _ => Tag::Unknown,
+        }
+    }
+
+    // What the value of a name a walk binds nothing to, or of a definition TLC evaluates each
+    // time, carries: its expression's, under the name's own wrapper.
+    fn tag_of_applied(
+        &self,
+        node: NodeId,
+        expression: NodeId,
+        base: Context,
+        context: &Context,
+    ) -> Tag {
+        match self
+            .sany(node)
+            .and_then(|sany| self.wrapper(context.cm, sany))
+        {
+            Ok(wrapper) => self.tag_of(
+                expression,
+                &Context {
+                    cm: wrapper,
+                    ..base
+                },
+            ),
+            Err(_) => Tag::Unknown,
         }
     }
 
@@ -912,6 +1039,44 @@ fn resetting(compiled: Compiled, cells: Range<usize>) -> Compiled {
 }
 
 impl Compiler<'_> {
+    // `S \cup T`, where S is a set enumeration, is T where S is empty, and otherwise enumerates T
+    // into its cost model (`SetEnumValue.cup`), which counts where T is a set the expression
+    // built. Elsewhere TLC keeps the union lazy, which the variant abandons.
+    fn guard_union(
+        &mut self,
+        args: &[NodeId],
+        context: &Context,
+        compiled: Compiled,
+    ) -> Compiling<Compiled> {
+        let built = match self.tag_of(args[1], context) {
+            Tag::Built(wrapper) => Some(wrapper),
+            _ => None,
+        };
+        let quiet = Context {
+            cm: NO_CM,
+            ..context.clone()
+        };
+        let left = self.compile(args[0], &quiet)?.eval;
+        let right = self.compile(args[1], &quiet)?.eval;
+        let inner = compiled.eval.clone();
+        Ok(Compiled {
+            eval: eval(move |machine| {
+                if let (Ok(left), Ok(right)) = (left(machine), right(machine)) {
+                    if machine.store.kind_of(left) != KIND_SET
+                        || machine.store.kind_of(right) != KIND_SET
+                    {
+                        machine.abandon_coverage("a union TLC keeps lazy");
+                    } else if machine.store.size_of(left) > 0 {
+                        let size = machine.store.size_of(right);
+                        enumerated(machine, built, size + 1);
+                    }
+                }
+                inner(machine)
+            }),
+            ..strip(compiled)
+        })
+    }
+
     // A builtin's value, abandoning the count where TLC would convert what it is applied to into
     // a cost model the variant doesn't know: `toTuple` of a function TLC built, the comparison or
     // membership of functions of classes the store doesn't tell apart. The operands it checks are
@@ -923,6 +1088,9 @@ impl Compiler<'_> {
         context: &Context,
         compiled: Compiled,
     ) -> Compiling<Compiled> {
+        if matches!(builtin, "\\cup" | "\\union") {
+            return self.guard_union(args, context, compiled);
+        }
         let (checked, check): (&[NodeId], Check) = if EQUALITIES.contains(&builtin) {
             (args, holds_function)
         } else if MEMBERSHIPS.contains(&builtin) {
@@ -958,6 +1126,34 @@ impl Compiler<'_> {
             }),
             ..strip(compiled)
         })
+    }
+}
+
+/// Counts the calls of `nextElement` an enumeration of a set its wrapper built made into the
+/// wrapper's secondary count: one for each element taken and one for the end it reached.
+pub(super) fn enumerated(machine: &mut Machine<'_>, built: Option<Cm>, calls: u32) {
+    if let Some(wrapper) = built {
+        machine.coverage.secondary[wrapper as usize] += u64::from(calls);
+    }
+}
+
+/// Abandons the count of a set TLC sorts comparing functions of classes the store doesn't tell
+/// apart, which converts them into their cost models.
+pub(super) fn check_elements(machine: &mut Machine<'_>, set: Id) {
+    let mut classes = (0..machine.store.size_of(set)).map(|position| {
+        let element = machine.store.element_at(set, position);
+        match machine.store.kind_of(element) {
+            KIND_TUPLE if machine.store.is_built_as_function(element) => 3,
+            KIND_TUPLE => 1,
+            KIND_FUNCTION if machine.store.is_record(element) => 2,
+            KIND_FUNCTION => 3,
+            _ => 0,
+        }
+    });
+    if let Some(first) = classes.next()
+        && classes.any(|class| class != first)
+    {
+        machine.abandon_coverage("a set of functions TLC may compare between classes");
     }
 }
 
