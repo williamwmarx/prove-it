@@ -851,6 +851,17 @@ fn check_spec(
         Some([_]) => return report_not_native(printer, "-dump into the meta directory"),
         Some(_) => return report_not_native(printer, "-dump dot"),
     };
+    // -config keeps its name with `.cfg` added; TLC reads the CONFIG section of a module named
+    // `.tla` (`MonolithSpecExtractor.getConfig`).
+    if args
+        .first("-config")
+        .is_some_and(|path| path.ends_with(".tla.cfg"))
+    {
+        return report_not_native(
+            printer,
+            "a configuration in a module's CONFIG section, which TLC reads from a -config ending in .tla",
+        );
+    }
     // TLC names the configuration file by -config or the spec's name, then finds it as it finds a
     // module (`ModelConfig`), and names it by that name when it finds none.
     let config_name = match args.first("-config") {

@@ -300,6 +300,11 @@ normalized set's (`(SUBSET {2}) \cup {{1}}` through a variable, a constant via a
 name or a LET named twice), and a variable bound by `\in` to a set enumeration's lazy first
 element (`Next == s' \in {UNION {1..2, 2..3}} /\ y' \in s'`: TLC 17, native 13).
 
+Outside the counts, SANY's report differs on an INSTANCE of a module with semantic errors: for
+`I == INSTANCE Other` with `Other.tla` holding `Op(n) == n - 1` and no EXTENDS, TLC prints
+`*** Errors: 2` for module Spec, while the binary prints `*** Errors: 3`, adding `Substitution error,
+probably due to error in module being instantiated.` at the INSTANCE (exit 150 in both).
+
 #### Every reason
 
 Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so the counts follow
