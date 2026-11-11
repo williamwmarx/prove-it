@@ -387,6 +387,8 @@ pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
     pub(crate) state_builtins: &'static [&'static str],
+    /// Whether `can_read` bounds the level as TLC's `getLevelBound` does, for `may_reach_bound`.
+    pub(crate) is_level_bound: bool,
     texts: Vec<Option<Rc<Text>>>,
     /// The value of each string literal, by its node.
     literals: HashMap<NodeId, Rc<Text>>,
@@ -732,6 +734,7 @@ impl<'ir> Evaluator<'ir> {
         let width = ir.variables.len();
         Evaluator {
             state_builtins: &[],
+            is_level_bound: false,
             ir,
             texts: vec![None; ir.texts.len()],
             literals: HashMap::new(),
@@ -2388,7 +2391,7 @@ impl<'ir> Evaluator<'ir> {
         if self.reads == reads
             && self.printed.len() == printed
             && (self.captures == captures
-                || !self.may_reach(node, &["TLCGet", "CounterExample", "_Counts"]))
+                || !self.may_reach_bound(node, &["TLCGet", "CounterExample", "_Counts"]))
         {
             // TLC computed the value of a definition that reads no state as it started, and
             // sorted it.

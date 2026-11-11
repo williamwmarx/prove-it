@@ -198,6 +198,19 @@ impl<'ir> Evaluator<'ir> {
         reads
     }
 
+    /// Whether an expression may read the state or apply one of these builtins, as TLC bounds the
+    /// level of a definition it computes as it starts (`getLevelBound`).
+    pub(crate) fn may_reach_bound(
+        &mut self,
+        node: NodeId,
+        builtins: &'static [&'static str],
+    ) -> bool {
+        self.is_level_bound = true;
+        let reads = self.may_reach(node, builtins);
+        self.is_level_bound = false;
+        reads
+    }
+
     /// Whether an expression may read the state, as `getLevel` finds it above constant level.
     pub(crate) fn can_read(&self, node: NodeId, context: &Context) -> bool {
         self.can_read_state(node, context, &mut HashSet::new())
@@ -224,6 +237,10 @@ impl<'ir> Evaluator<'ir> {
             | NodeKind::Decimal(_)
             | NodeKind::String(_)
             | NodeKind::ExceptAt => false,
+            // `getLevelBound` gives an operator passed as an argument level 0, whatever it reads.
+            NodeKind::Lambda { .. } | NodeKind::OperatorReference(_) if self.is_level_bound => {
+                false
+            }
             NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => {
                 self.can_name_read_state(name, context, visited)
             }
