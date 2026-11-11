@@ -307,8 +307,10 @@ pub(crate) enum Event {
     /// A simulation's progress: the states checked, the traces generated, and TLC's packed mean
     /// and squared deviations of their lengths.
     SimulationProgress(u64, u64, i64),
-    /// A part of the `-dump` file's text, in order, for the host to append.
-    Dumped(String),
+    /// A part of the `-dump` file's text, in order, for the host to append, and whether it writes
+    /// a state of a graph, which TLC copies to a snapshot as it writes each
+    /// (`DotStateWriter.writeState`).
+    Dumped(String, bool),
     /// Under -continue, a violation the search went on past, as TLC reports it.
     Continued(Box<ContinuedReport>),
     /// The relay can't print what TLC prints next, for this reason: the search ends as not
@@ -717,8 +719,9 @@ impl Reporter for Relay<'_> {
                 steps
                     .ok_or("-dump dot of a state the search didn't fingerprint")
                     .and_then(|steps| {
+                        let is_stated = !states.is_empty();
                         write_graph(ir, options, store, states, steps, &mut |text| {
-                            let _ = sender.send(Event::Dumped(text));
+                            let _ = sender.send(Event::Dumped(text, is_stated));
                         })
                     }),
             );
@@ -751,12 +754,14 @@ impl Reporter for Relay<'_> {
                     format_texts(ir, &texts)
                 ));
                 if text.len() >= DUMP_PART_BYTES {
-                    let _ = self.sender.send(Event::Dumped(std::mem::take(&mut text)));
+                    let _ = self
+                        .sender
+                        .send(Event::Dumped(std::mem::take(&mut text), false));
                 }
                 Ok(())
             });
         if !text.is_empty() {
-            let _ = self.sender.send(Event::Dumped(text));
+            let _ = self.sender.send(Event::Dumped(text, false));
         }
         self.dumped = Some(written);
     }
@@ -1415,10 +1420,10 @@ fn check_spec(
                         declined = Some(reason);
                         break;
                     }
-                    Event::Dumped(text) => {
+                    Event::Dumped(text, is_stated) => {
                         let path = Path::new(dump.as_deref().unwrap_or_default());
                         is_dump_unwritten |= !printer.host.write_file(path, text.as_bytes(), true);
-                        if let Some(snapshot) = &snapshot {
+                        if let Some(snapshot) = snapshot.as_ref().filter(|_| is_stated) {
                             let header = dot.map(|options| options.header());
                             let (text, is_appended) = match header.filter(|_| !is_snapshot_begun) {
                                 Some(header) => (header + &text, false),
