@@ -142,11 +142,10 @@ for (const module of byModule.values())
   for (const [key, limits] of Object.entries(module.timeLimits))
     timeLimits[key] = [...new Set([...(timeLimits[key] ?? []), ...limits])];
 mkdirSync(PROVER_INPUTS_DIRECTORY, { recursive: true });
-// A run over some modules keeps the time limits of the inputs it didn't write.
-const earlierTimeLimits =
-  getOption("--filter") !== undefined && existsSync(TIME_LIMITS_PATH)
-    ? JSON.parse(readFileSync(TIME_LIMITS_PATH, "utf8"))
-    : {};
+// A run over some modules (--filter, --skip) keeps the time limits of the inputs it didn't write.
+const earlierTimeLimits = existsSync(TIME_LIMITS_PATH)
+  ? JSON.parse(readFileSync(TIME_LIMITS_PATH, "utf8"))
+  : {};
 writeFileSync(
   TIME_LIMITS_PATH,
   `${JSON.stringify(getMergedTimeLimits(earlierTimeLimits, timeLimits))}\n`,

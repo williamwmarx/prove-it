@@ -243,7 +243,15 @@ if (retry === undefined) {
     describe,
   );
 } else {
-  const results: Result[] = JSON.parse(readFileSync(RESULTS_PATH, "utf8")).results;
+  const audit: { z3: { sha256: string }; results: Result[] } = JSON.parse(
+    readFileSync(RESULTS_PATH, "utf8"),
+  );
+  // A retry is only comparable with the run of the same binary.
+  if (audit.z3.sha256 !== sha256)
+    throw new Error(
+      `the last run used the Z3 binary with SHA-256 ${audit.z3.sha256}, not ${sha256}: run the audit again with this binary first`,
+    );
+  const results = audit.results;
   const retried = results.filter((result) => result.verdict === "ts-proves");
   const limits = new Map(
     retried.map((result) => [

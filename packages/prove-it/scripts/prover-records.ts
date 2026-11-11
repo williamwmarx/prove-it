@@ -81,7 +81,7 @@ export const getUpdatedRecords = (
   );
 
 // The time limits after a run over some modules: the run's limits for the inputs it wrote, the
-// earlier file's for the rest, so that a --filter run keeps the other modules' limits.
+// earlier file's for the rest, so that a run with --filter or --skip keeps the other modules' limits.
 export const getMergedTimeLimits = (
   earlier: Record<string, (number | null)[]>,
   written: Record<string, (number | null)[]>,
