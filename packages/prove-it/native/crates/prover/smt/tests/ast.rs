@@ -5,7 +5,9 @@
 
 use prove_decide::Limits;
 use prove_num::{Int, Rational};
-use prove_smt::core::ast::{AstManager, Decl, Expr, KIND_APP, QuantifierData, SmtSymbol};
+use prove_smt::core::ast::{
+    AstManager, Decl, Expr, KIND_APP, OP_IDIV0, QuantifierData, SORT_INT, SmtSymbol,
+};
 use prove_smt::util::rlimit::ResourceLimit;
 
 fn number<T: std::str::FromStr>(text: &str) -> T
@@ -263,4 +265,41 @@ fn with_temporaries_releases_what_it_does_not_keep() {
     assert_eq!(manager.get_num_asts(), asts + 5);
     manager.dec_ref(kept).unwrap();
     assert_eq!(manager.get_num_asts(), asts);
+}
+
+// (div0 x x), held, and the number of ASTs with it.
+fn get_division_by_zero() -> (AstManager, Expr, i64) {
+    let limits = Limits::new(f64::INFINITY, None, None);
+    let mut manager = AstManager::new(ResourceLimit::new(&limits));
+    let x_decl = manager.mk_func_decl(SmtSymbol::Name("x".into()), &[], SORT_INT, false);
+    let x = manager.mk_app(x_decl, &[], SORT_INT).unwrap();
+    let division = manager.mk_app(OP_IDIV0, &[x, x], SORT_INT).unwrap();
+    manager.inc_ref(division);
+    let num_asts = manager.get_num_asts();
+    (manager, division, num_asts)
+}
+
+// `smt-ast.test.ts`: Z3 counts the references to a func_decl together, whether an application or a
+// model holds it, as MBQI's models hold the div0 and mod0 they interpret. The number of ASTs seeds
+// model completion.
+#[test]
+fn keeps_a_builtin_declaration_a_model_releases_while_an_application_holds_it() {
+    let (mut manager, division, num_asts) = get_division_by_zero();
+    let decl_id = manager.get_decl_id(division).unwrap();
+    for _ in 0..2 {
+        manager.inc_decl_ref(OP_IDIV0);
+        manager.dec_decl_ref(OP_IDIV0).unwrap();
+        assert_eq!(manager.get_num_asts(), num_asts);
+        assert_eq!(manager.get_decl_id(division), Ok(decl_id));
+    }
+}
+
+#[test]
+fn releases_a_builtin_declaration_with_the_last_of_the_model_and_the_applications() {
+    let (mut manager, division, num_asts) = get_division_by_zero();
+    manager.inc_decl_ref(OP_IDIV0);
+    manager.dec_ref(division).unwrap();
+    assert_eq!(manager.get_num_asts(), num_asts - 2);
+    manager.dec_decl_ref(OP_IDIV0).unwrap();
+    assert_eq!(manager.get_num_asts(), num_asts - 3);
 }

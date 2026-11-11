@@ -16,6 +16,8 @@ use prove_smt::util::rlimit::ResourceLimit;
 const STEP_LIMIT: u64 = 50_000_000;
 /// The step limit of `scripts/smt-decide-reference.ts`.
 const REFERENCE_STEP_LIMIT: u64 = 5_000_000;
+/// The step limit of `scripts/smt-decide-reference.ts` on `tests/inputs`.
+const INPUT_STEP_LIMIT: u64 = 20_000;
 const DECIDE_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 struct Recorded {
@@ -453,22 +455,29 @@ fn decides_every_fixture_as_the_typescript_does() {
     assert_eq!(count, 45);
 }
 
-// smt/c0119d516427b279 of the decider corpus, reduced: MBQI's models interpret div0 and mod0,
-// builtin declarations without a reference count in the TypeScript, so each model that releases
-// one deletes it and frees its small id. That changes the number of expressions, which seeds
-// `get_some_value`, and so the models and the search. decideSmt gives this under the same step
-// limit.
+// `tests/tables/decide-inputs.txt`, which `scripts/smt-decide-reference.ts` also writes: decideSmt's
+// verdict and statistics on each input of `tests/inputs` under a smaller step limit. Each input is a
+// corpus input the ports once differed on, reduced. `builtin-decl-release.smt`, from
+// smt/c0119d516427b279: MBQI's models interpret div0 and mod0, which Z3 counts with the
+// applications that hold them, so a model that releases one keeps it. Releasing it would change
+// the number of ASTs, which seeds `get_some_value`, and so the models and the search.
 #[test]
-fn releases_a_builtin_declaration_of_a_model_as_the_typescript_does() {
-    let text = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/inputs/builtin-decl-release.smt"),
-    )
-    .expect("the input");
-    let decision =
-        on_deep_stack(|| prove_smt::decide(&text, &Limits::new(f64::INFINITY, Some(20_000), None)))
-            .map(|decision| get_decision_text(&decision));
-    assert_eq!(
-        decision,
-        Ok("unknown instances=11 steps=20011 stop=steps".into())
-    );
+fn decides_every_input_as_the_typescript_does() {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let table = fs::read_to_string(directory.join("tables/decide-inputs.txt")).expect("the table");
+    let mut count = 0;
+    for line in table.lines() {
+        let (name, expected) = line.split_once(' ').expect("an input and its decision");
+        let text = fs::read_to_string(directory.join("inputs").join(name)).expect("the input");
+        let decision = on_deep_stack(|| {
+            prove_smt::decide(
+                &text,
+                &Limits::new(f64::INFINITY, Some(INPUT_STEP_LIMIT), None),
+            )
+        })
+        .map(|decision| get_decision_text(&decision));
+        assert_eq!(decision, Ok(expected.into()), "{name}");
+        count += 1;
+    }
+    assert_eq!(count, 1);
 }

@@ -1108,7 +1108,7 @@ is next.
 Where a TypeScript back end does what the tool it ports does not, the Rust mirrors the TypeScript,
 so that the differential stays exact, until the two are fixed together and the inputs it moves are
 re-recorded. smt-core.md §4 lists the SMT core's and points here for the evidence. Lines are as of
-b1b794c; Z3's are of the tag `z3-5.3.3`.
+b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
 
 - **A model's hold on a builtin declaration (`div0`, `mod0`, `/0`)** moves smt/0c812b0a8aa1347b,
   c0119d516427b279, f57d6baf800a11d6, 44fea97e4ee0312c and a50910e8b0798813 (all `unknown` at
@@ -1158,3 +1158,22 @@ b1b794c; Z3's are of the tag `z3-5.3.3`.
   - *a50910e8b0798813* belongs here, though 3e31515 did not list it: the Rust before 3e31515 gives
     `unknown` with 131,956 instances and 3,307,788 steps, and with it the record, `unknown` with
     3,307,783 steps and no instances (the limit stopped a step that throws).
+  - *Fixed* on both sides: `incDeclRef`/`inc_decl_ref` and `decDeclRef`/`dec_decl_ref` count a
+    model's hold on a builtin declaration with a signature under that signature, with its
+    applications, as Z3 counts the one `func_decl`; other builtin declarations, which Z3's plugins
+    keep, are not counted (`smt-ast.test.ts`, `tests/ast.rs`). Decided again by the fixed
+    TypeScript (`prover-differential --side ts --prover smt`), 10,316 of the 10,320 smt inputs give
+    the record and four move, which the record must take with `prover-inputs --record`:
+
+    | Input | Record | Fixed |
+    |---|---|---|
+    | smt/0c812b0a8aa1347b | `unknown` instances=153469 steps=2305801 | `unsat` instances=24889 steps=881375 |
+    | smt/44fea97e4ee0312c | `unknown` instances=37134 steps=1629193 | `unknown` instances=65627 steps=1629192 |
+    | smt/a50910e8b0798813 | `unknown` steps=3307783 | `unknown` instances=131956 steps=3307788 |
+    | smt/c0119d516427b279 | `unknown` steps=2572033 | `unknown` instances=28904 steps=2572037 |
+
+    smt/f57d6baf800a11d6 gives the record again. The fixed Rust gives the fixed TypeScript's answer
+    on all 10,320, the four that move included. Of the tables, only `models.txt` moves: its `partial-theory` model, which
+    interprets `div0`, now leaves the declaration to its application when it is released
+    (`asts=181`, was 180). `builtin-decl-release.smt` is replayed from `tables/decide-inputs.txt`,
+    which `scripts/smt-decide-reference.ts` writes.

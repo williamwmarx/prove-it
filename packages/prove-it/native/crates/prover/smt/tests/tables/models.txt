@@ -140,7 +140,7 @@ const y = 0#26
 const x = 0#26
 func div0 else 7#24
 universe Int: 0#26
-released: steps=16 asts=180
+released: steps=16 asts=181
 == euf-branch ==
 result=1
 searched: steps=33 asts=206

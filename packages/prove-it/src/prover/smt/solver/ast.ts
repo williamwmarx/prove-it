@@ -375,8 +375,7 @@ export class AstManager {
     if (this.isFiniteSetPluginInitialized) return;
     this.isFiniteSetPluginInitialized = true;
     for (let index = 0; index < NUM_FINITE_SET_PLUGIN_SORTS; index++) this.mkSmallId();
-    this.freeSmallIds.push(this.mkSmallId());
-    this.numDecls--;
+    this.freeSmallId(this.mkSmallId());
   }
 
   // insert_macro: cmd_context keeps a named expression as a recursive function with one case, whose
@@ -413,9 +412,15 @@ export class AstManager {
     if (decl === OP_NUM) return 8 * this.values[expr] + SIGNATURE_NUMERAL;
     if (decl === OP_EQ) return 8 * this.sorts[this.getArg(expr, 0)] + SIGNATURE_EQ;
     if (decl === OP_ITE) return 8 * this.sorts[expr] + SIGNATURE_ITE;
-    if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
     if (decl === OP_DISTINCT || decl === OP_PATTERN)
       return `${decl}:${this.mapArgs(expr, (arg) => this.sorts[arg]).join(",")}`;
+    return this.getDeclSignature(decl);
+  }
+
+  // The signature of a builtin declaration that each of its applications shares, a division by zero
+  // or a model value, or null for any other declaration.
+  private getDeclSignature(decl: number) {
+    if (decl === OP_DIV0 || decl === OP_IDIV0 || decl === OP_MOD0) return 8 * decl + SIGNATURE_DIV0;
     if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) return 8 * decl + SIGNATURE_MODEL_VALUE;
     return null;
   }
@@ -436,7 +441,11 @@ export class AstManager {
       return;
     }
     const key = this.getSignature(expr);
-    if (key === null) return;
+    if (key !== null) this.holdSignature(decl, key);
+  }
+
+  // Holds the declaration of a signature, which Z3 makes when it is first held.
+  private holdSignature(decl: number, key: number | string) {
     const signatureDecl = this.signatureDecls.get(key);
     if (signatureDecl !== undefined) {
       signatureDecl.refCount++;
@@ -460,7 +469,11 @@ export class AstManager {
       return this.funcDecls[decl].smallId;
     }
     const key = this.getSignature(expr);
-    if (key === null) return -1;
+    return key === null ? -1 : this.releaseSignature(key);
+  }
+
+  // The small id of the declaration of a signature that loses its last reference, or -1.
+  private releaseSignature(key: number | string) {
     const signatureDecl = this.getSignatureDecl(key);
     signatureDecl.refCount--;
     if (signatureDecl.refCount > 0) return -1;
@@ -472,39 +485,34 @@ export class AstManager {
     this.refCounts[expr]++;
   }
 
-  // A model value's declaration is counted under its signature, like the applications that hold it.
+  // A model holds a declaration as an application does: Z3 counts the references to a func_decl
+  // together, so a builtin declaration with a signature (a model's div0 or model value) is counted
+  // under it, with the applications that hold it. Z3's plugins keep the other builtin declarations.
   incDeclRef(decl: number) {
-    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
-      const key = 8 * decl + SIGNATURE_MODEL_VALUE;
-      const signatureDecl = this.signatureDecls.get(key);
-      if (signatureDecl !== undefined) {
-        signatureDecl.refCount++;
-        return;
-      }
-      const smallId = this.mkSmallId();
-      this.signatureDecls.set(key, { smallId, refCount: 1 });
-      this.funcDecls[decl].smallId = smallId;
+    if (this.funcDecls[decl].family === FAMILY_USER) {
+      if (this.deletedDecls.delete(decl)) this.funcDecls[decl].smallId = this.mkSmallId();
+      this.declRefCounts[decl]++;
       return;
     }
-    if (this.deletedDecls.delete(decl)) this.funcDecls[decl].smallId = this.mkSmallId();
-    this.declRefCounts[decl]++;
+    const key = this.getDeclSignature(decl);
+    if (key !== null) this.holdSignature(decl, key);
   }
 
   decDeclRef(decl: number) {
-    if (this.funcDecls[decl].family === FAMILY_MODEL_VALUE) {
-      const key = 8 * decl + SIGNATURE_MODEL_VALUE;
-      const signatureDecl = this.getSignatureDecl(key);
-      signatureDecl.refCount--;
-      if (signatureDecl.refCount > 0) return;
-      this.freeSmallIds.push(signatureDecl.smallId);
-      this.signatureDecls.delete(key);
-      this.numDecls--;
+    if (this.funcDecls[decl].family === FAMILY_USER) {
+      this.declRefCounts[decl]--;
+      if (this.declRefCounts[decl] > 0) return;
+      this.deletedDecls.add(decl);
+      this.freeSmallId(this.funcDecls[decl].smallId);
       return;
     }
-    this.declRefCounts[decl]--;
-    if (this.declRefCounts[decl] > 0) return;
-    this.deletedDecls.add(decl);
-    this.freeSmallIds.push(this.funcDecls[decl].smallId);
+    const key = this.getDeclSignature(decl);
+    const smallId = key === null ? -1 : this.releaseSignature(key);
+    if (smallId !== -1) this.freeSmallId(smallId);
+  }
+
+  private freeSmallId(smallId: number) {
+    this.freeSmallIds.push(smallId);
     this.numDecls--;
   }
 
@@ -564,8 +572,7 @@ export class AstManager {
     const worklist = [expr];
     for (let node = worklist.pop(); node !== undefined; node = worklist.pop()) {
       if (node < 0) {
-        this.freeSmallIds.push(-1 - node);
-        this.numDecls--;
+        this.freeSmallId(-1 - node);
         continue;
       }
       this.deleteNode(node);
