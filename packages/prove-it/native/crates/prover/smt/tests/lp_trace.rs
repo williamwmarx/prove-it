@@ -2,7 +2,8 @@
 //! theory (`src/prover/smt/solver/lp-trace.ts` describes the format) against the Rust lp: the same
 //! calls in the same order, the callbacks lp makes answered from the trace, and every result,
 //! filled-in argument, field read and callback, with its arguments and its place among the calls,
-//! checked against the trace.
+//! checked against the trace. Each line must also be the text the Rust recorder's JSON writer
+//! (`prove_smt::lp::json`) writes for it, so that Rust and TypeScript traces compare textually.
 //!
 //! The traces are read from the directory `PROVE_IT_LP_TRACES` names, by default
 //! `packages/prove-it/tests/conformance/.lp-traces`, and its prover subdirectories (`smt/`, `z3/`);
@@ -1008,11 +1009,21 @@ fn get_implied_bound_index(path: &str, method: &str) -> Option<usize> {
         .ok()
 }
 
+/// A line of the trace, which the Rust recorder's JSON writer must write back as it is.
 fn parse_line(text: &str, number: usize) -> Result<Json, Stop> {
-    parse(text).map_err(|message| Stop::Crash {
+    let line = parse(text).map_err(|message| Stop::Crash {
         line: number,
         message: format!("bad JSON: {message}"),
-    })
+    })?;
+    let written = line.to_string();
+    if written != text {
+        return Err(Stop::Differs {
+            line: number,
+            expected: text.to_string(),
+            got: format!("{written}, as Rust writes it"),
+        });
+    }
+    Ok(line)
 }
 
 /// Replays one trace: None when it all matched, with the number of lines.
