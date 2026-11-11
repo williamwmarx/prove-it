@@ -19,9 +19,19 @@ const INPUTS = [
   ["ls4", read("conformance/ptl/equivalence-of-boxes.ls4")],
 ] as const;
 
-// What the TypeScript decider answered on the Zenon input with no limits, before it was deleted, as
-// tests/fixtures/zenon/decisions.txt records it too.
+// What the TypeScript SMT decider answered on the SMT input with no limits, as smt and as z3, before
+// it was deleted, as crates/prover/smt/tests/tables/decide.txt records it too.
+const SMT_RECORDED: Decision = {
+  verdict: "unsat",
+  timeUsedMs: 0,
+  statistics: { instances: 14, steps: 4626 },
+};
+
+// What the TypeScript deciders answered on their inputs with no limits, before they were deleted,
+// Zenon's as tests/fixtures/zenon/decisions.txt records it too.
 const RECORDED: Record<string, Decision> = {
+  smt: SMT_RECORDED,
+  z3: SMT_RECORDED,
   zenon: {
     verdict: "unsat",
     timeUsedMs: 0,
@@ -122,11 +132,15 @@ describe("the Rust ports", () => {
     );
   });
 
-  // Zenon's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
-  it("decides Zenon in Rust whatever PROVE_IT_PROVER says", () => {
-    expect(useProver("ts", () => decide("zenon", INPUTS[1][1], OPTIONS))).toMatchObject({
+  // Their TypeScript is deleted, so PROVE_IT_PROVER doesn't reach them. Z3 is sent the SMT input.
+  it.each([
+    ["zenon", INPUTS[1][1]],
+    ["smt", INPUTS[0][1]],
+    ["z3", INPUTS[0][1]],
+  ])("decides %s in Rust whatever PROVE_IT_PROVER says", (prover, text) => {
+    expect(useProver("ts", () => decide(prover, text, OPTIONS))).toMatchObject({
       verdict: "unsat",
-      statistics: RECORDED.zenon.statistics,
+      statistics: RECORDED[prover].statistics,
     });
   });
 

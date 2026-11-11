@@ -3,21 +3,10 @@
 
 import { getNativeAddon } from "../engine/native";
 import { getEnvironmentSetting, reportEngine } from "../engine/settings";
-import { EngineUnavailableError, SmtParseError, TlaProverError } from "../errors";
+import { EngineUnavailableError, TlaProverError } from "../errors";
 import { decideIsabelle } from "./isabelle/decide";
 import { decidePtl } from "./ptl/decide";
-import { decideSmt } from "./smt/solver/solver";
 import { createSteps, type DecideOptions, type Decision, type Verdict } from "./verdict";
-
-// Z3 rejects malformed input with an error, and tlapm counts that as a failure.
-const decideZ3 = (text: string, options: DecideOptions) => {
-  try {
-    return decideSmt(text, options);
-  } catch (error) {
-    if (error instanceof SmtParseError) throw new TlaProverError(error.message, error);
-    throw error;
-  }
-};
 
 // The backends prove decides with, by the prover of the method that selects them.
 export const BACKENDS: readonly string[] = ["smt", "z3", "zenon", "isabelle", "ls4"];
@@ -26,8 +15,6 @@ export const BACKENDS: readonly string[] = ["smt", "z3", "zenon", "isabelle", "l
 // alone.
 export const DECIDERS: Partial<Record<string, (text: string, options: DecideOptions) => Verdict>> =
   {
-    smt: decideZ3,
-    z3: decideZ3,
     isabelle: decideIsabelle,
     ls4: decidePtl,
   };
@@ -41,7 +28,7 @@ export const hasTypeScriptDecider = (prover: string) => DECIDERS[prover] !== und
 const RUST_BACKENDS = new Set<string>(["ls4", "zenon", "isabelle", "smt", "z3"]);
 
 // Which port decides a backend's inputs: the Rust port alone for a backend without a TypeScript
-// decider, else PROVE_IT_PROVER_<PROVER>, such as PROVE_IT_PROVER_SMT, for one backend, else
+// decider, else PROVE_IT_PROVER_<PROVER>, such as PROVE_IT_PROVER_ISABELLE, for one backend, else
 // PROVE_IT_PROVER for all, each "ts" or "rust", else the default.
 const isRust = (prover: string) => {
   if (!hasTypeScriptDecider(prover)) return true;
