@@ -1115,8 +1115,23 @@ as Integers does.
   (`ReportOptions.root_extendees`) and for TLC's order (`TlcOrder::with_root_extendees`), and lowers
   without the Naturals flags (`ModelOptions.is_trace_recorded`). A run that ends without a
   counterexample prints TLC's output in full.
-- **What still declines:** a counterexample, for which TLC writes `<Spec>_TTrace_<epoch>.bin`, and
-  for a trace of two states or more `<Spec>_TTrace_<epoch>.tla` and its path after `Finished in`.
+- **The trace exploration spec:** after an error trace of two states or more TLC writes
+  `<Spec>_TTrace_<epoch>.tla` beside the spec and prints its path after `Finished in`. The binary
+  records the trace as TLC's `ErrorTraceMessagePrinterRecorder` does and writes the spec as
+  `TraceExplorationSpec.writeSpecTEStreams` does (`te_spec.rs`), with the variables and the model
+  values in the orders of TLC's Java hash sets and the date as `java.util.Date` writes it, in UTC.
+- **What still declines:** the trace file `_TLCTraceSilent` writes for a counterexample,
+  `<Spec>_TTrace_<epoch>.bin`, which joins -dumpTrace's postconditions but which TLC gzips with
+  Java's Deflater and writes with its own tokens of the strings; a date in a zone other than UTC,
+  whose name Java gives it; `-teSpecOutDir`; a spec named by a path Java's `Path` would normalize,
+  such as `specs//M`; model values the spec makes with TLCModelValue; a model value named as an
+  operator of the modules `_TLCTrace` loads, which TLC's `Defns` holds; an initial state without a
+  value for each variable, on which the postcondition fails too; the simulator's violation, whose
+  trace file the postcondition writes; and a trace printed that the binary doesn't record, as the
+  simulator's under `-noTEBin`. The simulator's lone error state at unbounded depth isn't recorded,
+  so TLC writes no spec for it, nor does the binary (`prove-it-cli/tests/te_cases.rs`). A spec found
+  in a library directory is written as TLC writes it, in the directory of the path it was given
+  (`prove-it-cli/tests/spec_paths.rs`).
 - **The TypeScript interpreter** writes neither file, and in this mode it keeps Naturals' `>=`
   wording (`getTraceSpecArithmetic`). It is retired with the interpreter (fallback.md, S4).
 

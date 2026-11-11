@@ -19,7 +19,7 @@ use crate::check::{
     ASSUMPTION_VIOLATION, DEADLOCK, Event, Relay, SAFETY_VIOLATION, SUCCESS, print_coded_failure,
     print_finished, print_small_sets, print_startup_message, print_violation, report_not_native,
 };
-use crate::dump_trace::TraceDumps;
+use crate::dump_trace::{TRACE_FILE_DECLINE, TraceDumps};
 use crate::failure::print_assumption_failure;
 use crate::messages::{self as code, Level, Printer};
 use crate::stack::alongside;
@@ -29,7 +29,6 @@ const ERROR_STATE: u32 = 2120;
 const MODE_SIMULATION: u32 = 2188;
 const PROGRESS_SIMULATION: u32 = 2209;
 const STATS_SIMULATION: u32 = 2210;
-const STATE_PRINT_1: u32 = 2216;
 
 // TLC's default depth of a trace (`TLC.traceDepth`), and the depth `-depth -1` stands for.
 const DEFAULT_DEPTH: i32 = 100;
@@ -105,7 +104,7 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
         Some("a simulation that checks temporal properties")
     } else if !model.postconditions.is_empty() {
         Some("a simulation with a POSTCONDITION")
-    } else if !simulating.dumps.is_empty() {
+    } else if simulating.dumps.has_command_line_dumps() {
         Some("a simulation with -dumpTrace, whose postcondition TLC's simulator checks")
     } else if !model.possible.is_empty() {
         Some("a simulation with a _POSSIBLE predicate")
@@ -256,6 +255,11 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
         print_finished(printer, start);
         return SUCCESS;
     };
+    // The simulator checks the trace exploration spec's postcondition on the violation's trace,
+    // which writes the trace's file.
+    if dumps.is_trace_recorded() {
+        return report_not_native(printer, TRACE_FILE_DECLINE);
+    }
     // TLC's simulator reports the violation and goes on generating traces (`Simulator`'s
     // `TLCGlobals.continuation`).
     if is_continued {
@@ -338,7 +342,7 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
     if is_unbounded {
         printer.print(ERROR_STATE, Level::None, "The error state is:\n");
         let text = texts.last().map_or("", String::as_str);
-        printer.print(STATE_PRINT_1, Level::State, &format!(":\n{text}"));
+        printer.print(code::STATE_PRINT_1, Level::State, &format!(":\n{text}"));
     } else {
         printer.print(
             code::BEHAVIOR_UP_TO_THIS_POINT,

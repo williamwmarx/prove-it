@@ -454,7 +454,8 @@ an option TLC doesn't know, a missing or malformed value of `-seed`, `-workers`,
 know, and, on the `tlc2.TLC` form, a second module or none. Each message was
 compared with a TLC built from the clone at d8fb231.
 
-It models `-config` (with or without `.cfg`, as TLC), `-continue`, `-coverage`, `-deadlock`,
+It models `-config` (with or without `.cfg`, as TLC, which looks for the file where it looks for
+the spec's modules, in that order), `-continue`, `-coverage`, `-deadlock`,
 `-dump`, `-dumpTrace tlc` and `-dumpTrace json` (below), `-fp`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
 trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`,
 `-noGenerateSpecTEBin`/`-noTEBin`), and `-simulate`, `-depth` and `-aril` (below). Every other

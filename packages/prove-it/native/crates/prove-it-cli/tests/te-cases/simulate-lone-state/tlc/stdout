@@ -1,0 +1,26 @@
+TLC2 Version 2026.11.11.072736
+Running Random Simulation with seed 5 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 12593] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit).
+Parsing file {root}/M.tla
+Parsing file /tmp/tlc-15061104550091225526/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-15061104550091225526/TLC.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-15061104550091225526/Sequences.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-15061104550091225526/FiniteSets.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-11 07:27:36)
+Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-11 07:27:36.
+Error: Invariant Inv is violated.
+The error state is:
+
+State :
+x = 3
+
+The number of states generated: 4
+Simulation using seed 5 and aril 0
+Progress: 4 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)
+Finished in 00s at (2026-11-11 07:27:36)

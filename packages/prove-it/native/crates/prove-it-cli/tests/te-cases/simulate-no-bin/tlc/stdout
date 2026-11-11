@@ -1,0 +1,35 @@
+TLC2 Version 2026.11.11.072736
+Running Random Simulation with seed 5 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 12614] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit).
+Parsing file {root}/M.tla
+Parsing file /tmp/tlc-9521765649664365681/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-9521765649664365681/TLC.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-9521765649664365681/Sequences.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-9521765649664365681/FiniteSets.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Starting... (2026-11-11 07:27:36)
+Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-11 07:27:36.
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Init line 4, col 9 to line 4, col 13 of module M>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 2
+
+State 4: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 3
+
+The number of states generated: 4
+Simulation using seed 5 and aril 0
+Progress: 4 states checked, 1 traces generated (trace length: mean=0, var(x)=0, sd=0)
+Finished in 00s at (2026-11-11 07:27:36)
+Trace exploration spec path: ./M_TTrace_1794382056.tla

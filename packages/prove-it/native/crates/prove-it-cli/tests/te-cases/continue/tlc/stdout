@@ -1,0 +1,84 @@
+TLC2 Version 2026.11.11.072731
+Running breadth-first search Model-Checking with fp 0 and seed -6896246223485785196 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 12447] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file {root}/M.tla
+Parsing file /tmp/tlc-14875918704464871271/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-14875918704464871271/TLC.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-14875918704464871271/_TLCTrace.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-14875918704464871271/Sequences.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-14875918704464871271/FiniteSets.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-14875918704464871271/TLCExt.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-14875918704464871271/Integers.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module M
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module M
+Starting... (2026-11-11 07:27:32)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-11 07:27:32.
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 2
+
+State 4: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 3
+
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 2
+
+State 4: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 3
+
+State 5: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 4
+
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 2
+
+State 4: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 3
+
+State 5: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 4
+
+State 6: <Next line 5, col 9 to line 5, col 18 of module M>
+x = 5
+
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 2.7E-19
+6 states generated, 5 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 5.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+Finished in 00s at (2026-11-11 07:27:32)
+Trace exploration spec path: ./M_TTrace_1794382051.tla
