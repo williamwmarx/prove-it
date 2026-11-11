@@ -304,7 +304,7 @@ impl Compiler<'_> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let_definitions(definitions, *body, context)?;
+                let inner = self.bind_let_definitions(definitions, *body, context, true)?;
                 self.compile(*body, &inner)
             }
             NodeKind::Forall { bounds, body } => {
@@ -1293,6 +1293,10 @@ impl Compiler<'_> {
             are_elements_enumerated: elements.iter().all(|element| element.is_enumerated),
             is_in_order: true,
             are_elements_in_order: elements.iter().all(|element| element.is_in_order),
+            unsorted_first: elements
+                .first()
+                .filter(|first| !first.is_normalized)
+                .map(|first| (first.eval.clone(), first.reference.clone())),
             ..leaf(
                 eval(move |machine| {
                     let at = push_all(machine, &evaluators)?;

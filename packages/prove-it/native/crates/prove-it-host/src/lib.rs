@@ -19,7 +19,7 @@ use tla_values::{Id, Store};
 
 /// The version of the contract between the loader and the addon: the exports, their arguments
 /// and the engine IR. The loader uses the TypeScript engine when it expects another.
-pub const ABI_VERSION: i32 = 14;
+pub const ABI_VERSION: i32 = 15;
 
 /// How deep the search thread's stack may grow: compiled closures recurse with the expressions
 /// and the values they evaluate. It is reserved, not committed.
@@ -46,8 +46,9 @@ pub enum Event {
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
     /// A check of the temporal properties part way through the search: its branches, the states
-    /// expanded so far, and the states generated, the states found and the depth so far.
-    LivenessStarted(u64, u64, [u64; 3]),
+    /// expanded so far, the states of its behavior graphs summed over the branches, and the
+    /// states generated, the states found and the depth so far.
+    LivenessStarted(u64, u64, u64, [u64; 3]),
     LivenessFinished,
     /// What Print or PrintT printed, as one state of `width` values.
     Print(EncodedStates, usize),
@@ -76,10 +77,10 @@ impl Reporter for Relay {
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn liveness_started(&mut self, branches: u64, expanded: u64, counts: [u64; 3]) {
+    fn liveness_started(&mut self, branches: u64, expanded: u64, states: u64, counts: [u64; 3]) {
         let _ = self
             .0
-            .send(Event::LivenessStarted(branches, expanded, counts));
+            .send(Event::LivenessStarted(branches, expanded, states, counts));
     }
 
     fn liveness_finished(&mut self) {
@@ -119,8 +120,8 @@ impl Reporter for Direct<'_> {
         (self.0)(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn liveness_started(&mut self, branches: u64, expanded: u64, counts: [u64; 3]) {
-        (self.0)(Event::LivenessStarted(branches, expanded, counts));
+    fn liveness_started(&mut self, branches: u64, expanded: u64, states: u64, counts: [u64; 3]) {
+        (self.0)(Event::LivenessStarted(branches, expanded, states, counts));
     }
 
     fn liveness_finished(&mut self) {
