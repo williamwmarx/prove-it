@@ -384,7 +384,6 @@ impl<'ir> Relay<'ir> {
         is_tool: bool,
         workers: usize,
         is_periodic: bool,
-        coverage_countdown: Option<i32>,
         is_dumped: bool,
         startup_messages: Vec<StartupMessage>,
     ) -> Self {
@@ -393,7 +392,7 @@ impl<'ir> Relay<'ir> {
             is_misprinted: false,
             is_periodic,
             is_periodic_reached: false,
-            coverage_countdown,
+            coverage_countdown: None,
             is_coverage_reached: false,
             is_declined: false,
             is_dumped,
@@ -1156,10 +1155,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 is_tool,
                 workers,
                 is_periodic,
-                coverage::get_countdown(args),
                 is_dumped,
                 front.startup_messages,
             );
+            relay.coverage_countdown = coverage::get_countdown(args);
             let outcome = search(ir, &settings, &mut relay);
             (outcome, relay.assumed_printed, relay.dumped)
         },
