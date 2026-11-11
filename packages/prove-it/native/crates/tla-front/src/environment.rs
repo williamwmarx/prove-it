@@ -92,12 +92,6 @@ pub struct Environment {
     /// The methods of the Java class that overrides a module's operators, which TLC reports as it
     /// starts.
     pub java_overrides: Vec<crate::java_overrides::JavaOverride>,
-    /// The root module's operators the `TLCOverrides` index TLC loads replaces with Java methods,
-    /// each with the method's arity where TLC checks it.
-    pub index_overrides: Vec<(Name, Option<usize>)>,
-    /// The operators of another module, a standard one or one an INSTANCE copies, the index
-    /// replaces, which the run declines where the model reads.
-    pub foreign_overrides: Vec<Name>,
 }
 
 impl Environment {
@@ -2048,13 +2042,6 @@ pub fn get_sany_messages(
 /// Links the spec's modules as `createEnvironment` does for a spec without a model
 /// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
 pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
-    // TLC loads the overrides a `tlc2.overrides.TLCOverrides` index at its package's path lists,
-    // which the front end reads only for the root module's operators. Its class loader finds no
-    // index by the class's name alone (`TLAClass.loadClass`).
-    let index_overrides = match options.load_class {
-        Some(load) => crate::java_overrides::get_index_overrides(load)?,
-        None => Vec::new(),
-    };
     let parsed = Rc::new(parse_module_tokens(
         options.source,
         &tokenize(options.source)?,
@@ -2422,51 +2409,6 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     };
     let mut assumptions = Vec::new();
     add_assumptions(&linked_root, &mut Vec::new(), &mut assumptions);
-    // TLC skips an override of a module the spec doesn't load (`modSet.get`), of a name the module
-    // doesn't define (`getOpDef`), and an operator override whose arity isn't the definition's.
-    let get_symbol = |module: &str, identifier: &str| {
-        let linked = linker.linked_modules.borrow().get(module).cloned();
-        let symbols = linked
-            .or_else(|| linker.nested_modules.borrow().get(module).cloned())
-            .map(|linked| linked.visible.clone())
-            .or_else(|| linker.standard_exports.borrow().get(module).cloned());
-        symbols.map(|symbols| symbols.get(identifier).cloned())
-    };
-    let mut index_overrides_kept = Vec::new();
-    let mut foreign_overrides = Vec::new();
-    for (module, identifier, arity) in index_overrides {
-        if module == *root.name {
-            index_overrides_kept.push((Name::from(identifier), arity));
-            continue;
-        }
-        let is_standard = get_standard_modules(options.version)
-            .iter()
-            .any(|standard| standard.name == module);
-        let is_skipped = match get_symbol(&module, &identifier) {
-            // A module SANY may have read beside the spec, as one an INSTANCE names, which the
-            // linker keeps apart.
-            None => !is_standard && (options.load_module)(&module).is_none(),
-            Some(None) => true,
-            // The root module reads a definition of a module it extends by the same name.
-            Some(Some(symbol))
-                if !is_standard
-                    && linked_root
-                        .visible
-                        .get(identifier.as_str())
-                        .is_some_and(|visible| visible.key == symbol.key) =>
-            {
-                index_overrides_kept.push((Name::from(identifier.as_str()), arity));
-                true
-            }
-            Some(Some(symbol)) => {
-                symbol.kind == SymbolKind::Definition
-                    && arity.is_some_and(|arity| arity != symbol.arity)
-            }
-        };
-        if !is_skipped {
-            foreign_overrides.push(Name::from(identifier));
-        }
-    }
     let environment = Environment {
         startup_definitions,
         assumptions,
@@ -2486,8 +2428,6 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         instance_names: linker.instance_names.take(),
         printed,
         java_overrides: linker.java_overrides.take(),
-        index_overrides: index_overrides_kept,
-        foreign_overrides,
     };
     // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
     // the level bound it computes is above constant. The bound counts the operators that TLC's

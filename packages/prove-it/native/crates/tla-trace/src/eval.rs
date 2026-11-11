@@ -385,9 +385,6 @@ pub struct TracePrefix {
 
 pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
-    /// The bodies of the definitions TLC computes again, with their effects, wherever the model
-    /// reads the name the configuration substitutes them for (`Definition::READ_DECLINED`).
-    pub(crate) declined_bodies: std::collections::HashSet<NodeId>,
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
     pub(crate) state_builtins: &'static [&'static str],
     /// Whether `can_read` bounds the level as TLC's `getLevelBound` does, for `may_reach_bound`.
@@ -740,7 +737,6 @@ impl<'ir> Evaluator<'ir> {
             .collect();
         let width = ir.variables.len();
         Evaluator {
-            declined_bodies: ir.get_declined_bodies(),
             state_builtins: &[],
             is_level_bound: false,
             level_bounds: HashMap::new(),
@@ -872,7 +868,7 @@ impl<'ir> Evaluator<'ir> {
         &self.ir.texts[id as usize]
     }
 
-    pub(crate) fn node(&self, node: NodeId) -> (NodeId, &'ir NodeKind) {
+    fn node(&self, node: NodeId) -> (NodeId, &'ir NodeKind) {
         let mut id = node;
         loop {
             match &self.ir.nodes.arena[id as usize].kind {
@@ -1700,9 +1696,6 @@ impl<'ir> Evaluator<'ir> {
     }
 
     fn evaluate_node(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
-        if self.declined_bodies.contains(&self.node(node).0) {
-            return fail(tla_ir::READ_DECLINED_REASON);
-        }
         let kind = self.kind(node);
         match kind {
             NodeKind::Number(int) => Ok(Value::Int(*int)),

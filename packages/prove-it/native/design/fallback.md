@@ -285,34 +285,18 @@ it from one that printed something else. Each is outside the corpus:
   `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
   `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
   first position where the stream differs from the normalized set, not where the stream starts.
-- a configuration substitute for a definition that draws at random, `C <- D` with
-  `D == RandomElement({1})`, where the run computes C: TLC holds C as D's definition and draws
-  again at each read and as it starts, which moves its generator, where the engine holds one
-  value, and the run declines where it computes C (`Definition::READ_DECLINED`) or where TLC
-  computes it only as it starts (D before C, or a printing definition between them). Main printed
-  what TLC prints only because nothing after draws from the generator; with a later draw the two
-  differ. 44 specs of #292's adversarial rounds matched on main and decline now:
-  `A-{acons,cons,indirect,indirectCons}-cX-rand`, `F-{act,assume,cons,prop}-c1-randB`,
-  `F-post-c1-rand{,B}`, `A-rand-{assume,inNext,post}-CD`, `A-rand-{def,none}-{CmidD,DC}`,
-  `A-{cardinal,choose,enabled,ifBrConst,init,inst,lambda,letPar,quantArg,recDom,recOp,subset,union}-rnd`
-  (`init`, `inst`, `quantArg` and `recDom` also with `-tool`), `J-prop-rnd`,
-  `J-rand-{acC,aliasInvC,constrC,postUses}`, `J-rand-{aliasInvC,invC,invUsesC}-nowarn` and
-  `G-randT-{ac,co}`. To win them back, count TLC's draws: once as it starts where it computes C,
-  and once at each read.
-- an operator a TLCOverrides index replaces with a `final` method without parameters, which TLC
-  calls as it loads it (`MethodValue.get`): main matched only where the method shows nothing and
-  fails nowhere, which only running the Java tells. 17 specs of round 6:
-  `C-final-{Bar,Foo,Foo1,FooF,Len,Op,ToString}-{deadIf,unused}` and
-  `C-final-Foo-{letNext,passUnused,view}`.
-- an operator a TLCOverrides index replaces that a VIEW or a POSTCONDITION reads, which TLC
-  computes with the Java method: main matched only where the method's value changes nothing the
-  run prints. 7 specs of round 6: `C-{ok,evalSilent,overload,twoClasses,twoClassesBoth}-Foo-view`,
-  `I-cfg-viewOnly-bfs` and `I-cfg-post-bfs`. To win them back, run the method's constant.
-- an argument with a configuration substitute that draws or prints, passed to a recursive
-  operator that never reads it: TLC passes it unevaluated (`LazyValue`), the engine evaluates the
-  arguments of a recursive call as it makes it, where the run declines. 4 specs of round 6:
-  `A-{recUnused,recSwap2}-0-{init,next}`. To win them back, pass a recursive operator's arguments
-  as TLC does, computed where the body first reads them.
+- a configuration substitute `C <- D`, and an operator a TLCOverrides index replaces, where TLC
+  computes the definition or the Java method again at each read: TLC holds C as D's definition, so
+  it prints, draws and sets registers again wherever it reads C, and calls a `final` method without
+  parameters as it loads it (`MethodValue.get`). Native runs keep main's behaviour, which matches
+  only where nothing after the read shows the difference, and prints other output where something
+  does. The groups: register readers, TLCGet("level") printers, invisible override reads, random
+  draws, final methods, VIEW and POSTCONDITION reads, and recursive-operator arguments. The
+  `front-constants-full` branch declines them where the run computes the read
+  (`Definition::READ_DECLINED`) and reads the index; its 13,050 adversarial specs, against TLC at
+  d8fb231, are the regression set for winning them back. A substitute that reaches AssertEq,
+  TLCGetOrDefault, TLCGetAndSet or PickSuccessor where the run reads it stays declined, as it was
+  before the engine checked them.
 
 #### Known wrong outputs
 
@@ -620,17 +604,9 @@ differently on one thread and four, and 1,020 are native in TLC's default mode.
 
 The front end reads the class TLC loads for a module and puts the constant each method returns in
 place of the operator. It skips a method annotated `@TLAPlusOperator` or `@Evaluation`, as
-`processModuleOverrides` does, unless a `tlc2.overrides.TLCOverrides` class beside the spec could
-list it, and runs a method that catches an exception up to its first return. It reads a
-`tlc2/overrides/TLCOverrides` index whose `get` returns class literals, and whose classes'
-overrides are `@TLAPlusOperator(warn = false)` or `@Evaluation(silent = true, warn = false)`
-methods TLC doesn't call as it loads them (a `final` one without parameters it calls). An override
-of a module the spec doesn't load, of a name the module doesn't define, or of an operator of
-another arity changes nothing. The IR flags each operator of the root module, or of a module it
-extends, that one replaces (`Definition::READ_DECLINED`), and the run declines where it computes
-it, as it also does where it computes a substitute TLC computes again with its effects. It
-declines at startup where the operator's own definition prints or draws as TLC would have computed
-it then, and for an override of a standard module's operator or of an instanced module's. These shapes stay
+`processModuleOverrides` does, and runs a method that catches an exception up to its first return.
+It declines an annotated method where a `tlc2.overrides.TLCOverrides` index, beside the spec or at
+its package's path, could load the class. These shapes stay
 declined for good, because what TLC does with them depends on the JVM, not on the class file:
 
 - **A static initializer, a field's initializer or a superclass.** Java runs them as TLC first

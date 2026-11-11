@@ -263,29 +263,6 @@ fn lower_ranked(
         .collect();
     let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
     let lowered = (|| {
-        let index_overrides =
-            crate::lower::get_index_overrides(&config, &environment, Some(&evaluator))?;
-        // The front end computes none of the names TLC computes as it doesn't.
-        evaluator.opaque_names.borrow_mut().extend(
-            crate::lower::get_repeated_reads(&environment)?
-                .into_keys()
-                .chain(
-                    index_overrides
-                        .iter()
-                        .map(|definition| definition.name.clone()),
-                )
-                .chain(
-                    environment
-                        .substitutions
-                        .iter()
-                        .filter(|(_, target)| {
-                            index_overrides
-                                .iter()
-                                .any(|definition| definition.name == **target)
-                        })
-                        .map(|(name, _)| name.clone()),
-                ),
-        );
         let constant_invariants = check_invariants(
             &config,
             &environment,
@@ -326,7 +303,6 @@ fn lower_ranked(
         );
         lowering.evaluator = Some(&evaluator);
         lowering.random_seed = options.random_seed;
-        lowering.index_overrides = index_overrides;
         let version_text = options.version.map(|version| match version {
             TlcVersion::V1_7_4 => "1.7.4",
             TlcVersion::Master => "master",

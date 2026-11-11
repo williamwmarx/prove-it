@@ -5,7 +5,7 @@
 //! state it keeps, so every state but the last prints sorted. The last state of a violation is
 //! one the search didn't keep, and TLC fingerprinted it only if it satisfies the constraints.
 
-use tla_ir::{AtomKind, Definition, DefinitionForm, Ir, NodeId, NodeKind};
+use tla_ir::{AtomKind, Definition, DefinitionForm, Ir, NodeId};
 use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
@@ -72,9 +72,7 @@ impl<'ir> Rebuilder<'ir> {
     /// computed as it started (`processConstantDefns`), which it rejects where the configuration
     /// names it as the ALIAS or a POSTCONDITION (`Spec.getAliasSpec`, `getPostConditionSpecs`):
     /// a 0-ary definition of constant level, as the front end marks it, whose evaluation then
-    /// succeeds, but for one whose body is a numeral or a string: TLC's lookup finds the value
-    /// it gave the literal (`processConstants`) and leaves the definition as it is
-    /// (`SymbolNodeValueLookupProvider.lookup`). `Unsupported` where the evaluator can't tell.
+    /// succeeds. `Unsupported` where the evaluator can't tell.
     pub fn is_computed_at_startup(&mut self, definition: u32) -> Result<bool, Unsupported> {
         if !self.is_precomputed(definition) {
             return Ok(false);
@@ -82,15 +80,6 @@ impl<'ir> Rebuilder<'ir> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
         let defined = evaluator.definition(ir.definitions[definition as usize]);
-        match ir.nodes.arena[defined.body as usize].kind {
-            NodeKind::Number(_) | NodeKind::String(_) => return Ok(false),
-            NodeKind::WideNumber(_) => {
-                return Err(Unsupported(
-                    "a definition of a numeral TLC can't hold".into(),
-                ));
-            }
-            _ => {}
-        }
         let is_marked = defined.flags & Definition::NORMALIZED != 0
             && matches!(&defined.form, DefinitionForm::Operator(params) if params.is_empty())
             && !ir.model.startup.definitions.contains(&definition);

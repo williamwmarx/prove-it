@@ -1113,7 +1113,7 @@ impl Decoder<'_> {
                 NodeKind::Subexpression(selectors)
             }
             tag::DEFINITION => {
-                if flags & !0x7f != 0 {
+                if flags & !0x3f != 0 {
                     return self.error(format!("definition flags {flags}"));
                 }
                 let name = self.text()?;

@@ -52,30 +52,7 @@ pub type NodeId = u32;
 /// An index into [`Ir::definitions`], [`Ir::scopes`], [`Ir::constants`] or [`Ir::builtins`].
 pub type Index = u32;
 
-/// Why a run declines where it computes a definition flagged `Definition::READ_DECLINED`.
-pub const READ_DECLINED_REASON: &str =
-    "unsupported: a definition TLC computes again with its effects, or with a Java method";
-
 impl Ir {
-    /// The bodies of the definitions flagged `Definition::READ_DECLINED`.
-    pub fn get_declined_bodies(&self) -> std::collections::HashSet<NodeId> {
-        self.definitions
-            .iter()
-            .filter_map(|&node| match &self.nodes.arena[node as usize].kind {
-                NodeKind::Definition(definition)
-                    if definition.flags & Definition::READ_DECLINED != 0 =>
-                {
-                    let mut body = definition.body;
-                    while let NodeKind::Reference(target) = self.nodes.arena[body as usize].kind {
-                        body = target;
-                    }
-                    Some(body)
-                }
-                _ => None,
-            })
-            .collect()
-    }
-
     /// A text's UTF-16 code units, as the store holds a string.
     pub fn get_text_units(&self, text: TextId) -> Vec<u16> {
         self.wide_texts.get(&text).map_or_else(
@@ -566,11 +543,6 @@ impl Definition {
     pub const SUBSTITUTED: i32 = 16;
     /// A constant definition TLC computes and deep-normalizes at startup (`processConstantDefns`).
     pub const NORMALIZED: i32 = 32;
-    /// A definition TLC computes as the run can't, where the run declines as it computes it: the
-    /// copy of a definition the configuration substitutes for a name, which TLC computes again
-    /// with its effects wherever the name is read, or one a TLCOverrides index replaces with a
-    /// Java method.
-    pub const READ_DECLINED: i32 = 64;
 }
 
 #[derive(Debug, Clone, PartialEq)]

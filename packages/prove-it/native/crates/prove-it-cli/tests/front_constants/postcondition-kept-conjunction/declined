@@ -1,1 +1,1 @@
-a POSTCONDITION the configuration substitutes a printing TLCEval for: C <- D
+a POSTCONDITION TLC may compute as it starts
