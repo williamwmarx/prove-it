@@ -551,7 +551,8 @@ const proveNatively = async (
           missingProofCount: result.missingProofCount,
           omittedProofCount: result.omittedProofCount,
         };
-      for (const key of result.keys) {
+      // A module two others extend is asked for once.
+      for (const key of new Set(result.keys)) {
         const moduleName = key.slice("module:".length);
         const source = options.loadModule?.(moduleName);
         loaded.set(moduleName, source);
@@ -566,17 +567,23 @@ const proveNatively = async (
       const requests = result.requests.filter(
         (request) => failed === undefined || request.priority < failed.priority,
       );
-      if (failed !== undefined && requests.length === 0) throw failures.get(failed.key);
+      if (failed !== undefined && requests.length === 0) {
+        options.signal?.throwIfAborted();
+        throw failures.get(failed.key);
+      }
       if (requests.length > 0) options.signal?.throwIfAborted();
       await Promise.all(
         requests.map(async (request) => {
           try {
+            // A decide that throws at once is read as one that rejects, as the TypeScript awaits it.
             const answer = await getAnswer(
-              decideText(
-                request.prover,
-                request.text,
-                { timeLimitMs: request.timeLimitMs, signal: options.signal },
-                request.priority,
+              Promise.resolve().then(() =>
+                decideText(
+                  request.prover,
+                  request.text,
+                  { timeLimitMs: request.timeLimitMs, signal: options.signal },
+                  request.priority,
+                ),
               ),
             );
             known.set(`decide:${request.key}`, answer);

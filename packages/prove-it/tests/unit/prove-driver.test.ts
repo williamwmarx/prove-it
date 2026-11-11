@@ -303,6 +303,46 @@ describe("the Rust driver", () => {
     });
   });
 
+  it("throws an abort before a decision's error", async () => {
+    await expectSame({
+      options: { source: getModule("THEOREM 1 + 1 = 2 BY SMT\nTHEOREM 2 + 2 = 4 BY Zenon") },
+      decide: async (prover) => {
+        if (prover === "zenon") throw new Error("fatal zenon");
+        return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
+      },
+      abortAfter: 2,
+    });
+  });
+
+  it("reads a decide that throws at once as one that rejects", async () => {
+    await expectSame({
+      options: { source: getModule("THEOREM 1 + 1 = 2 BY SMT, Zenon") },
+      decide: (prover) => {
+        if (prover === "smt") throw new TlaProverError("at once");
+        return Promise.resolve({ verdict: "unsat", timeUsedMs: 1, statistics: {} });
+      },
+    });
+  });
+
+  it("loads a module two others extend once", async () => {
+    const getLoads = async (driver: string) => {
+      const loads: string[] = [];
+      await proveWithDriver(driver, {
+        options: {
+          source: getModule("THEOREM 1 = 1 BY SMT", "A, B, TLAPS"),
+          loadModule: (name) => {
+            loads.push(name);
+            if (name === "A" || name === "B") return `---- MODULE ${name} ----\nEXTENDS C\n====\n`;
+            return name === "C" ? "---- MODULE C ----\nZ == 1\n====\n" : undefined;
+          },
+        },
+        decide: byProver({}),
+      });
+      return loads;
+    };
+    expect(await getLoads("rust")).toEqual(await getLoads("ts"));
+  });
+
   it("proves with workers as the TypeScript driver does", async () => {
     const source = loadFixture("HourClock") ?? "";
     const setting = process.env.PROVE_IT_PROVER_DRIVER;
