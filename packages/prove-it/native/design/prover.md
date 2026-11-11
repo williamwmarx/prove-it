@@ -1232,13 +1232,17 @@ b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
 
 **The gate is tlapm's record; Z3 4.8.9 breaks ties.** tlapm's build pins and bundles Z3 4.8.9
 (`deps/z3/Makefile` at ff40755) and runs it as `z3 -smt2 -v:0 AUTO_CONFIG=false smt.MBQI=true`
-(`src/params.ml:230`); which Z3 the recording of `proofs.json` ran is not established. On Simple's
-`Init => Inv` (`smt/5e53b781a834c8ec`, tlapm's `13e58ea1eeb4ae17`), which `proofs.json` records as
-proved by tlapm's SMT, Z3 4.8.9's release binary answers `unsat` in 0.3 s, where Z3 5.3.3 times out
-at 5 s and 30 s. Over the 10,373 `smt` and `z3` inputs matched to tlapm's, 4.8.9 and tlapm's
+(`src/params.ml:230`). `proofs.json` was recorded with tlapm 5f5037f's release build on macOS
+(the configuration `tlapm.json` keeps), whose `deps/z3/dune` installs that Z3 4.8.9
+(`z3-4.8.9-x64-osx-10.14.6`) to `lib/tlapm/backends/bin`, first on the PATH tlapm runs it with.
+On Simple's `Init => Inv` (`smt/5e53b781a834c8ec`, tlapm's `13e58ea1eeb4ae17`), which `proofs.json`
+records as proved by tlapm's SMT, Z3 4.8.9's release binary answers `unsat` in 0.3 s, where Z3
+5.3.3 times out at 5 s and 30 s. Over the 10,373 `smt` and `z3` inputs matched to tlapm's, 4.8.9 and tlapm's
 record both prove 10,074, 4.8.9 alone 121 and tlapm alone 33; 5.3.3 disagrees with the record on
-44, 4.8.9 on 154, so neither version accounts for the record. The audit below was run against
-5.3.3, and causes 1 and 4 were fixed toward it, which lost Simple's four `Init => Inv` obligations.
+44, 4.8.9 on 154: the recording ran 4.8.9 on another machine under a 5 s wall-clock limit, so
+an input near the limit can go either way, and the audit is read input by input. The audit below
+was run against 5.3.3, and causes 1 and 4 were fixed toward it, which lost Simple's four
+`Init => Inv` obligations.
 Against Z3 4.8.9's source:
 
 | Cause | Z3 4.8.9 | Now |
