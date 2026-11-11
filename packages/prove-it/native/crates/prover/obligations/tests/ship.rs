@@ -245,6 +245,114 @@ fn ptl_fails_a_step_whose_enabled_needs_a_hidden_definition() {
     assert!(matches!(input, Err(ObligationError::Prover(_))));
 }
 
+// The LS4 input of each theorem ptl.test.ts decides, as the TypeScript writes it.
+#[test]
+fn ptl_writes_the_inputs_the_typescript_decides() {
+    let cases: [(&[&str], &str); 12] = [
+        (
+            &[
+                "THEOREM Spec => []Inv",
+                "<1>2. Inv /\\ [Next]_vars => Inv'",
+                "  BY DEF Inv, Next, vars",
+                "<1>. QED  BY <1>2, PTL DEF Spec",
+            ],
+            "not (((always ((h2f89a & (hfc35e | h18388)) -> (next h2f89a))) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always h2f89a))))",
+        ),
+        (
+            &[
+                "THEOREM Spec => (x = 0 ~> x = 2)",
+                "<1>1. Spec => (x = 0 ~> x = 1)",
+                "  OMITTED",
+                "<1>2. Spec => (x = 1 ~> x = 2)",
+                "  OMITTED",
+                "<1>. QED  BY <1>1, <1>2, PTL",
+            ],
+            "not (((always (h94a4d -> (always (h4ca64 -> (sometime h7fe4a))))) & (always (h94a4d -> (always (h7fe4a -> (sometime hda924))))) & (always (cc | ~ cc)) -> (h94a4d -> (always (h4ca64 -> (sometime hda924))))))",
+        ),
+        (
+            &[
+                "THEOREM Spec => (x = 0 ~> x = 2)",
+                "<1>1. Spec => (x = 0 ~> x = 1)",
+                "  OMITTED",
+                "<1>. QED  BY <1>1, PTL",
+            ],
+            "not (((always (h94a4d -> (always (h4ca64 -> (sometime h7fe4a))))) & (always (cc | ~ cc)) -> (h94a4d -> (always (h4ca64 -> (sometime hda924))))))",
+        ),
+        (
+            &[
+                "THEOREM ASSUME []ENABLED <<Next>>_vars PROVE Spec => []<><<Next>>_vars",
+                "  BY PTL DEF Spec",
+            ],
+            "not (((always (always hc5714)) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
+        ),
+        (
+            &[
+                "THEOREM ASSUME []<>ENABLED <<Next>>_vars PROVE Spec => []<><<Next>>_vars",
+                "  BY PTL DEF Spec",
+            ],
+            "not (((always (always (sometime hc5714))) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
+        ),
+        (
+            &[
+                "THEOREM ASSUME []<>ENABLED <<Next>>_vars PROVE SF_vars(Next) => []<><<Next>>_vars",
+                "  BY PTL",
+            ],
+            "not (((always (always (sometime hc5714))) & (always (cc | ~ cc)) -> (((always (sometime hc5714)) -> (always (sometime (hfc35e & (~ h18388))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
+        ),
+        (
+            &["THEOREM ASSUME x = 1 PROVE x = 1", "  BY PTL"],
+            "not ((h7fe4a & (always (cc | ~ cc)) -> h7fe4a))",
+        ),
+        (
+            &["THEOREM ASSUME x = 1 PROVE 1 = x", "  BY PTL"],
+            "not ((h7fe4a & (always (cc | ~ cc)) -> h344d6))",
+        ),
+        (
+            &[
+                "THEOREM ASSUME NEW CONSTANT c, c = 1 PROVE [](c = 1)",
+                "  BY PTL",
+            ],
+            "not (((always h38dda) & (always (cc | ~ cc)) -> (always h38dda)))",
+        ),
+        (
+            &["THEOREM ASSUME x = 1 PROVE [](x = 1)", "  BY PTL"],
+            "not ((h7fe4a & (always (cc | ~ cc)) -> (always h7fe4a)))",
+        ),
+        (
+            &[
+                "THEOREM TRUE",
+                "<1>. DEFINE P(T) == T # {}",
+                "<1>1. ASSUME NEW T, P(T) PROVE T = T",
+                "  <2>1. CASE T = {}",
+                "    OMITTED",
+                "  <2>2. CASE ~(T = {})",
+                "    OMITTED",
+                "  <2>. QED  BY <2>1, <2>2, PTL",
+                "<1>. QED  OBVIOUS",
+            ],
+            "not (((hbe322 -> haf23d) & ((~ hbe322) -> haf23d) & (always (cc | ~ cc)) -> haf23d))",
+        ),
+        (
+            &[
+                "THEOREM ASSUME NEW T PROVE T = T",
+                "<1>1. CASE T = {}",
+                "  OMITTED",
+                "<1>2. CASE ~(T = {})",
+                "  OMITTED",
+                "<1>. QED  BY <1>1, <1>2, PTL",
+            ],
+            "not (((always ((always hbe322) -> haf23d)) & (always ((always (~ hbe322)) -> haf23d)) & (always (cc | ~ cc)) -> haf23d))",
+        ),
+    ];
+    for (theorem, expected) in cases {
+        assert_eq!(
+            get_ptl_input(theorem).expect("the obligation encodes"),
+            expected,
+            "{theorem:?}"
+        );
+    }
+}
+
 // tlapm's comments name its version and the obligation, so only the commands are compared.
 fn encode_smt_fixture(name: &str, id: usize) -> String {
     let directory = get_fixtures("prove");
