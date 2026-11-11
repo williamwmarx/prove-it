@@ -2200,24 +2200,33 @@ impl Parser {
 
     fn parse_declaration_unit(&mut self) -> Parsed<Declaration> {
         let location = self.peek_location();
-        if self.is_at("_", 0) && self.peek_kind(1) == TokenKind::Operator {
+        // SANY's SomeFixDecl: `_ op _` for an infix operator, `_ op` for a postfix one and `op _`
+        // for a prefix one.
+        if self.is_at("_", 0) {
             self.advance()?;
+            let operator = self.peek(0);
+            let is_infix = operator.kind == TokenKind::Operator && is_infix(&operator.text);
+            let is_postfix = operator.kind == TokenKind::Operator
+                && (is_postfix(&operator.text) || &*operator.text == "'");
+            if !(is_infix || is_postfix) {
+                return Err(self.error("Expected an infix or postfix operator"));
+            }
             let name = self.advance()?.text;
-            let arity = if self.accept("_") { 2 } else { 1 };
+            if is_infix {
+                self.expect("_")?;
+            }
             return Ok(Declaration {
                 name,
-                arity,
+                arity: if is_infix { 2 } else { 1 },
                 location,
             });
         }
         if self.peek_kind(0) == TokenKind::Operator && self.is_at("_", 1) {
-            let operator = self.advance()?.text;
+            if !is_definable_prefix(&self.peek(0).text) {
+                return Err(self.error("Expected a prefix operator"));
+            }
+            let name = self.advance()?.text;
             self.advance()?;
-            let name = if &*operator == "-" {
-                Rc::from("-.")
-            } else {
-                operator
-            };
             return Ok(Declaration {
                 name,
                 arity: 1,
@@ -2225,6 +2234,10 @@ impl Parser {
             });
         }
         let name = self.expect_identifier()?;
+        // SANY's lexer reads `__` as two `_`, which name nothing.
+        if name.chars().all(|character| character == '_') {
+            return Err(self.error("Expected a name"));
+        }
         if !self.accept("(") {
             return Ok(Declaration {
                 name,
