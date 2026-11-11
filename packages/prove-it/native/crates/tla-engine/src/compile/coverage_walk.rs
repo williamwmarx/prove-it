@@ -420,6 +420,11 @@ impl Compiler<'_> {
                 let [argument] = &args[..] else {
                     return decline("a function applied to several arguments");
                 };
+                // TLC applies a function it keeps lazy without building it, which counts its body
+                // only for the argument and builds nothing.
+                if !self.is_strict_function(*function, at) {
+                    return decline("a function TLC may keep lazy, applied");
+                }
                 let function = self.compile(*function, at)?.eval;
                 let argument = self.compile(*argument, at)?.eval;
                 Ok(super::eval(move |machine| {

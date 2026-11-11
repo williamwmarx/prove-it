@@ -217,3 +217,20 @@ fn declines_coverage_of_a_run_past_the_cut() {
         String::from_utf8_lossy(&output.stdout)
     );
 }
+
+#[test]
+fn declines_coverage_of_a_lazy_function_applied_in_a_walk() {
+    // TLC applies a function it keeps lazy without building it, counting its body only for the
+    // argument and no construction (TLC at d8fb231 reports the body twice, the engine counted it
+    // four times), so neither the engine nor the replay counts it, and the binary declines.
+    let output = run("LazyApply", "LazyApply", &[]);
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        errors.contains("prove-it: not native yet: coverage"),
+        "{errors}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("The coverage statistics"),
+        "{errors}"
+    );
+}

@@ -853,7 +853,7 @@ impl Compiler<'_> {
     // Whether TLC evaluates the function an application applies to a value at once: one a state
     // holds, a constant or one computed at startup, a bound name, or one applied or selected out
     // of such, where a function constructed in place TLC keeps lazy (`EvalControl.KeepLazy`).
-    fn is_strict_function(&self, node: NodeId, context: &Context) -> bool {
+    pub(super) fn is_strict_function(&self, node: NodeId, context: &Context) -> bool {
         match self.node(node).1 {
             NodeKind::Label { body, .. } => self.is_strict_function(*body, context),
             NodeKind::Prime(inner) => self.is_strict_function(*inner, context),
