@@ -2443,7 +2443,9 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
             .iter()
             .any(|standard| standard.name == module);
         let is_skipped = match get_symbol(&module, &identifier) {
-            None => !is_standard,
+            // A module SANY may have read beside the spec, as one an INSTANCE names, which the
+            // linker keeps apart.
+            None => !is_standard && (options.load_module)(&module).is_none(),
             Some(None) => true,
             // The root module reads a definition of a module it extends by the same name.
             Some(Some(symbol))

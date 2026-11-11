@@ -467,8 +467,11 @@ pub(crate) fn get_index_overrides(
     // The engine computes another module's operator as a builtin, or as an INSTANCE's copy: the
     // run declines where the model may read one, by its name or a copy's.
     for identifier in &environment.foreign_overrides {
+        // A copy's key is the name with where it comes from (`Op@M#1`), and an instance names it
+        // `I!Op`.
         let copy = format!("!{identifier}");
-        let is_named = |name: &str| name == &**identifier || name.ends_with(&copy);
+        let is_named =
+            |name: &str| name.split('@').next() == Some(&**identifier) || name.ends_with(&copy);
         let mut pending: Vec<Expr> = environment
             .definitions
             .values()
@@ -602,6 +605,17 @@ fn is_read_under_binder(name: &str, environment: &Environment) -> bool {
             pending.push((body.clone(), is_bound));
             continue;
         }
+        // A binder's sets are computed where it is, its body under its names.
+        let sets: Vec<Expr> = match &expression.kind {
+            ExpressionKind::Quantified { bounds, .. }
+            | ExpressionKind::SetMap { bounds, .. }
+            | ExpressionKind::FunctionConstruction { bounds, .. } => {
+                bounds.iter().map(|bound| bound.set.clone()).collect()
+            }
+            ExpressionKind::SetFilter { bound, .. } => vec![bound.set.clone()],
+            ExpressionKind::Choose { set, .. } => set.iter().cloned().collect(),
+            _ => Vec::new(),
+        };
         let is_binder = matches!(
             expression.kind,
             ExpressionKind::Lambda { .. }
@@ -612,12 +626,10 @@ fn is_read_under_binder(name: &str, environment: &Environment) -> bool {
                 | ExpressionKind::SetMap { .. }
                 | ExpressionKind::FunctionConstruction { .. }
         );
-        pending.extend(
-            expression
-                .children()
-                .into_iter()
-                .map(|child| (child, is_bound || is_binder)),
-        );
+        pending.extend(expression.children().into_iter().map(|child| {
+            let is_set = sets.iter().any(|set| Rc::ptr_eq(set, &child));
+            (child, is_bound || is_binder && !is_set)
+        }));
     }
     false
 }
@@ -1736,6 +1748,20 @@ impl<'a> Lowering<'a> {
             return Err(FrontError::NotYet(
                 "an assumption that passes an operator an argument with AssertEq".into(),
             ));
+        }
+        // TLC computes each constant definition as it starts (`processConstantDefns`), and with it
+        // a substitute with effects it reads, again; the engine computes a definition where the
+        // model reads it.
+        let repeated: Vec<&str> = self.repeated_reads.keys().map(|name| &**name).collect();
+        if let Some(definition) = environment.startup_definitions.iter().find(|definition| {
+            self.normalized.contains(&(Rc::as_ptr(definition) as usize))
+                && reaches_in(&definition.body, environment, &repeated, self.evaluator)
+        }) {
+            return Err(FrontError::NotYet(format!(
+                "a constant definition TLC computes as it starts that reads a configuration \
+                 substitute with effects: {}",
+                definition.name
+            )));
         }
         // TLC computes the constant definitions of a module without parameters a named INSTANCE
         // copies again as the copies (`processConstantDefns`), which repeats their effects. It
