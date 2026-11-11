@@ -1311,7 +1311,11 @@ impl<'a> Lowering<'a> {
         // registers once as it starts (`TLCGetOrDefault` has no minimum level), and warns of a
         // constant invariant that does; the engine computes them where the model reads them.
         let registers = ["TLCGetOrDefault", "TLCGetAndSet"];
-        let analyzer = environment.create_level_analyzer(&["TLCGet", "Trace", "CounterExample"]);
+        let variables: Vec<&str> = environment
+            .variable_index
+            .keys()
+            .map(|name| &**name)
+            .collect();
         let mut is_register_constant = false;
         for definition in environment.definitions.values() {
             is_register_constant |= matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
@@ -1320,11 +1324,7 @@ impl<'a> Lowering<'a> {
                     || environment.substitutions.iter().any(|(name, target)| {
                         *target == definition.name && is_read(name, config, environment)
                     }))
-                && analyzer
-                    .analyze_definition(definition, &crate::levels::Scope::default())?
-                    .data
-                    .level
-                    == 0;
+                && !reaches_in(&definition.body, environment, &variables);
         }
         is_register_constant |= environment
             .assumptions
