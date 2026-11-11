@@ -771,6 +771,7 @@ impl<'a> Compiler<'a> {
                 slot_count: SEARCH_SLOTS.len(),
                 is_epoch_checked: options.is_epoch_checked,
                 random_seed: ir.model.random_seed,
+                fingerprint_index: ir.model.fingerprint_index,
                 ..Program::default()
             },
             texts: vec![None; ir.texts.len()],

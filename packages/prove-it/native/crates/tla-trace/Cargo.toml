@@ -13,3 +13,6 @@ tla-values = { path = "../tla-values" }
 
 [dev-dependencies]
 tla-engine = { path = "../tla-engine" }
+# For the dumps' tests, which lower their specs as the binary does: a dev-dependency only, whose
+# cycle Cargo allows, tla-front depending on tla-trace.
+tla-front = { path = "../tla-front" }

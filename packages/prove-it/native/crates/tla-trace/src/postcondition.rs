@@ -79,6 +79,12 @@ impl Rebuilder<'_> {
             }
             _ => None,
         };
+        let counter_example = match &inputs.counter_example {
+            Some(counter_example) => {
+                Some(self.counter_example_value(counter_example, aliases.as_deref(), false)?)
+            }
+            None => None,
+        };
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         let Some(definition) = ir
@@ -89,32 +95,12 @@ impl Rebuilder<'_> {
         else {
             return unsupported("the IR doesn't define");
         };
-        // The values TLC binds the parameters of each action of the trace's steps to.
-        let mut parameters = HashMap::new();
-        if let Some(counter_example) = &inputs.counter_example {
-            let positions = counter_example
-                .trace
-                .states
-                .iter()
-                .skip(1)
-                .map(|state| state.action)
-                .chain(counter_example.cycle.map(|(_, closing)| closing));
-            for position in positions.flatten() {
-                if let (Some(action), None) = (
-                    ir.model.actions.get(position as usize),
-                    parameters.get(&position),
-                ) {
-                    let bound = action_parameters(evaluator, action)?;
-                    parameters.insert(position, bound);
-                }
-            }
-        }
         let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
         let record = |fields: Vec<(&str, Value)>| {
             Value::record(
                 fields
                     .into_iter()
-                    .map(|(name, value)| (evaluator.counterexample_field(name), value))
+                    .map(|(name, value)| (evaluator.counterexample_field(name, false), value))
                     .collect(),
             )
         };
@@ -176,128 +162,12 @@ impl Rebuilder<'_> {
             counts
         };
         let named = run(sorted_function(names, values, Class::Plain))?;
-        let counter_example = match &inputs.counter_example {
+        let counter_example = match counter_example {
+            Some(counter_example) => counter_example,
             None => run(record(vec![
                 ("action", Value::empty_set()),
                 ("state", Value::empty_set()),
             ]))?,
-            Some(counter_example) => {
-                let states = counter_example
-                    .trace
-                    .states
-                    .iter()
-                    .enumerate()
-                    .map(|(position, state)| {
-                        if let Some(Alias::Record(fields)) =
-                            aliases.as_ref().map(|aliases| &aliases[position])
-                        {
-                            if fields.iter().any(|(name, _)| name == "_ALIASEvalError") {
-                                return unsupported("of a model whose ALIAS fails");
-                            }
-                            let fields = fields
-                                .iter()
-                                .map(|(name, value)| {
-                                    (
-                                        evaluator.text_of(name.encode_utf16().collect()),
-                                        value.clone(),
-                                    )
-                                })
-                                .collect();
-                            return Ok(Value::tuple(vec![
-                                Value::Int(position as i32 + 1),
-                                run(Value::record(fields))?,
-                            ]));
-                        }
-                        let fields = ir
-                            .tlc_order
-                            .iter()
-                            .map(|&variable| {
-                                (
-                                    evaluator.text_of(
-                                        ir.texts[ir.variables[variable as usize] as usize]
-                                            .encode_utf16()
-                                            .collect(),
-                                    ),
-                                    state.values[variable as usize].clone(),
-                                )
-                            })
-                            .collect();
-                        Ok(Value::tuple(vec![
-                            Value::Int(position as i32 + 1),
-                            run(Value::record(fields))?,
-                        ]))
-                    })
-                    .collect::<Result<Vec<_>, Unsupported>>()?;
-                // TLC records each step with its action's name and location.
-                let action = |position: Option<u32>| {
-                    let Some(action) =
-                        position.and_then(|position| ir.model.actions.get(position as usize))
-                    else {
-                        return unsupported("of a step whose action the trace lacks");
-                    };
-                    // TLC records the name and location its action holds (`TLCStateInfo`).
-                    let name = &ir.texts[action.name as usize];
-                    let Some(range) = action.location else {
-                        return unsupported("of an action without a location");
-                    };
-                    let location = run(record(vec![
-                        ("beginLine", Value::Int(range.start_line)),
-                        ("beginColumn", Value::Int(range.start_column)),
-                        ("endLine", Value::Int(range.end_line)),
-                        ("endColumn", Value::Int(range.end_column)),
-                        ("module", text(&ir.texts[range.module as usize])),
-                    ]))?;
-                    let mut fields = vec![("name", text(name)), ("location", location)];
-                    // TLC adds the parameters bound to values, by name and in order.
-                    let bound = position.and_then(|position| parameters.get(&position));
-                    if let Some(bound) = bound.filter(|bound| !bound.is_empty()) {
-                        let context = bound
-                            .iter()
-                            .map(|(name, value)| (*name, value.clone()))
-                            .collect();
-                        let names = bound.iter().map(|(name, _)| text(name)).collect();
-                        fields.push(("context", run(record(context))?));
-                        fields.push(("parameters", Value::tuple(names)));
-                    }
-                    run(record(fields))
-                };
-                let mut steps = Vec::new();
-                for position in 1..states.len() {
-                    steps.push(Value::tuple(vec![
-                        states[position - 1].clone(),
-                        action(counter_example.trace.states[position].action)?,
-                        states[position].clone(),
-                    ]));
-                }
-                if let Some((start, closing)) = counter_example.cycle {
-                    let (Some(last), Some(first)) = (states.last(), states.get(start)) else {
-                        return unsupported("of a lasso outside its trace");
-                    };
-                    // TLC records a step it holds no action for as `Action.UNKNOWN`'s: unnamed, at
-                    // the null location.
-                    let closing = match closing {
-                        Some(closing) => action(Some(closing))?,
-                        None => {
-                            let location = run(record(vec![
-                                ("beginLine", Value::Int(0)),
-                                ("beginColumn", Value::Int(0)),
-                                ("endLine", Value::Int(0)),
-                                ("endColumn", Value::Int(0)),
-                                ("module", text("--TLA+ BUILTINS--")),
-                            ]))?;
-                            run(record(vec![
-                                ("name", text("UnnamedAction")),
-                                ("location", location),
-                            ]))?
-                        }
-                    };
-                    steps.push(Value::tuple(vec![last.clone(), closing, first.clone()]));
-                }
-                run(record(vec![
-                    ("action", run(set_of(steps))?),
-                    ("state", run(set_of(states))?),
-                ]))?
-            }
         };
         let body = evaluator
             .definition(ir.definitions[definition as usize])
@@ -329,6 +199,175 @@ impl Rebuilder<'_> {
             },
         };
         Ok(Checked { verdict, printed })
+    }
+
+    /// CounterExample's record of a violation's trace (`tlc2.value.impl.CounterExample`): each
+    /// state as the tuple of its number and its record, through the ALIAS where `aliases` has it,
+    /// and each step as the tuple of its states with its action's record between them. A trace
+    /// TLC dumps (`is_dumped`) ranks the field names as the trace modules intern them.
+    pub(crate) fn counter_example_value(
+        &mut self,
+        counter_example: &CounterExample<'_>,
+        aliases: Option<&[Alias]>,
+        is_dumped: bool,
+    ) -> Result<Value, Unsupported> {
+        let evaluator = self.evaluator();
+        let ir = evaluator.ir;
+        // The values TLC binds the parameters of each action of the trace's steps to.
+        let mut parameters = HashMap::new();
+        {
+            let positions = counter_example
+                .trace
+                .states
+                .iter()
+                .skip(1)
+                .map(|state| state.action)
+                .chain(counter_example.cycle.map(|(_, closing)| closing));
+            for position in positions.flatten() {
+                if let (Some(action), None) = (
+                    ir.model.actions.get(position as usize),
+                    parameters.get(&position),
+                ) {
+                    let bound = action_parameters(evaluator, action)?;
+                    parameters.insert(position, bound);
+                }
+            }
+        }
+        let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
+        let record = |fields: Vec<(&str, Value)>| {
+            Value::record(
+                fields
+                    .into_iter()
+                    .map(|(name, value)| (evaluator.counterexample_field(name, is_dumped), value))
+                    .collect(),
+            )
+        };
+        let states = counter_example
+            .trace
+            .states
+            .iter()
+            .enumerate()
+            .map(|(position, state)| {
+                if let Some(Alias::Record(fields)) =
+                    aliases.as_ref().map(|aliases| &aliases[position])
+                {
+                    if fields.iter().any(|(name, _)| name == "_ALIASEvalError") {
+                        return unsupported("of a model whose ALIAS fails");
+                    }
+                    let fields = fields
+                        .iter()
+                        .map(|(name, value)| {
+                            (
+                                evaluator.text_of(name.encode_utf16().collect()),
+                                value.clone(),
+                            )
+                        })
+                        .collect();
+                    return Ok(Value::tuple(vec![
+                        Value::Int(position as i32 + 1),
+                        run(Value::record(fields))?,
+                    ]));
+                }
+                let fields = ir
+                    .tlc_order
+                    .iter()
+                    .map(|&variable| {
+                        (
+                            evaluator.text_of(
+                                ir.texts[ir.variables[variable as usize] as usize]
+                                    .encode_utf16()
+                                    .collect(),
+                            ),
+                            state.values[variable as usize].clone(),
+                        )
+                    })
+                    .collect();
+                Ok(Value::tuple(vec![
+                    Value::Int(position as i32 + 1),
+                    run(Value::record(fields))?,
+                ]))
+            })
+            .collect::<Result<Vec<_>, Unsupported>>()?;
+        // TLC records each step with its action's name and location.
+        let action = |position: Option<u32>| {
+            let Some(action) =
+                position.and_then(|position| ir.model.actions.get(position as usize))
+            else {
+                return unsupported("of a step whose action the trace lacks");
+            };
+            // TLC records the name and location its action holds (`TLCStateInfo`).
+            let name = &ir.texts[action.name as usize];
+            let Some(range) = action.location else {
+                return unsupported("of an action without a location");
+            };
+            let location = run(record(vec![
+                ("beginLine", Value::Int(range.start_line)),
+                ("beginColumn", Value::Int(range.start_column)),
+                ("endLine", Value::Int(range.end_line)),
+                ("endColumn", Value::Int(range.end_column)),
+                ("module", text(&ir.texts[range.module as usize])),
+            ]))?;
+            let mut fields = vec![("name", text(name)), ("location", location)];
+            // TLC adds the parameters bound to values, by name and in order.
+            let bound = position.and_then(|position| parameters.get(&position));
+            if let Some(bound) = bound.filter(|bound| !bound.is_empty()) {
+                // A dump writes a value TLC wrote before as a reference to it, and TLC binds a
+                // parameter to the very value its set holds, which a state may hold too.
+                let is_shareable = |value: &Value| {
+                    !matches!(
+                        value,
+                        Value::Bool(_) | Value::Int(_) | Value::Model(_) | Value::Interval(..)
+                    )
+                };
+                if is_dumped && bound.iter().any(|(_, value)| is_shareable(value)) {
+                    return unsupported("dumped with an action's parameter TLC may share");
+                }
+                let context = bound
+                    .iter()
+                    .map(|(name, value)| (*name, value.clone()))
+                    .collect();
+                let names = bound.iter().map(|(name, _)| text(name)).collect();
+                fields.push(("context", run(record(context))?));
+                fields.push(("parameters", Value::tuple(names)));
+            }
+            run(record(fields))
+        };
+        let mut steps = Vec::new();
+        for position in 1..states.len() {
+            steps.push(Value::tuple(vec![
+                states[position - 1].clone(),
+                action(counter_example.trace.states[position].action)?,
+                states[position].clone(),
+            ]));
+        }
+        if let Some((start, closing)) = counter_example.cycle {
+            let (Some(last), Some(first)) = (states.last(), states.get(start)) else {
+                return unsupported("of a lasso outside its trace");
+            };
+            // TLC records a step it holds no action for as `Action.UNKNOWN`'s: unnamed, at
+            // the null location.
+            let closing = match closing {
+                Some(closing) => action(Some(closing))?,
+                None => {
+                    let location = run(record(vec![
+                        ("beginLine", Value::Int(0)),
+                        ("beginColumn", Value::Int(0)),
+                        ("endLine", Value::Int(0)),
+                        ("endColumn", Value::Int(0)),
+                        ("module", text("--TLA+ BUILTINS--")),
+                    ]))?;
+                    run(record(vec![
+                        ("name", text("UnnamedAction")),
+                        ("location", location),
+                    ]))?
+                }
+            };
+            steps.push(Value::tuple(vec![last.clone(), closing, first.clone()]));
+        }
+        run(record(vec![
+            ("action", run(set_of(steps))?),
+            ("state", run(set_of(states))?),
+        ]))
     }
 }
 

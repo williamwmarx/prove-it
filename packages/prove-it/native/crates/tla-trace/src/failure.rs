@@ -4,10 +4,10 @@
 //! TypeScript print them.
 
 use tla_ir::{AtomKind, NodeId, NodeKind, SourceRange, TextId};
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::{Id, Store};
 
-use crate::eval::{CallStack, Context, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
+use crate::eval::{CallStack, Context, Demand, Evaluator, StackFrame, UNFOLLOWED_FRAMES};
 use crate::fingerprint::{fingerprint_failure, state_fingerprint};
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_in_model, is_same, run};
@@ -41,8 +41,9 @@ pub enum Site {
     /// states' last: a successor's state predicate, or an action on a step to it.
     Atom { atom: u32, is_extra: bool },
     /// Evaluating the atom at this position of the model's atoms as TLC adds the initial state
-    /// the path holds to the behavior graphs, before it checks the state.
-    InitialAtom(u32),
+    /// the path holds first to the behavior graphs, before it checks the state. `replayed` is the
+    /// atom that fails as TLC's replay of the initial states adds the path's second state.
+    InitialAtom { atom: u32, replayed: Option<u32> },
 }
 
 /// Where TLC fails to fingerprint a state: the ranges of the expressions that built the values it
@@ -315,11 +316,12 @@ impl<'ir> Rebuilder<'ir> {
                     "evaluating the assumption again: it didn't fail".into(),
                 ));
             }
-            // `Tool.isValid` fails on an assumption that is no boolean, naming its place.
+            // `Tool.isValid` fails on an assumption that is no boolean, naming it as SANY's
+            // `toString` does.
             Ok(_) if ir.nodes.arena[node as usize].range.is_some() => TlcMessage {
                 text: format!(
                     "TLC expected a boolean value, but did not find one. {}",
-                    evaluator.describe_range(node)
+                    ir.texts[name as usize]
                 ),
                 code: Some(EXPECTED_VALUE),
                 is_eval_exception: false,
@@ -414,6 +416,22 @@ impl<'ir> Rebuilder<'ir> {
             }
             _ => (states, actions, None),
         };
+        // The initial state TLC's replay fails at again isn't on the path.
+        let (states, replayed) = match site {
+            Site::InitialAtom {
+                replayed: Some(atom),
+                ..
+            } => match states {
+                [_, replayed] => (&states[..1], Some((*replayed, atom))),
+                _ => {
+                    return Err(Unsupported(
+                        "evaluating the failure again: the initial state TLC's replay fails at"
+                            .into(),
+                    ));
+                }
+            },
+            _ => (states, None),
+        };
         // A successor that fails an invariant is held as TLC found it, as a violating one is.
         let ending = match site {
             Site::Invariant(_) => Ending::Violation,
@@ -479,19 +497,27 @@ impl<'ir> Rebuilder<'ir> {
                         position as usize + 1,
                     ),
                 };
+                // The invariants as TLC checks them: the model's, then its properties checked as
+                // invariants, which the engine counts past them.
+                let mut invariants = evaluator.tlc_invariants()?;
+                invariants.truncate(invariant_count);
+                if invariants.iter().any(|&(_, scope, _)| scope.is_some()) {
+                    return Err(Unsupported(
+                        "evaluating the failure again: an invariant in an instance's scope".into(),
+                    ));
+                }
+                if invariant_count > invariants.len() {
+                    return Err(Unsupported(
+                        "evaluating the failure again: an invariant the model doesn't have".into(),
+                    ));
+                }
                 let checks: Option<Vec<NodeId>> = ir
                     .model
                     .constraints
                     .iter()
                     .take(constraint_count)
                     .map(body)
-                    .chain(
-                        ir.model
-                            .invariants
-                            .iter()
-                            .take(invariant_count)
-                            .map(|invariant| body(&invariant.root)),
-                    )
+                    .chain(invariants.iter().map(|&(invariant, _, _)| Some(invariant)))
                     .chain(
                         ir.model
                             .initial_predicates
@@ -564,7 +590,11 @@ impl<'ir> Rebuilder<'ir> {
                                 evaluator.current.iter().flatten().for_each(settle);
                             }
                             evaluator.call_stack = call_stack;
-                            return evaluator.boolean(*failed, &Context::default());
+                            return evaluator.boolean_as(
+                                *failed,
+                                &Context::default(),
+                                Demand::Invariant,
+                            );
                         }
                         // TLC's replay of the initial states evaluates the constraint with its
                         // `CallStackTool`, so a failure as it evaluates the constraint has the
@@ -649,7 +679,7 @@ impl<'ir> Rebuilder<'ir> {
             }
             // TLC evaluates the atom as it adds the state, on the state, the successor whose
             // state predicate it checks, or the step to it.
-            Site::Atom { atom, .. } | Site::InitialAtom(atom) => {
+            Site::Atom { atom, .. } | Site::InitialAtom { atom, .. } => {
                 let Some(atom) = ir.model.atoms.get(atom as usize) else {
                     return Err(Unsupported("an atom the model doesn't have".into()));
                 };
@@ -727,7 +757,7 @@ impl<'ir> Rebuilder<'ir> {
                 evaluator.call_stack = call_stack;
                 evaluator
                     .scope_context(scope)
-                    .and_then(|context| evaluator.boolean(failed, &context))
+                    .and_then(|context| evaluator.boolean_as(failed, &context, Demand::Invariant))
             }
         };
         let call_stack = evaluator.call_stack.take().unwrap_or_default();
@@ -780,6 +810,24 @@ impl<'ir> Rebuilder<'ir> {
             return Err(Unsupported(format!(
                 "evaluating the failure again: {reason}"
             )));
+        }
+        // `DoInitFunctor` reports an initial state that isn't a legal state, one some variable
+        // lacks a value in, outside any evaluation.
+        if site == Site::Init
+            && let Some(state) = call_stack.incomplete
+        {
+            let message = "current state is not a legal state".to_string();
+            return Ok(Failure {
+                code: INITIAL_STATE,
+                message: message.clone(),
+                tool_message: message,
+                call_stack: Vec::new(),
+                exit_code: FAILURE_ERROR,
+                printed,
+                fingerprint: None,
+                state: Some(state),
+                replay: Replay::default(),
+            });
         }
         if let Some((sources, state)) = call_stack.fingerprint {
             let Some(message) = error.message else {
@@ -897,7 +945,7 @@ impl<'ir> Rebuilder<'ir> {
         // exits with the error's own status, since its replay of the initial states, which have
         // the state already, doesn't fail again (`ModelChecker#doInit`). An EvalException escapes
         // `doInit` without the state, which isn't ported.
-        if let Site::InitialAtom(_) = site {
+        if let Site::InitialAtom { .. } = site {
             if message.is_eval_exception {
                 return Err(Unsupported(
                     "evaluating the failure again: an EvalException adding an initial state".into(),
@@ -913,21 +961,33 @@ impl<'ir> Rebuilder<'ir> {
                     "evaluating the failure again: an initial state the path lacks".into(),
                 ));
             };
+            let state = values.iter().map(format_value).collect();
+            // Where the replay fails again, TLC prints its call stack and exits as for it.
+            let (call_stack, exit_code) = match replayed {
+                Some((target, atom)) => (
+                    replay_initial_atom(evaluator, store, target, atom)?,
+                    FAILURE_SPEC_EVAL,
+                ),
+                // `EC.ExitStatus.errorConstantToExitStatus` of the error's code: an identifier
+                // that is undefined is among the configuration's errors, and the other errors an
+                // evaluation raises are general ones.
+                None => (
+                    Vec::new(),
+                    match message.code {
+                        Some(UNDEFINED_IDENTIFIER) => ERROR_CONFIG_PARSE,
+                        _ => FAILURE_ERROR,
+                    },
+                ),
+            };
             return Ok(Failure {
                 code: INITIAL_STATE,
                 message: message.text.clone(),
                 tool_message: nested(&message),
-                call_stack: Vec::new(),
-                // `EC.ExitStatus.errorConstantToExitStatus` of the error's code: an identifier
-                // that is undefined is among the configuration's errors, and the other errors an
-                // evaluation raises are general ones.
-                exit_code: match message.code {
-                    Some(UNDEFINED_IDENTIFIER) => ERROR_CONFIG_PARSE,
-                    _ => FAILURE_ERROR,
-                },
+                call_stack,
+                exit_code,
                 printed,
                 fingerprint: None,
-                state: Some(values.iter().map(format_value).collect()),
+                state: Some(state),
                 replay: Replay::default(),
             });
         }
@@ -1033,6 +1093,68 @@ impl<'ir> Rebuilder<'ir> {
 // The call stack TLC prints with a FingerprintException its replay threw: the nodes it was in,
 // then the sources of the values whose methods the failure passed through, outermost first
 // (`CallStack.freeze`), a node that repeats the one before it once.
+// TLC's replay of the initial states with its `CallStackTool` adds the initial states its first
+// pass didn't find to the behavior graphs, and fails again evaluating `position` of the model's
+// atoms on `target`, within the frames of the initial predicate that found it
+// (`ModelChecker#doInit`): the call stack it prints.
+fn replay_initial_atom(
+    evaluator: &mut Evaluator<'_>,
+    store: &Store,
+    target: &[Id],
+    position: u32,
+) -> Result<Vec<SourceRange>, Unsupported> {
+    let ir = evaluator.ir;
+    let Some(atom) = ir.model.atoms.get(position as usize) else {
+        return Err(Unsupported("an atom the model doesn't have".into()));
+    };
+    let width = ir.variables.len();
+    evaluator.printed.clear();
+    evaluator.call_stack = Some(CallStack::default());
+    evaluator.current = vec![None; width];
+    evaluator.next = vec![None; width];
+    evaluator.level = 0;
+    let context = evaluator.scope_context(ir.model.scope);
+    let result = context.and_then(|context| {
+        evaluator.walk_action(ir.model.init, &context, true, &mut |evaluator| {
+            let values: Option<Vec<Value>> = evaluator.current.iter().cloned().collect();
+            if !values.is_some_and(|values| is_same(store, target, &values)) {
+                return Ok(true);
+            }
+            evaluator.level = 1;
+            let context = evaluator.scope_context(atom.scope)?;
+            match atom.kind {
+                AtomKind::State => evaluator.boolean(atom.expression, &context),
+                AtomKind::Enabled { .. } => evaluator
+                    .enabled(atom.expression, &context)
+                    .map(|value| matches!(value, Value::Bool(true))),
+                AtomKind::Action { .. } => fail("an action TLC evaluates of an initial state"),
+            }
+        })
+    });
+    let call_stack = evaluator.call_stack.take().unwrap_or_default();
+    if result.is_ok() {
+        return Err(Unsupported(
+            "evaluating the failure again: TLC's replay of the initial states doesn't fail".into(),
+        ));
+    }
+    if let Some(reason) = call_stack.unfollowed {
+        return Err(Unsupported(format!(
+            "evaluating the failure again: {reason}"
+        )));
+    }
+    if !evaluator.printed.is_empty()
+        || call_stack.is_unsorted
+        || call_stack.is_fingerprinted
+        || call_stack.fingerprint.is_some()
+    {
+        return Err(Unsupported(
+            "evaluating the failure again: TLC's replay of the initial states prints or fingerprints"
+                .into(),
+        ));
+    }
+    Ok(ranges(evaluator, &call_stack))
+}
+
 fn fingerprint_ranges(evaluator: &Evaluator<'_>, call_stack: &CallStack) -> Vec<SourceRange> {
     let mut sources = ranges(evaluator, call_stack);
     for &source in &call_stack.fingerprinted_sources {
@@ -1084,7 +1206,7 @@ fn replay_expansion(
         return unsupported("the next-state relation doesn't split");
     };
     let width = ir.variables.len();
-    let mut fingerprints = Fingerprints::new();
+    let mut fingerprints = Fingerprints::new(Polynomial::get(ir.model.fingerprint_index));
     let mut found: Vec<u64> = Vec::new();
     let mut replay = Replay::default();
     for (expression, context) in actions {
@@ -1142,7 +1264,7 @@ fn replay_expansion(
                 let Ok(context) = evaluator.scope_context(scope) else {
                     return unsupported("an invariant's scope");
                 };
-                match evaluator.boolean(invariant, &context) {
+                match evaluator.boolean_as(invariant, &context, Demand::Invariant) {
                     Ok(true) => {}
                     Ok(false) => {
                         return Ok(Replayed {
@@ -1524,9 +1646,23 @@ fn constraint_value_holds(
     body: NodeId,
     value: Value,
 ) -> Evaluated<bool> {
+    let node = &evaluator.ir.nodes.arena[body as usize];
     match value {
         Value::Bool(holds) => Ok(holds),
-        _ if evaluator.ir.nodes.arena[body as usize].range.is_some() => fail_with(
+        // `Tool.eval` gives a literal the value its tool object holds, which
+        // `processModelConstraints` replaced with the constraint's `OpDefNode`: TLC fails with a
+        // ClassCastException, whose message names the JVM's classes.
+        _ if matches!(
+            node.kind,
+            NodeKind::Number(_)
+                | NodeKind::WideNumber(_)
+                | NodeKind::Decimal(_)
+                | NodeKind::String(_)
+        ) =>
+        {
+            fail("a constraint that is a literal, which TLC fails to cast")
+        }
+        _ if node.range.is_some() => fail_with(
             "a constraint that isn't a boolean",
             TlcMessage {
                 text: format!(

@@ -1,0 +1,34 @@
+theory tlapm_71c6cb
+const isReal :: c = PredicateLogic.c
+const isa_slas_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_bksl_diva :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_perc_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_peri_peri_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isInfinity :: c = PredicateLogic.c
+const isa_lbrk_rbrk_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+const isa_less_more_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+fixes a_CONSTANTunde_Cardinalityunde_a
+fixes a_CONSTANTunde_nunde_a
+assumes a_CONSTANTunde_nunde_a_in: (a_CONSTANTunde_nunde_a \\<in> (Nat))
+  = ('PredicateLogic.Trueprop (('SetTheory.in a_CONSTANTunde_nunde_a) Nat))
+fixes a_CONSTANTunde_Sunde_a
+assumes v'47: ((a_CONSTANTunde_IsFiniteSetunde_a ((a_CONSTANTunde_Sunde_a))))
+  = ('PredicateLogic.Trueprop (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Sunde_a))
+assumes v'48: ((((a_CONSTANTunde_Cardinalityunde_a ((a_CONSTANTunde_Sunde_a)))) = ((addint ((a_CONSTANTunde_nunde_a), ((succ[0])))))))
+  = ('PredicateLogic.Trueprop (('PredicateLogic.eq (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a)) ((addint a_CONSTANTunde_nunde_a) (('Functions.fapply succ) 'Integers.zero))))
+fixes a_CONSTANTunde_Tunde_a
+assumes v'50: ((a_CONSTANTunde_IsFiniteSetunde_a ((a_CONSTANTunde_Tunde_a))))
+  = ('PredicateLogic.Trueprop (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Tunde_a))
+assumes v'51: ((less (((a_CONSTANTunde_Cardinalityunde_a ((a_CONSTANTunde_Tunde_a)))), ((a_CONSTANTunde_Cardinalityunde_a ((a_CONSTANTunde_Sunde_a)))))))
+  = ('PredicateLogic.Trueprop ((less (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Tunde_a)) (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a)))
+fixes a_CONSTANTunde_funde_a
+assumes a_CONSTANTunde_funde_a_in: (a_CONSTANTunde_funde_a \\<in> ([(a_CONSTANTunde_Sunde_a) \\<rightarrow> (a_CONSTANTunde_Tunde_a)]))
+  = ('PredicateLogic.Trueprop (('SetTheory.in a_CONSTANTunde_funde_a) (('Functions.FuncSet a_CONSTANTunde_Sunde_a) a_CONSTANTunde_Tunde_a)))
+assumes v'59: (((a_CONSTANTunde_IsFiniteSetunde_a (({})))) & (\\<forall>a_CONSTANTunde_Sunde_a_1 : ((((((a_CONSTANTunde_IsFiniteSetunde_a ((a_CONSTANTunde_Sunde_a_1)))) \\<and> ((((a_CONSTANTunde_Cardinalityunde_a ((a_CONSTANTunde_Sunde_a_1)))) = ((0)))))) \\<Rightarrow> (((a_CONSTANTunde_Sunde_a_1) = ({})))))))
+  = ('PredicateLogic.Trueprop (('PredicateLogic.conj (a_CONSTANTunde_IsFiniteSetunde_a 'SetTheory.emptyset)) ('PredicateLogic.All (%a_CONSTANTunde_Sunde_a_1. (('PredicateLogic.imp (('PredicateLogic.conj (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Sunde_a_1)) (('PredicateLogic.eq (a_CONSTANTunde_Cardinalityunde_a a_CONSTANTunde_Sunde_a_1)) 'Integers.zero))) (('PredicateLogic.eq a_CONSTANTunde_Sunde_a_1) 'SetTheory.emptyset))))))
+assumes v'60: ((((a_CONSTANTunde_Cardinalityunde_a (({})))) = ((0))))
+  = ('PredicateLogic.Trueprop (('PredicateLogic.eq (a_CONSTANTunde_Cardinalityunde_a 'SetTheory.emptyset)) 'Integers.zero))
+shows (((a_CONSTANTunde_Sunde_a) \\<noteq> ({})))
+  = ('PredicateLogic.Trueprop (('PredicateLogic.not_equal a_CONSTANTunde_Sunde_a) 'SetTheory.emptyset))
+using assms true
+method word:force

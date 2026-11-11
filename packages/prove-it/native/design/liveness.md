@@ -99,6 +99,50 @@ isn't native where it holds. TLC's call stack records no node for the `<<A>>_v` 
 which the front writes at A, and ENABLED names the fairness condition where A leaves a variable of
 v unassigned (2148).
 
+An atom that fails on an initial state stops TLC's `DoInitFunctor` there, and TLC reports it with
+the state. TLC then replays the initial states with its `CallStackTool` (`ModelChecker#doInit`),
+adding to the behavior graphs only those its first pass didn't find. Where an atom fails again on
+one of them, TLC prints that call stack, the initial predicate's frames then the atom's, and exits
+as for it. Its counts are the replay's, up to that state, or all the initial states where nothing
+fails again. The engine hands this over (`ErrorSite::InitialAtom`, with the atom the replay may
+fail at and its state) where every initial state it generated is distinct, so a state's position
+is its count, and where it printed the progress TLC did before the failing state. The invariants
+and implied inits the replay checks again held of every initial state, as the engine checked them
+before it got there. A property `[]P` of a
+state predicate P isn't an atom: TLC checks it as an invariant, which the replay checks again on
+the states it found, the failing one first.
+
+## A failure of the next-state relation in a model with temporal properties (planned)
+
+The binary declines it (the `tlc-replay` test's two runs and one of `check`'s). It has to print
+what TLC prints, and TLC goes on after the failure. Read from `Worker.run` and
+`Worker#doNextCheckLiveness` at d8fb231, and checked against TLC built there:
+
+1. `getNextStates` throws at state s. `ModelChecker#doNextFailed` sets the error state and prints
+   the error and the trace to s.
+2. The worker doesn't stop. With temporal properties it calls `doNextCheckLiveness` on s with the
+   successors Next generated before it failed, and adds the stuttering step from s to s.
+3. `LiveCheck#addNextState` evaluates, for each solution of the tableau:
+   1. `checkAction` on each successor, in the order of the `SetOfStates`, which is the order of
+      their fingerprints' hashes, not the order Next generated them in;
+   2. `checkState` on s, which holds the ENABLED and state checks;
+   3. with a tableau, the consistency of each successor with the tableau's nodes.
+4. If one of those fails, TLC evaluates them again with a `CallStackTool` and prints that call
+   stack (`EC.TLC_NESTED_EXPRESSION`). It sets `keepCallStack` to false, so TLC doesn't print
+   Next's call stack, and its second `doNextFailed` prints nothing, since the error state is
+   already set.
+
+So TLC prints Next's error and the trace either way. After them it prints Next's call stack when
+every liveness check on s holds, and the first failing check's stack when one fails. In the
+`tlc-replay` model, the ENABLED of the failing action's fairness fails on s, so TLC prints the
+stack Spec, the fairness condition, Next, the action. A model whose fairness names an action that
+doesn't fail (`WF_x(B)` while A fails) prints the plain Next failure.
+
+The fix belongs where the engine orders the failure, not in the gate that declines it: at a Next
+failure in a model with temporal properties, the engine evaluates TLC's liveness checks on s with
+the partial successors and the stuttering step, in TLC's order. It reports the first that fails as
+the error site, or Next's failure when none does.
+
 ## Temporal formulas inside a predicate (as built)
 
 A liveness atom can be an operator whose body holds a temporal formula in a branch the run never

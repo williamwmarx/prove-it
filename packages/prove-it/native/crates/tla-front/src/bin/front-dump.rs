@@ -4,7 +4,8 @@
 //! - `front-dump tokens` writes each module's tokens as `[kind, text, spelling, line, column,
 //!   endColumn]`, or the syntax error the lexer raises;
 //! - `front-dump ast` writes the module `parseModule` reads, as canonical JSON, or its error;
-//! - `front-dump sany-ast` does the same for `parseSanyModule`;
+//! - `front-dump sany-ast` does the same for `parseSanyModule`, and `front-dump tlapm-ast` for
+//!   `parseTlapmModule`;
 //! - `front-dump config` writes the model configuration `parseConfig` reads from each file, for
 //!   TLC master and 1.7.4, or the error it raises;
 //! - `front-dump resolve [--library <directory>]` links each file as the root module of a spec,
@@ -38,7 +39,7 @@ use tla_front::TlcVersion;
 use tla_front::config::parse_config;
 use tla_front::dump;
 
-use tla_front::ast::{Expression, ExpressionKind, Location};
+use tla_front::ast::{Expression, ExpressionKind, Location, Module};
 use tla_front::dependencies::create_definition_facts;
 use tla_front::environment::{Environment, EnvironmentOptions, create_environment};
 use tla_front::errors::FrontError;
@@ -47,9 +48,11 @@ use tla_front::lexer::tokenize;
 use tla_front::lower::{Lowering, RankedTexts};
 use tla_front::model::{ModelOptions, lower_model};
 use tla_front::order::TlcOrder;
-use tla_front::parser::{parse_module, parse_sany_module};
+use tla_front::parser::{Parsed, parse_module, parse_sany_module, parse_tlapm_module};
 use tla_front::pcal::{PcalFatal, PcalSession};
 use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text};
+use tla_front::sany::export::export_xml;
+use tla_front::sany::xml::XmlExportOptions;
 use tla_front::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 use tla_front::spec::{get_properties, get_specification};
 use tla_ir::{Model, Startup};
@@ -83,12 +86,7 @@ fn write_tokens(out: &mut String, source: &str) {
     }
 }
 
-fn write_module(out: &mut String, source: &str, is_sany: bool) {
-    let parsed = if is_sany {
-        parse_sany_module(source, None, TlcVersion::Master)
-    } else {
-        parse_module(source)
-    };
+fn write_module(out: &mut String, parsed: Parsed<Module>) {
     match parsed {
         Ok(module) => dump::module(&module).write(out),
         Err(error) => dump::syntax_error(&error).write(out),
@@ -102,6 +100,65 @@ fn load(path: &Path, library: Option<&Path>, name: &str) -> Option<String> {
     std::fs::read_to_string(directory.join(&file))
         .ok()
         .or_else(|| library.and_then(|library| std::fs::read_to_string(library.join(&file)).ok()))
+}
+
+/// The XML's length in UTF-8 bytes and two 32-bit FNV-1a hashes of its bytes, as
+/// `front-differential.ts`'s `hashXml` writes them.
+fn hash_xml(xml: &str) -> String {
+    let hashes = xml
+        .bytes()
+        .fold([0x811c_9dc5_u32, 0x050c_5d1f_u32], |hashes, byte| {
+            hashes.map(|hash| (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193))
+        });
+    format!("{}:{:08x}{:08x}", xml.len(), hashes[0], hashes[1])
+}
+
+/// What SANY's XMLExporter prints for the spec at `path` with -o and each of -r, -u and -t, its
+/// keys in order: the error stream, the XML as its hash (or itself, `is_full`), the exit code.
+fn write_sany_xml(
+    out: &mut String,
+    source: &str,
+    path: &Path,
+    library: Option<&Path>,
+    is_full: bool,
+) {
+    let load_module = |name: &str| load(path, library, name);
+    let root = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let mut line = String::from("{");
+    for (index, flags) in ["", "r", "t", "tru", "u"].into_iter().enumerate() {
+        let options = XmlExportOptions {
+            is_restricted: flags.contains('r'),
+            is_uncommented: flags.contains('u'),
+            is_terse: flags.contains('t'),
+        };
+        let exported = match export_xml(root, source, file_name, &load_module, &options) {
+            Ok(exported) => exported,
+            Err(error) => return dump::environment(&Err(error)).write(out),
+        };
+        if index > 0 {
+            line.push(',');
+        }
+        write_js_string(&mut line, flags);
+        let _ = write!(line, ":{{\"exitCode\":{},\"stderr\":", exported.exit_code);
+        write_js_string(&mut line, &exported.stderr);
+        line.push_str(",\"stdout\":");
+        let stdout = if is_full || exported.stdout.is_empty() {
+            exported.stdout
+        } else {
+            hash_xml(&exported.stdout)
+        };
+        write_js_string(&mut line, &stdout);
+        line.push('}');
+    }
+    line.push('}');
+    out.push_str(&line);
 }
 
 /// Links the spec at `path` with the configuration `config`, or as SANY does without one.
@@ -203,6 +260,7 @@ fn lower_definitions(
         version: None,
         // TLC's default seed.
         random_seed: 0,
+        fingerprint_index: 0,
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
@@ -291,6 +349,7 @@ fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>) {
             file_name: None,
             load_module: &load_module,
             describe_file: &describe_file,
+            is_xml_export: false,
         },
     ) {
         Ok(sany) => {
@@ -418,10 +477,13 @@ fn main() -> ExitCode {
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
         "resolve" | "model" | "ir" | "order" | "model-ir" | "model-full" | "spec"
-        | "properties" | "sany-text" | "levels" => |_, _| {},
+        | "properties" | "sany-text" | "sany-xml" | "levels" => |_, _| {},
         "tokens" => write_tokens,
-        "ast" => |out, source| write_module(out, source, false),
-        "sany-ast" => |out, source| write_module(out, source, true),
+        "ast" => |out, source| write_module(out, parse_module(source)),
+        "sany-ast" => |out, source| {
+            write_module(out, parse_sany_module(source, None, TlcVersion::Master));
+        },
+        "tlapm-ast" => |out, source| write_module(out, parse_tlapm_module(source, None)),
         "time" => write_time,
         "sany-parse-error" => |out, source| {
             let write = |out: &mut String, text: Option<String>| match text {
@@ -466,7 +528,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|config|coded|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|tlapm-ast|config|coded|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|sany-xml|levels|time < paths"
             );
             return ExitCode::from(2);
         }
@@ -489,6 +551,15 @@ fn main() -> ExitCode {
             }
         } else if mode == "sany-text" {
             write_sany_text(&mut line, Path::new(&path), library.as_deref());
+        } else if mode == "sany-xml" {
+            let is_full = arguments.iter().any(|argument| argument == "--xml");
+            write_sany_xml(
+                &mut line,
+                &source,
+                Path::new(&path),
+                library.as_deref(),
+                is_full,
+            );
         } else if mode == "model-full" {
             write_model_full(&mut line, &source, Path::new(spec_path), library.as_deref());
         } else if mode == "model-ir" {
