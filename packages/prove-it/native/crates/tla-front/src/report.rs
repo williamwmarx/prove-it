@@ -459,6 +459,32 @@ impl Loader<'_> {
         Ok(())
     }
 
+    /// Whether a module the file of `extender` extends, through others, nests a module `name`.
+    fn is_nested_in_extendee(
+        &self,
+        extender: &Rc<str>,
+        name: &str,
+        visited: &mut FastSet<Rc<str>>,
+    ) -> bool {
+        fn nests(module: &Module, name: &str) -> bool {
+            module
+                .modules
+                .iter()
+                .any(|inner| &*inner.name == name || nests(inner, name))
+        }
+        if !visited.insert(extender.clone()) || !self.modules.contains_key(extender) {
+            return false;
+        }
+        self.get_dependencies(extender)
+            .extendees
+            .iter()
+            .filter(|extendee| self.modules.contains_key(*extendee))
+            .any(|extendee| {
+                nests(&self.modules[extendee].module, name)
+                    || self.is_nested_in_extendee(extendee, name, visited)
+            })
+    }
+
     /// The text of a module other than the root module as the front end reads it
     /// (`end_lines_at_carriage_returns`).
     fn read_text(&self, name: &str) -> Option<String> {
@@ -1052,6 +1078,11 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         let Some(((name, importer, naming_module), is_extension)) = next else {
             break;
         };
+        // ParseUnit.handleExtensions lets a module name the modules nested in the modules it
+        // extends, which the front end looks for in files.
+        if loader.is_nested_in_extendee(&importer, &name, &mut FastSet::default()) {
+            return Err(not_yet("a module nested in a module its extender extends"));
+        }
         if !loader.modules.contains_key(&name) {
             let (text, origin) = loader.read(&name);
             loader.load(&name, text, origin, &naming_module)?;
