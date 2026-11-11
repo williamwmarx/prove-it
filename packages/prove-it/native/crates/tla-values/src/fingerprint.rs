@@ -25,7 +25,7 @@ const INT_VALUE: u8 = 1;
 const STRING_VALUE: u8 = 3;
 const SET_ENUM_VALUE: u8 = 5;
 const FCN_RCD_VALUE: u8 = 9;
-const MODEL_VALUE: u8 = 21;
+pub const MODEL_VALUE: u8 = 21;
 
 /// FP64.Polys, the irreducible polynomials `-fp` picks one of to fingerprint with.
 pub const POLYNOMIALS: [u64; 131] = [
