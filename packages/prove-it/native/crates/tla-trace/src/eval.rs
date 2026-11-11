@@ -378,12 +378,15 @@ pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
 /// trace's records. TLC builds the records anew as it evaluates the alias of each state
 /// (`TLCExt.getTrace`), so one that an evaluation sorts stays as built for the next: the tuple of
 /// copies is `built` as the alias first reads Trace, so an ALIAS that doesn't costs nothing per
-/// state.
+/// state. TLC builds them anew each time the alias reads Trace, which the copies follow only
+/// where no read sorts them.
 #[derive(Clone)]
 pub struct TracePrefix {
     pub records: Rc<[Value]>,
     pub length: usize,
     pub built: RefCell<Option<Value>>,
+    /// How many times the alias read Trace.
+    pub reads: Cell<u32>,
 }
 
 pub struct Evaluator<'ir> {
@@ -5133,6 +5136,7 @@ impl<'ir> Evaluator<'ir> {
                 arity(0)?;
                 self.reads += 1;
                 let prefix = self.trace.as_ref().expect("the trace");
+                prefix.reads.set(prefix.reads.get() + 1);
                 // The copies share the values of the state's variables and of the action's
                 // parameters, which TLC's records hold as they are.
                 let action: Vec<u16> = "_action".encode_utf16().collect();

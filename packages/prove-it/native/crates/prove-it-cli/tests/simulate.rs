@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{run_named, stdout};
+use common::{run, run_named, stderr, stdout};
 
 const VIOL: &str = "---- MODULE Viol ----
 EXTENDS Naturals
@@ -608,17 +608,6 @@ fn prints_a_simulations_alias_that_reads_trace_actions_as_tlc() {
         ),
         ("Len(ToString(Trace[1]))", ["151"; 5].map(String::from)),
         (
-            "LET t == Tail(Trace) IN IF Len(t) > 1 THEN t[1] = t[2] ELSE t",
-            [
-                "<<>>",
-                "<<[_action |-> [name |-> \"Up\", location |-> [beginLine |-> 5, beginColumn |-> 7, endLine |-> 5, endColumn |-> 35, module |-> \"Act\"]], n |-> 1, x |-> 1]>>",
-                "FALSE",
-                "FALSE",
-                "FALSE",
-            ]
-            .map(String::from),
-        ),
-        (
             "[y |-> 1] @@ [Trace[Len(Trace)] EXCEPT !._action = 0]",
             [0, 1, 2, 3, 4]
                 .map(|n| format!("[y |-> 1, x |-> {}, n |-> {n}, _action |-> 0]", n % 2)),
@@ -652,6 +641,14 @@ fn prints_a_simulations_alias_that_reads_trace_actions_as_tlc() {
             "/\\ _ALIASEvalError = \"Attempted to check if the value:\\n[ name |-> \\\"Init\\\",\\n  location |->\\n      [ beginLine |-> 4,\\n        beginColumn |-> 9,\\n        endLine |-> 4,\\n        endColumn |-> 22,\\n        module |-> \\\"Act\\\" ] ]\\nis an element of STRING.\"\n"
         ),
         "{text}"
+    );
+    // The evaluator evaluates a LET definition as often as it's read, where TLC reads Trace once,
+    // so a comparison that sorts the records declines.
+    let output = run("LET t == Tail(Trace) IN IF Len(t) > 1 THEN t[1] = t[2] ELSE t");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("an ALIAS that reads Trace more than once and sorts its records")
     );
     let output = run("Trace[1]._action = \"a\"");
     assert_eq!(output.status.code(), Some(1));
@@ -721,9 +718,24 @@ fn declines_a_simulations_trace_whose_actions_bind_a_record() {
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(
         error.contains(
-            "an ALIAS that reads a simulation's Trace whose actions bind a parameter to a record"
+            "an ALIAS that reads a simulation's Trace whose actions bind a parameter to a record or a set"
         ),
         "{error}"
+    );
+    // TLC holds a parameter bound to `1..3` as the interval, which the IR holds as a set.
+    let (output, directory) = run_named(
+        "simulate-alias-interval",
+        "Rec",
+        (
+            &spec("Tail(Trace)").replace("[zz |-> 1, x |-> 2]", "1..3"),
+            config,
+        ),
+        &[&["-noTE"][..], &args, &["Rec"]].concat(),
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("bind a parameter to a record or a set")
     );
     let (code, text) = simulate(
         "simulate-alias-record",
@@ -733,4 +745,100 @@ fn declines_a_simulations_trace_whose_actions_bind_a_record() {
     );
     assert_eq!(code, Some(12), "{text}");
     assert!(text.contains("/\\ x = 0\n/\\ a = 1\n"), "{text}");
+}
+
+// TLC names the initial predicate by the definition the configuration substitutes for it, in its
+// label and in Trace's record of the initial state.
+#[test]
+fn names_a_substituted_initial_predicate_as_tlc() {
+    let spec = "---- MODULE Sub ----\nEXTENDS Naturals, TLC, Sequences, TLCExt\nVARIABLE x\nInit == x = 5\nInit2 == x = 0\nNext == x' = x + 1\nInv == x < 1\nAl == [x |-> x, t |-> Trace]\n====\n";
+    let (code, text) = simulate(
+        "simulate-substituted-init",
+        "Sub",
+        (
+            spec,
+            "INIT Init\nNEXT Next\nCONSTANT Init <- Init2\nINVARIANT Inv\nALIAS Al\n",
+        ),
+        &["-seed", "1", "-simulate", "num=1", "-depth", "10"],
+    );
+    assert_eq!(code, Some(12), "{text}");
+    assert!(
+        text.contains("State 1: <Init2 line 5, col 10 to line 5, col 14 of module Sub>\n/\\ x = 0\n/\\ t = <<[_action |-> [name |-> \"Init2\", location |-> [beginLine |-> 5, beginColumn |-> 10, endLine |-> 5, endColumn |-> 14, module |-> \"Sub\"]], x |-> 0]>>\n"),
+        "{text}"
+    );
+}
+
+// TLC names an initial predicate a named INSTANCE copies by the instance and places it at the
+// INSTANCE (`I!OInit`), which the binary doesn't follow: a simulation that prints it declines.
+#[test]
+fn declines_a_simulations_initial_predicate_an_instance_copies() {
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-simulate-instanced-init-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("Other.tla"),
+        "---- MODULE Other ----\nEXTENDS Naturals\nVARIABLE x\nOInit == x = 0\nONext == x' = x + 1\n====\n",
+    )
+    .expect("a module");
+    std::fs::write(
+        directory.join("Inst.tla"),
+        "---- MODULE Inst ----\nEXTENDS Naturals\nVARIABLE x\nI == INSTANCE Other\nSpec == I!OInit /\\ [][I!ONext]_x\nInv == x < 2\n====\n",
+    )
+    .expect("a spec");
+    std::fs::write(
+        directory.join("Inst.cfg"),
+        "SPECIFICATION Spec\nINVARIANT Inv\n",
+    )
+    .expect("a configuration");
+    let output = run(
+        &directory,
+        &[
+            "-noTE",
+            "-seed",
+            "1",
+            "-simulate",
+            "num=1",
+            "-depth",
+            "10",
+            "Inst",
+        ],
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("not native yet: the label of an initial predicate"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+// TLC builds Trace's records anew each time an alias reads Trace, so a read that sorts them, as
+// `@@` does, leaves another's as built, which the binary doesn't follow: it declines.
+#[test]
+fn declines_an_alias_that_reads_trace_twice_and_sorts_it() {
+    let spec = "---- MODULE Twice ----\nEXTENDS Naturals, TLC, Sequences, TLCExt\nVARIABLE a\nInit == a = 0\nNext == a' = a + 1\nInv == a < 2\nAl == [a |-> a, w |-> Trace[1] @@ [b |-> 1], t |-> Trace]\n====\n";
+    let (output, directory) = run_named(
+        "simulate-trace-twice",
+        "Twice",
+        (spec, "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Al\n"),
+        &[
+            "-noTE",
+            "-seed",
+            "1",
+            "-simulate",
+            "num=1",
+            "-depth",
+            "10",
+            "Twice",
+        ],
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("an ALIAS that reads Trace more than once and sorts its records"),
+        "{}",
+        stderr(&output)
+    );
 }
