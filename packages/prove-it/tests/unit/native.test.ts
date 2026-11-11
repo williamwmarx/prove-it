@@ -35,8 +35,14 @@ const checkCommit = (runtime: string, cli: string, env: Record<string, string | 
     },
   });
 
+// A state log leaves the check to the TypeScript check, which the CLI runs in place of the
+// binary's and which searches the engine IR. Where the log can't be created, the engine writes
+// none.
 const getEngineLines = (runtime: string, cli: string, env: Record<string, string | undefined>) => {
-  const run = checkCommit(runtime, cli, env);
+  const run = checkCommit(runtime, cli, {
+    PROVE_IT_STATE_LOG: join(COMMIT, "missing", "states.jsonl"),
+    ...env,
+  });
   // The status with what the run wrote to stderr, so that a crash on any platform says why.
   expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
   return run.stderr.split("\n").filter((line) => line.startsWith("[engine] "));
@@ -169,10 +175,7 @@ describe("the native engine", () => {
       const lines = getEngineLines(runtime, cli, {
         PROVE_IT_ENGINE_ADDON: ADDON,
       });
-      // The binary's check, which the CLI runs first, doesn't yet write SANY's report of the trace
-      // exploration spec TLC generates without -noGenerateSpecTE, so the CLI checks it as before.
       expect(lines).toEqual([
-        "[engine] native: checkSources declined: SANY's report of the trace exploration spec TLC parses with the spec",
         expect.stringMatching(/^\[engine\] native: ir: \d+ bytes in \d+\.\d\d ms$/),
         expect.stringMatching(/^\[engine\] native: complete: {2}\(\d+\.\d\d ms\)$/),
         expect.stringMatching(/^\[engine\] checked 251 states on 1 thread /),
