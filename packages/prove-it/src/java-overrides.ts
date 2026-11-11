@@ -15,8 +15,6 @@ interface JavaMethod {
   // Method#toString, which TLC prints as the signature of an override.
   signature: string;
   code: Uint8Array | undefined;
-  // Whether the bytecode catches an exception (an exception table).
-  isCatching: boolean;
 }
 
 // A public static method of the class named after a module, which TLC reports as it loads the
@@ -87,6 +85,13 @@ const REGISTERED_NAMES = new Set([
   "Plus",
   "SqSubseteq",
   "Times",
+]);
+
+// The annotations Method#getAnnotation finds that make TLC skip a method of the class named after a
+// module, which only a TLCOverrides index loads.
+const SKIPPING_ANNOTATIONS = new Set([
+  "Ltlc2/overrides/TLAPlusOperator;",
+  "Ltlc2/overrides/Evaluation;",
 ]);
 
 const PAIRED_TAGS = new Set([
@@ -168,12 +173,34 @@ const getTypeNames = (descriptor: string) =>
 
 const getClassName = (pool: PoolEntry[], index: number) => pool[pool[index].first].text;
 
+type Reader = ReturnType<typeof createReader>;
+
+// Reads past an annotation's element_value (JVM specification, section 4.7.16.1).
+const skipElementValue = (reader: Reader): void => {
+  const tag = String.fromCharCode(reader.readUint8());
+  if (tag === "e") reader.readUint32();
+  else if (tag === "@") readAnnotation(reader);
+  else if (tag === "[")
+    for (let count = reader.readUint16(); count > 0; count--) skipElementValue(reader);
+  else reader.readUint16();
+};
+
+// An annotation's type, past its elements.
+const readAnnotation = (reader: Reader) => {
+  const typeIndex = reader.readUint16();
+  for (let count = reader.readUint16(); count > 0; count--) {
+    reader.readUint16();
+    skipElementValue(reader);
+  }
+  return typeIndex;
+};
+
 const getJavaClassName = (pool: PoolEntry[], index: number) =>
   getClassName(pool, index).replaceAll("/", ".");
 
 // The public static methods of a class file and their bytecode, in the order of the class file.
 // Class#getDeclaredMethods orders them by where HotSpot allocated the symbols of their names.
-const readClassFile = (bytes: Uint8Array) => {
+const readClassFile = (bytes: Uint8Array, hasIndex: boolean) => {
   const reader = createReader(bytes);
   if (reader.readUint32() !== CLASS_MAGIC)
     throw new TlaSyntaxError("A module override is not a class file");
@@ -234,6 +261,22 @@ const readClassFile = (bytes: Uint8Array) => {
       name: pool[reader.readUint16()].text,
       reader: createReader(reader.readBytes(reader.readUint32())),
     }));
+    const annotations = attributes.find(
+      (attribute) => attribute.name === "RuntimeVisibleAnnotations",
+    )?.reader;
+    const annotationTypes = annotations
+      ? Array.from(
+          { length: annotations.readUint16() },
+          () => pool[readAnnotation(annotations)].text,
+        )
+      : [];
+    // processModuleOverrides skips a method annotated as an operator a TLCOverrides index loads,
+    // which a class TLC finds beside the spec could be.
+    if (annotationTypes.some((type) => SKIPPING_ANNOTATIONS.has(type))) {
+      if (hasIndex)
+        throw createUnreadError("A Java override class TLC may load through a TLCOverrides index");
+      continue;
+    }
     if (attributes.some((attribute) => attribute.name.includes("Annotation")))
       throw createUnreadError("A Java override class with annotations");
     const isOverride = (access & ACCESS_PUBLIC) !== 0 && (access & ACCESS_STATIC) !== 0;
@@ -257,8 +300,6 @@ const readClassFile = (bytes: Uint8Array) => {
       name,
       arity: parameters.length,
       code: bytecode,
-      // The exception table follows the bytecode.
-      isCatching: code !== undefined && code.readUint16() !== 0,
       signature: `${modifiers.join(" ")} ${returnType} ${className}.${name}(${parameters.join(",")})${throwsClause}`,
     });
   }
@@ -291,7 +332,8 @@ const getMemberReference = (pool: PoolEntry[], index: number) => {
 
 // Runs the bytecode of an override that returns a constant TLC value, such as
 // BoolValue.ValTrue, IntValue.gen(3), or new StringValue("a"), and returns that value as a
-// literal.
+// literal. The instructions it runs, from the first to the first return, don't branch or throw, so
+// no exception handler runs.
 const getReturnedLiteral = (
   method: JavaMethod,
   pool: PoolEntry[],
@@ -303,7 +345,7 @@ const getReturnedLiteral = (
       `The Java override ${className}.${method.name} computes its value, which tla-ts cannot run`,
     );
   const code = method.code;
-  if (!code || method.isCatching) throw createUnsupportedError();
+  if (!code) throw createUnsupportedError();
   const stack: StackItem[] = [];
   const pop = () => {
     const item = stack.pop();
@@ -384,10 +426,9 @@ const getReturnedLiteral = (
       instance.value = { kind: "String", value: text, location };
       offset += 3;
     } else if (opcode === OPCODE.areturn) {
-      // Of the only value, as the method's last instruction.
+      // Of the only value.
       const returned = pop();
-      if (typeof returned !== "object" || stack.length > 0 || offset + 1 !== code.length)
-        throw createUnsupportedError();
+      if (typeof returned !== "object" || stack.length > 0) throw createUnsupportedError();
       if ("className" in returned) {
         if (!returned.value) throw createUnsupportedError();
         return returned.value;
@@ -402,14 +443,16 @@ const getReturnedLiteral = (
 
 // TLC loads a class named after each module and replaces each operator of the module that the
 // root module sees with the public static method of the same name and arity. It reports whether
-// each method matched an operator.
+// each method matched an operator. TLC also loads the overrides a tlc2.overrides.TLCOverrides index
+// class lists, from beside the spec as from the class path.
 export const overrideDefinitions = (
   module: Module,
-  bytes: Uint8Array | undefined,
+  loadClass: ((name: string) => Uint8Array | undefined) | undefined,
   isRoot: boolean,
 ): { module: Module; overrides: JavaOverride[] } => {
+  const bytes = loadClass?.(module.name);
   if (!bytes) return { module, overrides: [] };
-  const classFile = readClassFile(bytes);
+  const classFile = readClassFile(bytes, loadClass?.("tlc2.overrides.TLCOverrides") !== undefined);
   const arities = new Map(
     module.definitions
       .filter((definition) => isRoot || !definition.isLocal || definition.isRecursive)

@@ -1,9 +1,10 @@
 //! What the front end computes of a spec's constants and its Java overrides before the search,
-//! against TLC built at d8fb231. Each directory of `tests/front_constants` holds a spec M with its
-//! configuration and the files beside it, and either `tlc.out`, TLC's exit code and output with
-//! `-fp 0 -nowarning -noGenerateSpecTE` but the lines that depend on the time or the machine, with
-//! the directory's path as `{directory}`, or `declined`, the reason the binary gives for a spec it
-//! leaves to TLC. Each runs on one thread and with every level shared between four.
+//! against TLC built at d8fb231. Each directory of `tests/front_constants` holds a spec with its
+//! configuration, which names it, and the files beside it, and either `tlc.out`, TLC's exit code
+//! and output with `-fp 0 -nowarning -noGenerateSpecTE` but the lines that depend on the time or
+//! the machine, with the directory's path as `{directory}`, or `declined`, the reason the binary
+//! gives for a spec it leaves to TLC. Each runs on one thread and with every level shared between
+//! four.
 
 use std::path::Path;
 use std::process::Command;
@@ -44,12 +45,17 @@ fn computes_constants_and_overrides_as_tlc() {
             std::process::id()
         ));
         std::fs::create_dir_all(&directory).expect("a directory");
+        let mut spec = None;
         for entry in std::fs::read_dir(&source).expect("a fixture") {
-            let file = entry.expect("an entry").file_name();
-            if file != "tlc.out" && file != "declined" {
+            let file = Path::new(&entry.expect("an entry").file_name()).to_owned();
+            if file.extension().is_some_and(|extension| extension == "cfg") {
+                spec = file.file_stem().map(|stem| stem.to_owned());
+            }
+            if file != Path::new("tlc.out") && file != Path::new("declined") {
                 std::fs::copy(source.join(&file), directory.join(&file)).expect("a copy");
             }
         }
+        let spec = spec.expect("a configuration");
         let expected = std::fs::read_to_string(source.join("tlc.out")).ok();
         let declined = std::fs::read_to_string(source.join("declined")).ok();
         for workers in ["1", "4"] {
@@ -61,8 +67,8 @@ fn computes_constants_and_overrides_as_tlc() {
                     "0",
                     "-nowarning",
                     "-noGenerateSpecTE",
-                    "M",
                 ])
+                .arg(&spec)
                 .current_dir(&directory)
                 .output()
                 .expect("the binary runs");

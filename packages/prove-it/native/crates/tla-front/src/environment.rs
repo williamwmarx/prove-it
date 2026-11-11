@@ -537,11 +537,15 @@ impl Linker<'_> {
 
     /// `overrideDefinitions` with the class TLC loads for the module, if any.
     fn override_module(&self, module: Rc<Module>, is_root: bool) -> Result<Rc<Module>> {
-        let Some(bytes) = self.options.load_class.and_then(|load| load(&module.name)) else {
+        let Some((load, bytes)) = self
+            .options
+            .load_class
+            .and_then(|load| Some((load, load(&module.name)?)))
+        else {
             return Ok(module);
         };
         let (module, overrides) =
-            crate::java_overrides::override_definitions(&module, &bytes, is_root)?;
+            crate::java_overrides::override_definitions(&module, &bytes, is_root, load)?;
         let mut java_overrides = self.java_overrides.borrow_mut();
         // TLC reports the overrides in the order it links the modules, which matters only for
         // two of them.
@@ -2042,8 +2046,13 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         &tokenize(options.source)?,
         options.version,
     )?);
-    let (root, root_overrides) = match options.load_class.and_then(|load| load(&parsed.name)) {
-        Some(bytes) => crate::java_overrides::override_definitions(&parsed, &bytes, true)?,
+    let (root, root_overrides) = match options
+        .load_class
+        .and_then(|load| Some((load, load(&parsed.name)?)))
+    {
+        Some((load, bytes)) => {
+            crate::java_overrides::override_definitions(&parsed, &bytes, true, load)?
+        }
         None => (parsed, Vec::new()),
     };
     let linker = create_linker(options, &root);

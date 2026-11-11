@@ -792,11 +792,7 @@ export const createEnvironment = (
 
   const javaOverrides = new Map<string, JavaOverride[]>();
   const linkModule = (unlinked: Module, scope: ModuleScope): LinkedModule => {
-    const overridden = overrideDefinitions(
-      unlinked,
-      options.loadClass?.(unlinked.name),
-      unlinked === root,
-    );
+    const overridden = overrideDefinitions(unlinked, options.loadClass, unlinked === root);
     javaOverrides.set(unlinked.name, overridden.overrides);
     const parsed = overridden.module;
     const firstCheck = instanceChecks.length;

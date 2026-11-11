@@ -532,6 +532,31 @@ The groups are checked in this order, so a decline counts once, in the first gro
 The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
 
+### Java overrides that stay declined
+
+The front end reads the class TLC loads for a module and puts the constant each method returns in
+place of the operator. It skips a method annotated `@TLAPlusOperator` or `@Evaluation`, as
+`processModuleOverrides` does, unless a `tlc2.overrides.TLCOverrides` class beside the spec could
+list it, and runs a method that catches an exception up to its first return. These shapes stay
+declined for good, because what TLC does with them depends on the JVM, not on the class file:
+
+- **A static initializer, a field's initializer or a superclass.** Java runs them as TLC first
+  calls a method, and what they print or throw shows in TLC's output. A failure there is an
+  `ExceptionInInitializerError`, whose report holds the JDK's own stack frames.
+- **A value the method computes by calling the JDK,** such as `Integer.parseInt`, which the front
+  end would have to run as Java does.
+- **Several methods TLC reports.** `Class#getDeclaredMethods` lists them in the order HotSpot
+  allocated the symbols of their names, which changes with `-Xshare:off` on the same JDK, and TLC
+  prints a message for each in that order. Where two methods share a name, the one listed last
+  overrides the other. The binary declines a class whose methods print more than one message, or
+  that has methods of one name, wherever the order could change what TLC logs.
+
+A method whose name `TLARegistry.mapName` maps to an operator's, such as `Plus` to `+`, is declined
+for now, not for good: the standard modules whose classes register the names are those SANY
+parsed before the overriding module, which in TLC's default mode include the modules of the trace
+exploration spec. With `-noGenerateSpecTE` and no EXTENDS, TLC at d8fb231 loads `Plus` as `Plus`,
+and in the default mode it fails to match it as `+`.
+
 ### What uses it as the reference, and what replaces it
 
 | User | Replacement |
