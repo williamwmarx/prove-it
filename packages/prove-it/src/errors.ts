@@ -255,18 +255,18 @@ export class EngineInvariantError extends TlaError {
 
 // No native engine loads: no platform package for this system is installed, its addon fails to
 // load, or, where there is no process.dlopen, the WebAssembly engine doesn't. check doesn't fall
-// back to a slower search unasked: PROVE_IT_ENGINE=0 checks with the interpreter.
+// back to a slower search unasked: PROVE_IT_ENGINE=0 checks with the interpreter. SANY's report
+// and XMLExporter have nothing else to fall back to.
 export class EngineUnavailableError extends Error {
-  constructor(reason: string) {
+  constructor(reason: string, isInterpreterAdvised = true) {
     super(
-      `The native engine is unavailable: ${reason}. Install @atemp/prove-it with its optional dependencies on a supported platform, or set PROVE_IT_ENGINE=0 to check with the interpreter.`,
+      `The native engine is unavailable: ${reason}. Install @atemp/prove-it with its optional dependencies on a supported platform${isInterpreterAdvised ? ", or set PROVE_IT_ENGINE=0 to check with the interpreter" : ""}.`,
     );
     this.name = "EngineUnavailableError";
   }
 }
 
-// A file the build puts beside the bundle, such as a worker's entry or SANY's snapshot of the
-// standard modules, isn't there: the build left it out, or put it where the bundle doesn't look.
+// A file the build puts beside the bundle, such as a worker's entry, isn't there: the build left it out, or put it where the bundle doesn't look.
 // index.ts doesn't export it.
 export class MissingBuildFileError extends TlaError {
   constructor(url: URL) {

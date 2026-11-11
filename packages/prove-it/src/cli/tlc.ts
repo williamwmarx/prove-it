@@ -39,9 +39,11 @@ import {
 import { describeRange } from "../evaluate";
 import { EXIT_STATUS } from "../exit-codes";
 import { checkParsed } from "../parallel";
-import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
-import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
-import { readSanySnapshot } from "../sany/snapshot";
+import {
+  getSanyStandardModules,
+  SANY_174_STANDARD_MODULES,
+  SANY_STANDARD_MODULES,
+} from "../sany/modules";
 import type { StateDump } from "../state-graph";
 import { getTlcFingerprint } from "../tlc/fingerprint";
 import {
@@ -69,7 +71,7 @@ import {
 import type { TlcVersion } from "../tlc/version";
 import { formatState } from "../values";
 import { CHECK_COMMAND, type ParsedArgs, USAGE } from "./options";
-import { getNativeSanyReport } from "./sany-text";
+import { getNativeSanyReport, NOT_NATIVE_EXIT_CODE, type SanyModuleOrigin } from "./sany-text";
 import {
   createModuleLoader,
   findFile,
@@ -814,33 +816,24 @@ const checkSpec = async (
     version,
   );
   // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for, as
-  // tla-front writes them where it does. It doesn't write TLC 1.7.4's, nor the trace exploration
-  // spec's TLC parses with the spec, which the TypeScript report does.
-  const nativeSany =
-    version === "master" && !isRecorded && existsSync(specPath)
-      ? getNativeSanyReport(specPath, readFileSync(specPath, "utf8"), version, {
-          fileName: specName,
-          loadModule,
-          describeFile,
-        })
-      : undefined;
-  if (nativeSany) writeOutput(1, nativeSany.text);
+  // tla-front writes them. TLC 1.7.4 prints to its error stream where SANY doesn't find a module,
+  // as SANY looks for it.
+  const isFound = existsSync(specPath);
+  // SANY reads a root module no file holds from its standard modules.
   const sany =
-    nativeSany ??
-    getSanyReport(
-      specPath,
-      reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
-      {
-        fileName: specName,
-        describeFile,
-        version,
-        // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
-        rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
-        precomputed: version === "master" ? readSanySnapshot() : undefined,
-        onPrint: (text) => writeOutput(1, text),
-        onPrintError: (text) => writeOutput(2, text),
-      },
-    );
+    isFound || !getSanyStandardModules(version).has(fileName)
+      ? getNativeSanyReport(specPath, isFound ? readFileSync(specPath, "utf8") : null, version, {
+          fileName: specName,
+          loadModule: reportMissingFile
+            ? reportMissingModules174(loadModule, reportMissingFile)
+            : loadModule,
+          describeFile,
+          // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
+          rootExtendees: isRecorded ? ["_TLCTrace"] : [],
+        })
+      : { declined: "SANY's report of a standard module given as the spec" };
+  if ("declined" in sany) return declineNatively(sany.declined);
+  writeOutput(1, sany.text);
   if (sany.isFailed) {
     printCheckProgress(printer, { kind: "parsed" }, timing, directories);
     printParsingFailed();
@@ -1049,6 +1042,11 @@ export const checkNatively = async (
   return result.exitCode;
 };
 
+const declineNatively = (reason: string) => {
+  console.error(`prove-it: not native yet: ${reason}`);
+  return NOT_NATIVE_EXIT_CODE;
+};
+
 export const checkSpecs = async (args: string[], java: JavaProperties, isTlcLaunch = false) => {
   const parsed = CHECK_COMMAND.parse(args);
   const isConfigured = parsed.has("-config");
@@ -1066,6 +1064,8 @@ export const checkSpecs = async (args: string[], java: JavaProperties, isTlcLaun
     return 1;
   }
   const paths = [...new Map(specPaths.map((path) => [findSpec(path, java), path])).entries()];
+  // SANY's report needs the engine, which may be WebAssembly to compile first.
+  await loadWasmEngine();
   // Each spec is checked as TLC would in a process of its own, so an error in one leaves the others
   // to report. The exit code is the first that is not success.
   const exitCodes: number[] = [];
