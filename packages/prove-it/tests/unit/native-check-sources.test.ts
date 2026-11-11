@@ -10,10 +10,10 @@ import { dirname, join, resolve } from "node:path";
 
 import { getTranscript } from "../../scripts/normalize-output";
 import { getBuiltAddon } from "../../scripts/platform-packages";
+import type { SanyModuleOrigin } from "../../src/cli/sany-text";
 import { createModuleLoader } from "../../src/cli/shared";
 import { createFileDescriber } from "../../src/cli/tlc";
 import { checkAllSources, getNativeAddon } from "../../src/engine/native";
-import type { SanyModuleOrigin } from "../../src/sany/report";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 const BINARY = join(dirname(getBuiltAddon() ?? ""), "bin", "prove-it");

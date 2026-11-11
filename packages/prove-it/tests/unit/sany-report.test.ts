@@ -3,30 +3,49 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createBuiltins } from "../../src/sany/builtins";
-import { generateSanySpecification } from "../../src/sany/generator";
-import { checkModuleLevels } from "../../src/sany/levels";
-import { getSanyStandardModules } from "../../src/sany/modules";
-import { getSanyModuleName, getSanyReport, type SanyReportOptions } from "../../src/sany/report";
-import { createSanySnapshot, getPrecomputedModules } from "../../src/sany/snapshot";
+import { getNativeSanyReport, type SanyModuleOrigin } from "../../src/cli/sany-text";
+import type { TlcVersion } from "../../src/tlc/version";
 
 const directories: string[] = [];
 
 afterAll(() => directories.forEach((directory) => rmSync(directory, { recursive: true })));
 
-// Writes each module to its own file, then reports on the first one.
-const getReport = (modules: Record<string, string>, options?: SanyReportOptions) => {
+interface ReportOptions {
+  version?: TlcVersion;
+  describeFile?: (moduleName: string, origin: SanyModuleOrigin) => string;
+}
+
+const PROGRESS = /^(?:Parsing file |Semantic processing of module |Linting of module )/;
+
+// Writes each module to its own file, then reports on the first one as tla-front writes SANY's
+// report. Without describeFile, the lines of SANY's progress are left out.
+const getReport = (modules: Record<string, string>, options: ReportOptions = {}) => {
   const directory = mkdtempSync(join(tmpdir(), "sany-report-"));
   directories.push(directory);
   Object.entries(modules).forEach(([name, source]) =>
     writeFileSync(join(directory, `${name}.tla`), source),
   );
-  const report = getSanyReport(
-    join(directory, `${Object.keys(modules)[0]}.tla`),
-    (name) => (name in modules ? readFileSync(join(directory, `${name}.tla`), "utf8") : undefined),
-    options,
+  const [root] = Object.keys(modules);
+  const report = getNativeSanyReport(
+    join(directory, `${root}.tla`),
+    modules[root],
+    options.version ?? "master",
+    {
+      fileName: root,
+      loadModule: (name) =>
+        name in modules ? readFileSync(join(directory, `${name}.tla`), "utf8") : undefined,
+      describeFile: options.describeFile ?? (() => ""),
+      rootExtendees: [],
+    },
   );
-  return { text: report.text, isFailed: report.isFailed };
+  if ("declined" in report) return report;
+  const text = options.describeFile
+    ? report.text
+    : report.text
+        .split(/(?<=\n)/)
+        .filter((line) => !PROGRESS.test(line))
+        .join("");
+  return { text, isFailed: report.isFailed };
 };
 
 const toText = (lines: string[]) => lines.map((line) => `${line}\n`).join("");
@@ -605,11 +624,6 @@ Prime == PrimeTest(')
       'Was expecting "==== or more Module body"\nEncountered "USE" at line 2, column 1',
     );
     expect(getText("THEOREM TRUE\n<1> USE ONLY TRUE\n<1> QED")).not.toContain("Parse Error");
-  });
-
-  it("names the specification by a root module that parses but has semantic errors", () => {
-    const text = "---- MODULE Named ----\nCONSTANT C\nTHEOREM TRUE BY DEF C\n====\n";
-    expect(getSanyModuleName(text, "1.7.4")).toBe("Named");
   });
 
   it("locates a substitution for a parameter of the definition at its target", () => {
@@ -1195,7 +1209,7 @@ Termination == <>(pc = "Done")
 
 // The expected reports are what the SANY of TLC 1.7.4's tla2tools.jar prints.
 describe("getSanyReport for TLC 1.7.4", () => {
-  const options: SanyReportOptions = { version: "1.7.4" };
+  const options: ReportOptions = { version: "1.7.4" };
 
   it("prints the errors and warnings of a module together", () => {
     const report = getReport(
@@ -1350,136 +1364,5 @@ EXTENDS Absent
         "",
       ]),
     );
-  });
-});
-
-describe("getSanyReport with the precomputed standard modules", () => {
-  // The CLI reads the snapshot from the JSON file the build writes.
-  const precomputed = getPrecomputedModules(JSON.parse(JSON.stringify(createSanySnapshot())));
-  const options: SanyReportOptions = {
-    describeFile: (name) => `${name}.tla`,
-    rootExtendees: ["_TLCTrace"],
-  };
-  const expectSameReport = (modules: Record<string, string>) => {
-    const report = getReport(modules, options);
-    expect(getReport(modules, { ...options, precomputed })).toEqual(report);
-    return report;
-  };
-
-  it("decodes the nodes SANY makes for the standard modules", () => {
-    const standardModules = getSanyStandardModules("master");
-    const specification = generateSanySpecification(
-      "---- MODULE Snapshot ----\n====\n",
-      (name) => standardModules.get(name),
-      {
-        rootFileName: "Snapshot",
-        rootExtendees: ["_TLCTrace"],
-        onModule: (module, messages) => checkModuleLevels(module, { messages, isTlc174: false }),
-      },
-    );
-    const decoded = precomputed.getModules(specification.builtins);
-    const modules = specification.modules.slice(0, -1);
-    expect([...decoded.keys()]).toEqual(modules.map((module) => module.name));
-    // The graphs are cyclic and deep, so the walk pairs each object with the one it was matched
-    // to, and keeps the pairs it has yet to compare.
-    const isSameGraph = (left: unknown, right: unknown) => {
-      const pairs = new Map<unknown, unknown>();
-      const pending = [[left, right]];
-      for (let pair = pending.pop(); pair !== undefined; pair = pending.pop()) {
-        const [one, other] = pair;
-        if (
-          typeof one !== "object" ||
-          one === null ||
-          typeof other !== "object" ||
-          other === null
-        ) {
-          if (!Object.is(one, other)) return false;
-          continue;
-        }
-        if (pairs.has(one)) {
-          if (pairs.get(one) !== other) return false;
-          continue;
-        }
-        pairs.set(one, other);
-        // Keys and values one after another.
-        const getParts = (value: object) =>
-          value instanceof Map
-            ? [...value].flat()
-            : value instanceof Set
-              ? [...value]
-              : Object.entries(value).flat();
-        const oneParts = getParts(one);
-        const otherParts = getParts(other);
-        if (Object.getPrototypeOf(one) !== Object.getPrototypeOf(other)) return false;
-        if (oneParts.length !== otherParts.length) return false;
-        oneParts.forEach((part, index) => pending.push([part, otherParts[index]]));
-      }
-      return true;
-    };
-    expect(modules.every((module) => isSameGraph(decoded.get(module.name), module))).toBe(true);
-  });
-
-  // The decode makes the body of a definition once it is read, and a body written before that is
-  // the body.
-  it("keeps a body written to a definition before its body is read", () => {
-    const getDefinitions = () =>
-      (
-        getPrecomputedModules(JSON.parse(JSON.stringify(createSanySnapshot())))
-          .getModules(createBuiltins(() => 0))
-          .get("Naturals")?.definitions ?? []
-      ).flatMap((node) => (node.kind === "OpDef" ? [node] : []));
-    const read = getDefinitions();
-    const index = read.findIndex((definition) => definition.body !== undefined);
-    const written = getDefinitions()[index];
-    expect(index).toBeGreaterThanOrEqual(0);
-    const keys = Object.keys(written);
-    written.body = read[index].body;
-    expect(written.body).toBe(read[index].body);
-    expect(Object.keys(written)).toEqual(keys);
-  });
-
-  it("reports a specification that uses the standard modules as SANY does", () => {
-    const report = expectSameReport({
-      Queue: `---- MODULE Queue ----
-EXTENDS Naturals, Sequences, FiniteSets, TLC
-VARIABLE queue
-Init == queue = <<>>
-Next == /\\ Len(queue) < 3 /\\ queue' = Append(queue, Cardinality({1, 2}))
-Spec == Init /\\ [][Next]_queue
-====
-`,
-    });
-    expect(report.isFailed).toBe(false);
-  });
-
-  it("reports errors in applications of the standard modules' operators", () => {
-    const report = expectSameReport({
-      Wrong: `---- MODULE Wrong ----
-EXTENDS Sequences, TLC
-VARIABLE x
-Arity == Len(x, x)
-Level == Print(x', TRUE)
-Init == x = <<>>
-Inv == [](x = <<>>)
-Bad == ENABLED Inv
-====
-`,
-    });
-    expect(report.isFailed).toBe(true);
-  });
-
-  // The replacement lacks operators that TLC and Sequences use, which SANY reports.
-  it("analyzes the modules that depend on a standard module the specification replaces", () => {
-    const report = expectSameReport({
-      Replaced: `---- MODULE Replaced ----
-EXTENDS Naturals, TLC
-====
-`,
-      Naturals: `---- MODULE Naturals ----
-Nat == {0, 1, 2}
-====
-`,
-    });
-    expect(report.isFailed).toBe(true);
   });
 });
