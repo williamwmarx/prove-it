@@ -4395,8 +4395,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // What TLC prints as it adds the state it stopped at to the behavior graphs, where the
             // search placed it.
             let mut stop_added = None;
-            // Where the engine doesn't place what TLC prints at the stop, the stop is reported as
-            // where nothing prints if nothing but the initial states prints, and declined
+            // A stop the engine doesn't place what TLC prints at is reported as main reports it,
+            // as is one it can't place where nothing but the initial states prints, and declined
             // otherwise.
             let mut found = found;
             if let Some(stop) = &found
@@ -4409,8 +4409,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 ) && bail.0 == INCOMPLETE_SUCCESSOR)
                 && search.graph.is_some()
                 && search.held.is_some()
-                && (get_stop_completeness(&context, &search, stop).is_ok()
-                    || is_printed_past_initial(&mut machine, &context, &search, stop))
+                && get_stop_completeness(&context, &search, stop).is_ok()
             {
                 match place_stop_prints(
                     &mut machine,

@@ -161,6 +161,13 @@ fn prints_as_tlc_does_at_a_stop_in_a_model_with_temporal_properties() {
             11,
             "Error: Deadlock reached.\n\"i\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n\"i\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 7, column 13 to line 7, column 44 in M\n1. Line 7, column 14 to line 7, column 41 in M\n2. Line 7, column 24 to line 7, column 41 in M\n3. Line 7, column 24 to line 7, column 37 in M\n\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n",
         ),
+        // a stop the engine doesn't place prints at, as atoms read TLC's level, is reported as main reports it
+        (
+            "Init == x = 0\nNext == PrintT(x) /\\ x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nP == []<>(TLCGet(\"level\") > 0)\nAP == [][x' = x + 2]_x",
+            "SPECIFICATION Spec\nPROPERTY P\nPROPERTY AP\n",
+            13,
+            "0\nError: Action property AP is violated.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\n0\nState 2: <Next line 5, col 9 to line 5, col 40 of module M>\nx = 1\n\n0\n2 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\n",
+        ),
         // and two initial states print
         (
             "Init == x \\in {0, 1} /\\ PrintT(x)\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == <>[][x' > x \\/ 1 \\div (2 - x) = 0]_x",
