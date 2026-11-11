@@ -1,5 +1,5 @@
-//! `tests/unit/zenon.test.ts`, on the same fixtures: the search, the proofs it prints and its input,
-//! against tlapm's Zenon. The checker's tests are in `src/check.rs`.
+//! The search, the proofs it prints and its input, against tlapm's Zenon, on the fixtures under
+//! tests/fixtures/zenon. The checker's tests are in `src/check.rs`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -399,6 +399,17 @@ fn rejects_the_proof_that_zenons_not_subseteq_cap_rule_gives() {
 }
 
 #[test]
+fn fails_on_malformed_input_as_tlapm_counts_it() {
+    let decision = prove_zenon::decide("$sig a", &limits());
+    assert_eq!(
+        decision,
+        Err(prove_decide::DecideError::Prover(
+            "Zenon: line 1: unsupported phrase $sig".into()
+        ))
+    );
+}
+
+#[test]
 fn rejects_malformed_input() {
     for text in ["$goal (= a b", "$sig a", "$goal (= \"\\q\" a)"] {
         assert!(decide_zenon(text, &limits()).is_err(), "{text}");
@@ -412,11 +423,11 @@ fn gives_up_once_the_cancel_cell_is_set() {
     assert_eq!(run.failure, Some("aborted"));
 }
 
-/// What `bun scripts/zenon-fixtures.ts` recorded from the TypeScript in
-/// tests/fixtures/zenon/decisions.txt: per fixture and step limit, the statistics `decideZenon`
-/// reports, which show the port made the same search and printed the same proof.
+/// tests/fixtures/zenon/decisions.txt holds, per fixture and step limit, the statistics the
+/// TypeScript Zenon reported before it was deleted, which show the port makes the same search and
+/// prints the same proof. Nothing rewrites it: a change to a line is a change to Zenon's search.
 #[test]
-fn decides_as_the_typescript_does_under_a_step_limit() {
+fn decides_as_recorded_under_a_step_limit() {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../tests/fixtures");
     for line in read_fixture("decisions.txt").lines() {
         let mut fields = line.splitn(3, ' ');

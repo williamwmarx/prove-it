@@ -2,8 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check, parseConfig, TlaConfigError } from "../../src";
+import { parseConfig, TlaConfigError } from "../../src";
 import { UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { checkParsed } from "../../src/parallel";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/possible");
 
@@ -13,7 +14,7 @@ const NEVER_WITNESSED =
 const checkPossible = async (configName: string) => {
   const config = parseConfig(readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"));
   config.checkDeadlock = false;
-  const result = await check({
+  const result = await checkParsed({
     source: readFileSync(join(DIRECTORY, "PossibleFail.tla"), "utf8"),
     config,
   });
@@ -21,7 +22,7 @@ const checkPossible = async (configName: string) => {
 };
 
 const checkModule = (body: string, config: string) =>
-  check({
+  checkParsed({
     source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\n${body}\n====`,
     config: `INIT Init\nNEXT Next\n${config}`,
   });
@@ -85,7 +86,7 @@ describe("_POSSIBLE matches TLC", () => {
   });
 
   it("checks a POSTCONDITION after a violation without changing its status", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nNever == TLCGet("level") < 0\nInv == x < 1\n====',
       config: "INIT Init\nNEXT Next\nPOSTCONDITION Never\nINVARIANT Inv",
@@ -107,7 +108,7 @@ describe("_POSSIBLE matches TLC", () => {
     ["PROPERTY P", "P == [][x' < 2 \\/ 1 \\div 0 = 0]_x", undefined],
     ["INVARIANT P", "P == TRUE\nStep == IF x = 2 THEN 1 \\div 0 = 0 ELSE Next", "Never"],
   ])("checks a POSTCONDITION after %s fails to evaluate as TLC does", async (kind, body, name) => {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 5 /\\ x' = x + 1\nNever == TLCGet("level") < 0\n${body}\nSpec == Init /\\ [][${body.includes("Step") ? "Step" : "Next"}]_x\n====`,
       config: `SPECIFICATION Spec\nPOSTCONDITION Never\n${kind}`,
     });

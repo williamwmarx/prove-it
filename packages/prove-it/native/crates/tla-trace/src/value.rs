@@ -7,7 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use tla_values::Store;
 
@@ -78,7 +78,7 @@ pub fn fail_coded<T>(reason: impl Into<String>, code: u32, text: String) -> Eval
 }
 
 /// A string or a model value's name, with TLC's rank of it: the order TLC interned the text in,
-/// or -1 for a text the IR doesn't rank, which compares by its units, as the store's does.
+/// or -1 for a text the evaluator doesn't rank, which TLC made as it searched.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Text {
     pub units: Box<[u16]>,
@@ -206,6 +206,39 @@ pub enum Value {
     Lambda(Rc<crate::eval::Lambda>),
 }
 
+/// The field names tlc2.value.impl.RecordValue interns as it initializes, in the order it declares
+/// them.
+pub const RECORD_VALUE_FIELDS: [&str; 10] = [
+    "beginLine",
+    "beginColumn",
+    "endLine",
+    "endColumn",
+    "module",
+    "name",
+    "location",
+    "context",
+    "parameters",
+    "_action",
+];
+
+thread_local! {
+    // Whether the evaluator has built a record since `take_is_record_built` last asked: TLC
+    // initializes RecordValue, which interns its field names, as it builds its first record.
+    static IS_RECORD_BUILT: Cell<bool> = const { Cell::new(false) };
+}
+
+fn new_class(class: Class) -> Cell<Class> {
+    if class == Class::Record {
+        IS_RECORD_BUILT.set(true);
+    }
+    Cell::new(class)
+}
+
+/// Whether the evaluator has built a record since the last call.
+pub(crate) fn take_is_record_built() -> bool {
+    IS_RECORD_BUILT.replace(false)
+}
+
 impl Value {
     pub fn empty_set() -> Value {
         Value::Set(Rc::new(Vec::new()))
@@ -215,7 +248,7 @@ impl Value {
         Value::Function(Rc::new(Function {
             domain,
             range,
-            class: Cell::new(class),
+            class: new_class(class),
             written: RefCell::new(None),
             search: Cell::new(Search::Unknown),
             interval: None,
@@ -228,7 +261,7 @@ impl Value {
         Value::Function(Rc::new(Function {
             domain: (low..=high).map(Value::Int).collect(),
             range,
-            class: Cell::new(class),
+            class: new_class(class),
             written: RefCell::new(None),
             search: Cell::new(Search::Unknown),
             interval: Some((low, high)),
@@ -237,6 +270,20 @@ impl Value {
 
     pub fn tuple(elements: Vec<Value>) -> Value {
         Value::over_interval(1, elements, Class::Tuple)
+    }
+
+    /// `TupleValue.EmptyTuple`, the one empty sequence of TLC's that SubSeq and SelectSeq give,
+    /// which a dumped trace writes once.
+    pub fn empty_tuple() -> Value {
+        thread_local! {
+            static EMPTY: Value = Value::tuple(Vec::new());
+        }
+        EMPTY.with(Value::clone)
+    }
+
+    /// Whether the value is a `TupleValue`, as opposed to a function TLC converts to one.
+    pub fn is_tuple_class(&self) -> bool {
+        matches!(self, Value::Function(function) if function.class.get() == Class::Tuple)
     }
 
     /// A record of fields as written: sorted into TLC's order, keeping the written order where it
@@ -309,7 +356,7 @@ pub fn written_function(keys: Vec<Value>, values: Vec<Value>, class: Class) -> E
     Ok(Value::Function(Rc::new(Function {
         domain,
         range,
-        class: Cell::new(class),
+        class: new_class(class),
         written: RefCell::new(written),
         search: Cell::new(Search::Unknown),
         interval: None,
@@ -328,12 +375,18 @@ pub fn sorted_function(keys: Vec<Value>, values: Vec<Value>, class: Class) -> Ev
 
 // --- TLC's order, as the store's `compare` ---
 
-fn compare_texts(left: &Text, right: &Text) -> Ordering {
+// TLC interns a text it makes after it starts as it makes it, after every text it interned as it
+// started: two such texts the evaluator didn't rank compare in an order it can't know.
+fn compare_texts(left: &Text, right: &Text) -> Evaluated<Ordering> {
+    // TLC interns a text once, so the same text compares equal however each was made.
+    if left.units == right.units {
+        return Ok(Ordering::Equal);
+    }
     match (left.rank, right.rank) {
-        (-1, -1) => left.units.cmp(&right.units),
-        (_, -1) => Ordering::Less,
-        (-1, _) => Ordering::Greater,
-        (left, right) => left.cmp(&right),
+        (-1, -1) => fail("an order of strings TLC made as it searched"),
+        (_, -1) => Ok(Ordering::Less),
+        (-1, _) => Ok(Ordering::Greater),
+        (left, right) => Ok(left.cmp(&right)),
     }
 }
 
@@ -388,23 +441,31 @@ fn typed_model_failure<T>(left: &Value, right: &Value, is_equality: bool) -> Eva
 
 thread_local! {
     // The sets a replay built that TLC holds unnormalized still, by address, each with its
-    // elements in the order TLC built it. Each entry holds its set, so that no other set takes
-    // its address while the entry lasts.
+    // elements in the order TLC built it. Each entry holds its set's allocation but not the set,
+    // so that no other set takes its address while the entry lasts, and a set nothing else
+    // holds is dropped, as the entries of one are each time the map doubles.
     static UNNORMALIZED: RefCell<HashMap<usize, Unnormalized>> = RefCell::new(HashMap::new());
+    // How many entries held a set when the map last dropped those that don't.
+    static UNNORMALIZED_HELD: Cell<usize> = const { Cell::new(0) };
 }
 
 // A set TLC holds unnormalized, with its elements as TLC built it.
-type Unnormalized = (Rc<Vec<Value>>, Vec<Value>);
+type Unnormalized = (Weak<Vec<Value>>, Vec<Value>);
 
 /// Records a set a replay built as TLC holds it unnormalized (`SetEnumValue` with `isNorm`
 /// false), with its elements as TLC built it.
 pub(crate) fn mark_unnormalized(set: &Value, written: Vec<Value>) {
     if let Value::Set(elements) = set {
         UNNORMALIZED.with(|sets| {
-            sets.borrow_mut().insert(
+            let mut sets = sets.borrow_mut();
+            if sets.len() >= 2 * UNNORMALIZED_HELD.get().max(1024) {
+                sets.retain(|_, entry| entry.0.strong_count() > 0);
+                UNNORMALIZED_HELD.set(sets.len());
+            }
+            sets.insert(
                 Rc::as_ptr(elements) as usize,
-                (Rc::clone(elements), written),
-            )
+                (Rc::downgrade(elements), written),
+            );
         });
     }
 }
@@ -417,6 +478,7 @@ pub(crate) fn unnormalized(set: &Value) -> Option<Vec<Value>> {
     UNNORMALIZED.with(|sets| {
         sets.borrow()
             .get(&(Rc::as_ptr(elements) as usize))
+            .filter(|entry| entry.0.strong_count() > 0)
             .map(|entry| entry.1.clone())
     })
 }
@@ -424,6 +486,7 @@ pub(crate) fn unnormalized(set: &Value) -> Option<Vec<Value>> {
 /// Forgets the sets the last replay built.
 pub(crate) fn clear_unnormalized() {
     UNNORMALIZED.with(|sets| sets.borrow_mut().clear());
+    UNNORMALIZED_HELD.set(0);
 }
 
 // TLC normalizes a set to enumerate, compare or print it.
@@ -491,20 +554,21 @@ fn sort(function: &Function) {
 }
 
 thread_local! {
-    // While `failing_comparison` runs, the left operands of the comparisons in progress,
-    // outermost first, which a failure leaves in place: the values in whose `compareTo` TLC's
-    // exception passes as it unwinds. `None` otherwise, so that no other comparison keeps values.
+    // While `failing_comparisons` runs, the left operands of the comparisons in progress,
+    // `compareTo` and `equals`, outermost first, which a failure leaves in place: the values in
+    // whose methods TLC's exception passes as it unwinds. `None` otherwise, so that no other
+    // comparison keeps values.
     static COMPARING: RefCell<Option<Vec<Value>>> = const { RefCell::new(None) };
 }
 
-/// TLC's `compareTo`, as the store's `compare`: an error where TLC can't compare the two.
-pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
+// Runs a comparison of `left`, which a failure leaves among those in progress.
+fn comparing<T>(left: &Value, run: impl FnOnce() -> Evaluated<T>) -> Evaluated<T> {
     COMPARING.with_borrow_mut(|comparing| {
         if let Some(comparing) = comparing {
             comparing.push(left.clone());
         }
     });
-    let compared = compare_values(left, right);
+    let compared = run();
     if compared.is_ok() {
         COMPARING.with_borrow_mut(|comparing| {
             if let Some(comparing) = comparing {
@@ -515,13 +579,18 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
     compared
 }
 
-/// The values in whose `compareTo` comparing `left` with `right` fails, outermost first, or none
-/// where it doesn't fail.
-pub fn failing_comparison(left: &Value, right: &Value) -> Vec<Value> {
+/// TLC's `compareTo`, as the store's `compare`: an error where TLC can't compare the two.
+pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
+    comparing(left, || compare_values(left, right))
+}
+
+/// What `run` gives, or where it fails, the values in whose `compareTo` or `equals` it fails,
+/// outermost first.
+pub fn failing_comparisons<T>(run: impl FnOnce() -> Evaluated<T>) -> Result<T, Vec<Value>> {
     COMPARING.set(Some(Vec::new()));
-    let is_failed = compare(left, right).is_err();
+    let compared = run();
     let comparing = COMPARING.take().unwrap_or_default();
-    if is_failed { comparing } else { Vec::new() }
+    compared.map_err(|_| comparing)
 }
 
 fn compare_values(left: &Value, right: &Value) -> Evaluated<Ordering> {
@@ -530,10 +599,10 @@ fn compare_values(left: &Value, right: &Value) -> Evaluated<Ordering> {
     match (left, right) {
         (Value::Int(left), Value::Int(right)) => Ok(left.cmp(right)),
         (Value::Bool(left), Value::Bool(right)) => Ok(left.cmp(right)),
-        (Value::Str(left), Value::Str(right)) => Ok(compare_texts(left, right)),
+        (Value::Str(left), Value::Str(right)) => compare_texts(left, right),
         (Value::Model(left_text), Value::Model(right_text)) => {
             check_model_types(left, right, false)?;
-            Ok(compare_texts(left_text, right_text))
+            compare_texts(left_text, right_text)
         }
         (Value::Model(model), _) => {
             if model.model_type() == 0 {
@@ -717,6 +786,10 @@ fn is_tuple_like(function: &Function) -> bool {
 /// TLC's `equals`, as the store's: values of kinds TLC can't compare fail, but a model value
 /// without a type is unequal to anything else.
 pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
+    comparing(left, || equal_values(left, right))
+}
+
+fn equal_values(left: &Value, right: &Value) -> Evaluated<bool> {
     normalize(left);
     normalize(right);
     match (left, right) {
@@ -735,6 +808,10 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
             } else {
                 typed_model_failure(left, right, true)
             }
+        }
+        // `SetEnumValue.equals` normalizes a set TLC holds unnormalized, which fails.
+        (Value::Unsorted(values), Value::Set(_) | Value::Interval(..) | Value::Unsorted(_)) => {
+            Err(unsorted_failure(values))
         }
         (Value::Function(left_function), Value::Function(right_function)) => {
             let (left_value, right_value) = (left, right);
@@ -1473,14 +1550,28 @@ pub fn permute(value: &Value, permutation: &[(Rc<Text>, Rc<Text>)]) -> Evaluated
 mod tests {
     use super::*;
 
-    // A comparison that fails outside `failing_comparison`, as sorting a set's elements does,
-    // keeps none of its operands, while `failing_comparison` gives the operand that failed.
+    // A comparison that fails outside `failing_comparisons`, as sorting a set's elements does,
+    // keeps none of its operands, while `failing_comparisons` gives the operand that failed.
     #[test]
     fn keeps_comparisons_only_while_finding_a_failing_one() {
         let set = Value::Set(Rc::new(vec![Value::Int(1)]));
         assert!(compare(&set, &Value::Int(2)).is_err());
         assert!(COMPARING.with_borrow(Option::is_none));
-        assert_eq!(failing_comparison(&set, &Value::Int(2)).len(), 1);
+        let failed = failing_comparisons(|| compare(&set, &Value::Int(2)));
+        assert_eq!(failed.err().map(|values| values.len()), Some(1));
         assert!(COMPARING.with_borrow(Option::is_none));
+    }
+
+    // A set a replay built unnormalized is gone once nothing else holds it.
+    #[test]
+    fn keeps_no_set_built_unnormalized_once_dropped() {
+        let elements = Rc::new(vec![Value::Int(2), Value::Int(1)]);
+        let held = Rc::downgrade(&elements);
+        let set = Value::Set(elements);
+        mark_unnormalized(&set, vec![Value::Int(2), Value::Int(1)]);
+        assert_eq!(unnormalized(&set).map(|written| written.len()), Some(2));
+        drop(set);
+        assert!(held.upgrade().is_none());
+        clear_unnormalized();
     }
 }

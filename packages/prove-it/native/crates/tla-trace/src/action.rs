@@ -149,11 +149,18 @@ impl<'ir> Evaluator<'ir> {
         demand: Demand,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        if self.boolean_as(node, context, demand)? {
-            then(self)
-        } else {
-            Ok(true)
+        let holds = self.boolean_as(node, context, demand);
+        // `Tool`'s getInitStates and getNextStates test themselves that a guard is a boolean,
+        // outside the methods of the value, where the call stack freezes.
+        if holds.is_err()
+            && let Some(stack) = &mut self.call_stack
+        {
+            stack.is_frozen = true;
         }
+        if !holds? {
+            return Ok(true);
+        }
+        then(self)
     }
 
     // A function's value the walk tests, which `OPCODE_fa` words apart from a guard's.
@@ -464,7 +471,7 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let(definitions, context)?;
+                let inner = self.bind_let(definitions, context, false)?;
                 self.walk(*body, &inner, is_init, then)
             }
             NodeKind::Unchanged(expression) => {

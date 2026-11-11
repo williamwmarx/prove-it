@@ -34,13 +34,23 @@ pub type Step = Arc<dyn Fn(&mut Machine<'_>, &mut Continue<'_>) -> Outcome<()> +
 /// count of initial states, which waits with what was printed before it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Printed {
-    Values(Vec<Id>),
+    Values(Prints),
     InitialStates(u64),
 }
 
 /// What a search stops with once its machines evaluated as many bodies of recursive definitions
 /// as PROVE_IT_TEST_EVALUATIONS allows.
 pub const EVALUATIONS_SPENT: &str = "stopped where PROVE_IT_TEST_EVALUATIONS asked";
+
+/// What one Print or PrintT printed: the values, and in the native checker TLC's text of each,
+/// which the compiler knows where the store forgets how TLC built a value the spec writes there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prints {
+    pub values: Vec<Id>,
+    /// TLC's text of each value, before TLC's pretty-printer breaks its lines; `None` where the
+    /// engine doesn't know one, or isn't the native checker.
+    pub texts: Option<Vec<Vec<u16>>>,
+}
 
 /// A variable that has no value yet, -1 in the TypeScript registers.
 pub const UNASSIGNED: Id = u32::MAX;
@@ -179,6 +189,10 @@ pub struct Machine<'p> {
     /// TLC binds the set as built until it fingerprints the state the walk completes, which
     /// caches it as its normalized set (`Tool.getInitStates`, `Tool.getNextStates`).
     pub(crate) held: Vec<Option<(Id, Option<Lazy>)>>,
+    /// Whether the search walks the initial predicate and it has completed no state yet, before
+    /// which TLC fingerprints no state, so it has cached no value a state holds as its
+    /// normalized set (`DoInitFunctor.addElement`).
+    pub(crate) is_before_initial_state: bool,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -242,6 +256,7 @@ impl<'p> Machine<'p> {
             fingerprints: Fingerprints::new(program.polynomial()),
             lazy_functions: Vec::new(),
             held: vec![None; program.width],
+            is_before_initial_state: false,
         }
     }
 

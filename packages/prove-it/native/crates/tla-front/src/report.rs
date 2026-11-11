@@ -15,7 +15,9 @@ use crate::linter::Linter;
 use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
 use crate::recursive::check_recursive;
+use crate::sany::GENERATOR_EXCEPTION;
 use crate::sany::generator::{ModuleDependencies, get_dependencies};
+use crate::sany::messages::{Generated, get_generator_messages};
 use crate::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 
 type Result<T> = std::result::Result<T, Stop>;
@@ -76,8 +78,8 @@ pub struct ReportOptions<'a> {
     /// The file TLC prints that it parses a module from, as `createFileDescriber` names it.
     pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> String,
     /// The modules TLC adds to the root module's EXTENDS for its post conditions, which SANY
-    /// loads after the ones the root module extends: `_TLCTrace` where TLC records the trace for
-    /// its trace exploration spec.
+    /// loads after the ones the root module extends: `-dumpTrace`'s, then `_TLCTrace` where TLC
+    /// records the trace for its trace exploration spec (`ModelOptions::root_extendees`).
     pub root_extendees: &'a [&'a str],
     /// tla2sany.xml.XMLExporter runs SANY with its validAstSettings: SANY prints only its errors,
     /// with no progress lines and no warnings, and neither validates PlusCal nor lints.
@@ -640,6 +642,32 @@ pub fn get_sany_text_of(
     }
 }
 
+/// What SANY prints where its generator throws on the root module, which `SANY.parse` prints
+/// after the "Semantic processing" lines: the standard modules before it have no messages, and
+/// a module of the user's before it is `NotYet`.
+fn push_generator_exception(
+    loader: &mut Loader,
+    order: &[Rc<str>],
+    root: &Rc<str>,
+    exception: &str,
+) -> Result<()> {
+    let is_standard = |name: &Rc<str>| loader.read(name).1 == ModuleOrigin::Standard;
+    if loader.options.version == TlcVersion::V1_7_4
+        || order.iter().any(|name| name != root && !is_standard(name))
+    {
+        return Err(not_yet(
+            "SANY's generator exception after a module of the user's",
+        ));
+    }
+    for name in order {
+        loader.push_progress(format!("Semantic processing of module {name}\n"));
+    }
+    loader.lines.push(format!("{exception}\n"));
+    loader.is_failed = true;
+    loader.exception = Some(exception.to_owned());
+    Ok(())
+}
+
 /// `Generator`'s exception where a nested module ends the module's recursive section early: its
 /// `checkForUndefinedRecursiveOps` takes the section's count off the total, so the definition of
 /// an operator the section declared drives the total below zero (`endOpDefNode`). `NotYet` where
@@ -690,9 +718,7 @@ fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
                     ));
                 }
                 if is_cleared {
-                    return Ok(Some(
-                        "util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.",
-                    ));
+                    return Ok(Some(GENERATOR_EXCEPTION));
                 }
                 pending.remove(index);
             }
@@ -767,42 +793,67 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     loader.report_parse_messages(options.file_name.unwrap_or(&root))?;
     // SANY's generator throws on the root module before it reports its messages, and
     // `SANY.parse` prints the exception. The standard modules before it have none.
-    if let Some(exception) = get_generator_exception(&loader.modules[&root].module)? {
-        let is_standard = |name: &Rc<str>| loader.read(name).1 == ModuleOrigin::Standard;
-        if options.version == TlcVersion::V1_7_4
-            || order.iter().any(|name| *name != root && !is_standard(name))
-        {
-            return Err(not_yet(
-                "SANY's generator exception after a module of the user's",
-            ));
-        }
-        for name in &order {
-            loader.push_progress(format!("Semantic processing of module {name}\n"));
-        }
-        loader.lines.push(format!("{exception}\n"));
-        loader.is_failed = true;
-        loader.exception = Some(exception.to_owned());
-        return Ok(());
+    // Where the shapes `get_generator_exception` reads don't decide whether SANY's generator
+    // throws, the generator below does, declining where it would throw.
+    let known_exception = get_generator_exception(&loader.modules[&root].module);
+    let undecided = known_exception.as_ref().err().and_then(|stop| match stop {
+        Stop::Front(error @ FrontError::NotYet(_)) => Some(error.clone()),
+        _ => None,
+    });
+    if let Some(exception) = match known_exception {
+        Ok(exception) => exception,
+        Err(_) if undecided.is_some() => None,
+        Err(stop) => return Err(stop),
+    } {
+        return push_generator_exception(loader, &order, &root, exception);
     }
     // SANY's messages come from linking, which reports what SANY's semantic analysis does.
     let config =
         parse_config("", options.version).map_err(|error| FrontError::Config(error.message))?;
-    let messages = get_sany_messages(
-        &EnvironmentOptions {
-            source,
-            load_module: &|name| loader.read(name).0,
-            config: &config,
-            is_unconfigured: true,
-            version: options.version,
-            is_level_checked: true,
-            load_class: None,
-        },
-        &order,
-    )
-    .map_err(|error| match error {
-        FrontError::NotYet(_) => Stop::Front(error),
-        _ => not_yet("an error that stops linking"),
+    let linked = match &undecided {
+        Some(error) => Err(error.clone()),
+        None => get_sany_messages(
+            &EnvironmentOptions {
+                source,
+                load_module: &|name| loader.read(name).0,
+                config: &config,
+                is_unconfigured: true,
+                version: options.version,
+                is_level_checked: true,
+                load_class: None,
+            },
+            &order,
+        )
+        .map(Generated::Messages),
+    };
+    // Where linking doesn't derive SANY's messages yet, SANY's generator and levelCheck give
+    // them, as they do for the TypeScript report.
+    let messages = linked.or_else(|linking| {
+        let generated = match options.version {
+            TlcVersion::Master => get_generator_messages(
+                &root,
+                source,
+                &|name| loader.read(name).0,
+                options.root_extendees,
+                &order,
+            ),
+            TlcVersion::V1_7_4 => Err(linking.clone()),
+        };
+        generated.map_err(|_| match linking {
+            FrontError::NotYet(_) => Stop::Front(linking),
+            _ => not_yet("an error that stops linking"),
+        })
     })?;
+    let messages = match messages {
+        Generated::Messages(messages) => messages,
+        // SANY's generator throws on the root module, the last SANY analyzes.
+        Generated::Exception(index) if index + 1 == order.len() => {
+            return push_generator_exception(loader, &order, &root, GENERATOR_EXCEPTION);
+        }
+        Generated::Exception(_) => {
+            return Err(not_yet("SANY's generator exception before the root module"));
+        }
+    };
     // SANY.frontEndSemanticAnalysis: after each module, SANY prints every message so far.
     let mut warnings: Vec<SanyError> = Vec::new();
     let mut errors: Vec<SanyError> = Vec::new();

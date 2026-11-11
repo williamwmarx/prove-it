@@ -13,13 +13,14 @@ pub mod sany;
 pub mod sources;
 pub mod value;
 
+use tla_engine::Prints;
 pub use tla_engine::search::{MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome, Settings};
+use tla_values::Store;
 use tla_values::transfer::{EncodedStates, StateEncoder};
-use tla_values::{Id, Store};
 
 /// The version of the contract between the loader and the addon: the exports, their arguments
 /// and the engine IR. The loader uses the TypeScript engine when it expects another.
-pub const ABI_VERSION: i32 = 15;
+pub const ABI_VERSION: i32 = 16;
 
 /// How deep the search thread's stack may grow: compiled closures recurse with the expressions
 /// and the values they evaluate. It is reserved, not committed.
@@ -89,12 +90,14 @@ impl Reporter for Relay {
 
     // The values go to JavaScript in `transfer.ts`'s encoding, as one state of their count, for
     // the interpreter's printer.
-    fn print(&mut self, store: &Store, values: &[Id]) {
+    fn print(&mut self, store: &Store, prints: &Prints) {
         let mut encoder = StateEncoder::new();
         encoder
-            .encode(store, values)
+            .encode(store, &prints.values)
             .expect("the engine prints beside the addon only values that encode");
-        let _ = self.0.send(Event::Print(encoder.finish(), values.len()));
+        let _ = self
+            .0
+            .send(Event::Print(encoder.finish(), prints.values.len()));
     }
 }
 
@@ -128,12 +131,12 @@ impl Reporter for Direct<'_> {
         (self.0)(Event::LivenessFinished);
     }
 
-    fn print(&mut self, store: &Store, values: &[Id]) {
+    fn print(&mut self, store: &Store, prints: &Prints) {
         let mut encoder = StateEncoder::new();
         encoder
-            .encode(store, values)
+            .encode(store, &prints.values)
             .expect("the engine prints beside the addon only values that encode");
-        (self.0)(Event::Print(encoder.finish(), values.len()));
+        (self.0)(Event::Print(encoder.finish(), prints.values.len()));
     }
 }
 

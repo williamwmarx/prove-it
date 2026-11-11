@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getNativeAddon } from "../../src/engine/native";
 import { TlaProverError } from "../../src/errors";
 import { decide } from "../../src/prover/deciders";
+import type { Decision } from "../../src/prover/verdict";
 
 const TESTS_DIRECTORY = join(import.meta.dirname, "..");
 
@@ -17,6 +18,26 @@ const INPUTS = [
   ["isabelle", read("fixtures/isabelle/AllocatorImplementation_proof-33.thy")],
   ["ls4", read("conformance/ptl/equivalence-of-boxes.ls4")],
 ] as const;
+
+// What the TypeScript decider answered on the Zenon, Isabelle and PTL inputs with no limits, before
+// it was deleted, as tests/fixtures/zenon/decisions.txt and prove-isabelle's testdata/decide.txt
+// record Zenon's and Isabelle's too.
+const RECORDED: Record<string, Decision> = {
+  isabelle: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 840 } },
+  ls4: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 5 } },
+  zenon: {
+    verdict: "unsat",
+    timeUsedMs: 0,
+    statistics: {
+      steps: 1932,
+      nodesSearched: 2246,
+      maxBranchFormulas: 319,
+      proofNodes: 183,
+      formulasCreated: 13905,
+      proof: "25254:004ede84",
+    },
+  },
+};
 
 const OPTIONS = { timeLimitMs: Infinity };
 
@@ -66,7 +87,7 @@ describe("a malformed input", () => {
 });
 
 // Until a backend's port lands, the native engine declines its inputs and TypeScript decides them.
-// Where it decides, it must answer as TypeScript does.
+// Where it decides, it must answer as TypeScript does, until the TypeScript backend is deleted.
 describe("the Rust ports", () => {
   const getAddon = () => {
     const addon = getNativeAddon();
@@ -86,10 +107,11 @@ describe("the Rust ports", () => {
     }
   };
 
+  // A backend whose TypeScript is deleted decides as its TypeScript did, as it was recorded.
   it.each(INPUTS)("%s declines, or decides as TypeScript does", (prover, text) => {
     const native = getAddon().decide(prover, text, Infinity, undefined, undefined);
     if (native.kind === "declined") return;
-    const typescript = useProver("ts", () => decide(prover, text, OPTIONS));
+    const typescript = RECORDED[prover] ?? useProver("ts", () => decide(prover, text, OPTIONS));
     expect(native).toEqual({
       kind: "decided",
       verdict: typescript.verdict,
@@ -97,16 +119,24 @@ describe("the Rust ports", () => {
     });
   });
 
-  it("decides PTL", () => {
-    expect(getAddon().decide("ls4", INPUTS[3][1], Infinity, undefined, undefined).kind).toBe(
-      "decided",
-    );
-  });
+  // Zenon's, Isabelle's and PTL's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
+  it.each([INPUTS[1], INPUTS[2], INPUTS[3]])(
+    "decides %s in Rust whatever PROVE_IT_PROVER says",
+    (prover, text) => {
+      expect(useProver("ts", () => decide(prover, text, OPTIONS))).toMatchObject({
+        verdict: "unsat",
+        statistics: RECORDED[prover].statistics,
+      });
+    },
+  );
 
-  it("decides Zenon", () => {
-    expect(getAddon().decide("zenon", INPUTS[1][1], Infinity, undefined, undefined).kind).toBe(
-      "decided",
-    );
+  // tlapm counts a Zenon, an Isabelle or an LS4 that stops on its input as a failure.
+  it.each([
+    ["zenon", "$sig a"],
+    ["isabelle", "theory \u{e9}"],
+    ["ls4", "not ((always h00000) ->"],
+  ])("fails on a malformed %s input", (prover, text) => {
+    expect(() => decide(prover, text, OPTIONS)).toThrow(TlaProverError);
   });
 
   it("declines a prover without a backend", () => {

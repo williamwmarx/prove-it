@@ -39,6 +39,7 @@ use crate::core::relevancy::{RelevancyContext, RelevancyHandler, RelevancyPropag
 use crate::core::rewriter::{KERNEL_REWRITER_OPTIONS, Rewriter};
 use crate::core::sticky_generations::StickyGenerations;
 use crate::core::theory_lra::TheoryLra;
+use crate::core::theory_lra_state::TheoryClosure;
 use crate::util::error::SmtError;
 use crate::util::lbool::LBool;
 
@@ -129,6 +130,8 @@ pub enum TrailClosure {
     LazyMatchingIndex { saved: u32 },
     /// The closures of the matchers and their compilers (`e_matching.rs`).
     Mam(MamClosure),
+    /// The closures of the arithmetic theory (`theory_lra_state.rs`).
+    Theory(TheoryClosure),
 }
 
 /// The CaseSplitContext of `internalizer.ts`'s constructor, over the context's fields.
@@ -496,6 +499,7 @@ impl Context {
             TrailClosure::ThVar { node, old_var } => self.node_mut(node).th_var = old_var,
             TrailClosure::LazyMatchingIndex { saved } => self.qmanager.lazy_matching_index = saved,
             TrailClosure::Mam(closure) => self.mam_undo_closure(closure),
+            TrailClosure::Theory(closure) => self.lra_undo_closure(closure),
         }
     }
 
@@ -2229,21 +2233,10 @@ mod tests {
         context.internalize_assertion(expr, 0).unwrap();
     }
 
-    /// The steps the TypeScript counts in what is still stubbed here: two in the empty theory's
-    /// first propagation, which a problem refuted before that propagation does not take, and two
-    /// in each of the theory's final checks. Once the stub is replaced, these are 0 and the counts
-    /// are the TypeScript's. (The model finder's constructor takes its step here too, since
-    /// `auf_solver` is ported.)
-    const STUBBED_STEPS: u64 = 2;
-    const STUBBED_BASE_LEVEL_STEPS: u64 = 0;
-    const STUBBED_FINAL_CHECK_STEPS: u64 = 2;
-
-    /// The result, the conflicts and the steps of a search, with the steps that the stubs do not
-    /// take added, which is what the TypeScript counts.
-    fn search(context: &mut Context, stubbed_steps: u64) -> (LBool, u32, u64) {
+    /// The result, the conflicts and the steps of a search, which the TypeScript prints.
+    fn search(context: &mut Context) -> (LBool, u32, u64) {
         let result = context.search().unwrap();
-        let steps = context.m.limit.count() + stubbed_steps;
-        (result, context.get_num_conflicts(), steps)
+        (result, context.get_num_conflicts(), context.m.limit.count())
     }
 
     struct Euf {
@@ -2292,11 +2285,7 @@ mod tests {
                 let clause = or(&mut context, &[first, second]);
                 assert(&mut context, clause);
             }
-            assert_eq!(
-                search(&mut context, STUBBED_STEPS),
-                (LBool::False, 2, 16),
-                "level {level}"
-            );
+            assert_eq!(search(&mut context), (LBool::False, 2, 16), "level {level}");
         }
     }
 
@@ -2313,10 +2302,7 @@ mod tests {
         let fa_fc = eq(&mut euf.context, fa, fc);
         let diseq = not(&mut euf.context, fa_fc);
         assert(&mut euf.context, diseq);
-        assert_eq!(
-            search(&mut euf.context, STUBBED_BASE_LEVEL_STEPS),
-            (LBool::False, 1, 8)
-        );
+        assert_eq!(search(&mut euf.context), (LBool::False, 1, 8));
     }
 
     #[test]
@@ -2335,10 +2321,7 @@ mod tests {
             let diseq = not(&mut euf.context, fa_other);
             assert(&mut euf.context, diseq);
         }
-        assert_eq!(
-            search(&mut euf.context, STUBBED_STEPS),
-            (LBool::False, 2, 27)
-        );
+        assert_eq!(search(&mut euf.context), (LBool::False, 2, 27));
     }
 
     #[test]
@@ -2354,10 +2337,7 @@ mod tests {
         let fa_fb = eq(&mut euf.context, fa, fb);
         let diseq = not(&mut euf.context, fa_fb);
         assert(&mut euf.context, diseq);
-        assert_eq!(
-            search(&mut euf.context, STUBBED_STEPS + STUBBED_FINAL_CHECK_STEPS),
-            (LBool::True, 1, 34)
-        );
+        assert_eq!(search(&mut euf.context), (LBool::True, 1, 34));
         let context = &euf.context;
         assert_eq!(context.find_assignment(ab), LBool::False);
         assert_eq!(context.find_assignment(ac), LBool::True);
@@ -2382,10 +2362,7 @@ mod tests {
         let fa_a = eq(&mut euf.context, fa, a);
         let diseq = not(&mut euf.context, fa_a);
         assert(&mut euf.context, diseq);
-        assert_eq!(
-            search(&mut euf.context, STUBBED_BASE_LEVEL_STEPS),
-            (LBool::False, 1, 10)
-        );
+        assert_eq!(search(&mut euf.context), (LBool::False, 1, 10));
     }
 
     #[test]
@@ -2402,7 +2379,7 @@ mod tests {
             let diseq = not(context, equality);
             assert(context, diseq);
         }
-        assert_eq!(search(context, STUBBED_STEPS), (LBool::False, 1, 16));
+        assert_eq!(search(context), (LBool::False, 1, 16));
     }
 
     #[test]
@@ -2429,10 +2406,7 @@ mod tests {
         let ends = eq(&mut euf.context, first, last);
         let diseq = not(&mut euf.context, ends);
         assert(&mut euf.context, diseq);
-        assert_eq!(
-            search(&mut euf.context, STUBBED_STEPS),
-            (LBool::False, 6, 290)
-        );
+        assert_eq!(search(&mut euf.context), (LBool::False, 6, 290));
     }
 
     #[test]
@@ -2488,7 +2462,7 @@ mod tests {
             let mut context = mk(2);
             assert_pigeonhole(&mut context, holes);
             assert_eq!(
-                search(&mut context, STUBBED_STEPS),
+                search(&mut context),
                 (LBool::False, conflicts, steps),
                 "{holes} holes"
             );
@@ -2542,16 +2516,7 @@ mod tests {
                     assert(&mut context, disjunction);
                 }
                 let case = format!("{num_vars} {seed} {level}");
-                let stubbed_steps = if expected == LBool::True {
-                    STUBBED_STEPS + STUBBED_FINAL_CHECK_STEPS
-                } else {
-                    STUBBED_STEPS
-                };
-                assert_eq!(
-                    search(&mut context, stubbed_steps),
-                    (expected, conflicts, steps),
-                    "{case}"
-                );
+                assert_eq!(search(&mut context), (expected, conflicts, steps), "{case}");
                 if expected == LBool::True {
                     let found: String = vars
                         .iter()
@@ -2603,7 +2568,7 @@ mod tests {
                 }
             }
             assert_eq!(
-                search(&mut euf.context, STUBBED_STEPS),
+                search(&mut euf.context),
                 (LBool::False, conflicts, steps),
                 "{holes} holes"
             );

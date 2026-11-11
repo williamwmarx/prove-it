@@ -58,8 +58,9 @@ for tool in "$@"; do
     mkdir -p "$directory"
     archive=$directory/archive
     # GitHub's release downloads return 504 for minutes at a time, so curl retries eight times,
-    # waiting twice as long each time, about four minutes in all.
-    curl --fail --silent --show-error --location --retry 8 --output "$archive" "$url"
+    # waiting twice as long each time, about four minutes in all. A connection that drops mid-download
+    # (exit 56) is not an error --retry covers alone, and --output starts each try afresh.
+    curl --fail --silent --show-error --location --retry 8 --retry-all-errors --output "$archive" "$url"
     printf '%s  %s\n' "$sha256" "$archive" | sha256sum --check --quiet - || die "$name $version doesn't match its pinned sha256"
     case $url in
       *.zip) unzip -q "$archive" -d "$directory" ;;

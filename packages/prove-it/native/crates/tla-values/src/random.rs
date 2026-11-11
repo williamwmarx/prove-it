@@ -85,7 +85,8 @@ pub fn get_primes() -> &'static [u64] {
     })
 }
 
-fn next_prime(random: &mut JavaRandom) -> u64 {
+/// `RandomGenerator.nextPrime`: one of the primes, drawn by `nextDouble`.
+pub fn next_prime(random: &mut JavaRandom) -> u64 {
     let primes = get_primes();
     loop {
         let index = random.next_index(primes.len());

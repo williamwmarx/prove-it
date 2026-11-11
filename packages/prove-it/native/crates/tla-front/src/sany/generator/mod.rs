@@ -138,12 +138,12 @@ pub struct GenerationOptions<'a> {
     pub root_file_name: Option<Name>,
     pub root_file_path: Option<String>,
     pub root_extendees: Option<Vec<Name>>,
-    pub on_module: Option<&'a ModuleHook>,
+    pub on_module: Option<&'a ModuleHook<'a>>,
 }
 
 /// `onModule`: what runs after SANY generates a module, given the graph, the module and the
 /// messages so far.
-pub type ModuleHook = dyn Fn(&mut Graph, NodeId, &mut Vec<SanyMessage>);
+pub type ModuleHook<'a> = dyn Fn(&mut Graph, NodeId, &mut Vec<SanyMessage>) + 'a;
 
 /// `ModuleDependencies`: the modules a file extends and instantiates, as SANY's ParseUnit collects
 /// them, and the module of that file which first names each.
@@ -324,7 +324,10 @@ fn get_assumed_instances(assumed: &Assumed, found: &mut Vec<Name>) {
     match assumed {
         Assumed::Expression(expression) => get_let_instances(expression, found),
         Assumed::NewSymbol(_) => {}
-        Assumed::AssumeProve(assume_prove) => {
+        Assumed::AssumeProve(assume_prove)
+        | Assumed::Label {
+            body: assume_prove, ..
+        } => {
             assume_prove
                 .assumptions
                 .iter()
@@ -948,13 +951,14 @@ pub fn generate_sany_specification(
         for &builtin in spec.builtins.iter().rev() {
             add_to_context(&spec.graph, &mut context, builtin);
         }
-        let module = generate_module(
+        let (module, _) = generate_module(
             &mut spec,
             &entry.module,
             &entry.file,
             None,
             Vec::new(),
             context,
+            RecursionState::default(),
         )?;
         spec.external_modules.insert(name, module);
         if let Some(on_module) = options.on_module {
@@ -987,6 +991,17 @@ struct RecursionState {
     recursive_section_count: i32,
 }
 
+impl Default for RecursionState {
+    fn default() -> Self {
+        RecursionState {
+            cur_level: 0,
+            unresolved_count: vec![0],
+            unresolved_sum: 0,
+            recursive_section_count: 0,
+        }
+    }
+}
+
 /// `generateModule`'s closures and state. `module` is `currentModule`; `scopes` holds the
 /// `AssumeProveScope`s, which `assume_prove_scopes` (keyed by AssumeProve nodes), `label_goals`
 /// (keyed by Label nodes) and `assume_prove_state.goal` share.
@@ -1010,6 +1025,8 @@ struct ModuleGenerator<'a> {
 
 /// `generateModule`: the module `ast` of `file`, inner to `parent` if any, whose symbol table is
 /// `outer` and the module's own `context`.
+/// `generateModule` with the recursion state `state` it starts from, which it returns as it
+/// ends.
 fn generate_module(
     spec: &mut SpecGenerator,
     ast: &Rc<Module>,
@@ -1017,11 +1034,13 @@ fn generate_module(
     parent: Option<NodeId>,
     outer: Vec<ContextSlot>,
     context: Context,
-) -> Result<NodeId> {
+    state: RecursionState,
+) -> Result<(NodeId, RecursionState)> {
     let mut generator = ModuleGenerator::new(spec, ast, file, parent, outer, context);
+    generator.state = state;
     generator.process_extends_list()?;
     generator.process_units()?;
-    Ok(generator.module)
+    Ok((generator.module, generator.state))
 }
 
 impl<'a> ModuleGenerator<'a> {
@@ -1061,12 +1080,7 @@ impl<'a> ModuleGenerator<'a> {
             file: file.clone(),
             module,
             symbol_table: SymbolTable { contexts },
-            state: RecursionState {
-                cur_level: 0,
-                unresolved_count: vec![0],
-                unresolved_sum: 0,
-                recursive_section_count: 0,
-            },
+            state: RecursionState::default(),
             functions: Vec::new(),
             except_stack: Vec::new(),
             except_spec_stack: Vec::new(),
@@ -1080,17 +1094,25 @@ impl<'a> ModuleGenerator<'a> {
     }
 
     /// The `generateModule` of an inner module, whose symbol table extends this one's.
+    /// An inner module, which SANY's Generator generates with the recursion state of the module
+    /// around it, as one Generator generates a module and the modules within it. The TypeScript
+    /// generator starts it afresh, so an inner module in a recursive section, whose
+    /// `checkForUndefinedRecursiveOps` takes the section's count off, doesn't throw as SANY does.
     fn generate_inner_module(&mut self, ast: &Rc<Module>) -> Result<NodeId> {
         let file = self.file.clone();
         let contexts = self.symbol_table.contexts.clone();
-        generate_module(
+        let state = std::mem::take(&mut self.state);
+        let (module, state) = generate_module(
             self.spec,
             ast,
             &file,
             Some(self.module),
             contexts,
             Context::default(),
-        )
+            state,
+        )?;
+        self.state = state;
+        Ok(module)
     }
 
     /// `addError` at a location.

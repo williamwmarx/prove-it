@@ -19,27 +19,24 @@ import type {
   CheckResult,
   CheckStatus,
   InitialStates,
-  InitialStateViolation,
   OutputLine,
   SearchStatistics,
   TraceStep,
   Violation,
 } from "../check";
 import { parseConfig } from "../config";
-import { getNativeAddon, loadWasmEngine, type NativeCheckSources } from "../engine/native";
-import { getEngineSetting, getEnvironmentSetting, reportEngine } from "../engine/settings";
+import { checkAllSources, getNativeAddon, loadWasmEngine } from "../engine/native";
+import { getEngineVariables, isTypeScriptCheckAsked, reportEngine } from "../engine/settings";
 import {
   getErrorExitCode,
   getUnexpectedException,
   TlaConfigError,
   TlaError,
-  TlaEvaluationError,
   TlaSanyFatalError,
   TlaSyntaxError,
-  UNEXPECTED_EXCEPTION,
 } from "../errors";
 import { describeRange } from "../evaluate";
-import { EXIT_STATUS, setExitCode } from "../exit-codes";
+import { EXIT_STATUS } from "../exit-codes";
 import { checkParsed } from "../parallel";
 import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
 import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
@@ -47,8 +44,14 @@ import { readSanySnapshot } from "../sany/snapshot";
 import type { StateDump } from "../state-graph";
 import { getTlcFingerprint } from "../tlc/fingerprint";
 import {
+  getFailureHeadline,
+  getInitialViolationHeadline,
+  getMessageHeadline,
+  getViolationHeadline,
+  isInitialViolation,
+} from "../tlc/headlines";
+import {
   createMessagePrinter,
-  formatInnerMessage,
   formatNestedMessage,
   formatTlcDate,
   formatTlcDuration,
@@ -141,20 +144,6 @@ const printInitialStatesProgress = (printer: MessagePrinter, count: number) =>
     `Computed ${count} initial states...`,
   );
 
-const getInitialViolationHeadline = (
-  status: InitialStateViolation["status"],
-  name: string | undefined,
-) =>
-  status === "invariant-violation"
-    ? {
-        code: MESSAGE_CODE.invariantViolatedInitial,
-        text: `Invariant ${name} is violated by the initial state:`,
-      }
-    : {
-        code: MESSAGE_CODE.propertyViolatedInitial,
-        text: `Property ${name} is violated by the initial state:`,
-      };
-
 // What the spec prints as TLC rebuilds a trace, before it prints the states or after.
 const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefined) =>
   lines?.forEach((line) => {
@@ -194,14 +183,6 @@ const COUNTER_EXAMPLE = {
   code: MESSAGE_CODE.counterExample,
   text: "The following behavior constitutes a counter-example:\n",
 };
-
-// TLC 1.7.4 doesn't name the properties, and later versions name none when they can't tell which.
-const getTemporalHeadline = (names: string[], version: TlcVersion) =>
-  version === "1.7.4" || names.length === 0
-    ? "Temporal properties were violated.\n"
-    : names.length === 1
-      ? `Temporal property ${names[0]} was violated.\n`
-      : `Temporal properties ${names.slice(0, -1).join(", ")}${names.length > 2 ? "," : ""} and ${names[names.length - 1]} were violated.\n`;
 
 // TLC's FingerprintException#getTrace: the range of each source, innermost first, skipping a
 // source the same as the one inside it.
@@ -389,49 +370,9 @@ const printLivenessEnd = (printer: MessagePrinter, timing: Timing) => {
 // Prints a violation, and returns whether TLC goes on to print the statistics of the search.
 const printViolation = (status: CheckStatus, violation: Violation, printer: MessagePrinter) => {
   const print = printer.print;
-  const name = violation.name;
   const loopStart = violation.loopStart;
-  // TLC prints a violation by an initial state without the behavior or the statistics.
-  const isInitial =
-    loopStart === undefined &&
-    violation.trace.length === 1 &&
-    (status === "invariant-violation" || status === "liveness-violation");
-  const temporal = {
-    code: MESSAGE_CODE.temporalPropertyViolated,
-    text: getTemporalHeadline(violation.properties ?? [name], printer.version),
-  };
-  const headline = {
-    success: undefined,
-    error: undefined,
-    "assumption-violation": violation.message
-      ? {
-          code: MESSAGE_CODE.assumptionEvaluationError,
-          text: formatInnerMessage(
-            MESSAGE_CODE.assumptionEvaluationError,
-            `Evaluating assumption ${name} failed.\n${violation.message}`,
-            printer.isTool,
-          ),
-        }
-      : { code: MESSAGE_CODE.assumptionFalse, text: `Assumption ${name} is false.` },
-    deadlock: { code: MESSAGE_CODE.deadlockReached, text: "Deadlock reached." },
-    "invariant-violation": isInitial
-      ? getInitialViolationHeadline("invariant-violation", name)
-      : { code: MESSAGE_CODE.invariantViolatedBehavior, text: `Invariant ${name} is violated.` },
-    "property-violation": temporal,
-    "liveness-violation":
-      loopStart !== undefined
-        ? temporal
-        : isInitial
-          ? getInitialViolationHeadline("liveness-violation", name)
-          : {
-              code: MESSAGE_CODE.actionPropertyViolatedBehavior,
-              text: `Action property ${name} is violated.`,
-            },
-    "postcondition-violation": {
-      code: violation.postcondition?.code ?? MESSAGE_CODE.general,
-      text: violation.message ?? `Postcondition ${name} is false.`,
-    },
-  }[status];
+  const isInitial = isInitialViolation(status, violation);
+  const headline = getViolationHeadline(status, violation, printer.isTool, printer.version);
   // A safety property's counterexample ends where it breaks, and a liveness one loops back.
   const isProperty = status === "property-violation";
   const isLasso = loopStart !== undefined && !isProperty;
@@ -494,7 +435,6 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
   const print = printer.print;
   if (result.failure) {
     const failure = result.failure;
-    const message = printer.isTool ? failure.toolMessage : failure.message;
     const printCallStack = () => {
       const fingerprint = failure.fingerprint;
       if (fingerprint) {
@@ -514,37 +454,13 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
       if (failure.callStack) printNestedExpressions(printer, failure.callStack);
     };
     if (failure.isCallStackFirst) printCallStack();
-    // TLC prints the state as it reports the error, so a state it can't print fails outside the
-    // checker, which TLC reports as an exception it did not expect.
-    const initialState =
-      failure.initialState &&
-      (() => {
-        try {
-          return `While working on the initial state:\n${formatState(failure.initialState)}`;
-        } catch (error) {
-          if (!(error instanceof TlaEvaluationError)) throw error;
-          throw setExitCode(
-            new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${error.message}`),
-            EXIT_STATUS.error,
-          );
-        }
-      })();
-    // TLC prints an error on an initial state and the state as one message.
-    print(
-      initialState ? MESSAGE_CODE.initialState : failure.code,
-      MESSAGE_LEVEL.error,
-      initialState ? `${message}\n${initialState}` : message,
-    );
+    const headline = getFailureHeadline(failure, printer.isTool);
+    print(headline.code, MESSAGE_LEVEL.error, headline.text);
     printTraceOutput(printer, failure.trace[0]?.output);
     printTrace(printer, failure.trace);
-    const traceFailure = failure.traceFailure;
-    if (traceFailure) {
-      print(
-        traceFailure.code,
-        MESSAGE_LEVEL.error,
-        printer.isTool ? traceFailure.toolMessage : traceFailure.message,
-      );
-    }
+    const traceFailure =
+      failure.traceFailure && getMessageHeadline(failure.traceFailure, printer.isTool);
+    if (traceFailure) print(traceFailure.code, MESSAGE_LEVEL.error, traceFailure.text);
     printTraceOutput(printer, failure.traceOutput);
     const postcondition = failure.postcondition;
     if (postcondition?.counts) console.log(postcondition.counts);
@@ -952,21 +868,6 @@ const getZoneRule = () => {
   return `<${offset < 0 ? "-" : "+"}${String(hours).padStart(2, "0")}${minutes}>${offset > 0 ? "-" : ""}${hours}:${minutes}`;
 };
 
-// The debug settings only the TypeScript check honours, which leave the command line to it:
-// PROVE_IT_STOP_AT tests its hand-over from the engine, the IR dump, the state log and the
-// fingerprint setting are written or checked there, and the memo, epoch, fingerprint and liveness
-// self-checks are the engine settings it passes, which the binary doesn't read.
-const TYPESCRIPT_SETTINGS = [
-  "PROVE_IT_STOP_AT",
-  "PROVE_IT_IR_DUMP",
-  "PROVE_IT_STATE_LOG",
-  "PROVE_IT_FINGERPRINT",
-  "PROVE_IT_MEMO",
-  "PROVE_IT_EPOCH_CHECK",
-  "PROVE_IT_FP_VERIFY",
-  "PROVE_IT_LIVE_CHECK",
-];
-
 // The check the native binary runs for the command line, run in-process: its exit code, once it
 // printed what the binary prints, or undefined where it declines the model or no engine loads, for
 // the TypeScript check to check it. The command line is TLC's as given, the Java launch's included;
@@ -978,12 +879,7 @@ export const checkNatively = async (
   args: string[],
   java: JavaProperties,
 ) => {
-  if (
-    getEngineSetting() === "0" ||
-    TYPESCRIPT_SETTINGS.some((name) => Boolean(getEnvironmentSetting(name)))
-  ) {
-    return undefined;
-  }
+  if (isTypeScriptCheckAsked()) return undefined;
   const startedAt = performance.now();
   await loadWasmEngine();
   const addon = getNativeAddon();
@@ -1014,32 +910,23 @@ export const checkNatively = async (
     const [origin, ...moduleName] = rest;
     return describeFile(moduleName.join(":"), origin as SanyModuleOrigin);
   };
-  const variables = Object.entries(process.env).filter(
-    (entry): entry is [string, string] =>
-      entry[0].startsWith("PROVE_IT_") && entry[1] !== undefined,
+  const result = checkAllSources(
+    addon,
+    commandLine,
+    [
+      type(),
+      release(),
+      arch(),
+      availableParallelism(),
+      Math.floor(totalmem() / 1024 / 1024),
+      process.pid,
+      Date.now(),
+      getZoneRule(),
+      getEngineVariables(),
+      false,
+    ],
+    readKey,
   );
-  const known = new Map<string, string | Uint8Array | undefined>();
-  const check = (): Exclude<NativeCheckSources, { kind: "needed" }> => {
-    const result = addon.checkSources(
-      commandLine,
-      [...known],
-      [
-        type(),
-        release(),
-        arch(),
-        availableParallelism(),
-        Math.floor(totalmem() / 1024 / 1024),
-        process.pid,
-        Date.now(),
-        getZoneRule(),
-        variables,
-      ],
-    );
-    if (result.kind !== "needed") return result;
-    result.keys.forEach((key) => known.set(key, readKey(key)));
-    return check();
-  };
-  const result = check();
   if (result.kind === "declined") {
     reportEngine(`native: checkSources declined: ${result.reason}`);
     return undefined;

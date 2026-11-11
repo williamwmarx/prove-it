@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import { check } from "../../src";
+import { checkParsed } from "../../src/parallel";
 
 const setting = process.env.PROVE_IT_ENGINE;
 
@@ -28,7 +28,7 @@ const run = async (body: string, config: string, engine: string) => {
     }
   });
   try {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\n${body}\n====`,
       config,
       onPrint: (text) => printed.push(text),

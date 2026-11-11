@@ -21,7 +21,6 @@ import {
 import { Context } from "../src/prover/smt/solver/context";
 import { FuncInterp, ProtoModel } from "../src/prover/smt/solver/proto-model";
 import { ResourceLimit } from "../src/prover/smt/solver/rlimit";
-import { TheoryLra } from "../src/prover/smt/solver/theory-lra";
 
 const show = (m: AstManager, expr: number | null | undefined) =>
   expr === null || expr === undefined || expr === -1
@@ -55,14 +54,7 @@ const printModel = (m: AstManager, model: ProtoModel, sorts: number[]) => {
     );
 };
 
-interface StepCounter {
-  steps: number;
-  depth: number;
-}
-
-// The steps the arithmetic theory of the current problem took, which the steps print without.
-const theorySteps: StepCounter = { steps: 0, depth: 0 };
-const getSteps = (m: AstManager) => m.limit.count - theorySteps.steps;
+const getSteps = (m: AstManager) => m.limit.count;
 
 const printCounts = (m: AstManager, label: string) =>
   console.log(`${label}: steps=${getSteps(m)} asts=${m.getNumAsts()}`);
@@ -279,45 +271,11 @@ const runProblem = (name: string, problem: Problem) => {
   printModel(m, model, problem.sorts);
 };
 
-const THEORY_METHODS = [
-  "canPropagate",
-  "propagate",
-  "pushScopeEh",
-  "popScopeEh",
-  "finalCheckEh",
-  "restartEh",
-  "initSearchEh",
-  "initModel",
-  "mkValue",
-];
-
-// Counts the steps taken inside a method, once per outermost call.
-const countSteps = (target: object, name: string, m: AstManager, counter: StepCounter) => {
-  const original: unknown = Reflect.get(target, name);
-  if (typeof original !== "function") return;
-  Reflect.set(target, name, (...args: unknown[]) => {
-    const start = m.limit.count;
-    counter.depth++;
-    const result: unknown = Reflect.apply(original, target, args);
-    counter.depth--;
-    if (counter.depth === 0) counter.steps += m.limit.count - start;
-    return result;
-  });
-};
-
-// The Rust port's arithmetic theory is still a stub, which makes none of the numerals and enodes
-// that TheoryLra's init makes, and takes none of the steps of its methods. So init is skipped here,
-// and the steps print without the theory's, so that the ids and the steps of both agree. Without
-// quantifiers, model-based instantiation is off.
+// Without quantifiers, model-based instantiation is off.
 const mkContext = (relevancyLevel: 0 | 2) => {
   const m = mkManager();
   const context = new Context(m, { isMbqi: false, relevancyLevel });
-  const init: unknown = Reflect.get(TheoryLra.prototype, "init");
-  Reflect.set(TheoryLra.prototype, "init", () => undefined);
   context.setupContext();
-  Reflect.set(TheoryLra.prototype, "init", init);
-  theorySteps.steps = 0;
-  for (const name of THEORY_METHODS) countSteps(context.theory, name, m, theorySteps);
   return { m, context };
 };
 

@@ -220,6 +220,7 @@ fn write_lowered(out: &mut String, source: &str, path: &Path, library: Option<&P
             RankedTexts {
                 texts: &[],
                 ranks: Default::default(),
+                wide: &Default::default(),
             },
         )
     });
@@ -269,6 +270,7 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
                 RankedTexts {
                     texts: &texts,
                     ranks,
+                    wide: &Default::default(),
                 },
             )
         });
@@ -313,7 +315,7 @@ fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: O
         is_warning_enabled: true,
         is_spec_described: false,
         random_seed: 0,
-        is_trace_recorded: false,
+        root_extendees: &[],
     };
     write_ir(out, lower_model(spec_path, config, &options));
 }

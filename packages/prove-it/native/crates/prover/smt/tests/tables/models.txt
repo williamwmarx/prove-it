@@ -143,199 +143,215 @@ universe Int: 0#26
 released: steps=16 asts=180
 == euf-branch ==
 result=1
-searched: steps=29 asts=198
-modeled: steps=29 asts=206
-const a = U!val!1#40
-const c = U!val!1#40
-const b = U!val!0#39
-func f [U!val!1#40 -> U!val!2#41] [U!val!0#39 -> U!val!3#42] else U!val!2#41
-universe U: U!val!2#41 U!val!1#40 U!val!0#39 U!val!3#42
+searched: steps=33 asts=206
+modeled: steps=34 asts=214
+const a = U!val!1#44
+const c = U!val!1#44
+const b = U!val!0#43
+func f [U!val!1#44 -> U!val!2#45] [U!val!0#43 -> U!val!3#46] else U!val!2#45
+universe U: U!val!2#45 U!val!1#44 U!val!0#43 U!val!3#46
 root true#1 = true#1
 root false#2 = true#1
-root b#23 = U!val!0#39
-root (= a b)#25 = false#2
-root c#24 = U!val!1#40
-root (= a c)#26 = true#1
-root (f a)#28 = U!val!2#41
-root (f b)#29 = U!val!3#42
-root (= (f a) (f b))#30 = false#2
+root 1#22 = 1#22
+root 1.0#23 = 1.0#23
+root 0#24 = 0#24
+root 0.0#25 = 0.0#25
+root b#27 = U!val!0#43
+root (= a b)#29 = false#2
+root c#28 = U!val!1#44
+root (= a c)#30 = true#1
+root (f a)#32 = U!val!2#45
+root (f b)#33 = U!val!3#46
+root (= (f a) (f b))#34 = false#2
 proto:
-const a = U!val!1#40
-const c = U!val!1#40
-const b = U!val!0#39
-universe U: U!val!2#41 U!val!1#40 U!val!0#39 U!val!3#42
+const a = U!val!1#44
+const c = U!val!1#44
+const b = U!val!0#43
+universe U: U!val!2#45 U!val!1#44 U!val!0#43 U!val!3#46
 valid=true
-validated: steps=43 asts=205
-eval partial (f a)#28 = U!val!2#41 steps=45
-eval partial (f b)#29 = U!val!3#42 steps=47
-eval partial (f c)#33 = U!val!2#41 steps=49
-eval partial (f (f a))#34 = U!val!2#41 steps=55
-eval partial (= a b)#25 = false#2 steps=57
-eval partial (= (f a) (f c))#35 = true#1 steps=61
-eval partial d#32 = d#32 steps=62
-eval partial (f d)#36 = (ite (= d U!val!0) U!val!3 U!val!2)#46 steps=68
-eval partial (h a)#37 = (h U!val!1)#45 steps=70
-eval partial (ite (= a c) b a)#38 = U!val!0#39 steps=74
-eval complete (f a)#28 = U!val!2#41 steps=76
-eval complete (f b)#29 = U!val!3#42 steps=78
-eval complete (f c)#33 = U!val!2#41 steps=80
-eval complete (f (f a))#34 = U!val!2#41 steps=88
-eval complete (= a b)#25 = false#2 steps=90
-eval complete (= (f a) (f c))#35 = true#1 steps=94
-eval complete d#32 = U!val!2#41 steps=95
-eval complete (f d)#36 = U!val!2#41 steps=101
-eval complete (h a)#37 = U!val!2#41 steps=105
-eval complete (ite (= a c) b a)#38 = U!val!0#39 steps=109
-const a = U!val!1#40
-const c = U!val!1#40
-const d = U!val!2#41
-const b = U!val!0#39
-func f [U!val!1#40 -> U!val!2#41] [U!val!0#39 -> U!val!3#42] else U!val!2#41
-func h else U!val!2#41
-universe U: U!val!2#41 U!val!1#40 U!val!0#39 U!val!3#42
+validated: steps=48 asts=213
+eval partial (f a)#32 = U!val!2#45 steps=50
+eval partial (f b)#33 = U!val!3#46 steps=52
+eval partial (f c)#37 = U!val!2#45 steps=54
+eval partial (f (f a))#38 = U!val!2#45 steps=60
+eval partial (= a b)#29 = false#2 steps=62
+eval partial (= (f a) (f c))#39 = true#1 steps=66
+eval partial d#36 = d#36 steps=67
+eval partial (f d)#40 = (ite (= d U!val!0) U!val!3 U!val!2)#50 steps=73
+eval partial (h a)#41 = (h U!val!1)#49 steps=75
+eval partial (ite (= a c) b a)#42 = U!val!0#43 steps=79
+eval complete (f a)#32 = U!val!2#45 steps=81
+eval complete (f b)#33 = U!val!3#46 steps=83
+eval complete (f c)#37 = U!val!2#45 steps=85
+eval complete (f (f a))#38 = U!val!2#45 steps=93
+eval complete (= a b)#29 = false#2 steps=95
+eval complete (= (f a) (f c))#39 = true#1 steps=99
+eval complete d#36 = U!val!2#45 steps=100
+eval complete (f d)#40 = U!val!2#45 steps=106
+eval complete (h a)#41 = U!val!2#45 steps=110
+eval complete (ite (= a c) b a)#42 = U!val!0#43 steps=114
+const a = U!val!1#44
+const c = U!val!1#44
+const d = U!val!2#45
+const b = U!val!0#43
+func f [U!val!1#44 -> U!val!2#45] [U!val!0#43 -> U!val!3#46] else U!val!2#45
+func h else U!val!2#45
+universe U: U!val!2#45 U!val!1#44 U!val!0#43 U!val!3#46
 == propositional ==
 result=1
-searched: steps=19 asts=191
-modeled: steps=19 asts=191
+searched: steps=23 asts=199
+modeled: steps=24 asts=199
 const r = false#2
 const q = true#1
 const p = false#2
 root true#1 = true#1
 root false#2 = true#1
+root 1#22 = 1#22
+root 1.0#23 = 1.0#23
+root 0#24 = 0#24
+root 0.0#25 = 0.0#25
 proto:
 const r = false#2
 const q = true#1
 const p = false#2
 valid=true
-validated: steps=24 asts=191
-eval partial p#22 = false#2 steps=25
-eval partial q#23 = true#1 steps=26
-eval partial r#24 = false#2 steps=27
-eval partial s#25 = s#25 steps=28
-eval partial (and p r)#32 = false#2 steps=30
-eval partial (or q s)#33 = true#1 steps=32
-eval partial (not s)#34 = (not s)#34 steps=34
-eval partial (= p s)#35 = (not s)#34 steps=36
-eval complete p#22 = false#2 steps=37
-eval complete q#23 = true#1 steps=38
-eval complete r#24 = false#2 steps=39
-eval complete s#25 = false#2 steps=40
-eval complete (and p r)#32 = false#2 steps=42
-eval complete (or q s)#33 = true#1 steps=44
-eval complete (not s)#34 = true#1 steps=46
-eval complete (= p s)#35 = true#1 steps=48
+validated: steps=29 asts=199
+eval partial p#26 = false#2 steps=30
+eval partial q#27 = true#1 steps=31
+eval partial r#28 = false#2 steps=32
+eval partial s#29 = s#29 steps=33
+eval partial (and p r)#36 = false#2 steps=35
+eval partial (or q s)#37 = true#1 steps=37
+eval partial (not s)#38 = (not s)#38 steps=39
+eval partial (= p s)#39 = (not s)#38 steps=41
+eval complete p#26 = false#2 steps=42
+eval complete q#27 = true#1 steps=43
+eval complete r#28 = false#2 steps=44
+eval complete s#29 = false#2 steps=45
+eval complete (and p r)#36 = false#2 steps=47
+eval complete (or q s)#37 = true#1 steps=49
+eval complete (not s)#38 = true#1 steps=51
+eval complete (= p s)#39 = true#1 steps=53
 const r = false#2
 const q = true#1
 const p = false#2
 const s = false#2
 == euf-functions-2 ==
 result=1
-searched: steps=30 asts=205
-modeled: steps=30 asts=211
-const a = U!val!0#46
+searched: steps=34 asts=213
+modeled: steps=35 asts=219
+const a = U!val!0#50
 const q = true#1
-const c = U!val!2#48
-const b = U!val!1#47
-func f [U!val!0#46 -> U!val!1#47] [U!val!1#47 -> U!val!0#46] else U!val!1#47
-func P [U!val!2#48 -> true#1] [U!val!0#46 -> false#2] else true#1
-func g [U!val!0#46 U!val!1#47 -> U!val!2#48] else U!val!2#48
-universe U: U!val!2#48 U!val!1#47 U!val!0#46
+const c = U!val!2#52
+const b = U!val!1#51
+func f [U!val!0#50 -> U!val!1#51] [U!val!1#51 -> U!val!0#50] else U!val!1#51
+func P [U!val!2#52 -> true#1] [U!val!0#50 -> false#2] else true#1
+func g [U!val!0#50 U!val!1#51 -> U!val!2#52] else U!val!2#52
+universe U: U!val!2#52 U!val!1#51 U!val!0#50
 root true#1 = true#1
 root false#2 = true#1
-root a#22 = U!val!0#46
-root b#23 = U!val!1#47
-root (= a b)#26 = false#2
-root (= (f a) b)#29 = true#1
-root (= (f b) a)#31 = true#1
-root c#24 = U!val!2#48
-root (= (g a b) c)#33 = true#1
-root (P c)#34 = true#1
-root (P a)#35 = false#2
+root 1#22 = 1#22
+root 1.0#23 = 1.0#23
+root 0#24 = 0#24
+root 0.0#25 = 0.0#25
+root a#26 = U!val!0#50
+root b#27 = U!val!1#51
+root (= a b)#30 = false#2
+root (= (f a) b)#33 = true#1
+root (= (f b) a)#35 = true#1
+root c#28 = U!val!2#52
+root (= (g a b) c)#37 = true#1
+root (P c)#38 = true#1
+root (P a)#39 = false#2
 proto:
-const a = U!val!0#46
+const a = U!val!0#50
 const q = true#1
-const c = U!val!2#48
-const b = U!val!1#47
-universe U: U!val!2#48 U!val!1#47 U!val!0#46
+const c = U!val!2#52
+const b = U!val!1#51
+universe U: U!val!2#52 U!val!1#51 U!val!0#50
 valid=true
-validated: steps=53 asts=209
-eval partial (f c)#39 = U!val!1#47 steps=59
-eval partial (f (f a))#40 = U!val!0#46 steps=61
-eval partial (g b a)#41 = U!val!2#48 steps=65
-eval partial (g (f b) (f a))#42 = U!val!2#48 steps=67
-eval partial (P (f b))#43 = false#2 steps=69
-eval partial (P b)#37 = true#1 steps=75
-eval partial (= (g a b) a)#44 = false#2 steps=77
-eval partial (and q (P c))#45 = true#1 steps=81
-eval complete (f c)#39 = U!val!1#47 steps=87
-eval complete (f (f a))#40 = U!val!0#46 steps=91
-eval complete (g b a)#41 = U!val!2#48 steps=95
-eval complete (g (f b) (f a))#42 = U!val!2#48 steps=99
-eval complete (P (f b))#43 = false#2 steps=101
-eval complete (P b)#37 = true#1 steps=107
-eval complete (= (g a b) a)#44 = false#2 steps=111
-eval complete (and q (P c))#45 = true#1 steps=115
-const a = U!val!0#46
+validated: steps=58 asts=217
+eval partial (f c)#43 = U!val!1#51 steps=64
+eval partial (f (f a))#44 = U!val!0#50 steps=66
+eval partial (g b a)#45 = U!val!2#52 steps=70
+eval partial (g (f b) (f a))#46 = U!val!2#52 steps=72
+eval partial (P (f b))#47 = false#2 steps=74
+eval partial (P b)#41 = true#1 steps=80
+eval partial (= (g a b) a)#48 = false#2 steps=82
+eval partial (and q (P c))#49 = true#1 steps=86
+eval complete (f c)#43 = U!val!1#51 steps=92
+eval complete (f (f a))#44 = U!val!0#50 steps=96
+eval complete (g b a)#45 = U!val!2#52 steps=100
+eval complete (g (f b) (f a))#46 = U!val!2#52 steps=104
+eval complete (P (f b))#47 = false#2 steps=106
+eval complete (P b)#41 = true#1 steps=112
+eval complete (= (g a b) a)#48 = false#2 steps=116
+eval complete (and q (P c))#49 = true#1 steps=120
+const a = U!val!0#50
 const q = true#1
-const c = U!val!2#48
-const b = U!val!1#47
-func f [U!val!0#46 -> U!val!1#47] [U!val!1#47 -> U!val!0#46] else U!val!1#47
-func P [U!val!2#48 -> true#1] [U!val!0#46 -> false#2] else true#1
-func g [U!val!0#46 U!val!1#47 -> U!val!2#48] else U!val!2#48
-universe U: U!val!2#48 U!val!1#47 U!val!0#46
+const c = U!val!2#52
+const b = U!val!1#51
+func f [U!val!0#50 -> U!val!1#51] [U!val!1#51 -> U!val!0#50] else U!val!1#51
+func P [U!val!2#52 -> true#1] [U!val!0#50 -> false#2] else true#1
+func g [U!val!0#50 U!val!1#51 -> U!val!2#52] else U!val!2#52
+universe U: U!val!2#52 U!val!1#51 U!val!0#50
 == euf-functions-0 ==
 result=1
-searched: steps=31 asts=205
-modeled: steps=31 asts=211
-const a = U!val!0#46
+searched: steps=35 asts=213
+modeled: steps=36 asts=219
+const a = U!val!0#50
 const q = true#1
-const c = U!val!2#48
-const b = U!val!1#47
-func f [U!val!0#46 -> U!val!1#47] [U!val!1#47 -> U!val!0#46] else U!val!1#47
-func P [U!val!2#48 -> true#1] [U!val!0#46 -> false#2] [U!val!1#47 -> false#2] else false#2
-func g [U!val!0#46 U!val!1#47 -> U!val!2#48] else U!val!2#48
-universe U: U!val!2#48 U!val!1#47 U!val!0#46
+const c = U!val!2#52
+const b = U!val!1#51
+func f [U!val!0#50 -> U!val!1#51] [U!val!1#51 -> U!val!0#50] else U!val!1#51
+func P [U!val!2#52 -> true#1] [U!val!0#50 -> false#2] [U!val!1#51 -> false#2] else false#2
+func g [U!val!0#50 U!val!1#51 -> U!val!2#52] else U!val!2#52
+universe U: U!val!2#52 U!val!1#51 U!val!0#50
 root true#1 = true#1
 root false#2 = true#1
-root a#22 = U!val!0#46
-root b#23 = U!val!1#47
-root (= a b)#26 = false#2
-root (= (f a) b)#29 = true#1
-root (= (f b) a)#31 = true#1
-root c#24 = U!val!2#48
-root (= (g a b) c)#33 = true#1
-root (P c)#34 = true#1
-root (P a)#35 = false#2
-root (P b)#37 = false#2
+root 1#22 = 1#22
+root 1.0#23 = 1.0#23
+root 0#24 = 0#24
+root 0.0#25 = 0.0#25
+root a#26 = U!val!0#50
+root b#27 = U!val!1#51
+root (= a b)#30 = false#2
+root (= (f a) b)#33 = true#1
+root (= (f b) a)#35 = true#1
+root c#28 = U!val!2#52
+root (= (g a b) c)#37 = true#1
+root (P c)#38 = true#1
+root (P a)#39 = false#2
+root (P b)#41 = false#2
 proto:
-const a = U!val!0#46
+const a = U!val!0#50
 const q = true#1
-const c = U!val!2#48
-const b = U!val!1#47
-universe U: U!val!2#48 U!val!1#47 U!val!0#46
+const c = U!val!2#52
+const b = U!val!1#51
+universe U: U!val!2#52 U!val!1#51 U!val!0#50
 valid=true
-validated: steps=58 asts=209
-eval partial (f c)#39 = U!val!1#47 steps=64
-eval partial (f (f a))#40 = U!val!0#46 steps=66
-eval partial (g b a)#41 = U!val!2#48 steps=70
-eval partial (g (f b) (f a))#42 = U!val!2#48 steps=72
-eval partial (P (f b))#43 = false#2 steps=74
-eval partial (P b)#37 = false#2 steps=76
-eval partial (= (g a b) a)#44 = false#2 steps=78
-eval partial (and q (P c))#45 = true#1 steps=82
-eval complete (f c)#39 = U!val!1#47 steps=88
-eval complete (f (f a))#40 = U!val!0#46 steps=92
-eval complete (g b a)#41 = U!val!2#48 steps=96
-eval complete (g (f b) (f a))#42 = U!val!2#48 steps=100
-eval complete (P (f b))#43 = false#2 steps=102
-eval complete (P b)#37 = false#2 steps=104
-eval complete (= (g a b) a)#44 = false#2 steps=108
-eval complete (and q (P c))#45 = true#1 steps=112
-const a = U!val!0#46
+validated: steps=63 asts=217
+eval partial (f c)#43 = U!val!1#51 steps=69
+eval partial (f (f a))#44 = U!val!0#50 steps=71
+eval partial (g b a)#45 = U!val!2#52 steps=75
+eval partial (g (f b) (f a))#46 = U!val!2#52 steps=77
+eval partial (P (f b))#47 = false#2 steps=79
+eval partial (P b)#41 = false#2 steps=81
+eval partial (= (g a b) a)#48 = false#2 steps=83
+eval partial (and q (P c))#49 = true#1 steps=87
+eval complete (f c)#43 = U!val!1#51 steps=93
+eval complete (f (f a))#44 = U!val!0#50 steps=97
+eval complete (g b a)#45 = U!val!2#52 steps=101
+eval complete (g (f b) (f a))#46 = U!val!2#52 steps=105
+eval complete (P (f b))#47 = false#2 steps=107
+eval complete (P b)#41 = false#2 steps=109
+eval complete (= (g a b) a)#48 = false#2 steps=113
+eval complete (and q (P c))#49 = true#1 steps=117
+const a = U!val!0#50
 const q = true#1
-const c = U!val!2#48
-const b = U!val!1#47
-func f [U!val!0#46 -> U!val!1#47] [U!val!1#47 -> U!val!0#46] else U!val!1#47
-func P [U!val!2#48 -> true#1] [U!val!0#46 -> false#2] [U!val!1#47 -> false#2] else false#2
-func g [U!val!0#46 U!val!1#47 -> U!val!2#48] else U!val!2#48
-universe U: U!val!2#48 U!val!1#47 U!val!0#46
+const c = U!val!2#52
+const b = U!val!1#51
+func f [U!val!0#50 -> U!val!1#51] [U!val!1#51 -> U!val!0#50] else U!val!1#51
+func P [U!val!2#52 -> true#1] [U!val!0#50 -> false#2] [U!val!1#51 -> false#2] else false#2
+func g [U!val!0#50 U!val!1#51 -> U!val!2#52] else U!val!2#52
+universe U: U!val!2#52 U!val!1#51 U!val!0#50
