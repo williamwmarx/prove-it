@@ -398,3 +398,48 @@ fn an_unknown_prover_has_no_encoder() {
     assert_eq!(error.name(), "TlaUnsupportedError");
     assert_eq!(error.message(), "the spass backend");
 }
+
+// tlapm's Prep.compute_meth fails a prover it does not know with "Unknown prover", whatever the
+// name; the TypeScript looked names up in an object and took `constructor` for a prover.
+#[test]
+fn a_prover_named_like_an_object_property_is_unknown() {
+    let source = [
+        "---- MODULE M ----",
+        "EXTENDS TLAPS",
+        "CONSTANT c",
+        "P1 == TRUE (*{ by (prover:\"constructor\") }*)",
+        "THEOREM c = c BY P1",
+        "====",
+    ]
+    .join("\n");
+    let obligations = get_module_obligations("M", source, &mut |name| {
+        (name == "TLAPS").then(|| ObligationSource {
+            file: "TLAPS.tla".to_owned(),
+            source: TLAPS_MODULE.to_owned(),
+        })
+    });
+    let error = encode(&obligations[0], "smt").expect_err("an unknown prover");
+    assert_eq!(error.name(), "TlaProverError");
+    assert_eq!(error.message(), "Unknown prover: constructor");
+}
+
+// Operators named like an object's properties are ordinary operators, as in tlapm.
+#[test]
+fn an_operator_named_like_an_object_property_encodes() {
+    for (name, smt_name) in [
+        ("constructor", "constructor"),
+        ("hasOwnProperty", "hasOwnProperty"),
+        ("valueOf", "valueOf"),
+        ("toString", "toString"),
+        ("__proto__", "____proto____"),
+    ] {
+        let source =
+            format!("---- MODULE M ----\nCONSTANT {name}\nTHEOREM {name} = {name} OBVIOUS\n====");
+        let obligations = get_module_obligations("M", source, &mut |_| None);
+        let text = encode(&obligations[0], "smt").unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert!(
+            text.contains(&format!("(declare-fun smt__CONSTANT__{smt_name}__ () Idv)")),
+            "{name}: {text}"
+        );
+    }
+}
