@@ -248,13 +248,17 @@ impl Compiled {
             .any(|slot| SEARCH_SLOTS.contains(slot))
     }
 
-    /// Whether the expression reads TLCGet("level") or TLCGet("distinct"), which only the search
-    /// keeps.
-    pub fn reads_tlc_get(&self) -> bool {
+    /// Whether the expression reads TLCGet("level"), of the state or, primed, of the next.
+    pub fn reads_level(&self) -> bool {
         self.footprint
             .slots
             .iter()
-            .any(|&slot| slot == LEVEL_SLOT || slot == NEXT_LEVEL_SLOT || slot == DISTINCT_SLOT)
+            .any(|&slot| slot == LEVEL_SLOT || slot == NEXT_LEVEL_SLOT)
+    }
+
+    /// Whether the expression reads TLCGet("distinct"), which only the search keeps.
+    pub fn reads_distinct(&self) -> bool {
+        self.footprint.slots.contains(&DISTINCT_SLOT)
     }
 
     /// Whether the expression sets or reads TLC's registers.

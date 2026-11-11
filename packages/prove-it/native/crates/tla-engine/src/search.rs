@@ -373,6 +373,10 @@ pub enum ViolationKind {
         /// What the atoms printed as TLC found the properties the lasso violates, once it had
         /// rebuilt the lasso: each print's values, ids of the violation's store.
         printed: Vec<Vec<Id>>,
+        /// Whether the atoms read TLCGet("level"), which TLC reads of each state of the lasso it
+        /// rebuilt at its position, as it names the properties the lasso violates: the caller
+        /// names them so.
+        is_level_read: bool,
     },
     /// The last state of the trace reaches a tableau node that accepts every behavior, which TLC
     /// stops at as it adds the state: the positions of the properties it names.
@@ -2795,6 +2799,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 .assigned_shapes
                 .as_ref()
                 .is_some_and(|joins| joins.iter().all(ShapeJoin::is_comparable));
+        let levels: Option<Vec<u32>> = context.level_atoms.contains(&true).then(|| {
+            let mut levels: Vec<u32> = Vec::with_capacity(count);
+            for &parent in &search.states.parents[..count] {
+                let level = usize::try_from(parent).map_or(1, |parent| levels[parent] + 1);
+                levels.push(level);
+            }
+            levels
+        });
         let live = match reals {
             Some(reals) => LiveGraph {
                 states: &reals.states,
@@ -2806,6 +2818,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: reals.labels.as_deref(),
                 is_enabled_exact,
                 is_next_taken,
+                levels: None,
             },
             None => LiveGraph {
                 states: &search.states.ids[..count * width],
@@ -2817,6 +2830,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
                 is_enabled_exact,
                 is_next_taken,
+                levels: levels.as_deref(),
             },
         };
         answer_atoms(
@@ -2906,7 +2920,17 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         {
             let count = search.states.count();
             let tables = graph_tables(&mut machine, &search, 0, count, None, None).map_err(Bail)?;
-            if let Some(unanswered) = unanswered_at(model, &search, &tables, 0, count) {
+            if let Some(unanswered) = unanswered_at(
+                model,
+                &search,
+                &tables,
+                context
+                    .level_atoms
+                    .contains(&true)
+                    .then_some(&context.level_atoms[..]),
+                0,
+                count,
+            ) {
                 let failing = unanswered.state as u64 + 1;
                 let is_followed = initial_states.0 == initial_states.1
                     && std::iter::successors(Some(2u64), |count| count.checked_mul(2))
@@ -2916,6 +2940,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     model,
                     &search,
                     &tables,
+                    context
+                        .level_atoms
+                        .contains(&true)
+                        .then_some(&context.level_atoms[..]),
                     count,
                     unanswered.state as usize + 1,
                 );
@@ -3014,15 +3042,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 periodic_size = expanded;
                 let tables =
                     graph_tables(machine, search, expanded, count, None, None).map_err(Bail)?;
-                let liveness = check_liveness(
-                    model,
-                    search,
-                    &tables,
-                    None,
-                    false,
-                    &context.diameter_atoms,
-                    thread_count,
-                );
+                let liveness =
+                    check_liveness(model, search, &tables, None, false, &context, thread_count);
                 periodic_time += at.elapsed();
                 // Whatever the checker leaves undecided, the check of the complete graph decides,
                 // and the graph is bounded again for the interpreter, which checks as it grows.
@@ -3274,6 +3295,23 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         let graph = search.graph.as_ref().expect("a graph");
         let states = &search.states;
         let edge_count = graph.edge_offsets[expanded] as usize;
+        // The interpreter asks a state predicate of a state whatever step reached it, which
+        // answers an atom that reads TLCGet("level") at the state's own level alone.
+        let tables = tables
+            .into_iter()
+            .enumerate()
+            .map(|(position, table)| {
+                if context.level_atoms.get(position) != Some(&true) {
+                    return table;
+                }
+                Table {
+                    answers: Vec::new(),
+                    is_from_steps: false,
+                    unknown: Some("TLCGet(\"level\") at the step that reached a state".into()),
+                    prints: table.prints,
+                }
+            })
+            .collect();
         Checkpoint {
             expanding: expanding as u64,
             count: count as u64,
@@ -3468,7 +3506,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             &tables,
                             reals.as_ref(),
                             is_effectful,
-                            &context.diameter_atoms,
+                            &context,
                             thread_count,
                         );
                         if liveness.verdict != Verdict::Unexpanded {
@@ -3876,7 +3914,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                 })
                                 && tables.iter().all(|table| table.prints.is_empty())
                         })
-                        .and_then(|tables| unanswered_at(model, &search, tables, expanded, count))
+                        .and_then(|tables| {
+                            unanswered_at(
+                                model,
+                                &search,
+                                tables,
+                                context
+                                    .level_atoms
+                                    .contains(&true)
+                                    .then_some(&context.level_atoms[..]),
+                                expanded,
+                                count,
+                            )
+                        })
                         .filter(|unanswered| {
                             unanswered.is_initial || (unanswered.state as usize) < search.expanding
                         });
@@ -4359,8 +4409,9 @@ fn accepted_at(
         table.unknown.is_none()
             && match atom {
                 Atom::State(_) => !table.answers[..count].contains(&UNKNOWN),
+                Atom::LevelState(_) => !table.answers.contains(&UNKNOWN),
                 Atom::Enabled { .. } => !table.answers[..expanded].contains(&UNKNOWN),
-                Atom::Action { .. } | Atom::Unknown(_) => true,
+                Atom::Action { .. } | Atom::LevelAction { .. } | Atom::Unknown(_) => true,
             }
     });
     if !is_answered || context.is_live_printing || context.diameter_atoms.contains(&true) {
@@ -4387,6 +4438,10 @@ fn accepted_at(
             fingerprints: &search.states.fingerprints[..count],
             reals: None,
             diameters: None,
+            levels: context
+                .level_atoms
+                .contains(&true)
+                .then_some(&context.level_atoms[..]),
         },
         &answers,
     )
@@ -4410,6 +4465,7 @@ fn with_online<T>(
         fingerprints: &search.states.fingerprints[..count],
         reals: None,
         diameters: None,
+        levels: None,
     };
     let answers = LiveAnswers {
         machine: std::cell::RefCell::new(machine),
@@ -4478,8 +4534,8 @@ fn answers_initial_atoms(
             machine.set_next(&unassigned);
             context.atoms.iter().all(|atom| match atom {
                 Atom::State(eval) | Atom::Enabled { run: Ok(eval), .. } => eval(machine).is_ok(),
-                Atom::Action { .. } => true,
-                Atom::Enabled { run: Err(_), .. } | Atom::Unknown(_) => false,
+                Atom::Action { .. } | Atom::LevelAction { .. } => true,
+                Atom::LevelState(_) | Atom::Enabled { run: Err(_), .. } | Atom::Unknown(_) => false,
             })
         })
 }
@@ -4522,6 +4578,7 @@ fn unanswered_at(
     model: &Model,
     search: &Search<'_, States>,
     tables: &[Table],
+    levels: Option<&[bool]>,
     expanded: usize,
     count: usize,
 ) -> Option<tla_live::Unanswered> {
@@ -4539,6 +4596,7 @@ fn unanswered_at(
             fingerprints: &search.states.fingerprints[..count],
             reals: None,
             diameters: None,
+            levels,
         },
         &answers,
     )
@@ -4551,6 +4609,7 @@ fn replayed_unanswered(
     model: &Model,
     search: &Search<'_, States>,
     tables: &[Table],
+    levels: Option<&[bool]>,
     count: usize,
     found: usize,
 ) -> Option<tla_live::Unanswered> {
@@ -4573,6 +4632,7 @@ fn replayed_unanswered(
             fingerprints: &search.states.fingerprints[..count],
             reals: None,
             diameters: None,
+            levels,
         },
         &answers,
     )
@@ -4621,7 +4681,7 @@ fn to_atom_failure(
             };
             Some(next)
         }
-        Atom::Unknown(_) => return None,
+        Atom::LevelState(_) | Atom::LevelAction { .. } | Atom::Unknown(_) => return None,
     };
     let sum = |counts: &[u32]| {
         counts[..=state]
@@ -4749,6 +4809,7 @@ fn to_lasso(
                 loop_start,
                 loop_label,
                 printed,
+                is_level_read: context.level_atoms.contains(&true),
             },
             states: path
                 .iter()
@@ -5060,9 +5121,10 @@ fn check_liveness(
     tables: &[Table],
     reals: Option<&Reals>,
     is_effectful: bool,
-    diameter_atoms: &[bool],
+    context: &EngineContext,
     threads: usize,
 ) -> Liveness {
+    let (diameter_atoms, level_atoms) = (&context.diameter_atoms, &context.level_atoms);
     let graph = search.graph.as_ref().expect("a graph");
     // Under SYMMETRY or a VIEW, TLC names the violated properties from the trace it rebuilds, of
     // states the graph doesn't hold, so the checker names none.
@@ -5091,6 +5153,7 @@ fn check_liveness(
                 last: search.depth.max(1) as u32,
                 atoms: diameter_atoms,
             }),
+            levels: level_atoms.contains(&true).then_some(&level_atoms[..]),
         },
         &answers,
         is_effectful,

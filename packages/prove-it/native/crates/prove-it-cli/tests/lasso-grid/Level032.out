@@ -1,0 +1,19 @@
+exit 13
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Level032
+Linting of module Level032
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: Temporal property P was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+x = 0
+
+State 2: Stuttering
+8 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.

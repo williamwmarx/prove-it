@@ -50,6 +50,11 @@ pub struct Graph<'g> {
     pub reals: Option<&'g [u32]>,
     /// Where an atom reads TLCGet("diameter"), what TLC's diameter is as it adds each state.
     pub diameters: Option<Diameters<'g>>,
+    /// Where an atom reads TLCGet("level"), which atoms do. TLC evaluates such a state predicate
+    /// at the level of the state it holds: the state it adds, or a successor one level past it,
+    /// whatever the level the successor was first found at. Their tables answer each state, then
+    /// each state a step reached, by the step's edge.
+    pub levels: Option<&'g [bool]>,
 }
 
 /// TLC's diameter, the deepest level its search has found so far, as it adds each state to the
@@ -77,18 +82,19 @@ impl Graph<'_> {
     /// each state's stuttering step.
     fn position(&self, slot: Slot) -> usize {
         match slot {
-            Slot::State(state) => state as usize,
+            Slot::State(state) | Slot::Reached { state, .. } => state as usize,
             Slot::Step { edge, .. } => edge as usize,
             Slot::Stutter(state) => self.edges.len() + state as usize,
         }
     }
 }
 
-/// Where the checker asks an atom: of a state, of the step at a position of the graph's edges, from
-/// its state, or of a state's stuttering step.
+/// Where the checker asks an atom: of a state, of a state the step at a position of the graph's
+/// edges reached, of that step, from its state, or of a state's stuttering step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
     State(u32),
+    Reached { state: u32, edge: u32 },
     Step { state: u32, edge: u32 },
     Stutter(u32),
 }
@@ -150,6 +156,14 @@ impl Answers for Tables<'_> {
     }
 
     fn position(&self, atom: u32, slot: Slot, diameter: u32) -> usize {
+        if let Slot::Reached { edge, .. } = slot
+            && self
+                .graph
+                .levels
+                .is_some_and(|levels| levels.get(atom as usize) == Some(&true))
+        {
+            return self.graph.count() + edge as usize;
+        }
         let position = self.graph.position(slot);
         match &self.graph.diameters {
             Some(diameters) if diameters.atoms.get(atom as usize) == Some(&true) => {
@@ -168,7 +182,7 @@ impl Answers for Tables<'_> {
     }
 
     fn tables(&self) -> Option<&[Option<&[u8]>]> {
-        self.graph.diameters.is_none().then_some(self.tables)
+        (self.graph.diameters.is_none() && self.graph.levels.is_none()).then_some(self.tables)
     }
 }
 
