@@ -3,7 +3,8 @@
 // prover or reason, and the counts of missing and omitted proofs, or the error. The replay makes
 // both runs deterministic, so the answers must be the same. A text the record doesn't hold, which a
 // re-recording that moved an earlier answer can leave a run to reach, is unknown on both sides, and
-// each run counts those.
+// each run counts those. Each Rust run must end in the native engine's prove, so a run that gives way
+// to the TypeScript driver is its own verdict, and the script fails without the engine.
 //   --filter text keeps the modules whose path contains the text. --jobs n runs n workers.
 // Writes every result to .prover-driver-differential.json. Needs the native engine.
 
@@ -11,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { getNativeAddon } from "../src/engine/native";
 import { TlaError, TlaProverError } from "../src/errors";
 import { proveWith } from "../src/prover/prove";
 import type { Decision } from "../src/prover/verdict";
@@ -26,7 +28,7 @@ import { getInputKey, readInputRecords } from "./prover-records";
 import { getDigest } from "./tlapm-digest";
 
 interface Result {
-  verdict: "same" | "differs" | "crash";
+  verdict: "same" | "differs" | "gave way" | "crash";
   module: string;
   unrecorded?: number;
   typescript?: unknown;
@@ -40,6 +42,21 @@ const filter = getOption("--filter");
 const records = readInputRecords();
 
 let unrecorded = 0;
+
+const native = getNativeAddon();
+if (typeof native === "string") {
+  console.error(`The Rust driver needs the native engine: ${native}`);
+  process.exit(1);
+}
+// The kind of what the native prove last returned, which is "proved" or "error" where the Rust
+// driver settled the run.
+let lastKind: string | undefined;
+const nativeProve = native.prove.bind(native);
+native.prove = (...parts) => {
+  const result = nativeProve(...parts);
+  lastKind = result.kind;
+  return result;
+};
 
 // The recorded answer, as prove's decide gives it: a decision, or the TlaProverError the backend
 // threw.
@@ -77,8 +94,11 @@ const byModule = await runModuleWorkers(
     unrecorded = 0;
     try {
       const typescript = await proveWithDriver("ts", path);
+      lastKind = undefined;
       const rust = await proveWithDriver("rust", path);
       const counts = unrecorded > 0 ? { unrecorded } : {};
+      if (lastKind !== "proved" && lastKind !== "error")
+        return { verdict: "gave way", module: module.id, ...counts };
       return isDeepStrictEqual(rust, typescript)
         ? { verdict: "same", module: module.id, ...counts }
         : { verdict: "differs", module: module.id, ...counts, typescript, rust };
@@ -99,9 +119,15 @@ const unrecordedCount = results.reduce((total, result) => total + (result.unreco
 console.log(
   `${results.length} of ${modules.length} modules${missing > 0 ? `, ${missing} lost with their worker` : ""}, ${unrecordedCount} decisions unrecorded`,
 );
-printResults(results, ["same", "differs", "crash"], ["differs", "crash"], (result) =>
-  result.verdict === "crash"
-    ? `crash ${result.module}: ${result.crash}`
-    : `differs ${result.module}: see ${RESULTS_PATH}`,
+printResults(
+  results,
+  ["same", "differs", "gave way", "crash"],
+  ["differs", "gave way", "crash"],
+  (result) =>
+    result.verdict === "crash"
+      ? `crash ${result.module}: ${result.crash}`
+      : result.verdict === "gave way"
+        ? `gave way ${result.module}: the Rust driver gave way to the TypeScript one`
+        : `differs ${result.module}: see ${RESULTS_PATH}`,
 );
 if (results.some((result) => result.verdict !== "same") || missing > 0) process.exitCode = 1;
