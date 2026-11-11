@@ -640,14 +640,15 @@ now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator
 
 Since #250 the binary prints SANY's report of the trace exploration spec too, and checks TLC's
 default natively. After an error trace of two states or more it writes the spec TLC writes,
-`<Spec>_TTrace_<epoch>.tla`, and its path after `Finished in` (`te_spec.rs`). It still declines
-where TLC writes the trace's file, `<Spec>_TTrace_<epoch>.bin`, for a counterexample: TLC gzips it
-with Java's Deflater, whose compressed bytes the binary doesn't reproduce, and writes each string's
-token in TLC's run. An error after a behavior, as an Assert that fails in an action, has no trace
-file and is native. On the 733 corpus models in TLC's default, against TLC's recordings of that
-mode, 569 print and write what TLC does, 161 decline at the trace file, and 3 differ as they do
-with `-noGenerateSpecTE`, by TLC's runtime (a Java stack overflow, where TLC is installed, and a
-NullPointerException in TLC).
+`<Spec>_TTrace_<epoch>.tla`, and its path after `Finished in` (`te_spec.rs`), and for any
+counterexample the trace file, `<Spec>_TTrace_<epoch>.bin`, which is identical where TLC reads it
+back to the same trace (AGENTS.md, "The oracle"; cli.md, "-dumpTrace"). On the 733 corpus models in
+TLC's default, against TLC's recordings of that mode, with each `.bin` compared by what the jar
+reads back from it, 723 print and write what TLC does, 3 differ as they do with
+`-noGenerateSpecTE`, by TLC's runtime (a Java stack overflow, where TLC is installed, and a
+NullPointerException in TLC), and 7 decline at a trace file `tla-trace` doesn't dump: a random
+draw, whose trace TLC may not find again for its postconditions (5), a set TLC keeps lazy (1), and a
+deadlock that violates a temporal property (1).
 
 ### The public API afterwards
 

@@ -307,9 +307,28 @@ The binary (`prove-it-check`'s `dump_trace.rs`) does what TLC does with `-dumpTr
   `b.bin` twice and never `a.bin`.
 - `to_tlc` takes the configuration's model values (`ModelConfig::get_model_values`).
 
-Not native: where TLC also records the trace (its default without `-tool`, `-noTE` or
-`-continue`), a counterexample, whose `.bin` the trace exploration spec's postcondition writes with
-the same constant; a failure evaluating the spec past the initial states, after which TLC may check
+Where TLC also records the trace (its default without `-tool`, `-noTE` or `-continue`), the trace
+exploration spec's postcondition writes a counterexample's `<Spec>_TTrace_<epoch>.bin` after the
+command line's dumps, without printing that it did, and the binary writes it too.
+
+The `.bin` is the one file the binary doesn't write byte for byte: each string carries TLC's intern
+number of the text in that run, which depends on the order the JVM's `getDeclaredMethods` gives
+(gaps.md, "The tokens of a dumped trace"). It is identical where TLC's `-loadTrace tlc` reads it
+back to the same trace (AGENTS.md, "The oracle"). The Parity workflow checks that on every run of
+its TLC-default differential that writes one (`scripts/differential.ts`, `--modes te`): the
+transcript holds what the jar reads back from each `.bin`, TLC's and the binary's, which must be
+equal, and a truncated and a corrupted copy of the binary's must read back to something else, as
+TLC fails to read them (`Unexpected end of ZLIB input stream`, `Corrupt GZIP trailer`). What it
+reads back is twice the file: what `-loadTrace tlc` prints, the trace it rebuilds and checks
+again, which compares the spec's variables alone and so misses an ALIAS's fields; and TLCExt's
+`TLCFP` of the whole value TLC's `_TLCTrace` deserialises, which a module of the run's own named
+`_TLCTrace` makes reachable beside the spec (a fingerprint, since a value such as a SUBSET of 20
+elements is too large to print). `tests/dump_trace.rs` compares the values, references followed
+and tokens skipped as TLC's reader skips them, with TLC's for an ALIAS of an initial state's
+violation and of a step's, an ALIAS that fails, and a value the binary writes twice where TLC
+shares it (`tests/te-bin`).
+
+Not native: a failure evaluating the spec past the initial states, after which TLC may check
 the postconditions on a trace it can't find again; a spec that draws RandomElement or
 RandomSubset, whose trace TLC may not find again, writing nothing; a deadlock that violates a
 temporal property; a file name that isn't printable ASCII or holds a quote or a backslash; a file
@@ -361,12 +380,17 @@ differs as it does without -dumpTrace.
   `java -jar tla2tools.jar -tool -modelcheck -config <Spec>.cfg -loadtrace tlc trace.bin <Spec>`,
   and printed the same, but for times, pids, the seed and the fingerprint index: the trace
   replayed, exit 12, 11, 13 and 12.
-- Not dumped (`Unsupported`): a safety violation of a model with an ALIAS; a set or function TLC
-  keeps lazy, whose cached enumeration is a Java object of its own; an action's parameter bound to
-  a string, set or function, the object its set holds, which a state may hold too; a model value
-  the configuration doesn't make. The sharing follows the evaluator's, which these specs check; where
-  TLC's state queue spilled the held state to disk and read it back, TLC's literals are new
-  objects, which the dump doesn't follow.
+- Not dumped (`Unsupported`): a set or function TLC keeps lazy, whose cached enumeration is a Java
+  object of its own; a model value the configuration doesn't make. Where a JSON dump is written
+  too, whose text follows TLC's sharing of values, also a safety violation of a model with an
+  ALIAS, an action's parameter bound to a string, set or function, the object its set holds,
+  which a state may hold too, and a value the evaluator made again or shared where TLC didn't
+  (`Rebuilder::dump_trace`'s `is_sharing_followed`). The binary trace files alone write a value TLC
+  shares as many times as the evaluator made it, and the ALIAS's records of a safety violation as
+  `Worker.doPostCondition` builds them, which TLC's `-loadTrace` reads back to the same trace. The
+  sharing follows the evaluator's, which these specs check; where TLC's state queue spilled the
+  held state to disk and read it back, TLC's literals are new objects, which the dump doesn't
+  follow.
 - The corpus sweep found where the evaluator's sharing wasn't TLC's, now followed:
   `[S -> T]` enumerates a lazy `T` once for each element of `S` (`SetOfFcnsValue.Enumerator`), so
   no two arguments share a value; SubSeq and SelectSeq give TLC's one empty sequence

@@ -17,7 +17,11 @@
 // whole corpus takes minutes, and fails if it prints something TLC doesn't that
 // known-differences.json doesn't list for tlc/native; a run it declines as not native fails nothing.
 // --modes te, with --native-only, compares it in TLC's own default, where TLC records the trace and
-// writes the trace exploration files, which the transcripts hold.
+// writes the trace exploration files, which the transcripts hold. TLC's binary trace file, the .bin,
+// holds each string's token in the run that wrote it, which no other run reproduces, so the
+// transcript holds what TLC's -loadTrace rebuilds from it, with the jar TLA2TOOLS_JAR names: TLC's
+// file and the binary's are the same where TLC reads the same trace back from each. A truncated and
+// a corrupted copy of each of the binary's must not read back to that trace, or the run fails.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
@@ -27,7 +31,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 
 import {
   CONFORMANCE_DIRECTORY,
@@ -106,6 +110,12 @@ const nativeBinary = nativeOption && resolve(nativeOption);
 const isNativeOnly = process.argv.includes("--native-only");
 if (isNativeOnly && !nativeBinary) throw new Error("--native-only needs --native");
 if (modes.includes("te") && !isNativeOnly) throw new Error("--modes te needs --native-only");
+const tlaToolsJar = process.env.TLA2TOOLS_JAR;
+if (modes.includes("te") && (!tlaToolsJar || !existsSync(tlaToolsJar))) {
+  throw new Error("--modes te needs TLA2TOOLS_JAR, the tla2tools.jar that reads each trace file");
+}
+// The runs whose damaged trace file TLC read back to the trace the whole file holds.
+const undamaged: string[] = [];
 
 // Runs a checker with TLC's command line for the model, from the model's directory.
 const spawnChecker = (
@@ -142,6 +152,103 @@ const spawnChecker = (
     });
   });
 
+// Runs the jar's TLC from the directory, and returns its exit code, stdout and stderr, normalised.
+const runJar = (directory: string, args: string[]) =>
+  new Promise<string>((resolve) => {
+    const child = spawn("java", ["-XX:+UseParallelGC", "-cp", tlaToolsJar ?? "", ...args], {
+      cwd: directory,
+      env: { ...process.env, JAVA_TOOL_OPTIONS: undefined },
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("close", (exitCode) =>
+      resolve(
+        getTranscript(
+          String(exitCode),
+          Buffer.concat(stdout).toString("utf8"),
+          Buffer.concat(stderr).toString("utf8"),
+        ),
+      ),
+    );
+  });
+
+// What TLC reads back from the trace file's bytes for the model, normalised: what its -loadTrace
+// prints, the trace it rebuilds from the file and checks again, which compares only the spec's
+// variables; then the fingerprint of the whole value the file holds (TLCExt's TLCFP), as TLC
+// deserialises it, which a module of its own named _TLCTrace makes the trace module's reader
+// reachable for, beside the spec, with its model values from its configuration. The value itself
+// may be too large to print, as a SUBSET of 20 elements. A file TLC can't read prints why, twice.
+const readTrace = async (model: CorpusModel, bytes: Buffer) => {
+  const directory = mkdtempSync(join(tmpdir(), "prove-it-read-trace-"));
+  const tracePath = join(directory, "trace.bin");
+  writeFileSync(tracePath, bytes);
+  const args = getTlcArguments(model, "default", join(directory, "states"));
+  const configIndex = args.indexOf("-config");
+  const loaded = await runJar(model.directory, [
+    LIBRARY_OPTION,
+    "tlc2.TLC",
+    ...args.slice(0, configIndex),
+    "-loadTrace",
+    "tlc",
+    tracePath,
+    ...args.slice(configIndex),
+  ]);
+  writeFileSync(
+    join(directory, "_TLCTrace.tla"),
+    "---- MODULE _TLCTrace ----\n_TLCTraceDeserialize(file) == TRUE\n====\n",
+  );
+  writeFileSync(
+    join(directory, "ProveItTraceValue.tla"),
+    [
+      "---- MODULE ProveItTraceValue ----",
+      `EXTENDS ${basename(model.specPath, ".tla")}, _TLCTrace, TLC, TLCExt`,
+      `ASSUME PrintT(TLCFP(_TLCTraceDeserialize(${JSON.stringify(tracePath)}))) /\\ FALSE`,
+      "====",
+      "",
+    ].join("\n"),
+  );
+  const value = await runJar(model.directory, [
+    `${LIBRARY_OPTION}${delimiter}${dirname(model.specPath)}`,
+    "tlc2.TLC",
+    ...args.slice(0, -1),
+    join(directory, "ProveItTraceValue.tla"),
+  ]);
+  rmSync(directory, { recursive: true, force: true });
+  return `${loaded}\n--- the fingerprint of the value it holds\n${value}`;
+};
+
+// The trace exploration files with each .bin, held in base64, as what TLC reads back from it. Where
+// `isDamageChecked`, a truncated and a corrupted copy of each must read back to something else.
+const readTraceFiles = async (
+  model: CorpusModel,
+  files: Record<string, string>,
+  isDamageChecked: boolean,
+) =>
+  Object.fromEntries(
+    await Promise.all(
+      Object.entries(files).map(async ([name, text]) => {
+        if (!name.endsWith(".bin")) return [name, text];
+        const bytes = Buffer.from(text, "base64");
+        const loaded = await readTrace(model, bytes);
+        if (isDamageChecked) {
+          const corrupted = Buffer.from(bytes);
+          corrupted[Math.floor(corrupted.length / 2)] ^= 0x5a;
+          for (const [damage, damaged] of [
+            ["truncated", bytes.subarray(0, Math.floor(bytes.length / 2))],
+            ["corrupted", corrupted],
+          ] as const) {
+            if ((await readTrace(model, damaged)) === loaded) {
+              undamaged.push(`${model.id}: a ${damage} ${name}`);
+            }
+          }
+        }
+        return [name, `what TLC reads back from the file:\n${loaded}`];
+      }),
+    ),
+  );
+
 // A run in TLC's own default writes the trace exploration files, which its transcript holds.
 const runChecker = async (
   command: string,
@@ -156,8 +263,9 @@ const runChecker = async (
       ? await runTakingTraceFiles(dirname(model.specPath), run)
       : { result: await run(), files: {} };
   const result = checked.result;
+  const files = mode === "te" ? await readTraceFiles(model, checked.files, true) : checked.files;
   return {
-    transcript: getTranscript(result.status, result.stdout, result.stderr, checked.files),
+    transcript: getTranscript(result.status, result.stdout, result.stderr, files),
     isAborted: result.isAborted,
     engineLine: getEngineLine(result.stderr),
     stdout: result.stdout,
@@ -269,7 +377,9 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
         String(recording.exitCode),
         recording.stdout,
         recording.stderr,
-        recording.files,
+        mode === "te" && recording.files
+          ? await readTraceFiles(model, recording.files, false)
+          : recording.files,
       );
     if (nativeBinary && isNativeOnly) {
       const native = await runChecker(nativeBinary, [], model, mode, process.env);
@@ -408,8 +518,12 @@ if (nativeBinary) {
         for (const line of comparison.diff.slice(0, 10)) console.log(`    ${line}`);
       }
     }
-    if (aborted.length > 0 || differing.length > 0) process.exitCode = 1;
-    nativeSummary.text = `${differing.length} native differences known-differences.json doesn't list, and ${aborted.length} native runs aborted.`;
+    if (undamaged.length > 0) {
+      console.log(`\n${undamaged.length} damaged trace files TLC read back to the same trace:`);
+      for (const run of undamaged) console.log(`  ${run}`);
+    }
+    if (aborted.length > 0 || differing.length > 0 || undamaged.length > 0) process.exitCode = 1;
+    nativeSummary.text = `${differing.length} native differences known-differences.json doesn't list, ${aborted.length} native runs aborted, and ${undamaged.length} damaged trace files read back.`;
   }
 }
 if (missing.length > 0) {
