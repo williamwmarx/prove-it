@@ -3884,8 +3884,8 @@ run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=3 n=3 ids=4138398540 | #418:397766970 steps=168 asts=295
 ufnia => inconsistent=0 n=3 ids=385513469 | #212:2324080971 steps=864 asts=318
 assert-goal => 3 steps=916 asts=322
-reduce => inconsistent=0 n=5 ids=52351558 | #239:2132038580 steps=1297 asts=333
-refs => 238 1787193785 3655390246 steps=1297 asts=333
+reduce => inconsistent=0 n=4 ids=2296749176 | #223:1811027925 steps=1297 asts=331
+refs => 235 1679814920 679149851 steps=1297 asts=331
 run stages => - steps=0 asts=165
 parse => n=3 ids=605541518 | #418:397766970 steps=0 asts=253
 goal => inconsistent=0 n=3 ids=605541518 | #418:397766970 steps=0 asts=253
@@ -3902,8 +3902,8 @@ push-assert => 7 steps=843 asts=309
 push-reduce => inconsistent=0 n=2 ids=2775176060 | (= (+ (* 2 (f 5)) (* 2 b) (f -2) (* -1 x0!1)) -2) ; (not (= (+ (f b) (f x0!1) x0!1) -3)) steps=1074 asts=313
 pop => 6 inconsistent=0 steps=1074 asts=299
 reassert => 7 steps=1108 asts=302
-rereduce => inconsistent=0 n=3 ids=3055345632 | (or (g a a) (not p)) ; (or (g a a) (not q)) ; (or p q (forall (1) (or p (not (<= (:var 0) 2)) (not (>= (+ (* 2 (:var 0)) (* -1 (h u))) 0))))) steps=1315 asts=303
-refs => 219 3608853530 2921162333 steps=1315 asts=303
+rereduce => inconsistent=0 n=2 ids=4081336456 | (or (not (or p q)) (g a a)) ; (or p q (forall (1) (or p (not (<= (:var 0) 2)) (not (>= (+ (* 2 (:var 0)) (* -1 (h u))) 0))))) steps=1315 asts=305
+refs => 219 3222483426 3627109210 steps=1315 asts=305
 random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun b () Int) (declare-fun c () Int) (declare-fun p () Bool) (declare-fun q () Bool) (declare-fun r () Bool) (declare-fun u () U) (declare-fun v () U) (declare-fun f (Int) Int) (declare-fun g (Int Int) Bool) (declare-fun h (U) Int) (declare-fun k (Int) U) (declare-fun P (U) Bool) (assert (forall ((x0 Int) (x1 Bool)) (! (or (not (= x0 b)) (not (ite (exists ((x2 Int) (x3 Int)) (and p (not (= x2 1)) (ite (> 1 2) (= x3 (ite p 1 a)) (= x3 (ite true b 1))))) (= x1 (= b 3)) (= x1 (not false)))) (<= x0 (+ x0 x0))) :pattern ((f x0))))) (assert (or (= (k 0) (k a)) (= (* 3 5) (* 2 b)))) (check-sat)
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=2 n=2 ids=1492848790 | #284:3510839732 steps=115 asts=241
