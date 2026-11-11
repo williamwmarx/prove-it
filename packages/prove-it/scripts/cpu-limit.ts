@@ -34,9 +34,7 @@ const startWorker = async () => {
   const worker = new Worker(join(DIST_DIRECTORY, "prove-worker.js"), {
     resourceLimits: { stackSizeMb: 1.15 },
   });
-  // The thread's CPU time counts from the moment it has loaded the backends, which its answer to an
-  // empty SMT input shows.
-  worker.postMessage({ prover: "smt", text: "", timeLimitMs: Number.POSITIVE_INFINITY });
+  // The thread's CPU time counts from the moment it has loaded the backends, which it says.
   await once(worker, "message");
   return worker;
 };

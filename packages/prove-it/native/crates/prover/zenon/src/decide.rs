@@ -36,7 +36,7 @@ pub struct ZenonRun {
     pub formulas_created: u64,
 }
 
-/// The search and its statistics, which match the -stats output of the OCaml Zenon: `runZenon`.
+/// The search and its statistics, which match the -stats output of the OCaml Zenon.
 /// Fails when the text isn't a valid .znn file.
 pub fn run_zenon(text: &str, limits: &Limits) -> Result<ZenonRun, ZenonError> {
     let exprs = Expressions::new();
@@ -132,7 +132,7 @@ pub enum ZenonDecision {
     Unknown,
 }
 
-/// Zenon's verdict on a .znn file: `decideZenon`, with the run for its statistics.
+/// Zenon's verdict on a .znn file.
 pub fn decide_zenon(text: &str, limits: &Limits) -> Result<ZenonDecision, ZenonError> {
     Ok(match run_zenon(text, limits)?.isar {
         Some(isar) => ZenonDecision::Unsat(isar),
