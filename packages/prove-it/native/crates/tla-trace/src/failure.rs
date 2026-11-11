@@ -12,8 +12,8 @@ use crate::fingerprint::{fingerprint_failure, state_fingerprint};
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_in_model, is_same, run};
 use crate::value::{
-    Evaluated, TlcMessage, Value, clear_unnormalized, equals, fail, fail_with, normalize_failure,
-    settle,
+    Evaluated, Lazy, TlcMessage, Value, clear_unnormalized, equals, fail, fail_with,
+    normalize_failure, settle,
 };
 use crate::{Ending, Trace, Unsupported};
 
@@ -99,6 +99,9 @@ pub struct Replay {
     /// Whether the replay failed in turn, with the call stack or the FingerprintException the
     /// failure holds: TLC then leaves the state graph's out-degrees out.
     pub is_failed: bool,
+    /// The initial states TLC's replay of the initial states generated, where it went on past
+    /// one it failed to fingerprint as a FingerprintException, which it counts as generated.
+    pub initial_states: Option<u64>,
 }
 
 const GENERAL: u32 = 1000;
@@ -476,6 +479,8 @@ impl<'ir> Rebuilder<'ir> {
             .unwrap_or_else(|| vec![None; width]);
         // The initial state TLC failed to check, as the replay found it.
         let mut checked: Option<Vec<Value>> = None;
+        // The initial states the replay of the initial predicate found.
+        let mut initial_states = 0;
         let result = match site {
             Site::InitialConstraint(position)
             | Site::InitialInvariant(position)
@@ -621,11 +626,49 @@ impl<'ir> Rebuilder<'ir> {
                 evaluator.current = vec![None; width];
                 evaluator.level = 0;
                 let context = evaluator.scope_context(ir.model.scope);
-                context.and_then(|context| {
+                // `DoInitFunctor` keeps a FingerprintException, which `addElement` catches as a
+                // `Throwable`, and only counts the states left, then `doInit` throws it.
+                let mut failure = None;
+                let mut printed = 0;
+                let walked = context.and_then(|context| {
                     evaluator.walk_action(ir.model.init, &context, true, &mut |evaluator| {
-                        evaluator.fingerprint_found(true)
+                        initial_states += 1;
+                        if failure.is_some() {
+                            return Ok(true);
+                        }
+                        let found = evaluator.fingerprint_found(true);
+                        match found {
+                            Err(error)
+                                if evaluator.call_stack.as_ref().is_some_and(|stack| {
+                                    stack.unfollowed.is_none()
+                                        && stack
+                                            .fingerprint
+                                            .as_ref()
+                                            .is_some_and(|(sources, _)| !sources.is_empty())
+                                }) =>
+                            {
+                                failure = Some((error, evaluator.call_stack.take()));
+                                printed = evaluator.printed.len();
+                                Ok(true)
+                            }
+                            found => found,
+                        }
                     })
-                })
+                });
+                match failure {
+                    Some((error, call_stack)) => {
+                        evaluator.call_stack = call_stack;
+                        if (walked.is_err() || evaluator.printed.len() != printed)
+                            && let Some(stack) = &mut evaluator.call_stack
+                        {
+                            stack.unfollowed.get_or_insert(
+                                "initial states that fail or print after one TLC can't fingerprint",
+                            );
+                        }
+                        Err(error)
+                    }
+                    None => walked,
+                }
             }
             Site::Next => {
                 let actions = evaluator.tlc_actions();
@@ -781,8 +824,10 @@ impl<'ir> Rebuilder<'ir> {
             ));
         };
         // TLC fails to fingerprint an initial state that holds a set it can't normalize, then to
-        // print the state as it reports that, which escapes as an exception it didn't expect.
-        if call_stack.is_unsorted {
+        // print the state as it reports that, which escapes as an exception it didn't expect. A
+        // next-state relation that fails in a method of a value with a source fails before TLC
+        // fingerprints any successor of the expansion that holds such a set.
+        if call_stack.is_unsorted && !(call_stack.is_fingerprinted && site == Site::Next) {
             return match call_stack.unprintable {
                 Some(message)
                     if site == Site::Init
@@ -829,13 +874,28 @@ impl<'ir> Rebuilder<'ir> {
                 replay: Replay::default(),
             });
         }
-        if let Some((sources, state)) = call_stack.fingerprint {
+        if let Some((sources, state)) = call_stack.fingerprint.take() {
             let Some(message) = error.message else {
                 return Err(Unsupported(format!(
                     "evaluating the failure again: {}",
                     error.reason
                 )));
             };
+            // A value without a source fails as it is: `DoInitFunctor` reports it with the
+            // state, and TLC's replay prints the frames it froze in.
+            if sources.is_empty() {
+                return Ok(Failure {
+                    code: INITIAL_STATE,
+                    message: message.text.clone(),
+                    tool_message: nested(&message),
+                    call_stack: ranges(evaluator, &call_stack),
+                    exit_code: FAILURE_SPEC_EVAL,
+                    printed,
+                    fingerprint: None,
+                    state: Some(state),
+                    replay: Replay::default(),
+                });
+            }
             let fingerprint = FingerprintFailure {
                 sources: sources
                     .into_iter()
@@ -847,16 +907,17 @@ impl<'ir> Rebuilder<'ir> {
             };
             // TLC reports a state it fails to fingerprint as it works on an initial state, or as
             // an exception it didn't expect in the next states, and exits as for the replay.
-            let (code, text, tool_text, state) = match site {
+            let (code, text, tool_text, state, initial_states) = match site {
                 Site::Init => (
                     INITIAL_STATE,
                     message.text.clone(),
                     nested(&message),
                     Some(state),
+                    Some(initial_states),
                 ),
                 _ => {
                     let (code, text, tool_text) = report(&message, true);
-                    (code, text, tool_text, None)
+                    (code, text, tool_text, None, None)
                 }
             };
             return Ok(Failure {
@@ -868,29 +929,34 @@ impl<'ir> Rebuilder<'ir> {
                 printed,
                 fingerprint: Some(fingerprint),
                 state,
-                replay: Replay::default(),
+                replay: Replay {
+                    initial_states,
+                    ..Replay::default()
+                },
             });
         }
-        // A constraint or an invariant that fails on an initial state in a value's method: TLC
-        // reports the error, with the state unless it is an EvalException, then its replay of the
-        // initial states throws the FingerprintException, whose call stack it prints.
+        // A constraint or an invariant that fails on an initial state in a value's method, or the
+        // initial predicate itself: TLC reports the error, with the state where `DoInitFunctor`
+        // kept it, then its replay of the initial states throws the FingerprintException, whose
+        // call stack it prints.
         if call_stack.is_fingerprinted
-            && matches!(site, Site::InitialConstraint(_) | Site::InitialInvariant(_))
             && let Some(message) = &error.message
-            && !call_stack.fingerprinted_sources.is_empty()
-            && let Some(values) = &checked
+            && (site == Site::Init && call_stack.is_frozen && !call_stack.frames.is_empty()
+                || !call_stack.fingerprinted_sources.is_empty()
+                    && matches!(site, Site::InitialConstraint(_) | Site::InitialInvariant(_))
+                    && checked.is_some())
         {
-            // An EvalException escapes `doInit` without the state, and TLC prints it as a general
-            // error around the nested message.
-            let (code, text, tool_text, state) = if message.is_eval_exception {
-                (GENERAL, message.text.clone(), nested(message), None)
-            } else {
-                (
+            // An EvalException escapes `doInit` without the state, and the initial predicate
+            // fails before `DoInitFunctor` has one, so TLC prints a general error around the
+            // nested message.
+            let (code, text, tool_text, state) = match &checked {
+                Some(values) if !message.is_eval_exception => (
                     INITIAL_STATE,
                     message.text.clone(),
                     nested(message),
                     Some(values.iter().map(format_value).collect()),
-                )
+                ),
+                _ => (GENERAL, message.text.clone(), nested(message), None),
             };
             return Ok(Failure {
                 code,
@@ -909,15 +975,17 @@ impl<'ir> Rebuilder<'ir> {
                 replay: Replay::default(),
             });
         }
-        // A failure in the next states whose receiver the replay gave a source TLC reports as it
-        // is, then fails again as a FingerprintException as it replays the expansion with its
-        // `CallStackTool`, which gives values their sources, and prints that call stack.
+        // A failure in the initial or next states whose receiver the replay gave a source TLC
+        // reports as it is, then fails again as a FingerprintException as it replays the
+        // computation with its `CallStackTool`, which gives values their sources, and prints that
+        // call stack (`ModelChecker.modelCheckImpl`).
         if call_stack.is_fingerprinted
-            && site == Site::Next
+            && matches!(site, Site::Init | Site::Next)
             && let Some(message) = &error.message
-            && !call_stack.fingerprinted_sources.is_empty()
+            && (!call_stack.fingerprinted_sources.is_empty()
+                || call_stack.is_frozen_before_fingerprint)
         {
-            let (code, text, tool_text) = report(message, true);
+            let (code, text, tool_text) = report(message, site == Site::Next);
             let sources = fingerprint_ranges(evaluator, &call_stack);
             return Ok(Failure {
                 code,
@@ -955,12 +1023,21 @@ impl<'ir> Rebuilder<'ir> {
         // TLC reports an error adding an initial state to the behavior graphs with the state, and
         // exits with the error's own status, since its replay of the initial states, which have
         // the state already, doesn't fail again (`ModelChecker#doInit`). An EvalException escapes
-        // `doInit` without the state, which isn't ported.
+        // `doInit` without the state, so TLC prints it as a general error, whose status it exits
+        // with.
         if let Site::InitialAtom { .. } = site {
             if message.is_eval_exception {
-                return Err(Unsupported(
-                    "evaluating the failure again: an EvalException adding an initial state".into(),
-                ));
+                return Ok(Failure {
+                    code: GENERAL,
+                    message: message.text.clone(),
+                    tool_message: nested(&message),
+                    call_stack: Vec::new(),
+                    exit_code: FAILURE_ERROR,
+                    printed,
+                    fingerprint: None,
+                    state: None,
+                    replay: Replay::default(),
+                });
             }
             let Some(values) = evaluator
                 .current
@@ -1550,12 +1627,56 @@ impl<'ir> Evaluator<'ir> {
     // evaluation: where that fails, the failure is the FingerprintException of the values it
     // fails in. A state whose fingerprint the evaluator can't tell stops the replay.
     fn fingerprint_found(&mut self, is_init: bool) -> Evaluated<bool> {
-        let found = self.fingerprint_state(is_init);
-        // TLC fingerprints a state only where the constraints hold of it (`isInModel`), which
-        // the replay doesn't evaluate here.
         let model = &self.ir.model;
+        // `DoInitFunctor` fingerprints an initial state only where the constraints hold of it
+        // (`isInModel`), as its replay finds the state.
+        if is_init && !model.constraints.is_empty() {
+            let level = std::mem::replace(&mut self.level, 1);
+            let call_stack = self.call_stack.take();
+            let printed = self.printed.len();
+            let mut holds = Ok(true);
+            for constraint in &model.constraints {
+                holds = match constraint.definition {
+                    Some(index) => {
+                        let body = self.definition(self.ir.definitions[index as usize]).body;
+                        constraint_holds(self, body)
+                    }
+                    None => fail("a constraint the model doesn't define"),
+                };
+                if !matches!(holds, Ok(true)) {
+                    break;
+                }
+            }
+            self.call_stack = call_stack;
+            self.level = level;
+            // TLC evaluated the constraints of the state as it found it before the replay, where
+            // the search stopped first.
+            if self.printed.len() != printed
+                && let Some(stack) = &mut self.call_stack
+            {
+                stack
+                    .unfollowed
+                    .get_or_insert("a constraint that prints as TLC replays the initial states");
+            }
+            match holds {
+                Ok(true) => {}
+                Ok(false) => return Ok(true),
+                Err(error) => {
+                    if let Some(stack) = &mut self.call_stack {
+                        stack.unfollowed.get_or_insert(
+                            "a constraint that fails as TLC replays the initial states",
+                        );
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        let found = self.fingerprint_state(is_init);
+        // TLC's worker fingerprints a successor only where the constraints hold of it, which
+        // the replay doesn't evaluate here.
         if found.is_err()
-            && (!model.constraints.is_empty() || !is_init && !model.action_constraints.is_empty())
+            && !is_init
+            && (!model.constraints.is_empty() || !model.action_constraints.is_empty())
             && let Some(stack) = &mut self.call_stack
         {
             stack
@@ -1600,19 +1721,30 @@ impl<'ir> Evaluator<'ir> {
             match failure {
                 Ok(None) => {}
                 Ok(Some((chain, message))) => {
+                    // `CallStackTool.eval` copies a `SetPredValue` without its source.
                     let sources: Vec<_> = chain
                         .iter()
+                        .filter(|value| !is_filter(value))
                         .filter_map(|value| stack.source(value))
                         .collect();
-                    if sources.is_empty() {
+                    let texts = state
+                        .iter()
+                        .map(|value| value.as_ref().map(format_value).unwrap_or_default())
+                        .collect();
+                    if chain.iter().all(is_filter) {
+                        // A filter fails as a plain exception, in the frames the replay is in,
+                        // which TLC's worker reports otherwise than `DoInitFunctor` does.
+                        if !is_init {
+                            stack
+                                .unfollowed
+                                .get_or_insert("a successor that fails to fingerprint a filter");
+                        }
+                        stack.fingerprint = Some((Vec::new(), texts));
+                    } else if sources.is_empty() {
                         stack
                             .unfollowed
                             .get_or_insert("a fingerprint of values without sources");
                     } else {
-                        let texts = state
-                            .iter()
-                            .map(|value| value.as_ref().map(format_value).unwrap_or_default())
-                            .collect();
                         stack.frames.clear();
                         stack.is_frozen = true;
                         stack.fingerprint = Some((sources, texts));
@@ -1629,6 +1761,10 @@ impl<'ir> Evaluator<'ir> {
         }
         Ok(true)
     }
+}
+
+fn is_filter(value: &Value) -> bool {
+    matches!(value, Value::Lazy(lazy) if matches!(**lazy, Lazy::Filter(..)))
 }
 
 // Whether a value holds a set TLC can't normalize, or may: the replay doesn't look into a lazy set.

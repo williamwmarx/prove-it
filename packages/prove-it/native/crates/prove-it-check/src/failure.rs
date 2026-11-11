@@ -198,7 +198,11 @@ pub fn print_failure(
     );
     let progress = std::iter::successors(Some(2u64), |count| count.checked_mul(2))
         .take_while(|&count| is_progress_replayed && count < stop.statistics.generated);
-    if stop.statistics.generated > 2
+    if stop
+        .statistics
+        .generated
+        .max(failure.replay.initial_states.unwrap_or(0))
+        > 2
         && is_progress_replayed
         && (failure.fingerprint.is_some() || !report.after.is_empty())
     {
@@ -273,18 +277,23 @@ pub fn print_failure(
         None => print_call_stack(printer, ir, &failure.call_stack),
     }
     // TLC counts the state it failed to fingerprint as generated, which the search stopped before
-    // counting, and an initial state as at depth 1.
+    // counting, and an initial state as at depth 1: the initial state it reports failed to
+    // fingerprint, whether as a FingerprintException or not.
+    let is_unfingerprinted = stop.site == Site::Init && failure.state.is_some();
     let statistics = match (&failure.fingerprint, stop.site) {
         (Some(fingerprint), _) if fingerprint.is_replayed => stop.statistics,
-        (Some(_), site) => Statistics {
-            generated: stop.statistics.generated + 1,
+        (None, _) if !is_unfingerprinted => stop.statistics,
+        (_, site) => Statistics {
+            generated: failure
+                .replay
+                .initial_states
+                .unwrap_or(stop.statistics.generated + 1),
             depth: match site {
                 Site::Init => stop.statistics.depth.max(1),
                 _ => stop.statistics.depth,
             },
             ..stop.statistics
         },
-        (None, _) => stop.statistics,
     };
     // TLC's replay adds the successors it hadn't seen to its set, and to its queue those that
     // pass its checks.
