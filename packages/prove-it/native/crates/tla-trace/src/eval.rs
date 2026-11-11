@@ -23,14 +23,14 @@ use crate::pretty::pretty_print;
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{
-    as_tuple, cardinality, difference, intersection, is_member, is_member_filtered, is_reducible,
-    union,
+    as_tuple, cardinality, difference, failing_operation, intersection, is_member,
+    is_member_filtered, is_reducible, union,
 };
 use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
-    elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store,
-    is_enumerable, lambda_as_function, mark_unnormalized, note_sorted, set_of, sorted_function,
-    unnormalized, unsorted_failure, written_function,
+    elements, equals, fail, fail_coded, fail_runtime, fail_with, failing_comparisons, find_key,
+    from_store, is_enumerable, lambda_as_function, mark_unnormalized, note_sorted, set_of,
+    sorted_function, unnormalized, unsorted_failure, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -246,8 +246,9 @@ pub struct CallStack {
     pub frames: Vec<StackFrame>,
     pub is_frozen: bool,
     /// The values the replay built that TLC's `CallStackTool` gives a source, by their address,
-    /// each with the node that built it.
-    sourced: HashMap<usize, NodeId>,
+    /// each with the node that built it. Each is kept, so that no other value takes its address
+    /// while the replay runs.
+    sourced: HashMap<usize, (NodeId, Value)>,
     /// The value each node of the replay last evaluated to.
     values: HashMap<NodeId, Value>,
     /// Whether the failure was in a method of a value with a source, which TLC reports as a
@@ -260,6 +261,10 @@ pub struct CallStack {
     /// the failure is fingerprinted: the last frames of the call stack TLC's replay prints with
     /// the FingerprintException.
     pub fingerprinted_sources: Vec<NodeId>,
+    /// Whether the fingerprinted failure froze the call stack before a function TLC was building
+    /// with a source threw it on as a FingerprintException, which then adds no frames to the
+    /// stack TLC prints (`CallStack.freeze` of a frozen stack).
+    pub is_frozen_before_fingerprint: bool,
     /// Why the replay can't follow TLC to the failure, where it can't: through an assignment
     /// `x' \in S` whose set TLC streams in an order of its own.
     pub unfollowed: Option<&'static str>,
@@ -281,7 +286,7 @@ pub struct CallStack {
 impl CallStack {
     /// The node that built a value with a source.
     pub(crate) fn source(&self, value: &Value) -> Option<NodeId> {
-        self.sourced.get(&address(value)?).copied()
+        self.sourced.get(&address(value)?).map(|&(node, _)| node)
     }
 }
 
@@ -292,8 +297,18 @@ fn address(value: &Value) -> Option<usize> {
         Value::Set(set) => Some(Rc::as_ptr(set) as usize),
         Value::Function(function) => Some(Rc::as_ptr(function) as usize),
         Value::Lazy(lazy) => Some(Rc::as_ptr(lazy) as *const u8 as usize),
+        Value::Unsorted(values) => Some(Rc::as_ptr(values) as usize),
         _ => None,
     }
+}
+
+/// What the method of a value that failed was given: the element a membership tests, the value an
+/// equality compares with, or neither.
+#[derive(Clone, Copy)]
+enum Given<'v> {
+    Element(&'v Value),
+    Equated(&'v Value),
+    Nothing,
 }
 
 /// A node TLC's call stack holds: a node of the IR, or the prefix of an infix chain of junctions,
@@ -408,6 +423,9 @@ pub struct Evaluator<'ir> {
     /// How many AssertError expressions the evaluator is inside, which compare a failure's
     /// message alone, without where TLC reports it.
     asserting: u32,
+    /// How many function applications the evaluator is evaluating the function of, which TLC
+    /// evaluates keeping a function constructor in it lazy (`EvalControl.KeepLazy`).
+    keeping_lazy: u32,
     /// The function constructors a LET names once, found when first asked for.
     once_named: Option<HashSet<NodeId>>,
 }
@@ -501,10 +519,12 @@ fn undefined_register<T>(key: &Value) -> Evaluated<T> {
 
 /// The reasons the replay can't follow TLC's frames to a failure, which change no message: TLC
 /// prints no frames where an assumption fails to evaluate.
-pub(crate) const UNFOLLOWED_FRAMES: [&str; 3] = [LAZY_DOMAIN, BUILT_FUNCTION, LAZY_MEMBER];
+pub(crate) const UNFOLLOWED_FRAMES: [&str; 4] =
+    [LAZY_DOMAIN, BUILT_FUNCTION, LAZY_MEMBER, LAZY_BODY];
 const LAZY_MEMBER: &str = "the membership of a filter TLC keeps lazy";
 const LAZY_DOMAIN: &str = "the domain of a function TLC keeps lazy";
 const BUILT_FUNCTION: &str = "building a function a definition defines";
+const LAZY_BODY: &str = "the body of a function TLC keeps lazy";
 /// `EC.TLC_MODULE_VALUE_JAVA_METHOD_OVERRIDE`.
 const JAVA_METHOD_FAILED: u32 = 2154;
 
@@ -682,6 +702,7 @@ impl<'ir> Evaluator<'ir> {
             is_tool: None,
             workers: None,
             asserting: 0,
+            keeping_lazy: 0,
             once_named: None,
         }
     }
@@ -1133,8 +1154,17 @@ impl<'ir> Evaluator<'ir> {
         });
         let is_sourced = self.is_sourced(node);
         if let (Some(stack), Ok(value)) = (&mut self.call_stack, &result) {
-            if is_sourced && let Some(address) = address(value) {
-                stack.sourced.entry(address).or_insert(node);
+            // `CallStackTool.eval` returns a copy of a `SetPredValue`, which has no source.
+            let is_copied =
+                matches!(value, Value::Lazy(lazy) if matches!(**lazy, Lazy::Filter(..)));
+            if is_sourced
+                && !is_copied
+                && let Some(address) = address(value)
+            {
+                stack
+                    .sourced
+                    .entry(address)
+                    .or_insert_with(|| (node, value.clone()));
             }
             stack.values.insert(node, value.clone());
         }
@@ -1215,12 +1245,27 @@ impl<'ir> Evaluator<'ir> {
             .or(chosen)
             .map(|receiver| self.resolved(receiver));
         // The element a membership tests, whose failure passes through the sets nested in the
-        // receiver that test their own members.
-        let element = match self.kind(node) {
+        // receiver that test their own members, or the value an equality compares with.
+        let given = match self.kind(node) {
+            NodeKind::Apply { name, args } if !name.is_local && args.len() == 2 => {
+                match self.name(name.text) {
+                    "\\in" | "\\notin" => Some((true, self.resolved(args[0]))),
+                    "=" | "#" => Some((false, self.resolved(args[1]))),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        // The operands of a union, an intersection or a difference.
+        let operands = match self.kind(node) {
             NodeKind::Apply { name, args }
-                if !name.is_local && matches!(self.name(name.text), "\\in" | "\\notin") =>
+                if !name.is_local && matches!(self.name(name.text), "\\cup" | "\\cap" | "\\") =>
             {
-                Some(self.resolved(args[0]))
+                Some((
+                    self.name(name.text) == "\\cup",
+                    self.resolved(args[0]),
+                    self.resolved(args[1]),
+                ))
             }
             _ => None,
         };
@@ -1230,40 +1275,101 @@ impl<'ir> Evaluator<'ir> {
         let Some(received) = receiver.and_then(|receiver| stack.values.get(&receiver)) else {
             return;
         };
-        let element = element
-            .and_then(|element| stack.values.get(&element))
-            .cloned();
+        // `Tool`'s `evalAppl` fails itself where it applies a value that isn't a function, before
+        // it calls a method of the value.
+        if matches!(self.kind(node), NodeKind::FunctionApplication { .. })
+            && !matches!(received, Value::Function(_) | Value::Lambda(_))
+        {
+            return;
+        }
         let received = received.clone();
-        self.mark_failing_member(&received, element.as_ref());
+        if let Some((is_union, left, right)) = operands {
+            let other = if receiver == Some(left) { right } else { left };
+            if let Some(other) = stack.values.get(&other).cloned()
+                && let Some((set, element)) = failing_operation(&received, &other, is_union)
+            {
+                let outer = stack.source(&received);
+                let given = element.as_ref().map_or(Given::Nothing, Given::Element);
+                self.mark_failing_member(outer, &set, given, false);
+                return;
+            }
+        }
+        let given = given.and_then(|(is_membership, node)| {
+            Some((is_membership, stack.values.get(&node)?.clone()))
+        });
+        let given = match &given {
+            Some((true, element)) => Given::Element(element),
+            Some((false, other)) => Given::Equated(other),
+            None => Given::Nothing,
+        };
+        self.mark_failing_member(None, &received, given, true);
     }
 
-    // Marks a failure in a method of a set with a source as TLC's FingerprintException, through
-    // the sets nested in it that test the element's parts, where an element was tested, or in the
-    // compareTo of a tested element with a source and of its parts.
-    fn mark_failing_member(&mut self, received: &Value, element: Option<&Value>) {
+    // Marks a failure in a method of a value with a source as TLC's FingerprintException, after
+    // the source of the set whose method asked it, if any, through the sets nested in it that test
+    // the element's parts, where an element was tested, and the values with a source whose
+    // methods its search, comparison or normalization fails in.
+    fn mark_failing_member(
+        &mut self,
+        outer: Option<NodeId>,
+        received: &Value,
+        given: Given,
+        is_membership: bool,
+    ) {
         let Some(stack) = &mut self.call_stack else {
             return;
         };
         if stack.is_fingerprinted {
             return;
         }
-        let nested = element.and_then(|element| crate::sets::failing_sets(element, received));
-        // The search of a sorted set fails in the element's `compareTo`, and in those of its parts
-        // it compares, which have sources where the evaluation gave them: the set's, which a
-        // definition TLC computed as it started has none of, is outside them. Where the failure
-        // passes through nested sets, the search is the innermost set's.
-        let (searched, searched_set) = match (&nested, element) {
-            (Some((_, inner_element, inner_set)), _) => (Some(inner_element), inner_set),
-            (None, element) => (element, received),
+        // `SetPredValue.member` asks its base set first, whose FingerprintException passes through
+        // a filter `CallStackTool` copied without its source, as though the base were asked.
+        if let (Given::Element(element), Value::Lazy(lazy)) = (&given, received)
+            && let Lazy::Filter(base, _) = &**lazy
+            && stack.source(received).is_none()
+            && is_member(element, base).is_err()
+        {
+            let base = base.clone();
+            self.mark_failing_member(outer, &base, given, is_membership);
+            return;
+        }
+        let nested = match given {
+            Given::Element(element) => crate::sets::failing_sets(element, received),
+            _ => None,
         };
-        let compared: Vec<NodeId> = searched
-            .map(|searched| crate::sets::failing_search(searched, searched_set))
-            .unwrap_or_default()
+        // The search of a set fails in the methods of the values it compares, and an equality in
+        // those of the parts it compares (`equals`), which have sources where the evaluation gave
+        // them: the set's, which a definition TLC computed as it started has none of, is outside
+        // them. A set TLC holds unnormalized normalizes itself in its other methods
+        // (`SetEnumValue.normalize`), which fails in the `compareTo` of the element it sorts in.
+        // Where a membership's failure passes through nested sets, the search is the innermost set's.
+        let compared = match (given, received) {
+            (Given::Element(element), _) => match &nested {
+                Some((_, inner_element, inner_set)) => {
+                    crate::sets::failing_search(inner_element, inner_set)
+                }
+                None => crate::sets::failing_search(element, received),
+            },
+            (Given::Equated(other), _)
+                if !matches!(received, Value::Lazy(_)) && !matches!(other, Value::Lazy(_)) =>
+            {
+                failing_comparisons(|| equals(received, other))
+                    .err()
+                    .unwrap_or_default()
+            }
+            (_, Value::Unsorted(values)) => {
+                failing_comparisons(|| crate::value::normalize_failure(values).map_or(Ok(()), Err))
+                    .err()
+                    .unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
+        let compared: Vec<NodeId> = compared
             .iter()
             .filter_map(|value| stack.source(value))
             .collect();
         let source = stack.source(received);
-        if source.is_none() && compared.is_empty() {
+        if outer.is_none() && source.is_none() && compared.is_empty() {
             return;
         }
         let nested = nested.map(|(sets, _, _)| sets);
@@ -1278,9 +1384,14 @@ impl<'ir> Evaluator<'ir> {
             })
         });
         let sources = nested.iter().flatten().filter_map(|set| stack.source(set));
-        let sources: Vec<NodeId> = source.into_iter().chain(sources).chain(compared).collect();
+        let sources: Vec<NodeId> = outer
+            .into_iter()
+            .chain(source)
+            .chain(sources)
+            .chain(compared)
+            .collect();
         stack.is_fingerprinted = true;
-        stack.is_member_followed = is_followed;
+        stack.is_member_followed = is_membership && is_followed;
         stack.fingerprinted_sources = sources;
     }
 
@@ -1359,6 +1470,19 @@ impl<'ir> Evaluator<'ir> {
 
     // `f[x]` with TLC's message where `x` isn't in the domain of `f`.
     pub(crate) fn apply_checked(&self, function: &Value, key: &Value) -> Evaluated<Value> {
+        // `TupleValue.apply` and `RecordValue.apply` fail on a key of another kind before they
+        // look it up.
+        if let Value::Function(inner) = function
+            && !self.is_174()
+            && match inner.class.get() {
+                Class::Tuple => !matches!(key, Value::Int(_)),
+                Class::Record => !matches!(key, Value::Str(_)),
+                _ => false,
+            }
+            && let Some(text) = describe_missing(function, inner.class.get(), key)
+        {
+            return fail_runtime("applied a function outside its domain", text);
+        }
         let result = apply_value(function, key);
         match (&result, function) {
             (Err(error), Value::Function(inner))
@@ -2104,8 +2228,14 @@ impl<'ir> Evaluator<'ir> {
             self.printed.truncate(printed);
         }
         let value = match &definition.form {
+            // TLC evaluates the function constructor SANY makes of the definition, which has the
+            // definition's range.
             DefinitionForm::Function(bounds) => {
-                self.defined_function(bounds, definition.body, &context.global())?
+                self.in_frame(StackFrame::Node(node), &mut |evaluator| {
+                    evaluator.nested(|evaluator| {
+                        evaluator.construct_function(bounds, definition.body, &context.global())
+                    })
+                })?
             }
             DefinitionForm::Operator(params) if params.is_empty() => {
                 self.evaluate(definition.body, &context.global())?
@@ -2951,12 +3081,12 @@ impl<'ir> Evaluator<'ir> {
                     text,
                 })));
             }
+            let is_built = self.is_built(std::slice::from_ref(&set));
             if let Value::Interval(low, high) = set {
                 let mut values = Vec::new();
                 for key in low..=high {
-                    values.push(
-                        self.function_body(body, &context.bind_value(name, Value::Int(key)))?,
-                    );
+                    let context = context.bind_value(name, Value::Int(key));
+                    values.push(self.function_body(body, &context, is_built)?);
                 }
                 return Ok(Value::over_interval(low, values, Class::Lambda));
             }
@@ -2964,7 +3094,8 @@ impl<'ir> Evaluator<'ir> {
             let mut values = Vec::new();
             for element in elements(&set)?.iter() {
                 keys.push(element.clone());
-                values.push(self.function_body(body, &context.bind_value(name, element.clone()))?);
+                let context = context.bind_value(name, element.clone());
+                values.push(self.function_body(body, &context, is_built)?);
             }
             let function = sorted_function(keys, values, Class::Lambda)?;
             // Applied while TLC keeps it lazy, the function asks its bound's set for the
@@ -2990,6 +3121,7 @@ impl<'ir> Evaluator<'ir> {
         {
             return fail("a function of several bounds or a tuple pattern TLC keeps lazy");
         }
+        let is_built = self.is_built(&sets);
         let mut keys = Vec::new();
         let mut values = Vec::new();
         self.for_each_keyed(
@@ -3002,7 +3134,7 @@ impl<'ir> Evaluator<'ir> {
                     [element] => element.clone(),
                     _ => Value::tuple(bound.to_vec()),
                 });
-                values.push(evaluator.function_body(body, inner)?);
+                values.push(evaluator.function_body(body, inner, is_built)?);
                 Ok(())
             },
         )?;
@@ -3030,15 +3162,40 @@ impl<'ir> Evaluator<'ir> {
             && self.cache.contains_key(&(definition, false))
     }
 
-    // A function's value at one key. TLC builds the function in a method of the FcnLambdaValue
-    // that `CallStackTool` gives a source, so a failure there is a FingerprintException, as
-    // `headFingerprint` in `evaluate.ts` marks it.
-    fn function_body(&mut self, body: NodeId, context: &Context) -> Evaluated<Value> {
+    // Whether `Tool`'s OPCODE_fc builds a function of these domains as it constructs it
+    // (`FcnLambdaValue.toFcnRcd`): where each is reducible, a set enumeration or an interval, and
+    // TLC doesn't keep the function lazy.
+    fn is_built(&self, domains: &[Value]) -> bool {
+        self.keeping_lazy == 0
+            && domains.iter().all(|domain| {
+                matches!(
+                    domain,
+                    Value::Set(_) | Value::Interval(..) | Value::Unsorted(_)
+                )
+            })
+    }
+
+    // A function's value at one key as the evaluator builds the function. TLC builds one it
+    // `is_built` in `toFcnRcd` of the FcnLambdaValue that `CallStackTool` gives a source, which
+    // throws a failure there on as a FingerprintException (`FingerprintException.getNewHead`).
+    // TLC evaluates the body of any other where it applies or fingerprints the function, in
+    // frames the replay doesn't record.
+    fn function_body(
+        &mut self,
+        body: NodeId,
+        context: &Context,
+        is_built: bool,
+    ) -> Evaluated<Value> {
         let result = self.evaluate(body, context);
         if result.is_err()
             && let Some(stack) = &mut self.call_stack
         {
-            stack.is_fingerprinted = true;
+            if !is_built {
+                stack.unfollowed.get_or_insert(LAZY_BODY);
+            } else if !stack.is_fingerprinted {
+                stack.is_fingerprinted = true;
+                stack.is_frozen_before_fingerprint = stack.is_frozen;
+            }
         }
         result
     }
@@ -3104,7 +3261,17 @@ impl<'ir> Evaluator<'ir> {
         }
         // `evalAppl` checks that it applies a function before it evaluates the argument.
         let function_node = function;
-        let function = self.evaluate(function, context)?;
+        // `getInitStates` evaluates the function of the application it walks with
+        // `EvalControl.Init`, which builds a function constructor in it.
+        let is_init_walked = matches!(
+            self.walked_application,
+            Some((walked, true)) if walked == self.resolved(node)
+        );
+        let keeps_lazy = u32::from(!is_init_walked);
+        self.keeping_lazy += keeps_lazy;
+        let function = self.evaluate(function, context);
+        self.keeping_lazy -= keeps_lazy;
+        let function = function?;
         if let Some(kind) = non_function_kind(&function) {
             let computing = match self.walked_application {
                 Some((walked, is_init)) if walked == self.resolved(node) => {
@@ -3261,7 +3428,7 @@ impl<'ir> Evaluator<'ir> {
         let current = std::mem::replace(&mut self.current, lambda.current.clone());
         let next = std::mem::replace(&mut self.next, lambda.next.clone());
         let level = std::mem::replace(&mut self.level, lambda.level);
-        let result = self.function_body(lambda.body, &context);
+        let result = self.evaluate(lambda.body, &context);
         self.current = current;
         self.next = next;
         self.level = level;
@@ -3614,6 +3781,31 @@ impl<'ir> Evaluator<'ir> {
         result
     }
 
+    // `SetPredValue.member`: the base's membership, then the predicate. TLC turns an
+    // EvalException of either into a message of its own ("Cannot decide if element"), which the
+    // evaluator doesn't word yet.
+    fn filter_member(
+        &mut self,
+        element: &Value,
+        base: &Value,
+        predicate: &Predicate,
+    ) -> Evaluated<bool> {
+        let tested = self
+            .member(element, base)
+            .and_then(|is_in| Ok(is_in && self.filters(element, base, predicate)?));
+        match tested {
+            Err(error)
+                if error
+                    .message
+                    .as_ref()
+                    .is_some_and(|message| message.is_eval_exception) =>
+            {
+                fail("an EvalException that a filter's membership rewords")
+            }
+            tested => tested,
+        }
+    }
+
     /// Membership as TLC's lazy sets test it, the predicate of a lazy filter evaluated
     /// (`SetPredValue.member`), through the sets it is combined in.
     pub(crate) fn member(&mut self, element: &Value, set: &Value) -> Evaluated<bool> {
@@ -3621,12 +3813,7 @@ impl<'ir> Evaluator<'ir> {
             return is_member(element, set);
         };
         match &**lazy {
-            Lazy::Filter(base, predicate) => {
-                if !self.member(element, base)? {
-                    return Ok(false);
-                }
-                self.filters(element, base, predicate)
-            }
+            Lazy::Filter(base, predicate) => self.filter_member(element, base, predicate),
             Lazy::Cap(left, right) => {
                 Ok(self.member(element, left)? && self.member(element, right)?)
             }
@@ -3670,16 +3857,16 @@ impl<'ir> Evaluator<'ir> {
             );
         }
         for element in elements(&left)?.iter() {
-            // `isSubsetEq` tests each element in T's own `member`, so a failure there is in a
-            // method of T, which TLC reports as a FingerprintException where T has a source.
+            // `isSubsetEq` of S tests each element in T's own `member`, so a failure there is in
+            // a method of T within one of S, which TLC reports as a FingerprintException where
+            // either has a source.
             let is_member = self.member(element, &right);
             if is_member.is_err()
-                && self
-                    .call_stack
-                    .as_ref()
-                    .is_some_and(|stack| !stack.is_frozen)
+                && let Some(stack) = &self.call_stack
+                && !stack.is_frozen
             {
-                self.mark_failing_member(&right, Some(element));
+                let outer = stack.source(&left);
+                self.mark_failing_member(outer, &right, Given::Element(element), true);
             }
             if !is_member? {
                 return Ok(Value::Bool(false));
@@ -5062,9 +5249,7 @@ fn permute(
 fn filter_test<'a, 'ir>(
     evaluator: &'a mut Evaluator<'ir>,
 ) -> impl FnMut(&Value, &Value, &Predicate) -> Evaluated<bool> + 'a {
-    move |element, base, predicate| {
-        Ok(evaluator.member(element, base)? && evaluator.filters(element, base, predicate)?)
-    }
+    move |element, base, predicate| evaluator.filter_member(element, base, predicate)
 }
 
 enum Combined {

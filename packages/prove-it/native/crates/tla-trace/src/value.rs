@@ -491,20 +491,21 @@ fn sort(function: &Function) {
 }
 
 thread_local! {
-    // While `failing_comparison` runs, the left operands of the comparisons in progress,
-    // outermost first, which a failure leaves in place: the values in whose `compareTo` TLC's
-    // exception passes as it unwinds. `None` otherwise, so that no other comparison keeps values.
+    // While `failing_comparisons` runs, the left operands of the comparisons in progress,
+    // `compareTo` and `equals`, outermost first, which a failure leaves in place: the values in
+    // whose methods TLC's exception passes as it unwinds. `None` otherwise, so that no other
+    // comparison keeps values.
     static COMPARING: RefCell<Option<Vec<Value>>> = const { RefCell::new(None) };
 }
 
-/// TLC's `compareTo`, as the store's `compare`: an error where TLC can't compare the two.
-pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
+// Runs a comparison of `left`, which a failure leaves among those in progress.
+fn comparing<T>(left: &Value, run: impl FnOnce() -> Evaluated<T>) -> Evaluated<T> {
     COMPARING.with_borrow_mut(|comparing| {
         if let Some(comparing) = comparing {
             comparing.push(left.clone());
         }
     });
-    let compared = compare_values(left, right);
+    let compared = run();
     if compared.is_ok() {
         COMPARING.with_borrow_mut(|comparing| {
             if let Some(comparing) = comparing {
@@ -515,13 +516,18 @@ pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
     compared
 }
 
-/// The values in whose `compareTo` comparing `left` with `right` fails, outermost first, or none
-/// where it doesn't fail.
-pub fn failing_comparison(left: &Value, right: &Value) -> Vec<Value> {
+/// TLC's `compareTo`, as the store's `compare`: an error where TLC can't compare the two.
+pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
+    comparing(left, || compare_values(left, right))
+}
+
+/// What `run` gives, or where it fails, the values in whose `compareTo` or `equals` it fails,
+/// outermost first.
+pub fn failing_comparisons<T>(run: impl FnOnce() -> Evaluated<T>) -> Result<T, Vec<Value>> {
     COMPARING.set(Some(Vec::new()));
-    let is_failed = compare(left, right).is_err();
+    let compared = run();
     let comparing = COMPARING.take().unwrap_or_default();
-    if is_failed { comparing } else { Vec::new() }
+    compared.map_err(|_| comparing)
 }
 
 fn compare_values(left: &Value, right: &Value) -> Evaluated<Ordering> {
@@ -717,6 +723,10 @@ fn is_tuple_like(function: &Function) -> bool {
 /// TLC's `equals`, as the store's: values of kinds TLC can't compare fail, but a model value
 /// without a type is unequal to anything else.
 pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
+    comparing(left, || equal_values(left, right))
+}
+
+fn equal_values(left: &Value, right: &Value) -> Evaluated<bool> {
     normalize(left);
     normalize(right);
     match (left, right) {
@@ -735,6 +745,10 @@ pub fn equals(left: &Value, right: &Value) -> Evaluated<bool> {
             } else {
                 typed_model_failure(left, right, true)
             }
+        }
+        // `SetEnumValue.equals` normalizes a set TLC holds unnormalized, which fails.
+        (Value::Unsorted(values), Value::Set(_) | Value::Interval(..) | Value::Unsorted(_)) => {
+            Err(unsorted_failure(values))
         }
         (Value::Function(left_function), Value::Function(right_function)) => {
             let (left_value, right_value) = (left, right);
@@ -1473,14 +1487,15 @@ pub fn permute(value: &Value, permutation: &[(Rc<Text>, Rc<Text>)]) -> Evaluated
 mod tests {
     use super::*;
 
-    // A comparison that fails outside `failing_comparison`, as sorting a set's elements does,
-    // keeps none of its operands, while `failing_comparison` gives the operand that failed.
+    // A comparison that fails outside `failing_comparisons`, as sorting a set's elements does,
+    // keeps none of its operands, while `failing_comparisons` gives the operand that failed.
     #[test]
     fn keeps_comparisons_only_while_finding_a_failing_one() {
         let set = Value::Set(Rc::new(vec![Value::Int(1)]));
         assert!(compare(&set, &Value::Int(2)).is_err());
         assert!(COMPARING.with_borrow(Option::is_none));
-        assert_eq!(failing_comparison(&set, &Value::Int(2)).len(), 1);
+        let failed = failing_comparisons(|| compare(&set, &Value::Int(2)));
+        assert_eq!(failed.err().map(|values| values.len()), Some(1));
         assert!(COMPARING.with_borrow(Option::is_none));
     }
 }

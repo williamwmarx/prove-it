@@ -1,7 +1,12 @@
 //! Runs the binary on the cells `fingerprint-exceptions.txt` records TLC's output for: invariants
-//! that fail on an initial state in a value's method, which TLC reports with the FingerprintException
-//! of its replay. Each cell must print what TLC printed, byte for byte, with TLC's exit code, at
-//! -workers 1 and 4, or be one the binary declines and that `DECLINED` lists.
+//! that fail on an initial state in a value's method, functions, applications and comparisons that
+//! fail in the initial or next states, which TLC reports with the FingerprintException of its
+//! replay, initial states that hold values TLC fails to fingerprint, temporal properties whose atoms
+//! fail on the initial state, function definitions that fail as TLC builds them, memberships whose
+//! comparison fails in a set nested in the one tested, and constant definitions TLC can't normalize
+//! at startup. Each cell must print what TLC printed, byte for
+//! byte, with TLC's exit code, at -workers 1 and 4, or be one the binary declines and that
+//! `DECLINED` lists.
 //!
 //! TLC's output is recorded by `scripts/record-fingerprint-exceptions.ts` from TLC at the commit
 //! the recordings pin; to check it, run that script with TLA2TOOLS_JAR set and diff the file.
@@ -13,9 +18,16 @@ const RECORDED: &str = include_str!("fingerprint-exceptions.txt");
 
 // The cells the binary declines, by name.
 const DECLINED: &[&str] = &[
-    // TLC compares a record with a function with the record's compareTo, which the binary
-    // doesn't report yet.
+    // TLC compares a record with a function with the record's compareTo, but the engine's store,
+    // which can't tell a record from a function over strings, stops there at a limit of its own.
     "S == {[i \\in 0..1 |-> 5]}: [a |-> x] \\notin S",
+    // TLC's messages for the `equals` of a function, a tuple or a record with a value of another
+    // kind, which the evaluator doesn't word yet.
+    "({<<1>>} \\cup {2}) = {}",
+    "2 \\in {<<1>>}",
+    "Init == x = [a |-> 1]: x = {}",
+    "Init == x = \"a\" :> 1: x = {}",
+    "Init == x = \"a b\" :> 1: x = {}",
 ];
 
 // The lines that differ from run to run or between TLC and the binary, as the script drops them.
@@ -91,7 +103,7 @@ fn directory(index: usize, cell: &Cell) -> PathBuf {
 #[test]
 fn fingerprint_exceptions() {
     let cells = parse(RECORDED);
-    assert_eq!(cells.len(), 93, "the recorded cells");
+    assert_eq!(cells.len(), 134, "the recorded cells");
     for (index, cell) in cells.iter().enumerate() {
         let directory = directory(index, cell);
         for (workers, exit, expected) in &cell.expected {
