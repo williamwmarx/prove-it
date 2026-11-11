@@ -1,0 +1,5 @@
+{
+ "root": "U",
+ "version": "1.7.4",
+ "test": "names only the last item of a selector it can't resolve"
+}

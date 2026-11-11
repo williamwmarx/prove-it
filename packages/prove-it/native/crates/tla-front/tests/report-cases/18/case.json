@@ -1,0 +1,5 @@
+{
+ "root": "Box",
+ "version": "master",
+ "test": "reports a []ASSUME matched by PROVE in an ASSUME's scope with both errors as SANY does"
+}

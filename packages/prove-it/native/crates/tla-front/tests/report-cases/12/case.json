@@ -1,0 +1,5 @@
+{
+ "root": "M",
+ "version": "master",
+ "test": "reports an operator substitution that doesn't fit as SANY does"
+}

@@ -1,0 +1,5 @@
+{
+ "root": "Outer",
+ "version": "master",
+ "test": "spells an operator that is no legal substitution target as the source does"
+}

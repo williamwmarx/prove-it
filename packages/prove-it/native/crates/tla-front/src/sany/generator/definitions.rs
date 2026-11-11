@@ -567,9 +567,9 @@ impl ModuleGenerator<'_> {
             NodeKind::OpArg { op, .. } => get_symbol_arity(graph, *op),
             _ => 0,
         };
-        let is_null_op_arg = target_arity > 0
-            && matches!(graph.kind(substitute), NodeKind::OpAppl(application) if application.is_null);
-        if arity != target_arity && !is_null_op_arg {
+        // After an error, `generateOpArg` gives the nullOpArg, whose arity is -2, so its arity
+        // differs from the target's as well.
+        if arity != target_arity {
             let text = format!(
                 "An operator must be substituted for symbol '{}', and it must have arity {target_arity}.",
                 declaration.name
