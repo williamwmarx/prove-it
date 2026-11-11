@@ -142,10 +142,16 @@ pub fn get_startup_model(environment: &Environment) -> StartupModel {
                 .iter()
                 .any(|constant| constant.name == **name)
         })
+        .filter(|(_, target)| !environment.constants.contains_key(*target))
         .filter_map(|(_, target)| environment.definitions.get(target).map(key))
         .collect();
     for constant in &environment.root_constants {
-        let Some(target) = environment.substitutions.get(&constant.name) else {
+        // A definition the configuration gives a value substitutes that value, which TLC holds.
+        let Some(target) = environment
+            .substitutions
+            .get(&constant.name)
+            .filter(|target| !environment.constants.contains_key(*target))
+        else {
             continue;
         };
         let Some(definition) = environment.definitions.get(target) else {
@@ -169,6 +175,11 @@ pub fn get_startup_model(environment: &Environment) -> StartupModel {
         else {
             continue;
         };
+        // The configuration's value for the definition it substitutes is what the name holds.
+        if !Rc::ptr_eq(definition, written) && environment.constants.contains_key(&definition.name)
+        {
+            continue;
+        }
         if !is_nullary(definition)
             || model
                 .attempted
