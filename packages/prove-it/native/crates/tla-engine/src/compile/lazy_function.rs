@@ -12,7 +12,7 @@ use tla_values::store::{KIND_LAZY_FUNCTION, KIND_TUPLE, Outcome};
 use tla_values::{Bail, Id};
 
 use super::lazy::Lazy;
-use super::nodes::assign_bound;
+use super::nodes::assign_converted;
 use crate::machine::{Eval, Machine};
 
 /// What a construction TLC keeps lazy compiles to: each bound's slots, and whether it is a tuple
@@ -181,7 +181,7 @@ fn apply_lazy(machine: &mut Machine<'_>, function: Id, key: Id) -> Outcome<Id> {
             }
         }
         for ((slots, tuple), &element) in definition.levels.iter().zip(&elements) {
-            assign_bound(machine, slots, *tuple, element)?;
+            assign_converted(machine, slots, *tuple, element)?;
         }
         (definition.body)(machine)
     })

@@ -272,6 +272,9 @@ pub struct Checker {
     /// The state being added, with whether as an initial state, and the first atom found
     /// unanswered while adding one.
     adding: Cell<Option<(u32, bool)>>,
+    /// The edge of the step that reached the state the checker checks against a tableau node, as
+    /// TLC checks a successor, whose level is one past its source's.
+    reached: Cell<Option<u32>>,
     pub(crate) unanswered: Cell<Option<Unanswered>>,
     /// The position among all the behaviors of each this checker builds, which a checker that
     /// shares them with others builds only some of.
@@ -362,6 +365,7 @@ impl Checker {
             effects: RefCell::new(None),
             diameter: Cell::new(1),
             adding: Cell::new(None),
+            reached: Cell::new(None),
             unanswered: Cell::new(None),
             global,
             at: Cell::new((false, 0, 0)),
@@ -397,7 +401,10 @@ impl Checker {
             Kind::Boolean(value) => Ok(value),
             Kind::State(atom) | Kind::Enabled(atom) => {
                 let mut effects = self.effects.borrow_mut();
-                let slot = Slot::State(state);
+                let slot = match self.reached.get() {
+                    Some(edge) => Slot::Reached { state, edge },
+                    None => Slot::State(state),
+                };
                 let Some(effects) = effects.as_mut() else {
                     return self.answer(source, atom, slot);
                 };
@@ -715,6 +722,26 @@ impl Checker {
             .as_ref()
     }
 
+    // Whether the state a step reached is consistent with a tableau node, at the step: TLC checks
+    // the successor it generated, whose level is one past its source's, where the step is to
+    // another state, and the state itself for its stuttering step.
+    fn is_reached_consistent(
+        &mut self,
+        source: &Source<'_>,
+        behavior: usize,
+        node: u32,
+        step: &Step,
+    ) -> Result<bool, Declined> {
+        let edge = match step.slot {
+            Slot::Step { edge, .. } => Some(edge),
+            _ => None,
+        };
+        self.reached.set(edge);
+        let consistent = self.is_consistent(source, behavior, node, step.real);
+        self.reached.set(None);
+        consistent
+    }
+
     // Whether a reached state is consistent with a tableau node.
     fn is_consistent(
         &mut self,
@@ -728,8 +755,11 @@ impl Checker {
         };
         let slot = state as usize * tableau.nodes.len() + node as usize;
         // TLC evaluates each time, which keeping nothing matches where an atom has effects or
-        // reads TLC's diameter, which grows as the states are added.
-        let is_effectful = self.is_effectful() || source.graph.diameters.is_some();
+        // reads TLC's diameter, which grows as the states are added, or the level, which is the
+        // step's that reached the state.
+        let is_effectful = self.is_effectful()
+            || source.graph.diameters.is_some()
+            || source.graph.levels.is_some();
         if !is_effectful
             && let Some(&known) = self.behaviors[behavior].consistency.get(slot)
             && known != UNKNOWN_RESULT
@@ -1047,7 +1077,7 @@ impl Checker {
             // In TLC's order, which decides the first atom left unanswered.
             for node in 0..node_count {
                 for (position, step) in set.iter().enumerate() {
-                    if self.is_consistent(source, behavior, node as u32, step.real)? {
+                    if self.is_reached_consistent(source, behavior, node as u32, step)? {
                         consistency[position * words + node / 64] |= 1 << (node % 64);
                     }
                 }
@@ -1183,7 +1213,7 @@ impl Checker {
             let successor_step = self.check_action(source, behavior, real, step)?;
             let is_done = self.is_done(behavior, step.target);
             for &next in &tableau_successors {
-                if !self.is_consistent(source, behavior, next, step.real)? {
+                if !self.is_reached_consistent(source, behavior, next, &step)? {
                     continue;
                 }
                 let existing = self.node_id(behavior, step.target, next);

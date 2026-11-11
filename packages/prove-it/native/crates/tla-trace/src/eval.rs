@@ -369,6 +369,8 @@ pub struct Evaluator<'ir> {
     drawn: HashMap<usize, (Rc<Frame>, Value)>,
     /// TLCGet("level") of the current state.
     pub level: i32,
+    /// TLCGet("level") of the next state, where it isn't one past the current's.
+    pub next_level: Option<i32>,
     /// What Print and PrintT printed, each as the texts of its values.
     pub printed: Vec<Vec<String>>,
     /// The state a walk looks for, where a value that differs from it can't lead to it: a walk
@@ -376,6 +378,9 @@ pub struct Evaluator<'ir> {
     pub target: Option<Vec<Value>>,
     /// Whether a walk is ENABLED's, which TLC's `Tool#enabled` runs.
     pub(crate) is_enabling: bool,
+    /// The function application the walk tests, and whether it walks the initial predicate:
+    /// `getInitStates`, `getNextStates` and `enabled` word a non-function applied there apart.
+    pub(crate) walked_application: Option<(NodeId, bool)>,
     /// Where a replay of a failure is, as TLC's `CallStackTool` records it: each node the walks and
     /// the evaluation are in, outermost first, frozen once an evaluation fails.
     pub call_stack: Option<CallStack>,
@@ -662,9 +667,11 @@ impl<'ir> Evaluator<'ir> {
             reads: 0,
             drawn: HashMap::new(),
             level: 0,
+            next_level: None,
             printed: Vec::new(),
             target: None,
             is_enabling: false,
+            walked_application: None,
             call_stack: None,
             choices: Vec::new(),
             random: None,
@@ -3059,10 +3066,16 @@ impl<'ir> Evaluator<'ir> {
         let function_node = function;
         let function = self.evaluate(function, context)?;
         if let Some(kind) = non_function_kind(&function) {
+            let computing = match self.walked_application {
+                Some((walked, is_init)) if walked == self.resolved(node) => {
+                    format!("In computing {}, a", self.computing(is_init))
+                }
+                _ => "A".to_string(),
+            };
             return fail_runtime(
                 "applied a non-function",
                 format!(
-                    "A non-function ({kind}) was applied as a function.\n{}",
+                    "{computing} non-function ({kind}) was applied as a function.\n{}",
                     self.describe_range(node)
                 ),
             );
@@ -3916,7 +3929,10 @@ impl<'ir> Evaluator<'ir> {
             }
             Value::Str(key) if *key.units == *"level".encode_utf16().collect::<Vec<_>>() => {
                 self.reads += 1;
-                Value::Int(self.level + i32::from(context.is_primed))
+                Value::Int(match self.next_level {
+                    Some(level) if context.is_primed => level,
+                    _ => self.level + i32::from(context.is_primed),
+                })
             }
             // Once the search is over, the run's counts, and its named registers, each
             // the tuple of one worker's value.
