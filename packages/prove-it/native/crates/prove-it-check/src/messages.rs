@@ -50,6 +50,9 @@ pub const NO_FAIRNESS_BUT_PROPERTY: u32 = 2259;
 pub const COMPUTING_INIT_PROGRESS: u32 = 2269;
 pub const SYMMETRY_SET_TOO_SMALL: u32 = 2300;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
+pub const GENERAL: u32 = 1000;
+pub const CONFIG_ID_REQUIRES_NO_ARG: u32 = 2228;
+pub const CONFIG_ID_MUST_NOT_BE_CONSTANT: u32 = 2233;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Level {

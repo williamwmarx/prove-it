@@ -361,6 +361,15 @@ const APPLIED_NON_BOOLEAN: &str = "a function's value the walk tests that isn't 
 /// The reason for a primed variable a state doesn't assign, before the variable's name.
 pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
 
+/// The states the builtin Trace holds at a position of a trace: the first `length` of the
+/// trace's records. The records are shared between positions, and the tuple is built only when an
+/// ALIAS reads Trace, so an ALIAS that doesn't costs nothing per state.
+#[derive(Clone)]
+pub struct TracePrefix {
+    pub records: std::rc::Rc<[Value]>,
+    pub length: usize,
+}
+
 pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
@@ -418,6 +427,10 @@ pub struct Evaluator<'ir> {
     /// holds the code's markers, which AssertError compares with. `None` where the caller doesn't
     /// say, and AssertError isn't followed.
     pub is_tool: Option<bool>,
+    /// The builtin Trace as TLC binds it while it evaluates the ALIAS as it prints a trace
+    /// (`Tool.evalAlias`): a record of each state it holds, in TLC's order of the variables.
+    /// `None` elsewhere, where TLC evaluates the Java method, which isn't followed.
+    pub trace: Option<TracePrefix>,
     /// How many workers TLC runs, which TLCGet("config") reads. `None` where the caller doesn't
     /// say, and TLCGet("config") isn't followed.
     pub workers: Option<usize>,
@@ -566,6 +579,7 @@ fn as_java_runtime_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluate
     }
 }
 
+const ASSERT_ERROR: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 const SELECT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 const SORT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
@@ -701,6 +715,7 @@ impl<'ir> Evaluator<'ir> {
             register_writes: 0,
             register_reads: 0,
             is_tool: None,
+            trace: None,
             workers: None,
             asserting: 0,
             keeping_lazy: 0,
@@ -4557,21 +4572,33 @@ impl<'ir> Evaluator<'ir> {
             // `TLCExt.assertError`: whether evaluating the expression fails with this message.
             "AssertError" => {
                 arity(2)?;
+                // TLC takes only a string written as the message, and says where any other is
+                // written as SANY's `toString` gives it.
+                match &operands[0] {
+                    Operand::Node(node, _) if matches!(self.kind(*node), NodeKind::String(_)) => {}
+                    Operand::Node(node, _) => {
+                        let written = (self.ir.nodes.arena[self.resolved(*node) as usize].range)
+                            .and_then(|_| self.describe_node(*node));
+                        let Some(written) = written else {
+                            return fail("AssertError of a message that isn't a string");
+                        };
+                        return as_java_failure(
+                            ASSERT_ERROR,
+                            fail_runtime(
+                                "AssertError of a message that isn't a string",
+                                format!(
+                                    "In computing AssertError, a non-string expression ({written}) was used as the err of an AssertError(err, exp)."
+                                ),
+                            ),
+                        );
+                    }
+                    Operand::Value(_) => {
+                        return fail("AssertError of a message that isn't a string");
+                    }
+                }
                 let Some(is_tool) = self.is_tool else {
                     return fail("AssertError, whose messages depend on -tool");
                 };
-                let is_literal = match &operands[0] {
-                    Operand::Node(node, _) => {
-                        matches!(
-                            self.ir.nodes.arena[*node as usize].kind,
-                            NodeKind::String(_)
-                        )
-                    }
-                    Operand::Value(_) => false,
-                };
-                if !is_literal {
-                    return fail("AssertError of a message that isn't a string");
-                }
                 self.asserting += 1;
                 let asserted = self.operand(&operands[1]);
                 self.asserting -= 1;
@@ -4957,6 +4984,12 @@ impl<'ir> Evaluator<'ir> {
                     .expect("the runtime")
                     .possible_counts
                     .clone()
+            }
+            "Trace" if self.trace.is_some() => {
+                arity(0)?;
+                self.reads += 1;
+                let prefix = self.trace.as_ref().expect("the trace");
+                Value::tuple(prefix.records[..prefix.length].to_vec())
             }
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;

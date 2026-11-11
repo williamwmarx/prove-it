@@ -1,0 +1,43 @@
+exit 13
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module TraceLasso
+Linting of module TLCExt
+Linting of module TraceLasso
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: Temporal property Never was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ x = 0
+/\ length = 0
+/\ trace = <<>>
+
+State 2: <Next line 5, col 9 to line 6, col 17 of module TraceLasso>
+/\ x = 1
+/\ length = 2
+/\ trace = <<[x |-> 0, y |-> "a"], [x |-> 1, y |-> "a"]>>
+
+State 3: <Next line 5, col 9 to line 6, col 17 of module TraceLasso>
+/\ x = 2
+/\ length = 3
+/\ trace = <<[x |-> 0, y |-> "a"], [x |-> 1, y |-> "a"], [x |-> 2, y |-> "a"]>>
+
+State 4: <Next line 5, col 9 to line 6, col 17 of module TraceLasso>
+/\ x = 3
+/\ length = 4
+/\ trace = << [x |-> 0, y |-> "a"],
+   [x |-> 1, y |-> "a"],
+   [x |-> 2, y |-> "a"],
+   [x |-> 3, y |-> "a"] >>
+
+Back to state 2: <Next line 5, col 9 to line 6, col 17 of module TraceLasso>
+
+5 states generated, 4 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 4.

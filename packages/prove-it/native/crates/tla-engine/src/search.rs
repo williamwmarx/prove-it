@@ -212,7 +212,8 @@ pub const DELEGATED_ASSUMPTION: &str = "unsupported: AssertError";
 
 /// What the caller found of an assumption the engine left to it.
 pub struct Delegated {
-    pub holds: bool,
+    /// Whether it holds, or `None` where it fails to evaluate.
+    pub holds: Option<bool>,
     /// The state it leaves TLC's generator in.
     pub random: u64,
 }
@@ -2804,9 +2805,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         break;
                     }
                 };
-                if !delegated.holds {
-                    let name = context.startup.assumptions[position as usize].1.clone();
-                    return SearchOutcome::AssumptionViolated { name };
+                match delegated.holds {
+                    Some(true) => {}
+                    Some(false) => {
+                        let name = context.startup.assumptions[position as usize].1.clone();
+                        return SearchOutcome::AssumptionViolated { name };
+                    }
+                    None => return SearchOutcome::AssumptionFailed { position },
                 }
                 machine.random = JavaRandom::from_state(delegated.random);
                 assumed = match check_assumptions(

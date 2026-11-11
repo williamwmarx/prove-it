@@ -2450,27 +2450,6 @@ fn stops_where_an_invariant_sets_exit_as_tlc_does() {
 }
 
 #[test]
-fn declines_a_postcondition_or_alias_tlc_computes_as_it_starts() {
-    // TLC computes a definition of constant level as it starts, then rejects it as a
-    // POSTCONDITION ("The post condition Post cannot be a constant.") or an ALIAS.
-    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nPost == FALSE\nAl == [y |-> 1]\n====\n";
-    for config in ["POSTCONDITION Post\n", "ALIAS Al\n"] {
-        let (output, directory) = run_lowered(
-            "precomputed",
-            spec,
-            &format!("INIT Init\nNEXT Next\n{config}"),
-        );
-        assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("prove-it: not native yet: a POSTCONDITION or an ALIAS"),
-            "{}",
-            stdout(&output)
-        );
-        std::fs::remove_dir_all(directory).expect("removed");
-    }
-}
-
-#[test]
 fn declines_an_alias_that_prints_as_it_fails() {
     // TLC prints what the alias printed before the state whose alias fails, which the binary
     // doesn't place.
