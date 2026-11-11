@@ -2804,7 +2804,7 @@ fn rejects_a_constant_invariant_the_front_end_leaves_to_the_startup() {
         is_warning_enabled: true,
         is_spec_described: false,
         random_seed: 0,
-        is_trace_recorded: false,
+        root_extendees: &[],
     };
     let ir = tla_front::model::lower_model(&spec, config, &options).expect("an IR");
     std::fs::remove_file(&spec).expect("removed");

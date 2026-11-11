@@ -272,6 +272,20 @@ impl Value {
         Value::over_interval(1, elements, Class::Tuple)
     }
 
+    /// `TupleValue.EmptyTuple`, the one empty sequence of TLC's that SubSeq and SelectSeq give,
+    /// which a dumped trace writes once.
+    pub fn empty_tuple() -> Value {
+        thread_local! {
+            static EMPTY: Value = Value::tuple(Vec::new());
+        }
+        EMPTY.with(Value::clone)
+    }
+
+    /// Whether the value is a `TupleValue`, as opposed to a function TLC converts to one.
+    pub fn is_tuple_class(&self) -> bool {
+        matches!(self, Value::Function(function) if function.class.get() == Class::Tuple)
+    }
+
     /// A record of fields as written: sorted into TLC's order, keeping the written order where it
     /// differs.
     pub fn record(fields: Vec<(Rc<Text>, Value)>) -> Evaluated<Value> {

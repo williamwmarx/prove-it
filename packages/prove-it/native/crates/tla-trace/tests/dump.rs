@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use payload::compare_dumps;
 use tla_engine::search::{Reporter, SearchOutcome, Settings, ViolationKind, search};
-use tla_front::config::{ConfigValue, parse_config};
+use tla_front::config::parse_config;
 use tla_front::model::{ModelOptions, lower_front_ranking};
 use tla_trace::{CounterExample, Ending, Rebuilder, Registers, add_actions};
 use tla_values::{Id, Store};
@@ -31,28 +31,6 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-// The configuration's model values in the order TLC makes them as it parses it.
-fn get_model_values(config: &str) -> Vec<String> {
-    fn collect(value: &ConfigValue, names: &mut Vec<String>) {
-        match value {
-            ConfigValue::ModelValue(name) if !names.contains(name) => names.push(name.clone()),
-            ConfigValue::Set(values) => values.iter().for_each(|value| collect(value, names)),
-            _ => {}
-        }
-    }
-    let model = parse_config(config, tla_front::TlcVersion::Master).expect("a configuration");
-    let mut names = Vec::new();
-    for constant in &model.constants {
-        constant
-            .args
-            .iter()
-            .flatten()
-            .for_each(|value| collect(value, &mut names));
-        collect(&constant.value, &mut names);
-    }
-    names
-}
-
 /// What tla-trace dumps of the spec's counterexample: the `-dumpTrace tlc` file and the
 /// `-dumpTrace json` one, written in the order the command line gives them, as TLC writes them.
 /// The spec is lowered as the binary lowers it, with the strings its constant definitions make
@@ -71,7 +49,7 @@ fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
             is_warning_enabled: true,
             is_spec_described: true,
             random_seed: 0,
-            is_trace_recorded: false,
+            root_extendees: &[],
         },
         &get_startup_texts,
     )
@@ -80,8 +58,8 @@ fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     // The binary splits TLC's actions as it checks a model.
     let ir = tla_values::on_nesting_stack(|| add_actions(&ir)).expect("TLC's actions");
-    let model_values = get_model_values(&config);
-    let model_values: Vec<&str> = model_values.iter().map(String::as_str).collect();
+    let model = parse_config(&config, tla_front::TlcVersion::Master).expect("a configuration");
+    let model_values = model.get_model_values();
     tla_values::on_nesting_stack(|| {
         let settings = Settings {
             is_violation_reported: true,
@@ -200,6 +178,14 @@ fn dumps_nested_values() {
     // Functions over intervals that aren't tuples, strings JSON escapes, sets of sets, and the
     // action's parameters, over a violation three states long.
     check("DumpNested");
+}
+
+#[test]
+fn dumps_values_as_tlc_makes_them_once_or_again() {
+    // A function into a record set TLC enumerates once for each argument, so no two share a
+    // record; the empty sequence SubSeq gives and `\o` passes on, which is TLC's one; and the
+    // strings DOMAIN makes of a record's fields, new each time.
+    check("DumpShared");
 }
 
 #[test]

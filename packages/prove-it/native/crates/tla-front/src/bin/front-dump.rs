@@ -315,7 +315,7 @@ fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: O
         is_warning_enabled: true,
         is_spec_described: false,
         random_seed: 0,
-        is_trace_recorded: false,
+        root_extendees: &[],
     };
     write_ir(out, lower_model(spec_path, config, &options));
 }

@@ -73,12 +73,14 @@ pub fn enumerate(lazy: &Lazy) -> Evaluated<Vec<Value>> {
                 );
             }
             // Over an empty domain the set holds the empty function alone, whatever the range.
-            let range = if domain.is_empty() {
-                Rc::new(Vec::new())
-            } else {
-                elements(range)?
-            };
-            let tuples = product(&vec![Rc::clone(&range); domain.len()])?;
+            // TLC enumerates the range once for each element of the domain
+            // (`SetOfFcnsValue.Enumerator`), so a lazy range gives each its own values, which a
+            // dumped trace writes apart.
+            let ranges = domain
+                .iter()
+                .map(|_| elements(range))
+                .collect::<Evaluated<Vec<_>>>()?;
+            let tuples = product(&ranges)?;
             // A function over an interval keeps it as its domain.
             let build = |values: Vec<Value>| match domain_set {
                 Value::Interval(low, _) => Value::over_interval(*low, values, Class::Plain),

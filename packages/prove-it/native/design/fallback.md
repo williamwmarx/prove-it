@@ -164,7 +164,9 @@ Besides the 15 declines, it does the following in the library:
 - **A WebAssembly stack overflow.** The interpreter searches from the start.
 - **`PROVE_IT_LIVE_CHECK=1`.** It cross-checks the native liveness verdict.
 
-Neither side implements `-simulate`, `-generate`, `-debug`, `-dumpTrace` or `-loadTrace`.
+Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The binary writes
+`-dumpTrace tlc` and `-dumpTrace json`, and declines the other formats and the cases cli.md's
+"-dumpTrace" lists; the interpreter writes none.
 `src/pcal` only validates for SANY, `src/obligations` imports nothing from the interpreter, and
 `src/prover` imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
 `getParentPort`). Those move to the prover. `tlc/version.ts`, `tlc/jar-data.ts` and
