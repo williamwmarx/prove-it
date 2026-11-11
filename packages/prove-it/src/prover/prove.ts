@@ -1,6 +1,13 @@
 // Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
 
-import { TlaProverError, TlaUnsupportedError } from "../errors";
+import { getNativeAddon, type NativeProve } from "../engine/native";
+import { getEnvironmentSetting, reportEngine } from "../engine/settings";
+import {
+  TlaProofError,
+  TlaProverError,
+  TlaSyntaxError,
+  TlaUnsupportedError,
+} from "../errors";
 import { getObligations, type PrintedObligation } from "../obligations";
 import { type Expr, getChildren, type Hyp, mapHyp, type Sequent } from "../obligations/expression";
 import { formatObligation } from "../obligations/printer";
@@ -449,8 +456,83 @@ const getTlapmObligation = (
   ...(result ?? { status: "unsupported", reason: "tlapm reported no result" }),
 });
 
+// The error the Rust driver reports, as the TypeScript would throw it.
+const getDriverError = (result: Extract<NativeProve, { kind: "error" }>) => {
+  if (result.name === "TlaProofError")
+    return new TlaProofError(
+      result.message,
+      result.failure === undefined ? { exception: result.exception } : { failure: result.failure },
+    );
+  if (result.name === "TlaSyntaxError") return new TlaSyntaxError(result.message);
+  if (result.name === "TlaUnsupportedError") return new TlaUnsupportedError(result.message);
+  return new TlaProverError(result.message);
+};
+
+// prove with the Rust driver, which proves in rounds: each asks for the modules and the decisions
+// it needs, which this answers, deciding as the TypeScript driver does, in the pool when there is
+// one, and the next starts again from the beginning with them (design/prover.md, section 4c).
+const proveNatively = async (
+  options: ProveOptions,
+  name: string,
+  native: Exclude<ReturnType<typeof getNativeAddon>, string>,
+): Promise<ProveResult> => {
+  const workerCount = options.workers ?? 1;
+  const pool = workerCount > 1 && isWorkerSupported() ? await createDecidePool(workerCount) : undefined;
+  const decideText = pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions));
+  const known = new Map<string, string | undefined>();
+  let reportedCount = 0;
+  try {
+    for (;;) {
+      options.signal?.throwIfAborted();
+      const result = native.prove(`${name}.tla`, options.source, [...known]);
+      if (result.kind === "error") throw getDriverError(result);
+      result.reports.slice(reportedCount).forEach((report) => options.onObligation?.(report));
+      reportedCount = result.reports.length;
+      if (result.kind === "proved")
+        return {
+          obligations: result.reports,
+          missingProofCount: result.missingProofCount,
+          omittedProofCount: result.omittedProofCount,
+        };
+      result.keys.forEach((key) =>
+        known.set(key, options.loadModule?.(key.slice("module:".length))),
+      );
+      await Promise.all(
+        result.requests.map(async (request, index) => {
+          const answer = await decideText(
+            request.prover,
+            request.text,
+            { timeLimitMs: request.timeLimitMs, signal: options.signal },
+            index,
+          ).then(
+            (decision) => `${decision.verdict} ${decision.timeUsedMs}`,
+            (error: unknown) => {
+              if (!(error instanceof TlaProverError)) throw error;
+              return `error:${error.message}`;
+            },
+          );
+          known.set(`decide:${request.key}`, answer);
+        }),
+      );
+    }
+  } finally {
+    pool?.terminate(new TlaProverError("prove stopped"));
+  }
+};
+
+// The Rust driver proves where PROVE_IT_PROVER_DRIVER is "rust" and a native engine loads.
+const getNativeDriver = () => {
+  if (getEnvironmentSetting("PROVE_IT_PROVER_DRIVER") !== "rust") return undefined;
+  const native = getNativeAddon();
+  if (typeof native !== "string") return native;
+  reportEngine(`prover: no native engine for the driver: ${native}`);
+  return undefined;
+};
+
 export const prove = async (options: ProveOptions): Promise<ProveResult> => {
   const name = getModuleName(options.source);
+  const native = options.backend === "tlapm" ? undefined : getNativeDriver();
+  if (native !== undefined) return proveNatively(options, name, native);
   const modules = new Map<string, string>();
   const results = getObligations(
     [{ file: `${name}.tla`, source: options.source }],

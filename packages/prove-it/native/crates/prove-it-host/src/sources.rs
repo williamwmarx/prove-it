@@ -12,7 +12,9 @@
 //!   configuration (`checkSources`);
 //! - `class:<name>`, the Java override TLC loads for a module, as a Uint8Array (`checkSources`);
 //! - `bytes:<path>`, the bytes of a file the command line names, such as the tla2tools.jar on a
-//!   Java launch's class path, as a Uint8Array (`checkSources`).
+//!   Java launch's class path, as a Uint8Array (`checkSources`);
+//! - `decide:<key>`, a backend's answer to a decision `prove` asks for, with its text, by the key it
+//!   gives it (`prove`).
 //!
 //! An export that reads something else names it by a key of a new kind, which this list gains.
 
@@ -83,6 +85,15 @@ impl Sources {
         match self.get_known(key)? {
             Known::Bytes(bytes) => Some(bytes),
             Known::Text(_) => None,
+        }
+    }
+
+    /// The text of a key JavaScript answered, without asking for it where it hasn't: for an
+    /// export that asks for such keys in its own way.
+    pub fn get_answered(&self, key: &str) -> Option<String> {
+        match self.known.get(key)? {
+            Some(Known::Text(text)) => Some(text.clone()),
+            _ => None,
         }
     }
 
