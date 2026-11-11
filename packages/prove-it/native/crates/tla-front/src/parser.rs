@@ -766,6 +766,11 @@ impl Parser {
                 self.advance()?;
                 names.push(self.expect_identifier()?);
             }
+            // SANY reads a subscript @ as the value an EXCEPT changes.
+            if names.len() == 1 && &*names[0] == "@" {
+                let at = located(ExpressionKind::ExceptAt, location);
+                return Ok(self.with_range(at, start));
+            }
             let name: Name = Rc::from(names.join("!"));
             let identifier = located(
                 ExpressionKind::Identifier {
