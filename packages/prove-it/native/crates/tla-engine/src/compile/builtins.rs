@@ -1160,6 +1160,13 @@ impl Compiler<'_> {
                 let Some((slots, body, value)) = &operator else {
                     return Ok(old);
                 };
+                // A key that stops or configures TLC, such as "exit", which the search and the
+                // simulation follow only for TLCSet.
+                if get_register_key(&machine.store, key).is_none() {
+                    return Err(Bail(
+                        "unsupported: TLCGetAndSet of a key that stops or configures TLC",
+                    ));
+                }
                 let value = value(machine)?;
                 let saved = [slots[0], slots[1]].map(|slot| machine.locals[slot as usize]);
                 machine.locals[slots[0] as usize] = old;
@@ -1193,6 +1200,11 @@ impl Compiler<'_> {
             || !model.live_formula.is_empty()
         {
             return unsupported("PickSuccessor with temporal properties");
+        }
+        // TLC's workers share what PickSuccessor has seen, which the counts of its search on
+        // several workers follow in an order the engine's don't.
+        if self.workers > 1 {
+            return unsupported("PickSuccessor on several workers");
         }
         let [operand] = operands else {
             return unsupported("an operator applied to the wrong number of arguments");

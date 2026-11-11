@@ -767,6 +767,28 @@ fn format_config_value(
     }
 }
 
+/// Whether an expression refers to a name, directly or through the definitions it applies.
+fn reaches_name(expression: &Expr, name: &str, environment: &Environment) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    let mut pending = vec![expression.clone()];
+    while let Some(expression) = pending.pop() {
+        if let Some(reference) = expression.reference()
+            && !expression.is_locally_resolved()
+        {
+            if &*reference == name {
+                return true;
+            }
+            if let Some(definition) = get_definition(&reference, environment)
+                && seen.insert(Rc::as_ptr(definition) as usize)
+            {
+                pending.push(definition.body.clone());
+            }
+        }
+        pending.extend(expression.children());
+    }
+    false
+}
+
 /// `isConstantTrue`, for a conjunct that is a constant name: TLC drops one that is TRUE, and
 /// rejects the spec for any other value. The engine's startup checks a conjunct of the
 /// specification the evaluator can't compute, which a definition of the root module names, and
@@ -1111,6 +1133,11 @@ pub fn get_specification(
                 return Err(FrontError::Config(format!(
                     "TLC cannot handle the action-level conjunct of the specification {specification}"
                 )));
+            }
+            // TLC levels PickSuccessor as an action (its Java method's minLevel), and rejects a
+            // conjunct that reaches it.
+            _ if reaches_name(&item.expression, "PickSuccessor", environment) => {
+                return Err(not_yet("PickSuccessor in a conjunct of the specification"));
             }
             _ => init_conjuncts.push((item.expression, item.scope)),
         }

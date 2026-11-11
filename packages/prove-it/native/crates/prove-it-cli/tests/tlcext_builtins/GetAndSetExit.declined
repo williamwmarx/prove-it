@@ -1,1 +1,1 @@
-prove-it: not native yet: the engine stopped: unsupported: TLCSet("exit", TRUE) outside an invariant
+prove-it: not native yet: the engine stopped: unsupported: TLCGetAndSet of a key that stops or configures TLC
