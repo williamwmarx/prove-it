@@ -16,7 +16,7 @@
 // solver's heap fills on a few modules, and the run fails when it loses a module:
 //   NODE_OPTIONS=--max-old-space-size=4500 bun scripts/run.ts prover-inputs [--record] [--jobs n]
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TlaError, TlaProverError } from "../src/errors";
@@ -35,6 +35,7 @@ import {
 import {
   getInputKey,
   getInputPath,
+  getMergedTimeLimits,
   type InputRecord,
   PROVER_INPUTS_DIRECTORY,
   PROVER_INPUTS_PATH,
@@ -141,7 +142,15 @@ for (const module of byModule.values())
   for (const [key, limits] of Object.entries(module.timeLimits))
     timeLimits[key] = [...new Set([...(timeLimits[key] ?? []), ...limits])];
 mkdirSync(PROVER_INPUTS_DIRECTORY, { recursive: true });
-writeFileSync(TIME_LIMITS_PATH, `${JSON.stringify(timeLimits)}\n`);
+// A run over some modules keeps the time limits of the inputs it didn't write.
+const earlierTimeLimits =
+  getOption("--filter") !== undefined && existsSync(TIME_LIMITS_PATH)
+    ? JSON.parse(readFileSync(TIME_LIMITS_PATH, "utf8"))
+    : {};
+writeFileSync(
+  TIME_LIMITS_PATH,
+  `${JSON.stringify(getMergedTimeLimits(earlierTimeLimits, timeLimits))}\n`,
+);
 if (isRecording && byModule.size === modules.length) {
   writeInputRecords({ ...records, ...inputs });
   rmSync(RECORDING_PATH);
