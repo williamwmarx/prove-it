@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tla_ir::NodeId;
-use tla_values::fingerprint::Fingerprints;
+use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::store::{Outcome, ShapeJoin};
 use tla_values::{Bail, Id, Store};
 
@@ -40,8 +40,15 @@ pub enum Printed {
 pub const UNASSIGNED: Id = u32::MAX;
 
 /// How deep recursive operators and functions may call themselves before the engine hands over,
-/// so that deep TLA+ recursion stops cleanly rather than overflow the native stack.
-const MAXIMUM_RECURSION: u32 = 20_000;
+/// so that deep TLA+ recursion stops cleanly rather than overflow the native stack. WebAssembly's
+/// frames are on the host's stack, which holds about 1,500 calls of a simple recursive operator
+/// under Bun and 1,800 under Node's default stack (fallback.md), so it stops sooner there. TLC's
+/// own JVM stack holds a few hundred.
+const MAXIMUM_RECURSION: u32 = if cfg!(target_arch = "wasm32") {
+    1_000
+} else {
+    20_000
+};
 
 /// Where a memo table reads one of its keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,6 +84,14 @@ pub struct Program {
     /// What TLC seeds the generator its startup and initial states draw from with, and what a
     /// state's fingerprint is xored with to seed the draws of its expansion.
     pub(crate) random_seed: u64,
+    /// The index in FP64.Polys of the polynomial TLC fingerprints with.
+    pub(crate) fingerprint_index: usize,
+}
+
+impl Program {
+    pub(crate) fn polynomial(&self) -> &'static Polynomial {
+        Polynomial::get(self.fingerprint_index)
+    }
 }
 
 /// The statistics of one memo table, as `getMemoStatistics` gives them.
@@ -191,7 +206,7 @@ impl<'p> Machine<'p> {
             startup_random: 0,
             registers: Registers::default(),
             tlc_caches: HashMap::new(),
-            fingerprints: Fingerprints::new(),
+            fingerprints: Fingerprints::new(program.polynomial()),
             lazy_functions: Vec::new(),
         }
     }

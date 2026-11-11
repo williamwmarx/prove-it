@@ -223,14 +223,19 @@ fn get_number(host: &dyn Host, name: &str) -> Option<usize> {
 }
 
 /// TLC.printStartupBanner, with what runs Prove It in place of the JVM.
-fn print_startup_banner(printer: &mut Printer, seed: i64, workers: usize) {
+fn print_startup_banner(
+    printer: &mut Printer,
+    fingerprint_index: usize,
+    seed: i64,
+    workers: usize,
+) {
     let machine = printer.host.machine();
     let (system, release, arch) = (&machine.system, &machine.release, &machine.arch);
     printer.print(
         code::MODEL_CHECKING,
         Level::None,
         &format!(
-            "Running breadth-first search Model-Checking with fp 0 and seed {seed} with {workers} worker{} on {} cores with {}MB heap and 0MB offheap memory [pid: {}] ({system} {release} {arch}, prove-it native {}bit, MemFPSet, MemStateQueue).",
+            "Running breadth-first search Model-Checking with fp {fingerprint_index} and seed {seed} with {workers} worker{} on {} cores with {}MB heap and 0MB offheap memory [pid: {}] ({system} {release} {arch}, prove-it native {}bit, MemFPSet, MemStateQueue).",
             if workers == 1 { "" } else { "s" },
             machine.cores,
             machine.memory_megabytes,
@@ -655,6 +660,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         .first("-seed")
         .and_then(|seed| seed.parse::<i64>().ok())
         .unwrap_or(0);
+    // Without -fp, TLC picks a polynomial at random; Prove It picks the first.
+    let fingerprint_index = args
+        .first("-fp")
+        .and_then(|index| index.parse().ok())
+        .unwrap_or(0);
     let dump = args.get("-dump");
     let workers = match args.first("-workers") {
         Some(workers) if is_auto(workers) => printer.host.machine().cores,
@@ -665,7 +675,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     print_welcome(printer);
     match &simulation {
         Some(simulation) => print_banner(printer, simulation.seed, workers),
-        None => print_startup_banner(printer, seed, workers),
+        None => print_startup_banner(printer, fingerprint_index, seed, workers),
     }
     // TLC opens the file before it reads the configuration, and names it with a suffix of .dump
     // unless it has one.
@@ -823,6 +833,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     }
     // TLC seeds its generator with -seed, which an IR tla-front lowers doesn't hold.
     ir.model.random_seed = seed as u64;
+    ir.model.fingerprint_index = fingerprint_index;
     if args.has("-deadlock") {
         ir.model.check_deadlock = false;
     }

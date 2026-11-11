@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{run_spec_with, stdout};
+use common::{run_named, stdout};
 
 const VIOL: &str = "---- MODULE Viol ----
 EXTENDS Naturals
@@ -102,7 +102,7 @@ fn simulate(test: &str, name: &str, files: (&str, &str), args: &[&str]) -> (Opti
     let mut all = vec!["-workers", "1", "-nowarning", "-noTE"];
     all.extend_from_slice(args);
     all.push(name);
-    let (output, directory) = run_spec_with(test, name, files, &all);
+    let (output, directory) = run_named(test, name, files, &all);
     std::fs::remove_dir_all(directory).expect("removed");
     let text = stdout(&output);
     let lines: Vec<&str> = text.lines().collect();
@@ -342,7 +342,7 @@ fn declines_what_races_tlcs_worker() {
         &["-seed", "4", "-simulate", "num=10"][..],
         &["-seed", "4", "-simulate"],
     ] {
-        let (output, directory) = run_spec_with(
+        let (output, directory) = run_named(
             "simulate-races",
             "Viol",
             (VIOL, INVARIANT_CONFIG),
@@ -398,7 +398,7 @@ Progress: 9 states checked, 1 traces generated (trace length: mean=0, var(x)=0, 
 // TLC reports the exception it throws comparing the states, which the binary doesn't print yet.
 #[test]
 fn declines_a_trace_tlc_fails_to_compare() {
-    let (output, directory) = run_spec_with(
+    let (output, directory) = run_named(
         "simulate-incomparable",
         "Github743",
         (INCOMPARABLE, INVARIANT_CONFIG),

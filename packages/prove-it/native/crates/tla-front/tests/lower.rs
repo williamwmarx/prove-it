@@ -55,6 +55,7 @@ fn lower(source: &str, name: &str) -> Ir {
             // TLC's default seed, 0, and java.util.Random seeded with it, which no assumption has drawn
             // from: the model `ir.ts` writes for an environment that evaluated nothing at startup.
             random_seed: 0,
+            fingerprint_index: 0,
             atoms: Vec::new(),
             live_formula: Vec::new(),
             live_properties: Vec::new(),

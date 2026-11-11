@@ -368,13 +368,19 @@ an option TLC doesn't know, a missing or malformed value of `-seed`, `-workers`,
 compared with a TLC built from the clone at d8fb231.
 
 It models `-config` (with or without `.cfg`, as TLC), `-continue`, `-deadlock`, `-dump`,
-`-fp 0`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
+`-fp`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
 trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`,
 `-noGenerateSpecTEBin`/`-noTEBin`), and `-simulate`, `-depth` and `-aril` (below). Every other
-option TLC reads (`-generate`, `-difftrace`,
-`-coverage`, `-maxSetSize`, `-dfid`, `-fp N`, ...) is not native, as are the shapes where TLC
+option TLC reads (`-generate`, `-difftrace`, `-coverage`, `-maxSetSize`, `-dfid`, ...) is not
+native, as are the shapes where TLC
 throws (`-dump` last, an empty argument), an argument that isn't ASCII, and `Spec.cfg` named as
 the module on the `tlc2.TLC` form. `-lncheck off` is not native either: TLC then checks no temporal property (`LiveCheck.java:238`).
+`-fp N` picks `FP64.Polys[N]`, one of TLC's 131 irreducible polynomials, which every fingerprint
+extends from: of the states, which the search keys its table on, seeds each state's draws with and
+measures the "actual fingerprints" estimate by, and which order the liveness checker's tables; of
+TLCFP's values and TLCCache's keys; and `TLCGet("config").fingerprint`. Each polynomial's table is
+built the first time it is used. Without `-fp`, TLC picks a polynomial at random, and the binary
+picks the first, as `-fp 0`.
 `seqfinal` is `final` with one worker for the liveness check (`LiveCheck.java:291`), so the two
 read alike.
 

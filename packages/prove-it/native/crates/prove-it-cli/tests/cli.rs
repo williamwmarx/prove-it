@@ -180,7 +180,6 @@ fn reads_the_command_line_as_tlc() {
         (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
         (&["-generate", "TCommit"], "the TLC option -generate"),
         (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
-        (&["-fp", "1", "TCommit"], "-fp 1"),
         (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {

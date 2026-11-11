@@ -1,4 +1,4 @@
-//! What the binary's integration tests share: running it on a spec of their own.
+//! Helpers the binary's integration tests share.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -17,7 +17,7 @@ pub fn stdout(output: &Output) -> String {
 
 /// Writes the spec and its configuration as `<name>.tla` and `<name>.cfg` into a directory of the
 /// test's own, and runs the binary there with the arguments.
-pub fn run_spec_with(
+pub fn run_named(
     test: &str,
     name: &str,
     (spec, config): (&str, &str),

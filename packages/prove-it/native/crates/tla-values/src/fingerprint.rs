@@ -1,5 +1,5 @@
-//! TLC's 64-bit fingerprints (FP64 with `-fp 0`) of values and states, as
-//! `src/tlc/fingerprint.ts` and `src/engine/fingerprint.ts` compute them.
+//! TLC's 64-bit fingerprints (FP64 with the polynomial `-fp` picks) of values and states, as
+//! `src/tlc/fingerprint.ts` and `src/engine/fingerprint.ts` compute them with `-fp 0`.
 //!
 //! TLC fingerprints a state by extending FP64 over the bytes of its values. Extending is linear
 //! over GF(2), so extending a fingerprint by the bytes of a value v is `shift(fp, |v|) ^ F(v)`,
@@ -8,7 +8,7 @@
 //! parent's, one per variable that changed.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::store::{
     Bail, EMPTY_SLOT, Id, KIND_BOOL, KIND_FUNCTION, KIND_INFINITE_SET, KIND_INT,
@@ -20,9 +20,6 @@ use crate::store::{
 pub const UNFINGERPRINTABLE: Bail =
     Bail("unsupported: fingerprinting a function TLC keeps lazy, or Nat, Int or STRING");
 
-/// FP64.Polys[0], which `-fp 0` selects. A fingerprint starts as the polynomial.
-pub const INITIAL: u64 = 0x911498ae0e66bad6;
-
 const BOOL_VALUE: u8 = 0;
 const INT_VALUE: u8 = 1;
 const STRING_VALUE: u8 = 3;
@@ -30,42 +27,228 @@ const SET_ENUM_VALUE: u8 = 5;
 const FCN_RCD_VALUE: u8 = 9;
 const MODEL_VALUE: u8 = 21;
 
-// FP64's ByteModTable: entry b is the fingerprint from zero of byte b, the sum of x^(71 - k) mod
-// the polynomial for each bit k of b, with x^0 in a fingerprint's top bit.
-const BYTE_MOD: [u64; 256] = {
-    let mut table = [0u64; 256];
-    let mut power: u64 = 1 << 63;
-    let mut exponent = 1;
-    while exponent < 72 {
-        let is_reduced = power & 1 != 0;
-        power = (power >> 1) ^ if is_reduced { INITIAL } else { 0 };
-        if exponent >= 64 {
-            let bit = 1usize << (71 - exponent);
-            let mut byte = 0;
-            while byte < 256 {
-                if byte & bit != 0 {
-                    table[byte] ^= power;
-                }
-                byte += 1;
-            }
-        }
-        exponent += 1;
-    }
-    table
-};
+/// FP64.Polys, the irreducible polynomials `-fp` picks one of to fingerprint with.
+pub const POLYNOMIALS: [u64; 131] = [
+    0x911498ae0e66bad6,
+    0xda8a0ba66dae0181,
+    0xc02f176b8f268d9f,
+    0xd617bb1220fc7812,
+    0xc6fd951ad34f9f74,
+    0xdd1897bd991704d4,
+    0xf5394c541cbfd343,
+    0xb1dded37b5c7b8f7,
+    0xb713ff61039dc632,
+    0xdfb340cb2fb03d43,
+    0xbc3e7e4c5ecb76a3,
+    0xdbb4b1349cd7058a,
+    0xf53e9dcb9e915cdf,
+    0xca5f58e90dd01848,
+    0x80e7ff4406891aa1,
+    0xab541bf881fa8571,
+    0xbf274e07ac5499d5,
+    0x939b1ea933040a4e,
+    0xb791a595448d75b1,
+    0x8bf88d6ef85563a2,
+    0xecb33ec339513a53,
+    0xfa2d3e722db5208a,
+    0xb4e2058aac479d24,
+    0xafbd6474e7213b82,
+    0x98c1694d14ffaeef,
+    0xe188fb5c0a125e24,
+    0xfa71cc3865487d80,
+    0x891135f7c1c94569,
+    0xcf77cdd16d22e3e6,
+    0xeb5e3a1d2e2bb4b5,
+    0x92f7f5b69cd00c55,
+    0xa9fbbe40ca3b9ae9,
+    0x84a7b33d85295bde,
+    0xebd4680dbb6fdee2,
+    0xa31fc46a0583b4d0,
+    0xa792c94f15de3e49,
+    0xd9d60a9feff4521a,
+    0x9227ba31dfdda04b,
+    0xfb4c89c607ce162d,
+    0xa89b3b2e01479cc0,
+    0xb35a0c2a28b89f7d,
+    0x91d0b700b99d9ec2,
+    0xf0646bbda05020b0,
+    0xcb5d5f63ce043056,
+    0xd276b6a04f42a1b8,
+    0xbc1a7a7dbfeb47a3,
+    0xe138acff7a963036,
+    0xed860223c1557ee7,
+    0x9b2491e980150ab6,
+    0xe7e03dd8a5b4e59e,
+    0xaaa3f5eac516783c,
+    0xfe78cc267a724180,
+    0xc22519a21edfac64,
+    0xcdb2941933fec60f,
+    0xc5f485551ef38aa1,
+    0xa19293d250bd3335,
+    0xa4d4c215a50b7afe,
+    0xc1155176406a5070,
+    0xecadaa8200e123ec,
+    0xbacfe629d58b2f08,
+    0xded991082148cb42,
+    0x9a0ccbe5deaa88db,
+    0x9a83246f342061bb,
+    0xb71482842297ab05,
+    0xf2407eeb997592bd,
+    0xb7b43d4b5c4c4bcc,
+    0xb339a2568221ffe7,
+    0xdb4b6b379446ef9e,
+    0xe43c205bb5c0b2b6,
+    0xe8e1d141f19d6db0,
+    0xd19e8710a4ea1c86,
+    0x9704cecfa8d6d07b,
+    0xb0a35716162c3f26,
+    0xa2a68c0cf56390ac,
+    0xe4a74bc601c95b46,
+    0xe668fff675595e56,
+    0xe0ea77ebe06fabbb,
+    0xa8bb94f585279523,
+    0xbeb667b42b684f21,
+    0xd7b65410189e28af,
+    0x85722037beffc5b9,
+    0xe7e7c5f773426204,
+    0xa5fd0cc8e060c6f4,
+    0xb8f91ee9065dcf95,
+    0xb4047008040f8b50,
+    0xecb9ab6291c8cfcc,
+    0xe08bb9b70caad6df,
+    0xd6e086a301d95d56,
+    0xf6a808f5f3fb9da3,
+    0xfa74b8a8ef86fbc5,
+    0xa0b6b33ba9e6381c,
+    0x8c78703427873dbb,
+    0xc5516ea423011021,
+    0xb075cce8528ae7e2,
+    0x92e4a37979e2b13b,
+    0xafc9ab000ed81026,
+    0xf1873f2a861a518a,
+    0xf885d6b35770192c,
+    0xd2a82f27f71f5f7e,
+    0xd5e7a4dd8beb2d9f,
+    0xbab9e7e65dc23e0f,
+    0xd5fc877c0bdf5b85,
+    0xab428169b9f31c02,
+    0xb7b1351f9266d3ea,
+    0xfad564914328f635,
+    0x9623ecb1000db9bd,
+    0x88d371ec6644c892,
+    0xd0a71270573e271c,
+    0xbd200d763f9d81b4,
+    0x8484fd96374bf2ea,
+    0xe0d0810749432294,
+    0x8ebe9dadc88658ba,
+    0xf6268c58993ae542,
+    0xd6cc88fed0d359c9,
+    0xbcaddb8d40a16690,
+    0x92817c6db421cbf6,
+    0xac63721120a371b5,
+    0xd6cc137fdced0820,
+    0xf1c5fbaebb617bd7,
+    0xac35d78c765237a5,
+    0xbd0a471fa9a23116,
+    0x943a7031b946a5ae,
+    0xe4e83520cb1aaebb,
+    0xe92a4b73246dd124,
+    0xafc1e070787c4c86,
+    0xdfe84d42cf06286b,
+    0x8b29ec962e4b964b,
+    0x807eb5de812ede0f,
+    0xa3cd71299c8b3bfd,
+    0x845b8031ef886f35,
+    0x91f5a5fa9c5515a5,
+];
 
-#[inline(always)]
-pub fn extend_byte(fingerprint: u64, byte: u8) -> u64 {
-    (fingerprint >> 8) ^ BYTE_MOD[((u64::from(byte) ^ fingerprint) & 0xff) as usize]
+/// An irreducible polynomial of FP64.Polys, with the table FP64.Init builds of it.
+pub struct Polynomial {
+    value: u64,
+    // FP64's ByteModTable: entry b is the fingerprint from zero of byte b, the sum of x^(71 - k)
+    // mod the polynomial for each bit k of b, with x^0 in a fingerprint's top bit.
+    byte_mod: [u64; 256],
 }
 
-/// Extends by the four bytes of a word, lowest first.
-#[inline(always)]
-pub fn extend_int(fingerprint: u64, word: i32) -> u64 {
-    (word as u32)
-        .to_le_bytes()
-        .into_iter()
-        .fold(fingerprint, extend_byte)
+impl Polynomial {
+    /// FP64.Polys[index] and its table, built the first time it is asked for.
+    pub fn get(index: usize) -> &'static Polynomial {
+        static BUILT: [OnceLock<Polynomial>; POLYNOMIALS.len()] =
+            [const { OnceLock::new() }; POLYNOMIALS.len()];
+        BUILT[index].get_or_init(|| Polynomial::build(POLYNOMIALS[index]))
+    }
+
+    fn build(value: u64) -> Polynomial {
+        let mut byte_mod = [0u64; 256];
+        let mut power: u64 = 1 << 63;
+        for exponent in 1..72 {
+            let is_reduced = power & 1 != 0;
+            power = (power >> 1) ^ if is_reduced { value } else { 0 };
+            if exponent >= 64 {
+                let bit = 1usize << (71 - exponent);
+                for (byte, entry) in byte_mod.iter_mut().enumerate() {
+                    if byte & bit != 0 {
+                        *entry ^= power;
+                    }
+                }
+            }
+        }
+        Polynomial { value, byte_mod }
+    }
+
+    /// The polynomial, which a fingerprint starts as (`FP64.New`).
+    pub fn value(&self) -> u64 {
+        self.value
+    }
+
+    #[inline(always)]
+    pub fn extend_byte(&self, fingerprint: u64, byte: u8) -> u64 {
+        (fingerprint >> 8) ^ self.byte_mod[((u64::from(byte) ^ fingerprint) & 0xff) as usize]
+    }
+
+    /// Extends by the four bytes of a word, lowest first.
+    #[inline(always)]
+    pub fn extend_int(&self, fingerprint: u64, word: i32) -> u64 {
+        (word as u32)
+            .to_le_bytes()
+            .into_iter()
+            .fold(fingerprint, |fingerprint, byte| {
+                self.extend_byte(fingerprint, byte)
+            })
+    }
+
+    // F of an integer.
+    fn get_int(&self, value: i32) -> u64 {
+        self.extend_int(self.extend_byte(0, INT_VALUE), value)
+    }
+
+    /// F and length of a boolean, as of a store's.
+    pub fn of_bool(&self, value: bool) -> (u64, u64) {
+        let byte = if value { b't' } else { b'f' };
+        (self.extend_byte(self.extend_byte(0, BOOL_VALUE), byte), 2)
+    }
+
+    /// F and length of an integer.
+    pub fn of_int(&self, value: i32) -> (u64, u64) {
+        (self.get_int(value), 5)
+    }
+
+    /// F and length of a string.
+    pub fn of_string(&self, text: &[u16]) -> (u64, u64) {
+        let start = self.extend_int(self.extend_byte(0, STRING_VALUE), text.len() as i32);
+        let fingerprint = text.iter().fold(start, |fingerprint, &unit| {
+            self.extend_byte(fingerprint, unit as u8)
+        });
+        (fingerprint, 5 + text.len() as u64)
+    }
+
+    /// F and length of a model value, by the rank of its name.
+    pub fn of_model(&self, rank: i32) -> (u64, u64) {
+        (
+            self.extend_int(self.extend_byte(0, MODEL_VALUE), rank + 1),
+            5,
+        )
+    }
 }
 
 // A table that shifts a fingerprint by a fixed number of zero bytes: entry [k][b] holds the shift
@@ -263,8 +446,8 @@ impl Entries for Overlaid {
 
 /// F(v) and |v| of the store's values, computed as they are first asked for, and the tables that
 /// shift by their lengths.
-#[derive(Default)]
 pub struct Fingerprints<E = Dense> {
+    polynomial: &'static Polynomial,
     generation: Option<u32>,
     values: E,
     // Shifts by 2^j zero bytes.
@@ -279,8 +462,9 @@ pub struct Fingerprints<E = Dense> {
 const SHORT_LENGTHS: usize = 1 << 12;
 
 impl Fingerprints {
-    pub fn new() -> Fingerprints {
-        Fingerprints::default()
+    /// Fingerprints with the polynomial.
+    pub fn new(polynomial: &'static Polynomial) -> Fingerprints {
+        Fingerprints::with_entries(polynomial)
     }
 
     /// Lends the fingerprints computed so far to the caches of a parallel level's threads, until
@@ -337,6 +521,23 @@ impl Fingerprints<Overlaid> {
 }
 
 impl<E: Entries> Fingerprints<E> {
+    /// Fingerprints with the polynomial, which keep the entries of values in `E`.
+    pub fn with_entries(polynomial: &'static Polynomial) -> Fingerprints<E> {
+        Fingerprints {
+            polynomial,
+            generation: None,
+            values: E::default(),
+            powers: Vec::new(),
+            lengths: Vec::new(),
+            short_numbers: Vec::new(),
+            length_numbers: HashMap::new(),
+        }
+    }
+
+    pub fn polynomial(&self) -> &'static Polynomial {
+        self.polynomial
+    }
+
     /// Forgets every value's fingerprint, as `resetFingerprints` does. The fingerprints also
     /// forget them when the store they were computed from is reset.
     pub fn reset(&mut self) {
@@ -351,7 +552,10 @@ impl<E: Entries> Fingerprints<E> {
     fn get_power(&mut self, exponent: usize) -> &ShiftTable {
         while self.powers.len() <= exponent {
             let table = match self.powers.last() {
-                None => ShiftTable::build(|fingerprint| extend_byte(fingerprint, 0)),
+                None => {
+                    let polynomial = self.polynomial;
+                    ShiftTable::build(|fingerprint| polynomial.extend_byte(fingerprint, 0))
+                }
                 Some(half) => ShiftTable::build(|fingerprint| half.shift(half.shift(fingerprint))),
             };
             self.powers.push(table);
@@ -510,10 +714,10 @@ impl<E: Entries> Fingerprints<E> {
 
     fn compute_one(&mut self, store: &Store, id: Id) -> Outcome<ValueFingerprint> {
         let (fingerprint, length) = match store.kind_of(id) {
-            KIND_BOOL => of_bool(id == TRUE),
-            KIND_INT => of_int(store.int_of(id)),
-            KIND_STRING => of_string(store.text_of(id)),
-            KIND_MODEL => of_model(store.text_rank_of(id)),
+            KIND_BOOL => self.polynomial.of_bool(id == TRUE),
+            KIND_INT => self.polynomial.of_int(store.int_of(id)),
+            KIND_STRING => self.polynomial.of_string(store.text_of(id)),
+            KIND_MODEL => self.polynomial.of_model(store.text_rank_of(id)),
             KIND_LAZY_FUNCTION | KIND_INFINITE_SET => return Err(UNFINGERPRINTABLE),
             kind @ (KIND_SET | KIND_FUNCTION | KIND_TUPLE) => {
                 let tag = if kind == KIND_SET {
@@ -521,7 +725,9 @@ impl<E: Entries> Fingerprints<E> {
                 } else {
                     FCN_RCD_VALUE
                 };
-                let mut fingerprint = extend_int(extend_byte(0, tag), store.size_of(id) as i32);
+                let polynomial = self.polynomial;
+                let mut fingerprint =
+                    polynomial.extend_int(polynomial.extend_byte(0, tag), store.size_of(id) as i32);
                 let mut length = 5;
                 let mut parts = Vec::new();
                 Self::for_each_part(store, id, |part, index| parts.push((part, index)));
@@ -532,7 +738,8 @@ impl<E: Entries> Fingerprints<E> {
                             length += self.values.entry(part).length;
                         }
                         None => {
-                            fingerprint = self.shift(fingerprint, 5) ^ get_int(index as i32 + 1);
+                            fingerprint =
+                                self.shift(fingerprint, 5) ^ polynomial.get_int(index as i32 + 1);
                             length += 5;
                         }
                     }
@@ -557,7 +764,11 @@ impl<E: Entries> Fingerprints<E> {
         } else {
             (FCN_RCD_VALUE, parts.len() / 2)
         };
-        let start = (extend_int(extend_byte(0, tag), size as i32), 5);
+        let polynomial = self.polynomial;
+        let start = (
+            polynomial.extend_int(polynomial.extend_byte(0, tag), size as i32),
+            5,
+        );
         parts
             .iter()
             .fold(start, |(fingerprint, length), &(part, part_length)| {
@@ -573,7 +784,7 @@ impl<E: Entries> Fingerprints<E> {
     pub fn of_state(&mut self, values: &[(u64, u64)]) -> u64 {
         values
             .iter()
-            .fold(INITIAL, |fingerprint, &(value, length)| {
+            .fold(self.polynomial.value, |fingerprint, &(value, length)| {
                 self.shift(fingerprint, length) ^ value
             })
     }
@@ -581,19 +792,21 @@ impl<E: Entries> Fingerprints<E> {
     /// TLC's fingerprint of one state, its values read in `order`.
     pub fn get_state(&mut self, store: &Store, state: &[Id], order: &[usize]) -> Outcome<u64> {
         self.check_generation(store);
-        order.iter().try_fold(INITIAL, |fingerprint, &index| {
-            self.compute(store, state[index])?;
-            Ok(self.extend_known(fingerprint, state[index]))
-        })
+        order
+            .iter()
+            .try_fold(self.polynomial.value, |fingerprint, &index| {
+                self.compute(store, state[index])?;
+                Ok(self.extend_known(fingerprint, state[index]))
+            })
     }
 
     /// The TLC fingerprints of states stored one after another, each `width` ids, read in
     /// `order`, as `getStateFingerprints` computes them.
     ///
-    /// A state's fingerprint is `shift(INITIAL, L)` xor the xor over its values v_j of
-    /// `shift(F(v_j), S_j)`, where L is the length of all its values and S_j that of the values
-    /// after v_j. Where a state differs from its parent only in values of the same lengths, L and
-    /// every S_j are the parent's, so its fingerprint is the parent's xor
+    /// A state's fingerprint is `shift(P, L)` xor the xor over its values v_j of
+    /// `shift(F(v_j), S_j)`, where P is the polynomial, L the length of all its values and S_j
+    /// that of the values after v_j. Where a state differs from its parent only in values of the
+    /// same lengths, L and every S_j are the parent's, so its fingerprint is the parent's xor
     /// `shift(F(v_j) ^ F(v'_j), S_j)` for each value that changed. An initial state, which has no
     /// parent, follows from the state before it in the same way.
     pub fn get_states(
@@ -689,7 +902,7 @@ impl<E: Entries> Fingerprints<E> {
         parent.positions.resize(state.len(), 0);
         parent.tails.resize(order.len(), (u64::MAX, NO_TABLE));
         parent.prefixes.clear();
-        parent.prefixes.push(INITIAL);
+        parent.prefixes.push(self.polynomial.value);
         let mut tail = 0;
         for (position, &index) in order.iter().enumerate().rev() {
             parent.positions[index] = position;
@@ -774,41 +987,13 @@ impl<E: Entries> Fingerprints<E> {
         states
             .chunks_exact(width)
             .map(|row| {
-                order.iter().try_fold(INITIAL, |fingerprint, &index| {
-                    let (value, length) = self.get_value(store, row[index])?;
-                    Ok(self.shift_by_powers(fingerprint, length) ^ value)
-                })
+                order
+                    .iter()
+                    .try_fold(self.polynomial.value, |fingerprint, &index| {
+                        let (value, length) = self.get_value(store, row[index])?;
+                        Ok(self.shift_by_powers(fingerprint, length) ^ value)
+                    })
             })
             .collect()
     }
-}
-
-// F of an integer.
-fn get_int(value: i32) -> u64 {
-    extend_int(extend_byte(0, INT_VALUE), value)
-}
-
-/// F and length of a boolean, as of a store's.
-pub fn of_bool(value: bool) -> (u64, u64) {
-    let byte = if value { b't' } else { b'f' };
-    (extend_byte(extend_byte(0, BOOL_VALUE), byte), 2)
-}
-
-/// F and length of an integer.
-pub fn of_int(value: i32) -> (u64, u64) {
-    (get_int(value), 5)
-}
-
-/// F and length of a string.
-pub fn of_string(text: &[u16]) -> (u64, u64) {
-    let start = extend_int(extend_byte(0, STRING_VALUE), text.len() as i32);
-    let fingerprint = text.iter().fold(start, |fingerprint, &unit| {
-        extend_byte(fingerprint, unit as u8)
-    });
-    (fingerprint, 5 + text.len() as u64)
-}
-
-/// F and length of a model value, by the rank of its name.
-pub fn of_model(rank: i32) -> (u64, u64) {
-    (extend_int(extend_byte(0, MODEL_VALUE), rank + 1), 5)
 }

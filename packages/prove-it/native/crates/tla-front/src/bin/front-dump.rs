@@ -260,6 +260,7 @@ fn lower_definitions(
         version: None,
         // TLC's default seed.
         random_seed: 0,
+        fingerprint_index: 0,
         atoms: Vec::new(),
         live_formula: Vec::new(),
         live_properties: Vec::new(),
