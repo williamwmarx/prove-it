@@ -72,10 +72,10 @@ struct Reader<'b> {
 impl Reader<'_> {
     fn take(&mut self, length: usize) -> Result<&[u8]> {
         let start = self.position;
-        self.position += length;
-        if self.position > self.end {
-            return Err(corrupted());
-        }
+        self.position = match start.checked_add(length) {
+            Some(position) if position <= self.end => position,
+            _ => return Err(corrupted()),
+        };
         // The header's length can claim more than the file holds.
         self.bytes.get(start..self.position).ok_or_else(corrupted)
     }
@@ -101,6 +101,11 @@ impl Reader<'_> {
         let index = self.objects.len();
         if size > 0 {
             self.objects.push(None);
+        }
+        // Each field takes a byte at least, so a header claiming more fields than bytes remain is
+        // corrupt; reserving for it could exhaust memory.
+        if size > self.end - self.position {
+            return Err(corrupted());
         }
         let mut fields = Vec::with_capacity(size);
         for _ in 0..size {
@@ -188,7 +193,9 @@ pub fn read_marshaled(bytes: &[u8], offset: usize) -> Result<(MarshalValue, usiz
         return Err(corrupted());
     }
     let length = get_word(offset + 4).ok_or_else(corrupted)? as usize;
-    let end = offset + HEADER_SIZE + length;
+    let end = (offset + HEADER_SIZE)
+        .checked_add(length)
+        .ok_or_else(corrupted)?;
     let mut reader = Reader {
         bytes,
         position: offset + HEADER_SIZE,

@@ -206,3 +206,19 @@ fn marshal_bounds_how_deep_blocks_nest() {
         assert!(read_marshaled(&nested(depth), 0).is_err(), "{depth}");
     }
 }
+
+// Headers that claim more than the input holds: a block of four million fields and a string of
+// 4 GB, each in a few bytes. Both are corrupt, found before anything is reserved for them.
+#[test]
+fn marshal_refuses_sizes_the_input_cannot_hold() {
+    for data in [
+        vec![0x08, 0xff, 0xff, 0xfc, 0x00, 0x40],
+        vec![0x0a, 0xff, 0xff, 0xff, 0xff, 0x61],
+    ] {
+        let mut input = from_hex("8495a6be0000000000000000000000000000000000000000");
+        input.truncate(20);
+        input[4..8].copy_from_slice(&(data.len() as u32).to_be_bytes());
+        input.extend(&data);
+        assert!(read_marshaled(&input, 0).is_err(), "{data:?}");
+    }
+}
