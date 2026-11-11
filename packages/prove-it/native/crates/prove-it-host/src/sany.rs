@@ -158,10 +158,8 @@ fn write_sany_text(arguments: &[HostValue]) -> HookResult {
         Some(source) => get_sany_text_of(&root, source, &options),
         // SANY reads a root module no file holds from its standard modules.
         None if standard.is_some() => standard.expect("a standard root"),
-        // The module SANY names may not be the file TLC names where the name has directories.
-        None if version == TlcVersion::Master && name == root => {
-            Ok(get_missing_root_text(name, &root))
-        }
+        // SANY names a root module no file holds by the spec's name as TLC was given it.
+        None if version == TlcVersion::Master => Ok(get_missing_root_text(name, name)),
         None => Err(FrontError::NotYet("a spec without its file".to_owned())),
     };
     if let Some(needed) = sources.get_needed() {
