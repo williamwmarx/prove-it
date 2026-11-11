@@ -591,6 +591,7 @@ fn assert_answers_as_z3(scripts: &[(&str, &str)]) {
             "(reset-assertions",
             "(check-sat-assuming",
             "(check-sat-using",
+            "(check-sat x)",
         ]
         .iter()
         .any(|command| script.contains(command))
@@ -629,7 +630,7 @@ fn resets_as_z3_does() {
 
 /// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
 /// 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 47] = [
+const COMMAND_ERRORS: [(&str, &str); 53] = [
     ("(assert false)(exit)(check-sat) )", ""),
     ("(assert false)(exit)(assert |x", ""),
     (
@@ -745,9 +746,28 @@ const COMMAND_ERRORS: [(&str, &str); 47] = [
         "(set-logic FOO)(set-logic UFNIA)(check-sat)",
         "unsupported\nsat",
     ),
+    // Z3 4.8.9 refuses set-logic once its manager is made, at the first declaration (5.3.3 only
+    // after an assertion, and prints sat).
     (
         "(declare-fun f (Int) Int)(set-logic UFNIA)(check-sat)",
-        "sat",
+        "(error \"logic must be set before initialization\")\nsat",
+    ),
+    (
+        "(declare-const x Int)(assert (! (> x 0) :named a))(set-logic UFNIA)(check-sat)",
+        "(error \"line 1 column 62: logic must be set before initialization\")\nsat",
+    ),
+    // Z3 4.8.9's check_not_initialized: the proof and core options too fail once the manager is
+    // made (5.3.3 refuses them only after an assertion, and prints sat).
+    (
+        "(declare-const x Int)(set-option :produce-proofs true)(check-sat)",
+        "(error \"error setting ':produce-proofs', option value cannot be modified after \
+         initialization\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(declare-const p Bool)(set-option :produce-assertions true)\
+         (assert false)(check-sat)",
+        "(error \"line 1 column 77: error setting ':produce-assertions', option value cannot be \
+         modified after initialization\")\nunsat",
     ),
     (
         "(set-logic |\"ALL\"|)(assert false)(check-sat)",
@@ -766,6 +786,14 @@ const COMMAND_ERRORS: [(&str, &str); 47] = [
         "(error \"line 1 column 12: invalid command argument, symbol expected\")\nunsat",
     ),
     (
+        "(declare-const x Bool)(assert (not x))(check-sat x)",
+        "unsat",
+    ),
+    (
+        "(assert false (check-sat))(check-sat)",
+        "(error \"line 1 column 15: invalid assert command, ')' expected\")\nunsat",
+    ),
+    (
         "(declare-const |(| Bool)(assert |(|)(assert (not |(|))(check-sat)",
         "unsat",
     ),
@@ -775,6 +803,11 @@ const COMMAND_ERRORS: [(&str, &str); 47] = [
     ),
     ("(assert |true|)(check-sat)", "sat"),
     ("(assert (|and| true false))(check-sat)", "unsat"),
+    // Z3 4.8.9's join refuses Bool and Int in one equality (5.3.3 joins them, and prints sat).
+    (
+        "(declare-const x Bool)(assert (= x 1))(check-sat)",
+        "(error \"Sorts Bool and Int are incompatible\")\nsat",
+    ),
     (
         "(get-model)(assert false)(check-sat)",
         "(error \"line 1 column 11: model is not available\")\nunsat",

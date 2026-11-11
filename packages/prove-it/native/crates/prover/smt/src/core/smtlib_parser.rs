@@ -985,10 +985,18 @@ pub fn parse_smtlib(
     let mut assertions = Vec::new();
     let mut has_check_sat = false;
     let mut has_logic = false;
+    // has_manager: Z3 4.8.9 makes its manager at the first declaration or assertion.
+    let mut is_initialized = false;
     let mut is_exited = false;
     for command in commands {
         let list = parser.expect_list(Some(command))?;
         let name = parser.expect_symbol(list.first().copied())?;
+        if matches!(
+            name,
+            "declare-sort" | "declare-fun" | "declare-const" | "assert"
+        ) {
+            is_initialized = true;
+        }
         match name {
             "declare-sort" => {
                 if let Some(arity) = list.get(2)
@@ -1029,6 +1037,11 @@ pub fn parse_smtlib(
                 let decl = m.mk_func_decl(SmtSymbol::Name(func_name.into()), &domain, range, false);
                 parser.funcs.insert(func_name, decl);
             }
+            "assert" if list.len() > 2 => {
+                return Err(SmtError::Parse(
+                    "invalid assert command, ')' expected".into(),
+                ));
+            }
             "assert" => {
                 // cmd_context::assert_expr keeps the assertion, and passes it to the solver.
                 let assertion = parser.parse_term(m, list.get(1).copied())?;
@@ -1050,6 +1063,7 @@ pub fn parse_smtlib(
                 parser.named.clear();
                 assertions.clear();
                 has_logic = false;
+                is_initialized = false;
                 m.limit.restart();
                 *m = AstManager::new(m.limit.clone());
                 on_command(m, Command::Reset)?;
@@ -1067,25 +1081,29 @@ pub fn parse_smtlib(
                 if has_logic {
                     return Err(SmtError::Parse("the logic has already been set".into()));
                 }
-                if !assertions.is_empty() {
+                if is_initialized {
                     return Err(SmtError::Parse(
                         "logic must be set before initialization".into(),
                     ));
                 }
                 has_logic = is_supported_logic(logic);
             }
-            // set_option_cmd's check_no_assertions.
+            // set_option_cmd's check_not_initialized, in Z3 4.8.9.
             "set-option"
-                if !assertions.is_empty()
+                if is_initialized
                     && [
                         ":produce-proofs",
                         ":produce-unsat-cores",
                         ":produce-unsat-assumptions",
+                        ":produce-assertions",
+                        ":interactive-mode",
+                        ":global-decls",
+                        ":global-declarations",
                     ]
                     .contains(&parser.get_keyword(list.get(1).copied()).unwrap_or("")) =>
             {
                 return Err(SmtError::Parse(
-                    "option value cannot be modified after assertions have been added".into(),
+                    "option value cannot be modified after initialization".into(),
                 ));
             }
             // Before the first check-sat there is no model, proof or core to get.
@@ -1097,6 +1115,12 @@ pub fn parse_smtlib(
             | "get-unsat-assumptions"
             | "eval" => {
                 return Err(SmtError::Parse(format!("{name} has nothing to get")));
+            }
+            // With arguments, check-sat is check-sat-assuming.
+            "check-sat" if list.len() > 1 => {
+                return Err(SmtError::Unsupported(
+                    "check-sat with assumptions is not supported".into(),
+                ));
             }
             "check-sat" => {
                 has_check_sat = true;
