@@ -288,6 +288,15 @@ impl CallStack {
     pub(crate) fn source(&self, value: &Value) -> Option<NodeId> {
         self.sourced.get(&address(value)?).map(|&(node, _)| node)
     }
+
+    // Gives a value the replay built the node that built it as its source, unless it has one.
+    fn give_source(&mut self, value: &Value, node: NodeId) {
+        if let Some(address) = address(value) {
+            self.sourced
+                .entry(address)
+                .or_insert_with(|| (node, value.clone()));
+        }
+    }
 }
 
 // The address of a value TLC's `CallStackTool` can give a source: an object, as a set, a function
@@ -1181,14 +1190,8 @@ impl<'ir> Evaluator<'ir> {
             // `CallStackTool.eval` returns a copy of a `SetPredValue`, which has no source.
             let is_copied =
                 matches!(value, Value::Lazy(lazy) if matches!(**lazy, Lazy::Filter(..)));
-            if is_sourced
-                && !is_copied
-                && let Some(address) = address(value)
-            {
-                stack
-                    .sourced
-                    .entry(address)
-                    .or_insert_with(|| (node, value.clone()));
+            if is_sourced && !is_copied {
+                stack.give_source(value, node);
             }
             stack.values.insert(node, value.clone());
         }
@@ -6006,6 +6009,26 @@ fn holds_unsorted(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A value the replay gave a source and then dropped keeps its address, so the next value the
+    // allocator makes can't take its source, whichever allocator it is.
+    #[test]
+    fn keeps_the_values_it_gives_a_source() {
+        let mut stack = CallStack::default();
+        let elements = Rc::new(vec![Value::Int(1)]);
+        let kept = Rc::downgrade(&elements);
+        stack.give_source(&Value::Set(elements), 7);
+        assert!(
+            kept.upgrade().is_some(),
+            "the call stack keeps the value it gave a source"
+        );
+        let other = Value::Set(Rc::new(vec![Value::Int(2)]));
+        assert_eq!(stack.source(&other), None);
+        assert_eq!(
+            stack.source(&Value::Set(kept.upgrade().expect("kept"))),
+            Some(7)
+        );
+    }
 
     fn lazy(lazy: Lazy) -> Value {
         Value::Lazy(Rc::new(lazy))
