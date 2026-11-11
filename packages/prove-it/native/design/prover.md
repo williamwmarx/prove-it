@@ -1048,12 +1048,26 @@ is next.
 - P1, PTL (#231): `prove-ptl` gives the reference LS4's verdict on the 26 formulas of
   `tests/conformance/ptl`, and on the 297 LS4 inputs of the record the TypeScript's verdict and
   step count on every one (297 same, 0 differs, declined or crash). Rust decides PTL by default.
-- P2 Zenon: `prove-zenon` ports all of `zenon/` but `encode.ts`, one module per TS file, behind
-  `PROVE_IT_PROVER`. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's tests
-  are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on each
-  fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches in
-  verdict, steps, every statistic and the proof's digest. Malformed input is declined. Next: the
-  decider differential on the corpus's `.znn` inputs, then the flip commit.
+- P2 Zenon (#227, flip in this entry's PR): `prove-zenon` ports all of `zenon/` but `encode.ts`,
+  one module per TS file. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's
+  tests are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on
+  each fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches
+  in verdict, steps, every statistic and the proof's digest. Malformed input is declined. On the
+  949 Zenon inputs of the record, `prover-differential --side rust --prover zenon` gives 949 same,
+  0 differs, unstable, declined or crash, through the addon and through WebAssembly; the TS unit
+  tests pass with `PROVE_IT_PROVER_ZENON=rust`. Rust decides Zenon by default. Size, release builds
+  on linux-x64-gnu from b736513 to fb96510: `prove-it-engine.node` 5,918,368 → 7,080,784 bytes,
+  `prove-it-engine.wasm` 4,303,223 → 5,210,377, the `prove-it` binary 5,701,384, unchanged (it
+  doesn't link the prover yet). Rust's Zenon peaks at 958 MB where the TypeScript's takes
+  1,416 MB on the input that reaches the memory limit. `conformance:prove` with Zenon in Rust and
+  in TypeScript: on every obligation both runs finished, the same status, but for two SMT
+  obligations that sit at Z3's time limit and `LamportMutex_proofs.tla` #388, which Rust's Zenon
+  proves inside tlapm's time limit and the TypeScript's doesn't. Its input
+  (`zenon/afc234afa4fc2a0a`) is `unknown` on both sides at the recorded step limit and `unsat` on
+  both with no limit, in the same 94,929 steps and the same statistics and proof. On the 4-core
+  container both runs lose a few large modules (`tcp_proof`, `BPConProof`, `CRDT_proof`) whose
+  workers the container's memory limit kills; alone, `CRDT_proof` gives the same statuses both
+  ways.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
@@ -1122,3 +1136,167 @@ is next.
       bytes as the TypeScript re-saves them;
     - every encoded result, re-encoded at its stored date and version.
   - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
+
+### TypeScript deviations from Z3
+
+The record holds what the TypeScript answers, so it cannot show where the TypeScript leaves Z3.
+`scripts/z3-parity.ts` runs Z3 5.3.3, the version the solver ports, on every `smt` and `z3` input
+of the record as tlapm runs it: `z3 -smt2 -v:0 AUTO_CONFIG=false smt.MBQI=true`, under the time
+limit prove sent the input with (5 s for all but 24 inputs; 2 have an `rlimit` budget and no time
+limit), which prover-inputs now writes to
+`.prover-inputs/time-limits.json`. The script's header cites tlapm's source for each part of the
+invocation. It fails unless the binary is Z3 5.3.3, records the binary's SHA-256 (`f6aa070c…6470`,
+the binary of the `z3-solver` 5.3.3.0 wheel), journals each run, and writes `.z3-parity.json`.
+
+On the record of `main` at b830769, and as it will be once the SMT part 3 re-record lands:
+
+| | `smt` | `z3` | after part 3 (`smt`) |
+|---|---|---|---|
+| Same verdict | 10,246 | 54 | 10,245 |
+| The TypeScript proves, Z3 doesn't | 4 | — | 5 |
+| Z3 proves, the TypeScript doesn't | 70 | 2 | 70 |
+| A verdict that contradicts (`sat` against `unsat`) | 0 | 0 | 0 |
+| Z3 errors | 0 | 0 | 0 |
+
+Where both prove, the search is mostly Z3's: on 9,996 of the 10,032 inputs both prove, the
+TypeScript makes as many quantifier instances as Z3. Its step count is not Z3's `rlimit-count`,
+though (equal on 1,464 inputs, a median of 0.92 of it): some of Z3's resource-limit charges are not
+counted.
+
+How the divergences were found: the instance streams. `smt.qi.profile_freq=1` makes Z3 print each
+instance's quantifier as it makes it, and the TypeScript's `QiQueue.instantiateEntry` gives the same
+stream. Z3 names a quantifier without `:qid` `k!<line>` with a numerical qid, and compares two
+quantifiers' qids unless both are numerical (`ast.cpp:448-449`), so a `:qid k!<line>` written into
+the text can stop Z3 from sharing two equal quantifiers and change its search (it does on
+`beb7dd1741444a77`). Z3's streams therefore come from the text as recorded, and the TypeScript's
+from the text with the names written in, which it does not change, since the TypeScript never
+compares qids (`ast.ts:1063`). Z3's `trace=true` changes Z3's search and cannot be used. A Z3 5.3.3
+built from the tag with tracing (`Z3_ENABLE_TRACING_FOR_NON_DEBUG`) gives the pinned binary's
+counts. Its `qi_queue_profile`, `mam_candidate` and `trigger_bug` traces leave the search
+unchanged, but `model_checker` changes it.
+
+Where the instance streams part, finer streams of both, compared event by event, place the first
+event that differs. In the build, trace points that print terms with `mk_ll_pp` (they leave the
+counts unchanged) give the e-matching candidates and code-tree runs, the matches and their
+fingerprints, the instantiation attempts with their bindings, the MBQI counterexamples and
+inverses, the auxiliary context's assertions, preprocessed formulas and decisions, the model
+finder's partial functions, the fresh names, and the merges. Hooks on the same functions of the
+TypeScript give its stream. A cause is confirmed by adding Z3's behaviour to a scratch copy of the
+TypeScript: the instance stream must then be Z3's past the old first difference.
+
+**The TypeScript proves, Z3 doesn't.** Z3 times out at 5 s and at 50 s on each.
+
+| Input | Obligation (`proofs.json`) | First instance that differs | Is the TypeScript's `unsat` right? |
+|---|---|---|---|
+| `smt/8df9b72d29f8a626` | VoteProof `Consensus` #33 | 37th: Z3 `k!33` (`SeqLenDef`, which has no pattern), the TypeScript `k!35` | Yes. Z3 5.3.3 proves it with `smt.random_seed` 1, 2 and 3, and with its default configuration. tlapm's Isabelle proved the obligation. |
+| `smt/fe8845daad4c648e` | `EmptySetEqCases_proofs` #1084 | 53rd: Z3 makes one more `k!25` (`EnumDefIntro 1`) | Yes. Z3 proves it with seeds 1, 2 and 3. tlapm's Z3 proved it. |
+| `smt/5e53b781a834c8ec` | TeachingConcurrency `Simple` #7, #27; `Simple_proof` #7 | 163rd: Z3 `k!39`, the TypeScript `k!42` | Yes. Z3 proves it in 1.1 s with its default configuration. tlapm's Z3 proved it. |
+| `smt/1319a2956705afce` | `EmptySetEqCases_proofs` #640 | 371st: Z3 `k!28`, the TypeScript `k!25` | Yes, from the obligation: tlapm's Zenon proved it. No Z3 setting tried proves the text: seeds 0 to 14 with tlapm's options and 0 to 13 with the default configuration, at 60 s each. |
+| `smt/0c812b0a8aa1347b` (after part 3) | DiningPhilosophers `DiningPhilosophers_proof` #274 | none on `main`: its 153,469 instances are Z3's first 153,469 | Yes, from the obligation: tlapm's Isabelle proved it. Z3 doesn't decide the text at 5 s or 50 s, or with seeds 1 to 3 or the default configuration at 60 s. |
+
+So none of the five is a soundness risk: each `unsat` holds. They are divergences in the search.
+Each run's instances are Z3's up to the point in the table. After that, the TypeScript happens to
+reach a proof, and Z3, on its own path, doesn't in the time.
+
+**Z3 proves, the TypeScript doesn't: 72.** Each was decided again by the TypeScript with no time
+limit and a step limit of twice Z3's `rlimit-count`.
+
+- **64 come from the step limits** (62 `smt`, both `z3`). The TypeScript proves each with exactly
+  Z3's number of instances, so it makes the same search. It needs about 0.9 of Z3's
+  `rlimit-count`, and the record's step limit is less than that.
+  - The record's step limit is the steps the TypeScript took in tlapm's time on the recording
+    machine. That is 0.08 to 0.88 of the resources Z3 uses in that time.
+  - These are a matter of the decider's speed, not of the search.
+- **8 are real divergences** (all `smt`). The first instance that differs, Z3's against the
+  TypeScript's:
+  - `cb7b13d3236da8ea` 413th, `k!41` against `k!30`; Z3 proves it with 0.14 of the record's
+    step limit.
+  - `ee2307985b84e424` 137th, `k!43` against `k!38`; Z3 proves it with 0.22 of the step limit.
+  - `52c873767bacfb3b` 2,343rd, Z3's last instance, the goal's `k!270`, against `k!23`.
+  - `024f5dc53f8b63a5` 214th, `k!25` against `k!431`.
+  - `d542f926ff5ed013` 213th, `k!282` against `k!276`.
+  - `fa51a87ba4ebf399` 7,702nd, `k!284` against `k!286`.
+  - `41a69bf765dd7c8b` 11,110th, `k!197` against `k!53`, and `beb7dd1741444a77` 52,974th, `k!33`
+    against `k!49` (the 152nd with the names written in, which change Z3's search there). The
+    TypeScript still proves these two with more steps, on another path.
+
+**Where the searches part.** Four causes, in the TypeScript and in Z3 5.3.3 (paths under
+`src/prover/smt/solver/` and Z3's `src/`):
+
+1. **`flatten_clauses` distributes a shared conjunction.** `cb7b13d3236da8ea`,
+   `ee2307985b84e424`, `52c873767bacfb3b`, `024f5dc53f8b63a5`, `d542f926ff5ed013`,
+   `fa51a87ba4ebf399` and `beb7dd1741444a77`; and of the TypeScript's proofs `fe8845daad4c648e`,
+   `5e53b781a834c8ec` and the first divergence of `1319a2956705afce`.
+   - Z3 distributes `(or a (not d))` into clauses only when the disjunction `d` has no other
+     parent, `d->get_ref_count() == 1` in `can_distribute` (`solver/assertions/asserted_formulas.cpp:433-437`,
+     in `flatten_clauses`, 411). `asserted-formulas.ts:426-430`, in `flattenClauses` (405-468),
+     checks only the occurrence count, so it also distributes a `d` that another formula holds.
+   - The difference shows in MBQI's auxiliary context, which preprocesses each check's formulas.
+     On `cb7b13d3236da8ea` the events agree up to the 589th instantiation attempt, an MBQI
+     instance of `k!28`. In the check of `k!26` before it the auxiliary context's assertions are
+     the same, but after `flatten_clauses` its clauses differ (`(not (or …))` over a disjunction
+     that also occurs elsewhere). Its decision at level 4 then differs, and so does its
+     counterexample for `k!28` (`smt_model_checker.cpp:218`, `add_instance`, against
+     `model-checker.ts:200`). On `ee2307985b84e424` the first difference is again a preprocessed
+     clause of the auxiliary context.
+   - With the reference-count condition added, the TypeScript's instance stream is Z3's to the
+     end on `cb7b13d3236da8ea` (471 instances), `ee2307985b84e424` (1,257), `52c873767bacfb3b`
+     (2,343), `024f5dc53f8b63a5` (1,045), `d542f926ff5ed013` (53,000) and `fa51a87ba4ebf399`
+     (8,000), and it proves each. On `beb7dd1741444a77` it is Z3's for all 449,825 instances Z3
+     makes in 6 s, and the TypeScript proves it. On `fe8845daad4c648e` (28,303) and
+     `5e53b781a834c8ec` (86,967) it is Z3's whole 5 s stream, and the TypeScript no longer proves
+     either within its step limit.
+2. **The model gives `false` the value `true`.** `8df9b72d29f8a626`.
+   - Z3's model generator takes a Boolean class's value from `get_assignment(enode)`, which
+     answers `l_false` for the `false` node (`smt/smt_model_generator.cpp:102`,
+     `smt/smt_context.cpp:1681-1690`), and `get_assignment(expr)` answers `l_false` for `false`
+     before it looks at a Boolean variable (`smt_context.cpp:1646-1648`). The TypeScript's
+     `model-generator.ts:61` calls `findAssignment` (`internalizer.ts:380`), which reads the
+     variable that `false` shares with `true` (209) before it checks for `false` (389-390), and so
+     answers true.
+   - So `(Cast_Bool false)` has no entry of its own. MBQI's `cleanup_instantiation_sets`
+     evaluates it with model completion and gives `Cast_Bool` an else value
+     (`model-evaluator.ts:225`, `getMacro`, against `model/model_evaluator.cpp:394`). In Z3 the
+     function stays partial, so `complete_partial_funcs` gives it a projection and the fresh
+     `Cast_Bool!17` (`smt_model_finder.cpp:955-971, 1072-1109`, against `auf-solver.ts:466-481,
+     520-542`). The fresh names, the auxiliary context's clauses and the counterexamples part from
+     there, and the 37th instance, made by MBQI, differs.
+   - With `false` answered first, the TypeScript's stream is Z3's for all 9,343 instances it
+     makes within its step limit, and it no longer proves the input. This corrects the guess that
+     the model checker itself parts.
+3. **Propagated values reorder a restriction.** The second divergence of `1319a2956705afce`, at
+   the 736th instance once the first two causes are taken away.
+   - The auxiliary context gets the same restriction `(or (= k!269 v45) (= k!269 v19) …)`
+     (`smt_model_finder.cpp:2674`, `restrict_sks_to_inst_set`). The rewriting in the first pass of
+     `propagate_values` moves the same eight disjuncts to the front in a different order
+     (`solver/assertions/asserted_formulas.cpp:618-622`, the rewriter of `propagate_values(i)`,
+     against `asserted-formulas.ts:351-359`).
+   - The first differing event inside the rewriter is not found yet.
+4. **A propagated equality.** `41a69bf765dd7c8b`, which the first two causes don't touch.
+   - The events agree until a match of `k!52` with generation 10, about the 21,457th
+     instantiation attempt. Z3's next merge is an asserted equality between
+     `(Proj_Int (y1!6 (FunApp (e!7 (y1!6 …)) …)))`, a chain of four `y1!6`, and a shorter
+     `Proj_Int` term. The TypeScript's next merge joins a different `Proj_Int` term,
+     `(Proj_Int (y1!6 (z!0 …)))`, to the same one.
+   - The places: Z3's `context::propagate` and `add_eq` (`smt_context.cpp:1840, 484`) against
+     `context.ts:355, 470`. The first differing event inside, the assignment that leads to the
+     merge, is not found yet.
+
+`0c812b0a8aa1347b` follows Z3 on `main` (above), with or without the first cause's condition.
+With part 3's fix the TypeScript proves it instead, so the fix leaves Z3's search on this input;
+compare its stream with Z3's before merging.
+
+**Fix order.** No decider changes with this audit. The fixes come first where a verdict changes,
+and the earliest divergence first within each group, since a single cause may explain several:
+
+1. The reference-count condition of `flatten_clauses` (cause 1). It changes the verdict of
+   `cb7b13d3236da8ea` and `ee2307985b84e424` whatever the calibration, and makes `52c873767bacfb3b`,
+   `024f5dc53f8b63a5`, `d542f926ff5ed013`, `fa51a87ba4ebf399` and `beb7dd1741444a77` follow Z3.
+   It takes away the TypeScript's extra proofs of `fe8845daad4c648e` and `5e53b781a834c8ec`.
+2. The value of `false` in the model (cause 2), which takes away the extra proof of
+   `8df9b72d29f8a626`.
+3. `1319a2956705afce` (cause 3) and `41a69bf765dd7c8b` (cause 4), once their first differing
+   events are found. Then `0c812b0a8aa1347b` once part 3 is in.
+4. The 64 step-limit cases need no decider fix. Recording step limits from Z3's `rlimit-count`
+   within tlapm's time would make the record match Z3's verdicts there. That needs the step count
+   to charge what Z3 charges first.

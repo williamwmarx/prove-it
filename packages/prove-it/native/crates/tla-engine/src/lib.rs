@@ -16,5 +16,5 @@ pub mod search;
 pub mod symmetry;
 
 pub use compile::{CompileError, Compiled, Compiler, Options, Root};
-pub use machine::{Continue, Eval, Machine, Printed, Program, Registers, Step, UNASSIGNED};
+pub use machine::{Continue, Eval, Machine, Printed, Prints, Program, Registers, Step, UNASSIGNED};
 pub use tla_values::on_nesting_stack;
