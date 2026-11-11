@@ -1,4 +1,4 @@
-//! prove-num against JavaScript: the tables `scripts/smt-foundation-tables.ts` records from
+//! prove-num against JavaScript: the tables `scripts/smt-foundation-tables.ts` recorded from
 //! `bigint` and `rational.ts`.
 
 use std::cmp::Ordering;

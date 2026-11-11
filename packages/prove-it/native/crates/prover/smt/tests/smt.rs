@@ -1,7 +1,7 @@
-//! `tests/unit/smt.test.ts`, case for case, on `decide` and `check_smt`: each test asserts what the
-//! TypeScript test asserts, on the same inputs under `tests/fixtures/smt`.
+//! The deleted `tests/unit/smt.test.ts`, case for case, on `decide` and `check_smt`: each test
+//! asserts what the TypeScript test asserted, on the same inputs under `tests/fixtures/smt`.
 //!
-//! The TypeScript gives each decision 5 seconds; these give none and a step limit far above what
+//! The TypeScript gave each decision 5 seconds; these give none and a step limit far above what
 //! any case takes, so that they are deterministic. Each runs on a thread with the stack the binding
 //! gives a decision.
 
@@ -14,7 +14,7 @@ use prove_smt::core::solver::check_smt;
 use prove_smt::util::rlimit::ResourceLimit;
 
 const STEP_LIMIT: u64 = 50_000_000;
-/// The step limit of `scripts/smt-decide-reference.ts`.
+/// The step limit `tests/tables/decide.txt` was recorded under.
 const REFERENCE_STEP_LIMIT: u64 = 5_000_000;
 const DECIDE_STACK_BYTES: usize = 256 * 1024 * 1024;
 
@@ -415,7 +415,7 @@ fn refutes_a_factorization_of_a_prime() {
     );
 }
 
-/// The verdict and the statistics as `scripts/smt-decide-reference.ts` prints them.
+/// The verdict and the statistics as `tests/tables/decide.txt` holds them.
 fn get_decision_text(decision: &Decision) -> String {
     let statistics = decision.statistics.iter().map(|entry| match &entry.1 {
         Statistic::Count(count) => format!(" {}={count}", entry.0),
@@ -428,12 +428,12 @@ fn get_decision_text(decision: &Decision) -> String {
     )
 }
 
-// The decider differential in miniature: `tests/tables/decide.txt`, which
-// `scripts/smt-decide-reference.ts` writes, holds decideSmt's verdict and statistics on every
-// fixture under the same step limit and no deadline. The port answers each with the same verdict
-// and the same statistics: the same search, step for step.
+// The decider differential in miniature: `tests/tables/decide.txt` holds the verdict and statistics
+// the TypeScript decideSmt gave on every fixture under the same step limit and no deadline, before
+// it was deleted. Nothing rewrites it. The port answers each with the same verdict and the same
+// statistics: the same search, step for step.
 #[test]
-fn decides_every_fixture_as_the_typescript_does() {
+fn decides_every_fixture_as_recorded() {
     let table =
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/tables/decide.txt"))
             .expect("the table");

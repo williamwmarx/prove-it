@@ -1,4 +1,4 @@
-//! th_rewriter against the TypeScript it ports: `scripts/smt-th-rewriter-tables.ts` records
+//! th_rewriter against the TypeScript it ports: `scripts/smt-th-rewriter-tables.ts` recorded
 //! seeded episodes of random arithmetic, Boolean, ite and quantified terms rewritten by
 //! `rewriter.ts`'s Rewriter under its option sets, by its mk_* entry points and by `der.ts`, and
 //! the rewrite of every assertion of `tests/fixtures/smt`, with what each returned, the resource

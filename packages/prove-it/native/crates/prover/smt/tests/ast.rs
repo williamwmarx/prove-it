@@ -1,4 +1,4 @@
-//! The AST manager against the TypeScript it ports: `scripts/smt-core-tables.ts` records a seeded
+//! The AST manager against the TypeScript it ports: `scripts/smt-core-tables.ts` recorded a seeded
 //! sequence of operations on `ast.ts`'s AstManager with what each returned, and this replays them:
 //! the handles, Z3 ids and hashes of the expressions, the small ids of their declarations, the
 //! number of ASTs, and the ids and reference counts of every expression at checkpoints.

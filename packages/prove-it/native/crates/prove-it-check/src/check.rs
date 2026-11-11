@@ -1141,6 +1141,12 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .host
             .get_variable("PROVE_IT_TEST_LIVE_CHECK_AT")
             .and_then(|at| at.parse().ok()),
+        test_memo_entries: get_number(printer.host, "PROVE_IT_TEST_MEMO_ENTRIES"),
+        test_progress_at: get_number(printer.host, "PROVE_IT_TEST_PROGRESS_AT"),
+        test_evaluations: printer
+            .host
+            .get_variable("PROVE_IT_TEST_EVALUATIONS")
+            .and_then(|evaluations| evaluations.parse().ok()),
         is_dumped,
         is_continued,
         large_region_advice: printer.host.large_region_advice(),
@@ -1181,7 +1187,19 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             (outcome, relay.assumed_printed, relay.dumped)
         },
         || {
-            for event in receiver.iter() {
+            loop {
+                // TLC prints each line as it goes, so what waits in the buffer goes out whenever
+                // the search has nothing more to say yet.
+                let event = match receiver.try_recv() {
+                    Ok(event) => event,
+                    Err(_) => {
+                        printer.flush();
+                        let Ok(event) = receiver.recv() else {
+                            break;
+                        };
+                        event
+                    }
+                };
                 match event {
                     Event::InitialStatesStarted => printer.print(
                         code::COMPUTING_INIT,
@@ -2045,7 +2063,7 @@ pub(crate) fn print_violation(
                 "-dumpTrace into a file it can't write",
             ));
         }
-        printer.outcome.violations.push(Reported {
+        printer.record(Reported {
             code,
             headline: text,
             states: vec![ReportedState {
@@ -2285,7 +2303,7 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
             Level::Error,
             &format!("{}\n{}", report.headline, format_variables(&variables)),
         );
-        printer.outcome.violations.push(Reported {
+        printer.record(Reported {
             code: report.code,
             headline: report.headline.clone(),
             states: vec![ReportedState {
@@ -2585,20 +2603,13 @@ mod tests {
         fn print(&mut self, _store: &tla_values::Store, _prints: &tla_engine::Prints) {}
     }
 
-    #[test]
-    fn answers_atoms_that_cache_on_the_machine_that_searched() {
-        // TLC keeps one TLCCache for the run, filled as it first evaluates the expression: the
-        // key 0 caches x of the initial state, 0, so the atom is FALSE where x is 1, and the
-        // lasso that stutters there violates Prop, on any number of threads.
+    // The engine IR of a model of the module, which is named `name`, and the configuration.
+    fn lower(name: &str, module: &str, config: &str) -> tla_ir::Ir {
         let directory =
-            std::env::temp_dir().join(format!("prove-it-cached-atoms-{}", std::process::id()));
+            std::env::temp_dir().join(format!("prove-it-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("a directory");
-        let spec = directory.join("Cached.tla");
-        std::fs::write(
-            &spec,
-            "---- MODULE Cached ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = 1\nSpec == Init /\\ [][Next]_x\nProp == <>[](\\E i \\in {x} : TLCCache(i, 0) = x)\n====\n",
-        )
-        .expect("a spec");
+        let spec = directory.join(format!("{name}.tla"));
+        std::fs::write(&spec, module).expect("a spec");
         let options = tla_front::model::ModelOptions {
             libraries: &[],
             version: None,
@@ -2607,11 +2618,21 @@ mod tests {
             random_seed: 0,
             root_extendees: &[],
         };
-        let bytes =
-            tla_front::model::lower_model(&spec, "SPECIFICATION Spec\nPROPERTY Prop\n", &options)
-                .expect("a model");
+        let bytes = tla_front::model::lower_model(&spec, config, &options).expect("a model");
         std::fs::remove_dir_all(&directory).expect("removed");
-        let ir = tla_ir::decode(&bytes).expect("an IR");
+        tla_ir::decode(&bytes).expect("an IR")
+    }
+
+    #[test]
+    fn answers_atoms_that_cache_on_the_machine_that_searched() {
+        // TLC keeps one TLCCache for the run, filled as it first evaluates the expression: the
+        // key 0 caches x of the initial state, 0, so the atom is FALSE where x is 1, and the
+        // lasso that stutters there violates Prop, on any number of threads.
+        let ir = lower(
+            "Cached",
+            "---- MODULE Cached ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = 1\nSpec == Init /\\ [][Next]_x\nProp == <>[](\\E i \\in {x} : TLCCache(i, 0) = x)\n====\n",
+            "SPECIFICATION Spec\nPROPERTY Prop\n",
+        );
         for threads in [1, 2, 4] {
             let settings = Settings {
                 is_violation_reported: true,
@@ -2633,5 +2654,186 @@ mod tests {
                 "{threads} threads"
             );
         }
+    }
+
+    // IsSimpleCycle as the ewd998 example's Utils.tla defines it, with Range from the community
+    // modules' Functions.tla, which reads F[i-1] twice: without its memo table, a call over n
+    // nodes evaluates F's body 2^n - 1 times.
+    const SIMPLE_CYCLE: &str = r"EXTENDS Integers, Sequences, FiniteSets, TLC
+Range(f) == { f[x] : x \in DOMAIN f }
+IsSimpleCycle(S, r) ==
+  LET
+   F[ i \in 1..Cardinality(S) ] ==
+         IF i = 1 THEN << CHOOSE s \in S : TRUE >>
+         ELSE LET seq == F[i-1]
+                  head == Head(seq)
+              IN << r[head] >> \o F[i-1]
+  IN Range(F[Cardinality(S)]) = S
+";
+
+    // What a search found, from its counts and the fingerprints of its states in order, and on
+    // how many threads it shared a level.
+    fn get_found(ir: &tla_ir::Ir, settings: &Settings) -> (String, usize) {
+        let outcome = tla_engine::on_nesting_stack(|| search(ir, settings, &mut Quiet));
+        match outcome {
+            SearchOutcome::Complete {
+                counts,
+                fingerprints,
+                threads,
+                ..
+            } => (format!("{counts:?} {fingerprints:?}"), threads),
+            SearchOutcome::Declined(reason) | SearchOutcome::Stopped { reason, .. } => {
+                panic!("{reason}")
+            }
+            _ => panic!("a search that didn't complete"),
+        }
+    }
+
+    // The workers read the ring the search's machine chose as the initial states were computed,
+    // as TLC's do the value it computed at startup (SpecProcessor.processConstantDefns), rather
+    // than choose it again each: within a budget of twice what one thread evaluates, they find
+    // what one thread finds.
+    #[test]
+    fn shares_the_constants_the_search_computed_with_the_threads() {
+        let ir = lower(
+            "Ring",
+            &format!(
+                "---- MODULE Ring ----\n{SIMPLE_CYCLE}Node == 1..5\nRingOfNodes ==\n  CHOOSE r \\in [ Node -> Node ]: IsSimpleCycle(Node, r)\nVARIABLES x, n\nInit == x = RingOfNodes[1] /\\ n = 0\nNext == \\E k \\in 1..20 : n' = (n + k) % 400 /\\ x' = RingOfNodes[x]\nSpec == Init /\\ [][Next]_<<x, n>>\n====\n"
+            ),
+            "SPECIFICATION Spec\n",
+        );
+        let settings = |threads| Settings {
+            threads,
+            minimum_shared_level: 1,
+            test_evaluations: Some(RING_EVALUATIONS),
+            ..Settings::default()
+        };
+        let (one, _) = get_found(&ir, &settings(1));
+        let (four, threads) = get_found(&ir, &settings(4));
+        assert_eq!(four, one);
+        assert!(threads > 1);
+    }
+
+    // Twice the 9,710 bodies of F that the search evaluates on one thread, choosing RingOfNodes
+    // over 1..5, where each of four threads choosing it again would take about five times that.
+    const RING_EVALUATIONS: u64 = 2 * 9_710;
+
+    // A constant the threads read first is computed at most once on each, rather than again at
+    // each level, by those that read it before the search's machine has it: within a budget of
+    // four times the 4,855 bodies of F that choosing RingOfNodes over 1..5 evaluates, and a
+    // fifth for room, they find what one thread finds.
+    #[test]
+    fn computes_a_constant_the_threads_read_first_at_most_once_on_each() {
+        let ir = lower(
+            "LateRing",
+            &format!(
+                "---- MODULE LateRing ----\n{SIMPLE_CYCLE}Node == 1..5\nRingOfNodes ==\n  CHOOSE r \\in [ Node -> Node ]: IsSimpleCycle(Node, r)\nVARIABLES x, n\nInit == x = 1 /\\ n = 0\nNext == \\E k \\in 1..20 : n' = (n + k) % 400 /\\ x' = IF n >= 50 THEN RingOfNodes[x] ELSE x\nSpec == Init /\\ [][Next]_<<x, n>>\n====\n"
+            ),
+            "SPECIFICATION Spec\n",
+        );
+        let settings = |threads, evaluations| Settings {
+            threads,
+            minimum_shared_level: 1,
+            test_evaluations: Some(evaluations),
+            ..Settings::default()
+        };
+        let (one, _) = get_found(&ir, &settings(1, 4_855));
+        let (four, threads) = get_found(&ir, &settings(4, 5 * 4_855));
+        assert_eq!(four, one);
+        assert!(threads > 1);
+    }
+
+    // A full memo table of a recursive function forgets what it holds rather than take no more or
+    // turn off, so each state's call over 20 nodes evaluates F's body 20 times rather than
+    // 2^20 - 1, with a room that fills in a few states, on any number of threads.
+    #[test]
+    fn keeps_memoizing_a_recursive_function_once_its_table_is_full() {
+        let ir = lower(
+            "Shifted",
+            &format!(
+                "---- MODULE Shifted ----\n{SIMPLE_CYCLE}Node == 1..20\nShift(n) == [ i \\in Node |-> ((i + n) % 20) + 1 ]\nVARIABLE n\nInit == n = 0\nNext == \\E k \\in 1..10 : n' = (n + k) % 200\nSpec == Init /\\ [][Next]_n\nInv == IsSimpleCycle(Node, Shift(n)) \\in BOOLEAN\n====\n"
+            ),
+            "SPECIFICATION Spec\nINVARIANT Inv\n",
+        );
+        let settings = |threads| Settings {
+            threads,
+            minimum_shared_level: 1,
+            test_memo_entries: Some(256),
+            test_evaluations: Some(200 * 100),
+            ..Settings::default()
+        };
+        let (one, _) = get_found(&ir, &settings(1));
+        let (four, threads) = get_found(&ir, &settings(4));
+        assert_eq!(four, one);
+        assert!(threads > 1);
+    }
+
+    // A constant TLC computed at startup that draws keeps the search on one thread, which reads
+    // the value drawn.
+    #[test]
+    fn keeps_a_search_that_draws_on_one_thread() {
+        let ir = lower(
+            "Drawn",
+            "---- MODULE Drawn ----\nEXTENDS Integers, TLC\nDrawn == RandomElement(1..1000000)\nVARIABLES n, d\nInit == n = 0 /\\ d = Drawn\nNext == \\E k \\in 1..10 : n' = (n + k) % 200 /\\ d' = Drawn\nSpec == Init /\\ [][Next]_<<n, d>>\n====\n",
+            "SPECIFICATION Spec\n",
+        );
+        let settings = |threads| Settings {
+            threads,
+            minimum_shared_level: 1,
+            ..Settings::default()
+        };
+        let (one, _) = get_found(&ir, &settings(1));
+        let (four, threads) = get_found(&ir, &settings(4));
+        assert_eq!(four, one);
+        assert_eq!(threads, 1);
+    }
+
+    // The progress a search reported: states generated, distinct and left on the queue.
+    struct Progressed(Vec<[u64; 3]>);
+
+    impl Reporter for Progressed {
+        fn initial_states_started(&mut self) {}
+        fn initial_states_progress(&mut self, _count: u64) {}
+        fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
+        fn progress(&mut self, generated: u64, distinct: u64, queued: u64, _depth: u64) {
+            self.0.push([generated, distinct, queued]);
+        }
+        fn print(&mut self, _store: &tla_values::Store, _prints: &tla_engine::Prints) {}
+    }
+
+    // TLC reports its progress while its workers expand a level, so a search that shares a level
+    // reports it there too: once a thread claims the state PROVE_IT_TEST_PROGRESS_AT names, with
+    // more than the 4,001 states generated before the level and fewer than the 8,001 after it.
+    #[test]
+    fn reports_its_progress_inside_a_shared_level() {
+        let ir = lower(
+            "Wide",
+            "---- MODULE Wide ----\nEXTENDS Integers\nVARIABLE n\nInit == n = 0\nNext == \\/ n = 0 /\\ n' \\in 1..4000\n        \\/ n \\in 1..4000 /\\ n' = n + 4000\nSpec == Init /\\ [][Next]_n\n====\n",
+            "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\n",
+        );
+        let settings = Settings {
+            threads: 4,
+            minimum_shared_level: 1,
+            test_progress_at: Some(2000),
+            ..Settings::default()
+        };
+        let mut progressed = Progressed(Vec::new());
+        let outcome = tla_engine::on_nesting_stack(|| search(&ir, &settings, &mut progressed));
+        let SearchOutcome::Complete { counts, .. } = outcome else {
+            panic!("a search that didn't complete");
+        };
+        assert_eq!((counts.generated, counts.distinct), (8001, 8001));
+        assert!(
+            progressed
+                .0
+                .iter()
+                .any(|&[generated, distinct, queued]| generated > 4001
+                    && generated < 8001
+                    && distinct > 4001
+                    && distinct <= 8001
+                    && distinct - queued > 1),
+            "{:?}",
+            progressed.0
+        );
     }
 }

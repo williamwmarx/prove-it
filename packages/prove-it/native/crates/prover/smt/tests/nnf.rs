@@ -1,4 +1,4 @@
-//! The normal forms against the TypeScript they port: `scripts/smt-nnf-tables.ts` records a seeded
+//! The normal forms against the TypeScript they port: `scripts/smt-nnf-tables.ts` recorded a seeded
 //! sequence of operations on random quantified Boolean and arithmetic terms with uninterpreted
 //! functions, then applies each transformation to every assertion and quantifier of
 //! `tests/fixtures/smt`, with what each returned, the fresh declarations it made, the resource

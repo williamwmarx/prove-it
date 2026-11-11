@@ -1045,9 +1045,9 @@ impl<'a> Compiler<'a> {
         slot
     }
 
-    fn allocate_table(&mut self, width: usize) -> usize {
-        self.program.memo_widths.push(width);
-        self.program.memo_widths.len() - 1
+    fn allocate_table(&mut self, width: usize, is_kept: bool) -> usize {
+        self.program.memo_tables.push((width, is_kept));
+        self.program.memo_tables.len() - 1
     }
 
     fn allocate_once(&mut self) -> usize {
@@ -1122,7 +1122,7 @@ impl<'a> Compiler<'a> {
         if width > MAXIMUM_MEMO_WIDTH {
             return self.cached_in_epoch(compiled);
         }
-        let table = self.allocate_table(width);
+        let table = self.allocate_table(width, false);
         let footprint = &compiled.footprint;
         let keys: Vec<Key> = footprint
             .vars
@@ -2831,7 +2831,7 @@ impl<'a> Compiler<'a> {
     ) {
         let width = key_slots.len() + footprint.vars.len() + footprint.primes.len();
         let table = (width <= MAXIMUM_MEMO_WIDTH && !self.options.is_memo_off)
-            .then(|| self.allocate_table(width));
+            .then(|| self.allocate_table(width, true));
         let keys = footprint
             .vars
             .iter()

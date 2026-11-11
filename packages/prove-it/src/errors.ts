@@ -243,33 +243,6 @@ export class TlaUnsupportedError extends TlaError {
   }
 }
 
-// The SMT solver met input outside the SMT-LIB subset that tlapm emits, or a numeral too large for
-// its exact arithmetic. The solver answers unknown.
-export class SmtUnsupportedError extends TlaError {
-  constructor(message: string, cause?: unknown) {
-    super(message, cause);
-    this.name = "SmtUnsupportedError";
-  }
-}
-
-// The SMT solver ran past its time limit, or its signal aborted, in the middle of a rewrite. The
-// solver answers unknown.
-export class SmtCanceledError extends TlaError {
-  constructor() {
-    super("the SMT solver was canceled");
-    this.name = "SmtCanceledError";
-  }
-}
-
-// The SMT solver broke one of its own invariants, a bug in the port rather than in the input. It
-// keeps its name, and index.ts doesn't export it.
-export class SmtInvariantError extends TlaError {
-  constructor(message: string) {
-    super(message);
-    this.name = "SmtInvariantError";
-  }
-}
-
 // The engine broke one of its own invariants, or one of its self-checks (PROVE_IT_EPOCH_CHECK,
 // PROVE_IT_LIVE_CHECK, PROVE_IT_FINGERPRINT=check) found two ways of computing one answer that
 // disagree: a bug in the engine rather than in the spec. index.ts doesn't export it.
@@ -299,32 +272,6 @@ export class MissingBuildFileError extends TlaError {
   constructor(url: URL) {
     super(`Cannot find ${url.href}, which the build puts beside the bundle.`);
     this.name = "MissingBuildFileError";
-  }
-}
-
-// nlsat reached a case Z3 leaves unimplemented, where Z3 exits the process. nra answers unknown
-// instead. index.ts doesn't export it.
-export class NlsatUnsupportedError extends TlaError {
-  constructor(reason: string) {
-    super(`nlsat does not implement ${reason}`);
-    this.name = "NlsatUnsupportedError";
-  }
-}
-
-// mem_out: the pdd manager needed a node past its limit outside an operation. Grobner catches it
-// and gives up on the round. index.ts doesn't export it.
-export class PddMemoryOutError extends TlaError {
-  constructor() {
-    super("the pdd manager ran out of nodes");
-    this.name = "PddMemoryOutError";
-  }
-}
-
-// The SMT-LIB input is malformed: a syntax error, an undeclared symbol, or an ill-sorted application.
-export class SmtParseError extends TlaError {
-  constructor(message: string, cause?: unknown) {
-    super(message, cause);
-    this.name = "SmtParseError";
   }
 }
 

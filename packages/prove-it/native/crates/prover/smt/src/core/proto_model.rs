@@ -933,7 +933,7 @@ impl ProtoModel {
 #[cfg(test)]
 pub(crate) mod tests {
     //! The hand-built interpretations and models of `scripts/smt-model-reference.ts`, built in the
-    //! same order, against the table it prints (`tests/tables/models.txt`): each line of a section
+    //! same order, against the table it printed (`tests/tables/models.txt`): each line of a section
     //! here is the line the TypeScript printed.
 
     use prove_decide::Limits;
