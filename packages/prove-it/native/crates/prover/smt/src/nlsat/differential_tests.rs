@@ -10,7 +10,9 @@ use super::test_util::{
     parse_polynomial, parse_rational, read_fixture, show_anum, show_polynomial,
 };
 use super::types::{Atom, IneqKind, RootKind};
-use super::{L_FALSE, L_TRUE, LBool, SmtError};
+use super::{L_FALSE, L_TRUE, LBool, ResourceLimit, SmtError};
+use crate::util::rlimit::StopReason;
+use prove_decide::Limits;
 
 fn get_line<'input>(input: &'input str, name: &str) -> &'input str {
     input
@@ -82,8 +84,12 @@ fn show_atom(solver: &NlsatSolver, atom: Option<&Atom>) -> String {
 }
 
 // The solver of a problem's text, with its atoms and clauses, and the literal of each atom.
-fn mk_solver(input: &str, budget: Option<u64>) -> (NlsatSolver, Vec<u32>) {
-    let mut solver = NlsatSolver::new(budget);
+fn mk_solver(
+    input: &str,
+    limit: Option<&ResourceLimit>,
+    budget: Option<u64>,
+) -> (NlsatSolver, Vec<u32>) {
+    let mut solver = NlsatSolver::new(limit, budget);
     let mut literals: Vec<u32> = Vec::new();
     for line in input.split('\n') {
         let words: Vec<&str> = line.split(' ').collect();
@@ -133,6 +139,7 @@ fn mk_solver(input: &str, budget: Option<u64>) -> (NlsatSolver, Vec<u32>) {
 fn run_check(input: &str) -> Vec<String> {
     let (mut solver, literals) = mk_solver(
         input,
+        None,
         Some(get_line(input, "budget").parse().expect("a budget")),
     );
     let conflicts = get_line(input, "conflicts");
@@ -141,7 +148,7 @@ fn run_check(input: &str) -> Vec<String> {
     }
     let shown: Vec<String> = literals.iter().map(ToString::to_string).collect();
     let mut output = vec![format!("literals {}", shown.join(" "))];
-    match solver.check(None) {
+    match solver.check() {
         Ok(result) => {
             output.push(format!("check {}", show_result(result)));
             if result == L_TRUE {
@@ -168,7 +175,7 @@ fn run_check(input: &str) -> Vec<String> {
     output.push(format!(
         "steps {} conflicts={} restarts={} propagations={} decisions={} stages={} \
          irrational_assignments={}",
-        solver.steps,
+        solver.steps(),
         stats.conflicts,
         stats.restarts,
         stats.propagations,
@@ -181,7 +188,7 @@ fn run_check(input: &str) -> Vec<String> {
 
 // check_assignment at each point in turn, on one solver of the problem, until one fails.
 fn run_check_assignment(input: &str) -> Vec<String> {
-    let mut solver = mk_solver(input, None).0;
+    let mut solver = mk_solver(input, None, None).0;
     let mut output = Vec::new();
     for line in input.split('\n').filter(|line| line.starts_with("point ")) {
         let values: Vec<Option<Anum>> = line
@@ -189,7 +196,7 @@ fn run_check_assignment(input: &str) -> Vec<String> {
             .skip(1)
             .map(|text| (text != "_").then(|| Anum::new(parse_rational(text))))
             .collect();
-        match solver.check_assignment(&values, None) {
+        match solver.check_assignment(&values) {
             Ok((result, clause)) if result == L_FALSE => {
                 let literals: String = clause
                     .iter()
@@ -238,4 +245,37 @@ fn searches_as_the_typescript_does() {
         cases.len(),
         failures.join("\n")
     );
+}
+
+// A problem on which the search used to run without end inside the resultants of eval_sign_at,
+// between two of its own checkpoints.
+const UNBOUNDED_PROBLEM: &str = "vars 3
+int 0 0 1
+a LT o 4:2^2 12:2^1 9:
+a LT o 6:0^1,1^1,2^1 4:1^1,2^2 2:1^1,2^1
+a LT o -3:2^1 3:0^1 -5:1^2
+a GT o -2:0^2,2^1 -2:1^1,2^2
+a LT o 2:1^3 1:0^1,1^1,2^1 5: | o 3:1^1,2^1
+a LT o 3:0^3 -2:1^1 3:0^1,1^1 2:
+a EQ o -3:0^1,1^1 1:0^1,2^2 -2:1^1,2^1 5:
+cl 0 -2 7 -2
+cl -1 3 4
+cl 0 6
+cl -1 -3 3 1
+cl -1 -3";
+
+#[test]
+fn stops_the_polynomial_arithmetic_at_the_step_limit() {
+    let limit = ResourceLimit::new(&Limits::new(f64::INFINITY, Some(20000), None));
+    let mut solver = mk_solver(UNBOUNDED_PROBLEM, Some(&limit), None).0;
+    assert_eq!(solver.check(), Err(SmtError::Canceled));
+    assert_eq!(limit.stop_reason(), Some(StopReason::Steps));
+}
+
+#[test]
+fn stops_the_polynomial_arithmetic_at_the_deadline() {
+    let limit = ResourceLimit::new(&Limits::new(100.0, None, None));
+    let mut solver = mk_solver(UNBOUNDED_PROBLEM, Some(&limit), None).0;
+    assert_eq!(solver.check(), Err(SmtError::Canceled));
+    assert_eq!(limit.stop_reason(), Some(StopReason::Time));
 }

@@ -30,7 +30,7 @@ export const DECIDERS: Record<string, (text: string, options: DecideOptions) => 
 
 // The backends whose Rust port decides by default, each once it decides every recorded input as
 // the TypeScript backend does (design/prover.md, section 4).
-const RUST_BACKENDS = new Set<string>();
+const RUST_BACKENDS = new Set<string>(["ls4"]);
 
 // Which port decides a backend's inputs: PROVE_IT_PROVER_<PROVER>, such as PROVE_IT_PROVER_ZENON,
 // for one backend, else PROVE_IT_PROVER for all, each "ts" or "rust", else the default.
@@ -62,7 +62,8 @@ const decideNatively = (
 };
 
 // The decision, with the backend's statistics. A step limit, which only scripts set, stops the
-// backend after that many steps.
+// backend after that many steps. A native backend sees only the cancel cell, so an input whose
+// signal has aborted already goes to TypeScript, which answers unknown.
 export const decide = (
   prover: string,
   text: string,
@@ -70,7 +71,10 @@ export const decide = (
   stepLimit?: number,
 ): Decision => {
   const start = performance.now();
-  const native = isRust(prover) ? decideNatively(prover, text, options, stepLimit) : undefined;
+  const native =
+    isRust(prover) && options.signal?.aborted !== true
+      ? decideNatively(prover, text, options, stepLimit)
+      : undefined;
   const statistics = native?.statistics ?? {};
   const verdict =
     native?.verdict ??

@@ -65,13 +65,17 @@ fn overflows_on_an_initial_predicate_the_configuration_redefines_by_itself() {
 #[test]
 fn reports_a_constant_part_that_fails_as_an_exception_tlc_did_not_expect() {
     // TLC's enumerateSet throws a RuntimeException, which the liveness checker doesn't catch.
+    // Without a symmetry or warnings about the spec, TLC warns of nothing before.
     let error = try_lower("enumerated", "SPECIFICATION Spec\nPROPERTY Enumerated\n")
         .expect_err("a failure");
     assert_eq!(
         error,
-        FrontError::Evaluation(format!(
-            "{UNEXPECTED_EXCEPTION}Attempted to enumerate a set of the form [D -> R],but the domain D:\nSTRING\ncannot be enumerated."
-        ))
+        FrontError::Warned(
+            Vec::new(),
+            Box::new(FrontError::Evaluation(format!(
+                "{UNEXPECTED_EXCEPTION}Attempted to enumerate a set of the form [D -> R],but the domain D:\nSTRING\ncannot be enumerated."
+            )))
+        )
     );
 }
 

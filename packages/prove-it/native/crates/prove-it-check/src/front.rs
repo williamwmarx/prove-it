@@ -22,9 +22,11 @@ pub enum Read {
 }
 
 /// A spec TLC stops at before the search: SANY's report, then SANY's rejection of the spec, or
-/// else the error TLC reports with its code, or the exception SANY threw, which ends the report.
+/// else the warnings TLC prints before the error it reports with its code, or the exception SANY
+/// threw, which ends the report.
 pub struct Failure {
     pub sany: String,
+    pub warnings: Vec<StartupMessage>,
     pub error: Option<CodedError>,
     pub exception: Option<String>,
 }
@@ -96,12 +98,13 @@ pub fn read_front(
     if sany.is_failed {
         return Ok(Read::Failed(Failure {
             sany: sany.text,
+            warnings: Vec::new(),
             error: None,
             exception: sany.exception,
         }));
     }
     // TLC's seed as the generator's 64 bits.
-    let error = match lower(
+    let (warnings, error) = match lower(
         sources.as_ref(),
         config_text,
         is_warning_enabled,
@@ -118,13 +121,15 @@ pub fn read_front(
             }));
         }
         Err(FrontError::NotYet(reason)) => return Err(reason),
-        Err(error) => error,
+        Err(FrontError::Warned(warnings, error)) => (warnings, *error),
+        Err(error) => (Vec::new(), error),
     };
     let coded = error
         .get_coded(is_tool)
         .ok_or("an error tla-front raises that TLC reports without a code")?;
     Ok(Read::Failed(Failure {
         sany: sany.text,
+        warnings,
         error: Some(coded),
         exception: None,
     }))

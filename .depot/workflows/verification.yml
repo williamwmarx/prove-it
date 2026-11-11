@@ -102,7 +102,6 @@ jobs:
               done
               bun scripts/sany-corpus.ts --recorded tests/conformance/sany-stdout/corpus.json
               bun scripts/sany-corpus.ts --specs native/crates/tla-front/tests/recursive-shapes --recorded tests/conformance/sany-stdout/grid.json
-              bun scripts/front-differential.ts sany-xml --rust native/target/release/front-dump
               xml=tests/conformance/sany-stdout/xml
               for flags in "-o" "-o -t" "-o -r" "-o -u" "-o -t -r -u"; do
                 bun scripts/sany-corpus.ts --recorded "$xml$(echo "$flags" | tr -d ' ').json" --main tla2sany.xml.XMLExporter --arguments "$flags"

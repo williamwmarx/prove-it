@@ -16,6 +16,7 @@ pub mod hnf;
 pub mod hnf_cutter;
 pub mod int_cube;
 pub mod int_solver;
+pub mod json;
 pub mod lar_solver;
 pub mod lar_term;
 pub mod lp_settings;
@@ -47,6 +48,7 @@ pub mod pdd_simplifier;
 pub mod pdd_solver;
 pub mod random_updater;
 pub mod static_matrix;
+pub mod trace;
 pub mod union_find;
 
 #[cfg(test)]

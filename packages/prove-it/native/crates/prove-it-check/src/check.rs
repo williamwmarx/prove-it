@@ -1945,6 +1945,9 @@ fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) 
         return SPEC_PARSE_ERROR;
     }
     print_sany(printer, &failure.sany);
+    for warning in &failure.warnings {
+        print_startup_message(printer, warning);
+    }
     match &failure.error {
         Some(coded) => print_coded_failure(printer, coded, start),
         None => {

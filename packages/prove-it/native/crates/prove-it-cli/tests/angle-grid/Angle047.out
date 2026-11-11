@@ -1,0 +1,8 @@
+exit 255
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Angle047
+Linting of module Angle047
+Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.

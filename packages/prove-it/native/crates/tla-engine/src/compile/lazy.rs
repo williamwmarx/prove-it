@@ -218,11 +218,12 @@ impl Lazy {
                 let choices = range.elements(machine, is_streamed)?;
                 let lists = vec![choices; keys.len()];
                 cartesian(&lists, |values| {
-                    if is_sorted {
-                        Ok(machine.store.function_of_sorted(&keys, values))
+                    let function = if is_sorted {
+                        machine.store.function_of_sorted(&keys, values)
                     } else {
-                        machine.store.function_of(&keys, values)
-                    }
+                        machine.store.function_of(&keys, values)?
+                    };
+                    Ok(machine.store.mark_built_as_function(function))
                 })
             }
             Lazy::RecordSet(keys, sets) => {
