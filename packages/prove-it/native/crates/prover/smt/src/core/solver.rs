@@ -8,7 +8,8 @@ use crate::core::asserted_formulas::AssertedFormulas;
 use crate::core::ast::AstManager;
 use crate::core::context::{Context, SmtParams};
 use crate::core::quant_tactics::apply_ufnia_tactic;
-use crate::core::smtlib_parser::{Command, SmtProblem, parse_smtlib};
+use crate::core::script_subset::check_script;
+use crate::core::smtlib_parser::parse_smtlib;
 use crate::util::error::SmtError;
 use crate::util::lbool::LBool;
 use crate::util::rlimit::ResourceLimit;
@@ -19,11 +20,8 @@ pub struct SmtCheck {
     pub num_instances: u32,
 }
 
-/// The verdict tlapm reads in Z3's output, and the number of quantifier instances the search made.
-/// tlapm counts an obligation proved when a line of the output starts with unsat, whatever errors
-/// Z3 printed before it, so the verdict is the first check-sat's answer, and a check-sat after one
-/// that is not unsat is unsupported. `limit` is the resource limit of the manager, which the caller
-/// may keep a clone of to read its count.
+/// The verdict, and the number of quantifier instances the search made. `limit` is the resource
+/// limit of the manager, which the caller may keep a clone of to read its count.
 pub fn check_smt(text: &str, limit: ResourceLimit) -> Result<SmtCheck, SmtError> {
     let mut manager = AstManager::new(limit);
     // combined_solver gives each assertion to the incremental smt kernel as well, which rewrites
@@ -32,44 +30,16 @@ pub fn check_smt(text: &str, limit: ResourceLimit) -> Result<SmtCheck, SmtError>
     // solver::assert_expr counts one for each assertion.
     let mut incremental = AssertedFormulas::new(&manager);
     manager.limit.inc();
-    let problem = parse_smtlib(text, &mut manager, |manager, command| match command {
-        Command::Assert(assertion) => {
-            let limit = manager.limit.clone();
-            limit.set_step_limit_suspended(true);
-            limit.inc();
-            let result = incremental.assert_expr(manager, assertion);
-            limit.set_step_limit_suspended(false);
-            result
-        }
-        // The new manager's solver, as at the start.
-        Command::Reset => {
-            incremental = AssertedFormulas::new(manager);
-            manager.limit.inc();
-            Ok(())
-        }
+    let problem = parse_smtlib(text, &mut manager, |manager, assertion| {
+        manager.limit.inc();
+        incremental.assert_expr(manager, assertion)
     })?;
-    if let Some(logic) = problem.logic.as_ref().filter(|logic| *logic != "UFNIA") {
-        return Err(SmtError::Unsupported(format!(
-            "the logic {logic} is not supported"
-        )));
-    }
     if !problem.has_check_sat {
         return Ok(SmtCheck {
             verdict: Verdict::Unknown,
             num_instances: 0,
         });
     }
-    let check = check_first(manager, &problem)?;
-    if problem.has_later_check_sat && check.verdict != Verdict::Unsat {
-        return Err(SmtError::Unsupported(
-            "a check-sat after one that is not unsat is not supported".into(),
-        ));
-    }
-    Ok(check)
-}
-
-// The answer to the first check-sat: the UFNIA tactic, then the smt kernel.
-fn check_first(mut manager: AstManager, problem: &SmtProblem) -> Result<SmtCheck, SmtError> {
     let goal = apply_ufnia_tactic(&mut manager, &problem.assertions)?;
     // and_then runs smt_tactic only on a goal that the preprocessing left undecided.
     if goal.is_inconsistent || goal.forms.is_empty() {
@@ -128,6 +98,19 @@ fn set_statistic(
 pub fn decide_smt(text: &str, limits: &Limits) -> Result<Decision, SmtError> {
     let limit = ResourceLimit::new(limits);
     let mut statistics = Vec::new();
+    // Only the SMT-LIB tlapm's encoder writes is decided; anything else is declined.
+    if check_script(text).is_err() {
+        set_statistic(
+            &mut statistics,
+            "stop",
+            Statistic::Text("unsupported".into()),
+        );
+        set_statistic(&mut statistics, "steps", Statistic::Count(0));
+        return Ok(Decision {
+            verdict: Verdict::Unknown,
+            statistics,
+        });
+    }
     let verdict = match check_smt(text, limit.clone()) {
         Ok(check) => {
             set_statistic(
@@ -193,24 +176,20 @@ mod tests {
         Statistic::Text(text.into())
     }
 
+    // A script outside what tlapm's encoder writes is declined before any step.
     #[test]
     fn unsupported_input_is_unknown_and_says_so_before_the_steps() {
-        let decision = decide("(declare-sort U 0)\n(push 1)\n(check-sat)\n", None, None);
-        assert_eq!(decision.verdict, Verdict::Unknown);
-        assert_eq!(
-            decision.statistics,
-            [("stop", text("unsupported")), ("steps", count(1))]
-        );
-    }
-
-    #[test]
-    fn a_script_without_check_sat_is_unknown() {
-        let decision = decide("(declare-fun p () Bool)\n(assert p)\n", None, None);
-        assert_eq!(decision.verdict, Verdict::Unknown);
-        assert_eq!(
-            decision.statistics,
-            [("instances", count(0)), ("steps", count(3))]
-        );
+        for script in [
+            "(declare-sort U 0)\n(push 1)\n(check-sat)\n",
+            "(set-logic UFNIA)(declare-fun smt__p () Bool)(assert smt__p)\n",
+        ] {
+            let decision = decide(script, None, None);
+            assert_eq!(decision.verdict, Verdict::Unknown);
+            assert_eq!(
+                decision.statistics,
+                [("stop", text("unsupported")), ("steps", count(0))]
+            );
+        }
     }
 
     #[test]

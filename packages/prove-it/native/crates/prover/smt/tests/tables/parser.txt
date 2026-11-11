@@ -4771,17 +4771,16 @@ decl 30 p 2 30 :0 143
 decl 31 q 2 30 :0 144
 decl 32 both 2 30 :0 145
 decl 33 n1 2 30 :0 147
-decl 34 n2 2 30 :0 149
-asts 176
-nodes 5 267390385 2829179291
+asts 174
+nodes 5 267390385 610716706
 script unterminated-quoted-symbol "(assert |x)"
 error SmtParseError unterminated quoted symbol
 script unbalanced-close "(assert true))"
-error SmtParseError invalid command, '(' expected
+error SmtParseError unbalanced parentheses
 script unbalanced-open "(assert true"
-error SmtParseError unexpected end of file
+error SmtParseError unbalanced parentheses
 script unbalanced-quoted-paren "(assert |(|)"
-error SmtParseError unknown function (
+error SmtParseError unbalanced parentheses
 script top-level-symbol "foo"
 error SmtParseError expected a list
 script declare-fun-without-domain "(declare-fun f Int Int)"
@@ -4805,7 +4804,7 @@ error SmtParseError expected a symbol
 script application-head-list "(assert ((f) 1))"
 error SmtParseError expected a symbol
 script named-without-name "(assert (! true :named))"
-error SmtParseError invalid attribute value, symbol expected
+error SmtParseError expected a symbol
 script qid-not-a-symbol "(assert (forall ((x Int)) (! (> x 0) :qid (a))))"
 error SmtParseError expected a symbol
 script declaration-without-sort "(assert (forall ((x)) true))"

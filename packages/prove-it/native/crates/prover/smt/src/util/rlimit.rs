@@ -49,8 +49,6 @@ impl StopReason {
 pub struct ResourceLimit {
     limits: Limits,
     stop_reason: Rc<Cell<Option<StopReason>>>,
-    // scoped_rlimit no_limit: the steps are counted but the step limit is not checked.
-    is_step_limit_suspended: Rc<Cell<bool>>,
 }
 
 impl ResourceLimit {
@@ -58,32 +56,12 @@ impl ResourceLimit {
         ResourceLimit {
             limits: limits.clone(),
             stop_reason: Rc::new(Cell::new(None)),
-            is_step_limit_suspended: Rc::new(Cell::new(false)),
         }
     }
 
     /// m_count: the steps taken, which MBQI also uses as a random seed.
     pub fn count(&self) -> u64 {
         self.limits.steps()
-    }
-
-    /// The reslimit of the new manager that cmd_context::reset makes: m_count starts again from 0,
-    /// and the step limit, which stands for Z3's rlimit, counts from there, as Z3 checks rlimit
-    /// against the new manager's count. The deadline and the stop reason stay.
-    pub fn restart(&self) {
-        self.limits.restart_steps();
-        if matches!(
-            self.stop_reason.get(),
-            Some(StopReason::Steps | StopReason::Heap)
-        ) {
-            self.stop_reason.set(None);
-        }
-    }
-
-    /// scoped_rlimit no_limit(m.limit(), 0), which cmd_context::assert_expr holds while the solver
-    /// takes an assertion: Z3's rlimit bounds only check-sat.
-    pub fn set_step_limit_suspended(&self, is_suspended: bool) {
-        self.is_step_limit_suspended.set(is_suspended);
     }
 
     /// memory::allocate past max_memory: fails once what the decision holds passes MAX_SIZE.
@@ -102,8 +80,7 @@ impl ResourceLimit {
 
     /// inc: counts a step and returns whether the work may go on.
     pub fn inc(&self) -> bool {
-        let is_over_step_limit =
-            self.limits.is_step_limit_reached() && !self.is_step_limit_suspended.get();
+        let is_over_step_limit = self.limits.is_step_limit_reached();
         if self.stop_reason.get().is_some() {
             return false;
         }
@@ -181,20 +158,5 @@ mod tests {
         let other = ResourceLimit::new(&Limits::new(f64::INFINITY, None, None));
         other.clone().stop(StopReason::Heap);
         assert_eq!(other.stop_reason(), Some(StopReason::Heap));
-    }
-
-    #[test]
-    fn a_restart_counts_from_0_against_the_step_limit() {
-        let limits = Limits::new(f64::INFINITY, Some(2), None);
-        let limit = ResourceLimit::new(&limits);
-        assert!(limit.inc());
-        assert!(limit.inc());
-        limit.clone().restart();
-        assert_eq!(limit.count(), 0);
-        assert!(limit.inc());
-        assert!(limit.inc());
-        assert!(!limit.inc());
-        assert_eq!(limit.count(), 3);
-        assert_eq!(limit.stop_reason(), Some(StopReason::Steps));
     }
 }

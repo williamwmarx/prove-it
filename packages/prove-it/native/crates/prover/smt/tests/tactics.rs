@@ -18,7 +18,7 @@ use prove_smt::core::goal::Goal;
 use prove_smt::core::propagate_values::propagate_values;
 use prove_smt::core::qe_lite::apply_qe_lite;
 use prove_smt::core::quant_tactics::apply_ufnia_tactic;
-use prove_smt::core::smtlib_parser::{Command, parse_smtlib};
+use prove_smt::core::smtlib_parser::parse_smtlib;
 use prove_smt::util::error::SmtError;
 use prove_smt::util::rlimit::ResourceLimit;
 
@@ -139,10 +139,7 @@ impl Run {
         let mut incremental = AssertedFormulas::new(&self.m);
         self.m.limit.inc();
         self.pending = "parse";
-        let problem = parse_smtlib(text, &mut self.m, |m, command| {
-            let Command::Assert(assertion) = command else {
-                unreachable!("the scripts do not reset");
-            };
+        let problem = parse_smtlib(text, &mut self.m, |m, assertion| {
             m.limit.inc();
             incremental.assert_expr(m, assertion)
         })?;

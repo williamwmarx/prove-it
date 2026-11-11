@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use prove_decide::{Cancel, DecideError, Decision, Limits, Statistic, Verdict};
 use prove_smt::core::solver::check_smt;
-use prove_smt::util::rlimit::ResourceLimit;
+use prove_smt::util::error::SmtError;
+use prove_smt::util::rlimit::{ResourceLimit, StopReason};
 
 const STEP_LIMIT: u64 = 50_000_000;
 /// The step limit `tests/tables/decide.txt` was recorded under.
@@ -83,9 +84,19 @@ fn decide_with(text: &str, cancel: Option<Cancel>) -> Result<Decision, DecideErr
     on_deep_stack(|| prove_smt::decide(text, &Limits::new(f64::INFINITY, Some(STEP_LIMIT), cancel)))
 }
 
-/// The verdict, or the reason the port declines the input.
+/// The verdict of the solver itself, past the subset of SMT-LIB that `decide` takes: these cases
+/// are the TypeScript's, written in more of SMT-LIB than tlapm's encoder. A parse error is the
+/// prover's error, as `decide` makes it.
 fn decide(text: &str) -> Result<Verdict, DecideError> {
-    decide_with(text, None).map(|decision| decision.verdict)
+    on_deep_stack(|| {
+        let limits = Limits::new(f64::INFINITY, Some(STEP_LIMIT), None);
+        match check_smt(text, ResourceLimit::new(&limits)) {
+            Ok(check) => Ok(check.verdict),
+            Err(SmtError::Parse(message)) => Err(DecideError::Prover(message)),
+            Err(SmtError::Canceled | SmtError::Unsupported(_)) => Ok(Verdict::Unknown),
+            Err(error) => Err(DecideError::Declined(error.to_string())),
+        }
+    })
 }
 
 // (g x) is f applied depth times to x, and (g 0) is not: unsat after one instance.
@@ -113,7 +124,7 @@ fn decide_lines(lines: &[&str]) -> Result<Verdict, DecideError> {
 fn proves_what_z3_proves() {
     for recorded in get_recorded("unsat") {
         assert_eq!(
-            decide(&read(&recorded.name)),
+            decide_with(&read(&recorded.name), None).map(|decision| decision.verdict),
             Ok(Verdict::Unsat),
             "proves {}",
             recorded.source
@@ -125,7 +136,7 @@ fn proves_what_z3_proves() {
 #[test]
 fn does_not_prove_what_z3_refutes() {
     for recorded in get_recorded("sat") {
-        let verdict = decide(&read(&recorded.name));
+        let verdict = decide_with(&read(&recorded.name), None).map(|decision| decision.verdict);
         assert!(verdict.is_ok(), "{}: {verdict:?}", recorded.source);
         assert_ne!(
             verdict,
@@ -227,21 +238,11 @@ fn decides_a_problem_that_the_preprocessing_reduces_to_false_or_to_nothing() {
     assert_eq!(decide_assertion("(= x x)"), Ok(Verdict::Sat));
 }
 
-// Z3 5.3.3 reports the ill-sorted application and skips its assertion: "(error "line 2 column 15:
-// unknown constant p (Bool) declared: (declare-fun p (Int) Bool) ")", then sat. With x and (not x)
-// asserted after it, the error is followed by unsat, which tlapm counts as proved.
 #[test]
-fn skips_an_ill_sorted_assertion_as_z3_does() {
+fn rejects_an_ill_sorted_application() {
     assert_eq!(
         decide("(declare-fun p (Int) Bool)\n(assert (p true))\n(check-sat)\n"),
-        Ok(Verdict::Sat)
-    );
-    assert_eq!(
-        decide(
-            "(declare-fun p (Int) Bool)(declare-const x Bool)\n(assert (p true))\n(assert x)\n\
-             (assert (not x))\n(check-sat)\n"
-        ),
-        Ok(Verdict::Unsat)
+        Err(DecideError::Prover("ill-sorted application of p".into()))
     );
 }
 
@@ -483,25 +484,112 @@ fn releases_a_builtin_declaration_of_a_model_as_the_typescript_does() {
     );
 }
 
-// Each named term is the conjunction of the one before with itself: goal::quick_process splits
-// the last into 2^59 conjuncts without taking a step, as Z3 5.3.3 does (`-T:20`: timeout at
-// 9.4 GB). The size cap stops the decision with unknown and says why.
+/// Scripts outside the SMT-LIB that tlapm's encoder writes: attributes, symbols, numerals,
+/// connectives, commands and logics it never writes, and scripts that misuse what it does write.
+/// Z3 answers some with an error and some with a verdict; the port declines each before any step.
+const OUTSIDE_THE_ENCODER: [&str; 49] = [
+    r"(declare-const i Int)(declare-fun p (Int) Bool)(assert (! (p i) :named a))(assert (forall ((z Int)) (! (=> a (p z)) :pattern (a))))(assert (not (p 7)))(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named a))(assert (not (a)))(check-sat)",
+    r"(declare-const x Bool)(assert (! (not x) :foo))(assert x)(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named a :foo))(assert (not a))(check-sat)",
+    r"(declare-const i Int)(declare-fun f (Int) Int)(assert (forall ((z Int)) (! (> (f z) 0) :pattern (! (f i) :named a))))(assert (< a 0))(check-sat)",
+    r"(declare-const x Bool)(assert (! (not x) :named -1))(assert x)(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :qid 1)))(assert (not (p 0)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :skolemid (a b))))(assert (not (p 0)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :weight 2.0)))(assert (not (p 0)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :no-pattern ((p z)))))(assert (not (p 0)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :pattern ((p z)) :no-pattern (p z))))(assert (not (p 0)))(check-sat)",
+    r"(declare-const x Bool)(assert (! (not x) :a:b n))(assert x)(check-sat)",
+    r"(declare-const x Bool)(assert (! (not x) :lblpos :named))(assert x)(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named false))(assert false)(check-sat)",
+    r"(declare-const x Bool)(assert (let ((false x)) false))(check-sat)",
+    r"(declare-const i Int)(assert (! (> i 0) :named <))(assert (< i 0))(check-sat)",
+    r"(declare-const |as| Bool)(assert |as|)(assert (not |as|))(check-sat)",
+    r"(declare-fun _ (Int) Bool)(assert (_ 1))(assert (not (_ 1)))(check-sat)",
+    r"(declare-const x Bool)(assert (let ((123 x)) (not x)))(assert x)(check-sat)",
+    r"(declare-const a'b Bool)(assert a'b)(assert (not a'b))(check-sat)",
+    r"(declare-const x Bool)(assert (not x) {)(assert x)(check-sat)",
+    r"(declare-const x Bool)(assert (not x) #)(assert x)(check-sat)",
+    r"(declare-const z Bool {)(assert z)(assert (not z))(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named a) {)(assert (not a))(check-sat)",
+    r"(')(assert false)(check-sat)",
+    r"(declare-const x Bool)(assert x)(foo ({) ) (assert (not x))(check-sat)",
+    r"(declare-const x Bool)(assert x)(foo (#) ) (assert (not x))(check-sat)",
+    r"(set-logic UFNIA zz)(declare-const r Real)(assert (> r 0.0))(assert (< r 0.0))(check-sat)",
+    r"(declare-const i Int)(assert (< i -1))(assert (> i -3))(assert (not (= i -2)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :pattern ((p z)) :qid |\|| :skolemid |\||)))(assert (not (p 0)))(check-sat)",
+    r"(declare-const |a\|b| Bool)(assert |a\|b|)(assert (not |a\|b|))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((true Int)) (p true)))(assert (not (p 0)))(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named |false|))(assert (not |false|))(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named |+|))(assert (not |+|))(check-sat)",
+    r"(declare-const x Bool)(assert (iff x (not x)))(check-sat)",
+    r"(declare-const x Bool)(assert (implies x (not x)))(assert x)(check-sat)",
+    r"(declare-const c Int)(declare-const c Bool)(assert (and (as c Bool) (not (as c Bool))))(check-sat)",
+    r"(declare-fun g ((Int)) Int)(assert (not (= (g 1) (g 1))))(check-sat)",
+    r"(simplify true)(set-logic UFNIA)(declare-const r Real)(assert (> r 0.0))(assert (< r 0.0))(check-sat)",
+    r"(declare-const x Bool)(assert x)(check-sat)(exit 1)(assert false)(check-sat)",
+    r#"(declare-const x Bool)(assert x)(check-sat)(echo "unsat")"#,
+    r"(declare-fun a (Int) Bool)(declare-const i Int)(assert (let ((c a)) (< i 1)))(assert (> i 1))(check-sat)",
+    r"(set-logic QF_UF)(declare-const x Bool)(assert x)(assert (not x))(check-sat)",
+    r"(declare-const true Bool)(assert false)(check-sat)",
+    r"(declare-fun f (Int) Int)(declare-fun f (Int) Bool)(assert false)(check-sat)",
+    r"(declare-const x Bool)(assert x)(check-sat)(assert (not x))(check-sat)",
+    r"(assert (and))(assert false)(check-sat)",
+    r"(set-logic UFNIA)(declare-fun smt__i () Int)(assert (let ((smt__n0 (+ smt__i 1))) (let ((smt__n1 (* smt__n0 smt__n0))) (< smt__n1 0))))(check-sat)",
+    r"(set-logic UFNIA)(declare-fun smt__a () Int)(declare-fun smt__b () Int)(declare-fun smt__c () Int)(assert (= smt__a smt__b smt__c))(assert (not (= smt__a smt__c)))(check-sat)",
+];
+
+#[test]
+fn declines_what_tlapm_does_not_write() {
+    for script in OUTSIDE_THE_ENCODER {
+        let decision = decide_with(script, None).map(|decision| get_decision_text(&decision));
+        assert_eq!(
+            decision,
+            Ok("unknown stop=unsupported steps=0".into()),
+            "{script}"
+        );
+    }
+}
+
+// What the encoder writes is decided: a goal named |Goal|, a pattern, a negative numeral as
+// (- 1), the rlimit option and the final (exit).
+#[test]
+fn decides_what_tlapm_writes() {
+    let script = "(set-option :rlimit 100)\n(set-logic UFNIA)\n(declare-sort Idv 0)\n\
+                  (declare-fun smt__p (Int) Bool)\n(declare-fun smt__i () Int)\n\
+                  (assert (forall ((smt__z Int)) (! (smt__p smt__z) :pattern ((smt__p smt__z)))))\n\
+                  (assert (! (not (and (smt__p smt__i) (> smt__i (- 1)))) :named |Goal|))\n\
+                  (assert (= smt__i 0))\n(check-sat)\n(exit)\n";
+    assert_eq!(
+        decide_with(script, None).map(|decision| decision.verdict),
+        Ok(Verdict::Unsat)
+    );
+}
+
+// Each let names the conjunction of the term before with itself: goal::quick_process splits the
+// last into 2^59 conjuncts without taking a step, as Z3 5.3.3 does (`-T:20`: timeout at 9.4 GB).
+// The size cap stops the decision and says why. Lets are outside the subset `decide` takes, so the
+// solver is run on its own.
 #[test]
 fn stops_at_the_size_cap() {
     let text = (1..60).fold(
-        "(declare-const x Bool)(declare-const y Bool)(assert (! (and x y) :named n0))".to_string(),
+        "(declare-const x Bool)(declare-const y Bool)(assert (let ((n0 (and x y)))".to_string(),
         |text, index| {
             format!(
-                "{text}(assert (! (and n{} n{}) :named n{index}))",
+                "{text} (let ((n{index} (and n{} n{})))",
                 index - 1,
                 index - 1
             )
         },
-    ) + "(check-sat)";
-    let decision =
-        on_deep_stack(|| prove_smt::decide(&text, &Limits::new(f64::INFINITY, None, None)))
-            .map(|decision| get_decision_text(&decision));
-    assert_eq!(decision, Ok("unknown steps=299 stop=heap".into()));
+    ) + " n59"
+        + &")".repeat(61)
+        + "(check-sat)";
+    let stop = on_deep_stack(|| {
+        let limit = ResourceLimit::new(&Limits::new(f64::INFINITY, None, None));
+        let check = check_smt(&text, limit.clone()).map(|check| check.verdict);
+        (check, limit.stop_reason())
+    });
+    assert_eq!(stop, (Err(SmtError::Canceled), Some(StopReason::Heap)));
 }
 
 // A multi-pattern over 2,910 terms of each of its two functions, with a weight that delays every
@@ -515,589 +603,5 @@ fn leaves_a_large_search_to_its_answer() {
     }
     text += "(assert (forall ((x Int) (y Int)) (! (or (f x) (g y)) :pattern ((f x) (g y)) \
              :weight 100)))(check-sat)";
-    let decision = on_deep_stack(|| {
-        prove_smt::decide(&text, &Limits::new(f64::INFINITY, Some(STEP_LIMIT), None))
-    })
-    .map(|decision| get_decision_text(&decision));
-    assert_eq!(decision, Ok("sat instances=0 steps=371285".into()));
-}
-
-/// Scripts with (reset), each with what Z3 5.3.3 prints on it, run as tlapm runs it: `z3 -smt2
-/// -v:0 AUTO_CONFIG=false smt.MBQI=true -T:5`.
-const RESETS: [(&str, &str); 20] = [
-    ("(assert false)(reset)(check-sat)", "sat"),
-    ("(assert false)(reset)(assert false)(check-sat)", "unsat"),
-    ("(reset)(reset)(assert false)(check-sat)", "unsat"),
-    ("(reset)\n(assert false)\n(check-sat)", "unsat"),
-    ("(assert false)(check-sat)(reset)", "unsat"),
-    ("(assert false)(reset)", ""),
-    (
-        "(declare-const x Bool)(assert x)(reset)(assert (not x))(check-sat)",
-        "(error \"line 1 column 53: unknown constant x\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(reset)(declare-const x Int)(assert (> x 0))(check-sat)",
-        "sat",
-    ),
-    (
-        "(declare-fun f (Int) Int)(assert (= (f 1) 2))(reset)(assert (= (f 1) 3))(check-sat)",
-        "(error \"line 1 column 68: unknown constant f (Int) \")\nsat",
-    ),
-    (
-        "(set-logic UFNIA)(declare-sort U 0)(reset)(declare-const u U)(check-sat)",
-        "(error \"line 1 column 60: Invalid constant declaration: unknown sort 'U'\")\nsat",
-    ),
-    (
-        "(declare-sort U 0)(declare-fun c () U)(reset)(declare-sort U 0)(declare-fun c () U)\
-         (assert (= c c))(check-sat)",
-        "sat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :named a))(reset)(assert a)(check-sat)",
-        "(error \"line 1 column 61: unknown constant a\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :named a))(reset)(declare-const a Bool)\
-         (assert (not a))(check-sat)",
-        "sat",
-    ),
-    (
-        "(declare-const x Int)(assert (! (> x 0) :named a))(reset)(declare-const x Int)\
-         (assert (! (< x 0) :named a))(check-sat)",
-        "sat",
-    ),
-    (
-        "(set-logic UFNIA)(assert false)(reset)(set-logic UFNIA)(check-sat)",
-        "sat",
-    ),
-    (
-        "(set-option :produce-unsat-cores true)(assert false)(reset)(check-sat)",
-        "sat",
-    ),
-    (
-        "(reset 1)(assert false)(check-sat)",
-        "(error \"line 1 column 8: invalid reset command, ')' expected\")\nunsat",
-    ),
-    ("(push 1)(assert false)(reset)(check-sat)", "sat"),
-    (
-        "(push 1)(assert false)(reset)(pop 1)(check-sat)",
-        "(error \"line 1 column 36: invalid pop command, argument is greater than the current \
-         stack depth\")\nsat",
-    ),
-    (
-        "(reset",
-        "(error \"line 2 column 0: invalid reset command, ')' expected\")",
-    ),
-];
-
-// The port answers what tlapm makes of Z3's output (backend/prep.ml): proved, unsat, when a line
-// starts with unsat, and otherwise Z3's first answer. Z3 reports an error, skips the command and
-// reads on, so an error before the answer leaves the answer standing. Push, pop,
-// reset-assertions, check-sat-assuming and check-sat-using are outside the subset the port supports.
-fn assert_answers_as_z3(scripts: &[(&str, &str)]) {
-    for (script, z3) in scripts {
-        let decision = decide_with(script, None);
-        if [
-            "(push",
-            "(reset-assertions",
-            "(check-sat-assuming",
-            "(check-sat-using",
-            "(check-sat x)",
-        ]
-        .iter()
-        .any(|command| script.contains(command))
-        {
-            let text = decision.map(|decision| get_decision_text(&decision));
-            assert!(
-                text.as_ref()
-                    .is_ok_and(|text| text.starts_with("unknown stop=unsupported ")),
-                "{script}: {text:?}"
-            );
-            continue;
-        }
-        let answer = if z3.lines().any(|line| line.starts_with("unsat")) {
-            "unsat"
-        } else {
-            z3.lines()
-                .find(|line| ["sat", "unknown"].contains(line))
-                .unwrap_or("unknown")
-        };
-        assert_eq!(
-            decision.map(|decision| decision.verdict.name()),
-            Ok(answer),
-            "{script}"
-        );
-    }
-}
-
-// cmd_context::reset forgets the assertions, the declarations, the named terms, the scopes and the
-// logic.
-#[test]
-fn resets_as_z3_does() {
-    assert_answers_as_z3(&RESETS);
-}
-
-/// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
-/// 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 54] = [
-    ("(assert false)(exit)(check-sat) )", ""),
-    ("(assert false)(exit)(assert |x", ""),
-    (
-        "(assert false)(check-sat))",
-        "unsat\n(error \"line 1 column 26: invalid command, '(' expected\")",
-    ),
-    (
-        "(assert false)(check-sat)(foo |bar",
-        "unsat\n(error \"line 1 column 35: unexpected end of quoted symbol\")",
-    ),
-    (
-        "(assert false)(check-sat",
-        "(error \"line 1 column 25: invalid expression, unexpected input\")",
-    ),
-    (
-        "(assert false))(check-sat)",
-        "(error \"line 1 column 15: invalid command, '(' expected\")\nunsat",
-    ),
-    (
-        "(set-logic UFNIA extra)(assert false)(check-sat)",
-        "(error \"line 1 column 18: invalid command, too many arguments\")\nunsat",
-    ),
-    (
-        "(set-logic \"UFNIA\")(assert false)(check-sat)",
-        "(error \"line 1 column 12: invalid command argument, symbol expected\")\nunsat",
-    ),
-    (
-        "(set-logic)(assert false)(check-sat)",
-        "(error \"line 1 column 11: invalid command, argument(s) missing\")\nunsat",
-    ),
-    (
-        "(eval true)(assert false)(check-sat)",
-        "(error \"line 1 column 11: model is not available\")\nunsat",
-    ),
-    (
-        "(declare-const x Int)(eval x)(check-sat)",
-        "(error \"line 1 column 29: model is not available\")\nsat",
-    ),
-    (
-        "(get-unsat-assumptions)(assert false)(check-sat)",
-        "(error \"line 1 column 23: unsat assumptions construction is not enabled, use command \
-         (set-option :produce-unsat-assumptions true)\")\nunsat",
-    ),
-    (
-        "(set-option :produce-unsat-assumptions true)(get-unsat-assumptions)(assert false)\
-         (check-sat)",
-        "(error \"line 1 column 67: unsat assumptions is not available\")\nunsat",
-    ),
-    (
-        "(assert false)(exit 1)(check-sat)",
-        "(error \"line 1 column 21: invalid command, too many arguments\")\nunsat",
-    ),
-    (
-        "(assert false)(exit (x))(check-sat)",
-        "(error \"line 1 column 21: invalid command, too many arguments\")\nunsat",
-    ),
-    (
-        "(assert false)(|exit| 1)(check-sat)",
-        "(error \"line 1 column 23: invalid command, too many arguments\")\nunsat",
-    ),
-    (
-        "(assert true)(check-sat-using smt)(get-model)(check-sat)",
-        "sat\n(\n)\nsat",
-    ),
-    (
-        "(declare-const x Int)(assert (> x 0))(check-sat-using smt)(get-value (x))(check-sat)",
-        "sat\n((x 1))\nsat",
-    ),
-    (
-        "(set-option :produce-unsat-cores true)(assert (! false :named a))(check-sat-using smt)\
-         (get-unsat-core)(check-sat)",
-        "unsat\n(a)\nunsat",
-    ),
-    ("(assert true)(check-sat-using smt)", "sat"),
-    (
-        "(check-sat-assuming (false))(assert true)(check-sat)",
-        "unsat\nsat",
-    ),
-    ("(assert false)(exit)(check-sat)", ""),
-    ("(assert false)(check-sat)(exit)", "unsat"),
-    ("(assert false)(reset-assertions)(check-sat)", "sat"),
-    (
-        "(assert true)(set-option :produce-unsat-cores true)(check-sat)",
-        "(error \"line 1 column 47: error setting ':produce-unsat-cores', option value cannot be \
-         modified after assertions have been added\")\nsat",
-    ),
-    (
-        "(assert true)(set-option :produce-unsat-assumptions true)(assert false)(check-sat)",
-        "(error \"line 1 column 53: error setting ':produce-unsat-assumptions', option value \
-         cannot be modified after assertions have been added\")\nunsat",
-    ),
-    (
-        "(assert true)(reset)(set-option :produce-proofs true)(assert false)(check-sat)",
-        "unsat",
-    ),
-    (
-        "(assert true)(set-option :produce-models true)(assert false)(check-sat)",
-        "unsat",
-    ),
-    (
-        "(assert true)(set-logic UFNIA)(check-sat)",
-        "(error \"line 1 column 25: logic must be set before initialization\")\nsat",
-    ),
-    (
-        "(set-logic UFNIA)(set-logic UFNIA)(check-sat)",
-        "(error \"line 1 column 29: the logic has already been set\")\nsat",
-    ),
-    (
-        "(set-logic UFNIA)(reset)(set-logic UFNIA)(assert false)(check-sat)",
-        "unsat",
-    ),
-    // Z3 4.8.9 lists the logics it sets, and UFFS is not one (5.3.3 sets every name with UF in it,
-    // and prints "the logic has already been set", then sat).
-    (
-        "(set-logic UFFS)(set-logic UFNIA)(check-sat)",
-        "unsupported\nsat",
-    ),
-    (
-        "(set-logic FOO)(set-logic UFNIA)(check-sat)",
-        "unsupported\nsat",
-    ),
-    // Z3 4.8.9 refuses set-logic once its manager is made, at the first declaration (5.3.3 only
-    // after an assertion, and prints sat).
-    (
-        "(declare-fun f (Int) Int)(set-logic UFNIA)(check-sat)",
-        "(error \"logic must be set before initialization\")\nsat",
-    ),
-    (
-        "(declare-const x Int)(assert (! (> x 0) :named a))(set-logic UFNIA)(check-sat)",
-        "(error \"line 1 column 62: logic must be set before initialization\")\nsat",
-    ),
-    // Z3 4.8.9's check_not_initialized: the proof and core options too fail once the manager is
-    // made (5.3.3 refuses them only after an assertion, and prints sat).
-    (
-        "(declare-const x Int)(set-option :produce-proofs true)(check-sat)",
-        "(error \"error setting ':produce-proofs', option value cannot be modified after \
-         initialization\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(declare-const p Bool)(set-option :produce-assertions true)\
-         (assert false)(check-sat)",
-        "(error \"line 1 column 77: error setting ':produce-assertions', option value cannot be \
-         modified after initialization\")\nunsat",
-    ),
-    (
-        "(set-logic |\"ALL\"|)(assert false)(check-sat)",
-        "unsupported\n; ignoring unsupported logic \"ALL\" line: 1 position: 1\nunsat",
-    ),
-    (
-        "(set-logic 5)(assert false)(check-sat)",
-        "(error \"line 1 column 12: invalid command argument, symbol expected\")\nunsat",
-    ),
-    (
-        "(set-logic :ALL)(assert false)(check-sat)",
-        "(error \"line 1 column 12: invalid command argument, symbol expected\")\nunsat",
-    ),
-    (
-        "(set-logic #b1)(assert false)(check-sat)",
-        "(error \"line 1 column 12: invalid command argument, symbol expected\")\nunsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (not x))(check-sat x)",
-        "unsat",
-    ),
-    (
-        "(assert false (check-sat))(check-sat)",
-        "(error \"line 1 column 15: invalid assert command, ')' expected\")\nunsat",
-    ),
-    (
-        "(declare-const |(| Bool)(assert |(|)(assert (not |(|))(check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-const |5| Bool)(assert |5|)(assert (not |5|))(check-sat)",
-        "unsat",
-    ),
-    ("(assert |true|)(check-sat)", "sat"),
-    ("(assert (|and| true false))(check-sat)", "unsat"),
-    // Z3 4.8.9's join refuses Bool and Int in one equality (5.3.3 joins them, and prints sat).
-    (
-        "(declare-const x Bool)(assert (= x 1))(check-sat)",
-        "(error \"Sorts Bool and Int are incompatible\")\nsat",
-    ),
-    (
-        "(get-model)(assert false)(check-sat)",
-        "(error \"line 1 column 11: model is not available\")\nunsat",
-    ),
-    (
-        "(declare-const x Int)(get-value (x))(check-sat)",
-        "(error \"line 1 column 36: model is not available\")\nsat",
-    ),
-    (
-        "(get-assignment)(check-sat)",
-        "(error \"line 1 column 16: model is not available\")\nsat",
-    ),
-    (
-        "(get-proof)(check-sat)",
-        "(error \"line 1 column 11: proof is not available\")\nsat",
-    ),
-    (
-        "(get-unsat-core)(check-sat)",
-        "(error \"line 1 column 16: unsat core construction is not enabled, use command \
-         (set-option :produce-unsat-cores true)\")\nsat",
-    ),
-    (
-        "(check-sat)(reset)(get-model)",
-        "sat\n(error \"line 1 column 29: model is not available\")",
-    ),
-];
-
-#[test]
-fn refuses_what_z3_refuses_before_check_sat() {
-    assert_answers_as_z3(&COMMAND_ERRORS);
-}
-
-/// References to named terms, with what Z3 5.3.3 prints, run as above. A reset forgets the names
-/// (`RESETS`).
-const NAMED_TERMS: [(&str, &str); 21] = [
-    // Z3 4.8.9's cmd_context::mk_app expands a macro before it looks for a declaration of the name,
-    // so the Bool term takes the place of the Int constant and the application is ill-sorted; 5.3.3
-    // picks by sort and prints unsat, then sat.
-    (
-        "(declare-const i Int)(assert (! (> i 0) :named i))(assert (< i 0))(check-sat)",
-        "(error \"Sort mismatch\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(declare-const t Int)(assert (! x :named t))(assert (> t 0))\
-         (check-sat)",
-        "(error \"Sort mismatch\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :weight 3 :named a))(assert (not a))(check-sat)",
-        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\n\
-         (error \"line 1 column 69: unknown constant a\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :named a :pattern (x)))(assert (not a))(check-sat)",
-        "(error \"line 1 column 45: invalid attribute, not in the scope of a quantifier\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :pattern (x)))(check-sat)",
-        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :qid q))(check-sat)",
-        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :skolemid s))(check-sat)",
-        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :no-pattern (x)))(check-sat)",
-        "(error \"line 1 column 36: invalid attribute, not in the scope of a quantifier\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x |:named| a))(assert (not a))(check-sat)",
-        "(error \"line 1 column 36: invalid attributed expression, keyword expected\")\n\
-         (error \"line 1 column 61: unknown constant a\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x foo))(check-sat)",
-        "(error \"line 1 column 36: invalid attributed expression, keyword expected\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :named))(check-sat)",
-        "(error \"line 1 column 42: invalid attribute value, symbol expected\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :named a :named b))(assert (not b))(check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (|!| x :named a))(assert (not a))(check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-fun f (Int) Bool)(declare-fun g (Int) Bool)(declare-const c Int)\
-         (assert (! (g c) :named a))(assert (forall ((y Int)) (! (f y) :pattern ((f y) a))))\
-         (assert (not (f 0)))(check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :named a))(assert (not a))(check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (and (! x :named a) (not a)))(check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-const x Int)(assert (= (! (+ x 1) :named t) 0))(assert (> t 5))(check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-const x Int)(assert (! (> x 0) :named a))(assert (forall ((a Int)) (> a x)))\
-         (check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-const x Int)(assert (! (> x 0) :named a))(assert (let ((a false)) a))(check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-const x Int)(assert (! (> x 0) :named a))(assert (a 1))(check-sat)",
-        "(error \"line 1 column 63: unknown constant a (Int) \ndeclared: (declare-fun a () Bool) \")\nsat",
-    ),
-    (
-        "(declare-fun f (Int) Bool)(assert (forall ((y Int)) (! (f y) :named a)))(check-sat)",
-        "(error \"line 1 column 70: invalid named expression, expression contains free \
-         variables\")\nsat",
-    ),
-];
-
-// cmd_context names a term with a macro, which a reference expands to the term itself.
-#[test]
-fn expands_a_reference_to_a_named_term_as_z3_does() {
-    assert_answers_as_z3(&NAMED_TERMS);
-}
-
-/// Declarations, names and a logic's sorts that Z3 refuses, skipping the command, with what
-/// Z3 5.3.3 prints, run as above: an error followed by unsat counts as proved for tlapm.
-const DECLARATION_ERRORS: [(&str, &str); 9] = [
-    (
-        "(declare-const x Bool)(declare-const x Bool)(assert x)(assert (not x))(check-sat)",
-        "(error \"line 1 column 44: invalid declaration, constant 'x' (with the given signature) \
-         already declared\")\nunsat",
-    ),
-    (
-        "(declare-sort U 0)(declare-sort U 0)(declare-const u U)(assert (not (= u u)))(check-sat)",
-        "(error \"line 1 column 33: invalid sort declaration, sort already declared/defined\")\n\
-         unsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :named a))(assert (! (not x) :named a))(check-sat)",
-        "(error \"line 1 column 73: named expression already defined\")\nsat",
-    ),
-    (
-        "(declare-const x Bool)(assert (! x :named a))(declare-const a Bool)(assert (not a))\
-         (check-sat)",
-        "(error \"line 1 column 67: invalid declaration, named expression already defined with \
-         this name a\")\nunsat",
-    ),
-    (
-        "(declare-fun f (Int) Int)(declare-fun f (Bool) Int)(assert (= (f 1) 2))\
-         (assert (= (f true) 3))(assert (not (= (f 1) 2)))(check-sat)",
-        "unsat",
-    ),
-    (
-        "(declare-const x Bool)(declare-const x Int)(assert x)(assert (not x))(check-sat)",
-        "(error \"line 1 column 52: ambiguous constant reference, more than one constant with the \
-         same sort, use a qualified expression (as <symbol> <sort>) to disambiguate x\")\n\
-         (error \"line 1 column 67: ambiguous constant reference, more than one constant with the \
-         same sort, use a qualified expression (as <symbol> <sort>) to disambiguate x\")\nsat",
-    ),
-    (
-        "(set-logic UFNIA)(declare-const x Real)(assert (> x 0.5))(assert false)(check-sat)",
-        "(error \"line 1 column 39: logic does not support reals\")\n\
-         (error \"line 1 column 51: unknown constant x\")\nunsat",
-    ),
-    (
-        "(set-logic UFNIA)(declare-const x Int)(assert (> (to_real x) 0.5))(assert (< x 0))\
-         (assert (> x 0))(check-sat)",
-        "(error \"line 1 column 66: logic does not support reals\")\nunsat",
-    ),
-    (
-        "(set-logic UFNIA)(declare-const x Int)(assert (> (/ x 2) 0))(check-sat)",
-        "(error \"line 1 column 60: logic does not support reals\")\nsat",
-    ),
-];
-
-// cmd_context::insert and check_logic: the refused command is skipped, and the check-sat after it
-// answers.
-#[test]
-fn skips_what_z3_refuses_to_declare() {
-    assert_answers_as_z3(&DECLARATION_ERRORS);
-}
-
-// tlapm reads every answer: a later unsat proves the obligation (Z3 5.3.3 prints sat, then unsat),
-// so the port, which answers the first check-sat, declines a later one after an answer that is not
-// unsat, and answers unsat at once. A logic other than UFNIA, whose solver the port does not run,
-// is declined too.
-#[test]
-fn answers_the_first_check_sat_or_declines() {
-    let decide_text = |text: &str| {
-        decide_with(text, None).map(|decision| {
-            let text = get_decision_text(&decision);
-            text.split(" steps=")
-                .next()
-                .map(String::from)
-                .unwrap_or(text)
-        })
-    };
-    assert_eq!(
-        decide_text("(declare-const x Bool)(assert (not x))(check-sat)(assert x)(check-sat)"),
-        Ok("unknown stop=unsupported".into())
-    );
-    assert_eq!(
-        decide_text("(assert false)(check-sat)(assert true)(check-sat)"),
-        Ok("unsat instances=0".into())
-    );
-    assert_eq!(
-        decide_text("(set-logic QF_UF)(declare-const p Bool)(assert p)(assert (not p))(check-sat)"),
-        Ok("unknown stop=unsupported".into())
-    );
-}
-
-// cmd_context::reset deletes the manager, and the next command makes a new one with its solver and
-// its resource limit, whose count starts from 0: what follows a reset is decided as a script of its
-// own, with the same ids, steps and instances. Z3 counts the same rlimit on Allocator-37 with this
-// prefix as without it (5085).
-#[test]
-fn decides_what_follows_a_reset_as_a_script_of_its_own() {
-    let prefix = "(declare-sort Idv 0)(declare-fun a () Idv)(assert (forall ((x Idv)) (= x a)))\
-                  (assert false)(reset)";
-    let decide = |text: &str| {
-        on_deep_stack(|| {
-            prove_smt::decide(
-                text,
-                &Limits::new(f64::INFINITY, Some(REFERENCE_STEP_LIMIT), None),
-            )
-        })
-        .map(|decision| get_decision_text(&decision))
-    };
-    for name in ["Allocator-37.smt", "Barriers-63.smt", "CRDT_proof-49.smt"] {
-        let text = read(name);
-        assert_eq!(decide(&format!("{prefix}{text}")), decide(&text), "{name}");
-    }
-}
-
-// The step limit stands for Z3's rlimit, which Z3 checks against the new manager's count after a
-// reset: what came before costs nothing. Z3 5.3.3 with rlimit=3000 answers unknown at
-// rlimit-count 3211 on Allocator-37, with 50 assertions and three resets before it and without.
-#[test]
-fn a_reset_starts_the_step_limit_again() {
-    let text = read("Allocator-37.smt");
-    let decide = |text: &str, step_limit: u64| {
-        on_deep_stack(|| {
-            prove_smt::decide(text, &Limits::new(f64::INFINITY, Some(step_limit), None))
-        })
-        .map(|decision| get_decision_text(&decision))
-    };
-    let decision = decide(&text, 1000);
-    assert_eq!(decision, Ok("unknown steps=1001 stop=steps".into()));
-    let prefix = format!(
-        "(declare-const p Bool){}(reset)(reset)(reset)",
-        "(assert p)".repeat(50)
-    );
-    assert_eq!(decide(&format!("{prefix}{text}"), 1000), decision);
-    // 600 assertions pass the step limit, and the new manager's count starts below it again:
-    // Z3 5.3.3 with rlimit=500 prints unsat.
-    let past_the_limit = format!(
-        "(declare-const p Bool){}(reset)(declare-const x Bool)(assert x)(assert (not x))\
-         (check-sat)",
-        "(assert p)".repeat(600)
-    );
-    assert_eq!(
-        decide(&past_the_limit, 500).map(|text| text.starts_with("unsat ")),
-        Ok(true)
-    );
+    assert_eq!(decide(&text), Ok(Verdict::Sat));
 }

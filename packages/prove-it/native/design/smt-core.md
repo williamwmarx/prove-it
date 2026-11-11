@@ -30,7 +30,7 @@ track: keep it current.
 | `core::{proto_model, model_evaluator, model_generator}` | models: interpretations, evaluation, completion, the model of a search | done; hand-built models and ground EUF/propositional searches against the TS (`smt/tests/tables/models.txt`, `scripts/smt-model-reference.ts`) |
 | `core::{auf_solver, model_macro_solver, quantifier_analyzer, model_finder, model_checker}` | model-based quantifier instantiation | done; thirteen quantified EUF problems without patterns, which only MBQI decides (sat by macros, quasi-macros and projections, unsat by model-based instances over several rounds), give the TS's result, conflicts, steps, instances, ASTs and model (`smt/tests/tables/mbqi.txt`, `scripts/smt-mbqi-reference.ts`). The model checker's auxiliary context shares the main context's manager by swapping it in for each of its operations (`model_checker.rs`'s header) |
 | `core::theory_lra*` | `theory-lra*.ts`, the arithmetic theory | done; one module per TS file, the state a struct `TheoryLra` held as `Context::theory` and its methods `impl Context` methods (`lra_*`, the kernel's `theory_*`), as the header of `theory_lra_state.rs` describes, with how it owns and calls `LarSolver`, `BoundPropagator`, `IntSolver` and `NlaCore`. 116 arithmetic problems (Int and Real, bounds, (dis)equalities, ite, div and mod, nonlinear products, theory combination, models; 80 of them seeded random) and solver.ts's `checkSmt` on all 45 `tests/fixtures/smt` scripts give the TS's result, conflicts, steps, instances, ASTs and models (`smt/tests/tables/lra.txt`, `scripts/smt-lra-reference.ts`). nlsat's model is read through `lp::nra_solver` (`NraSolver::value`, its algebraic manager) as the TS reads it: `mk_value`, `is_eq` and `assume_eqs` under `is_using_nra_model`, which the nine `nra-*` problems pin (shared variables, terms and integers compared in nlsat's model, rational model values, and the TS's `SmtUnsupportedError` on an irrational one) |
-| `core::solver`, `prove_smt::decide` | `solver.ts` (`checkSmt`, `decideSmt`) and `decideZ3` | done; declines nothing but a port bug: as `decideSmt`, a cancel or the step limit is unknown with its `stop`, `SmtError::Unsupported` unknown with `stop=unsupported`, a parse error `DecideError::Prover`; every other error (`SmtError::Invariant` above all) is `DecideError::Declined`, never a verdict. `tests/unit/smt.test.ts` case for case in `smt/tests/smt.rs`, all with the TS's expectations, and all 45 fixtures' verdicts and statistics (`instances`, `steps`, `stop`) identical to `decideSmt`'s (`smt/tests/tables/decide.txt`, `scripts/smt-decide-reference.ts`) |
+| `core::solver`, `prove_smt::decide` | `solver.ts` (`checkSmt`, `decideSmt`) and `decideZ3` | done; declines a script outside the SMT-LIB tlapm writes (`core::script_subset`: unknown, `stop=unsupported`, `steps=0`) and a port bug: as `decideSmt`, a cancel or the step limit is unknown with its `stop`, `SmtError::Unsupported` unknown with `stop=unsupported`, a parse error `DecideError::Prover`; every other error (`SmtError::Invariant` above all) is `DecideError::Declined`, never a verdict. `tests/unit/smt.test.ts` case for case in `smt/tests/smt.rs`, all with the TS's expectations, and all 45 fixtures' verdicts and statistics (`instances`, `steps`, `stop`) identical to `decideSmt`'s (`smt/tests/tables/decide.txt`, `scripts/smt-decide-reference.ts`) |
 | `core::*` | the rest of `smt/solver/*.ts` | §3 |
 
 The tables were written from the TypeScript by the scripts named above, which were deleted with it
@@ -121,66 +121,16 @@ goes on (so far: a nullary `(and)`, `(or)`, `(=)`, whose TS declaration hash rea
 sorts, matching neither Z3 nor any input tlapm writes) must reach `decide` as
 `DecideError::Declined`, so the TypeScript decides it; never as a verdict.
 
-**Reset.** `(reset)` is cmd_context::reset: the parser forgets the declarations, named terms and
-assertions and makes a new manager, whose resource limit counts from 0 and the step limit with it,
-as Z3 checks rlimit against the new count, and a stop for the step limit or the size cap is
-forgotten; the deadline stays (`smtlib_parser.rs`,
-`ResourceLimit::restart`). Z3 also forgets the logic, and with none set runs another solver than
-UFNIA's; the port runs UFNIA's on every script, with a logic set or not, after a reset as before.
-
-**Assertions.** cmd_context::assert_expr holds `scoped_rlimit no_limit`: the solver's steps on an
-assertion are counted, but the step limit is not checked until the assertions are taken
-(`ResourceLimit::set_step_limit_suspended`).
-
-**Commands.** Z3 4.8.9, which tlapm bundles, decides where its front end and 5.3.3's differ; the
-tests that record such a case (`tests/smt.rs`) say so. tlapm counts an obligation proved when a
-line of Z3's output starts with unsat (`backend/prep.ml`, `generic_unsat_re`), whatever else Z3
-printed. The port reads a script as Z3 reads it, a command at a time, up to the first check-sat
-or `(exit)`, and its verdict is that check-sat's answer; a check-sat after one that is not unsat
-is unsupported, since a later unsat would prove the obligation. A quoted symbol names what the
-plain one does but is never a keyword, a numeral, a string or a parenthesis. An annotation's
-attributes are read in order, as consume_attributes reads them: each `:named` names the term, and
-a reference to the name, also in a pattern, expands to it; as in 4.8.9's cmd_context::mk_app, a
-name shadows a declared constant of another sort (5.3.3 picks by sort). A name is overloaded by
-signature, as func_decls does: an application picks the declaration whose domain is its
-arguments' sorts. Push, pop, `(reset-assertions)`, check-sat-assuming, check-sat with arguments,
-check-sat-using, a logic other than UFNIA, a declaration of a builtin's name (4.8.9 lets it take
-over the builtin) and two declarations of one name and domain with different ranges (an
-application picks between them in a hash set's order) are unsupported (unknown,
-`stop=unsupported`).
-
-**Errors.** Where Z3 reports an error, its parser skips the rest of the command and reads on
-(`smt2::parser::operator()`, `sync_after_error`): the command has no effect but what it did
-before the error (a `:named` read before a bad attribute stays named, `parse_assert` asserts
-before it looks for its closing parenthesis), and a check-sat after it answers. So does the port:
-`SmtProblem::errors` keeps each error, and the verdict is the check-sat's, an error followed by
-unsat included. The errors it reports as Z3 does: a syntax error, a stray parenthesis or a
-command the text ends inside; an unknown name or sort; an ill-sorted application, Bool and Int in
-one equality included (4.8.9's join); set-logic with other than one symbol, a second time, or once
-a declaration or assertion made 4.8.9's manager; `:produce-proofs`, `:produce-unsat-cores`,
-`:produce-unsat-assumptions`, `:produce-assertions`, `:interactive-mode` or
-`:global-declarations` after that (4.8.9's check_not_initialized); assert, exit or reset with
-extra arguments; a name or sort declared twice with the same signature, a constant named after a
-`:named` term, a `:named` name already named or declared with the term's sort, and a reference to
-a constant declared with two sorts (cmd_context::insert, mk_app); under UFNIA, a declaration or
-assertion with a real (check_logic); an attribute that is not a keyword, `:weight`, `:qid`,
-`:skolemid`, `:pattern` or `:no-pattern` outside a quantifier's body, a name that is not a
-symbol, and naming a term with free variables; and eval, get-model, get-value, get-assignment,
-get-proof, get-unsat-core and get-unsat-assumptions. Z3 aborts a script only on its own
-exhaustion (out of memory) or at the end of the text; neither ends a port decision early but the
-size cap.
-
-Z3's other errors are not ported. None of them changes what is asserted, so the port answers
-as Z3 does around them: a value of the wrong kind for an option (`:produce-proofs foo`), an
-unknown parameter, get-assertions outside interactive mode, and an unknown command, for which Z3
-prints `unsupported` and reads on. Options Z3 accepts are ignored, including those that change
-its search (`:smt.mbqi false`, `:rlimit`).
-
-Two more differences answer as Z3 does, at another cost: `:lblpos` and `:lblneg` labels are
-dropped where Z3 wraps the term in a label, and a distinct of more than two terms becomes the
-disequalities of every pair, where Z3 keeps it and, past 32 terms, asserts it through a fresh
-function onto distinct values (`assert_distinct`, in 4.8.9 and 5.3.3 alike): a distinct of 1,000
-constants takes 21 million steps where Z3 takes milliseconds.
+**The subset.** The solver decides only the SMT-LIB tlapm's encoder writes (`backend/smtlib.ml`,
+ported in the obligations crate's `smt` module); `core::script_subset` states it, and holds every
+smt and z3 input of the decider corpus and every fixture. `decide` declines any other script
+before a step: unknown, `stop=unsupported`, `steps=0`, never a verdict. That covers what Z3 reads
+with an error and reads past (unknown attributes, symbols and numerals the encoder never spells,
+a stray parenthesis), what it reads otherwise than the encoder means (`:named` references, `let`,
+overloaded and builtin names, `(reset)`, a second check-sat, `echo`), a logic other than UFNIA,
+and the forms it writes otherwise (a negative numeral is `(- 1)`, a chained equality two). The
+parser keeps the TypeScript's reading of what lies outside, for the tests that run the solver on
+its own.
 
 **Size.** The core stops at `MAX_SIZE` (`rlimit.rs`, prover.md 3.6) with `stop=heap`: a count of
 the expressions, the goal's formulas, the e-graph's nodes and the instances found, read at the
@@ -233,12 +183,5 @@ group, integrated and tested before the next:
 ### Deviations from Z3
 
 Where the TS does what Z3 does not, the port mirrors the TS, so that the differential stayed exact. With the TS deleted, each is fixed in Rust alone, with the inputs it moves re-recorded (`prover-differential --side ts --update`, which decides smt and z3 with the Rust port).
-
-- The parser table (`tests/tables/parser.txt`) records two TypeScript readings Z3 does not make,
-  corrected with Z3's reading of quoted symbols and attributes: `(! q :named n1 :named n2)` named
-  the term n1 only, and `(assert |(|)` read `|(|` as a parenthesis. The two lines now hold the
-  Rust's reading, as do the messages for a `:named` without a name and, with Z3's error recovery,
-  for a stray closing parenthesis and a command the text ends inside. A script with an error now
-  goes on past it, so the table keeps its first error, as the TypeScript stopped there.
 
 - A model's hold on a builtin declaration (`div0`, `mod0`): `ast.ts`'s `incDeclRef` and `decDeclRef` counted it in `declRefCounts`, which had no entry for it, so the count was NaN and each time a model dropped the declaration it was released and its small id freed, while its applications, counted under its signature, still held it. Z3 counts an application's and a model's references on the one `func_decl`, and keeps it. It moves the small ids later declarations get, and so MBQI's search and, under the step limit, verdicts. The Rust mirrors it with `decl_ref_counts: Vec<Option<i32>>` (`None` is the NaN); regression input `smt/tests/inputs/builtin-decl-release.smt`. The evidence (TS, Rust and Z3 lines), the verdict it changes and the inputs it moves are in prover.md's Handoff, "Deviations from Z3". A fix on both sides that counted a model's hold under the declaration's signature (ea83e9c) was reverted: it is Z3's counting but not Z3's search. Run against Z3 5.3.3 (its traced instances against the TS's, by Z3's ids), neither the NaN nor the fix is Z3: the NaN makes all of Z3's instances on smt/0c812b0a8aa1347b where the fix leaves Z3 at the 1,255th, and the fix keeps to Z3 longer on a50910e8b0798813. The search moves through the small ids `div0` and `mod0` give back to the LIFO free list, not through `getNumAsts`. Z3's runs behave as if no model holds the declarations when the model checker pops its aux scope, where the TS's aux context still holds its last counterexample's model; releasing it before the pop gives Z3's stream on every input that tells them apart. Z3's source, as read, keeps that model too, so the change waits for the line in Z3 that releases it; prover.md's Handoff has the runs and lines.

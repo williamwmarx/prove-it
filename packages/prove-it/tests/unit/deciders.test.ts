@@ -79,14 +79,13 @@ describe("the deciders' steps and statistics", () => {
   });
 });
 
-// Z3 reports the malformed term, skips its assertion and answers the check-sat: Z3 5.3.3 prints
-// "(error "line 3 column 14: unknown constant foo (Int) ")", then unsat, which tlapm counts as
-// proved. It takes steps parsing up to the error, so a step limit can stop it first.
+// Z3 takes steps parsing up to a malformed term, so a step limit can stop it before the error, which
+// is why prover-inputs.ts records an input that throws without a step limit.
 describe("a malformed input", () => {
   const text = "(declare-const x Int)\n(assert (= (+ x 1) x))\n(assert (foo x))\n(check-sat)";
 
-  it("answers past the error as Z3 does", () => {
-    expect(decide("smt", text, OPTIONS).verdict).toBe("unsat");
+  it("throws without a step limit", () => {
+    expect(() => decide("smt", text, OPTIONS)).toThrow(TlaProverError);
   });
 
   it("is unknown when the step limit stops it first", () => {

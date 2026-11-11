@@ -88,11 +88,6 @@ fn record(text: &str) -> Vec<String> {
         Ok(problem) => problem,
         Err(error) => return vec![get_error_line(&error)],
     };
-    // The TypeScript stopped at the first error, where Z3 and the port skip the command and read on:
-    // the table keeps that error (tests/smt.rs has what follows one).
-    if let Some(error) = problem.errors.first() {
-        return vec![get_error_line(error)];
-    }
     let mut lines = vec![format!("check-sat {}", problem.has_check_sat)];
     for assertion in &problem.assertions {
         let index = *assertion as usize;

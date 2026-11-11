@@ -24,11 +24,8 @@ use crate::util::error::SmtError;
 // An s-expression: an index into the arena that read_sexprs fills.
 type SExprId = usize;
 
-// A quoted symbol, |name|, names what the plain symbol name does, but is never a keyword, a numeral,
-// a string or a parenthesis.
 enum SExpr<'a> {
     Symbol(&'a str),
-    Quoted(&'a str),
     List(Vec<SExprId>),
 }
 
@@ -40,29 +37,10 @@ enum Binding {
     Let { depth: i32, expr: Expr },
 }
 
-/// What the script hands the solver as it is read: an assertion, or (reset), after which the
-/// manager is a new one.
-pub enum Command {
-    Assert(Expr),
-    Reset,
-}
-
 pub struct SmtProblem {
     pub assertions: Vec<Expr>,
     // Z3 prints no answer for a script without check-sat.
     pub has_check_sat: bool,
-    /// Whether a check-sat follows the first one, whose answers tlapm reads too.
-    pub has_later_check_sat: bool,
-    /// The logic set-logic set, if Z3 4.8.9 supports it.
-    pub logic: Option<String>,
-    /// The errors Z3 prints, each skipping its command, in order.
-    pub errors: Vec<SmtError>,
-}
-
-// A top-level item of the script: a command, or an error Z3 reports while it reads one.
-enum Item {
-    Command(SExprId),
-    Error(&'static str),
 }
 
 // An application that parse_term is parsing: its name, its list, where its arguments start on the
@@ -124,8 +102,7 @@ fn find_byte(bytes: &[u8], byte: u8, from: usize) -> Option<usize> {
         .map(|offset| from + offset)
 }
 
-// The tokens, up to an error that ends them, if any.
-fn tokenize(text: &str) -> (Vec<&str>, Option<&'static str>) {
+fn tokenize(text: &str) -> Result<Vec<&str>, SmtError> {
     let bytes = text.as_bytes();
     let mut tokens = Vec::new();
     let mut position = 0;
@@ -139,10 +116,9 @@ fn tokenize(text: &str) -> (Vec<&str>, Option<&'static str>) {
         } else if char == b' ' || char == b'\n' || char == b'\t' || char == b'\r' {
             position += 1;
         } else if char == b'|' {
-            let Some(end) = find_byte(bytes, b'|', position + 1) else {
-                return (tokens, Some("unterminated quoted symbol"));
-            };
-            tokens.push(&text[position..end + 1]);
+            let end = find_byte(bytes, b'|', position + 1)
+                .ok_or_else(|| SmtError::Parse("unterminated quoted symbol".into()))?;
+            tokens.push(&text[position + 1..end]);
             position = end + 1;
         } else if char == b'"' {
             let mut end = position + 1;
@@ -160,46 +136,32 @@ fn tokenize(text: &str) -> (Vec<&str>, Option<&'static str>) {
             position = end;
         }
     }
-    (tokens, None)
+    Ok(tokens)
 }
 
-// The arena of the s-expressions and the top-level items. Z3 reads a command at a time: a stray
-// parenthesis or a command the text ends inside is an error, and so is an atom, which the command
-// loop refuses.
-fn read_sexprs<'a>(
-    tokens: &[&'a str],
-    token_error: Option<&'static str>,
-) -> (Vec<SExpr<'a>>, Vec<Item>) {
+// The arena of the s-expressions, and the commands.
+fn read_sexprs<'a>(tokens: &[&'a str]) -> Result<(Vec<SExpr<'a>>, Vec<SExprId>), SmtError> {
     let mut nodes = Vec::new();
-    let mut items = Vec::new();
-    let mut stack: Vec<Vec<SExprId>> = Vec::new();
+    let mut stack: Vec<Vec<SExprId>> = vec![Vec::new()];
     for token in tokens {
         if *token == "(" {
             stack.push(Vec::new());
-            continue;
-        }
-        let node = if *token == ")" {
-            let Some(list) = stack.pop() else {
-                items.push(Item::Error("invalid command, '(' expected"));
-                continue;
+        } else if *token == ")" {
+            let list = stack.pop();
+            let (Some(list), Some(top)) = (list, stack.last_mut()) else {
+                return Err(SmtError::Parse("unbalanced parentheses".into()));
             };
-            SExpr::List(list)
-        } else {
-            match token.strip_prefix('|') {
-                Some(quoted) => SExpr::Quoted(&quoted[..quoted.len() - 1]),
-                None => SExpr::Symbol(token),
-            }
-        };
-        match stack.last_mut() {
-            Some(top) => top.push(nodes.len()),
-            None => items.push(Item::Command(nodes.len())),
+            top.push(nodes.len());
+            nodes.push(SExpr::List(list));
+        } else if let Some(top) = stack.last_mut() {
+            top.push(nodes.len());
+            nodes.push(SExpr::Symbol(token));
         }
-        nodes.push(node);
     }
-    if !stack.is_empty() || token_error.is_some() {
-        items.push(Item::Error(token_error.unwrap_or("unexpected end of file")));
+    match stack.pop() {
+        Some(commands) if stack.is_empty() => Ok((nodes, commands)),
+        _ => Err(SmtError::Parse("unbalanced parentheses".into())),
     }
-    (nodes, items)
 }
 
 fn is_digits(text: &str) -> bool {
@@ -474,7 +436,6 @@ fn get_weight(nodes: &[SExpr], value: Option<SExprId>) -> Result<i32, SmtError> 
         match current.map(|id| &nodes[id]) {
             None => break None,
             Some(SExpr::Symbol(text)) => break Some(*text),
-            Some(SExpr::Quoted(_)) => break None,
             Some(SExpr::List(list)) if list.is_empty() => break Some(""),
             Some(SExpr::List(list)) if list.len() == 1 => current = Some(list[0]),
             Some(SExpr::List(_)) => break None,
@@ -493,10 +454,7 @@ fn get_weight(nodes: &[SExpr], value: Option<SExprId>) -> Result<i32, SmtError> 
 struct SmtlibParser<'a> {
     nodes: &'a [SExpr<'a>],
     sorts: HashMap<&'a str, Sort>,
-    // The declarations of each name: Z3 4.8.9's func_decls, which overload a name by signature.
-    funcs: HashMap<&'a str, Vec<Decl>>,
-    // The named terms, which a reference expands to as cmd_context expands a macro.
-    named: HashMap<&'a str, Expr>,
+    funcs: HashMap<&'a str, Decl>,
     scopes: Vec<HashMap<&'a str, Binding>>,
     depth: i32,
     // The quantifiers, lets and annotations that parse_leaf is in.
@@ -515,51 +473,9 @@ impl<'a> SmtlibParser<'a> {
     fn get_symbol(&self, sexpr: Option<SExprId>) -> Option<&'a str> {
         let nodes = self.nodes;
         match sexpr.map(|id| &nodes[id]) {
-            Some(SExpr::Symbol(text) | SExpr::Quoted(text)) => Some(text),
+            Some(SExpr::Symbol(text)) => Some(text),
             _ => None,
         }
-    }
-
-    // A keyword, :name, which a quoted symbol never is.
-    fn get_keyword(&self, sexpr: Option<SExprId>) -> Option<&'a str> {
-        let nodes = self.nodes;
-        match sexpr.map(|id| &nodes[id]) {
-            Some(SExpr::Symbol(text)) if text.starts_with(':') => Some(text),
-            _ => None,
-        }
-    }
-
-    // check_identifier: a symbol, quoted or not, and not a keyword, a numeral, a string or a
-    // bit-vector literal.
-    fn get_identifier(&self, sexpr: Option<SExprId>) -> Option<&'a str> {
-        let nodes = self.nodes;
-        match sexpr.map(|id| &nodes[id]) {
-            Some(SExpr::Quoted(text)) => Some(text),
-            Some(SExpr::Symbol(text))
-                if !text.starts_with([':', '"', '#'])
-                    && !text.starts_with(|char: char| char.is_ascii_digit()) =>
-            {
-                Some(text)
-            }
-            _ => None,
-        }
-    }
-
-    // consume_attributes: the keyword and value of each attribute of (! term attribute*).
-    fn get_attributes(
-        &self,
-        list: &'a [SExprId],
-    ) -> Result<Vec<(&'a str, Option<SExprId>)>, SmtError> {
-        let mut attributes = Vec::new();
-        for index in (2..list.len()).step_by(2) {
-            let Some(keyword) = self.get_keyword(Some(list[index])) else {
-                return Err(SmtError::Parse(
-                    "invalid attributed expression, keyword expected".into(),
-                ));
-            };
-            attributes.push((keyword, list.get(index + 1).copied()));
-        }
-        Ok(attributes)
     }
 
     fn expect_list(&self, sexpr: Option<SExprId>) -> Result<&'a [SExprId], SmtError> {
@@ -607,10 +523,7 @@ impl<'a> SmtlibParser<'a> {
         }
         let decl = match self.get_symbol(Some(head)) {
             Some("true" | "false") => Some(-1),
-            Some(name) if self.named.contains_key(name) => None,
-            head => head
-                .and_then(|name| self.funcs.get(name))
-                .and_then(|decls| decls.first().copied()),
+            head => head.and_then(|name| self.funcs.get(name).copied()),
         };
         if decl == Some(-1)
             || decl.is_some_and(|decl| m.func_decls[decl as usize].domain.is_empty())
@@ -670,19 +583,22 @@ impl<'a> SmtlibParser<'a> {
         let mut weight = 1;
         let mut qid = String::new();
         if let Some(annotation) = annotation {
-            for (keyword, value) in self.get_attributes(annotation)? {
+            let mut index = 2;
+            while index < annotation.len() {
+                let keyword = self.get_symbol(Some(annotation[index]));
+                let value = annotation.get(index + 1).copied();
                 match keyword {
-                    ":pattern" => {
+                    Some(":pattern") => {
                         if let Some(pattern) = self.parse_pattern(m, value)? {
                             m.inc_ref(pattern);
                             patterns.push(pattern);
                         }
                     }
-                    ":weight" => weight = get_weight(self.nodes, value)?,
-                    ":qid" => qid = self.expect_symbol(value)?.to_string(),
-                    ":named" => self.name_term(m, value, body)?,
+                    Some(":weight") => weight = get_weight(self.nodes, value)?,
+                    Some(":qid") => qid = self.expect_symbol(value)?.to_string(),
                     _ => {}
                 }
+                index += 2;
             }
         }
         self.scopes.pop();
@@ -766,34 +682,7 @@ impl<'a> SmtlibParser<'a> {
         if let Some(op) = get_op(&BUILTIN_OPS, name) {
             return mk_app(m, op, args, None);
         }
-        // cmd_context::mk_app expands a macro first.
-        if args.is_empty()
-            && let Some(named) = self.named.get(name)
-        {
-            return Ok(*named);
-        }
-        // cmd_context::mk_app: one declaration of the name, or the one whose domain is the sorts
-        // of the arguments.
-        let decls = self.funcs.get(name).map_or(&[][..], Vec::as_slice);
-        let decl = match decls {
-            [] => None,
-            [decl] => Some(*decl),
-            _ if args.is_empty() => {
-                return Err(SmtError::Parse(format!(
-                    "ambiguous constant reference, more than one constant with the same sort, use \
-                     a qualified expression (as <symbol> <sort>) to disambiguate {name}"
-                )));
-            }
-            _ => decls.iter().copied().find(|decl| {
-                let domain = &m.func_decls[*decl as usize].domain;
-                domain.len() == args.len()
-                    && args
-                        .iter()
-                        .zip(domain)
-                        .all(|(arg, sort)| m.sorts[*arg as usize] == *sort)
-            }),
-        };
-        let Some(decl) = decl else {
+        let Some(decl) = self.funcs.get(name).copied() else {
             return Err(SmtError::Parse(format!("unknown function {name}")));
         };
         mk_app(m, decl, args, None)
@@ -805,8 +694,7 @@ impl<'a> SmtlibParser<'a> {
         let nodes = self.nodes;
         match sexpr.map(|id| &nodes[id]) {
             None => Err(SmtError::Parse("expected a term".into())),
-            Some(SExpr::Symbol(text)) => self.parse_symbol(m, text, false),
-            Some(SExpr::Quoted(text)) => self.parse_symbol(m, text, true),
+            Some(SExpr::Symbol(text)) => self.parse_symbol(m, text),
             Some(SExpr::List(list)) => {
                 if self.num_nested == MAX_NESTING {
                     return Err(SmtError::Unsupported(
@@ -821,17 +709,11 @@ impl<'a> SmtlibParser<'a> {
         }
     }
 
-    fn parse_symbol(
-        &mut self,
-        m: &mut AstManager,
-        text: &str,
-        is_quoted: bool,
-    ) -> Result<Expr, SmtError> {
-        if !is_quoted && is_digits(text) {
+    fn parse_symbol(&mut self, m: &mut AstManager, text: &str) -> Result<Expr, SmtError> {
+        if is_digits(text) {
             return Ok(m.mk_numeral(&parse_int(text)?));
         }
         if let Some((integer, fraction)) = text.split_once('.')
-            && !is_quoted
             && is_digits(integer)
             && is_digits(fraction)
         {
@@ -883,54 +765,16 @@ impl<'a> SmtlibParser<'a> {
             return self.parse_let(m, list);
         }
         let named = self.parse_term(m, list.get(1).copied())?;
-        for (keyword, value) in self.get_attributes(list)? {
-            match keyword {
-                ":named" => self.name_term(m, value, named)?,
-                ":weight" | ":skolemid" | ":qid" | ":pattern" | ":no-pattern" => {
-                    return Err(SmtError::Parse(
-                        "invalid attribute, not in the scope of a quantifier".into(),
-                    ));
-                }
-                _ => {}
-            }
+        // name_expr: cmd_context keeps a named expression as a macro.
+        let name_index = list
+            .iter()
+            .position(|item| self.get_symbol(Some(*item)) == Some(":named"));
+        if let Some(name_index) = name_index {
+            m.inc_ref(named);
+            let name = self.expect_symbol(list.get(name_index + 1).copied())?;
+            m.mk_macro(name, named);
         }
         Ok(named)
-    }
-
-    // name_expr: cmd_context keeps a named expression as a macro.
-    fn name_term(
-        &mut self,
-        m: &mut AstManager,
-        name: Option<SExprId>,
-        term: Expr,
-    ) -> Result<(), SmtError> {
-        if m.free_var_bounds[term as usize] > 0 {
-            return Err(SmtError::Parse(
-                "invalid named expression, expression contains free variables".into(),
-            ));
-        }
-        let name = self
-            .get_identifier(name)
-            .ok_or_else(|| SmtError::Parse("invalid attribute value, symbol expected".into()))?;
-        // cmd_context::insert of a macro.
-        if self.named.contains_key(name) {
-            return Err(SmtError::Parse("named expression already defined".into()));
-        }
-        let sort = m.sorts[term as usize];
-        if self.funcs.get(name).is_some_and(|decls| {
-            decls.iter().any(|decl| {
-                let decl = &m.func_decls[*decl as usize];
-                decl.domain.is_empty() && decl.range == sort
-            })
-        }) {
-            return Err(SmtError::Parse(format!(
-                "invalid named expression, declaration already defined with this name {name}"
-            )));
-        }
-        m.inc_ref(term);
-        m.mk_macro(name, term);
-        self.named.insert(name, term);
-        Ok(())
     }
 
     fn enter(
@@ -987,251 +831,50 @@ impl<'a> SmtlibParser<'a> {
     }
 }
 
-// smt_logics::supported_logic of Z3 4.8.9: a logic Z3 sets, where it ignores any other. 5.3.3
-// matches names by their parts instead.
-const SUPPORTED_LOGICS: [&str; 61] = [
-    "QF_UF",
-    "UF",
-    "QF_DT",
-    "SMTFD",
-    "ALL",
-    "CSP",
-    "QF_FD",
-    "QF_LRA",
-    "QF_LIA",
-    "QF_RDL",
-    "QF_IDL",
-    "QF_AUFLIA",
-    "QF_ALIA",
-    "QF_AUFLIRA",
-    "QF_AUFNIA",
-    "QF_AUFNIRA",
-    "QF_ANIA",
-    "QF_LIRA",
-    "QF_UFLIA",
-    "QF_UFLRA",
-    "QF_UFIDL",
-    "QF_UFRDL",
-    "QF_NIA",
-    "QF_NRA",
-    "QF_NIRA",
-    "QF_UFNRA",
-    "QF_UFNIA",
-    "QF_UFNIRA",
-    "QF_BVRE",
-    "ALIA",
-    "AUFLIA",
-    "AUFLIRA",
-    "AUFNIA",
-    "AUFNIRA",
-    "UFLIA",
-    "UFLRA",
-    "UFNRA",
-    "UFNIRA",
-    "NIA",
-    "NRA",
-    "UFNIA",
-    "LIA",
-    "LRA",
-    "UFIDL",
-    "QF_FP",
-    "FP",
-    "QF_FPBV",
-    "QF_BVFP",
-    "QF_S",
-    "QF_SLIA",
-    "HORN",
-    "QF_FPLRA",
-    "UFBV",
-    "AUFBV",
-    "ABV",
-    "BV",
-    "QF_BV",
-    "QF_UFBV",
-    "QF_ABV",
-    "QF_AUFBV",
-    "QF_AX",
-];
-
-fn is_supported_logic(name: &str) -> bool {
-    SUPPORTED_LOGICS.contains(&name)
-}
-
-fn get_builtin_sorts<'a>() -> HashMap<&'a str, Sort> {
-    HashMap::from([("Bool", SORT_BOOL), ("Int", SORT_INT), ("Real", SORT_REAL)])
-}
-
-/// Parses a script, and hands each assertion and reset to on_command as Z3's cmd_context does,
-/// before it parses the next command. Expressions are created in the order of Z3's parser, and live
-/// as long as there.
+/// Parses a script, and hands each assertion to assert_expr as Z3's cmd_context does, before it
+/// parses the next command. Expressions are created in the order of Z3's parser, and live as long
+/// as there.
 pub fn parse_smtlib(
     text: &str,
     m: &mut AstManager,
-    mut on_command: impl FnMut(&mut AstManager, Command) -> Result<(), SmtError>,
+    mut assert_expr: impl FnMut(&mut AstManager, Expr) -> Result<(), SmtError>,
 ) -> Result<SmtProblem, SmtError> {
-    let (tokens, token_error) = tokenize(text);
-    let (nodes, items) = read_sexprs(&tokens, token_error);
+    let tokens = tokenize(text)?;
+    let (nodes, commands) = read_sexprs(&tokens)?;
     let mut parser = SmtlibParser {
         nodes: &nodes,
-        sorts: get_builtin_sorts(),
+        sorts: HashMap::from([("Bool", SORT_BOOL), ("Int", SORT_INT), ("Real", SORT_REAL)]),
         funcs: HashMap::new(),
         scopes: Vec::new(),
         depth: 0,
         num_nested: 0,
-        named: HashMap::new(),
     };
-    let mut state = ScriptState::default();
-    let mut errors = Vec::new();
+    let mut assertions = Vec::new();
     let mut has_check_sat = false;
-    let mut has_later_check_sat = false;
-    for (index, item) in items.iter().enumerate() {
-        let flow = match item {
-            Item::Error(message) => Err(SmtError::Parse((*message).into())),
-            Item::Command(command) => parser.run_command(m, &mut state, *command, &mut on_command),
-        };
-        match flow {
-            Ok(Flow::Next) => {}
-            Ok(Flow::CheckSat) => {
-                has_check_sat = true;
-                has_later_check_sat = items[index + 1..]
-                    .iter()
-                    .filter_map(|item| match item {
-                        Item::Command(command) => parser.get_command_name(*command),
-                        Item::Error(_) => None,
-                    })
-                    .take_while(|name| *name != "exit")
-                    .any(|name| name.starts_with("check-sat"));
-                break;
-            }
-            Ok(Flow::Exit) => break,
-            // The parser reports the error, skips the rest of the command and reads on
-            // (smt2::parser::operator(), sync_after_error).
-            Err(SmtError::Parse(message)) => {
-                errors.push(SmtError::Parse(message));
-                parser.scopes.clear();
-                parser.depth = 0;
-                parser.num_nested = 0;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(SmtProblem {
-        assertions: state.assertions,
-        has_check_sat,
-        has_later_check_sat,
-        logic: state.logic.map(String::from),
-        errors,
-    })
-}
-
-enum Flow {
-    Next,
-    CheckSat,
-    Exit,
-}
-
-// What the commands read so far leave for the next one.
-#[derive(Default)]
-struct ScriptState<'a> {
-    assertions: Vec<Expr>,
-    logic: Option<&'a str>,
-    // has_manager: Z3 4.8.9 makes its manager at the first declaration or assertion, and checks
-    // what follows against the logic set by then (check_logic).
-    is_initialized: bool,
-    is_checking_ufnia: bool,
-}
-
-impl<'a> SmtlibParser<'a> {
-    fn get_command_name(&self, command: SExprId) -> Option<&'a str> {
-        self.get_symbol(self.get_list(Some(command))?.first().copied())
-    }
-
-    // The builtins a declaration would shadow, which Z3 4.8.9 lets a declaration take over.
-    fn is_builtin_name(name: &str) -> bool {
-        get_op(&BUILTIN_OPS, name).is_some()
-            || get_op(&CHAINABLE_OPS, name).is_some()
-            || matches!(name, "-" | "true" | "false")
-    }
-
-    fn run_command(
-        &mut self,
-        m: &mut AstManager,
-        state: &mut ScriptState<'a>,
-        command: SExprId,
-        on_command: &mut impl FnMut(&mut AstManager, Command) -> Result<(), SmtError>,
-    ) -> Result<Flow, SmtError> {
-        let list = self.expect_list(Some(command))?;
-        let name = self.expect_symbol(list.first().copied())?;
-        if !state.is_initialized
-            && matches!(
-                name,
-                "declare-sort" | "declare-fun" | "declare-const" | "assert"
-            )
-        {
-            state.is_initialized = true;
-            state.is_checking_ufnia = state.logic == Some("UFNIA");
-        }
+    for command in commands {
+        let list = parser.expect_list(Some(command))?;
+        let name = parser.expect_symbol(list.first().copied())?;
         match name {
             "declare-sort" => {
                 if let Some(arity) = list.get(2)
-                    && self.get_symbol(Some(*arity)) != Some("0")
+                    && parser.get_symbol(Some(*arity)) != Some("0")
                 {
                     return Err(SmtError::Unsupported(
                         "parametric sorts are not supported".into(),
                     ));
                 }
-                let sort_name = self.expect_symbol(list.get(1).copied())?;
-                if self.sorts.contains_key(sort_name) {
-                    return Err(SmtError::Parse(format!("sort already defined {sort_name}")));
-                }
-                self.sorts.insert(sort_name, m.mk_sort(sort_name));
+                let sort_name = parser.expect_symbol(list.get(1).copied())?;
+                parser.sorts.insert(sort_name, m.mk_sort(sort_name));
             }
             "declare-fun" | "declare-const" => {
                 let mut domain = Vec::new();
                 if name == "declare-fun" {
-                    for sort in self.expect_list(list.get(2).copied())? {
-                        domain.push(self.parse_sort(Some(*sort))?);
+                    for sort in parser.expect_list(list.get(2).copied())? {
+                        domain.push(parser.parse_sort(Some(*sort))?);
                     }
                 }
-                let range =
-                    self.parse_sort(list.get(if name == "declare-fun" { 3 } else { 2 }).copied())?;
-                let func_name = self.expect_symbol(list.get(1).copied())?;
-                if state.is_checking_ufnia && (range == SORT_REAL || domain.contains(&SORT_REAL)) {
-                    return Err(SmtError::Parse("logic does not support reals".into()));
-                }
-                // cmd_context::insert: a constant of a named term's name, the same signature
-                // twice; an overload or a builtin's name, which Z3 resolves by sorts, the port
-                // does not take.
-                if domain.is_empty() && self.named.contains_key(func_name) {
-                    return Err(SmtError::Parse(format!(
-                        "invalid declaration, named expression already defined with this name {func_name}"
-                    )));
-                }
-                for existing in self.funcs.get(func_name).into_iter().flatten() {
-                    let existing = &m.func_decls[*existing as usize];
-                    if existing.domain != domain {
-                        continue;
-                    }
-                    if existing.range == range {
-                        return Err(SmtError::Parse(format!(
-                            "invalid declaration, '{func_name}' (with the given signature) already declared"
-                        )));
-                    }
-                    // A reference to a constant declared twice is ambiguous, an error; an
-                    // application picks among such declarations in the order of a hash set.
-                    if domain.is_empty() {
-                        continue;
-                    }
-                    return Err(SmtError::Unsupported(
-                        "declarations of one name and domain with two ranges are not supported"
-                            .into(),
-                    ));
-                }
-                if Self::is_builtin_name(func_name) {
-                    return Err(SmtError::Unsupported(
-                        "a declaration of a builtin's name is not supported".into(),
-                    ));
-                }
+                let range = parser
+                    .parse_sort(list.get(if name == "declare-fun" { 3 } else { 2 }).copied())?;
                 // builtin_signature_collides and is_transcendental_shadow_decl each apply the builtin
                 // of that name to fresh variables, which they then release.
                 for _ in 0..2 {
@@ -1247,134 +890,34 @@ impl<'a> SmtlibParser<'a> {
                         m.dec_ref(domain_var)?;
                     }
                 }
+                let func_name = parser.expect_symbol(list.get(1).copied())?;
                 let decl = m.mk_func_decl(SmtSymbol::Name(func_name.into()), &domain, range, false);
-                self.funcs.entry(func_name).or_default().push(decl);
+                parser.funcs.insert(func_name, decl);
             }
             "assert" => {
                 // cmd_context::assert_expr keeps the assertion, and passes it to the solver.
-                // parse_assert asserts the term before it looks for the closing parenthesis.
-                let assertion = self.parse_term(m, list.get(1).copied())?;
+                let assertion = parser.parse_term(m, list.get(1).copied())?;
                 let assertion = expect_bool(m, assertion)?;
-                if state.is_checking_ufnia && has_reals(m, assertion) {
-                    return Err(SmtError::Parse("logic does not support reals".into()));
-                }
                 m.inc_ref(assertion);
-                state.assertions.push(assertion);
-                on_command(m, Command::Assert(assertion))?;
-                if list.len() > 2 {
-                    return Err(SmtError::Parse(
-                        "invalid assert command, ')' expected".into(),
-                    ));
-                }
+                assertions.push(assertion);
+                assert_expr(m, assertion)?;
             }
-            "reset" => {
-                if list.len() > 1 {
-                    return Err(SmtError::Parse(
-                        "invalid reset command, ')' expected".into(),
-                    ));
-                }
-                // cmd_context::reset forgets the declarations, the named terms, the assertions and
-                // the logic, and deletes the manager; the next command makes a new one, with its
-                // solver.
-                self.sorts = get_builtin_sorts();
-                self.funcs.clear();
-                self.named.clear();
-                *state = ScriptState::default();
-                m.limit.restart();
-                *m = AstManager::new(m.limit.clone());
-                on_command(m, Command::Reset)?;
+            "check-sat" => {
+                has_check_sat = true;
+                break;
             }
-            // cmd_context::set_logic.
-            "set-logic" => {
-                if list.len() > 2 {
-                    return Err(SmtError::Parse(
-                        "invalid command, too many arguments".into(),
-                    ));
-                }
-                let logic = self.get_identifier(list.get(1).copied()).ok_or_else(|| {
-                    SmtError::Parse("invalid command argument, symbol expected".into())
-                })?;
-                if state.logic.is_some() {
-                    return Err(SmtError::Parse("the logic has already been set".into()));
-                }
-                if state.is_initialized {
-                    return Err(SmtError::Parse(
-                        "logic must be set before initialization".into(),
-                    ));
-                }
-                if is_supported_logic(logic) {
-                    state.logic = Some(logic);
-                }
-            }
-            // set_option_cmd's check_not_initialized, in Z3 4.8.9.
-            "set-option"
-                if state.is_initialized
-                    && [
-                        ":produce-proofs",
-                        ":produce-unsat-cores",
-                        ":produce-unsat-assumptions",
-                        ":produce-assertions",
-                        ":interactive-mode",
-                        ":global-decls",
-                        ":global-declarations",
-                    ]
-                    .contains(&self.get_keyword(list.get(1).copied()).unwrap_or("")) =>
-            {
-                return Err(SmtError::Parse(
-                    "option value cannot be modified after initialization".into(),
-                ));
-            }
-            // Before the first check-sat there is no model, proof or core to get.
-            "get-model"
-            | "get-value"
-            | "get-assignment"
-            | "get-proof"
-            | "get-unsat-core"
-            | "get-unsat-assumptions"
-            | "eval" => {
-                return Err(SmtError::Parse(format!("{name} has nothing to get")));
-            }
-            // With arguments, check-sat is check-sat-assuming.
-            "check-sat" if list.len() > 1 => {
-                return Err(SmtError::Unsupported(
-                    "check-sat with assumptions is not supported".into(),
-                ));
-            }
-            "check-sat" => return Ok(Flow::CheckSat),
-            "exit" if list.len() > 1 => {
-                return Err(SmtError::Parse(
-                    "invalid command, too many arguments".into(),
-                ));
-            }
-            // Z3 reads no further.
-            "exit" => return Ok(Flow::Exit),
-            "push" | "pop" | "define-fun" | "define-sort" | "reset-assertions"
-            | "check-sat-assuming" | "check-sat-using" => {
+            "push" | "pop" | "define-fun" | "define-sort" => {
                 return Err(SmtError::Unsupported(format!(
                     "the command {name} is not supported"
                 )));
             }
             _ => {}
         }
-        Ok(Flow::Next)
     }
-}
-
-// check_logic for a logic without reals: whether the term has a subterm of sort Real, which a
-// cast to or from a real is too.
-fn has_reals(m: &AstManager, term: Expr) -> bool {
-    let mut visited = HashSet::new();
-    let mut todo = vec![term];
-    while let Some(current) = todo.pop() {
-        if !visited.insert(current) {
-            continue;
-        }
-        if m.sorts[current as usize] == SORT_REAL {
-            return true;
-        }
-        todo.extend(m.get_arg_slice(current).iter().copied());
-    }
-    false
+    Ok(SmtProblem {
+        assertions,
+        has_check_sat,
+    })
 }
 
 #[cfg(test)]
@@ -1389,12 +932,7 @@ mod tests {
     fn parse(text: &str) -> Result<usize, SmtError> {
         let limits = Limits::new(f64::INFINITY, None, None);
         let mut manager = AstManager::new(ResourceLimit::new(&limits));
-        // The first error the script reports, which skips its command.
-        let problem = parse_smtlib(text, &mut manager, |_, _| Ok(()))?;
-        match problem.errors.first() {
-            Some(error) => Err(error.clone()),
-            None => Ok(problem.assertions.len()),
-        }
+        parse_smtlib(text, &mut manager, |_, _| Ok(())).map(|problem| problem.assertions.len())
     }
 
     fn get_nested_lets(count: usize) -> String {

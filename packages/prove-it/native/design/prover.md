@@ -494,8 +494,8 @@ coordinator first, done by or with that crate's owner, and kept to that flag.
   of 2^24 stopped; one over about 5,800 terms would hold about 4.7 GB. 2^26 is a
   ceiling against runaway growth, not a budget: the decider corpus holds at most 7.3 million
   under its step limits (z3/d678a5ca2b5418a6, 1.3 GB). What it stops:
-  - goal::quick_process splitting 59 named conjunctions of the one before with itself into 2^59
-    formulas without a step stops at step 299 with 260 MB (Z3 5.3.3: timeout at 9.4 GB in 20 s);
+  - goal::quick_process splitting 59 let-bound conjunctions of the one before with itself into
+    2^59 formulas without a step stops (Z3 5.3.3: timeout at 9.4 GB in 20 s);
   - a mutant of smt/706e2c3eb8dbf208 whose one E-matching run finds millions of instances, 10.5 GB
     by two million steps, stops at 1,691,188 steps with 4.9 GB (Z3 5.3.3 grows the same way:
     timeout at 175 MB with tlapm's `-T:5`, 1.2 GB at 20 s, 6.7 GB at 60 s).
