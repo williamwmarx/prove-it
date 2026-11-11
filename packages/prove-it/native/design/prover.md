@@ -1228,8 +1228,13 @@ is next.
     decision (keyed by obligation, method, prover, limit and text), and proves again with the
     answers. A run's obligations, Prep and encodings stay on a long-lived thread, which takes
     tcp_proof from over two hours to 57 s.
-  - **Fallback:** a source or module that isn't well-formed UTF-16 goes to the TypeScript driver,
-    since a Rust string can't hold it.
+  - **Ill-formed text:** the engine's strings can't hold a lone surrogate. Read as U+FFFD, as
+    `get_text` reads it, two different strings become one and `"\uD800" = "\uDC00" BY SMT` is
+    proved, so the host's `prove` declines a file name, source or module read that holds one
+    (`TlaUnsupportedError`, "not native yet: … isn't well-formed UTF-16") before it decides
+    anything. Both bindings hand it a string's UTF-16 units unchanged, so it sees every one.
+    Winning these back takes carrying the units faithfully through the front end and the
+    encoders. The driver gives way to the TypeScript on no text.
   - **Checks:** `scripts/prover-driver-differential.ts` gives 304 of 304 corpus modules the same
     under both drivers with decisions replayed from the record; `tests/unit/prove-driver.test.ts`
     holds the cases seven break-it rounds found.

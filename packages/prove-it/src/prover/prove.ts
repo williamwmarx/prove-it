@@ -499,25 +499,16 @@ const getAnswer = (decision: Promise<Decision>) =>
     },
   );
 
-// Whether the Rust driver reads a text as the TypeScript does: its strings hold only well-formed
-// UTF-16.
-const isNativeText = (text: string) => text.isWellFormed();
-
 // prove with the Rust driver, which proves in rounds: each asks for the modules and the decisions
 // it needs, which this answers, deciding as the TypeScript driver does, in the pool when there is
 // one, and the next starts again from the beginning with them (design/prover.md, section 4c).
-// Where a module isn't well-formed UTF-16, which the Rust driver's strings can't hold, it returns
-// the modules it loaded, for the TypeScript driver to prove with: that is known before any
-// obligation is reported.
+// The engine declines a source or module with a lone surrogate, which its strings can't hold.
 const proveNatively = async (
   options: ProveOptions,
   name: string,
   native: Exclude<ReturnType<typeof getNativeAddon>, string>,
   decideWith: DecidePool["decide"] | undefined,
-): Promise<ProveResult | Map<string, (string | undefined)[]>> => {
-  // What loadModule gave for each module, in the order it read it.
-  const loaded = new Map<string, (string | undefined)[]>();
-  if (!isNativeText(options.source)) return loaded;
+): Promise<ProveResult> => {
   const workerCount = options.workers ?? 1;
   const pool =
     workerCount > 1 && isWorkerSupported() && decideWith === undefined
@@ -569,10 +560,7 @@ const proveNatively = async (
       const [key] = result.keys;
       if (key !== undefined) {
         const moduleName = key.slice("module:".length, key.lastIndexOf("#"));
-        const source = options.loadModule?.(moduleName);
-        loaded.set(moduleName, [...(loaded.get(moduleName) ?? []), source]);
-        if (source !== undefined && !isNativeText(source)) return loaded;
-        known.set(key, source);
+        known.set(key, options.loadModule?.(moduleName));
         continue;
       }
       // A decision that threw ends the run once no earlier obligation needs a decision, as the
@@ -638,21 +626,12 @@ export const proveWith = async (
   const name = getModuleName(options.source);
   if (options.backend !== "tlapm") await loadWasmEngine();
   const native = options.backend === "tlapm" ? undefined : getNativeDriver();
-  const proved =
-    native === undefined ? undefined : await proveNatively(options, name, native, decideWith);
-  if (proved !== undefined && !(proved instanceof Map)) return proved;
-  // The modules the Rust driver read before it gave way, each read again from what it read.
-  const loadModule = (moduleName: string) => {
-    const reads = proved?.get(moduleName);
-    return reads !== undefined && reads.length > 0
-      ? reads.shift()
-      : options.loadModule?.(moduleName);
-  };
+  if (native !== undefined) return proveNatively(options, name, native, decideWith);
   const modules = new Map<string, string>();
   const results = getObligations(
     [{ file: `${name}.tla`, source: options.source }],
     (moduleName) => {
-      const source = loadModule(moduleName);
+      const source = options.loadModule?.(moduleName);
       if (source !== undefined) modules.set(moduleName, source);
       const loaded = source ?? (moduleName === "TLAPS" ? TLAPS_MODULE : undefined);
       return loaded === undefined ? undefined : { file: `${moduleName}.tla`, source: loaded };

@@ -19,7 +19,7 @@
 //! An export that reads something else names it by a key of a new kind, which this list gains.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::value::HostValue;
 
@@ -27,6 +27,7 @@ use crate::value::HostValue;
 pub struct Sources {
     known: HashMap<String, Option<Known>>,
     needed: RefCell<Vec<String>>,
+    ill_formed: HashSet<String>,
 }
 
 /// A value JavaScript answered: a string, or a Uint8Array.
@@ -36,11 +37,24 @@ enum Known {
     Bytes(Vec<u8>),
 }
 
-/// A string argument, or the message of the TypeError for another.
+/// A string argument, or the message of the TypeError for another. A string JavaScript holds may
+/// not be well-formed UTF-16, and each lone surrogate becomes U+FFFD, one unit for one, so that
+/// columns stay where they were. That makes two different strings one, so an export whose answer
+/// depends on the text, as `prove`'s does, asks `is_well_formed` first.
 pub fn get_text(value: &HostValue, what: &str) -> Result<String, String> {
     match value {
         HostValue::Text(units) => Ok(String::from_utf16_lossy(units)),
         _ => Err(format!("{what} must be a string")),
+    }
+}
+
+/// Whether a value is a string without a lone surrogate, which `get_text` would replace.
+pub fn is_well_formed(value: &HostValue) -> bool {
+    match value {
+        HostValue::Text(units) => {
+            char::decode_utf16(units.iter().copied()).all(|unit| unit.is_ok())
+        }
+        _ => true,
     }
 }
 
@@ -51,16 +65,23 @@ impl Sources {
         let HostValue::Array(entries) = known else {
             return Err(wrong());
         };
+        let mut ill_formed = HashSet::new();
         let known = entries
             .iter()
             .map(|entry| match entry {
                 HostValue::Array(pair) if pair.len() == 2 => {
+                    let key = get_text(&pair[0], "a known key")?;
                     let value = match &pair[1] {
                         HostValue::Undefined | HostValue::Null => None,
                         HostValue::Uint8s(bytes) => Some(Known::Bytes(bytes.clone())),
-                        value => Some(Known::Text(get_text(value, "a known value")?)),
+                        value => {
+                            if !is_well_formed(value) {
+                                ill_formed.insert(key.clone());
+                            }
+                            Some(Known::Text(get_text(value, "a known value")?))
+                        }
                     };
-                    Ok((get_text(&pair[0], "a known key")?, value))
+                    Ok((key, value))
                 }
                 _ => Err(wrong()),
             })
@@ -68,6 +89,7 @@ impl Sources {
         Ok(Sources {
             known,
             needed: RefCell::default(),
+            ill_formed,
         })
     }
 
@@ -114,6 +136,11 @@ impl Sources {
         value.flatten()
     }
 
+    /// Whether the text JavaScript answered for the key held a lone surrogate.
+    pub fn is_ill_formed(&self, key: &str) -> bool {
+        self.ill_formed.contains(key)
+    }
+
     /// Whether a key was read that isn't known.
     pub fn has_needed(&self) -> bool {
         !self.needed.borrow().is_empty()
@@ -132,5 +159,35 @@ impl Sources {
                 ),
             ])
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_a_lone_surrogate() {
+        assert!(is_well_formed(&HostValue::Text(vec![0x61, 0xd83d, 0xde00])));
+        assert!(is_well_formed(&HostValue::Text(Vec::new())));
+        for units in [
+            vec![0xd800],
+            vec![0xdc00],
+            vec![0xde00, 0xd83d],
+            vec![0xd83d, 0x61],
+        ] {
+            assert!(!is_well_formed(&HostValue::Text(units)));
+        }
+    }
+
+    #[test]
+    fn reads_each_lone_surrogate_as_a_replacement_character() {
+        let units = vec![
+            0x61, 0xd800, 0xd83d, 0xde00, 0xdc00, 0xd800, 0xd800, 0x62, 0xdbff,
+        ];
+        assert_eq!(
+            get_text(&HostValue::Text(units), "the text"),
+            Ok("a\u{fffd}\u{1f600}\u{fffd}\u{fffd}\u{fffd}b\u{fffd}".to_owned())
+        );
     }
 }

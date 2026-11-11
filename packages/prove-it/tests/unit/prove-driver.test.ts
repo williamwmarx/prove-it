@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { getInputKey, readInputRecords } from "../../scripts/prover-records";
 import { getDigest } from "../../scripts/tlapm-digest";
 import { prove } from "../../src";
+import { getNativeAddon, type NativeAddon, type NativeProve } from "../../src/engine/native";
+import { instantiateEngine } from "../../src/engine/wasm";
 import { TlaProverError, TlaUnsupportedError } from "../../src/errors";
 import { type ProveOptions, proveWith } from "../../src/prover/prove";
 import type { Decision } from "../../src/prover/verdict";
@@ -102,17 +104,24 @@ describe("the Rust driver", () => {
     expect(rust.streamed).toEqual(typescript.result?.obligations ?? []);
   });
 
-  // A lone surrogate, which a Rust string can't hold, would read as U+FFFD, and "\uD800" =
-  // "\uDC00" would be proved.
-  it("proves a module that isn't well-formed UTF-16 as the TypeScript driver does", async () => {
-    await expectSame({
-      options: { source: getModule('THEOREM "\uD800" = "\uDC00" BY SMT') },
-      decide: async (_prover, text) => ({
-        verdict: text.includes("�") ? "unsat" : "unknown",
-        timeUsedMs: 1,
-        statistics: {},
-      }),
+  // The engine's strings can't hold a lone surrogate, and reading it as U+FFFD would prove
+  // "\uD800" = "\uDC00", so the Rust driver declines before it decides anything.
+  it("declines a source that isn't well-formed UTF-16", async () => {
+    const decided: string[] = [];
+    const decide: Decide = async (_prover, text) => {
+      decided.push(text);
+      return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
+    };
+    const getRun = (source: string) => ({ options: { source: getModule(source) }, decide });
+    expect(await proveWithDriver("rust", getRun('THEOREM "\uD800" = "\uDC00" BY SMT'))).toEqual({
+      error: {
+        class: "TlaUnsupportedError",
+        name: "TlaUnsupportedError",
+        message: "not native yet: the source isn't well-formed UTF-16",
+      },
+      streamed: [],
     });
+    expect(decided).toEqual([]);
   });
 
   // A run's cache is keyed by its source and modules, which a NUL mustn't run together.
@@ -279,33 +288,41 @@ describe("the Rust driver", () => {
     });
   });
 
-  // The Rust driver gives way on the module that isn't well-formed, after loading the others.
-  it("loads each module once when it gives way to the TypeScript driver", async () => {
+  // A loaded module is read as the source is, and each module is loaded once.
+  it("declines a loaded module that isn't well-formed UTF-16", async () => {
     const loads: string[] = [];
-    let count = 0;
-    const run = (driver: string) =>
-      proveWithDriver(driver, {
+    const decided: string[] = [];
+    const run = (surrogate: string) =>
+      proveWithDriver("rust", {
         options: {
-          source: getModule("THEOREM X = 1 BY SMT DEF X", "Lib, TLAPS"),
+          source: getModule("THEOREM X = Y BY SMT DEF X, Y", "Lib, TLAPS"),
           loadModule: (name) => {
             loads.push(name);
-            if (name === "Lib")
-              return `---- MODULE Lib ----\nEXTENDS Lib2\nX == ${++count}\n====\n`;
-            if (name === "Lib2") return '---- MODULE Lib2 ----\nY == "\uD800"\n====';
+            if (name === "Lib") return '---- MODULE Lib ----\nEXTENDS Lib2\nX == "\uFFFD"\n====\n';
+            if (name === "Lib2") return `---- MODULE Lib2 ----\nY == "${surrogate}"\n====`;
             return undefined;
           },
         },
-        decide: async (_prover, text) => ({
-          verdict: text.includes("2") ? "sat" : "unsat",
-          timeUsedMs: 1,
-          statistics: {},
-        }),
+        decide: async (_prover, text) => {
+          decided.push(text);
+          return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
+        },
       });
-    const typescript = await run("ts");
-    const typescriptLoads = loads.splice(0);
-    count = 0;
-    expect(await run("rust")).toEqual(typescript);
-    expect(loads).toEqual(typescriptLoads);
+    expect((await run("\uFFFD")).result?.obligations[0]).toMatchObject({ status: "proved" });
+    const wellFormedLoads = loads.splice(0);
+    decided.splice(0);
+    for (const surrogate of ["\uD800", "\uDFFF"]) {
+      expect(await run(surrogate)).toEqual({
+        error: {
+          class: "TlaUnsupportedError",
+          name: "TlaUnsupportedError",
+          message: "not native yet: the module Lib2 isn't well-formed UTF-16",
+        },
+        streamed: [],
+      });
+      expect(loads.splice(0)).toEqual(wellFormedLoads);
+      expect(decided).toEqual([]);
+    }
   });
 
   it("skips a method whose backend can't take the text", async () => {
@@ -504,5 +521,74 @@ describe("the Rust driver", () => {
       if (setting === undefined) delete process.env.PROVE_IT_PROVER_DRIVER;
       else process.env.PROVE_IT_PROVER_DRIVER = setting;
     }
+  });
+});
+
+// Both bindings hand the engine a string's UTF-16 units, and the engine's prove declines a source or
+// module with a lone surrogate before it decides anything.
+describe("the engine's prove", () => {
+  const WASM =
+    process.env.PROVE_IT_ENGINE_WASM ??
+    join(import.meta.dirname, "../../dist/prove-it-engine.wasm");
+  const getAddon = () => {
+    const addon = getNativeAddon();
+    if (typeof addon === "string") throw new Error(addon);
+    return addon;
+  };
+
+  // Proves in rounds, reading Lib from library and answering every decision unsat, and returns the
+  // last round with the texts decided.
+  const proveAll = (engine: NativeAddon, source: string, library: string) => {
+    const known: [string, string | undefined][] = [];
+    const texts: string[] = [];
+    for (;;) {
+      const result: NativeProve = engine.prove("M.tla", source, known);
+      if (result.kind !== "needed") return { result, texts };
+      for (const key of result.keys)
+        known.push([key, key.startsWith("module:Lib#") ? library : undefined]);
+      for (const request of result.requests) {
+        texts.push(request.text);
+        known.push([`decide:${request.key}`, "unsat 1"]);
+      }
+    }
+  };
+
+  const SOURCE = getModule(
+    'THEOREM "\uFFFD" = Y BY SMT DEF Y\nTHEOREM X BY Zenon DEF X',
+    "Lib, TLAPS",
+  );
+  const LIBRARY =
+    '---- MODULE Lib ----\nX == "\uFFFD\uFFFD" = "\uFFFD\uFFFD"\nY == "\uFFFD"\n====\n';
+
+  const expectDeclined = (engine: NativeAddon) => {
+    const wellFormed = proveAll(engine, SOURCE, LIBRARY);
+    expect(wellFormed.result.kind).toBe("proved");
+    expect(wellFormed.texts.length).toBe(2);
+    const getDeclined = (what: string) => ({
+      result: {
+        kind: "error" as const,
+        name: "TlaUnsupportedError",
+        message: `not native yet: ${what} isn't well-formed UTF-16`,
+      },
+      texts: [],
+    });
+    for (const surrogate of ["\uD800", "\uDC00", "\uDBFF", "\uDFFF"]) {
+      expect(proveAll(engine, SOURCE.replaceAll("\uFFFD", surrogate), LIBRARY)).toEqual(
+        getDeclined("the source"),
+      );
+      expect(proveAll(engine, SOURCE, LIBRARY.replaceAll("\uFFFD", surrogate))).toEqual(
+        getDeclined("the module Lib"),
+      );
+    }
+  };
+
+  it("declines a lone surrogate through the addon", () => {
+    expectDeclined(getAddon());
+  });
+
+  // The build has the engine once `platform-packages.ts build --target wasm32-unknown-unknown`
+  // writes it.
+  it.if(existsSync(WASM))("declines a lone surrogate through WebAssembly", () => {
+    expectDeclined(instantiateEngine(new WebAssembly.Module(readFileSync(WASM))));
   });
 });
