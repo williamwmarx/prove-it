@@ -18,7 +18,7 @@ import {
   isInitialViolation,
 } from "./tlc/headlines";
 import type { TlcVersion } from "./tlc/version";
-import { formatValue, toFiniteFunction, type Value } from "./values";
+import { formatValue, toFiniteFunction, UNDEFINED_VARIABLE, type Value } from "./values";
 
 // A value as plain data: a boolean, an integer or a string as itself; a function over 1..n, such as
 // a sequence or a tuple, as an array; a record, or any function whose keys are all strings none of
@@ -124,10 +124,11 @@ const toPlainFunction = (domain: Value[], range: Value[], budget: Budget): Plain
 };
 
 // A value as plain data, as prove-it-check's plain.rs writes the native one: null where TLC can't
-// print the value, as a set it can't normalize, where its text wouldn't be TLC's, and past the
-// budget.
+// print the value, as a set it can't normalize, where its text wouldn't be TLC's, where the
+// interpreter marks a variable a state leaves undefined, and past the budget.
 const toPlain = (value: Value, budget: Budget): PlainValue | null => {
   if (typeof value !== "object") return value;
+  if (value === UNDEFINED_VARIABLE) return null;
   if (value.kind === "ModelValue") return { "@model": value.name };
   if (value.kind === "MixedSet") return null;
   if (value.kind === "Set") {

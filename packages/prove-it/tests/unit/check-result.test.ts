@@ -166,6 +166,31 @@ describe("check's result", () => {
     ]);
   });
 
+  it("writes a variable a successor leaves undefined as null, and a model value named null", async () => {
+    const run = await runBoth(
+      [
+        "CONSTANT N",
+        "VARIABLES x, y",
+        "Init == x = N /\\ y = 0",
+        "Next == y < 1 /\\ y' = y + 1",
+      ].join("\n"),
+      "CONSTANT N = null\nINIT Init\nNEXT Next",
+    );
+    expect(run.result.status).toBe("error");
+    expect(
+      run.result.violations[0].states.map((state) => [state.variables.x, state.variables.y]),
+    ).toEqual([
+      [
+        { text: "null", value: { "@model": "null" } },
+        { text: "0", value: 0 },
+      ],
+      [
+        { text: "null", value: null },
+        { text: "1", value: 1 },
+      ],
+    ]);
+  });
+
   it("reports where a lasso's cycle starts", async () => {
     const run = await runBoth(
       [
