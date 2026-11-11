@@ -220,6 +220,9 @@ struct Unit<'a> {
     /// Where the module declares each of its constants and variables, which a unit sees only
     /// after.
     declared: Rc<FastMap<Name, Position>>,
+    /// The modules `SymbolTable.resolveModule` finds from the unit on, by where they begin to be
+    /// found: the module itself and its extended modules, and each inner module from its own.
+    modules: Rc<FastMap<Name, Position>>,
     get_instance: GetInstance<'a>,
     definitions: Rc<OrderedMap<Name, Rc<Definition>>>,
     get_key: GetKey,
@@ -2380,10 +2383,16 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
 /// or assumption, and analyzes any other fact as an expression.
 fn check_facts(facts: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
     for fact in facts {
-        // `generateUseOrHide` reports a module its symbol table doesn't hold, which the front
-        // end doesn't track.
-        let Fact::Expression(fact) = fact else {
-            return Err(FrontError::NotYet("a module named as a fact".to_owned()));
+        let fact = match fact {
+            Fact::Expression(fact) => fact,
+            Fact::Module { name, .. } if is_module_found(name, unit) => continue,
+            // `generateUseOrHide` reports a module its symbol table doesn't hold, which no
+            // recording shows.
+            Fact::Module { .. } => {
+                return Err(FrontError::NotYet(
+                    "a module named as a fact that SANY may not find".to_owned(),
+                ));
+            }
         };
         if is_instance_arity_reported(fact, scope, unit)
             || check_reference(fact, scope, unit, true)?
@@ -2417,18 +2426,33 @@ fn check_facts(facts: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
     Ok(())
 }
 
+/// `SymbolTable.resolveModule` finds a module of the unit's table, or, as `generateUseOrHide`
+/// adds, the current module.
+fn is_module_found(name: &str, unit: &Unit) -> bool {
+    unit.modules
+        .get(name)
+        .is_some_and(|from| (from.line, from.column) <= (unit.location.line, unit.location.column))
+}
+
 /// `generateUseOrHide` rejects a DEF entry that names no defined operator, theorem or assumption:
 /// an unknown name, which `selectorToNode` reports first, or a built-in operator, a constant, a
 /// variable, a parameter or a NEW symbol. Tells whether an entry may be kept.
 fn check_defs(defs: &[Fact], scope: &Scope, unit: &Unit) -> Result<bool> {
     let mut is_kept = false;
     for def in defs {
-        // `generateUseOrHide` reports a module its symbol table doesn't hold, which the front
-        // end doesn't track.
-        let Fact::Expression(def) = def else {
-            return Err(FrontError::NotYet(
-                "a module named in a DEF clause".to_owned(),
-            ));
+        let def = match def {
+            Fact::Expression(def) => def,
+            Fact::Module { name, .. } if is_module_found(name, unit) => {
+                is_kept = true;
+                continue;
+            }
+            // `generateUseOrHide` reports a module its symbol table doesn't hold, which no
+            // recording shows.
+            Fact::Module { .. } => {
+                return Err(FrontError::NotYet(
+                    "a module named in a DEF clause that SANY may not find".to_owned(),
+                ));
+            }
         };
         // SANY's parser rejects an entry in parentheses, which the front end doesn't word.
         if def
@@ -3238,6 +3262,7 @@ pub fn resolve_substitutions(
         &Unit {
             imported: Rc::new(imported),
             declared: get_declared(module),
+            modules: Rc::default(),
             get_instance: unit.get_instance.clone(),
             definitions: unit.definitions.clone(),
             get_key: unit.get_key.clone(),
@@ -3383,6 +3408,19 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
     let declarations: Rc<RefCell<Vec<RecursiveDeclaration>>> = Rc::default();
     let let_recursive: LetRecursive = Rc::default();
     let declared = get_declared(module);
+    let modules: Rc<FastMap<Name, Position>> = Rc::new(
+        module
+            .modules
+            .iter()
+            .map(|inner| (inner.name.clone(), inner.location.position()))
+            .chain(
+                [&module.name]
+                    .into_iter()
+                    .chain(&module.extends)
+                    .map(|name| (name.clone(), MODULE_START)),
+            )
+            .collect(),
+    );
     let create_unit = |location: Position,
                        self_definition: Option<Rc<Definition>>,
                        errors: &ErrorList,
@@ -3390,6 +3428,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
                        has_label_scope: bool| Unit {
         imported: symbols.clone(),
         declared: declared.clone(),
+        modules: modules.clone(),
         get_instance: unit.get_instance.clone(),
         definitions: unit.definitions.clone(),
         get_key: unit.get_key.clone(),

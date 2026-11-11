@@ -22,6 +22,7 @@ pub(crate) mod lazy_function;
 
 pub(crate) use lazy_function::Lambda;
 mod nodes;
+mod pieces;
 mod predicate;
 pub(crate) mod random;
 mod sets;
@@ -36,6 +37,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use tla_ir::{
     Bound, Definition, DefinitionForm, Index, Ir, Name, NodeId, NodeKind, Param, Resolution,
@@ -199,9 +201,11 @@ pub struct Compiled {
     pub(crate) are_elements_enumerated: bool,
     /// For a set: whether TLC's value is known to stream its elements as its normalized set does,
     /// which a UNION or `\cup` TLC keeps lazy doesn't (`isStreamedApart`), and a value of unknown
-    /// provenance, such as a bound name's, may not; and whether each of its elements is.
+    /// provenance, such as a bound name's, may not; whether each of its elements is; and whether
+    /// each element of those is, which a UNION's elements are.
     pub(crate) is_in_order: bool,
     pub(crate) are_elements_in_order: bool,
+    pub(crate) are_elements_of_elements_in_order: bool,
     /// Whether the value is always TRUE or FALSE.
     pub(crate) is_boolean: bool,
     pub(crate) is_constant: bool,
@@ -226,6 +230,24 @@ pub struct Compiled {
     /// For a set TLC keeps lazy: the interpreter's value of it, which says the order TLC
     /// enumerates it in.
     pub(crate) reference: Option<lazy::Reference>,
+    /// Whether TLC keeps the value it evaluates for later uses (`LazyValue`), as it keeps an
+    /// argument or a LET definition named more than once, where a use before may have cached a
+    /// set it holds as its normalized set (`Lazy::Kept`).
+    pub(crate) is_kept: bool,
+    /// For a set enumeration whose first element is a set TLC keeps lazy: that element's value
+    /// and reference. TLC's sort compares each element after the first as the receiver, which
+    /// caches it as its normalized set, and leaves the first as built (`ValueVec.sort`), which a
+    /// name bound to it streams.
+    pub(crate) unsorted_first: Option<(Eval, Option<lazy::Reference>)>,
+    /// For a set enumeration some of whose elements TLC keeps lazy: each element's reference, in
+    /// the order written, which a UNION of the set streams (`Lazy::Enumeration`).
+    pub(crate) element_references: Option<Vec<lazy::Reference>>,
+    /// For a set TLC keeps lazy that may stream apart: whether its reference is TLC's value as
+    /// built, each set it is built of streaming in order or so referenced, where the reference of
+    /// a set the engine holds as an id, such as a variable's the initial predicate assigned, is
+    /// its normalized set. `Machine::held` follows only a variable an assignment assigns, not one
+    /// `x' \in S` binds to an element S holds as built.
+    pub(crate) is_reference_exact: bool,
     /// For `SUBSET S`: S, which `\subseteq` of two power sets compares in their place.
     pub(crate) subset_base: Option<Box<Compiled>>,
 }
@@ -275,6 +297,27 @@ impl Compiled {
         self.footprint.slots.contains(&PRINT_SLOT)
     }
 
+    /// The value as TLC keeps it for later uses, and so each element of a set enumeration of it,
+    /// which its sort leaves as built only where it is the first (`ValueVec.sort`).
+    pub(crate) fn kept(compiled: Compiled) -> Compiled {
+        if compiled.is_kept {
+            return compiled;
+        }
+        let kept = |reference: lazy::Reference| {
+            Arc::new(move |machine: &mut Machine<'_>| Ok(reference(machine)?.kept()))
+                as lazy::Reference
+        };
+        Compiled {
+            reference: compiled.reference.clone().map(kept),
+            element_references: compiled
+                .element_references
+                .clone()
+                .map(|references| references.into_iter().map(kept).collect()),
+            is_kept: true,
+            ..compiled
+        }
+    }
+
     fn with_predicate(self, predicate: predicate::Predicate) -> Compiled {
         Compiled {
             predicate: Some(Arc::new(predicate)),
@@ -302,6 +345,7 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         are_elements_enumerated: false,
         is_in_order: false,
         are_elements_in_order: false,
+        are_elements_of_elements_in_order: false,
         is_boolean: false,
         is_constant: false,
         infinite: None,
@@ -314,6 +358,10 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         filter: None,
         predicate: None,
         reference: None,
+        is_kept: false,
+        unsorted_first: None,
+        element_references: None,
+        is_reference_exact: false,
         subset_base: None,
     }
 }
@@ -501,6 +549,11 @@ struct Argument {
     /// register something writes between its uses, so this holds where it is used once or
     /// nothing where it is used may write one.
     is_each_use_alike: bool,
+    /// Whether TLC keeps its value for later uses that may cache it as its normalized set: an
+    /// argument or a LET definition of an expression named more than once
+    /// (`Compiled::is_kept`). TLC evaluates a LET of an action or the initial predicate anew at
+    /// each use (`Tool.getInitStates`, `Tool.getNextStates`).
+    is_kept: bool,
     compiled: RefCell<[Option<Compiled>; 2]>,
     /// For a binding of an instance's scope whose expression closes over that scope: the scope
     /// that binds it, which its context reaches.
@@ -702,6 +755,9 @@ pub struct Compiler<'a> {
     /// The walks whose first step is a guard `f[k] = c`, by the address of their step, each kept
     /// alive so no other step takes its address (`walker::Leading`).
     leading_guards: HashMap<usize, (Step, walker::Leading)>,
+    /// The nodes of Next's walk that make up an action atom, each with the bit a walk through it
+    /// sets on the step it takes (`pieces.rs`).
+    pub(crate) pieces: Vec<(NodeId, u8)>,
     // The fused predicate of each walk whose first step is a guard, by the walk's address.
     first_guards: HashMap<usize, (Step, predicate::Predicate)>,
     /// The bodies of recursive functions an action applies, each walked once for what the walk
@@ -727,6 +783,13 @@ pub struct Compiler<'a> {
     /// second would come in an order the store doesn't keep.
     pub is_lazy_set_held: bool,
     pub is_held_set_enumerated: bool,
+    /// For each variable, whether a walk streams a set that reads its value in the step that
+    /// assigns it, which only then needs the set it is assigned as TLC built it
+    /// (`Machine::held`).
+    held_streams: Vec<Arc<AtomicBool>>,
+    /// The slots of names a walk binds over a set enumeration whose first element TLC keeps lazy,
+    /// with that element's value and reference (`Compiled::unsorted_first`).
+    unsorted_slots: HashMap<u32, (Eval, Option<lazy::Reference>)>,
     /// Whether the caller reports what the search finds itself (`Settings::is_violation_reported`),
     /// as the native checker does: only then does the engine follow what the interpreter wouldn't
     /// take a search over with, such as TLC's registers, and otherwise declines it as the
@@ -802,6 +865,7 @@ impl<'a> Compiler<'a> {
             depth: 0,
             reads: None,
             leading_guards: HashMap::new(),
+            pieces: Vec::new(),
             first_guards: HashMap::new(),
             walked_functions: Vec::new(),
             walked_operators: Vec::new(),
@@ -814,6 +878,10 @@ impl<'a> Compiler<'a> {
             is_ranking: false,
             is_lazy_set_held: false,
             is_held_set_enumerated: false,
+            held_streams: (0..ir.variables.len())
+                .map(|_| Arc::new(AtomicBool::new(false)))
+                .collect(),
+            unsorted_slots: HashMap::new(),
             is_native: false,
             workers: 1,
             is_lambda_built: false,
@@ -1466,6 +1534,7 @@ impl<'a> Compiler<'a> {
             shape: Shape::Current(index),
             is_in_order: !context.is_init,
             are_elements_in_order: !context.is_init,
+            are_elements_of_elements_in_order: !context.is_init,
             ..leaf(
                 eval(move |machine| machine.read_current(index)),
                 Footprint::var(index),
@@ -1513,6 +1582,11 @@ impl<'a> Compiler<'a> {
                             argument.expression,
                             &argument_context(argument).primed(is_primed),
                         )?;
+                        let compiled = if argument.is_kept {
+                            Compiled::kept(compiled)
+                        } else {
+                            compiled
+                        };
                         argument.compiled.borrow_mut()[index] = Some(compiled.clone());
                         compiled
                     }
@@ -1672,6 +1746,7 @@ impl<'a> Compiler<'a> {
                     Some(value) => Ok(Compiled {
                         is_in_order: true,
                         are_elements_in_order: true,
+                        are_elements_of_elements_in_order: true,
                         ..constant(self.intern_value(value)?)
                     }),
                     None => decline(format!(
@@ -1750,6 +1825,89 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    // Whether the expressions that may use a local name TLC binds a value to, keeping it for later
+    // uses (`LazyValue`), name it more than once, one of them where it may cache a set it holds as
+    // its normalized set, so that a use after it streams the normalized set where the engine
+    // streams the set as built.
+    fn is_kept_name(&self, roots: impl IntoIterator<Item = NodeId> + Clone, name: TextId) -> bool {
+        roots
+            .clone()
+            .into_iter()
+            .map(|root| self.count_names(root, name))
+            .sum::<u32>()
+            > 1
+            && roots
+                .into_iter()
+                .any(|root| self.may_normalize_name(root, name))
+    }
+
+    // How many times an expression names a local name as written, up to 2, each name under a
+    // binder or in a LET's operator once.
+    fn count_names(&self, node: NodeId, name: TextId) -> u32 {
+        let kind = self.node(node).1;
+        let own = match kind {
+            NodeKind::Identifier(named) | NodeKind::Apply { name: named, .. } => {
+                u32::from(named.is_local && named.text == name)
+            }
+            NodeKind::Subexpression(_) => 2,
+            _ => 0,
+        };
+        let filtered = match kind {
+            NodeKind::SetFilter { bound, .. } => Some(bound.set),
+            _ => None,
+        };
+        kind.children()
+            .into_iter()
+            .chain(filtered)
+            .fold(own, |count, child| {
+                if count > 1 {
+                    count
+                } else {
+                    count + self.count_names(child, name)
+                }
+            })
+            .min(2)
+    }
+
+    // Whether an expression names a local name other than as the set of `e \in S` or
+    // `e \notin S`, which TLC tests or streams without caching it as its normalized set: where it
+    // may size, compare or fingerprint it (`convertAndCache`).
+    fn may_normalize_name(&self, node: NodeId, name: TextId) -> bool {
+        let kind = self.node(node).1;
+        let is_name = |node: NodeId| {
+            matches!(self.node(node).1, NodeKind::Identifier(named)
+                if named.is_local && named.text == name)
+        };
+        match kind {
+            NodeKind::Identifier(_) => return is_name(node),
+            NodeKind::Subexpression(_) => return true,
+            NodeKind::Apply {
+                name: applied,
+                args,
+            } if !applied.is_local => {
+                if let Resolution::Builtin(index) = applied.resolution
+                    && matches!(self.builtin_name(index), "\\in" | "\\notin")
+                    && let [element, set] = &args[..]
+                {
+                    return self.may_normalize_name(*element, name)
+                        || (!is_name(*set) && self.may_normalize_name(*set, name));
+                }
+            }
+            NodeKind::Apply { name: applied, .. } if applied.text == name && applied.is_local => {
+                return true;
+            }
+            _ => {}
+        }
+        let filtered = match kind {
+            NodeKind::SetFilter { bound, .. } => Some(bound.set),
+            _ => None,
+        };
+        kind.children()
+            .into_iter()
+            .chain(filtered)
+            .any(|child| self.may_normalize_name(child, name))
+    }
+
     fn sum_uses(
         &self,
         name: TextId,
@@ -1814,12 +1972,14 @@ impl<'a> Compiler<'a> {
                 .any(|child| self.may_write_register(child, scope, seen))
     }
 
-    // A LET's definitions, those an INSTANCE in it copies in among them.
+    // A LET's definitions, those an INSTANCE in it copies in among them, of an expression or,
+    // where not `is_expression`, of an action or the initial predicate.
     fn bind_let_definitions(
         &mut self,
         definitions: &[NodeId],
         body: NodeId,
         context: &Context,
+        is_expression: bool,
     ) -> Compiling<Context> {
         let mut scope = context.scope.clone();
         for (position, &node) in definitions.iter().enumerate() {
@@ -1887,6 +2047,14 @@ impl<'a> Compiler<'a> {
                                 || !definitions.iter().chain([&body]).any(|&root| {
                                     self.may_write_register(root, &scope, &mut HashSet::new())
                                 }),
+                            is_kept: is_expression
+                                && self.is_kept_name(
+                                    later
+                                        .iter()
+                                        .map(|&later| self.definition(later).body)
+                                        .chain([body]),
+                                    definition.name,
+                                ),
                             context: definition_context,
                             compiled: RefCell::new([None, None]),
                             own_scope: RefCell::new(Weak::new()),
@@ -1944,6 +2112,7 @@ impl<'a> Compiler<'a> {
                             .is_some_and(|count| count <= 1)
                             || !self.may_write_register(body, &callee.scope, &mut HashSet::new())
                     }),
+                    is_kept: body.is_some_and(|body| self.is_kept_name([body], param.name)),
                     context: argument_context.clone(),
                     compiled: RefCell::new([None, None]),
                     own_scope: RefCell::new(Weak::new()),
@@ -2679,7 +2848,7 @@ impl<'a> Compiler<'a> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let_definitions(definitions, *body, context)?;
+                let inner = self.bind_let_definitions(definitions, *body, context, true)?;
                 return self.get_applied_recursive_function(*body, &inner);
             }
             NodeKind::Apply { .. } => {

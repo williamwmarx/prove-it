@@ -11,6 +11,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
+use super::limit::NlsatLimit;
 use super::mpbq::{Mpbq, get_log2};
 use super::polynomial::{NULL_VAR, Polynomial, PolynomialManager, ValueOps, Var};
 use super::upolynomial::{Upolynomial, UpolynomialManager};
@@ -444,6 +445,8 @@ impl ValueOps<Anum> for AnumOps<'_> {
 }
 
 pub struct AlgebraicManager {
+    /// m_limit: the solver's, once set_limit shares it, as with the managers it owns.
+    limit: NlsatLimit,
     um: UpolynomialManager,
     pm: PolynomialManager,
 }
@@ -457,9 +460,16 @@ impl Default for AlgebraicManager {
 impl AlgebraicManager {
     pub fn new() -> AlgebraicManager {
         AlgebraicManager {
-            um: UpolynomialManager::new(None),
+            limit: NlsatLimit::default(),
+            um: UpolynomialManager::new(None, NlsatLimit::default()),
             pm: PolynomialManager::new(),
         }
+    }
+
+    pub fn set_limit(&mut self, limit: &NlsatLimit) {
+        self.limit = limit.clone();
+        self.um.limit = limit.clone();
+        self.pm.set_limit(limit);
     }
 
     // Queries.
@@ -657,7 +667,7 @@ impl AlgebraicManager {
                 return Ok(true);
             };
             self.um
-                .refine_to_precision(&cell.p, &cell.lower, &cell.upper, precision)
+                .refine_to_precision(&cell.p, &cell.lower, &cell.upper, precision)?
         };
         if !refined.is_interval {
             anum.set(AnumValue::Rational(refined.lower.to_rational()));
@@ -738,7 +748,7 @@ impl AlgebraicManager {
                 ));
                 continue;
             }
-            let isolated = self.um.sqf_isolate_roots(factor);
+            let isolated = self.um.sqf_isolate_roots(factor)?;
             for root in &isolated.roots {
                 roots.push(Anum::new(root.to_rational()));
             }
@@ -747,7 +757,7 @@ impl AlgebraicManager {
                     factor,
                     &isolated.lowers[index],
                     &isolated.uppers[index],
-                );
+                )?;
                 roots.push(if refined.is_interval {
                     Anum::from_cell(self.mk_cell(
                         factor.clone(),
@@ -764,8 +774,12 @@ impl AlgebraicManager {
         Ok(roots)
     }
 
-    // sort_roots: Z3's stable bottom-up merge sort, since each comparison may refine the roots.
+    // sort_roots: Z3's stable bottom-up merge sort, since each comparison may refine the roots. A
+    // canceled step leaves the roots unsorted, as in Z3.
     fn sort_roots(&mut self, roots: &mut [Anum]) -> Result<(), SmtError> {
+        if !self.limit.inc() {
+            return Ok(());
+        }
         let size = roots.len();
         if size < 2 {
             return Ok(());
@@ -839,13 +853,18 @@ impl AlgebraicManager {
 
     // isolate_kth_root: the i-th real root of a square-free p, by bisecting with its Sturm
     // sequence.
-    fn isolate_kth_root(&mut self, p: &[Int], sequence: &[Upolynomial], root_index: u32) -> Anum {
+    fn isolate_kth_root(
+        &mut self,
+        p: &[Int],
+        sequence: &[Upolynomial],
+        root_index: u32,
+    ) -> Result<Anum, SmtError> {
         if p.len() == 2 {
-            return Anum::new(
+            return Ok(Anum::new(
                 Rational::from_int(p[0].clone())
                     .div(&Rational::from_int(p[1].clone()))
                     .neg(),
-            );
+            ));
         }
         let minus_inf = self.um.sign_variations_at_minus_inf(sequence);
         let at_zero = self.um.sign_variations_at_zero(sequence);
@@ -879,6 +898,7 @@ impl AlgebraicManager {
             root_index - non_positive_count
         };
         while low_variations > high_variations + 1 {
+            self.limit.checkpoint()?;
             let middle = low.add(&high).div2();
             let middle_variations = self.um.sign_variations_at(sequence, &middle);
             let left_count = low_variations - middle_variations;
@@ -892,29 +912,36 @@ impl AlgebraicManager {
             }
         }
         if self.um.eval_sign_at_bq(p, &high) == 0 {
-            return Anum::new(high.to_rational());
+            return Ok(Anum::new(high.to_rational()));
         }
-        let refined = self.um.isolating2refinable(p, &low, &high);
+        let refined = self.um.isolating2refinable(p, &low, &high)?;
         if !refined.is_interval {
-            return Anum::new(refined.lower.to_rational());
+            return Ok(Anum::new(refined.lower.to_rational()));
         }
-        match self.get_rational_root_in(p, &refined.lower, &refined.upper) {
-            RootOrInterval::Root(root) => Anum::new(root),
-            RootOrInterval::Interval(interval) => {
-                Anum::from_cell(self.mk_cell(p.to_vec(), interval.lower, interval.upper, false))
-            }
-        }
+        Ok(
+            match self.get_rational_root_in(p, &refined.lower, &refined.upper)? {
+                RootOrInterval::Root(root) => Anum::new(root),
+                RootOrInterval::Interval(interval) => {
+                    Anum::from_cell(self.mk_cell(p.to_vec(), interval.lower, interval.upper, false))
+                }
+            },
+        )
     }
 
     // rational_root_in_interval: the root of p in (l, u) when it is rational, else the interval
     // refined below 1/|a_n|.
-    fn get_rational_root_in(&self, p: &[Int], lower: &Mpbq, upper: &Mpbq) -> RootOrInterval {
+    fn get_rational_root_in(
+        &self,
+        p: &[Int],
+        lower: &Mpbq,
+        upper: &Mpbq,
+    ) -> Result<RootOrInterval, SmtError> {
         let abs_leading = p[p.len() - 1].abs();
         let refined =
             self.um
-                .refine_to_precision(p, lower, upper, (get_log2(&abs_leading) + 1) as u32);
+                .refine_to_precision(p, lower, upper, (get_log2(&abs_leading) + 1) as u32)?;
         if !refined.is_interval {
-            return RootOrInterval::Root(refined.lower.to_rational());
+            return Ok(RootOrInterval::Root(refined.lower.to_rational()));
         }
         let candidate = Rational::of(
             refined.upper.mul(&Mpbq::of(abs_leading.clone(), 0)).floor(),
@@ -923,12 +950,12 @@ impl AlgebraicManager {
         if refined.lower.compare_rational(&candidate) < 0
             && self.um.eval_sign_at_q(p, &candidate) == 0
         {
-            return RootOrInterval::Root(candidate);
+            return Ok(RootOrInterval::Root(candidate));
         }
-        RootOrInterval::Interval(BqInterval {
+        Ok(RootOrInterval::Interval(BqInterval {
             lower: refined.lower,
             upper: refined.upper,
-        })
+        }))
     }
 
     // isolate_roots_closest_univariate: the roots next to s, s itself when it is a root.
@@ -937,49 +964,49 @@ impl AlgebraicManager {
         pm: &mut PolynomialManager,
         polynomial: &Polynomial,
         sample: &Rational,
-    ) -> ClosestAnums {
+    ) -> Result<ClosestAnums, SmtError> {
         let mut result = ClosestAnums {
             roots: Vec::new(),
             indices: Vec::new(),
         };
         if pm.is_const(polynomial) {
-            return result;
+            return Ok(result);
         }
         let up = pm.to_coeffs(polynomial);
         if up.is_empty() {
-            return result;
+            return Ok(result);
         }
-        let p = self.um.square_free(&up);
+        let p = self.um.square_free(&up)?;
         if p.len() <= 1 {
-            return result;
+            return Ok(result);
         }
         let sequence = self.um.sturm_seq(&p);
         let minus_inf = self.um.sign_variations_at_minus_inf(&sequence);
         let plus_inf = self.um.sign_variations_at_plus_inf(&sequence);
         if minus_inf <= plus_inf {
-            return result;
+            return Ok(result);
         }
         let total = minus_inf - plus_inf;
         let below = minus_inf - self.get_sign_variations_at_q(&sequence, sample);
         if self.um.eval_sign_at_q(&p, sample) == 0 {
-            return ClosestAnums {
+            return Ok(ClosestAnums {
                 roots: vec![Anum::new(sample.clone())],
                 indices: vec![below],
-            };
+            });
         }
         if below > 0 {
             result
                 .roots
-                .push(self.isolate_kth_root(&p, &sequence, below));
+                .push(self.isolate_kth_root(&p, &sequence, below)?);
             result.indices.push(below);
         }
         if below < total {
             result
                 .roots
-                .push(self.isolate_kth_root(&p, &sequence, below + 1));
+                .push(self.isolate_kth_root(&p, &sequence, below + 1)?);
             result.indices.push(below + 1);
         }
-        result
+        Ok(result)
     }
 
     // isolate_roots(p, x2v): the roots of p in its one unassigned variable at the values of the
@@ -1026,6 +1053,7 @@ impl AlgebraicManager {
         }
         let mut q = reduced.clone();
         for &y in &xs[..xs.len() - 1] {
+            self.limit.checkpoint()?;
             let coeffs = get_cell(get_value(values, y))?.p.clone();
             let univariate = pm.from_coeffs(&coeffs, y);
             q = pm.resultant(&q, &univariate, y)?;
@@ -1100,7 +1128,7 @@ impl AlgebraicManager {
         let z = xs.iter().copied().fold(NULL_VAR, Var::max) + 1;
         let var_z = self.pm.mk_var(z, 1);
         let var_x = self.pm.mk_var(x, power);
-        let product = self.pm.mul(&var_z, &var_x);
+        let product = self.pm.mul(&var_z, &var_x)?;
         let converted = convert(&mut self.pm, Some(&*pm), reduced, x, Some(power - 1));
         let q = self.pm.add(&product, &converted);
         let extended = get_extended(values, z, &leading);
@@ -1138,6 +1166,7 @@ impl AlgebraicManager {
     ) -> Result<Vec<Anum>, SmtError> {
         let mut filtered = Vec::new();
         for root in roots {
+            self.limit.checkpoint()?;
             let extended = get_extended(values, x, &root);
             if self.eval_sign_at_core(pm, polynomial, &extended, is_local_pm)? == 0 {
                 filtered.push(root);
@@ -1162,7 +1191,7 @@ impl AlgebraicManager {
             return Ok(result);
         }
         if pm.is_univariate(polynomial) {
-            return Ok(self.isolate_univariate_closest(pm, polynomial, sample));
+            return self.isolate_univariate_closest(pm, polynomial, sample);
         }
         let reduced = pm.substitute_rational(polynomial, &get_rational_values(values));
         if pm.is_const(&reduced) {
@@ -1172,7 +1201,7 @@ impl AlgebraicManager {
             if get_value(values, pm.max_var(&reduced)).is_some() {
                 return Ok(result);
             }
-            return Ok(self.isolate_univariate_closest(pm, &reduced, sample));
+            return self.isolate_univariate_closest(pm, &reduced, sample);
         }
         let all = self.isolate_roots(pm, polynomial, values)?;
         let sample_anum = Anum::new(sample.clone());
@@ -1297,6 +1326,7 @@ impl AlgebraicManager {
                 });
             }
             let xs = pm.get_vars(&reduced);
+            self.limit.checkpoint()?;
             let mut interval = evaluate_interval(pm, &reduced, values)?;
             let mut is_restarted = false;
             loop {
@@ -1319,9 +1349,11 @@ impl AlgebraicManager {
                 if !is_refined || is_restarted {
                     break;
                 }
+                self.limit.checkpoint()?;
                 interval = evaluate_interval(pm, &reduced, values)?;
             }
             if is_restarted {
+                self.limit.checkpoint()?;
                 continue;
             }
             let sign =
@@ -1353,6 +1385,7 @@ impl AlgebraicManager {
             let converted = convert(local, source, reduced, NULL_VAR, None);
             let mut resultant = local.sub(&var, &converted);
             for &variable in &sorted {
+                self.limit.checkpoint()?;
                 let coeffs = get_cell(get_value(values, variable))?.p.clone();
                 let univariate = local.from_coeffs(&coeffs, variable);
                 resultant = local.resultant(&resultant, &univariate, variable)?;
@@ -1373,6 +1406,7 @@ impl AlgebraicManager {
         }
         let mut sign = None;
         while sign.is_none() {
+            self.limit.checkpoint()?;
             let interval = evaluate_interval(pm, reduced, values)?;
             if !contains_zero(&interval) {
                 sign = Some(if interval.lower.is_neg() { -1 } else { 1 });
@@ -1427,7 +1461,7 @@ impl AlgebraicManager {
 
     // add(cell, basic): p(x - b), with the interval shifted by b.
     fn add_rational(&mut self, cell: &AlgebraicCell, value: &Rational) -> Result<Anum, SmtError> {
-        let p = self.um.translate_q(&cell.p, &value.neg());
+        let p = self.um.translate_q(&cell.p, &value.neg())?;
         let (shift, is_exact) = Mpbq::from_rational(value);
         let (lower, upper) = if is_exact {
             (cell.lower.add(&shift), cell.upper.add(&shift))
@@ -1615,7 +1649,7 @@ impl AlgebraicManager {
         second: &AlgebraicCell,
     ) -> Result<Upolynomial, SmtError> {
         let pa_x = self.pm.from_coeffs(&first.p, X);
-        let pa = self.pm.compose_x_minus_y(&pa_x, Y);
+        let pa = self.pm.compose_x_minus_y(&pa_x, Y)?;
         let pb = self.pm.from_coeffs(&second.p, Y);
         let resultant = self.pm.resultant(&pa, &pb, Y)?;
         Ok(self.pm.to_coeffs(&resultant))
@@ -1694,6 +1728,7 @@ impl AlgebraicManager {
         let mut saved_a = self.save_interval(first)?;
         let mut saved_b = self.save_interval(second)?;
         loop {
+            self.limit.checkpoint()?;
             let interval = {
                 // Both cells are read after both refinements, so a + a sees its one interval.
                 let cell_a = get_cell(Some(first))?;
@@ -1708,7 +1743,7 @@ impl AlgebraicManager {
             if let Some(found) = self.find_isolating_factor(&factors, &mut sequences, &interval) {
                 self.restore_if_too_small(&mut saved_a);
                 self.restore_if_too_small(&mut saved_b);
-                return Ok(self.set_core(&found, &interval, is_complete));
+                return self.set_core(&found, &interval, is_complete);
             }
             if !self.refine(first)? || !self.refine(second)? {
                 // Z3 restores a twice here, and b only once the operation is done.
@@ -1753,10 +1788,11 @@ impl AlgebraicManager {
             .collect();
         let mut saved = self.save_interval(anum)?;
         loop {
+            self.limit.checkpoint()?;
             let interval = get_interval_power(&get_interval(&*get_cell(Some(anum))?), exponent);
             if let Some(found) = self.find_isolating_factor(&factors, &mut sequences, &interval) {
                 self.restore_if_too_small(&mut saved);
-                return Ok(self.set_core(&found, &interval, is_complete));
+                return self.set_core(&found, &interval, is_complete);
             }
             if !self.refine(anum)? {
                 self.restore_if_too_small(&mut saved);
@@ -1771,13 +1807,13 @@ impl AlgebraicManager {
         found: &IsolatingFactor,
         interval: &BqInterval,
         is_minimal: bool,
-    ) -> Anum {
+    ) -> Result<Anum, SmtError> {
         let p = &found.factor;
         let mut lower = interval.lower.clone();
         let mut upper = interval.upper.clone();
         if contains_zero(interval) {
             if self.um.has_zero_roots(p) {
-                return Anum::new(Rational::zero());
+                return Ok(Anum::new(Rational::zero()));
             }
             if found.lower_variations == i64::from(self.um.sign_variations_at_zero(&found.sequence))
             {
@@ -1791,11 +1827,11 @@ impl AlgebraicManager {
         } else {
             p.clone()
         };
-        let refined = self.um.isolating2refinable(&nonzero, &lower, &upper);
+        let refined = self.um.isolating2refinable(&nonzero, &lower, &upper)?;
         if !refined.is_interval {
-            return Anum::new(refined.lower.to_rational());
+            return Ok(Anum::new(refined.lower.to_rational()));
         }
-        self.mk_anum(nonzero, refined.lower, refined.upper, is_minimal)
+        Ok(self.mk_anum(nonzero, refined.lower, refined.upper, is_minimal))
     }
 
     // Comparison.
@@ -1859,7 +1895,7 @@ impl AlgebraicManager {
         // The same number has the same polynomial, so the two are distinct from here on.
         debug_assert!(!Anum::ptr_eq(first, second));
         if cell_a.is_minimal && cell_b.is_minimal {
-            loop {
+            while self.limit.inc() {
                 self.refine(first)?;
                 update_detached_cell(first, &mut cell_a);
                 self.refine(second)?;
@@ -1870,6 +1906,7 @@ impl AlgebraicManager {
                 }
             }
         }
+        self.limit.checkpoint()?;
         let magnitude_a = self.get_cell_magnitude(&cell_a);
         let magnitude_b = self.get_cell_magnitude(&cell_b);
         let target = MIN_MAGNITUDE.max(magnitude_a.min(magnitude_b));
@@ -1905,12 +1942,12 @@ impl AlgebraicManager {
             }
         }
         // get_interval at precision 10: copies of the intervals refined below 1/2^40.
-        let interval_a = self
-            .um
-            .refine_to_precision(&cell_a.p, &cell_a.lower, &cell_a.upper, 40);
-        let interval_b = self
-            .um
-            .refine_to_precision(&cell_b.p, &cell_b.lower, &cell_b.upper, 40);
+        let interval_a =
+            self.um
+                .refine_to_precision(&cell_a.p, &cell_a.lower, &cell_a.upper, 40)?;
+        let interval_b =
+            self.um
+                .refine_to_precision(&cell_b.p, &cell_b.lower, &cell_b.upper, 40)?;
         if interval_a.is_interval && interval_b.is_interval {
             if interval_a.lower.compare(&interval_b.upper) > 0 {
                 return Ok(1);
@@ -1931,7 +1968,7 @@ impl AlgebraicManager {
         if self.compare_rational(&cell_b, &interval_a.upper.to_rational()) > 0 {
             return Ok(-1);
         }
-        let sequence = self.um.sturm_tarski_seq(&cell_a.p, &cell_b.p);
+        let sequence = self.um.sturm_tarski_seq(&cell_a.p, &cell_b.p)?;
         let variations = i64::from(self.um.sign_variations_at(&sequence, &cell_a.lower))
             - i64::from(self.um.sign_variations_at(&sequence, &cell_a.upper));
         if variations == 0 {

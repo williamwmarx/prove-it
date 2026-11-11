@@ -119,6 +119,9 @@ pub enum Atom {
         /// Whether the action is the next-state relation itself, which holds of every step the
         /// search took where TLC's predicate evaluation of it can't fail.
         is_next: bool,
+        /// The bit the walk sets on a step it takes through the pieces of Next the action is made
+        /// of, which then answers it (`pieces.rs`).
+        piece: Option<u8>,
     },
     /// ENABLED, run, or answered from the steps the search took when the action is made of TLC's
     /// actions of the next-state relation.
@@ -243,6 +246,20 @@ pub fn first_failing_changed(
         {
             continue;
         }
+        if !holds(machine, &predicate.eval).map_err(|bail| (position, bail))? {
+            return Ok(Some(position));
+        }
+    }
+    Ok(None)
+}
+
+/// The first of the predicates that fails of the state, evaluating each: where a parent may
+/// violate one, as under `-continue`, none holds by its parent's.
+pub fn first_failing(
+    machine: &mut Machine<'_>,
+    predicates: &[Predicate],
+) -> Result<Option<usize>, (usize, Bail)> {
+    for (position, predicate) in predicates.iter().enumerate() {
         if !holds(machine, &predicate.eval).map_err(|bail| (position, bail))? {
             return Ok(Some(position));
         }
@@ -512,7 +529,7 @@ impl EngineContext {
                     }),
             )
             .collect::<Result<Vec<_>, CompileError>>()?;
-        for (owner, (root, has_repeated_effect)) in roots.into_iter().enumerate() {
+        for (owner, &(root, has_repeated_effect)) in roots.iter().enumerate() {
             if has_repeated_effect && can_print {
                 printed.insert(root);
                 conjuncts.add(root);
@@ -521,6 +538,24 @@ impl EngineContext {
             }
             invariant_owners.resize(conjuncts.found.len(), owner);
         }
+        // TLC checks each invariant whole in an initial state, and under -continue goes on past
+        // one violated, so each keeps the conjuncts it shares with an invariant before it.
+        let owned_conjuncts: Vec<(Conjunct, usize)> = roots
+            .iter()
+            .enumerate()
+            .flat_map(|(owner, &(root, _))| {
+                let mut owned = Conjuncts::new(ir);
+                if printed.contains(&root) {
+                    owned.add(root);
+                } else {
+                    owned.collect(root);
+                }
+                owned
+                    .found
+                    .into_iter()
+                    .map(move |conjunct| (conjunct, owner))
+            })
+            .collect();
         let invariant_conjuncts = conjuncts.found;
         let invariants = invariant_conjuncts
             .iter()
@@ -647,6 +682,35 @@ impl EngineContext {
                 "a model without a next-state relation".into(),
             ));
         }
+        // The action atoms made of pieces of Next, each with a bit of its own, which the walk sets
+        // on the steps it takes through them; the steps' answers are then the bits. Recorded only
+        // where the steps aren't labelled by TLC's actions.
+        let pieces: Vec<Option<u8>> = match model.next {
+            Some(next) if model.is_recording_graph && !model.is_labelled => {
+                let mut count = 0;
+                model
+                    .atoms
+                    .iter()
+                    .map(|atom| {
+                        let is_candidate = matches!(atom.kind, AtomKind::Action { .. })
+                            && count < u8::BITS
+                            && atom.scope == model.scope
+                            && !is_next(compiler, ir, atom)
+                            && compiler.is_walk_repeatable(atom.expression, &mut HashSet::new());
+                        let found = is_candidate
+                            .then(|| compiler.match_pieces(atom.expression, next))
+                            .flatten()?;
+                        let bit = 1 << count;
+                        count += 1;
+                        compiler
+                            .pieces
+                            .extend(found.into_iter().map(|piece| (piece, bit)));
+                        Some(bit)
+                    })
+                    .collect()
+            }
+            _ => vec![None; model.atoms.len()],
+        };
         let next = model
             .next
             .map(|next| {
@@ -696,7 +760,8 @@ impl EngineContext {
             model
                 .atoms
                 .iter()
-                .map(|atom| compile_atom(compiler, ir, atom))
+                .zip(&pieces)
+                .map(|(atom, &piece)| compile_atom(compiler, ir, atom, piece))
                 .collect()
         } else {
             Vec::new()
@@ -709,12 +774,16 @@ impl EngineContext {
             .map(|atom| matches!(atom.atom, Atom::LevelState(_) | Atom::LevelAction { .. }))
             .collect();
         let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
-        let (initial_invariants, initial_invariant_owners) = invariants
-            .iter()
-            .zip(&invariant_conjuncts)
-            .zip(&invariant_owners)
-            .filter(|((_, conjunct), _)| !init_conjuncts.contains(conjunct))
-            .map(|((compiled, _), &owner)| (compiled.eval.clone(), owner))
+        let (initial_invariants, initial_invariant_owners) = owned_conjuncts
+            .into_iter()
+            .filter(|(conjunct, _)| !init_conjuncts.contains(conjunct))
+            .map(|(conjunct, owner)| {
+                let position = invariant_conjuncts
+                    .iter()
+                    .position(|&found| found == conjunct)
+                    .expect("an invariant's conjunct the invariants hold");
+                (invariants[position].eval.clone(), owner)
+            })
             .unzip();
         // Under a VIEW TLC fingerprints the view's value alone, so a set TLC keeps lazy that a
         // variable holds stays as the spec built it, in an order the store doesn't keep.
@@ -850,7 +919,12 @@ fn is_next(compiler: &Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> bool {
         && compiler.is_walk_repeatable(next, &mut HashSet::new())
 }
 
-fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> CompiledAtom {
+fn compile_atom(
+    compiler: &mut Compiler<'_>,
+    ir: &Ir,
+    atom: &tla_ir::Atom,
+    piece: Option<u8>,
+) -> CompiledAtom {
     let scope = atom.scope;
     let mut is_printing = false;
     let mut reads_diameter = false;
@@ -888,6 +962,7 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
             }
             Ok(Atom::Action {
                 is_next: !action.reads_search() && is_next(compiler, ir, atom),
+                piece: piece.filter(|_| !action.reads_search()),
                 action: action.eval,
                 subscript: subscript.map(|subscript| subscript.eval),
                 enabled: enabled.map(|position| position as usize),

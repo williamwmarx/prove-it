@@ -355,6 +355,14 @@ pub struct Definition {
     pub is_self_referential: Cell<Option<bool>>,
 }
 
+impl Definition {
+    /// SANY's `isLocal`: the node of an operator a RECURSIVE statement declares is never local
+    /// (`Generator.processRecursive`), and its definition keeps that node, LOCAL or not.
+    pub fn is_hidden(&self) -> bool {
+        self.is_local && !self.is_recursive
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Declaration {
     pub name: Name,

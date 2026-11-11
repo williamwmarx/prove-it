@@ -4,9 +4,9 @@
 
 use std::sync::Arc;
 
-use tla_ir::{Builtin, Index, NodeId, NodeKind, Resolution};
+use tla_ir::{Builtin, Index, NodeId, NodeKind, Pattern, Resolution};
 use tla_values::json;
-use tla_values::print::{is_printable, write_value};
+use tla_values::print::{Construction, is_printable, write_constructed};
 use tla_values::store::{
     EMPTY_SET, EMPTY_TUPLE, FALSE, INT, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, NAT, Outcome,
     STRINGS, TRUE, is_function_kind,
@@ -28,7 +28,7 @@ use super::{
     member, operator_context, predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Machine, Printed};
+use crate::machine::{Eval, Machine, Printed, Prints};
 
 // Operators whose results depend on more than their arguments, or that print.
 const IMPURE_BUILTINS: [&str; 8] = [
@@ -249,9 +249,10 @@ impl Compiler<'_> {
         Compiled {
             is_normalized: false,
             subset_base: Some(Box::new(base.clone())),
-            // It streams in its order, and its elements are set enumerations.
+            // It streams in its order, its elements are set enumerations, and theirs are S's.
             is_in_order: true,
             are_elements_in_order: true,
+            are_elements_of_elements_in_order: base.are_elements_in_order,
             // TLC enumerates SUBSET S in the normalized order of S's elements, whatever S's
             // own order (SubsetValue.elementsNormalized), so S's value does where S has no
             // reference.
@@ -593,8 +594,14 @@ impl Compiler<'_> {
         let is_boolean = !is_print || compiled[1].is_boolean;
         let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
         // The native binary's reporter finds what it can't print itself: TLC prints the startup's
-        // in the front the binary records, and the binary stops at any later one.
-        let is_native = self.is_native;
+        // in the front the binary records, and the binary stops at any later one. It prints each
+        // value as TLC prints a value built as the operand writes it, deep-normalized.
+        let constructions = self.is_native.then(|| {
+            operands
+                .iter()
+                .map(|operand| self.construction_of(operand))
+                .collect::<Vec<_>>()
+        });
         Ok(Compiled {
             is_boolean,
             ..leaf(
@@ -603,25 +610,121 @@ impl Compiler<'_> {
                     for evaluate in &evaluators {
                         values.push(evaluate(machine)?);
                     }
-                    for &value in &values {
-                        if !is_native && !is_printable(&machine.store, value) {
-                            return Err(Bail(
-                                "printing a value whose text depends on how TLC built it",
-                            ));
+                    let texts = match &constructions {
+                        Some(constructions) => values
+                            .iter()
+                            .zip(constructions)
+                            .map(|(&value, construction)| {
+                                let mut text = Vec::new();
+                                write_constructed(
+                                    &machine.store,
+                                    value,
+                                    construction,
+                                    true,
+                                    &mut text,
+                                )
+                                .then_some(text)
+                            })
+                            .collect(),
+                        None => {
+                            for &value in &values {
+                                if !is_printable(&machine.store, value) {
+                                    return Err(Bail(
+                                        "printing a value whose text depends on how TLC built it",
+                                    ));
+                                }
+                                // The addon hands what it prints to the interpreter, whose
+                                // encoding has no Nat, Int or STRING.
+                                if machine.store.holds_lazy_function(value) {
+                                    return Err(UNENCODABLE);
+                                }
+                            }
+                            None
                         }
-                        // The addon hands what it prints to the interpreter, whose encoding has
-                        // no Nat, Int or STRING.
-                        if !is_native && machine.store.holds_lazy_function(value) {
-                            return Err(UNENCODABLE);
-                        }
-                    }
+                    };
                     let result = if is_print { values[1] } else { TRUE };
-                    machine.output.push(Printed::Values(values));
+                    machine
+                        .output
+                        .push(Printed::Values(Prints { values, texts }));
                     Ok(result)
                 }),
                 footprint,
             )
         })
+    }
+
+    // How TLC builds the value of an operand, as far as its text depends on it: from the
+    // expression written there, a set enumeration, an interval, a tuple, a record, a function
+    // over a set enumeration or an interval, `k :> v`, a SUBSET or a set of functions of a set
+    // enumeration or an interval, and any other value as the store holds it. An argument of an
+    // operator is a value TLC may have compared, and normalized, before.
+    fn construction_of(&self, operand: &Operand) -> Construction {
+        if operand.is_param {
+            return Construction::Held;
+        }
+        self.construction_of_node(operand.node)
+    }
+
+    fn construction_of_node(&self, node: NodeId) -> Construction {
+        let of = |node: &NodeId| self.construction_of_node(*node);
+        let as_set = |node: &NodeId| {
+            let construction = of(node);
+            construction.of_elements().is_some().then_some(construction)
+        };
+        match self.node(node).1 {
+            NodeKind::Apply { name, args } => {
+                let builtin = match name.resolution {
+                    Resolution::Builtin(index) if !name.is_local => self.builtin_name(index),
+                    _ => return Construction::Held,
+                };
+                match (builtin, args.as_slice()) {
+                    ("..", [_, _]) => Construction::Interval,
+                    ("SUBSET", [base]) => as_set(base).map_or(Construction::Held, |base| {
+                        Construction::Subset(Box::new(base))
+                    }),
+                    (":>", [key, value]) => {
+                        Construction::Function(Box::new(of(key)), Box::new(of(value)))
+                    }
+                    _ => Construction::Held,
+                }
+            }
+            NodeKind::SetEnumeration(elements) => {
+                let constructions: Vec<Construction> = elements.iter().map(of).collect();
+                match constructions.split_first() {
+                    Some((first, rest)) if rest.iter().all(|other| other == first) => {
+                        Construction::Set(Box::new(first.clone()), Some(elements.len() as u32))
+                    }
+                    None => Construction::Set(Box::new(Construction::Held), Some(0)),
+                    _ => Construction::Held,
+                }
+            }
+            NodeKind::Tuple(elements) => Construction::Tuple(elements.iter().map(of).collect()),
+            NodeKind::Record(fields) => Construction::Record(
+                fields
+                    .iter()
+                    .map(|(field, value)| (self.text(*field).encode_utf16().collect(), of(value)))
+                    .collect(),
+            ),
+            NodeKind::FunctionConstruction {
+                is_recursive: false,
+                bounds,
+                body,
+            } => match bounds.as_slice() {
+                [bound] if matches!(bound.pattern, Pattern::Name(_)) => as_set(&bound.set)
+                    .and_then(|domain| domain.of_elements().cloned())
+                    .map_or(Construction::Held, |key| {
+                        Construction::Function(Box::new(key), Box::new(of(body)))
+                    }),
+                _ => Construction::Held,
+            },
+            NodeKind::FunctionSet { domain, range } => match (as_set(domain), as_set(range)) {
+                (Some(domain), Some(range)) => {
+                    Construction::FunctionSet(Box::new(domain), Box::new(range))
+                }
+                _ => Construction::Held,
+            },
+            _ => Construction::Held,
+        }
     }
 
     // The Json module's operators that write a value to the file a string names, as JSON or one
@@ -1330,18 +1433,35 @@ impl Compiler<'_> {
                 // TLC keeps UNION S lazy unless S and its elements are set enumerations, and then
                 // streams each element of S in turn (`UnionValue.Enumerator`). An element streams
                 // as its normalized set does unless it streams apart itself, which the engine,
-                // holding it as an id, can't follow.
-                let reference = (!is_enumerated && outer.are_elements_in_order)
-                    .then(|| reference_of(&outer))
-                    .flatten()
-                    .map(|base| {
-                        Arc::new(move |machine: &mut Machine<'_>| {
-                            Ok(Lazy::Union(Box::new(base(machine)?)))
-                        }) as Reference
-                    });
+                // holding it as an id, follows only where S is a set enumeration that holds it as
+                // written.
+                let base = match &outer.element_references {
+                    Some(elements) => {
+                        let elements = elements.clone();
+                        Some(Arc::new(move |machine: &mut Machine<'_>| {
+                            let mut lazies = Vec::with_capacity(elements.len());
+                            for element in &elements {
+                                lazies.push(element(machine)?);
+                            }
+                            Ok(Lazy::Enumeration(lazies))
+                        }) as Reference)
+                    }
+                    None => outer
+                        .are_elements_in_order
+                        .then(|| reference_of(&outer))
+                        .flatten(),
+                };
+                let reference = base.filter(|_| !is_enumerated).map(|base| {
+                    Arc::new(move |machine: &mut Machine<'_>| {
+                        Ok(Lazy::Union(Box::new(base(machine)?)))
+                    }) as Reference
+                });
                 Compiled {
                     is_normalized: is_enumerated,
                     is_enumerated,
+                    // Its elements are those of S's elements.
+                    are_elements_in_order: outer.are_elements_of_elements_in_order,
+                    is_reference_exact: reference.is_some(),
                     reference,
                     member: only.as_ref().map(|only| self.member_test(only)),
                     parts: only.as_ref().map(Self::parts_of),
@@ -1485,7 +1605,24 @@ impl Compiler<'_> {
                 arity(1)?;
                 self.is_ranking = true;
                 let value = self.operand(&operands[0])?;
-                unary(&value, to_string, true)
+                // The native checker writes a value as TLC does one built as the operand writes
+                // it.
+                let construction = if self.is_native {
+                    self.construction_of(&operands[0])
+                } else {
+                    Construction::Held
+                };
+                let evaluate = value.eval.clone();
+                Compiled {
+                    is_costly: true,
+                    ..leaf(
+                        eval(move |machine| {
+                            let value = evaluate(machine)?;
+                            to_string(machine, value, &construction)
+                        }),
+                        value.footprint.clone(),
+                    )
+                }
             }
             "TLCModelValue" => {
                 arity(1)?;
@@ -1948,21 +2085,27 @@ impl Compiler<'_> {
                 && left.is_in_order
                 && right.is_in_order,
             are_elements_in_order: left.are_elements_in_order && right.are_elements_in_order,
+            are_elements_of_elements_in_order: left.are_elements_of_elements_in_order
+                && right.are_elements_of_elements_in_order,
+            is_reference_exact: reference.is_some()
+                && [left, right]
+                    .iter()
+                    .all(|set| set.is_in_order || set.is_reference_exact),
             member: lazy_member,
             reference,
             ..binary(left, right, operation, true, false)
         }))
     }
 }
-// ToString(v): TLC's text of v (`write_value`), as a string TLC ranks as it makes it.
-fn to_string(machine: &mut Machine<'_>, value: Id) -> Outcome<Id> {
-    if !is_printable(&machine.store, value) {
+// ToString(v): TLC's text of v built as `construction` says (`write_constructed`), as a string
+// TLC ranks as it makes it.
+fn to_string(machine: &mut Machine<'_>, value: Id, construction: &Construction) -> Outcome<Id> {
+    let mut text = Vec::new();
+    if !write_constructed(&machine.store, value, construction, false, &mut text) {
         return Err(Bail(
             "ToString of a value whose text depends on how TLC built it",
         ));
     }
-    let mut text = Vec::new();
-    write_value(&machine.store, value, &mut text)?;
     // A text the engine made before, such as by \o, keeps the rank it had then, -1, which the
     // store's guard on unordered strings doesn't see.
     if let Some(string) = machine.store.find_str(&text)
@@ -2086,7 +2229,7 @@ mod tests {
     fn to_text(store: &mut Store, id: Id) -> Option<String> {
         let program = Program::default();
         let mut machine = Machine::new(&program, std::mem::take(store));
-        let result = to_string(&mut machine, id)
+        let result = to_string(&mut machine, id, &Construction::Held)
             .ok()
             .map(|string| String::from_utf16(machine.store.text_of(string)).expect("UTF-16"));
         *store = machine.store;

@@ -143,6 +143,7 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
             offset(property.action),
             offset(property.subscript),
             optional(property.scope),
+            property.name as i32,
         ]);
     }
     words.push(model.initial_predicates.len() as i32);

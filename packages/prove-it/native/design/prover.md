@@ -531,7 +531,7 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 
 | Crate | Derived from | Licence | `THIRD_PARTY_NOTICES.md` once it is Rust |
 |---|---|---|---|
-| `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`) | MIT | the Z3 section names `native/crates/prove-smt/`; `z3-license.txt` moves with the code |
+| `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`; `nlsat/` ports `src/nlsat` and `src/math/polynomial` of z3-5.3.3, limit checks included) | MIT | the Z3 section names `native/crates/prove-smt/`; `z3-license.txt` moves with the code |
 | `prove-num` | Z3's `rational`/`mpz` semantics, written fresh on JS `bigint`'s rules | MIT (Z3's where it follows `rational.ts`) | under the Z3 section |
 | `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps the `LICENSE` beside the code, as `src/prover/zenon/LICENSE` |
 | `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
@@ -1032,7 +1032,7 @@ is next.
 
   | Prover | Inputs | unsat | sat | unknown at the step limit | other unknown |
   |---|---|---|---|---|---|
-  | `smt` | 10,320 | 9,993 | 13 | 312 | 2 |
+  | `smt` | 10,320 | 9,986 | 13 | 319 | 2 |
   | `z3` | 56 | 50 | 1 | 5 | — |
   | `zenon` | 949 | 796 | — | 102 | 48 exhausted, 3 memory limit |
   | `isabelle` | 478 | 371 | — | 44 (`Interrupt`) | 63 |
@@ -1041,15 +1041,33 @@ is next.
   None stopped for a runtime limit (`unstable`), and none threw. Decided again by the TypeScript
   under the recorded step limits and no time limit (`prover-differential --side ts`), all 12,100
   give the recorded verdict and statistics, so the record reproduces.
+  Porting Z3's limit checks in nlsat's polynomial managers (z3-5.3.3) moved 10 `smt` inputs:
+  7 that were unsat now reach their recorded step limit, and 3 at the step limit changed their
+  statistics; they were re-recorded with `prover-differential --side ts --update`, which keeps
+  each input's step limit.
 - P1, PTL (#231): `prove-ptl` gives the reference LS4's verdict on the 26 formulas of
   `tests/conformance/ptl`, and on the 297 LS4 inputs of the record the TypeScript's verdict and
   step count on every one (297 same, 0 differs, declined or crash). Rust decides PTL by default.
-- P2 Zenon: `prove-zenon` ports all of `zenon/` but `encode.ts`, one module per TS file, behind
-  `PROVE_IT_PROVER`. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's tests
-  are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on each
-  fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches in
-  verdict, steps, every statistic and the proof's digest. Malformed input is declined. Next: the
-  decider differential on the corpus's `.znn` inputs, then the flip commit.
+- P2 Zenon (#227, flip in this entry's PR): `prove-zenon` ports all of `zenon/` but `encode.ts`,
+  one module per TS file. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's
+  tests are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on
+  each fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches
+  in verdict, steps, every statistic and the proof's digest. Malformed input is declined. On the
+  949 Zenon inputs of the record, `prover-differential --side rust --prover zenon` gives 949 same,
+  0 differs, unstable, declined or crash, through the addon and through WebAssembly; the TS unit
+  tests pass with `PROVE_IT_PROVER_ZENON=rust`. Rust decides Zenon by default. Size, release builds
+  on linux-x64-gnu from b736513 to fb96510: `prove-it-engine.node` 5,918,368 → 7,080,784 bytes,
+  `prove-it-engine.wasm` 4,303,223 → 5,210,377, the `prove-it` binary 5,701,384, unchanged (it
+  doesn't link the prover yet). Rust's Zenon peaks at 958 MB where the TypeScript's takes
+  1,416 MB on the input that reaches the memory limit. `conformance:prove` with Zenon in Rust and
+  in TypeScript: on every obligation both runs finished, the same status, but for two SMT
+  obligations that sit at Z3's time limit and `LamportMutex_proofs.tla` #388, which Rust's Zenon
+  proves inside tlapm's time limit and the TypeScript's doesn't. Its input
+  (`zenon/afc234afa4fc2a0a`) is `unknown` on both sides at the recorded step limit and `unsat` on
+  both with no limit, in the same 94,929 steps and the same statistics and proof. On the 4-core
+  container both runs lose a few large modules (`tcp_proof`, `BPConProof`, `CRDT_proof`) whose
+  workers the container's memory limit kills; alone, `CRDT_proof` gives the same statuses both
+  ways.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and

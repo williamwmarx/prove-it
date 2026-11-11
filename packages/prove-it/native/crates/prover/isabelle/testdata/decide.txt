@@ -1,0 +1,45 @@
+# decideIsabelle on the fixture theories and the variants isabelle.test.ts decides, recorded with
+# timeLimitMs Infinity and steps createSteps(limit): case, step limit, verdict, stop (- for none),
+# steps. Each case runs under its natural steps, then under half of them.
+thy:AllocatorImplementation_proof-127	431	unsat	-	431
+thy:AllocatorImplementation_proof-127	215	unknown	Interrupt	216
+thy:AllocatorImplementation_proof-33	840	unsat	-	840
+thy:AllocatorImplementation_proof-33	420	unknown	Interrupt	421
+thy:AtomicBakeryWithoutSMT-465	30939	unsat	-	30939
+thy:AtomicBakeryWithoutSMT-465	15469	unknown	Interrupt	15470
+thy:AtomicBakeryWithoutSMT-6	3517	unsat	-	3517
+thy:AtomicBakeryWithoutSMT-6	1758	unknown	Interrupt	1759
+thy:FiniteSetTheorems_proofs-453	384	unsat	-	384
+thy:FiniteSetTheorems_proofs-453	192	unknown	Interrupt	193
+thy:Level_test-1	0	unknown	ERROR	0
+thy:NaturalsInduction_proofs-1	2273	unsat	-	2273
+thy:NaturalsInduction_proofs-1	1136	unknown	Interrupt	1137
+thy:Paxos-109	2275944	unknown	stack	2275718
+thy:Paxos-109	1137972	unknown	Interrupt	1137973
+thy:Sets-183	612	unsat	-	612
+thy:Sets-183	306	unknown	Interrupt	307
+thy:TLAPS-2	115	unsat	-	115
+thy:TLAPS-2	57	unknown	Interrupt	58
+thy:constantfcn_test-1	261	unknown	-	261
+thy:constantfcn_test-1	130	unknown	Interrupt	131
+thy:function_except_tuple_soundness_gh201_test-1	239	unknown	-	239
+thy:function_except_tuple_soundness_gh201_test-1	119	unknown	Interrupt	120
+and:constantfcn_test-1	0	unknown	ERROR	0
+noassms:AllocatorImplementation_proof-33	908	unknown	-	908
+noassms:AllocatorImplementation_proof-33	454	unknown	Interrupt	455
+noassms:AllocatorImplementation_proof-127	36	unknown	-	36
+noassms:AllocatorImplementation_proof-127	18	unknown	Interrupt	19
+noassms:FiniteSetTheorems_proofs-453	42	unknown	-	42
+noassms:FiniteSetTheorems_proofs-453	21	unknown	Interrupt	22
+noassms:Sets-183	178	unknown	-	178
+noassms:Sets-183	89	unknown	Interrupt	90
+false:auto	45	unknown	-	45
+false:auto	22	unknown	Interrupt	23
+false:blast	42	unknown	-	42
+false:blast	21	unknown	Interrupt	22
+false:iprover	36	unknown	-	36
+false:iprover	18	unknown	Interrupt	19
+false:force	31	unknown	-	31
+false:force	15	unknown	Interrupt	16
+false:clarsimp auto?	17	unknown	-	17
+false:clarsimp auto?	8	unknown	Interrupt	9

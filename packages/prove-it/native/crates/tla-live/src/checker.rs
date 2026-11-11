@@ -202,6 +202,10 @@ struct Behavior {
     /// The state each late node reached, where it isn't the state stored for the node.
     node_reals: IntegerMap<u32, u32>,
     is_done: Vec<bool>,
+    /// TLC's `AbstractDiskGraph#size`: the states its node table has a key for. A graph without
+    /// a tableau has those of the nodes written, the states added; one with a tableau has those
+    /// done and those with a node recorded, such as a successor still to expand.
+    size: usize,
     error_node: Option<u32>,
 }
 
@@ -232,6 +236,9 @@ impl Behavior {
         if self.last_nodes.len() <= state {
             self.last_nodes.resize(state + 1, NO_NODE);
             self.first_nodes.resize(state + 1, NO_NODE);
+        }
+        if self.last_nodes[state] == NO_NODE && !self.is_done.get(state).is_some_and(|&done| done) {
+            self.size += 1;
         }
         match self.last_nodes[state] {
             NO_NODE => self.first_nodes[state] = node,
@@ -327,6 +334,7 @@ impl Checker {
                 next_siblings: Vec::new(),
                 node_reals: IntegerMap::default(),
                 is_done: Vec::new(),
+                size: 0,
                 error_node: None,
             });
         }
@@ -848,11 +856,20 @@ impl Checker {
     }
 
     fn set_done(&mut self, behavior: usize, state: u32) {
-        let is_done = &mut self.behaviors[behavior].is_done;
-        if is_done.len() <= state as usize {
-            is_done.resize(state as usize + 1, false);
+        let graph = &mut self.behaviors[behavior];
+        let index = state as usize;
+        if graph.is_done.len() <= index {
+            graph.is_done.resize(index + 1, false);
         }
-        is_done[state as usize] = true;
+        if !graph.is_done[index]
+            && graph
+                .last_nodes
+                .get(index)
+                .is_none_or(|&last| last == NO_NODE)
+        {
+            graph.size += 1;
+        }
+        graph.is_done[index] = true;
     }
 
     fn is_accepting(&self, behavior: usize, node: u32) -> bool {
@@ -1041,6 +1058,7 @@ impl Checker {
             steps.push((first_step + position) as u32);
         }
         behavior.write_node(state, &targets, &steps);
+        behavior.size += 1;
     }
 
     fn tableau_successors(&self, behavior: usize, node: u32) -> &[u32] {
@@ -1286,6 +1304,15 @@ impl Checker {
     /// How many solutions TLC checks, which it calls branches.
     pub fn branches(&self) -> usize {
         self.solutions.len()
+    }
+
+    /// The states of the behavior graphs, summed over the branches, which TLC reports as it
+    /// checks them (`LiveCheck.check0`).
+    pub fn size(&self) -> u64 {
+        self.behaviors
+            .iter()
+            .map(|behavior| behavior.size as u64)
+            .sum()
     }
 
     // The step from one state to another, as the first of the search's steps between them.
@@ -2218,6 +2245,11 @@ pub fn check_shared(
             })
             .collect::<Result<Vec<_>, _>>()
     })?;
+    for part in &parts {
+        for (behavior, &global) in part.checker.behaviors.iter().zip(&part.checker.global) {
+            checker.behaviors[global].size = behavior.size;
+        }
+    }
     let source = Source { graph, answers };
     let stopped = parts
         .iter()

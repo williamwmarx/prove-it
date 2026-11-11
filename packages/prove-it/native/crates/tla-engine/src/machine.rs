@@ -13,6 +13,7 @@ use tla_values::store::{Outcome, ShapeJoin};
 use tla_values::{Bail, Id, Store};
 
 use crate::compile::Lambda;
+use crate::compile::lazy::Lazy;
 use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MAXIMUM_ENTRIES, MemoTable};
 use tla_values::random::JavaRandom;
 
@@ -32,8 +33,18 @@ pub type Step = Arc<dyn Fn(&mut Machine<'_>, &mut Continue<'_>) -> Outcome<()> +
 /// count of initial states, which waits with what was printed before it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Printed {
-    Values(Vec<Id>),
+    Values(Prints),
     InitialStates(u64),
+}
+
+/// What one Print or PrintT printed: the values, and in the native checker TLC's text of each,
+/// which the compiler knows where the store forgets how TLC built a value the spec writes there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prints {
+    pub values: Vec<Id>,
+    /// TLC's text of each value, before TLC's pretty-printer breaks its lines; `None` where the
+    /// engine doesn't know one, or isn't the native checker.
+    pub texts: Option<Vec<Vec<u16>>>,
 }
 
 /// A variable that has no value yet, -1 in the TypeScript registers.
@@ -135,6 +146,8 @@ pub struct Machine<'p> {
     /// `[a : {}]`, which still tests the value's kind, or one that drops elements, as a filter
     /// does. Then the shapes the walks joined don't cover TLC's predicate evaluation.
     pub is_membership_unsafe: bool,
+    /// The bits of the action atoms whose pieces of Next the walk is in (`pieces.rs`).
+    pub(crate) piece_bits: u8,
     // The next states ENABLED runs its actions into, kept for the next test.
     pub(crate) spare_states: Vec<Vec<Id>>,
     /// What was printed since the search last handed it on (`tlc.output`).
@@ -153,6 +166,11 @@ pub struct Machine<'p> {
     pub(crate) fingerprints: Fingerprints,
     /// The functions TLC keeps lazy that the machine built, which the store's ids of them number.
     pub(crate) lazy_functions: Vec<Lambda>,
+    /// For each variable the walk assigned a set TLC may stream an element of twice: the value
+    /// assigned, and the set as TLC built it, or None where the engine has no reference of it.
+    /// TLC binds the set as built until it fingerprints the state the walk completes, which
+    /// caches it as its normalized set (`Tool.getInitStates`, `Tool.getNextStates`).
+    pub(crate) held: Vec<Option<(Id, Option<Lazy>)>>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -200,6 +218,7 @@ impl<'p> Machine<'p> {
             is_past_walk: false,
             assigned_shapes: None,
             is_membership_unsafe: false,
+            piece_bits: 0,
             spare_states: Vec::new(),
             output: Vec::new(),
             random: JavaRandom::seeded(program.random_seed),
@@ -208,6 +227,7 @@ impl<'p> Machine<'p> {
             tlc_caches: HashMap::new(),
             fingerprints: Fingerprints::new(program.polynomial()),
             lazy_functions: Vec::new(),
+            held: vec![None; program.width],
         }
     }
 

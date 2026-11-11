@@ -75,6 +75,10 @@ pub struct ReportOptions<'a> {
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
     /// The file TLC prints that it parses a module from, as `createFileDescriber` names it.
     pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> String,
+    /// The modules TLC adds to the root module's EXTENDS for its post conditions, which SANY
+    /// loads after the ones the root module extends: `_TLCTrace` where TLC records the trace for
+    /// its trace exploration spec.
+    pub root_extendees: &'a [&'a str],
     /// tla2sany.xml.XMLExporter runs SANY with its validAstSettings: SANY prints only its errors,
     /// with no progress lines and no warnings, and neither validates PlusCal nor lints.
     pub is_xml_export: bool,
@@ -224,7 +228,21 @@ impl Loader<'_> {
             });
         }
         let module = Rc::new(module);
-        let dependencies = Rc::new(get_dependencies(&module));
+        let mut dependencies = get_dependencies(&module);
+        // The root module extends the modules of TLC's post conditions after its own.
+        if self.loaded.is_empty() {
+            for (offset, &extendee) in self.options.root_extendees.iter().enumerate() {
+                let extendee: Rc<str> = Rc::from(extendee);
+                dependencies
+                    .importers
+                    .entry(extendee.clone())
+                    .or_insert_with(|| name.clone());
+                dependencies
+                    .extendees
+                    .insert(module.extends.len() + offset, extendee);
+            }
+        }
+        let dependencies = Rc::new(dependencies);
         // SANY validates the PlusCal of the root module once it parses, and of a module each
         // time it resolves another module's EXTENDS of it, as `loadValidatedModule` does.
         let extenders = self
@@ -725,6 +743,27 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     }
     let mut order = Vec::new();
     loader.get_analysis_order(&root, &mut Vec::new(), &mut FastSet::default(), &mut order)?;
+    // SANY analyzes the modules TLC adds for its post conditions with the spec's, but the front end
+    // links only those the spec uses: one of the user's among them may fail SANY's analysis, which
+    // the front end wouldn't report.
+    let mut added = Vec::new();
+    for extendee in options.root_extendees {
+        let extendee: Rc<str> = Rc::from(*extendee);
+        loader.get_analysis_order(
+            &extendee,
+            &mut Vec::new(),
+            &mut FastSet::default(),
+            &mut added,
+        )?;
+    }
+    if added
+        .iter()
+        .any(|name| loader.read(name).1 != ModuleOrigin::Standard)
+    {
+        return Err(not_yet(
+            "a module of the user's that the trace exploration spec uses",
+        ));
+    }
     loader.report_parse_messages(options.file_name.unwrap_or(&root))?;
     // SANY's generator throws on the root module before it reports its messages, and
     // `SANY.parse` prints the exception. The standard modules before it have none.
