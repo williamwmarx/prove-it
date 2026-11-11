@@ -201,6 +201,16 @@ impl Rebuilder<'_> {
                     }
                     Alias::Record(fields)
                 }
+                // TLC prints the state itself for a function with a key that isn't a string,
+                // which no record converts it to (`FcnRcdValue.toRcd`, `Value.toState`).
+                Value::Function(function)
+                    if function
+                        .domain
+                        .iter()
+                        .any(|key| !matches!(key, Value::Str(_))) =>
+                {
+                    Alias::State
+                }
                 // TLC prints a function of strings as the record it converts it to
                 // (`FcnRcdValue.toState`), but not one it keeps lazy.
                 Value::Function(_) => return unsupported("function that isn't a record"),
