@@ -160,16 +160,55 @@ fn streams_a_union_of_sets_tlc_keeps_lazy_as_tlc_does() {
         );
         assert!(text.contains(counts), "{next}: {text}");
     }
-    // TLC keeps an operator's argument for its later uses, and Cardinality sorted it here, so it
-    // streams as its normalized set (17 states generated), which the engine declines.
-    let spec = "---- MODULE Unions ----\nEXTENDS Naturals, FiniteSets\nVARIABLE y\nOp(u) == Cardinality(u) > 0 /\\ y' \\in u\nInit == y = 0\nNext == Op(UNION {UNION {0..2, {1}}, {7}})\n====\n";
-    std::fs::write(directory.join("Unions.tla"), spec).expect("the spec");
-    let output = run(&directory, &["-noGenerateSpecTE", "Unions"]);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "prove-it: not native yet: the engine stopped: unsupported: streaming a lazy set with duplicates TLC may have normalized at an earlier use\n",
-        "{}",
-        stdout(&output)
-    );
+    // TLC keeps an argument named more than once for its later uses (`LazyValue`), so a use that
+    // sizes it, or an element of it, caches it as its normalized set. Its stream is TLC's only
+    // where it streams no element twice, and the engine declines the others (`Lazy::Kept`). The
+    // counts are TLC's.
+    let kept = [
+        (
+            "Op(u) == Cardinality(u) > 0 /\\ y' \\in UNION {u, {7}}",
+            "Op(UNION {1..2, 3..4})",
+            Some("31 states generated, 6 distinct states found"),
+        ),
+        (
+            "Op(S) == y' \\in UNION S",
+            "Op({UNION {1..2, 2..3}, {7}})",
+            Some("26 states generated, 5 distinct states found"),
+        ),
+        // 17 states generated: the whole set normalized.
+        (
+            "Op(u) == Cardinality(u) > 0 /\\ y' \\in u",
+            "Op(UNION {UNION {0..2, {1}}, {7}})",
+            None,
+        ),
+        // 21 states generated: the element normalized.
+        (
+            "Op(u) == Cardinality(u) > 0 /\\ y' \\in UNION {u, {7}}",
+            "Op(UNION {1..2, 2..3})",
+            None,
+        ),
+        // 21 states generated: the first element of the set enumeration normalized.
+        (
+            "Op(S) == (\\A e \\in S : Cardinality(e) > 0) /\\ y' \\in UNION S",
+            "Op({UNION {1..2, 2..3}, {7}})",
+            None,
+        ),
+    ];
+    for (definition, next, counts) in kept {
+        let spec = format!(
+            "---- MODULE Unions ----\nEXTENDS Naturals, FiniteSets\nVARIABLE y\n{definition}\nInit == y = 0\nNext == {next}\n====\n"
+        );
+        std::fs::write(directory.join("Unions.tla"), spec).expect("the spec");
+        let output = run(&directory, &["-noGenerateSpecTE", "Unions"]);
+        let text = stdout(&output);
+        match counts {
+            Some(counts) => assert!(text.contains(counts), "{definition}: {text}"),
+            None => assert_eq!(
+                String::from_utf8_lossy(&output.stderr),
+                "prove-it: not native yet: the engine stopped: unsupported: streaming a lazy set with duplicates TLC may have normalized at an earlier use\n",
+                "{definition}: {text}"
+            ),
+        }
+    }
     std::fs::remove_dir_all(directory).expect("removed");
 }
