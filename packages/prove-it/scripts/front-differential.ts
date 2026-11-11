@@ -18,9 +18,7 @@
 // checksums of its translation, as SANY does under TLC master and 1.7.4, and compares the
 // results, what the translator logs and the exception it throws. sany-parse-error compares
 // SANY's report of a module its lexer or parser rejects, for TLC master and 1.7.4, and TLC
-// 1.7.4's lexical error. sany-xml compares what SANY's XMLExporter prints for each module as a
-// spec's root, with -o and each of -r, -u and -t, the XML by its length and hashes (--xml compares
-// the XML itself, for finding where a difference starts). --fixtures reads only the
+// 1.7.4's lexical error. --fixtures reads only the
 // fixtures, so it runs without the corpora. --mutate adds four variants of each of the first count modules, with syntax inserted and text
 // deleted at places a fixed seed picks, so the two sides' errors are compared too. Without --rust,
 // it builds front-dump with cargo first.
@@ -28,7 +26,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 import type { Definition, Expression } from "../src/ast";
 import { getIrStartup, lowerConstantSpec, lowerUnsearchedSpec } from "../src/check";
@@ -36,7 +34,6 @@ import { type ModelConfig, parseConfig } from "../src/config";
 import { lowerToIr } from "../src/engine/ir";
 import { createEnvironment } from "../src/environment";
 import {
-  getErrorExitCode,
   isStackOverflow,
   PcalBugError,
   PcalRuntimeError,
@@ -45,7 +42,6 @@ import {
   TlaEvaluationError,
   TlaModuleError,
   TlaSyntaxError,
-  TlaUnsupportedError,
 } from "../src/errors";
 import { type Builtin, describeRange } from "../src/evaluate";
 import { tokenize } from "../src/lexer";
@@ -58,7 +54,6 @@ import { validatePcalModule } from "../src/pcal/validate";
 import { getSany174LexicalError } from "../src/sany/lexer";
 import { getSanyParseError } from "../src/sany/parse-error";
 import { getSanyReport } from "../src/sany/report";
-import { exportSanyXml, XML_EXPORT_EXIT_CODE } from "../src/sany/xml";
 import { createSearch, getProperties, getSpecification } from "../src/search";
 import { getNextSubstitution } from "../src/spec-description";
 import { withUnexpectedException } from "../src/tlc/messages";
@@ -451,50 +446,6 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
     });
     return JSON.stringify({ text: report.text, isFailed: report.isFailed });
   },
-  // What SANY's XMLExporter prints for the module's file as the spec's root, with -o and each of
-  // -r, -u and -t, as exportXml prints it: the error stream, the XML as its length and FNV-1a
-  // hashes (or the XML itself with --xml), and the exit code.
-  "sany-xml": (_source, path) => {
-    const report = getSanyReport(path, createLoader(path), {
-      fileName: basename(path),
-      isXmlExport: true,
-    });
-    const specification = report.specification;
-    const exportWith = (flags: string) => {
-      if (report.isFailed || specification === undefined) {
-        return {
-          stderr: `${report.text}ERROR: Failed to parse module.\n`,
-          stdout: "",
-          exitCode: XML_EXPORT_EXIT_CODE.specParsingFailure,
-        };
-      }
-      try {
-        const xml = exportSanyXml(specification, {
-          version: "master",
-          isRestricted: flags.includes("r"),
-          isUncommented: flags.includes("u"),
-          isTerse: flags.includes("t"),
-        });
-        return {
-          stderr: report.text,
-          stdout: process.argv.includes("--xml") ? xml : hashXml(xml),
-          exitCode: 0,
-        };
-      } catch (error) {
-        if (!(error instanceof TlaUnsupportedError)) throw error;
-        const exitCode = getErrorExitCode(error);
-        const message =
-          exitCode === XML_EXPORT_EXIT_CODE.uncaughtException
-            ? `Exception in thread "main" ${error.message}`
-            : `ERROR: ${error.message}`;
-        return { stderr: `${report.text}${message}\n`, stdout: "", exitCode };
-      }
-    };
-    return JSON.stringify(
-      Object.fromEntries(XML_VARIANTS.map((flags) => [flags, exportWith(flags)])),
-      sortKeys,
-    );
-  },
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -511,21 +462,6 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
     ),
   config: (source) =>
     `{"master":${writeResult((text) => parseConfig(text, "master"))(source)},"v174":${writeResult((text) => parseConfig(text, "1.7.4"))(source)}}`,
-};
-
-// The flags of the exports sany-xml compares, besides -o.
-const XML_VARIANTS = ["", "r", "u", "t", "tru"];
-
-// The XML's length in UTF-8 bytes and two 32-bit FNV-1a hashes of them, which front-dump writes
-// too, so each side writes a short line for a spec whose XML runs to megabytes.
-const hashXml = (xml: string) => {
-  const bytes = Buffer.from(xml, "utf8");
-  const hashes = [0x811c9dc5, 0x050c5d1f];
-  bytes.forEach((byte) => {
-    hashes[0] = Math.imul(hashes[0] ^ byte, 0x01000193);
-    hashes[1] = Math.imul(hashes[1] ^ byte, 0x01000193);
-  });
-  return `${bytes.length}:${hashes.map((hash) => (hash >>> 0).toString(16).padStart(8, "0")).join("")}`;
 };
 
 // What a mutation inserts: the syntax whose errors and corner cases the parser handles.
@@ -627,14 +563,12 @@ const isLinked = [
   "spec",
   "properties",
   "sany-text",
-  "sany-xml",
   "levels",
 ].includes(mode);
 if (isLinked) linkLibraryModules();
 
 const runRust = (batch: typeof modules) => {
-  const xmlFlag = process.argv.includes("--xml") ? ["--xml"] : [];
-  const run = spawnSync(rust, isLinked ? [mode, "--library", LIBRARY_PATH, ...xmlFlag] : [mode], {
+  const run = spawnSync(rust, isLinked ? [mode, "--library", LIBRARY_PATH] : [mode], {
     input: batch
       .map((module) => (module.spec ? `${module.path}\t${module.spec}` : module.path))
       .join("\n"),
