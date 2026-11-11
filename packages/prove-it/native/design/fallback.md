@@ -518,17 +518,22 @@ distinct decline messages in the group.
 | An assumption that fails to evaluate, evaluated again | 57 | 25 | front session |
 | Temporal properties and liveness | 50 | 19 | liveness session |
 | The engine stopping where TLC reports an error | 46 | 25 | memo session |
-| What the constant evaluator doesn't compute | 29 | 9 | front session |
+| What the constant evaluator doesn't compute | 15 | 3 | front session |
 | Other failures evaluated again | 29 | 18 | memo session |
 | The engine declining an operator or builtin | 19 | 15 | memo session |
 | Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
 | `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
-| Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
+| Java overrides TLC loads with more than the shapes ported | 9 | 8 | unassigned |
 | SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
 | Rebuilding a trace through the builtin Trace | 4 | 1 | memo session |
 | The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, an ALIAS without a definition, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 9 | 7 | unassigned |
 
 The groups are checked in this order, so a decline counts once, in the first group that takes it.
+The constant evaluator's row and the Java overrides' row count what was left after the
+front-constants branch (measured 2026-11-11 from b8121dd3, 1,452 native before and 1,473 after):
+it made native the CHOOSE, division, equality, quantifier-bound and INIT or NEXT constant
+declines, and an annotated override and one that catches, and moved TLCGet("level") as a
+substitute to "a configuration substitute with effects" among the rest.
 The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
 

@@ -379,14 +379,26 @@ TLC evaluates a parameterless substitute for a declared constant at startup and 
 when that fails and the level bound `createLevelAnalyzer` computes is above constant, with TLCGet,
 Trace and CounterExample read as variables. `create_environment` runs the same analyzer from
 `levels.rs`, and evaluates such a substitute with the constant evaluator before TLC starts
-(`is_started: false`, with no string ranks). Two failures are TLC's:
+(`is_started: false`, with no string ranks). These failures are TLC's:
 
 - a variable, which no state assigns: TLC's "is either undefined or not an operator";
-- TLCGet of a key TLC's model checker holds (diameter, generated, distinct, queue, stats, config),
-  which `TLCGetSet.TLCGetEval` reports as its own failure on master.
+- TLCGet of a key TLC's model checker holds (diameter, generated, distinct, queue, stats, config)
+  or of a register, which `TLCGetSet.TLCGetEval` reports as its own failure on master, where
+  TLCGet("level") is 1, the level of `TLCState.Empty`;
+- a CHOOSE no element satisfies, `=` of values of two kinds, a membership in a value that isn't a
+  set, and a quantifier bound that isn't one, worded as TLC's classes word them where the
+  evaluator knows how TLC prints the values;
+- a division by zero, an EvalException.
 
-Either becomes TLC's configuration error "substitutes constant C with non-constant D -
-specifically: …". Anything else the evaluator can't compute is still `NotYet`.
+Each becomes TLC's configuration error "substitutes constant C with non-constant D", with
+" - specifically: …" and the failure's message unless it is an EvalException
+(`processConstantDefns`). Anything else the evaluator can't compute is still `NotYet`.
+
+`tlc_messages::is_eval_exception` tells the failures TLC throws as EvalExceptions by their
+messages' codes. `processConfigProps` lets one escape from a property's `\A` as an exception TLC
+didn't expect, and leaves the `\A` to the liveness checker for any other, whose `astToLive` takes
+a quantifier whose sets or body fail for a formula it can't handle, under `\A` with the message of
+a failure that isn't an EvalException.
 
 ## Constant parts of the liveness formula
 
