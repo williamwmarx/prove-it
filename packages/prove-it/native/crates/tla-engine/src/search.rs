@@ -33,7 +33,7 @@ use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atom
 use crate::machine::{
     EVALUATIONS_SPENT, Eval, Machine, Printed, Program, Registers, Step, UNASSIGNED,
 };
-use crate::memo::EMPTY;
+use crate::memo::{EMPTY, MAXIMUM_ENTRIES};
 use crate::symmetry::{
     Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
 };
@@ -80,6 +80,9 @@ pub struct Settings {
     /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
     /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
     pub test_live_check_at: Option<usize>,
+    /// PROVE_IT_TEST_MEMO_ENTRIES, for tests: the room the memo tables of the search's machines
+    /// share, rather than MAXIMUM_ENTRIES, so that a small model fills them.
+    pub test_memo_entries: Option<usize>,
     /// PROVE_IT_TEST_EVALUATIONS, for tests: how many bodies of recursive definitions the search's
     /// machines may evaluate between them before it stops with EVALUATIONS_SPENT.
     pub test_evaluations: Option<u64>,
@@ -125,6 +128,7 @@ impl Default for Settings {
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
+            test_memo_entries: None,
             test_evaluations: None,
             is_dumped: false,
             is_continued: false,
@@ -2765,6 +2769,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         ..compiler.finish()
     };
     let mut machine = Machine::new(&program, store);
+    let memo_entries = settings.test_memo_entries.unwrap_or(MAXIMUM_ENTRIES);
+    machine.limit_memo(memo_entries);
     // TLCGet("level") is 0 while TLC starts.
     let startup = machine.store.int(0).and_then(|zero| {
         machine.set_slot(LEVEL_SLOT, zero);
@@ -3310,12 +3316,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     if workers.is_empty() {
                         // The memo tables of the search's machine and its workers' share one
                         // machine's room, so that memory doesn't grow with the threads.
-                        machine.share_memo(thread_count);
+                        machine.limit_memo(memo_entries / thread_count);
                         workers = (0..thread_count)
                             .map(|_| Worker {
                                 machine: {
                                     let mut worker = Machine::new(&program, Store::new());
-                                    worker.share_memo(thread_count);
+                                    worker.limit_memo(memo_entries / thread_count);
                                     worker.assigned_shapes =
                                         machine.assigned_shapes.as_ref().map(|joins| {
                                             joins.iter().map(|_| ShapeJoin::default()).collect()

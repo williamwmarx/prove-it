@@ -949,6 +949,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .host
             .get_variable("PROVE_IT_TEST_LIVE_CHECK_AT")
             .and_then(|at| at.parse().ok()),
+        test_memo_entries: get_number(printer.host, "PROVE_IT_TEST_MEMO_ENTRIES"),
         test_evaluations: printer
             .host
             .get_variable("PROVE_IT_TEST_EVALUATIONS")
@@ -2342,6 +2343,31 @@ IsSimpleCycle(S, r) ==
         };
         let (one, _) = get_found(&ir, &settings(1, 4_855));
         let (four, threads) = get_found(&ir, &settings(4, 5 * 4_855));
+        assert_eq!(four, one);
+        assert!(threads > 1);
+    }
+
+    // A full memo table of a recursive function forgets what it holds rather than take no more or
+    // turn off, so each state's call over 20 nodes evaluates F's body 20 times rather than
+    // 2^20 - 1, with a room that fills in a few states, on any number of threads.
+    #[test]
+    fn keeps_memoizing_a_recursive_function_once_its_table_is_full() {
+        let ir = lower(
+            "Shifted",
+            &format!(
+                "---- MODULE Shifted ----\n{SIMPLE_CYCLE}Node == 1..20\nShift(n) == [ i \\in Node |-> ((i + n) % 20) + 1 ]\nVARIABLE n\nInit == n = 0\nNext == \\E k \\in 1..10 : n' = (n + k) % 200\nSpec == Init /\\ [][Next]_n\nInv == IsSimpleCycle(Node, Shift(n)) \\in BOOLEAN\n====\n"
+            ),
+            "SPECIFICATION Spec\nINVARIANT Inv\n",
+        );
+        let settings = |threads| Settings {
+            threads,
+            minimum_shared_level: 1,
+            test_memo_entries: Some(256),
+            test_evaluations: Some(200 * 100),
+            ..Settings::default()
+        };
+        let (one, _) = get_found(&ir, &settings(1));
+        let (four, threads) = get_found(&ir, &settings(4));
         assert_eq!(four, one);
         assert!(threads > 1);
     }

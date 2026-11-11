@@ -15,7 +15,7 @@ use tla_values::{Bail, Id, Store};
 
 use crate::compile::Lambda;
 use crate::compile::lazy::Lazy;
-use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MAXIMUM_ENTRIES, MemoTable};
+use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MemoTable};
 use tla_values::random::JavaRandom;
 
 /// A compiled expression: its value, or where TLC would fail, or the engine hands over.
@@ -81,7 +81,9 @@ pub(crate) struct Recursive {
 pub struct Program {
     pub(crate) width: usize,
     pub(crate) slot_count: usize,
-    pub(crate) memo_widths: Vec<usize>,
+    /// Each memo table's width, and whether it is kept: a recursive definition's, which never
+    /// turns off (`MemoTable::kept`).
+    pub(crate) memo_tables: Vec<(usize, bool)>,
     pub(crate) epoch_count: usize,
     pub(crate) once_count: usize,
     pub(crate) round_count: usize,
@@ -208,9 +210,15 @@ impl<'p> Machine<'p> {
             epoch_count: 0,
             program,
             tables: program
-                .memo_widths
+                .memo_tables
                 .iter()
-                .map(|&width| MemoTable::new(width))
+                .map(|&(width, is_kept)| {
+                    if is_kept {
+                        MemoTable::kept(width)
+                    } else {
+                        MemoTable::new(width)
+                    }
+                })
                 .collect(),
             epochs: (0..program.epoch_count)
                 .map(|_| EpochCache::default())
@@ -262,11 +270,12 @@ impl<'p> Machine<'p> {
         self.random = JavaRandom::seeded(fingerprint ^ self.program.random_seed);
     }
 
-    /// Shares each memo table's room with the other machines of a search on `threads` threads,
-    /// so that the tables of all of them take about what one machine's do.
-    pub fn share_memo(&mut self, threads: usize) {
+    /// Lets each memo table take no more than `entries` entries, such as its share of the room of
+    /// the machines of a search on threads, so that the tables of all of them take about what one
+    /// machine's do.
+    pub fn limit_memo(&mut self, entries: usize) {
         for table in &mut self.tables {
-            table.limit(MAXIMUM_ENTRIES / threads);
+            table.limit(entries);
         }
     }
 
@@ -537,7 +546,7 @@ mod tests {
     #[test]
     fn a_machine_starts_with_only_its_programs_empty_tables() {
         let program = Program {
-            memo_widths: vec![1, 3],
+            memo_tables: vec![(1, false), (3, true)],
             ..Program::default()
         };
         let mut store = Store::new();
