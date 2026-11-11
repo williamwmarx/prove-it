@@ -98,6 +98,20 @@ fn prints_as_tlc_does_at_a_stop_in_a_model_with_temporal_properties() {
             11,
             "<<\"n\", 0>>\n<<\"n\", 0>>\n<<\"n\", 1>>\nError: Deadlock reached.\n<<\"n\", 0>>\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 49 of module M>\nx = 1\n\n<<\"n\", 1>>\nState 3: <Next line 5, col 9 to line 5, col 49 of module M>\nx = 2\n\n<<\"n\", 0>>\n<<\"n\", 1>>\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n",
         ),
+        // only the initial predicate prints, and an atom reads TLC's level: a deadlock
+        (
+            "Init == PrintT(\"init\") /\\ x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nP == []<>(TLCGet(\"level\") > 0)",
+            "SPECIFICATION Spec\nPROPERTY P\n",
+            11,
+            "Error: Deadlock reached.\n\"init\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n\"init\"\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n",
+        ),
+        // and an invariant violated
+        (
+            "Init == PrintT(\"init\") /\\ x = 0\nNext == x < 4 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nP == []<>(TLCGet(\"level\") > 0)\nInv == x < 2",
+            "SPECIFICATION Spec\nPROPERTY P\nINVARIANT Inv\n",
+            12,
+            "Error: Invariant Inv is violated.\n\"init\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n\"init\"\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n",
+        ),
     ];
     for (index, (definitions, config, code, expected)) in cases.iter().enumerate() {
         for threads in ["1", "4"] {

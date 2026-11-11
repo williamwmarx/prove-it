@@ -259,6 +259,12 @@ late node's steps are the graph's. It declines, each with its reason:
 - SYMMETRY or a VIEW, atoms that read TLC's diameter or level, and a POSTCONDITION where the
   added state prints.
 
+Where one of those holds whatever prints (SYMMETRY, a VIEW, the diameter or level, a stop TLC
+reports otherwise) and nothing prints past the initial states, neither the search, nor the atoms,
+nor Next run again from s in full as a late node of s would, the engine reports the stop as where
+nothing prints, which matched TLC before: a model whose initial predicate alone prints and whose
+property reads `TLCGet("level")`.
+
 Verified against TLC on 360 generated specs (the stop's kind and depth, prints in the action, in a disjunct, in the fairness action alone or in the property, three
 properties, WF, SF or none), each in plain, -tool, -lncheck final and both, on 1 and 4 workers:
 2880 runs, 1936 print what TLC prints, 944 decline, none differ.

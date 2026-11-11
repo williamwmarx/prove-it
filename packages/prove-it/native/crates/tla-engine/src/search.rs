@@ -4182,8 +4182,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 // Where the search held what it printed for the liveness checker, TLC printed it
                 // between the states it added to the behavior graphs, and may print again as it
                 // adds the state it stopped at once it has printed the trace, even where nothing
-                // printed before: its late node of that state runs Next from it in full.
-                Some(found) if search.graph.is_some() && search.held.is_some() => {
+                // printed before: its late node of that state runs Next from it in full. Where the
+                // engine doesn't place that, and nothing but the initial states prints, the stop is
+                // reported as where nothing prints.
+                Some(found)
+                    if search.graph.is_some()
+                        && search.held.is_some()
+                        && (get_stop_completeness(&context, &search, &found).is_ok()
+                            || is_printed_past_initial(
+                                &mut machine,
+                                &context,
+                                &search,
+                                &found,
+                            )) =>
+                {
                     match place_stop_prints(
                         &mut machine,
                         &context,
@@ -5276,26 +5288,7 @@ fn place_stop_prints(
         context.is_invariant_printing || search.is_distinct_read || model.actions.len() > 1;
     // What the expansion printed up to the stop.
     let stopped_output = std::mem::take(&mut machine.output);
-    // TLC runs Next in full again from a state it adds a node of late, where its search
-    // stopped part way through the state's steps.
-    let is_complete = match found.kind {
-        ViolationKind::Deadlock {
-            accepted: None,
-            atom: None,
-        } => true,
-        ViolationKind::Invariant(_)
-        | ViolationKind::ActionProperty(_)
-        | ViolationKind::Error {
-            site: ErrorSite::Next | ErrorSite::Invariant(_),
-        } => false,
-        _ => return Err("a stop TLC reports otherwise in a model that prints"),
-    };
-    if search.states.key_width.is_some() || search.canonicalizer.is_some() {
-        return Err("a stop under SYMMETRY or a VIEW in a model that prints");
-    }
-    if context.diameter_atoms.contains(&true) || context.level_atoms.contains(&true) {
-        return Err("a stop where the atoms read TLC's diameter or level and something prints");
-    }
+    let is_complete = get_stop_completeness(context, search, found)?;
     let Some(mut held) = search.held.take() else {
         return Err("prints the search didn't hold");
     };
@@ -5357,21 +5350,8 @@ fn place_stop_prints(
         {
             return Err("a late node of the state a stop cut short, which prints");
         }
-        let next = context.next.as_ref().expect("a next-state relation");
-        let current = search.states.state(expanding as u32).to_vec();
-        let epoch = machine.next_epoch();
-        machine.set_current(&current, epoch);
-        machine.set_slot(LEVEL_SLOT, search.level_id);
-        machine.set_slot(NEXT_LEVEL_SLOT, search.next_level_id);
-        machine.set_next(&vec![UNASSIGNED; current.len()]);
-        machine.reset_assigned();
-        machine.seed_random(search.states.fingerprints[expanding]);
-        let mut successors: Vec<Vec<Id>> = Vec::new();
-        next(machine, &mut |machine: &mut Machine<'_>| {
-            successors.push(machine.next().to_vec());
-            Ok(())
-        })
-        .map_err(|_| "a late node of the state a stop cut short, whose steps fail")?;
+        let successors = run_next(machine, context, search, expanding)
+            .map_err(|_| "a late node of the state a stop cut short, whose steps fail")?;
         let graph = search.graph.as_ref().expect("a graph");
         let taken = &graph.edges[graph.edge_offsets[expanding] as usize..];
         let is_taken = successors.len() == taken.len()
@@ -5418,6 +5398,88 @@ fn place_stop_prints(
         }
     }
     Ok(added)
+}
+
+// Whether the search took all the steps of the state it stopped at, a deadlock, or why the engine
+// doesn't place what TLC prints at that stop. TLC runs Next in full again from a state it adds a
+// node of late, where its search stopped part way through the state's steps.
+fn get_stop_completeness(
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    found: &Found,
+) -> Result<bool, &'static str> {
+    let is_complete = match found.kind {
+        ViolationKind::Deadlock {
+            accepted: None,
+            atom: None,
+        } => true,
+        ViolationKind::Invariant(_)
+        | ViolationKind::ActionProperty(_)
+        | ViolationKind::Error {
+            site: ErrorSite::Next | ErrorSite::Invariant(_),
+        } => false,
+        _ => return Err("a stop TLC reports otherwise in a model that prints"),
+    };
+    if search.states.key_width.is_some() || search.canonicalizer.is_some() {
+        return Err("a stop under SYMMETRY or a VIEW in a model that prints");
+    }
+    if context.diameter_atoms.contains(&true) || context.level_atoms.contains(&true) {
+        return Err("a stop where the atoms read TLC's diameter or level and something prints");
+    }
+    Ok(is_complete)
+}
+
+// The successors Next gives from the stored state, as TLC's late node of it runs Next in full
+// (`TableauLiveChecker#addNextState`), with what it prints in the machine's output.
+fn run_next(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    state: usize,
+) -> Outcome<Vec<Vec<Id>>> {
+    let next = context.next.as_ref().expect("a next-state relation");
+    let current = search.states.state(state as u32).to_vec();
+    let epoch = machine.next_epoch();
+    machine.set_current(&current, epoch);
+    machine.set_slot(LEVEL_SLOT, search.level_id);
+    machine.set_slot(NEXT_LEVEL_SLOT, search.next_level_id);
+    machine.set_next(&vec![UNASSIGNED; current.len()]);
+    machine.reset_assigned();
+    machine.seed_random(search.states.fingerprints[state]);
+    let mut successors: Vec<Vec<Id>> = Vec::new();
+    next(machine, &mut |machine: &mut Machine<'_>| {
+        successors.push(machine.next().to_vec());
+        Ok(())
+    })?;
+    Ok(successors)
+}
+
+// Whether TLC prints anything past the initial states in a model whose search held what it
+// printed: as it expands the states, the stopped one up to its stop, as it evaluates the atoms, or
+// as its late node of the state the search stopped part way through runs Next from it in full.
+// Where nothing does, the stop is reported as in a model where nothing prints.
+fn is_printed_past_initial(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    found: &Found,
+) -> bool {
+    let is_printed = context.is_live_printing
+        || !machine.output.is_empty()
+        || search
+            .held
+            .as_ref()
+            .is_some_and(|held| held.iter().skip(1).any(|printed| !printed.is_empty()));
+    if is_printed || matches!(found.kind, ViolationKind::Deadlock { .. }) {
+        return is_printed;
+    }
+    let registers = std::mem::take(&mut machine.registers);
+    // A run that fails has printed what the search's run printed before it failed.
+    let _ = run_next(machine, context, search, search.expanding);
+    machine.registers = registers;
+    let is_late_printed = !machine.output.is_empty();
+    machine.output.clear();
+    is_late_printed
 }
 
 /// What the search reports, held until the liveness checker has checked the properties.
