@@ -443,3 +443,31 @@ fn leaves_a_let_whose_recursive_definitions_are_shaped_otherwise_not_native() {
         );
     }
 }
+
+// TLC's test-model UseHideModuleDefsXml and suite test208: `generateUseOrHide` takes a module that
+// `SymbolTable.resolveModule` finds, the current module, an extended module or an inner module
+// defined before, as a fact or a DEF entry.
+#[test]
+fn reads_a_module_named_as_a_fact_or_def_entry() {
+    let text = get_text(
+        "module-fact",
+        "---- MODULE Main ----\nEXTENDS Naturals\n---- MODULE Inner ----\n====\nUSE MODULE Main, MODULE Inner DEF MODULE Naturals\nHIDE DEFS MODULE Inner\n====\n",
+    );
+    assert!(!text.contains("Semantic errors"), "{text}");
+    assert!(text.ends_with("Linting of module Main\n"), "{text}");
+    // SANY's message for a module it doesn't find has no recording.
+    for statement in ["USE MODULE Inner", "USE DEF MODULE Sequences"] {
+        assert!(
+            matches!(
+                get_report(
+                    "module-fact-missing",
+                    &format!(
+                        "---- MODULE Main ----\n{statement}\n---- MODULE Inner ----\n====\n====\n"
+                    ),
+                ),
+                Err(FrontError::NotYet(_))
+            ),
+            "{statement}"
+        );
+    }
+}
