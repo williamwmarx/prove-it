@@ -546,6 +546,8 @@ Not native, where TLC writes what the binary doesn't model:
 
 - `-dump class,...` and a file under `${metadir}`;
 - a plain `-dump` after a `-dump dot`: TLC goes on writing a graph, into the last file;
+- `-dump dot` on more than one worker: TLC's workers write states and edges in the order they
+  reach them, which differs from run to run;
 - `-dump dot,constrained`: TLC writes a step to each successor a constraint excludes and to each
   that an action's guard excludes (`addUnsatisfiedState`), with the predicate;
 - `-dump dot` with an ALIAS, which labels the states; with `colorize` or `actionlabels` where the

@@ -1200,6 +1200,10 @@ fn check_spec(
     if is_dumped && (ir.model.view.is_some() || ir.model.startup.symmetry.is_some()) {
         return report_not_native(printer, "-dump under SYMMETRY or a VIEW");
     }
+    // TLC's workers write the graph's states and edges in the order they reach them.
+    if dot.is_some() && workers > 1 {
+        return report_not_native(printer, "-dump dot on more than one worker");
+    }
     // TLC writes each state again as it adds the state's stuttering step to the behavior graph
     // (`Worker.doNextCheckLiveness`), and the graph a stuttering step too, and the behavior graph
     // to a file of its own (`DotLivenessStateWriter`).

@@ -167,6 +167,25 @@ fn declines_a_dump_after_a_dump_dot() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// TLC's workers write the graph's states and edges in the order they reach them, which differs
+// from run to run.
+#[test]
+fn declines_a_dump_dot_on_several_workers() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====\n";
+    let (output, directory) = run_spec_with(
+        "dot-workers",
+        spec,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n",
+        &["-workers", "2", "-dump", "dot", "graph"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(
+        stderr(&output),
+        "prove-it: not native yet: -dump dot on more than one worker\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 // TLC copies the graph to the snapshot as it writes each state (`DotStateWriter.writeState`), so a
 // search that writes none leaves no snapshot.
 #[test]
