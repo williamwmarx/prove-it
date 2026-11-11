@@ -14,6 +14,7 @@ use tla_values::print::{is_printable, is_printable_normalized, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
+use crate::coverage;
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
@@ -727,6 +728,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         Some(workers) => workers.parse().unwrap_or(1),
         None => 1,
     };
+    // With several workers TLC's counts depend on how the workers interleave.
+    if args.has("-coverage") && workers > 1 {
+        return report_not_native(
+            printer,
+            "coverage on more than one worker is timing-dependent in TLC",
+        );
+    }
     print_welcome(printer);
     print_startup_banner(printer, fingerprint_index, seed, workers);
     // TLC opens the file before it reads the configuration, and names it with a suffix of .dump
@@ -1113,6 +1121,16 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         _ => {}
     }
+    if args.has("-coverage") {
+        let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
+        let directories: Vec<&Path> = std::iter::once(directory)
+            .chain(java.libraries.iter().map(Path::new))
+            .collect();
+        match coverage::compute(&ir, &outcome, printer.host, &directories, fingerprint_index) {
+            Ok(messages) => printer.coverage = Some(messages),
+            Err(why) => return report_not_native(printer, &why),
+        }
+    }
     let (counts, fingerprints) = match outcome {
         SearchOutcome::Complete {
             counts,
@@ -1496,6 +1514,9 @@ fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
 /// After a search, TLC prints how many states it found and how deep it went, after the progress
 /// with -tool.
 pub(crate) fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
+    if let Some(messages) = printer.coverage.take() {
+        coverage::print(printer, &messages);
+    }
     if printer.is_tool {
         print_progress(printer, statistics, Some(start));
     }
