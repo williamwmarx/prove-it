@@ -4702,6 +4702,28 @@ impl<'ir> Evaluator<'ir> {
                     Value::Bool(true)
                 }
             }
+            // TLCExt's AssertEq, whose TLA+ definition TLC evaluates: where the arguments differ,
+            // PrintT("Assertion failed") /\ PrintT(a) /\ PrintT(b) /\ a = b. TLC reports a failure
+            // at the positions of that definition, which the IR doesn't hold.
+            "AssertEq" => {
+                arity(2)?;
+                let unfollowed = |_| EvalError {
+                    reason: "a failure within TLCExt's AssertEq".into(),
+                    message: None,
+                };
+                let left = self.operand(&operands[0]).map_err(unfollowed)?;
+                let right = self.operand(&operands[1]).map_err(unfollowed)?;
+                if equals(&left, &right).map_err(unfollowed)? {
+                    return Ok(Value::Bool(true));
+                }
+                let message = Value::Str(self.text_of("Assertion failed".encode_utf16().collect()));
+                for value in [message, left, right] {
+                    let value = self.settle(&value).map_err(unfollowed)?;
+                    check_unchecked(&value).map_err(unfollowed)?;
+                    self.printed.push(vec![format_printed(&value)]);
+                }
+                Value::Bool(false)
+            }
             "RandomElement" | "RandomSubset" => {
                 let values = operands
                     .iter()
@@ -4763,6 +4785,16 @@ impl<'ir> Evaluator<'ir> {
                         Some(position) => record.range[position].clone(),
                         None => return fail("ToTrace of a record without states"),
                     },
+                    value @ (Value::Int(_) | Value::Bool(_) | Value::Str(_) | Value::Model(_)) => {
+                        return fail_coded(
+                            "ToTrace of a value that isn't a CounterExample",
+                            ONE_ARGUMENT_ERROR,
+                            format!(
+                                "The argument of ToTrace should be a CounterExample, but instead it is:\n{}",
+                                format_pretty(value)
+                            ),
+                        );
+                    }
                     _ => return fail("ToTrace of a value that isn't a CounterExample"),
                 };
                 let states = elements(&states)?;

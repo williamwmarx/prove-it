@@ -917,7 +917,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             Some("-continue under SYMMETRY or a VIEW")
         } else if !model.postconditions.is_empty() {
             Some("-continue with a POSTCONDITION")
-        } else if is_built_in(&["Print", "PrintT", "TLCSet"]) {
+        } else if is_built_in(&["Print", "PrintT", "AssertEq", "TLCSet"]) {
             // TLC prints what the spec prints as it evaluates, before the violation it then
             // reports, and sets its registers again as it rebuilds each trace (`printTrace`),
             // which the search goes on reading.
@@ -1661,10 +1661,12 @@ fn print_violation(
             else {
                 return Err(NOT_IN_IR);
             };
-            let is_printing = ir
-                .builtins
-                .iter()
-                .any(|builtin| matches!(&*ir.texts[builtin.name as usize], "Print" | "PrintT"));
+            let is_printing = ir.builtins.iter().any(|builtin| {
+                matches!(
+                    &*ir.texts[builtin.name as usize],
+                    "Print" | "PrintT" | "AssertEq"
+                )
+            });
             let is_warned = is_stuttering && is_cycle_constrained;
             if !is_stuttering && is_printing {
                 return Err("a step back into the cycle of a spec that prints");

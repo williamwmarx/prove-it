@@ -325,6 +325,9 @@ impl Compiler<'_> {
         if name == "Print" || name == "PrintT" {
             return self.compile_print(name, operands, context);
         }
+        if self.is_native && name == "AssertEq" {
+            return self.compile_assert_eq(operands, context);
+        }
         if name == "TLCGet" {
             return self.compile_tlc_get(operands, context);
         }
@@ -610,43 +613,64 @@ impl Compiler<'_> {
                     for evaluate in &evaluators {
                         values.push(evaluate(machine)?);
                     }
-                    let texts = match &constructions {
-                        Some(constructions) => values
-                            .iter()
-                            .zip(constructions)
-                            .map(|(&value, construction)| {
-                                let mut text = Vec::new();
-                                write_constructed(
-                                    &machine.store,
-                                    value,
-                                    construction,
-                                    true,
-                                    &mut text,
-                                )
-                                .then_some(text)
-                            })
-                            .collect(),
-                        None => {
-                            for &value in &values {
-                                if !is_printable(&machine.store, value) {
-                                    return Err(Bail(
-                                        "printing a value whose text depends on how TLC built it",
-                                    ));
-                                }
-                                // The addon hands what it prints to the interpreter, whose
-                                // encoding has no Nat, Int or STRING.
-                                if machine.store.holds_lazy_function(value) {
-                                    return Err(UNENCODABLE);
-                                }
-                            }
-                            None
-                        }
-                    };
                     let result = if is_print { values[1] } else { TRUE };
-                    machine
-                        .output
-                        .push(Printed::Values(Prints { values, texts }));
+                    push_prints(machine, values, constructions.as_deref())?;
                     Ok(result)
+                }),
+                footprint,
+            )
+        })
+    }
+
+    // AssertEq(a, b), which TLCExt defines in TLA+ as `IF a # b THEN PrintT("Assertion failed")
+    // /\ PrintT(a) /\ PrintT(b) /\ a = b ELSE a = b`: where a and b differ, it prints the string
+    // and each value as PrintT does, and is FALSE. TLC evaluates each argument once, which an
+    // argument without effects shows nowhere, so an argument that prints declines.
+    fn compile_assert_eq(
+        &mut self,
+        operands: &[Operand],
+        context: &Context,
+    ) -> Compiling<Compiled> {
+        if !context.can_print {
+            return self.decline_print("AssertEq");
+        }
+        if operands.len() != 2 {
+            return unsupported("an operator applied to the wrong number of arguments");
+        }
+        let operands: Vec<Operand> = operands
+            .iter()
+            .map(|operand| Operand {
+                context: operand.context.without_print(),
+                ..operand.clone()
+            })
+            .collect();
+        let differs = self
+            .compile_native_builtin("#", 0, &operands, context)?
+            .expect("a comparison");
+        let printed = [
+            self.compile_print("PrintT", &operands[..1], context)?,
+            self.compile_print("PrintT", &operands[1..], context)?,
+        ];
+        let footprint = differs
+            .footprint
+            .merge(&printed[0].footprint)
+            .merge(&printed[1].footprint);
+        let message = self
+            .store
+            .str(&"Assertion failed".encode_utf16().collect::<Vec<u16>>());
+        let (differs, printed) = (differs.eval, printed.map(|print| print.eval));
+        Ok(Compiled {
+            is_boolean: true,
+            ..leaf(
+                eval(move |machine| {
+                    if differs(machine)? != TRUE {
+                        return Ok(TRUE);
+                    }
+                    push_prints(machine, vec![message], Some(&[Construction::Held]))?;
+                    for print in &printed {
+                        print(machine)?;
+                    }
+                    Ok(FALSE)
                 }),
                 footprint,
             )
@@ -2136,6 +2160,45 @@ const NAMED_REGISTER_PREFIX: &str = "s:";
 /// The prefix of a key of TLCGet and TLCSet that names a Java system property, whose value
 /// `System.getProperty` gives with the key as the default.
 const JAVA_PROPERTY_PREFIX: &str = "-D";
+
+// Prints the values of a Print or PrintT, with TLC's text of each where the native checker knows
+// how TLC built it.
+fn push_prints(
+    machine: &mut Machine<'_>,
+    values: Vec<Id>,
+    constructions: Option<&[Construction]>,
+) -> Outcome<()> {
+    let texts = match constructions {
+        Some(constructions) => values
+            .iter()
+            .zip(constructions)
+            .map(|(&value, construction)| {
+                let mut text = Vec::new();
+                write_constructed(&machine.store, value, construction, true, &mut text)
+                    .then_some(text)
+            })
+            .collect(),
+        None => {
+            for &value in &values {
+                if !is_printable(&machine.store, value) {
+                    return Err(Bail(
+                        "printing a value whose text depends on how TLC built it",
+                    ));
+                }
+                // The addon hands what it prints to the interpreter, whose encoding has no Nat,
+                // Int or STRING.
+                if machine.store.holds_lazy_function(value) {
+                    return Err(UNENCODABLE);
+                }
+            }
+            None
+        }
+    };
+    machine
+        .output
+        .push(Printed::Values(Prints { values, texts }));
+    Ok(())
+}
 
 /// Where the JVM and its libraries name the system properties they set themselves.
 const JVM_PROPERTY_NAMESPACES: [&str; 16] = [

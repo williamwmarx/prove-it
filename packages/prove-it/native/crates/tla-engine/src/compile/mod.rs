@@ -1299,8 +1299,8 @@ impl<'a> Compiler<'a> {
                     Resolution::Builtin(index) => match self.builtin_name(index) {
                         "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCEval" | "="
                         | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCFP" | "TLCCache"
-                        | "Assert" | "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize"
-                        | "ndJsonDeserialize" => true,
+                        | "Assert" | "AssertEq" | "JsonSerialize" | "ndJsonSerialize"
+                        | "JsonDeserialize" | "ndJsonDeserialize" => true,
                         // TLC evaluates the operands, then builds the set, which the engine
                         // builds the same way unless an operand is a set TLC keeps lazy.
                         "\\cup" | "\\cap" | "\\" | "UNION" => !args
@@ -1340,6 +1340,7 @@ impl<'a> Compiler<'a> {
                         self.builtin_name(index),
                         "Print"
                             | "PrintT"
+                            | "AssertEq"
                             | "RandomElement"
                             | "RandomSubset"
                             | "TLCSet"
@@ -1390,6 +1391,7 @@ impl<'a> Compiler<'a> {
                         "\\cdot"
                             | "Print"
                             | "PrintT"
+                            | "AssertEq"
                             | "RandomElement"
                             | "RandomSubset"
                             | "TLCSet"
