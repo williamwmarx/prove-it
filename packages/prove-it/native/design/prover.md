@@ -1197,3 +1197,64 @@ b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
     interprets `div0`, now leaves the declaration to its application when it is released
     (`asts=181`, was 180). `builtin-decl-release.smt` is replayed from `tables/decide-inputs.txt`,
     which `scripts/smt-decide-reference.ts` writes.
+  - *Audit against Z3 5.3.3: neither side is Z3.* Z3 5.3.3 from PyPI (`z3-solver==5.3.3.0`), run as
+    tlapm runs it (`-smt2 AUTO_CONFIG=false smt.MBQI=true`) with `rlimit` set to the record's step
+    limit, and with `trace=true` to log its instances (each `[instance]` line, keyed through its
+    `[new-match]` or `[inst-discovered] MBQI` line to the quantifier and binding ids). The
+    TypeScript's instances were logged with the same Z3 ids (`AstManager.ids`) from
+    `QiQueue.instantiateEntry`, before the fix (98b901c) and after (ea83e9c; HEAD, with
+    b830769's nlsat steps, gives the same streams). At 200,000 steps both give Z3's first 1,214
+    instances exactly.
+
+    | Input | Z3 at the limit (instances, rlimit-count) | Before | Fixed | First instance off Z3 (before / fixed) |
+    |---|---|---|---|---|
+    | 0c812b0a8aa1347b | `unknown` 120,761, 2,306,586 | `unknown` 153,469 | `unsat` 24,889 | none / 1,255 |
+    | a50910e8b0798813 | `unknown` 93,193, 3,308,327 | `unknown` ~62,900 | `unknown` 131,956 | 252 / 3,299 |
+    | c0119d516427b279 | `unknown` 48,386, 2,572,601 | `unknown` ~31,600 | `unknown` 28,904 | 155 / 155 |
+    | 44fea97e4ee0312c | `unknown` 60,308, 1,630,104 | `unknown` 37,134 | `unknown` 65,627 | 74 / 74 |
+
+    Before the fix, the TypeScript makes all of Z3's instances on 0c812b0a8aa1347b (120,761 at
+    the limit, and all 239,484 at `rlimit=4000000`), where the fix leaves Z3 at the 1,255th; on
+    a50910e8b0798813 the fix keeps to Z3 longer (3,299 against 252). c0119d516427b279 and
+    44fea97e4ee0312c leave Z3 at the same instance either way, by another deviation. Over the 77
+    smt inputs with `div` or `mod`, at their limits, no other input tells the two apart. No count
+    at the limit matches Z3's, for a deviation of its own: the TypeScript's steps run behind
+    Z3's `rlimit-count` (on 0c812b0a8aa1347b it makes Z3's 120,761 instances and 32,708 more
+    within the limit). Z3 does not prove 0c812b0a8aa1347b in 20 s (840,277 instances), so the
+    fixed `unsat` is not Z3's answer.
+  - *How it moves the search.* Not through `getNumAsts`: forcing every value it returns, or only
+    the seeds of `ProtoModel`'s `RandomGen`, to the other side's sequence leaves each stream as
+    it was. It moves the small ids: `freeSmallIds` is Z3's LIFO `id_gen` (`id_gen.h:30-47`), so
+    when `div0` and `mod0` give back their ids decides which ids the aux context's next skolem,
+    `poly` and numeral declarations get, and those order `propagate_values`
+    (`asserted-formulas.ts` `isGreater`) and `rematch`. On 0c812b0a8aa1347b, forcing the one
+    numeral declaration the fixed TypeScript makes after the 1,214th instance (id 490) to any id
+    below 488 makes it follow Z3; the NaN gives it 480. The NaN is not Z3 either: it pushes the
+    declaration's `funcDecls` small id, `-1`, on `freeSmallIds`, frees an id twice and hands out
+    `-1`; it matches 0c812b0a8aa1347b by the order it happens to give.
+  - *What Z3 does.* By its source the fix counts as Z3 does: the plugin makes `div0`, `mod0` and
+    `/0` with `mk_func_decl` on each request (`arith_decl_plugin.cpp:423-425`), hash-consed to one
+    node (`register_node_core`, `ast.cpp:1665-1691`), whose one `m_ref_count`
+    (`ast.h:483-499,1705-1715`) its applications (`ast.cpp:1712-1714`) and models
+    (`model_core.cpp:84-103`, released in `unregister_decl` `:106-130` and `~model_core`
+    `:22-33`; `proto_model::mk_model` moves them, `proto_model.cpp:373-386`) share; the node
+    leaves `m_ast_table` (so `get_num_asts`, `ast.h:1701`) and recycles its id
+    (`RECYCLE_FREE_AST_INDICES`, `ast.h:55`, `ast.cpp:1792-1798`) only in `delete_node`, at the
+    last `dec_ref`. But Z3's runs behave as if no model holds them when the model checker's aux
+    scope is popped. The `div0` and `mod0` applications on 0c812b0a8aa1347b are the aux
+    context's (theory_lra's `found_underspecified`, `theory_lra.cpp:304-334`), released by the
+    pop at the end of `model_checker::check(q)` (`scoped_ctx_push`,
+    `smt_model_checker.cpp:361-433`). The TypeScript's aux context still holds the model of the
+    last restricted counterexample there (the loop stopped at `m_max_cexs`), and gives the
+    declarations back at the next `search`'s `reset_model` (`smt_context.cpp:4038`), after the
+    next quantifier's skolems and `poly` assumption. Releasing that model before the pop
+    (`Context.resetModel` before `pop`, with the fixed counting), or not counting a model's hold
+    on these declarations at all, gives Z3's stream on every input above: all 239,484 on
+    0c812b0a8aa1347b and 3,299 on a50910e8b0798813. Z3's source, as read
+    (`smt_model_checker.cpp:378-433`, `smt_context.cpp:3836-3880,4024-4038,4940-5016,3183-3188`),
+    keeps `m_model` until that `reset_model` too, so where Z3 lets the model go is not found
+    yet; an instrumented Z3 (printing `get_num_asts` and the declarations' ids and counts at
+    `model_core`'s holds and drops) would settle it.
+  - *Open.* The fix stays, as Z3's counting. The change that matches Z3's runs, on both sides,
+    is to release the aux context's model when the model checker pops its scope; it waits for the
+    line in Z3 that does so.
