@@ -617,7 +617,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
     //! Quantified EUF problems without patterns, which only model-based instantiation decides,
-    //! against the table `scripts/smt-mbqi-reference.ts` prints for the TypeScript kernel with
+    //! against the table `scripts/smt-mbqi-reference.ts` printed for the TypeScript kernel with
     //! MBQI on the same expressions, made in the same order (`tests/tables/mbqi.txt`): the result,
     //! the conflicts, the steps, the instances and the number of ASTs, and the model of a
     //! satisfiable problem, with the arithmetic theory of every context, the model checker's

@@ -1,6 +1,6 @@
-//! The SMT-LIB parser against the TypeScript it ports: `scripts/smt-parser-tables.ts` parses every
+//! The SMT-LIB parser against the TypeScript it ports: `scripts/smt-parser-tables.ts` parsed every
 //! script of `tests/fixtures/smt` and short scripts that reach each error of `smtlib-parser.ts`,
-//! and records the error, or the assertions, declarations, sorts, number of ASTs and the id and
+//! and recorded the error, or the assertions, declarations, sorts, number of ASTs and the id and
 //! reference count of every expression. This parses each again and compares.
 
 use std::fs;

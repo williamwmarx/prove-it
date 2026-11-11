@@ -1,8 +1,8 @@
 //! The kernel's preprocessing against the TypeScript it ports: `scripts/smt-tactics-tables.ts`
-//! runs every script of `tests/fixtures/smt` and seeded random quantified scripts through
+//! ran every script of `tests/fixtures/smt` and seeded random quantified scripts through
 //! `quant-tactics.ts` as `solver.ts` runs it, through `propagate-values.ts`, `ctx-simplify.ts` and
 //! `qe-lite.ts` one after the other, and through `asserted-formulas.ts` with a pushed scope, and
-//! records what each stage returned, the resource limit's step count, the number of ASTs, and
+//! recorded what each stage returned, the resource limit's step count, the number of ASTs, and
 //! digests of the ids and reference counts of every expression. This replays each run on
 //! quant_tactics.rs, propagate_values.rs, ctx_simplify.rs, qe_lite.rs, qe_lite_der.rs and
 //! asserted_formulas.rs, and compares the lines.

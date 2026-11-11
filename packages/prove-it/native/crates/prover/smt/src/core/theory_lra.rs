@@ -85,7 +85,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
     //! The arithmetic problems and the fixtures of `scripts/smt-lra-reference.ts`, against the
-    //! table it prints (`tests/tables/lra.txt`): the TypeScript kernel with its arithmetic theory
+    //! table it printed (`tests/tables/lra.txt`): the TypeScript kernel with its arithmetic theory
     //! on each problem (whose text the table gives), handed to the kernel as solver.ts hands it a
     //! goal, and solver.ts's checkSmt on each script of `tests/fixtures/smt`, run here the same
     //! way: the result, the conflicts, the steps, the instances and the number of ASTs, the model

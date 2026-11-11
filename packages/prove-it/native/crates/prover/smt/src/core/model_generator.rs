@@ -190,7 +190,7 @@ pub fn mk_model(context: &mut Context) -> Result<GeneratedModel, SmtError> {
 #[cfg(test)]
 mod tests {
     //! The satisfiable ground problems of `scripts/smt-model-reference.ts`, built in the same
-    //! order, against the table it prints (`tests/tables/models.txt`): the model `get_model` makes,
+    //! order, against the table it printed (`tests/tables/models.txt`): the model `get_model` makes,
     //! the value of each root, the proto model, its validation and the value of terms under it,
     //! with the TypeScript's ids and steps.
 
