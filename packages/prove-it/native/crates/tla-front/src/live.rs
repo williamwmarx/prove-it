@@ -278,6 +278,23 @@ impl Converter<'_> {
     }
 
     fn convert(&mut self, expression: &Expr, scope: Option<&Rc<Scope>>) -> Result<Rc<Live>> {
+        // TLC's `LNAction` of <<A>>_v compares v in the two states before it evaluates A.
+        if let ExpressionKind::Action {
+            is_box: false,
+            action,
+            subscript,
+        } = &expression.kind
+        {
+            return Ok(Rc::new(Live::Action {
+                expression: action.clone(),
+                unchanged: Some(Rc::new(Expression::new(
+                    ExpressionKind::Unchanged(subscript.clone()),
+                    expression.location.clone(),
+                ))),
+                scope: scope.cloned(),
+                enabled: None,
+            }));
+        }
         let level = self.level(expression, scope);
         if level <= Level::Action && !Self::is_translated_whole(expression) {
             return self.atom(expression, scope, level);

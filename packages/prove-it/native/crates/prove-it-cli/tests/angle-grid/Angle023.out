@@ -1,0 +1,20 @@
+exit 13
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Angle023
+Linting of module Angle023
+Computing initial states...
+Error: Action property P is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Tog line 7, col 8 to line 7, col 32 of module Angle023>
+/\ x = 0
+/\ y = 1
+
+3 states generated, 3 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 2.
