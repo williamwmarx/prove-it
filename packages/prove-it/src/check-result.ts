@@ -146,7 +146,7 @@ const toPlain = (value: Value, budget: Budget): PlainValue | null => {
   }
   if (value.kind === "Function") return toPlainFunction(value.domain, value.range, budget);
   // A function TLC keeps lazy over a set it enumerates is the function it converts to, unless its
-  // domain is past the budget.
+  // domain is past the budget, or applying it fails, where TLC prints it as its lazy text.
   if (value.kind === "LazyFunction" && typeof value.domain === "object") {
     const domain = value.domain;
     const size =
@@ -157,8 +157,12 @@ const toPlain = (value: Value, budget: Budget): PlainValue | null => {
           : undefined;
     if (size !== undefined && size > budget.remaining) return null;
     if (size !== undefined) {
-      const enumerated = toFiniteFunction(value);
-      return toPlainFunction(enumerated.domain, enumerated.range, budget);
+      try {
+        const enumerated = toFiniteFunction(value);
+        return toPlainFunction(enumerated.domain, enumerated.range, budget);
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError)) throw error;
+      }
     }
   }
   // The interpreter writes a lazy function or set filter it has no source for as no TLC text.
