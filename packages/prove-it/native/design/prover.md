@@ -1264,23 +1264,44 @@ limit and a step limit of twice Z3's `rlimit-count`.
    - With `false` answered first, the TypeScript's stream is Z3's for all 9,343 instances it
      makes within its step limit, and it no longer proves the input. This corrects the guess that
      the model checker itself parts.
-3. **Propagated values reorder a restriction.** The second divergence of `1319a2956705afce`, at
-   the 736th instance once the first two causes are taken away.
+3. **A released rewriter keeps its last result.** The second divergence of `1319a2956705afce`,
+   at the 736th instance once the first two causes are taken away.
    - The auxiliary context gets the same restriction `(or (= k!269 v45) (= k!269 v19) …)`
-     (`smt_model_finder.cpp:2674`, `restrict_sks_to_inst_set`). The rewriting in the first pass of
-     `propagate_values` moves the same eight disjuncts to the front in a different order
-     (`solver/assertions/asserted_formulas.cpp:618-622`, the rewriter of `propagate_values(i)`,
-     against `asserted-formulas.ts:351-359`).
-   - The first differing event inside the rewriter is not found yet.
-4. **A propagated equality.** `41a69bf765dd7c8b`, which the first two causes don't touch.
-   - The events agree until a match of `k!52` with generation 10, about the 21,457th
-     instantiation attempt. Z3's next merge is an asserted equality between
-     `(Proj_Int (y1!6 (FunApp (e!7 (y1!6 …)) …)))`, a chain of four `y1!6`, and a shorter
-     `Proj_Int` term. The TypeScript's next merge joins a different `Proj_Int` term,
-     `(Proj_Int (y1!6 (z!0 …)))`, to the same one.
-   - The places: Z3's `context::propagate` and `add_eq` (`smt_context.cpp:1840, 484`) against
-     `context.ts:355, 470`. The first differing event inside, the assignment that leads to the
-     merge, is not found yet.
+     (`smt_model_finder.cpp:2674`, `restrict_sks_to_inst_set`). The first pass of
+     `propagate_values` (`solver/assertions/asserted_formulas.cpp:618-622`, against
+     `asserted-formulas.ts:351-359`) sorts its disjuncts by expression id on both sides
+     (`ast/rewriter/bool_rewriter.cpp:274-277` with the `ast_lt` of `ast/ast_lt.h:30-32`, against
+     `rewriter.ts:454`). The eight disjuncts that move to the front have recycled ids, and those
+     differ.
+   - The two managers give and free the same ids for 52,729 creations and deletions. The first
+     difference is the release of a model's evaluator after an MBQI check: Z3 frees a
+     `(not (= …))` that the evaluator's last result held, and the TypeScript never frees it.
+     `~rewriter_tpl` releases its member `m_r` (`ast/rewriter/rewriter.h:227`) before the
+     shifters and the caches (`rewriter.cpp:201-203`). `RewriterEngine.release` and
+     `BetaReducer.release` (`rewriter-tpl.ts:420-424, 926-929`) release the shifters and the
+     caches but not `lastResult`, and so do `rewriter_tpl.rs:833-837, 1489-1492`.
+   - With `setLastResult(-1)` first in both, the ids agree for all 192,132 creations and deletions
+     the TypeScript makes in 400,000 steps, and its instance stream is Z3's for all 285,514
+     instances Z3 makes in 5 s.
+4. **A stale `is_shared` cache.** `41a69bf765dd7c8b`, which the first three causes don't touch.
+   - The ids agree up to the 11,110th instance, and the assignments and merges until a final
+     check's model-based theory combination (`smt/theory_lra.cpp:1741-1779`, `assume_eqs`,
+     against `theory-lra-model.ts:75-113`). Z3 counts `(Proj_Int (y1!6 (FunApp (e!7 …) …)))`, a
+     chain of four `y1!6`, as relevant and shared and assumes it equal to a `Proj_Int` term of the
+     same value. The TypeScript counts it as not shared and assumes `(Proj_Int (y1!6 (z!0 …)))`
+     equal to that term instead, the different merge seen before.
+   - Z3's `context::is_shared` (`smt_context.cpp:4830-4903`) keeps its answer in the root's
+     `m_is_shared` (`smt_enode.h:80, 196-208`). It clears it only when an enode is created over
+     the class (`smt_enode.cpp:52, 57`) and on a merge or its undoing (`smt_context.cpp:588,
+     994`), not when a pop deletes a parent. Here Z3 answers from a stale `true`, where a fresh
+     computation says false. `isShared` (`theory-lra-model.ts:208-218`; `theory_lra_model.rs:286`
+     on `smt-decide`) computes afresh each time.
+   - With the cache in the enode (`enode.ts:51`; `enode.rs:337`) and cleared in `mkEnode`,
+     `addEq` and `undoAddEq` (`internalizer.ts:604`, `context.ts:510, 594`; `internalizer.rs:616`,
+     `context.rs:1037, 1135` on `smt-decide`), the TypeScript proves the input with Z3's whole
+     stream of 19,846 instances. With the third and fourth fixes, `cb7b13d3236da8ea`,
+     `ee2307985b84e424`, `52c873767bacfb3b`, `024f5dc53f8b63a5`, `fa51a87ba4ebf399` and
+     `8df9b72d29f8a626` keep Z3's streams.
 
 `0c812b0a8aa1347b` follows Z3 on `main` (above), with or without the first cause's condition.
 With part 3's fix the TypeScript proves it instead, so the fix leaves Z3's search on this input;
