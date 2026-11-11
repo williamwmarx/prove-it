@@ -1077,8 +1077,8 @@ error.
   as an error; one that sets or reads TLC's registers, TLCGet("all"), TLCGet("duration") or
   CounterExample, which the evaluator doesn't hold as TLC's main thread does; one after the
   configuration's predicates; and -dump of a search it stops. A function definition, which TLC
-  fails comparing with FALSE, and a name the configuration assigns a value, which TLC fails on as
-  it starts, decline as the binary starts. At the first progress point, where TLC evaluates the
+  fails comparing with FALSE, and a name the configuration assigns a value or a builtin, which TLC
+  fails on as it starts, decline as the binary starts. At the first progress point, where TLC evaluates the
   expression, the search declines a configuration with an assignment or substitution qualified by
   a module, which the evaluator doesn't follow, and temporal properties, whose check of the
   current state space TLC prints before the expression's.
