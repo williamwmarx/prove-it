@@ -513,10 +513,11 @@ filter holding the states (`captures`), only where TLC computes it as it starts
 (`processConstantDefns`, which TLCSet doesn't stop), so `D == [i \in Nat |-> x']` is applied in
 each successor's states. That is where `getLevelBound` finds it of constant level, which
 `may_reach_bound` follows: a builtin of a level above constant (TLCGet, CounterExample, Trace,
-`_Counts`) reads the state; an operator passed as an argument, such as a LAMBDA, reads none, whatever
-its body reads; and so does a 0-ary definition the configuration substitutes for a constant, whose
-value TLC computed as it started. `may_reach_bound` keeps its answer for each definition, which a
-definition evaluated again at each use asks each time.
+`_Counts`) reads the state; an operator passed as an argument, a LAMBDA or the name of an operator
+with parameters, reads none, whatever its body reads; and so does a 0-ary definition the
+configuration substitutes for a constant, whose value TLC computed as it started.
+`may_reach_bound` keeps its answer for each definition, which a definition evaluated again at each
+use asks each time.
 
 ## Sets TLC holds unnormalized
 

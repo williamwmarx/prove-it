@@ -241,8 +241,14 @@ impl<'ir> Evaluator<'ir> {
             | NodeKind::Decimal(_)
             | NodeKind::String(_)
             | NodeKind::ExceptAt => false,
-            // `getLevelBound` gives an operator passed as an argument level 0, whatever it reads.
+            // `getLevelBound` gives an operator passed as an argument level 0, whatever it reads:
+            // a LAMBDA, or a name of an operator with parameters, which no other place holds.
             NodeKind::Lambda { .. } | NodeKind::OperatorReference(_) if self.is_level_bound => {
+                false
+            }
+            NodeKind::Identifier(name)
+                if self.is_level_bound && self.is_operator(name, context) =>
+            {
                 false
             }
             NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => {
@@ -317,6 +323,27 @@ impl<'ir> Evaluator<'ir> {
                         .any(|inner| self.can_read_state(inner, context, visited))
             }
             _ => true,
+        }
+    }
+
+    // Whether a name names an operator with parameters: a definition or a builtin.
+    fn is_operator(&self, name: &Name, context: &Context) -> bool {
+        if name.is_local {
+            return bound_expression(context, name.text).is_some_and(|(node, _)| {
+                matches!(
+                    self.kind(node),
+                    NodeKind::Definition(definition)
+                        if matches!(&definition.form, DefinitionForm::Operator(params) if !params.is_empty())
+                )
+            });
+        }
+        match name.resolution {
+            Resolution::Definition(index) => matches!(
+                &self.definition(self.ir.definitions[index as usize]).form,
+                DefinitionForm::Operator(params) if !params.is_empty()
+            ),
+            Resolution::Builtin(index) => self.ir.builtins[index as usize].arity > 0,
+            _ => false,
         }
     }
 
