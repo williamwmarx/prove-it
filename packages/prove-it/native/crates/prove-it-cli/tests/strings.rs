@@ -26,7 +26,9 @@ fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
 // record, Action's name where the configuration has an action, TLCGetSet's, those createConfig
 // makes, then those the assumptions make, as they make them. TLC orders the strings it makes as it
 // searches by when it makes them, which the engine doesn't follow, so it declines them. The same
-// text TLC interns once, so the counterexample's field names TLC makes each time compare equal.
+// text TLC interns once, so the counterexample's field names TLC makes each time compare equal. A
+// constant definition's text with a lone surrogate ranks as it starts too, before what the search
+// makes.
 #[test]
 fn orders_the_strings_it_makes_as_tlc() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/string-order");
@@ -37,6 +39,7 @@ fn orders_the_strings_it_makes_as_tlc() {
         ("record", 0),
         ("constant", 0),
         ("counterexample", 12),
+        ("lone", 0),
         ("searched", 1),
     ] {
         let (output, run) = run_spec(
