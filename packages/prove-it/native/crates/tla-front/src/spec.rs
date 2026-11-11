@@ -286,30 +286,25 @@ impl Expansion<'_> {
                 if let Some((node, Binding::Thunk { expression, scope })) = binding {
                     let is_let = matches!(scope, ScopeOf::Own);
                     let scope = scope.resolve(node);
-                    // TLC takes a state predicate a LET defines whole, as it does a definition's.
+                    let expanded =
+                        self.expand(expression, scope.as_ref(), expanding, is_substituted, name)?;
+                    // TLC takes a state predicate a LET defines whole, as it does a definition's,
+                    // which the front end follows only where none of its conjuncts is constant.
+                    let level = |expression: &Expr, scope: Option<&Rc<Scope>>| {
+                        get_level(expression, scope, self.environment, self.facts, &[])
+                    };
                     if self.is_specification
                         && is_let
-                        && get_level(
-                            expression,
-                            scope.as_ref(),
-                            self.environment,
-                            self.facts,
-                            &[],
-                        ) == Level::Variable
+                        && level(expression, scope.as_ref()) == Level::Variable
+                        && expanded.iter().any(|item| {
+                            level(&item.expression, item.scope.as_ref()) == Level::Constant
+                        })
                     {
-                        return Ok(vec![Expanded {
-                            expression: expression.clone(),
-                            scope,
-                            name: Some(written.clone()),
-                        }]);
+                        return Err(not_yet(
+                            "a constant conjunct of a state predicate a LET defines",
+                        ));
                     }
-                    return self.expand(
-                        expression,
-                        scope.as_ref(),
-                        expanding,
-                        is_substituted,
-                        name,
-                    );
+                    return Ok(expanded);
                 }
                 let definition = if self.environment.constants.contains_key(&reference) {
                     None

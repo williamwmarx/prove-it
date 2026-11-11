@@ -367,25 +367,25 @@ fn lower_ranked(
                 .find(|action| action.name == init.name)
                 .map_or(&init.location, |action| &action.location);
             let range = location.range.as_ref()?;
-            // TLC names the predicate by the definition the configuration substitutes for it,
-            // and one a named INSTANCE copies by the instance (`I!Init`), placing it there.
-            let name = environment
-                .substitutions
-                .get(&init.name)
-                .unwrap_or(&init.name);
+            // TLC names the predicate by the definition the configuration substitutes for it.
+            // One an INSTANCE copies (the front end's key marks the copy), and one a LET defines,
+            // TLC places otherwise: neither gets a label.
+            let substitute = environment.substitutions.get(&init.name);
+            let name = match substitute {
+                None => init.name.clone(),
+                Some(key) if key.contains('#') => return None,
+                Some(key) => get_definition(key, &environment)?.name.clone(),
+            };
+            let name = &name;
             let is_instanced = environment.instance_names.iter().any(|(key, instanced)| {
                 instanced.rsplit('!').next() == Some(&**name)
                     && get_definition(key, &environment)
                         .is_some_and(|copied| copied.body.location == init.location)
             });
-            // TLC places a LET's predicate in a definition an INSTANCE copies at the INSTANCE.
-            let is_let = get_definition(name, &environment).is_none() && &**name != UNNAMED_ACTION;
-            let is_elsewhere = environment
-                .variable_locations
-                .first()
-                .and_then(|location| location.range.as_ref())
-                .is_none_or(|variable| variable.module != range.module);
-            if is_instanced || (is_let && is_elsewhere) {
+            let is_let = substitute.is_none()
+                && get_definition(&init.name, &environment).is_none()
+                && &*init.name != UNNAMED_ACTION;
+            if is_instanced || is_let {
                 return None;
             }
             let label = if &**name == UNNAMED_ACTION {

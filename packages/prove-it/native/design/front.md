@@ -432,6 +432,9 @@ model; model-full lists such a model as not compared.
 `isConstantTrue` does, with the evaluator: TRUE is dropped, FALSE is "The spec is trivially
 false", and another value can't be "used as a spec". `[]P` of a state predicate in the
 specification is "TLC cannot handle the temporal formula" at P.
+TLC takes a state predicate a LET defines whole, as it does a definition's, so a constant conjunct
+inside one is no conjunct of the specification; the front end, which expands the LET's
+conjuncts, declines a LET's state predicate with a constant conjunct.
 
 `live.rs` follows `toLiveExpression`'s failures:
 - "cannot handle" at a formula it can't translate;

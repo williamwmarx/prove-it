@@ -167,11 +167,10 @@ fn declines_a_dump_after_a_dump_dot() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
-// TLC takes a state predicate a LET defines whole, a FALSE among its conjuncts included, so the
-// search finds no initial state and writes an empty graph, where a spec that names FALSE as a
-// conjunct of its own is trivially false.
+// TLC takes a state predicate a LET defines whole, a FALSE among its conjuncts included, and
+// finds no initial state, where the front end would find the spec trivially false: it declines.
 #[test]
-fn writes_the_empty_graph_of_a_let_initial_predicate_that_fails() {
+fn declines_a_let_initial_predicate_with_a_constant_conjunct() {
     let spec = "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nNext == x < 3 /\\ x' = x + 1 /\\ y' = y\nInv == TRUE\nSpec == LET In == x = 0 /\\ y = 0 /\\ FALSE IN In /\\ [][Next]_<<x, y>>\n====\n";
     let (output, directory) = run_spec_with(
         "dot-let-false",
@@ -187,19 +186,11 @@ fn writes_the_empty_graph_of_a_let_initial_predicate_that_fails() {
             "g.dot",
         ],
     );
-    let text = stdout(&output);
-    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
     assert!(
-        text.contains("Finished computing initial states: 0 distinct states generated"),
-        "{text}"
-    );
-    assert!(
-        text.contains("Model checking completed. No error has been found.\n"),
-        "{text}"
-    );
-    assert_eq!(
-        read_dump(&directory, "g.dot"),
-        "strict digraph DiskGraph {\nnode [shape=box,style=rounded]\nnodesep=0.35;\nsubgraph cluster_graph {\ncolor=\"white\";\n}\n}"
+        stderr(&output).contains("a constant conjunct of a state predicate a LET defines"),
+        "{}",
+        stderr(&output)
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
