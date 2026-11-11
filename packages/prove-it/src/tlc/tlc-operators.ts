@@ -234,14 +234,13 @@ export const createTlcOperators = (
   }),
   defineHigherOrderOperator("SortSeq", 2, (args) => {
     const precedes = getOperator(args, 1, "SortSeq");
+    // TLC.SortSeq's insertion sort walks each element back from the last sorted one while it
+    // precedes it, so a comparison that isn't a strict order keeps TLC's order.
     return createTuple(
       getSequence(args, 0, "SortSeq").reduce<Value[]>((sorted, element) => {
-        const position = sorted.findIndex(
-          (existing) => precedes.call([element, existing]) === true,
-        );
-        return position === -1
-          ? [...sorted, element]
-          : [...sorted.slice(0, position), element, ...sorted.slice(position)];
+        const position =
+          sorted.findLastIndex((existing) => precedes.call([element, existing]) !== true) + 1;
+        return [...sorted.slice(0, position), element, ...sorted.slice(position)];
       }, []),
     );
   }),

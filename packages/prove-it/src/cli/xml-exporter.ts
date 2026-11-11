@@ -1,19 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
-import { getErrorExitCode, TlaJavaException, TlaUnsupportedError } from "../errors";
+import { getNativeAddon, type NativeSanyXml } from "../engine/native";
+import { EngineUnavailableError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
-import type { SanySpecification } from "../sany/generator";
-import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
-import { getSanyModuleName, getSanyReport } from "../sany/report";
-import { exportSanyXml, XML_EXPORT_EXIT_CODE, type XmlExportOptions } from "../sany/xml";
-import {
-  createModuleLoader,
-  printMissingFile,
-  printMissingFile174,
-  reportMissingModules174,
-  toLibraryPath,
-} from "./shared";
+import { SANY_STANDARD_MODULES } from "../sany/modules";
+import { createModuleLoader, printMissingFile } from "./shared";
 
 // The usage that XMLExporter.printUsage prints with UsageGenerator.
 const XML_EXPORT_USAGE = (() => {
@@ -63,27 +55,15 @@ const XML_EXPORT_USAGE = (() => {
   ].join("\n");
 })();
 
+// XMLExporterExitCode.
+const XML_EXPORT_EXIT_CODE = { argsParsingFailure: 1, specParsingFailure: 2 } as const;
+
+// What the CLI exits with where tla-front doesn't export the spec, as the native binary does.
+const NOT_NATIVE_EXIT_CODE = 1;
+
 const printXmlExportUsageError = (message: string) => {
   process.stderr.write(`ERROR: ${message}\n${XML_EXPORT_USAGE}`);
   return XML_EXPORT_EXIT_CODE.argsParsingFailure;
-};
-
-// XMLExporter.run.
-const writeXml = (specification: SanySpecification, options: XmlExportOptions) => {
-  try {
-    process.stdout.write(exportSanyXml(specification, options));
-    return EXIT_STATUS.success;
-  } catch (error) {
-    if (!(error instanceof TlaUnsupportedError)) throw error;
-    const exitCode = getErrorExitCode(error);
-    const unwound = error instanceof TlaJavaException ? error.unwound : "";
-    console.error(
-      exitCode === XML_EXPORT_EXIT_CODE.uncaughtException
-        ? `${unwound}Exception in thread "main" ${error.message}`
-        : `ERROR: ${error.message}`,
-    );
-    return exitCode;
-  }
 };
 
 interface XmlExportArgs {
@@ -94,7 +74,8 @@ interface XmlExportArgs {
 
 // XMLExporter reads the flags before the last argument, which names the module, and skips an
 // argument it does not know, which then counts as another module.
-const parseXmlExportArgs = (args: string[], flagNames: Set<string>): XmlExportArgs => {
+const parseXmlExportArgs = (args: string[]): XmlExportArgs => {
+  const flagNames = new Set(["-o", "-t", "-r", "-u"]);
   const parsed: XmlExportArgs = { flags: new Set(), includes: [], error: undefined };
   const lastFlag = { index: -1 };
   for (let index = 0; index < args.length - 1; index++) {
@@ -112,9 +93,41 @@ const parseXmlExportArgs = (args: string[], flagNames: Set<string>): XmlExportAr
   return lastFlag.index === args.length - 2 ? parsed : { ...parsed, error: "several-files" };
 };
 
+// What XMLExporter prints for a root module that no file holds: SimpleFilenameToStream names the
+// file and where it looked, then SANY's fatal error.
+const printMissingRoot = (name: string, fileName: string, includes: string[]) => {
+  printMissingFile(process.cwd(), `./${fileName}`, includes);
+  const fatal = `Unknown location\n\nCannot find source file for module ${basename(fileName, ".tla")}`;
+  process.stderr.write(
+    `\nFatal errors while parsing TLA+ spec in file ${name}\n\n${fatal}\n*** Errors: 1\n\n${fatal}\n\n\n\nERROR: Failed to parse module.\n`,
+  );
+  return XML_EXPORT_EXIT_CODE.specParsingFailure;
+};
+
+// What SANY's XMLExporter prints, as tla-front writes it, through the native engine, which reads
+// nothing itself: it names the modules it needs, and is asked again with them.
+const exportNativeXml = (
+  root: string,
+  source: string,
+  fileName: string,
+  flags: string,
+  loadModule: (name: string) => string | undefined,
+) => {
+  const addon = getNativeAddon();
+  if (typeof addon === "string") throw new EngineUnavailableError(addon);
+  const known = new Map<string, string | undefined>();
+  const write = (): Exclude<NativeSanyXml, { kind: "needed" }> => {
+    const result = addon.sanyXml(root, source, fileName, flags, [...known]);
+    if (result.kind !== "needed") return result;
+    result.keys.forEach((key) => known.set(key, loadModule(key.slice("module:".length))));
+    return write();
+  };
+  return write();
+};
+
 export const exportXml = (args: string[]) => {
   if (args.length === 0) return printXmlExportUsageError("at least one .tla file must be given");
-  const parsed = parseXmlExportArgs(args, new Set(["-o", "-t", "-r", "-u"]));
+  const parsed = parseXmlExportArgs(args);
   if (parsed.error === "missing-include") {
     return printXmlExportUsageError(
       "the -I flag must be followed by a directory and at least one .tla file",
@@ -129,94 +142,26 @@ export const exportXml = (args: string[]) => {
     return EXIT_STATUS.success;
   }
   const fileName = name.endsWith(".tla") ? name : `${name}.tla`;
+  const rootName = basename(fileName, ".tla");
   // SANY looks for each module in the working directory, then in the -I directories, which
   // XMLExporter passes in place of TLA-Library, then among its standard modules.
   const directories = [".", ...parsed.includes];
   const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
-  if (path === undefined && !SANY_STANDARD_MODULES.has(fileName.slice(0, -".tla".length))) {
-    printMissingFile(process.cwd(), `./${fileName}`, parsed.includes);
-  }
-  const sany = getSanyReport(path ?? fileName, createModuleLoader(directories), {
-    fileName: name,
-    isXmlExport: true,
-  });
-  process.stderr.write(sany.text);
-  if (sany.isFailed || sany.specification === undefined) {
-    console.error("ERROR: Failed to parse module.");
-    return XML_EXPORT_EXIT_CODE.specParsingFailure;
-  }
-  return writeXml(sany.specification, {
-    version: "master",
-    isRestricted: parsed.flags.has("-r"),
-    isUncommented: parsed.flags.has("-u"),
-    isTerse: parsed.flags.has("-t"),
-  });
-};
-
-// TLC 1.7.4's XMLExporter.main throws an exception for an argument it can't take or a
-// specification without a root module.
-const printXmlExporterException = (exception: string, line: number) => {
-  console.error(
-    `Exception in thread "main" ${exception}\n\tat tla2sany.xml.XMLExporter.main(XMLExporter.java:${line})`,
+  const source =
+    path === undefined ? SANY_STANDARD_MODULES.get(rootName) : readFileSync(path, "utf8");
+  if (source === undefined) return printMissingRoot(name, fileName, parsed.includes);
+  const exported = exportNativeXml(
+    rootName,
+    source,
+    name,
+    [...parsed.flags].map((flag) => flag.slice(1)).join(""),
+    createModuleLoader(directories),
   );
-  return XML_EXPORT_EXIT_CODE.uncaughtException;
-};
-
-// TLC 1.7.4's XMLExporter.main, which takes only -o, as it can't validate the XML without
-// fetching its schema, and -I, and exports a specification that SANY finds errors in.
-export const exportXml174 = (args: string[], jar: string | undefined) => {
-  if (args.length === 0) {
-    return printXmlExporterException(
-      "java.lang.IllegalArgumentException: at least one .tla file must be given",
-      59,
-    );
+  if (exported.kind === "declined") {
+    console.error(`prove-it: not native yet: ${exported.reason}`);
+    return NOT_NATIVE_EXIT_CODE;
   }
-  const parsed = parseXmlExportArgs(args, new Set(["-o"]));
-  if (parsed.error === "missing-include") {
-    return printXmlExporterException(
-      "java.lang.IllegalArgumentException: the -I flag must be followed by a directory and at least one .tla file",
-      71,
-    );
-  }
-  if (parsed.error === "several-files") {
-    return printXmlExporterException(
-      "java.lang.IllegalArgumentException: Only one TLA file to check allowed!",
-      83,
-    );
-  }
-  const name = args[args.length - 1];
-  const fileName = `${name.replace(/\.tla$/i, "")}.tla`;
-  // SimpleFilenameToStream looks for a module in the working directory, then in the -I
-  // directories, or the root directory when there are none, then among the standard modules.
-  const libraries = (parsed.includes.length === 0 ? ["/"] : parsed.includes).map(toLibraryPath);
-  const directories = [".", ...libraries];
-  const printMissingFile = (moduleFileName: string) =>
-    printMissingFile174(`${libraries[libraries.length - 1]}${moduleFileName}`, libraries, jar);
-  const path = directories.map((directory) => resolve(directory, fileName)).find(existsSync);
-  if (path === undefined && !SANY_174_STANDARD_MODULES.has(basename(fileName, ".tla"))) {
-    printMissingFile(fileName);
-    return EXIT_STATUS.success;
-  }
-  const sany = getSanyReport(
-    path ?? fileName,
-    reportMissingModules174(createModuleLoader(directories), printMissingFile),
-    {
-      fileName: name,
-      isXmlExport: true,
-      version: "1.7.4",
-    },
-  );
-  process.stderr.write(sany.text);
-  if (sany.specification === undefined) {
-    return printXmlExporterException(
-      `tla2sany.xml.XMLExportingException: spec ${(path && getSanyModuleName(readFileSync(path, "utf8"), "1.7.4")) ?? "null"} is malformed - does not have a root module`,
-      110,
-    );
-  }
-  return writeXml(sany.specification, {
-    version: "1.7.4",
-    isRestricted: false,
-    isUncommented: false,
-    isTerse: true,
-  });
+  process.stderr.write(exported.stderr);
+  process.stdout.write(exported.stdout);
+  return exported.exitCode;
 };

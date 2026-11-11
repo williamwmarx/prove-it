@@ -1758,7 +1758,10 @@ impl Compiler<'_> {
                 binary(
                     &key,
                     &value,
-                    |machine, key, value| Ok(machine.store.function_of_sorted(&[key], &[value])),
+                    |machine, key, value| {
+                        let function = machine.store.function_of_sorted(&[key], &[value]);
+                        Ok(machine.store.mark_built_as_function(function))
+                    },
                     false,
                     false,
                 )
@@ -1790,7 +1793,8 @@ impl Compiler<'_> {
                             keys.push(key);
                             values.push(machine.store.get_range_value(right, index));
                         }
-                        machine.store.function_of(&keys, &values)
+                        let function = machine.store.function_of(&keys, &values)?;
+                        Ok(machine.store.mark_built_as_function(function))
                     },
                     true,
                     false,
