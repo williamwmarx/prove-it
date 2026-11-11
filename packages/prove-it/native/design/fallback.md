@@ -293,6 +293,17 @@ with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 |---|---|---:|---:|
 | A held SUBSET or set of functions `\cup` a set that overlaps it | `Init == s = 0 /\ x = 0`, `Next == s' = SUBSET {1} /\ x' \in s' \cup {{1}}` | 10 | 7 |
 
+An adversarial pass on #292 (2,267 specs against TLC at d8fb231, main 40009ac8 and the branch)
+found these on main, which the branch prints alike:
+
+| Shape | Repro | TLC | Native |
+|---|---|---|---|
+| A failing INSTANCE substitute | `N == INSTANCE Inner WITH c <- 1 \div 0`, the substitute used in `Init`, an invariant, a parameterized or unnamed instance | the nested expressions name the INSTANCE and the substitute's own frames | drops those frames |
+| A failing conjunct of the specification that is an operator applied to arguments, or an inline LET or LAMBDA | `P(n) == n = 1 /\ Assert(FALSE, "x")`, `Spec == P(1) /\ Init /\ [][Next]_x` | the frames of the body TLC inlines | adds the application's frames first |
+| A SYMMETRY definition that prints | `Sym == Print("sym", Permutations(S))` | `The sets "sym", and S have been defined…` | `The sets , and S …` |
+| A POSTCONDITION that sets a register | `Post == PrintT(IF TLCSet("exit", FALSE) THEN 1 ELSE 0)` | prints `1` once, then `The post condition Post cannot be a constant.` | prints `1` twice and passes |
+| An ALIAS the configuration substitutes a TRUE definition for | `D == TRUE`, `CONSTANT C <- D`, `ALIAS C` | plain states | `_ALIASEvalError = "The alias C cannot be a constant."` (fixed on the ALIAS branch, alias-trace-fixes) |
+
 The engine now declines the shapes that printed other counts here too: a constant definition
 normalized elsewhere, then streamed (`C == UNION {1..2, 2..3}`, `Init == s = C /\ x = 0`,
 `Next == s' = s /\ x' \in C`: TLC 13, native 17), a stream whose order alone differs from the
