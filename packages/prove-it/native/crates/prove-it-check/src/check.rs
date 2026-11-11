@@ -2045,7 +2045,7 @@ pub(crate) fn print_violation(
                 "-dumpTrace into a file it can't write",
             ));
         }
-        printer.outcome.violations.push(Reported {
+        printer.record(Reported {
             code,
             headline: text,
             states: vec![ReportedState {
@@ -2285,7 +2285,7 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
             Level::Error,
             &format!("{}\n{}", report.headline, format_variables(&variables)),
         );
-        printer.outcome.violations.push(Reported {
+        printer.record(Reported {
             code: report.code,
             headline: report.headline.clone(),
             states: vec![ReportedState {
