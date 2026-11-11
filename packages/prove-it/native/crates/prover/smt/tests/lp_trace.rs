@@ -26,7 +26,7 @@ use std::rc::Rc;
 use prove_decide::Limits;
 use prove_num::{Int, Rational};
 use prove_smt::lp::bound_propagator::{BoundPropagator, BoundPropagatorHost};
-use prove_smt::lp::constraints::ConstraintKind;
+use prove_smt::lp::constraints::{ConstraintKind, KIND_GE, KIND_GT, KIND_LE};
 use prove_smt::lp::explanation::Explanation;
 use prove_smt::lp::int_solver::{IntSolver, Lia};
 use prove_smt::lp::json::{Json, parse};
@@ -36,9 +36,9 @@ use prove_smt::lp::nla_divisions::{Division, Divisions};
 use prove_smt::lp::nra_solver::NraSolver;
 use prove_smt::lp::random_updater::random_update;
 use prove_smt::lp::trace::{
-    get_anum, get_bound_explanation, get_bound_info, get_equality, get_error, get_explanation,
-    get_fixed_equality, get_implied_bound, get_impq, get_ineq, get_lbool, get_lemma, get_lia_move,
-    get_number, get_rational, get_term,
+    Call, LpTrace, get_anum, get_bound_explanation, get_bound_info, get_callback, get_equality,
+    get_error, get_explanation, get_fixed_equality, get_implied_bound, get_impq, get_ineq,
+    get_lbool, get_lemma, get_lia_move, get_number, get_rational, get_term,
 };
 use prove_smt::nlsat::algebraic::Anum;
 use prove_smt::util::rlimit::ResourceLimit;
@@ -1182,4 +1182,152 @@ fn lp_traces() {
         differs == 0 && crashes == 0,
         "{differs} lp traces differ and {crashes} crashed"
     );
+}
+
+/// The session of `tests/unit/lp-trace.test.ts`, recorded from Rust as a theory records its lp
+/// calls (`prove_smt::lp::trace`): the file must be the one the TypeScript writes, and replay.
+#[test]
+fn records_the_lar_session_as_the_typescript_does() {
+    let directory = std::env::temp_dir().join(format!("prove-it-lp-trace-{}", std::process::id()));
+    let trace = Rc::new(RefCell::new(
+        LpTrace::create(&directory, "lar-session").expect("the trace directory is writable"),
+    ));
+    let lar_id = trace
+        .borrow_mut()
+        .new_object("lar", |id| vec![get_callback(&format!("{id}.new.0"))]);
+    let is_canceled_name = format!("{lar_id}.new.0");
+    let callback_trace = Rc::clone(&trace);
+    let mut lar = LarSolver::new(Box::new(move || {
+        callback_trace.borrow_mut().callback(
+            &is_canceled_name,
+            Vec::new(),
+            Some(Json::Bool(false)),
+        );
+        false
+    }));
+    let call = |method: &str, args: Vec<Json>| trace.borrow_mut().call(&lar_id, method, args);
+    let returned = |call: Call, result: Option<Json>| trace.borrow_mut().returned(call, result);
+    let traced_add_var = |lar: &mut LarSolver<'_>, external: usize| {
+        let started = call("addVar", vec![get_number(external), Json::Bool(false)]);
+        let column = lar.add_var(external, false);
+        returned(started, Some(get_number(column)));
+        column
+    };
+    let x = traced_add_var(&mut lar, 0);
+    let y = traced_add_var(&mut lar, 1);
+    let coeffs = [
+        (x, Rational::one()),
+        (y, Rational::of(Int::from(1), Int::from(2))),
+    ];
+    let started = call(
+        "addTerm",
+        vec![
+            Json::Array(
+                coeffs
+                    .iter()
+                    .map(|entry| Json::Array(vec![get_number(entry.0), get_rational(&entry.1)]))
+                    .collect(),
+            ),
+            get_number(2),
+        ],
+    );
+    let sum = lar.add_term(&coeffs, 2);
+    returned(started, Some(get_number(sum)));
+    let traced_bound =
+        |lar: &mut LarSolver<'_>, column: usize, kind: ConstraintKind, rhs: Rational| {
+            let started = call(
+                "mkVarBound",
+                vec![
+                    get_number(column),
+                    Json::Number(f64::from(kind)),
+                    get_rational(&rhs),
+                ],
+            );
+            let index = lar.mk_var_bound(column, kind, &rhs);
+            returned(started, Some(get_number(index)));
+            let started = call("activate", vec![get_number(index)]);
+            lar.activate(index);
+            returned(started, None);
+        };
+    let traced_find = |lar: &mut LarSolver<'_>| {
+        let started = call("findFeasibleSolution", Vec::new());
+        let status = lar.find_feasible_solution();
+        returned(started, Some(Json::Number(f64::from(status))));
+        status
+    };
+    let set_auxiliary = |lar: &mut LarSolver<'_>, is_auxiliary: bool| {
+        trace.borrow_mut().write(
+            &lar_id,
+            "constraints.isAuxiliaryMode",
+            Json::Bool(is_auxiliary),
+        );
+        lar.constraints.is_auxiliary_mode = is_auxiliary;
+    };
+    traced_bound(&mut lar, x, KIND_GE, Rational::from_i64(3));
+    traced_bound(&mut lar, y, KIND_GT, Rational::zero());
+    traced_find(&mut lar);
+    let started = call("getValue", vec![get_number(sum)]);
+    returned(started, Some(get_impq(lar.get_value(sum))));
+    for is_upper in [false, true] {
+        let started = call("getBound", vec![get_number(x), Json::Bool(is_upper)]);
+        returned(
+            started,
+            lar.get_bound(x, is_upper)
+                .map(|bound| get_bound_info(&bound)),
+        );
+    }
+    let started = call("push", Vec::new());
+    lar.push();
+    returned(started, None);
+    set_auxiliary(&mut lar, true);
+    traced_bound(
+        &mut lar,
+        sum,
+        KIND_LE,
+        Rational::of(Int::from(-7), Int::from(3)),
+    );
+    set_auxiliary(&mut lar, false);
+    let status = traced_find(&mut lar);
+    trace
+        .borrow_mut()
+        .read(&lar_id, "status", Json::Number(f64::from(lar.status)));
+    assert_eq!(status, lar.status);
+    let mut explanation = Explanation::new();
+    let started = call(
+        "getInfeasibilityExplanation",
+        vec![get_explanation(&explanation)],
+    );
+    lar.get_infeasibility_explanation(&mut explanation);
+    trace
+        .borrow_mut()
+        .returned_with_out(started, vec![get_explanation(&explanation)], None);
+    let started = call("pop", vec![get_number(1)]);
+    lar.pop(1);
+    returned(started, None);
+    traced_find(&mut lar);
+    for column in [sum, x] {
+        let started = call("getTerm", vec![get_number(column)]);
+        match lar.get_term(column) {
+            Ok(term) => returned(started, Some(get_term(term))),
+            Err(error) => trace.borrow_mut().threw(started, &get_error(&error)),
+        }
+    }
+    drop(lar);
+    Rc::into_inner(trace)
+        .expect("the solver's callback is gone")
+        .into_inner()
+        .close()
+        .expect("the trace is written");
+    let path = directory.join("ef5a0fc173b80a86.lptrace");
+    let written = fs::read_to_string(&path).expect("the trace is there");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../tests/fixtures/lp-trace/lar-session.lptrace");
+    assert_eq!(
+        written,
+        fs::read_to_string(fixture).expect("the TypeScript's trace is there")
+    );
+    let outcome = replay(&path, &Cell::new(0));
+    fs::remove_dir_all(&directory).expect("the trace directory is removable");
+    assert!(outcome.1.is_none(), "the trace replays");
+    assert_eq!(outcome.0, written.lines().count());
 }
