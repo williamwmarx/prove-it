@@ -2612,8 +2612,12 @@ impl<'a> Compiler<'a> {
                 context,
             );
         }
-        let base =
-            operator_context(operator).primed(context.is_primed || operator.context.is_primed);
+        // A LET operator's body counts under the wrapper of the application, as TLC's cost model
+        // walks the body where it is applied, not where it is defined.
+        let base = Context {
+            cm: context.cm,
+            ..operator_context(operator).primed(context.is_primed || operator.context.is_primed)
+        };
         let body = match operator.body {
             OperatorBody::Node(body) => Some(body),
             OperatorBody::Builtin(_) => None,

@@ -136,7 +136,7 @@ fn reports_coverage_the_engine_counts_as_tlc() {
 #[test]
 fn counts_coverage_in_the_engine_as_the_replay_does() {
     // The engine's search counts these, and the replay counts them again to compare.
-    for name in ["Counter", "Built"] {
+    for name in ["Counter", "Built", "LetOp"] {
         let output = run_with(
             &format!("compare-{name}"),
             name,
@@ -233,4 +233,11 @@ fn declines_coverage_of_a_lazy_function_applied_in_a_walk() {
         !String::from_utf8_lossy(&output.stdout).contains("The coverage statistics"),
         "{errors}"
     );
+}
+
+#[test]
+fn reports_coverage_of_a_let_operator_where_it_is_applied() {
+    // TLC counts a LET operator's body under the application's wrapper, so P's body nests under
+    // `P(x)` and prints nothing apart; the engine once counted it under the LET.
+    assert_as_tlc("LetOp");
 }
