@@ -3,8 +3,8 @@
 // answers must be the same, statistics included, which shows the same search was made.
 //   --side ts (the default) decides with the TypeScript backends, which checks that the recording
 //     reproduces; --side rust with the native ones. A backend without a TypeScript decider, as
-//     Zenon is, is decided by its Rust port on both sides, which the run says and its results
-//     record as `decider: "rust"`.
+//     Zenon, Isabelle and PTL are, is decided by its Rust port on both sides, which the run says
+//     and its results record as `decider: "rust"`.
 //   --prover smt|z3|zenon|isabelle|ls4 and --filter text keep the inputs of one backend, or whose
 //     key, prover/digest, contains the text. --jobs n runs n workers. --verbose lists every difference.
 //   --update, with --side ts only, writes the answer of each input that differs into the record,
