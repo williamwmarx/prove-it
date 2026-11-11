@@ -535,7 +535,7 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 | `prove-num` | Z3's `rational`/`mpz` semantics, written fresh on JS `bigint`'s rules | MIT (Z3's where it follows `rational.ts`) | under the Z3 section |
 | `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps Zenon's `LICENSE` beside the code (the TypeScript Zenon, which kept it too, is deleted) |
 | `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
-| `prove-isabelle` | Isabelle2025's Pure, Isar, Provers (BSD-style, Cambridge/TUM), and Isabelle/TLA+'s theories and ML setup as tlapm ships them (BSD, tlapm's licence) | BSD-3-Clause-style | the Isabelle section, and the tlapm section for the logic data and `tla/`; `LICENSE` and `LICENSE-tlapm` move with the code |
+| `prove-isabelle` | Isabelle2025's Pure, Isar, Provers (BSD-style, Cambridge/TUM), and Isabelle/TLA+'s theories and ML setup as tlapm ships them (BSD, tlapm's licence) | BSD-3-Clause-style | the Isabelle section names the crate, which keeps `LICENSE` and `LICENSE-tlapm` beside the code (the TypeScript Isabelle, which kept them too, is deleted) |
 | `prove-ptl` | tlapm's PTL backend input; the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` ports | tlapm section (no section named the TypeScript decider, which is deleted) |
 | `prove-obligations` | tlapm (obligations, Prep, encoders, `.tlacache`, TLAPS.tla verbatim) | BSD-2-Clause-style (INRIA, Microsoft, Linux Foundation) | tlapm section |
 | `prove-obligations` (`format`, `marshal`, the `getHash` of `action`) | OCaml's `Format` (`stdlib/format.ml`), Marshal (`runtime/intern.c`, `extern.c`), `runtime/hash.c` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust files |
@@ -1095,6 +1095,22 @@ is next.
   alone; text that isn't LS4 input is a `TlaProverError` with the message the TypeScript's
   `TlaSyntaxError` gave, where the port used to decline it. `conformance:ptl` decides with the
   native PTL. `THIRD_PARTY_NOTICES.md` named no path of the deleted decider.
+- P4 Isabelle, the TypeScript deleted (by the coordinator's decision, with PTL's): `src/prover/
+  isabelle/` is gone but `encode.ts`, which P5c owns, with `tests/unit/isabelle.test.ts`, every
+  case of which `crates/prover/isabelle/src/decide.rs` tests, and `TlaIsabelleError`. The scripts
+  that read the TypeScript went with it, and what they wrote stays as frozen data:
+  `scripts/isabelle-expectations.ts` recorded the crate's `testdata/`, which nothing rewrites now,
+  and `scripts/isabelle-logic.ts`, with the `Export.thy` and `export.ML` it ran in tlapm's heap,
+  checked the exported net keys against the TypeScript's `keyOfTerm` and wrote `logic-data.ts`,
+  from which `data/logic.bin` and its digest were made. What the TypeScript decided stays as
+  recorded expectations: the 478 Isabelle inputs of `tests/conformance/prover-inputs.json`
+  (`prover-differential --side rust --prover isabelle`, 478 same through the addon and through
+  WebAssembly), the 42 runs of `testdata/decide.txt`, and `deciders.test.ts`'s pin of its answer
+  on its Isabelle input (`unsat` in 840 steps). Isabelle is decided as Zenon and PTL are, by its
+  Rust port alone; a theory that isn't ASCII, or an exception that escapes the port, is a
+  `TlaProverError`, where the port used to decline it. `conformance:isabelle` decides with the
+  native Isabelle under tlapm's 30 s, which the port enforces, so it needs no worker.
+  `THIRD_PARTY_NOTICES.md`'s Isabelle section names the crate in place of the TypeScript.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
