@@ -527,6 +527,28 @@ Checks the binary answered and now declines, because the answer matched TLC only
   Winning them back takes the engine ranking what it makes in TLC's order of evaluation: one worker,
   every successor and every expression in TLC's order, which a later change would have to show.
 
+#### Declines to win back: cut from the CLI follow-ups
+
+Twelve adversarial rounds on the CLI follow-ups kept finding outputs unlike TLC's in two areas, so
+the follow-ups left them as main has them, printing what main prints. The work toward both is on
+the branch `trace-alias-wip`, with each round's findings in its tests.
+
+- **A simulation's ALIAS over TLCExt's Trace.** TLC binds Trace to records of the states that
+  carry each state's action first, `_action` (`RecordValue(state, action)`), the initial
+  predicate's for an initial state; main binds records without it, so an alias whose value shows
+  them prints unlike TLC. What the rounds found winning it back takes: the action's record with its
+  `context` and `parameters`; TLC builds the records anew each time the alias reads Trace, which a
+  read that sorts them (`@@`, `=`, `\in`) shows through an EXCEPT or ToString copy, while the
+  evaluator re-evaluates a LET where TLC reads Trace once; a parameter TLC holds as an interval or
+  lazily, or a record TLC sorts as it fingerprints it where the evaluator doesn't follow; Trace
+  bound for a trace of two states and for a violating initial state.
+- **The label of a simulation's initial predicate.** TLC names the predicate by the definition the
+  configuration substitutes (`Init <- Init2` labels Init2, by its definition's name, not the front
+  end's key), by the LET that defines one, placed at its body, by the instance for one an INSTANCE
+  copies, placed at the INSTANCE, and as written for a LOCAL one; it takes a LET's state predicate
+  whole, so a FALSE conjunct inside one leaves no initial state rather than a trivially false spec.
+  Main labels the substituted, LET and instanced ones by the definition it follows to.
+
 ### After the FingerprintException burn-down (measured 2026-11-11)
 
 Measured at #272 (main 924d7cd merged) with `bun scripts/run.ts check-log`:
