@@ -1,6 +1,7 @@
 // Writes every text tla-ts's prove sends a backend on the recorded modules to .prover-inputs, one
 // file per distinct input of each prover, named by its digest, for prover-differential.ts to decide
-// again.
+// again, and .prover-inputs/time-limits.json, the time limits in seconds, null for none, that
+// prove sent each input with, for z3-parity.ts to run Z3 under.
 //
 // Which backends prove tries on an obligation depends on what the earlier ones answered, so the
 // texts come from proving each module. By default the answers come from prover-inputs.json, which
@@ -15,7 +16,7 @@
 // solver's heap fills on a few modules, and the run fails when it loses a module:
 //   NODE_OPTIONS=--max-old-space-size=4500 bun scripts/run.ts prover-inputs [--record] [--jobs n]
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TlaError, TlaProverError } from "../src/errors";
@@ -34,10 +35,12 @@ import {
 import {
   getInputKey,
   getInputPath,
+  getMergedTimeLimits,
   type InputRecord,
   PROVER_INPUTS_DIRECTORY,
   PROVER_INPUTS_PATH,
   readInputRecords,
+  TIME_LIMITS_PATH,
   useTypeScriptBackends,
   writeInputRecords,
 } from "./prover-records";
@@ -83,25 +86,28 @@ if (isRecording)
 
 const RECORDING_PATH = join(PROVER_INPUTS_DIRECTORY, "recording.jsonl");
 
-interface RecordedModule {
-  id: string;
+interface ModuleInputs {
   inputs: Record<string, InputRecord>;
+  timeLimits: Record<string, (number | null)[]>;
+}
+
+interface RecordedModule extends ModuleInputs {
+  id: string;
 }
 
 // The modules this recording has finished. The parent cuts what a stop left unfinished, before
 // any worker appends.
 const readRecording = () =>
-  new Map(
-    readJournal<RecordedModule>(RECORDING_PATH).map((recorded) => [recorded.id, recorded.inputs]),
-  );
+  new Map(readJournal<RecordedModule>(RECORDING_PATH).map((recorded) => [recorded.id, recorded]));
 
 if (isRecording && !process.argv.includes("--worker")) repairJournal(RECORDING_PATH);
 
-// The inputs of a module's proofs, by key.
-const writeModuleInputs = async (module: ModuleProofRecord) => {
+// The inputs of a module's proofs, and the time limits each was sent with, by key.
+const writeModuleInputs = async (module: ModuleProofRecord): Promise<ModuleInputs> => {
   const finished = isRecording ? readRecording().get(module.id) : undefined;
   if (finished !== undefined) return finished;
   const inputs: Record<string, InputRecord> = {};
+  const timeLimits: Record<string, (number | null)[]> = {};
   const obligations = (() => {
     try {
       return getModuleObligations(join(CORPORA_DIRECTORY, module.id));
@@ -116,6 +122,8 @@ const writeModuleInputs = async (module: ModuleProofRecord) => {
       const path = getInputPath(key);
       mkdirSync(join(path, ".."), { recursive: true });
       writeFileSync(path, text);
+      const seconds = Number.isFinite(options.timeLimitMs) ? options.timeLimitMs / 1000 : null;
+      timeLimits[key] = [...new Set([...(timeLimits[key] ?? []), seconds])];
       const recorded = inputs[key] ?? (isRecording ? undefined : records[key]);
       if (!isRecording && recorded === undefined)
         throw new Error(`${module.id}: input ${key} isn't in prover-inputs.json`);
@@ -125,14 +133,30 @@ const writeModuleInputs = async (module: ModuleProofRecord) => {
   });
   if (isRecording) {
     mkdirSync(PROVER_INPUTS_DIRECTORY, { recursive: true });
-    appendJournal(RECORDING_PATH, { id: module.id, inputs });
+    appendJournal(RECORDING_PATH, { id: module.id, inputs, timeLimits });
   }
-  return inputs;
+  return { inputs, timeLimits };
 };
 
 const modules = readProofRecords();
 const byModule = await runModuleWorkers(modules, getObligationCount, writeModuleInputs, 1);
-const inputs: Record<string, InputRecord> = Object.assign({}, ...byModule.values());
+const inputs: Record<string, InputRecord> = Object.assign(
+  {},
+  ...[...byModule.values()].map((module) => module.inputs),
+);
+const timeLimits: Record<string, (number | null)[]> = {};
+for (const module of byModule.values())
+  for (const [key, limits] of Object.entries(module.timeLimits))
+    timeLimits[key] = [...new Set([...(timeLimits[key] ?? []), ...limits])];
+mkdirSync(PROVER_INPUTS_DIRECTORY, { recursive: true });
+// A run over some modules (--filter, --skip) keeps the time limits of the inputs it didn't write.
+const earlierTimeLimits = existsSync(TIME_LIMITS_PATH)
+  ? JSON.parse(readFileSync(TIME_LIMITS_PATH, "utf8"))
+  : {};
+writeFileSync(
+  TIME_LIMITS_PATH,
+  `${JSON.stringify(getMergedTimeLimits(earlierTimeLimits, timeLimits))}\n`,
+);
 if (isRecording && byModule.size === modules.length) {
   writeInputRecords({ ...records, ...inputs });
   rmSync(RECORDING_PATH);

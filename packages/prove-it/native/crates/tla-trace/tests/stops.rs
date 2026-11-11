@@ -51,6 +51,7 @@ fn stop(path: &str) -> (ErrorSite, usize, Failure, [u64; OUT_DEGREE_BUCKETS]) {
             ErrorSite::Next => Site::Next,
             ErrorSite::Invariant(position) => Site::Invariant(position),
             ErrorSite::Atom { atom, is_extra } => Site::Atom { atom, is_extra },
+            ErrorSite::NextAtom { atom, is_extra } => Site::NextAtom { atom, is_extra },
             ErrorSite::InitialAtom { atom, replayed } => Site::InitialAtom { atom, replayed },
             ErrorSite::InitialConstraint(_)
             | ErrorSite::InitialInvariant(_)
@@ -149,7 +150,8 @@ fn replays_the_expansion_past_the_successor_that_fails_an_invariant() {
             found: 1,
             queued: 0,
             is_failed: true,
-            is_successor_generated: false
+            is_successor_generated: false,
+            initial_states: None
         }
     );
     assert_eq!(failure.exit_code, 75);
