@@ -1,0 +1,4 @@
+---- MODULE C ----
+EXTENDS Sequences
+
+====
