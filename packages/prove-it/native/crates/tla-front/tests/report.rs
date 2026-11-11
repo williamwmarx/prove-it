@@ -240,7 +240,8 @@ fn reports_an_instance_named_as_an_expression() {
         ),
         "Parsing file Main File\nParsing file Naturals Standard\nSemantic processing of module Naturals\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 3\n\nline 4, col 6 to line 4, col 6 of module Main\n\nOperator name I is incomplete.\n\n\nline 5, col 7 to line 5, col 12 of module Main\n\nThe operator J requires 1 arguments.\n\n\nline 6, col 6 to line 6, col 6 of module Main\n\nThe operator J requires 1 arguments.\n\n\n"
     );
-    // With as many arguments as it takes, SANY generates them before it finds the name incomplete.
+    // With as many arguments as it takes, SANY generates them before it finds the name incomplete,
+    // as TLC at d8fb231 prints for this spec.
     assert_eq!(
         get_text(
             "instance-arguments",
