@@ -27,10 +27,11 @@ use crate::sets::{
     is_member_filtered, is_reducible, union,
 };
 use crate::value::{
-    Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
-    elements, equals, fail, fail_coded, fail_runtime, fail_with, failing_comparisons, find_key,
-    from_store, is_enumerable, lambda_as_function, mark_unnormalized, note_sorted, set_of,
-    sorted_function, unnormalized, unsorted_failure, written_function,
+    Class, EvalError, Evaluated, Function, Lazy, RECORD_VALUE_FIELDS, Search, Text, TlcMessage,
+    Value, compare, elements, equals, fail, fail_coded, fail_runtime, fail_with,
+    failing_comparisons, find_key, from_store, is_enumerable, lambda_as_function,
+    mark_unnormalized, note_sorted, set_of, sorted_function, take_is_record_built, unnormalized,
+    unsorted_failure, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -719,16 +720,41 @@ impl<'ir> Evaluator<'ir> {
         text
     }
 
-    /// A text a string operator makes, which TLC interns: ranked as it is made while the startup
+    /// A text a string operator makes, which TLC interns: ranked as it is made while the evaluator
     /// ranks texts (`rankString`, for the strings TLC makes as it starts).
     fn made_text(&mut self, units: Box<[u16]>) -> Rc<Text> {
-        if let Some(ranked) = &mut self.startup_ranked
-            && !self.ranks.contains_key(&units)
-        {
-            self.ranks.insert(units.clone(), self.ranks.len() as i32);
-            ranked.push(units.clone());
-        }
+        self.rank_record_fields();
+        self.rank_made(&units);
         self.text_of(units)
+    }
+
+    fn rank_made(&mut self, units: &[u16]) {
+        if let Some(ranked) = &mut self.startup_ranked
+            && !self.ranks.contains_key(units)
+        {
+            self.ranks.insert(units.into(), self.ranks.len() as i32);
+            ranked.push(units.into());
+        }
+    }
+
+    // RecordValue's field names, which TLC interns as it builds its first record, where the
+    // evaluator has built one since it last looked.
+    fn rank_record_fields(&mut self) {
+        if self.startup_ranked.is_some() && take_is_record_built() {
+            for field in RECORD_VALUE_FIELDS {
+                self.rank_made(&field.encode_utf16().collect::<Vec<u16>>());
+            }
+        }
+    }
+
+    /// Ranks what the evaluator makes from now on, as TLC interns it.
+    pub(crate) fn start_ranking(&mut self) {
+        take_is_record_built();
+        self.startup_ranked = Some(Vec::new());
+    }
+
+    pub(crate) fn stop_ranking(&mut self) {
+        self.startup_ranked = None;
     }
 
     /// A field name of the records TLC builds of its counterexample (`RecordValue`'s statics):
@@ -739,17 +765,6 @@ impl<'ir> Evaluator<'ir> {
     /// ranks; `action` they write as a string, which TLC interns as it runs.
     pub(crate) fn counterexample_field(&self, name: &str, is_dumped: bool) -> Rc<Text> {
         const PARSED: [&str; 3] = ["state", "vars", "counterexample"];
-        const FIELDS: [&str; 9] = [
-            "beginLine",
-            "beginColumn",
-            "endLine",
-            "endColumn",
-            "module",
-            "name",
-            "location",
-            "context",
-            "parameters",
-        ];
         let units: Box<[u16]> = name.encode_utf16().collect();
         if let Some(&rank) = self.ranks.get(&units) {
             return Rc::new(Text { units, rank });
@@ -769,7 +784,7 @@ impl<'ir> Evaluator<'ir> {
         let fields = if is_dumped { &PARSED[..] } else { &[] };
         let position = fields
             .iter()
-            .chain(&FIELDS)
+            .chain(&RECORD_VALUE_FIELDS)
             .position(|field| *field == name);
         let rank = position.map_or(-1, |position| last + 1 + position as i32);
         Rc::new(Text { units, rank })
@@ -2025,11 +2040,19 @@ impl<'ir> Evaluator<'ir> {
     }
 
     /// The texts TLC interns as it computes the startup definitions, the substitutes and then
-    /// `definitions` (`processConstantDefns`), past those the IR ranks, in order: those Tail,
-    /// SubSeq, `\o` and ToString make, as `rankString` ranks them.
-    pub(crate) fn get_startup_texts(ir: &Ir, definitions: &[Index]) -> Vec<Box<[u16]>> {
+    /// `definitions` (`processConstantDefns`), past the first `interned` texts the IR ranks, in
+    /// order: those Tail, SubSeq, `\o` and ToString make, as `rankString` ranks them, and
+    /// RecordValue's field names where it builds its first record.
+    pub(crate) fn get_startup_texts(
+        ir: &Ir,
+        definitions: &[Index],
+        interned: usize,
+    ) -> Vec<Box<[u16]>> {
         let mut evaluator = Evaluator::new(ir);
-        evaluator.startup_ranked = Some(Vec::new());
+        evaluator
+            .ranks
+            .retain(|_, rank| (*rank as usize) < interned);
+        evaluator.start_ranking();
         evaluator.random = Some(JavaRandom::seeded(ir.model.random_seed));
         let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
         for index in substitutes.chain(definitions.iter().copied()) {
@@ -2043,13 +2066,15 @@ impl<'ir> Evaluator<'ir> {
             evaluator
                 .evaluate(evaluator.definition(node).body, &Context::default())
                 .ok();
+            evaluator.rank_record_fields();
         }
         evaluator.startup_ranked.unwrap_or_default()
     }
 
-    /// Whether evaluating a definition may make a text `made_text` ranks, or draw from the
-    /// generator or set a register that a later startup definition reads: whether it reaches, as
-    /// written or through the definitions it names, an operator that does. Tail, SubSeq and `\o`
+    /// Whether evaluating a definition may make a text `made_text` ranks, build a record, or draw
+    /// from the generator or set a register that a later startup definition reads: whether it
+    /// reaches, as written or through the definitions it names, an operator that does. TLCGet
+    /// builds a record for "config", "spec" and "stats". Tail, SubSeq and `\o`
     /// of a tuple written in place make a tuple.
     fn may_rank_texts(&self, definition: NodeId) -> bool {
         let get_operator = |name: &Name| match name.resolution {
@@ -2074,14 +2099,17 @@ impl<'ir> Evaluator<'ir> {
                     };
                     (!is_tuple_made).then_some(name)
                 }
-                // A subexpression names what the walk doesn't follow.
-                NodeKind::Subexpression(_) => return true,
+                // A subexpression names what the walk doesn't follow, and TLC interns
+                // RecordValue's names as it builds its first record.
+                NodeKind::Subexpression(_) | NodeKind::Record(_) | NodeKind::RecordSet(_) => {
+                    return true;
+                }
                 _ => None,
             };
             if let Some(name) = name {
                 if let Some(
                     "Tail" | "\\o" | "SubSeq" | "ToString" | "RandomElement" | "RandomSubset"
-                    | "TLCSet",
+                    | "TLCSet" | "TLCGet",
                 ) = get_operator(name)
                 {
                     return true;

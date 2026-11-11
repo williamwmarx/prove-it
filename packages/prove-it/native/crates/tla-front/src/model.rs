@@ -12,9 +12,9 @@ use crate::describe::{Description, Part, describe};
 use crate::environment::{EnvironmentOptions, create_environment};
 use crate::errors::FrontError;
 use crate::eval::Evaluator;
-use crate::hash::FastMap;
+use crate::hash::{FastMap, FastSet};
 use crate::lower::{Lowering, RankedTexts};
-use crate::order::TlcOrder;
+use crate::order::{TlcOrder, get_checker_strings, get_unique};
 use crate::spec::{
     Properties, Specification, check_invariants, check_search_config, create_identifier,
     get_properties, get_specification,
@@ -93,7 +93,7 @@ pub fn lower_front(
     options: &ModelOptions,
 ) -> Result<LoweredModel, FrontError> {
     with_files(spec_path, options, |sources| {
-        lower_ranked(sources, config_text, options, &[]).map(|(lowered, _)| lowered)
+        lower_ranked(sources, config_text, options, &[]).map(|(lowered, ..)| lowered)
     })
 }
 
@@ -126,8 +126,8 @@ fn with_files<T>(
 }
 
 /// What finds the texts TLC interns as it computes the constant definitions an IR holds, given
-/// their indexes in TLC's order.
-pub type StartupTexts = dyn Fn(&tla_ir::Ir, &[tla_ir::Index]) -> Vec<Box<[u16]>>;
+/// their indexes in TLC's order and how many of the IR's ranked texts TLC interned before.
+pub type StartupTexts = dyn Fn(&tla_ir::Ir, &[tla_ir::Index], usize) -> Vec<Box<[u16]>>;
 
 /// The model as `lower_front` lowers it, with the strings TLC makes as it computes the constant
 /// definitions ranked after the spec's, as `check.ts` lowers its IR once it has computed them.
@@ -151,27 +151,23 @@ pub fn lower_front_ranking_of(
     options: &ModelOptions,
     get_startup_texts: &StartupTexts,
 ) -> Result<LoweredModel, FrontError> {
-    let (lowered, startup) = lower_ranked(sources, config_text, options, &[])?;
+    let (lowered, startup, interned) = lower_ranked(sources, config_text, options, &[])?;
     let Ok(ir) = tla_ir::decode(&lowered.ir) else {
         return Ok(lowered);
     };
-    // A text Rust can't hold as a string ends the ranks, which stay TLC's up to it.
-    let startup_texts: Vec<Rc<str>> = get_startup_texts(&ir, &startup)
-        .iter()
-        .map_while(|units| String::from_utf16(units).ok().map(Rc::from))
-        .collect();
+    let startup_texts = get_startup_texts(&ir, &startup, interned);
     if startup_texts.is_empty() {
         return Ok(lowered);
     }
-    lower_ranked(sources, config_text, options, &startup_texts).map(|(lowered, _)| lowered)
+    lower_ranked(sources, config_text, options, &startup_texts).map(|(lowered, ..)| lowered)
 }
 
 fn lower_ranked(
     sources: &ModelSources,
     config_text: &str,
     options: &ModelOptions,
-    startup_texts: &[Rc<str>],
-) -> Result<(LoweredModel, Vec<tla_ir::Index>), FrontError> {
+    startup_texts: &[Box<[u16]>],
+) -> Result<(LoweredModel, Vec<tla_ir::Index>, usize), FrontError> {
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = sources.source;
     let load = sources.load_module;
@@ -200,12 +196,46 @@ fn lower_ranked(
         &[]
     };
     let order = TlcOrder::new(source, load, version)?.with_root_extendees(root_extendees);
-    let texts: Vec<Rc<str>> = order
-        .get_string_order(&config)?
+    // TLC computes the constant definitions after SANY and before it builds its checker.
+    let sany = order.get_sany_string_order(&config)?;
+    let decoded: Vec<Option<String>> = startup_texts
         .iter()
-        .map(|text| Rc::from(text.as_str()))
-        .chain(startup_texts.iter().cloned())
+        .map(|units| String::from_utf16(units).ok())
         .collect();
+    // A text with a lone surrogate, which a `str` can't hold, as `Tail("😀a")` makes, ranks by a
+    // name of its own and keeps its units for the IR's wide texts. The name is U+FFFF, as many
+    // times as it takes to be no text the front ranks, then the units in hex.
+    let taken: FastSet<&str> = sany
+        .iter()
+        .chain(decoded.iter().flatten())
+        .map(String::as_str)
+        .chain(get_checker_strings(&config))
+        .collect();
+    let mut wide: FastMap<Rc<str>, Box<[u16]>> = FastMap::default();
+    let startup: Vec<String> = decoded
+        .iter()
+        .zip(startup_texts)
+        .map(|(text, units)| {
+            text.clone().unwrap_or_else(|| {
+                let hex: String = units.iter().map(|unit| format!("{unit:04x}")).collect();
+                let name = (1..)
+                    .map(|count| format!("{}{hex}", "\u{FFFF}".repeat(count)))
+                    .find(|name| !taken.contains(name.as_str()))
+                    .expect("a name no text takes");
+                wide.insert(Rc::from(name.as_str()), units.clone());
+                name
+            })
+        })
+        .collect();
+    let texts: Vec<Rc<str>> = get_unique(
+        sany.iter()
+            .map(String::as_str)
+            .chain(startup.iter().map(String::as_str))
+            .chain(get_checker_strings(&config)),
+    )
+    .into_iter()
+    .map(Rc::from)
+    .collect();
     let variable_order = order.get_declaration_order(true)?;
     let facts = create_definition_facts(&environment);
     let ranks: FastMap<Rc<str>, u32> = texts
@@ -234,6 +264,7 @@ fn lower_ranked(
             RankedTexts {
                 texts: &texts,
                 ranks: ranks.clone(),
+                wide: &wide,
             },
         );
         lowering.evaluator = Some(&evaluator);
@@ -382,7 +413,7 @@ fn lower_ranked(
         Err(error) if evaluator.is_deferring() && !matches!(error, FrontError::NotYet(_)) => Err(
             FrontError::NotYet("an error after a constant predicate the engine checks".to_owned()),
         ),
-        lowered => lowered,
+        lowered => lowered.map(|(lowered, startup)| (lowered, startup, sany.len())),
     }
 }
 

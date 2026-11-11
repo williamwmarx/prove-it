@@ -2877,8 +2877,8 @@ fn names_the_fairness_condition_whose_action_leaves_a_variable_unassigned() {
 
 #[test]
 fn records_the_specification_as_the_interpreter_does() {
-    // TLCGet("spec"), which tla-front describes and the split gives the actions of, as the
-    // interpreter prints it for this spec.
+    // TLCGet("spec"), which tla-front describes and the split gives the actions of, as TLC prints
+    // it for this spec at d8fb231: its records' fields in the order RecordValue interns them.
     let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nStep(d) == x < 3 /\\ x' = x + d /\\ y' = y\nReset == x >= 3 /\\ x' = 0 /\\ UNCHANGED y\nNext == (\\E d \\in {1, 2} : Step(d)) \\/ Reset\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nSmall == x < 10\nProp == [][x' # x]_<<x, y>> /\\ []<>(x = 0)\nBound == y < 5\nMoves == x' # x \\/ y' = y\nRecorded == PrintT(TLCGet(\"spec\"))\n====\n";
     let (output, directory) = run_lowered(
         "spec",

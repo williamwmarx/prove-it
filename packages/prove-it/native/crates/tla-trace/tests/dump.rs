@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use payload::compare_dumps;
 use tla_engine::search::{Reporter, SearchOutcome, Settings, ViolationKind, search};
 use tla_front::config::{ConfigValue, parse_config};
-use tla_front::model::{ModelOptions, lower_model};
+use tla_front::model::{ModelOptions, lower_front_ranking};
 use tla_trace::{CounterExample, Ending, Rebuilder, Registers, add_actions};
 use tla_values::{Id, Store};
 
@@ -55,9 +55,14 @@ fn get_model_values(config: &str) -> Vec<String> {
 
 /// What tla-trace dumps of the spec's counterexample: the `-dumpTrace tlc` file and the
 /// `-dumpTrace json` one, written in the order the command line gives them, as TLC writes them.
+/// The spec is lowered as the binary lowers it, with the strings its constant definitions make
+/// ranked as TLC interns them.
 fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
     let config = std::fs::read_to_string(fixture(&format!("{spec}.cfg"))).expect("a configuration");
-    let bytes = lower_model(
+    let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index], interned: usize| {
+        tla_values::on_nesting_stack(|| tla_trace::get_startup_texts(ir, definitions, interned))
+    };
+    let bytes = lower_front_ranking(
         &fixture(&format!("{spec}.tla")),
         &config,
         &ModelOptions {
@@ -68,7 +73,9 @@ fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
             random_seed: 0,
             is_trace_recorded: false,
         },
+        &get_startup_texts,
     )
+    .map(|lowered| lowered.ir)
     .expect("a model tla-front lowers");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     // The binary splits TLC's actions as it checks a model.
@@ -198,6 +205,7 @@ fn dumps_nested_values() {
 #[test]
 fn dumps_function_keys_with_unpaired_surrogates() {
     // Two keys that are each half of a different character stay apart, written as `?`, as TLC
-    // keeps them as Java strings.
+    // keeps them as Java strings. The constant definitions make them as TLC starts, which ranks
+    // them: two strings the search made, the engine couldn't order as TLC does, and declines.
     check("DumpSurrogate");
 }

@@ -545,6 +545,20 @@ The groups are checked in this order, so a decline counts once, in the first gro
 The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
 
+#### Declines to win back
+
+Checks the binary answered and now declines, because the answer matched TLC only by chance.
+
+- **Strings made during the search** (the string-order change; check-log on the same log, 1386
+  native on main, 1384 after): `unit/check.test.ts:704` and `unit/parallel.test.ts:18` with
+  `-workers 2`, both `fixtures/strings/RuntimeStrings`, where `CHOOSE` picks among
+  `"q" \o ToString(n)` strings the search makes. TLC orders two strings by when it interned them,
+  and it interns a string the search makes as it makes it. The store ordered two that no rank covers
+  by their text, which matched TLC's creation order there by chance. It now stops on them (`an order
+  of strings the search made`), and the library's tests assert TLC's output through the interpreter.
+  Winning them back takes the engine ranking what it makes in TLC's order of evaluation: one worker,
+  every successor and every expression in TLC's order, which a later change would have to show.
+
 ### What uses it as the reference, and what replaces it
 
 | User | Replacement |
