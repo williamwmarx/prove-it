@@ -123,6 +123,9 @@ pub struct Evaluator<'a> {
     /// computes an operator's argument where the body first uses it, and keeps the value
     /// (`LazyValue`).
     thunks: RefCell<HashMap<usize, (Rc<Scope>, ConfigValue)>>,
+    /// The names whose value TLC computes in a way the front end doesn't follow: a Java method
+    /// replaces the definition, or TLC computes the substitute again with its effects.
+    pub opaque_names: RefCell<std::collections::HashSet<Name>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -141,6 +144,7 @@ impl<'a> Evaluator<'a> {
             is_deferring: Cell::new(false),
             deferred_conjuncts: RefCell::new(Vec::new()),
             thunks: RefCell::new(HashMap::new()),
+            opaque_names: RefCell::default(),
         }
     }
 
@@ -333,6 +337,11 @@ impl Evaluator<'_> {
         }
         if let Some(value) = environment.constants.get(name) {
             return Ok(value.clone());
+        }
+        if self.opaque_names.borrow().contains(name) {
+            return Err(not_yet(
+                "a definition TLC computes as the front end doesn't",
+            ));
         }
         if let Some(definition) = get_definition(name, environment) {
             return match &definition.kind {
@@ -766,6 +775,11 @@ impl Evaluator<'_> {
                         _ => return Err(not_yet("an operator a scope doesn't bind")),
                     }
                 } else {
+                    if self.opaque_names.borrow().contains(&name) {
+                        return Err(not_yet(
+                            "a definition TLC computes as the front end doesn't",
+                        ));
+                    }
                     match get_definition(&name, self.environment).map(|definition| &definition.kind)
                     {
                         Some(DefinitionKind::Operator { params, .. }) => Some((

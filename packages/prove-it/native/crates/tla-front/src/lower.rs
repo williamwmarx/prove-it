@@ -253,6 +253,81 @@ fn get_reached_children(
     }
 }
 
+/// The effects TLC shows again where it computes a substitute again: setting a register again to
+/// a value that reads none sets it alike.
+const REPEATED_EFFECTS: [&str; 11] = [
+    "Print",
+    "PrintT",
+    "AssertEq",
+    "TLCGet",
+    "TLCGetAndSet",
+    "TLCGetOrDefault",
+    "JavaTime",
+    "RandomElement",
+    "RandomSubset",
+    "RandomSetOfSubsets",
+    "RandomSubsetSet",
+];
+
+/// Whether a constant definition without parameters shows effects each time TLC computes it.
+fn is_effectful(definition: &Rc<Definition>, environment: &Environment) -> Result<bool> {
+    let is_parameterless = matches!(
+        &definition.kind,
+        DefinitionKind::Operator { params, .. } if params.is_empty()
+    );
+    Ok(is_parameterless
+        && reaches_effect(definition, environment, None, &REPEATED_EFFECTS, false)
+        && environment
+            .create_level_analyzer(&["TLCGet", "Trace", "CounterExample"])
+            .analyze_definition(definition, &crate::levels::Scope::default())?
+            .data
+            .level
+            == 0)
+}
+
+/// The definitions the configuration substitutes an effectful definition for, outside a TLCEval
+/// TLC computes once, each with the copy of that definition its reads resolve to: TLC holds the
+/// name as the definition it names and computes it again at each read, which the engine declines
+/// where it computes the copy (`Definition::READ_DECLINED`).
+pub(crate) fn get_repeated_reads(
+    environment: &Environment,
+) -> Result<FastMap<Name, Rc<Definition>>> {
+    let mut copies = FastMap::default();
+    for (name, target) in environment.substitutions.iter() {
+        let Some(definition) = environment.definitions.get(target) else {
+            continue;
+        };
+        let is_constant = environment
+            .root_constants
+            .iter()
+            .any(|constant| constant.name == *name);
+        if is_constant
+            || !environment.definitions.contains_key(name)
+            || !is_effectful(definition, environment)?
+            || !reaches_effect(definition, environment, None, &REPEATED_EFFECTS, true)
+        {
+            continue;
+        }
+        // A body of its own, which TLC evaluates as the definition's.
+        let body = Rc::new(Expression::new(
+            ExpressionKind::If {
+                condition: crate::spec::create_identifier("TRUE"),
+                consequent: definition.body.clone(),
+                alternative: definition.body.clone(),
+            },
+            definition.body.location.clone(),
+        ));
+        copies.insert(
+            name.clone(),
+            Rc::new(Definition {
+                body,
+                ..(**definition).clone()
+            }),
+        );
+    }
+    Ok(copies)
+}
+
 /// Whether a definition reaches one of these builtins, past `cached`, and, with
 /// `is_past_kept`, outside a TLCEval, whose value TLC keeps.
 fn reaches_effect(
@@ -292,66 +367,13 @@ fn reaches_effect(
 }
 
 /// Whether the model reads a definition by its name: the configuration names it, or a
-/// definition or an assumption refers to it where its evaluation may reach. With
-/// `is_alias_traced`, the ALIAS, which TLC evaluates only as it prints a trace, reads nothing,
-/// where nothing else reads it.
+/// definition or an assumption refers to it where its evaluation may reach.
 fn is_read(
     name: &str,
     config: &crate::config::ModelConfig,
     environment: &Environment,
     evaluator: Option<&crate::eval::Evaluator>,
-    is_alias_traced: bool,
 ) -> bool {
-    // The ALIAS, where no other part of the model or of the configuration names it.
-    let alias = config
-        .alias
-        .as_deref()
-        .filter(|_| is_alias_traced)
-        .filter(|alias| {
-            let is_named = [
-                &config.invariants,
-                &config.properties,
-                &config.constraints,
-                &config.action_constraints,
-                &config.postconditions,
-                &config.possible,
-            ]
-            .into_iter()
-            .flatten()
-            .chain(
-                [
-                    &config.init,
-                    &config.next,
-                    &config.specification,
-                    &config.symmetry,
-                    &config.view,
-                ]
-                .into_iter()
-                .flatten(),
-            )
-            .any(|named| named == alias);
-            let mut pending: Vec<Expr> = environment
-                .definitions
-                .iter()
-                .filter(|(key, _)| &***key != *alias)
-                .map(|(_, definition)| definition.body.clone())
-                .chain(
-                    environment
-                        .assumptions
-                        .iter()
-                        .map(|assumption| assumption.expression.clone()),
-                )
-                .collect();
-            let mut is_referred = false;
-            while let Some(expression) = pending.pop() {
-                is_referred |= !expression.is_locally_resolved()
-                    && expression
-                        .reference()
-                        .is_some_and(|reference| &*reference == *alias);
-                pending.extend(expression.children());
-            }
-            !is_named && !is_referred
-        });
     let named = [
         &config.invariants,
         &config.properties,
@@ -371,17 +393,16 @@ fn is_read(
             &config.view,
             &config.periodic,
             &config.rl_reward,
+            &config.alias,
         ]
         .into_iter()
         .flatten(),
     )
-    .chain(config.alias.iter().filter(|_| alias.is_none()))
     .any(|named| named == name);
     let mut pending: Vec<Expr> = environment
         .definitions
-        .iter()
-        .filter(|(key, _)| alias.is_none_or(|alias| &***key != alias))
-        .map(|(_, definition)| definition.body.clone())
+        .values()
+        .map(|definition| definition.body.clone())
         .chain(
             environment
                 .assumptions
@@ -429,26 +450,16 @@ fn reaches_in(
     false
 }
 
-/// Why a trace printed through the ALIAS declines, where only the ALIAS reads an operator a
-/// TLCOverrides index replaces.
-pub(crate) fn check_index_overrides(
+/// The definitions of the root module a TLCOverrides index replaces with Java methods, which
+/// the front end doesn't run: the run declines where it computes one
+/// (`Definition::READ_DECLINED`). TLC no longer computes one as it starts, which only one whose
+/// computing shows nothing is alike in.
+pub(crate) fn get_index_overrides(
     config: &crate::config::ModelConfig,
     environment: &Environment,
-    evaluator: Option<&crate::eval::Evaluator>,
-) -> Result<Option<String>> {
-    let mut alias_decline = None;
-    // TLC replaces an operator a TLCOverrides index names with its Java method, which the
-    // front end doesn't run, and no longer computes it as it starts. It reads the method
-    // where the model reads the operator, a constant the configuration substitutes it for
-    // included, and where the ALIAS reads it as TLC prints a trace, where the run declines.
+) -> Result<Vec<Rc<Definition>>> {
+    let mut replaced = Vec::new();
     for (identifier, arity) in &environment.index_overrides {
-        let is_read_by = |name: &str, is_alias_traced| {
-            is_read(name, config, environment, evaluator, is_alias_traced)
-        };
-        let is_replaced = config.substitutions.iter().any(|substitution| {
-            *substitution.name == **identifier
-                || *substitution.target == **identifier && is_read_by(&substitution.name, false)
-        });
         // TLC skips a method whose arity isn't the operator's.
         let definition = environment
             .definitions
@@ -462,8 +473,10 @@ pub(crate) fn check_index_overrides(
             });
         let is_alike = match definition {
             Some(definition) => {
-                !is_replaced
-                    && !is_read_by(identifier, true)
+                !config
+                    .substitutions
+                    .iter()
+                    .any(|substitution| *substitution.name == **identifier)
                     && !reaches_shown_effect(definition, environment, None)
             }
             None => !environment.builtins.contains_key(identifier),
@@ -473,13 +486,9 @@ pub(crate) fn check_index_overrides(
                 "a TLCOverrides index's Java override of {identifier}"
             )));
         }
-        if definition.is_some() && is_read_by(identifier, false) {
-            alias_decline = Some(format!(
-                "an ALIAS that reads {identifier}, which a TLCOverrides index's Java method replaces"
-            ));
-        }
+        replaced.extend(definition.cloned());
     }
-    Ok(alias_decline)
+    Ok(replaced)
 }
 
 /// Whether an assumption passes an operator with parameters an argument that reaches one of
@@ -588,9 +597,14 @@ pub struct Lowering<'a> {
     /// The evaluator of the constant parts of the liveness formula, without which they stay
     /// `NotYet`.
     pub evaluator: Option<&'a crate::eval::Evaluator<'a>>,
+    /// The names whose reads resolve to a copy of the definition the configuration substitutes
+    /// for them (`get_repeated_reads`).
+    repeated_reads: FastMap<Name, Rc<Definition>>,
+    /// The definitions a TLCOverrides index replaces (`get_index_overrides`).
+    pub index_overrides: Vec<Rc<Definition>>,
     /// Why a trace printed through the ALIAS declines: the ALIAS reads a name a configuration
     /// substitute with effects replaces, which TLC computes again as it prints each state.
-    pub alias_decline: Option<String>,
+
     /// The constant definitions TLC computes and deep-normalizes at startup, by address.
     normalized: FastSet<usize>,
     facts: DefinitionFacts,
@@ -628,7 +642,8 @@ impl<'a> Lowering<'a> {
         Lowering {
             branches: None,
             random_seed: 0,
-            alias_decline: None,
+            repeated_reads: FastMap::default(),
+            index_overrides: Vec::new(),
             normalized: environment
                 .startup_definitions
                 .iter()
@@ -824,6 +839,9 @@ impl<'a> Lowering<'a> {
 
     /// What `compileApply` finds for an operator nothing binds: a definition, else a builtin.
     fn resolve_operator(&mut self, name: &Name) -> Resolution {
+        if let Some(copy) = self.repeated_reads.get(name).cloned() {
+            return Resolution::Definition(self.get_definition_index(&copy));
+        }
         let target = self
             .environment
             .substitutions
@@ -963,8 +981,22 @@ impl<'a> Lowering<'a> {
             IrDefinition::SUBSTITUTED
         } else {
             0
-        } | if self.normalized.contains(&(Rc::as_ptr(definition) as usize)) {
+        } | if self.normalized.contains(&(Rc::as_ptr(definition) as usize))
+            && !self
+                .index_overrides
+                .iter()
+                .any(|replaced| Rc::ptr_eq(replaced, definition))
+        {
             IrDefinition::NORMALIZED
+        } else {
+            0
+        } | if self
+            .repeated_reads
+            .values()
+            .chain(&self.index_overrides)
+            .any(|copy| Rc::ptr_eq(copy, definition))
+        {
+            IrDefinition::READ_DECLINED
         } else {
             0
         };
@@ -1356,11 +1388,12 @@ impl<'a> Lowering<'a> {
     /// it, with whether evaluating it again can show.
     pub fn config_name(&mut self, name: &str) -> Printed<ConfigName> {
         let key: Name = Rc::from(name);
-        let definition = self
-            .environment
-            .definitions
-            .get(self.environment.substitutions.get(&key).unwrap_or(&key))
-            .cloned();
+        let definition = self.repeated_reads.get(&key).cloned().or_else(|| {
+            self.environment
+                .definitions
+                .get(self.environment.substitutions.get(&key).unwrap_or(&key))
+                .cloned()
+        });
         let text = self.get_text(name);
         let definition = definition.map(|definition| self.get_definition_index(&definition));
         let identifier = Rc::new(Expression::new(
@@ -1399,6 +1432,7 @@ impl<'a> Lowering<'a> {
         version: Option<&str>,
         tlc_order: Vec<i32>,
     ) -> Result<Model> {
+        self.repeated_reads = get_repeated_reads(self.environment)?;
         self.tlc_order = tlc_order;
         self.next_substitution =
             crate::spec::get_next_substitution(config, self.environment, &self.facts)?;
@@ -1595,10 +1629,10 @@ impl<'a> Lowering<'a> {
         for definition in environment.definitions.values() {
             is_register_constant |= matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
                 && reaches_in(&definition.body, environment, &registers, self.evaluator)
-                && (is_read(&definition.name, config, environment, self.evaluator, false)
+                && (is_read(&definition.name, config, environment, self.evaluator)
                     || environment.substitutions.iter().any(|(name, target)| {
                         *target == definition.name
-                            && is_read(name, config, environment, self.evaluator, false)
+                            && is_read(name, config, environment, self.evaluator)
                     }))
                 && !reaches_in(&definition.body, environment, &variables, None);
         }
@@ -1732,29 +1766,12 @@ impl<'a> Lowering<'a> {
             // comes first, with no other effects between the two.
             // Setting a register again to a value that reads none sets it alike. TLC computes a
             // TLCEval again where the model reads the name outside what it computes once.
-            let effects: Vec<_> = SHOWN_EFFECTS
-                .into_iter()
-                .filter(|effect| *effect != "TLCSet")
-                .collect();
-            let is_effectful = |definition: &Rc<Definition>| -> Result<bool> {
-                let is_parameterless = matches!(
-                    &definition.kind,
-                    DefinitionKind::Operator { params, .. } if params.is_empty()
-                );
-                Ok(is_parameterless
-                    && reaches_effect(definition, environment, None, &effects, false)
-                    && environment
-                        .create_level_analyzer(&["TLCGet", "Trace", "CounterExample"])
-                        .analyze_definition(definition, &crate::levels::Scope::default())?
-                        .data
-                        .level
-                        == 0)
-            };
+            let is_effectful = |definition: &Rc<Definition>| is_effectful(definition, environment);
             if let Some(replaced) = environment.definitions.get(name).filter(|_| !is_constant)
                 && is_effectful(definition)?
             {
                 let is_evaluated_once =
-                    !reaches_effect(definition, environment, None, &effects, true);
+                    !reaches_effect(definition, environment, None, &REPEATED_EFFECTS, true);
                 let startup = &environment.startup_definitions;
                 let position = |wanted: &Rc<Definition>| {
                     startup.iter().position(|other| Rc::ptr_eq(other, wanted))
@@ -1762,25 +1779,9 @@ impl<'a> Lowering<'a> {
                 let is_alike = match (position(replaced), position(definition)) {
                     // TLC computes it again wherever the model reads the replaced name, but keeps
                     // the value of a TLCEval it computed where no names are bound.
-                    _ if if is_evaluated_once {
-                        is_read_under_binder(name, environment)
-                    } else {
-                        // A name only the ALIAS reads, TLC computes again only as it prints a
-                        // trace, where the run declines.
-                        let is_read_outside_alias =
-                            is_read(name, config, environment, self.evaluator, true);
-                        if !is_read_outside_alias
-                            && is_read(name, config, environment, self.evaluator, false)
-                        {
-                            self.alias_decline = Some(format!(
-                                "an ALIAS that reads a configuration substitute with effects: {name} <- {target}"
-                            ));
-                        }
-                        is_read_outside_alias
-                    } =>
-                    {
-                        false
-                    }
+                    // Where the model reads the name, the engine declines as it computes it
+                    // (`repeated_reads`).
+                    _ if is_evaluated_once && is_read_under_binder(name, environment) => false,
                     // TLC computes the substitute's TLCEval first where its own definition is.
                     (Some(first), Some(last)) if is_evaluated_once && last < first => true,
                     (Some(first), Some(last)) if first < last => {

@@ -33,7 +33,7 @@ use crate::summary::{
 use crate::te_spec::{self, TraceSpec};
 use crate::time::format_duration;
 use crate::trace::{
-    PostconditionRun, Postconditions, PrintedState, PrintedTrace, TraceChecks, Writing,
+    PostconditionRun, Postconditions, PrintedState, PrintedTrace, TraceChecks,
     check_postconditions, format_print, format_texts, format_variables, rebuild_accepted,
     rebuild_continued, rebuild_trace,
 };
@@ -368,8 +368,6 @@ pub(crate) struct Relay<'ir> {
     /// Whether the configuration substitutes for a name in one module (`<-[M]`), where the frames
     /// of a predicate TLC fails to compute at startup, and checks in the search, aren't followed.
     pub(crate) is_scoped_substituted: bool,
-    /// Why a trace printed through the ALIAS declines, where it does.
-    pub(crate) alias_decline: Option<String>,
 }
 
 impl<'ir> Relay<'ir> {
@@ -403,7 +401,6 @@ impl<'ir> Relay<'ir> {
             startup_texts: None,
             undelegated: None,
             is_scoped_substituted: false,
-            alias_decline: None,
         }
     }
 
@@ -487,12 +484,7 @@ impl Reporter for Relay<'_> {
         };
         let is_initial = matches!(kind, ViolationKind::InitialInvariant(_));
         let report = headline.map_err(String::from).and_then(|headline| {
-            let writing = Writing {
-                is_tool: self.is_tool,
-                is_plain: self.is_plain,
-                alias_decline: self.alias_decline.as_deref(),
-            };
-            let trace = rebuild_continued(ir, &continued, &kind, writing)?;
+            let trace = rebuild_continued(ir, &continued, &kind, self.is_tool, self.is_plain)?;
             let labels = trace_labels(ir, &trace)?
                 .into_iter()
                 .map(String::from)
@@ -1031,7 +1023,6 @@ fn check_spec(
     if !printer.host.is_complete() {
         return NOT_NATIVE;
     }
-    printer.alias_decline = front.alias_decline.clone();
     let mut ir = match tla_ir::decode(&front.ir) {
         Ok(ir) => ir,
         Err(error) => {
@@ -1313,7 +1304,6 @@ fn check_spec(
         .iter()
         .any(|substitution| substitution.module.is_some());
     let ir_ref = &ir;
-    let alias_decline = printer.alias_decline.clone();
     let (outcome, assumed_printed, dumped) = alongside(
         move || {
             let ir = ir_ref;
@@ -1328,7 +1318,6 @@ fn check_spec(
             relay.is_periodic = is_periodic;
             relay.is_dumped = is_dumped;
             relay.is_scoped_substituted = is_scoped_substituted;
-            relay.alias_decline = alias_decline;
             relay.coverage_countdown = coverage::get_countdown(args);
             let outcome = search(ir, &settings, &mut relay);
             (outcome, relay.assumed_printed, relay.dumped)
@@ -2058,7 +2047,13 @@ pub(crate) fn print_violation(
         run: checked,
         ..checks
     };
-    let trace = match rebuild_trace(ir, violation, checks, printer.writing()) {
+    let trace = match rebuild_trace(
+        ir,
+        violation,
+        checks,
+        printer.is_tool,
+        printer.host.is_plain(),
+    ) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
@@ -2080,7 +2075,13 @@ pub(crate) fn print_violation(
             if checked.is_some() || !checks.dumps.is_empty() {
                 return Err("a postcondition after a deadlock that violates a temporal property");
             }
-            match rebuild_accepted(ir, violation, accepted, printer.writing()) {
+            match rebuild_accepted(
+                ir,
+                violation,
+                accepted,
+                printer.is_tool,
+                printer.host.is_plain(),
+            ) {
                 Ok(trace) => Some((trace, properties_headline(ir, &accepted.violated))),
                 Err(reason) => return Ok(report_not_native(printer, &reason)),
             }

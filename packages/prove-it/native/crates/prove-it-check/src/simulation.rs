@@ -23,7 +23,7 @@ use crate::dump_trace::{TRACE_FILE_DECLINE, TraceDumps};
 use crate::failure::print_assumption_failure;
 use crate::messages::{self as code, Level, Printer};
 use crate::stack::alongside;
-use crate::trace::{TraceChecks, Writing, format_texts, format_variables, rebuild_trace};
+use crate::trace::{TraceChecks, format_texts, format_variables, rebuild_trace};
 
 const ERROR_STATE: u32 = 2120;
 const MODE_SIMULATION: u32 = 2188;
@@ -314,7 +314,7 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
         ),
         _ => return report_not_native(printer, "a simulation's violation of another kind"),
     };
-    let texts = match get_state_texts(ir, config, dumps, violation, printer.writing()) {
+    let texts = match get_state_texts(ir, config, dumps, violation, printer.is_tool) {
         Ok(texts) => texts,
         Err(why) => return report_not_native(printer, &format!("a simulation's trace: {why}")),
     };
@@ -375,7 +375,7 @@ fn get_state_texts(
     config: &ModelConfig,
     dumps: &TraceDumps,
     violation: &Violation,
-    writing: Writing<'_>,
+    is_tool: bool,
 ) -> Result<Vec<String>, String> {
     let store = &violation.store;
     let is_held = config.alias.is_none()
@@ -412,10 +412,8 @@ fn get_state_texts(
         ir,
         violation,
         TraceChecks { dumps, run: None },
-        Writing {
-            is_plain: false,
-            ..writing
-        },
+        is_tool,
+        false,
     )?;
     Ok(trace
         .states

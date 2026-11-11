@@ -470,6 +470,15 @@ assumptions, and swallows a failure to evaluate, as `getConstantValue` does.
 `processConstantDefns`: `isStartupDefinition` over the startup definitions, which skip the
 modules an INSTANCE gives parameters to.
 
+`Definition::READ_DECLINED` marks a definition TLC computes as the run can't, whose body the
+engine and the trace evaluator decline to compute where they reach it, so a read in code TLC
+never evaluates keeps the run native. One is the copy of a definition the configuration
+substitutes for another definition's name, `C <- D` with D showing effects outside a TLCEval:
+TLC holds C as D's definition and computes it again, with its effects, at each read, where the IR
+computes it once. C's reads resolve to the copy, whose body is `IF TRUE THEN body ELSE body`, a
+node of its own. The other is an operator a TLCOverrides index replaces with a Java method, which
+TLC no longer computes as it starts, so it carries no `NORMALIZED`.
+
 ## Models without a next-state relation, and properties in a scope
 
 `Model::next` is optional: TLC computes the initial states of a model whose configuration names

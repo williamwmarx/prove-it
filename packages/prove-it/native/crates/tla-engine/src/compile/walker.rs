@@ -1845,6 +1845,9 @@ impl<'a> Compiler<'a> {
         known: &Known,
         then: &mut Then<'_, 'a>,
     ) -> Compiling<Rest> {
+        if self.declined_bodies.contains(&self.node(node).0) {
+            return Ok(Some(step(|_, _| Err(Bail(tla_ir::READ_DECLINED_REASON)))));
+        }
         self.depth += 1;
         let result = self
             .walk_depth()

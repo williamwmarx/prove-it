@@ -63,7 +63,7 @@ import {
 } from "../values";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 16;
+export const IR_VERSION = 17;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;

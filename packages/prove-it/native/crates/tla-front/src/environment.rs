@@ -2441,6 +2441,17 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         let is_skipped = match get_symbol(&module, &identifier) {
             None => !is_standard,
             Some(None) => true,
+            // The root module reads a definition of a module it extends by the same name.
+            Some(Some(symbol))
+                if !is_standard
+                    && linked_root
+                        .visible
+                        .get(identifier.as_str())
+                        .is_some_and(|visible| visible.key == symbol.key) =>
+            {
+                index_overrides_kept.push((Name::from(identifier), arity));
+                true
+            }
             Some(Some(symbol)) => {
                 symbol.kind == SymbolKind::Definition
                     && arity.is_some_and(|arity| arity != symbol.arity)

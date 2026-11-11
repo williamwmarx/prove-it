@@ -467,6 +467,9 @@ impl<'ir> Evaluator<'ir> {
         is_init: bool,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
+        if self.declined_bodies.contains(&self.node(node).0) {
+            return fail(tla_ir::READ_DECLINED_REASON);
+        }
         match self.kind(node) {
             NodeKind::And(operands) => {
                 self.conjunction_prefix(node, operands, operands.len(), context, is_init, then)

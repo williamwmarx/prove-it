@@ -47,8 +47,6 @@ pub struct Front {
     pub startup_messages: Vec<StartupMessage>,
     /// How a simulation labels an initial state, where the front end knows.
     pub initial_label: Option<String>,
-    /// Why a trace printed through the ALIAS declines, where it does.
-    pub alias_decline: Option<String>,
 }
 
 /// The front as tla-front finds it: the model it lowers, or where TLC stops before the search, as
@@ -88,7 +86,6 @@ pub fn read_front(
             override_messages: Vec::new(),
             startup_messages: Vec::new(),
             initial_label: None,
-            alias_decline: None,
         }));
     }
     let describe = host.get_file_describer(files);
@@ -127,7 +124,6 @@ pub fn read_front(
                 startup_messages: lowered.startup_messages?,
                 override_messages: lowered.override_messages,
                 initial_label: lowered.initial_label,
-                alias_decline: lowered.alias_decline,
             }));
         }
         Err(FrontError::NotYet(reason)) => return Err(reason),

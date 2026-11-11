@@ -756,6 +756,9 @@ pub struct Compiler<'a> {
     // A definition compiled unprimed or primed, outside the initial predicate or in it, where a
     // variable's value isn't yet known to stream in order (`is_in_order`).
     definition_cache: HashMap<NodeId, [Option<(u64, Compiled)>; 4]>,
+    // The bodies of the definitions whose computing the engine declines where it happens
+    // (`Definition::READ_DECLINED`).
+    declined_bodies: HashSet<NodeId>,
     // The definitions TLC evaluates once at startup, each compiled to read the value it computed
     // then, once compiled.
     startup_definitions: HashMap<NodeId, Option<Compiled>>,
@@ -928,6 +931,7 @@ impl<'a> Compiler<'a> {
             is_tlc_cache_used: false,
             scope_contexts: HashMap::new(),
             normalized_definitions: OnceCell::new(),
+            declined_bodies: ir.get_declined_bodies(),
         }
     }
 
@@ -1257,6 +1261,12 @@ impl<'a> Compiler<'a> {
     }
 
     pub(crate) fn compile(&mut self, node: NodeId, context: &Context) -> Compiling<Compiled> {
+        if self.declined_bodies.contains(&self.node(node).0) {
+            return Ok(leaf(
+                eval(|_| Err(Bail(tla_ir::READ_DECLINED_REASON))),
+                Footprint::default(),
+            ));
+        }
         self.depth += 1;
         let result = if self.depth > MAXIMUM_EXPANSION {
             unsupported("expansion too deep")

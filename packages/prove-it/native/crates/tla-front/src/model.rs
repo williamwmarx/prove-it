@@ -86,9 +86,6 @@ pub struct LoweredModel {
     /// `Initial predicate` and where an unnamed one is written. None where the front end can't
     /// tell.
     pub initial_label: Option<String>,
-    /// Why a trace printed through the ALIAS declines, where the IR holds a value TLC computes
-    /// again as it prints each state.
-    pub alias_decline: Option<String>,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -261,8 +258,28 @@ fn lower_ranked(
         .collect();
     let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
     let lowered = (|| {
-        let index_alias_decline =
-            crate::lower::check_index_overrides(&config, &environment, Some(&evaluator))?;
+        let index_overrides = crate::lower::get_index_overrides(&config, &environment)?;
+        // The front end computes none of the names TLC computes as it doesn't.
+        evaluator.opaque_names.borrow_mut().extend(
+            crate::lower::get_repeated_reads(&environment)?
+                .into_keys()
+                .chain(
+                    index_overrides
+                        .iter()
+                        .map(|definition| definition.name.clone()),
+                )
+                .chain(
+                    environment
+                        .substitutions
+                        .iter()
+                        .filter(|(_, target)| {
+                            index_overrides
+                                .iter()
+                                .any(|definition| definition.name == **target)
+                        })
+                        .map(|(name, _)| name.clone()),
+                ),
+        );
         let constant_invariants = check_invariants(
             &config,
             &environment,
@@ -303,7 +320,7 @@ fn lower_ranked(
         );
         lowering.evaluator = Some(&evaluator);
         lowering.random_seed = options.random_seed;
-        lowering.alias_decline = index_alias_decline;
+        lowering.index_overrides = index_overrides;
         let version_text = options.version.map(|version| match version {
             TlcVersion::V1_7_4 => "1.7.4",
             TlcVersion::Master => "master",
@@ -391,7 +408,6 @@ fn lower_ranked(
                 })?
         };
         let branches = lowering.branches;
-        let alias_decline = lowering.alias_decline.take();
         let (ir, startup) = lowering.finish_indexing(model)?;
         // TLCGet("spec"), where an expression reads it; where the front end can't describe the
         // specification, the engine stops where TLC would read it.
@@ -482,7 +498,6 @@ fn lower_ranked(
                     .map(|name| name.to_string())
                     .collect(),
                 initial_label,
-                alias_decline,
             },
             startup,
         ))

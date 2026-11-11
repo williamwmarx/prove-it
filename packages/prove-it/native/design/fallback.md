@@ -594,10 +594,11 @@ list it, and runs a method that catches an exception up to its first return. It 
 overrides are `@TLAPlusOperator(warn = false)` or `@Evaluation(silent = true, warn = false)`
 methods TLC doesn't call as it loads them (a `final` one without parameters it calls). An override
 of a module the spec doesn't load, of a name the module doesn't define, or of an operator of
-another arity changes nothing. The run declines where the model reads an operator of the root
-module one replaces, where the operator's own definition prints or draws as TLC would have
-computed it at startup, and for any other module's operator one replaces; where only the ALIAS
-reads it, the run declines as it prints a trace. These shapes stay
+another arity changes nothing. The IR flags each operator of the root module, or of a module it
+extends, that one replaces (`Definition::READ_DECLINED`), and the run declines where it computes
+it, as it also does where it computes a substitute TLC computes again with its effects. It
+declines at startup where the operator's own definition prints or draws as TLC would have computed
+it then, and for an override of a standard module's operator or of an instanced module's. These shapes stay
 declined for good, because what TLC does with them depends on the JVM, not on the class file:
 
 - **A static initializer, a field's initializer or a superclass.** Java runs them as TLC first
