@@ -295,8 +295,10 @@ it from one that printed something else. Each is outside the corpus:
   `front-constants-full` branch declines them where the run computes the read
   (`Definition::READ_DECLINED`) and reads the index. Its 13,067 adversarial specs, against TLC at
   d8fb231, on the `front-constants-cases` branch, are the regression set for winning them back.
-  A substitute that reaches AssertEq, TLCGetOrDefault, TLCGetAndSet or PickSuccessor where the
-  run reads it stays declined, as it was before the engine checked them.
+  Where a substitute reaches AssertEq, TLCGetOrDefault, TLCGetAndSet or PickSuccessor, where a
+  constant definition or an assumption reads TLCExt's registers, or where only those builtins make
+  a constant definition impure, the IR marks the four `Builtin::DECLINED`, and the engine declines
+  them where it computes them, as it did before it checked them.
 
 #### Known wrong outputs
 
@@ -317,6 +319,7 @@ found these on main, which the branch prints alike:
 | A SYMMETRY definition that prints | `Sym == Print("sym", Permutations(S))` | `The sets "sym", and S have been defined…` | `The sets , and S …` |
 | A POSTCONDITION that sets a register | `Post == PrintT(IF TLCSet("exit", FALSE) THEN 1 ELSE 0)` | prints `1` once, then `The post condition Post cannot be a constant.` | prints `1` twice and passes |
 | An ALIAS the configuration substitutes a constant definition for | `D == TRUE` (or a record, a set, a tuple, `-1`, a LET), `CONSTANT C <- D`, `ALIAS C` | the alias's value | `_ALIASEvalError = "The alias C cannot be a constant."` (the TRUE case is fixed on the ALIAS branch, alias-trace-fixes) |
+| An ALIAS or a POSTCONDITION that is a literal, or that the configuration substitutes one for | `Alias == 3`, `ALIAS Alias`; `Post == "a"`, `POSTCONDITION Post` | `The alias Alias cannot be a constant.` or TLC's message for the postcondition | runs it as a definition (the constant-alias branch's `Definition::LITERAL` fixes it) |
 | A configuration substitute scoped to the root module | `CONSTANT C <- [M] E` in the cfg of module M | applies it | ignores it, with another verdict |
 | A failing configuration substitute scoped to an instanced module (`<-[Inner]`) | `C <- [Inner] E`, `E == 1 \div 0 = 1`, read through `INSTANCE Inner` | the INSTANCE frame, then the substitute's | the replaced definition's frame |
 | A conjunct of the specification the configuration substitutes a FALSE operator with arguments for | `P <- Q`, `Spec == P(0) /\ Init /\ [][Next]_x` | `The spec is trivially false because FALSE is false.` | passes with 0 states |

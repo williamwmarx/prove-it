@@ -327,7 +327,8 @@ impl Compiler<'_> {
         if name == "Print" || name == "PrintT" {
             return self.compile_print(name, operands, context);
         }
-        if self.is_native && name == "AssertEq" {
+        let is_checked = self.is_native && builtin.flags & Builtin::DECLINED == 0;
+        if is_checked && name == "AssertEq" {
             return self.compile_assert_eq(operands, context);
         }
         if name == "TLCGet" {
@@ -336,10 +337,10 @@ impl Compiler<'_> {
         if self.is_native && name == "TLCSet" {
             return self.compile_register(operands, context, true);
         }
-        if self.is_native && matches!(name, "TLCGetOrDefault" | "TLCGetAndSet") {
+        if is_checked && matches!(name, "TLCGetOrDefault" | "TLCGetAndSet") {
             return self.compile_get_or_default(operands, context, name == "TLCGetAndSet");
         }
-        if self.is_native && name == "PickSuccessor" {
+        if is_checked && name == "PickSuccessor" {
             return self.compile_pick_successor(operands);
         }
         if self.is_native && name == "TLCFP" {

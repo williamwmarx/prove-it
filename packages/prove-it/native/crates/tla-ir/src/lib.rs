@@ -106,6 +106,10 @@ impl Builtin {
     /// An operator a method of `tlc2.module.Naturals` computes rather than one of
     /// `tlc2.module.Integers`, which TLC loads over it where the spec uses Integers.
     pub const NATURALS_METHOD: i32 = 32;
+    /// A TLCExt builtin the engine declines where it computes it, as it did before it checked
+    /// them: one a configuration substitute, or a constant definition or an assumption TLC
+    /// computes as it starts, reaches.
+    pub const DECLINED: i32 = 64;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

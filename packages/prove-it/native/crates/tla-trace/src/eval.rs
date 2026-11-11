@@ -4422,6 +4422,9 @@ impl<'ir> Evaluator<'ir> {
             );
         }
         let name = self.name(builtin.name);
+        if builtin.flags & Builtin::DECLINED != 0 {
+            return fail(format!("the builtin {name}"));
+        }
         let arity = |count: usize| {
             if operands.len() == count {
                 Ok(())

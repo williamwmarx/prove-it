@@ -250,6 +250,18 @@ fn get_reached_children(
     }
 }
 
+/// The builtins that made a definition impure before the engine checked TLCExt's
+/// (`IMPURE_BUILTINS` in `dependencies.rs`).
+const EARLIER_IMPURE_BUILTINS: [&str; 7] = [
+    "Print",
+    "PrintT",
+    "Assert",
+    "JavaTime",
+    "RandomElement",
+    "TLCGet",
+    "TLCSet",
+];
+
 /// The TLCExt builtins the engine checks, which it declined before.
 const NEW_BUILTINS: [&str; 4] = [
     "AssertEq",
@@ -429,6 +441,9 @@ pub struct Lowering<'a> {
     pub branches: Option<usize>,
     /// The seed TLC seeds its generator with.
     pub random_seed: u64,
+    /// Whether the engine declines the TLCExt builtins it checks where it computes them
+    /// (`Builtin::DECLINED`).
+    is_tlcext_declined: bool,
     /// The evaluator of the constant parts of the liveness formula, without which they stay
     /// `NotYet`.
     pub evaluator: Option<&'a crate::eval::Evaluator<'a>>,
@@ -472,6 +487,7 @@ impl<'a> Lowering<'a> {
         Lowering {
             branches: None,
             random_seed: 0,
+            is_tlcext_declined: false,
             normalized: environment
                 .startup_definitions
                 .iter()
@@ -1498,11 +1514,7 @@ impl<'a> Lowering<'a> {
             }
             is_written && !reaches_in(&definition.body, environment, &variables, None)
         });
-        if is_register_constant {
-            return Err(FrontError::NotYet(
-                "a constant definition or an assumption that reads TLCExt's registers".into(),
-            ));
-        }
+        self.is_tlcext_declined |= is_register_constant;
         if environment
             .assumptions
             .iter()
@@ -1543,17 +1555,11 @@ impl<'a> Lowering<'a> {
                      {name} <- {target}"
                 )));
             }
-            // TLC computes a substitute again at each read, which the engine computes once: one
-            // that reaches a TLCExt builtin the engine checks declines, as it did before the
-            // engine checked them.
-            if reaches_effect(definition, environment, None, &NEW_BUILTINS, false)
-                && (is_read(name, config, environment, None)
-                    || is_read(target, config, environment, None))
-            {
-                return Err(FrontError::NotYet(format!(
-                    "a configuration substitute that reaches a TLCExt builtin: {name} <- {target}"
-                )));
-            }
+            // TLC computes a substitute again at each read, which the engine computes once: the
+            // engine declines the TLCExt builtins it checks where it computes them, as it did
+            // before it checked them.
+            self.is_tlcext_declined |=
+                reaches_effect(definition, environment, None, &NEW_BUILTINS, false);
             let is_checked = is_constant
                 && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
                 && !self.facts.is_constant_level(definition, environment);
@@ -1573,6 +1579,19 @@ impl<'a> Lowering<'a> {
             })
             .cloned()
             .collect();
+        // A definition only a TLCExt builtin the engine checks makes impure stays where the
+        // engine computes it, which declines those builtins, as before it checked them.
+        let (startup_definitions, checked): (Vec<_>, Vec<_>) =
+            startup_definitions.into_iter().partition(|definition| {
+                reaches_effect(
+                    definition,
+                    environment,
+                    None,
+                    &EARLIER_IMPURE_BUILTINS,
+                    false,
+                ) || !reaches_effect(definition, environment, None, &NEW_BUILTINS, false)
+            });
+        self.is_tlcext_declined |= !checked.is_empty();
         let definitions = startup_definitions
             .iter()
             .map(|definition| self.get_definition_index(definition))
@@ -1945,6 +1964,13 @@ impl<'a> Lowering<'a> {
         // Where the specification reaches the next-state relation through an INSTANCE, and what TLC
         // names the actions of the definitions INSTANCEs copy, of the definitions the IR holds, by
         // index.
+        if self.is_tlcext_declined {
+            for name in NEW_BUILTINS {
+                if let Some(index) = self.builtin_ids.get(name) {
+                    self.builtins[*index as usize].flags |= IrBuiltin::DECLINED;
+                }
+            }
+        }
         let next_substitution = self.next_substitution.take();
         model.next_substitution = self.write_range(
             next_substitution
