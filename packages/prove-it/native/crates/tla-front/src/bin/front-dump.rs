@@ -50,7 +50,6 @@ use tla_front::model::{ModelOptions, lower_model};
 use tla_front::order::TlcOrder;
 use tla_front::parser::{Parsed, parse_module, parse_sany_module, parse_tlapm_module};
 use tla_front::pcal::{PcalFatal, PcalSession};
-use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text};
 use tla_front::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 use tla_front::spec::{get_properties, get_specification};
 use tla_ir::{Model, Startup};
@@ -278,36 +277,6 @@ fn write_model_ir(out: &mut String, config: &str, spec_path: &Path, library: Opt
 }
 
 /// The IR of a model as `check.ts` lowers it, without TLC's actions, which the engine splits.
-/// What SANY prints for the spec at `path`, with each file described by its module's name and
-/// origin.
-/// With `root_extendees`, the post conditions' modules TLC adds to the root's EXTENDS.
-fn write_sany_text(out: &mut String, path: &Path, library: Option<&Path>, root_extendees: &[&str]) {
-    let load_module = |name: &str| load(path, library, name);
-    let describe_file = |name: &str, origin: ModuleOrigin| format!("{name}|{origin:?}");
-    match get_sany_text(
-        path,
-        &ReportOptions {
-            version: TlcVersion::Master,
-            file_name: None,
-            load_module: &load_module,
-            describe_file: &describe_file,
-            root_extendees,
-            is_xml_export: false,
-        },
-    ) {
-        Ok(sany) => {
-            out.push_str("{\"text\":");
-            write_js_string(out, &sany.text);
-            out.push_str(if sany.is_failed {
-                ",\"isFailed\":true}"
-            } else {
-                ",\"isFailed\":false}"
-            });
-        }
-        Err(error) => dump::environment(&Err(error)).write(out),
-    }
-}
-
 fn write_model_full(out: &mut String, config: &str, spec_path: &Path, library: Option<&Path>) {
     let options = ModelOptions {
         libraries: library.as_slice(),
@@ -421,7 +390,7 @@ fn main() -> ExitCode {
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
         "resolve" | "model" | "ir" | "order" | "model-ir" | "model-full" | "spec"
-        | "properties" | "sany-text" | "sany-text-trace" | "levels" => |_, _| {},
+        | "properties" | "levels" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, parse_module(source)),
         "sany-ast" => |out, source| {
@@ -472,7 +441,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|tlapm-ast|config|coded|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|sany-text|levels|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|tlapm-ast|config|coded|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|levels|time < paths"
             );
             return ExitCode::from(2);
         }
@@ -493,15 +462,6 @@ fn main() -> ExitCode {
                 Ok(_) => line.push_str("{\"isLevelChecked\":true}"),
                 Err(error) => dump::environment(&Err(error)).write(&mut line),
             }
-        } else if mode == "sany-text" {
-            write_sany_text(&mut line, Path::new(&path), library.as_deref(), &[]);
-        } else if mode == "sany-text-trace" {
-            write_sany_text(
-                &mut line,
-                Path::new(&path),
-                library.as_deref(),
-                &["_TLCTrace"],
-            );
         } else if mode == "model-full" {
             write_model_full(&mut line, &source, Path::new(spec_path), library.as_deref());
         } else if mode == "model-ir" {

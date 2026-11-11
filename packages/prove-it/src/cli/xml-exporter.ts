@@ -5,6 +5,7 @@ import { getNativeAddon, type NativeSanyXml } from "../engine/native";
 import { EngineUnavailableError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import { SANY_STANDARD_MODULES } from "../sany/modules";
+import { NOT_NATIVE_EXIT_CODE } from "./sany-text";
 import { createModuleLoader, printMissingFile } from "./shared";
 
 // The usage that XMLExporter.printUsage prints with UsageGenerator.
@@ -59,7 +60,6 @@ const XML_EXPORT_USAGE = (() => {
 const XML_EXPORT_EXIT_CODE = { argsParsingFailure: 1, specParsingFailure: 2 } as const;
 
 // What the CLI exits with where tla-front doesn't export the spec, as the native binary does.
-const NOT_NATIVE_EXIT_CODE = 1;
 
 const printXmlExportUsageError = (message: string) => {
   process.stderr.write(`ERROR: ${message}\n${XML_EXPORT_USAGE}`);
@@ -114,7 +114,7 @@ const exportNativeXml = (
   loadModule: (name: string) => string | undefined,
 ) => {
   const addon = getNativeAddon();
-  if (typeof addon === "string") throw new EngineUnavailableError(addon);
+  if (typeof addon === "string") throw new EngineUnavailableError(addon, false);
   const known = new Map<string, string | undefined>();
   const write = (): Exclude<NativeSanyXml, { kind: "needed" }> => {
     const result = addon.sanyXml(root, source, fileName, flags, [...known]);

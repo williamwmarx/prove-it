@@ -50,14 +50,15 @@ const getEngineLines = (runtime: string, cli: string, env: Record<string, string
 
 describe("the native engine", () => {
   it(
-    "is left alone with PROVE_IT_ENGINE=0, which needs no engine",
+    "needs the engine for SANY's report with PROVE_IT_ENGINE=0, which leaves the search alone",
     () => {
       const run = checkCommit("bun", SOURCE_CLI, {
         PROVE_IT_ENGINE: "0",
         PROVE_IT_ENGINE_ADDON: MISSING,
       });
-      expect({ status: run.status, stderr: run.stderr }).toEqual({ status: 0, stderr: "" });
-      expect(run.stdout).toContain("251 distinct states found");
+      expect(run.status).toBe(255);
+      expect(run.stderr).toContain(`The native engine is unavailable: can't load ${MISSING}: `);
+      expect(run.stderr).not.toContain("PROVE_IT_ENGINE=0");
     },
     SPAWN_LIMIT_MS,
   );
@@ -109,12 +110,12 @@ describe("the native engine", () => {
   );
 
   it(
-    "exits 255 where it can't load the engine, naming PROVE_IT_ENGINE=0",
+    "exits 255 where it can't load the engine, which SANY's report needs",
     () => {
       const run = checkCommit("bun", SOURCE_CLI, { PROVE_IT_ENGINE_ADDON: MISSING });
       expect(run.status).toBe(255);
       expect(run.stderr).toContain(`The native engine is unavailable: can't load ${MISSING}: `);
-      expect(run.stderr).toContain("or set PROVE_IT_ENGINE=0 to check with the interpreter.");
+      expect(run.stderr).not.toContain("PROVE_IT_ENGINE=0");
     },
     SPAWN_LIMIT_MS,
   );
