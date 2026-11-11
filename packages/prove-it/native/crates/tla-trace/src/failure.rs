@@ -1252,9 +1252,11 @@ impl<'ir> Rebuilder<'ir> {
                     "replaying the expansion without the fingerprints the search found".into(),
                 ));
             };
+            // TLC reports the message of the evaluation that failed, so what evaluating it again
+            // printed isn't printed again; its replay skips the failing state, which it had
+            // added to its set (`Worker#isSeenState`), and checks no invariant there.
             let replayed = replay_expansion(evaluator, path, &known)?;
-            let mut printed = printed;
-            printed.append(&mut evaluator.printed);
+            let printed = std::mem::take(&mut evaluator.printed);
             let (call_stack, fingerprint, exit_code) = match replayed.failure {
                 None => (Vec::new(), None, FAILURE_SAFETY_EVAL),
                 Some(ReplayFailure::Fingerprint(fingerprint)) => {

@@ -133,6 +133,27 @@ fn prints_as_tlc_does_at_a_stop_in_a_model_with_temporal_properties() {
             11,
             "Error: Deadlock reached.\n0\n1\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 1\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n0\n1\n4 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\n",
         ),
+        // an invariant that prints and then fails: TLC reports the message of that evaluation, and its replay skips the failing state
+        (
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == PrintT(<<\"pi\", x>>) /\\ 10 \\div (2 - x) > 0\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nP == <>(x = 3)\nPI == PrintT(<<\"pi\", x>>)",
+            "SPECIFICATION Spec\nPROPERTY P\nINVARIANT Inv\n",
+            76,
+            "<<\"pi\", 1>>\n<<\"pi\", 2>>\nError: Evaluating invariant Inv failed.\nThe second argument of \\div is 0.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\nThe average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).\n",
+        ),
+        // and two successors, after an invariant that prints
+        (
+            "Init == x = 0\nNext == x < 3 /\\ (x' = x + 1 \\/ x' = x + 2)\nInv == 10 \\div (2 - x) > 0\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nP == <>(x = 3)\nPI == PrintT(<<\"pi\", x>>)",
+            "SPECIFICATION Spec\nPROPERTY P\nINVARIANT PI\nINVARIANT Inv\n",
+            76,
+            "<<\"pi\", 1>>\n<<\"pi\", 2>>\nError: Evaluating invariant Inv failed.\nThe second argument of \\div is 0.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 43 of module M>\nx = 2\n\n3 states generated, 3 distinct states found, 1 states left on queue.\nThe depth of the complete state graph search is 2.\nThe average outdegree of the complete state graph is 2 (minimum is 2, the maximum 2 and the 95th percentile is 2).\n",
+        ),
+        // and one that fails on a condition
+        (
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ TRUE\nP == []<>(x >= 0)\nPI == IF x = 2 THEN PrintT(\"pi2\") ELSE TRUE\nInv == 10 \\div (2 - x) > 0",
+            "SPECIFICATION Spec\nPROPERTY P\nINVARIANT PI\nINVARIANT Inv\n",
+            76,
+            "\"pi2\"\nError: Evaluating invariant Inv failed.\nThe second argument of \\div is 0.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\nThe average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).\n",
+        ),
     ];
     for (index, (definitions, config, code, expected)) in cases.iter().enumerate() {
         for threads in ["1", "4"] {
