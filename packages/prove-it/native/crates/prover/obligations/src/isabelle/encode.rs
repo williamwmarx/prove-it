@@ -746,21 +746,33 @@ pub struct IsabelleProof {
 
 /// Isabelle.thy_init, thy_write and thy_close.
 pub fn encode_isabelle_theory(name: &str, proofs: &[IsabelleProof]) -> Result<String> {
+    join_isabelle_theory(name, proofs.iter().map(write_isabelle_proof).collect())
+}
+
+/// Isabelle.thy_write: a proof's lines of the theory.
+pub fn write_isabelle_proof(proof: &IsabelleProof) -> Result<Vec<String>> {
+    let id = proof.id;
+    Ok(vec![
+        format!("lemma ob'{id}:"),
+        format!(
+            "{}(is \"PROP ?ob'{id}\")",
+            print_lemma(&proof.sequent)?.text
+        ),
+        "proof -".to_owned(),
+        format!("ML_command \\<open> writeln \"*** TLAPS ENTER {id}\"; \\<close>"),
+        format!("show \"PROP ?ob'{id}\""),
+        format!("using assms by {}", proof.tactic),
+        format!("ML_command \\<open> writeln \"*** TLAPS EXIT {id}\"; \\<close> qed"),
+    ])
+}
+
+/// `encode_isabelle_theory` from each proof's `write_isabelle_proof`, which is a function of the
+/// proof alone, so a caller can write each proof as it makes it and keep only its lines. It fails
+/// as `encode_isabelle_theory` does: with the header's error, else the first proof's.
+pub fn join_isabelle_theory(name: &str, proofs: Vec<Result<Vec<String>>>) -> Result<String> {
     let mut lines = get_theory_header(name, true)?;
     for proof in proofs {
-        let id = proof.id;
-        lines.extend([
-            format!("lemma ob'{id}:"),
-            format!(
-                "{}(is \"PROP ?ob'{id}\")",
-                print_lemma(&proof.sequent)?.text
-            ),
-            "proof -".to_owned(),
-            format!("ML_command \\<open> writeln \"*** TLAPS ENTER {id}\"; \\<close>"),
-            format!("show \"PROP ?ob'{id}\""),
-            format!("using assms by {}", proof.tactic),
-            format!("ML_command \\<open> writeln \"*** TLAPS EXIT {id}\"; \\<close> qed"),
-        ]);
+        lines.extend(proof?);
     }
     lines.extend(["end".to_owned(), String::new()]);
     Ok(lines.join("\n"))

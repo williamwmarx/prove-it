@@ -866,6 +866,11 @@ impl<State: Clone, Step: FnMut(&State, &Hyp, &Hyp) -> Result<(State, Option<Hyp>
         }
     }
 
+    /// Forgets every mapped prefix.
+    pub fn clear(&mut self) {
+        self.empty.next.replace(PrefixTable::new());
+    }
+
     /// Maps `keys`, with `inputs` (the keys themselves by default) as what each step reads.
     pub fn map(&mut self, keys: &[Hyp], inputs: Option<&[Hyp]>) -> Result<MappedContext<State>> {
         let inputs = inputs.unwrap_or(keys);
