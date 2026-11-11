@@ -167,6 +167,58 @@ fn declines_a_dump_after_a_dump_dot() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// TLC writes the steps of the state an action fails on again as it reports the failure, and keys
+// an action's parameters by name, so an instance's parameter and its operator's of one name are
+// one: both decline.
+#[test]
+fn declines_a_dump_dot_it_doesnt_follow() {
+    for (test, spec, reason) in [
+        (
+            "dot-failing-action",
+            "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x\nInit == x = 0\nA == x' \\in {x + 1, x + 7}\nB == x' = 10 \\div (x - 1)\nNext == A \\/ B\n====\n",
+            "-dump dot of a search an action fails in",
+        ),
+        (
+            "dot-instance-parameters",
+            "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x\nI(k) == INSTANCE Other\nInit == x = 0\nNext == I(1)!A \\/ I(2)!B(7) \\/ (x = 7 /\\ x' = 8)\n====\n",
+            "-dump dot of an instance's action with parameters",
+        ),
+    ] {
+        let directory =
+            std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        std::fs::write(
+            directory.join("Other.tla"),
+            "---- MODULE Other ----\nEXTENDS Naturals\nVARIABLE x\nA == x < 2 /\\ x' = x + 1\nB(k) == x = 2 /\\ x' = k\n====\n",
+        )
+        .expect("a module");
+        std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
+        std::fs::write(directory.join("Stop.cfg"), "INIT Init\nNEXT Next\n")
+            .expect("a configuration");
+        let output = common::run(
+            &directory,
+            &[
+                "-workers",
+                "1",
+                "-fp",
+                "1",
+                "-dump",
+                "dot,colorize,actionlabels",
+                "g",
+                "-noTE",
+                "Stop",
+            ],
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+        assert_eq!(output.status.code(), Some(1), "{test}: {}", stdout(&output));
+        assert!(
+            stderr(&output).contains(reason),
+            "{test}: {}",
+            stderr(&output)
+        );
+    }
+}
+
 // TLC's workers write the graph's states and edges in the order they reach them, which differs
 // from run to run.
 #[test]

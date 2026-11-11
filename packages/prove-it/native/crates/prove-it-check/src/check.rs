@@ -1822,6 +1822,11 @@ fn check_spec(
                 {
                     Err("a failure with a POSTCONDITION or -dumpTrace".to_string())
                 }
+                // TLC writes the steps of the state an action fails on again as it finds the
+                // failure, which the graph doesn't follow.
+                ViolationKind::Error {
+                    site: ErrorSite::Next | ErrorSite::NextAtom { .. },
+                } if dot.is_some() => Err("-dump dot of a search an action fails in".to_string()),
                 ViolationKind::Error { site }
                     if config.alias.is_some()
                         && !is_initial_site(site)

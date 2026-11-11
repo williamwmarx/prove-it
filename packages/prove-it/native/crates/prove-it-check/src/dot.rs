@@ -287,6 +287,11 @@ fn get_signature(ir: &Ir, action: &tla_ir::Action) -> Result<String, &'static st
     if name == UNNAMED_ACTION {
         return Ok(name.to_string());
     }
+    // TLC keys an action's parameters by name (`Action.getParameters`), so a parameterised
+    // INSTANCE's parameter and the operator's own of the same name are one.
+    if name.contains('!') && label[name.len()..].starts_with('(') {
+        return Err("-dump dot of an instance's action with parameters");
+    }
     let parameters = label
         .strip_prefix(name)
         .and_then(|rest| {
