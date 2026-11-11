@@ -6,8 +6,8 @@ use std::sync::mpsc;
 use tla_engine::clock::Instant;
 
 use tla_engine::search::{
-    Delegated, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome, Settings, Violation,
-    ViolationKind, search,
+    Continued, ContinuedTrace, Delegated, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome,
+    Settings, Violation, ViolationKind, search,
 };
 use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, is_printable_normalized, write_value};
@@ -17,6 +17,7 @@ use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
+use crate::jar::{get_tools_jar, is_174};
 use crate::messages::{self as code, Level, Output, Printer};
 use crate::stack::{alongside, on_search_stack};
 use crate::summary::{
@@ -26,7 +27,7 @@ use crate::summary::{
 use crate::time::format_duration;
 use crate::trace::{
     PostconditionRun, Postconditions, PrintedTrace, check_postconditions, format_print,
-    format_texts, rebuild_accepted, rebuild_trace,
+    format_texts, rebuild_accepted, rebuild_continued, rebuild_trace,
 };
 use crate::xml_exporter::run_xml_exporter;
 use tla_front::TlcVersion;
@@ -52,6 +53,16 @@ const NOT_NATIVE: i32 = 1;
 // How much of the -dump file's text the relay holds before it sends it to be written.
 const DUMP_PART_BYTES: usize = 1 << 20;
 
+/// The exit codes of a run that may stop at a counterexample: a deadlock, a violation of an
+/// invariant, an action property or a temporal property, or a failure evaluating a state.
+const COUNTEREXAMPLE_EXITS: [i32; 5] = [
+    DEADLOCK,
+    SAFETY_VIOLATION,
+    LIVENESS_VIOLATION,
+    crate::failure::FAILURE_SPEC_EVAL,
+    crate::failure::ERROR,
+];
+
 const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
 
 /// Runs the command line `args` as TLC (or SANY's XMLExporter) would, writing to `output`, and
@@ -60,11 +71,19 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
     if args.first().is_some_and(|arg| arg == "tlapm") {
         return not_native(output, "tlapm");
     }
-    let Some(launch) = get_java_launch(args) else {
+    let Some(mut launch) = get_java_launch(args) else {
         return check_specs(args, &Java::default(), false, output);
     };
-    if launch.java.class_path.is_some() {
-        return not_native(output, "reading the version of a tla2tools.jar");
+    // Without -Dtla-ts.tlc, the jar on the class path picks the TLC to reproduce.
+    let jar = launch.java.class_path.as_deref().and_then(get_tools_jar);
+    if let (None, Some(jar)) = (launch.java.tlc_version, jar) {
+        launch.java.tlc_version = match is_174(output.host, jar) {
+            Ok(true) => Some(TlcVersion::V1_7_4),
+            Ok(false) => Some(TlcVersion::Master),
+            Err(reason) => {
+                return not_native(output, &format!("the version of {jar}: {reason}"));
+            }
+        };
     }
     match launch.main_class.as_str() {
         "tlc2.TLC" => match &launch.java.unmodelled_property {
@@ -74,7 +93,9 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
         "tla2sany.xml.XMLExporter" => match &launch.java.unmodelled_property {
             Some(property) => not_native(output, &format!("the system property {property}")),
             // TLC 1.7.4's XMLExporter is retired, and only master's is ported.
-            None if launch.java.is_174 => not_native(output, "TLC 1.7.4"),
+            None if launch.java.tlc_version == Some(TlcVersion::V1_7_4) => {
+                not_native(output, "TLC 1.7.4")
+            }
             None => run_xml_exporter(&launch.args, output)
                 .unwrap_or_else(|reason| not_native(output, &reason)),
         },
@@ -102,7 +123,7 @@ fn file_name(path: &str) -> String {
 
 // With `is_tlc` the command line is `tlc2.TLC`'s, which names one module.
 fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'_>) -> i32 {
-    if java.is_174 {
+    if java.tlc_version == Some(TlcVersion::V1_7_4) {
         return not_native(output, "TLC 1.7.4");
     }
     let parsed = match Parsed::parse(args, is_tlc) {
@@ -180,7 +201,21 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             let stem = name.strip_suffix(".tla").unwrap_or(&name);
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
-        exit_codes.push(check_spec(path, &parsed, java, &mut printer));
+        let exit_code = check_spec(path, &parsed, java, &mut printer);
+        // Where TLC records the trace for its trace exploration spec, a counterexample makes it
+        // write the trace's file beside the spec (`_TLCTraceSilent`), and, for one of two or more
+        // states, the spec (`TraceExplorationSpec.generate`), which the binary doesn't yet. The
+        // other specs are checked as after any spec it declines.
+        exit_codes.push(
+            if printer.is_trace_recorded && COUNTEREXAMPLE_EXITS.contains(&exit_code) {
+                report_not_native(
+                    &mut printer,
+                    "the trace exploration spec TLC writes for a counterexample",
+                )
+            } else {
+                exit_code
+            },
+        );
     }
     exit_codes
         .into_iter()
@@ -255,7 +290,7 @@ enum Event {
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
     /// TLC checks the temporal properties part way through the search: of how many branches, on
-    /// the graph of how many states.
+    /// behavior graphs of how many states in all.
     LivenessStarted(u64, u64),
     LivenessFinished,
     /// What Print or PrintT printed, or nothing when TLC's text isn't known.
@@ -268,6 +303,21 @@ enum Event {
     Periodic,
     /// A part of the `-dump` file's text, in order, for the host to append.
     Dumped(String),
+    /// Under -continue, a violation the search went on past, as TLC reports it.
+    Continued(Box<ContinuedReport>),
+    /// The relay can't print what TLC prints next, for this reason: the search ends as not
+    /// native.
+    Declined(String),
+}
+
+/// A violation TLC reports under -continue and goes on past: its headline, and its trace with
+/// each step's label, or the initial state alone.
+struct ContinuedReport {
+    code: u32,
+    headline: String,
+    trace: PrintedTrace,
+    labels: Vec<String>,
+    is_initial: bool,
 }
 
 struct Relay<'ir> {
@@ -278,6 +328,8 @@ struct Relay<'ir> {
     /// its progress; the search ends there, if it gets that far.
     is_periodic: bool,
     is_periodic_reached: bool,
+    /// Whether the relay sent `Event::Declined`.
+    is_declined: bool,
     /// Whether `-dump` writes each state the search found, as TLC's `StateWriter` does: the relay
     /// sends the text in parts (`Event::Dumped`) for the host to write.
     is_dumped: bool,
@@ -356,7 +408,56 @@ impl Relay<'_> {
 
 impl Reporter for Relay<'_> {
     fn is_cancelled(&self) -> bool {
-        self.is_misprinted || self.is_periodic_reached
+        self.is_misprinted || self.is_periodic_reached || self.is_declined
+    }
+
+    // TLC prints each violation with its trace as it finds it under -continue (`printTrace`).
+    fn continued(&mut self, continued: ContinuedTrace<'_>) {
+        let ir = self.ir;
+        let (kind, code, headline) = match continued.kind {
+            Continued::InitialInvariant(owner) => (
+                ViolationKind::InitialInvariant(owner),
+                code::INVARIANT_VIOLATED_INITIAL,
+                invariant_name(ir, owner)
+                    .map(|name| format!("Invariant {name} is violated by the initial state:")),
+            ),
+            Continued::Invariant(owner) => (
+                ViolationKind::Invariant(owner),
+                code::INVARIANT_VIOLATED_BEHAVIOR,
+                invariant_name(ir, owner).map(|name| format!("Invariant {name} is violated.")),
+            ),
+            Continued::ActionProperty(position) => (
+                ViolationKind::ActionProperty(position),
+                code::ACTION_PROPERTY_VIOLATED_BEHAVIOR,
+                action_property_headline(ir, position),
+            ),
+        };
+        let is_initial = matches!(kind, ViolationKind::InitialInvariant(_));
+        let report = headline.map_err(String::from).and_then(|headline| {
+            let trace = rebuild_continued(ir, &continued, &kind, self.is_tool)?;
+            let labels = trace_labels(ir, &trace)?
+                .into_iter()
+                .map(String::from)
+                .collect();
+            Ok(ContinuedReport {
+                code,
+                headline,
+                trace,
+                labels,
+                is_initial,
+            })
+        });
+        match report {
+            Ok(report) => {
+                let _ = self.sender.send(Event::Continued(Box::new(report)));
+            }
+            Err(reason) => {
+                self.is_declined = true;
+                let _ = self.sender.send(Event::Declined(format!(
+                    "a trace under -continue: {reason}"
+                )));
+            }
+        }
     }
 
     fn initial_states_started(&mut self) {
@@ -384,8 +485,8 @@ impl Reporter for Relay<'_> {
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn liveness_started(&mut self, branches: u64, expanded: u64, _counts: [u64; 3]) {
-        let _ = self.sender.send(Event::LivenessStarted(branches, expanded));
+    fn liveness_started(&mut self, branches: u64, _expanded: u64, states: u64, _counts: [u64; 3]) {
+        let _ = self.sender.send(Event::LivenessStarted(branches, states));
     }
 
     fn liveness_finished(&mut self) {
@@ -684,9 +785,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         None => return report_not_native(printer, "a configuration file the front end rejects"),
     };
-    if args.has("-continue") {
-        return report_not_native(printer, "-continue");
-    }
     let front = match read_front(
         spec_path,
         config_text.as_deref().unwrap_or_default(),
@@ -696,7 +794,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             libraries: &java.libraries,
             temporary: java.temporary_directory.as_deref(),
             metadir: args.first("-metadir"),
+            jar: java.class_path.as_deref().and_then(get_tools_jar),
             is_174: false,
+            is_trace_recorded: is_trace_recorded(args),
         },
         printer.host,
         printer.is_tool,
@@ -759,13 +859,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
     }
     if let Some(sany) = &front.sany {
-        if is_trace_recorded(args) {
-            return report_not_native(
-                printer,
-                "SANY's report of the trace exploration spec TLC parses with the spec",
-            );
-        }
         print_sany(printer, sany);
+        printer.is_trace_recorded = is_trace_recorded(args);
     }
     // TLC loads the classes of the modules before it computes the constant definitions.
     for message in &front.override_messages {
@@ -800,6 +895,43 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     if is_dumped && !ir.model.live_formula.is_empty() {
         return report_not_native(printer, "-dump with temporal properties");
     }
+    // Under -continue TLC reports each invariant and action property violated with its trace and
+    // goes on. Where it checks more than those, the binary doesn't follow.
+    let is_continued = args.has("-continue");
+    if is_continued {
+        let model = &ir.model;
+        let is_built_in = |names: &[&str]| {
+            ir.builtins
+                .iter()
+                .any(|builtin| names.contains(&&*ir.texts[builtin.name as usize]))
+        };
+        let unfollowed = if !model.live_formula.is_empty() {
+            Some("-continue with temporal properties")
+        } else if model.view.is_some() || model.startup.symmetry.is_some() {
+            Some("-continue under SYMMETRY or a VIEW")
+        } else if !model.postconditions.is_empty() {
+            Some("-continue with a POSTCONDITION")
+        } else if is_built_in(&["Print", "PrintT", "TLCSet"]) {
+            // TLC prints what the spec prints as it evaluates, before the violation it then
+            // reports, and sets its registers again as it rebuilds each trace (`printTrace`),
+            // which the search goes on reading.
+            Some("-continue with a spec that prints or sets TLC's registers")
+        } else if is_built_in(&[
+            "RandomElement",
+            "RandomSubset",
+            "RandomSetOfSubsets",
+            "RandomSubsetSet",
+        ]) {
+            // TLC fails to recover the traces of a spec that draws at random as it goes on
+            // (RandomElement, RandomSubsetNext): "Failed to recover the initial state".
+            Some("-continue with random draws")
+        } else {
+            None
+        };
+        if let Some(reason) = unfollowed {
+            return report_not_native(printer, reason);
+        }
+    }
     let settings = Settings {
         is_violation_reported: true,
         workers,
@@ -818,6 +950,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .get_variable("PROVE_IT_TEST_LIVE_CHECK_AT")
             .and_then(|at| at.parse().ok()),
         is_dumped,
+        is_continued,
         large_region_advice: printer.host.large_region_advice(),
         ..Settings::default()
     };
@@ -832,6 +965,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let mut is_misprinted = false;
     let mut is_periodic_reached = false;
     let mut is_dump_unwritten = false;
+    let mut declined = None;
     let is_periodic = config.periodic.is_some();
     let ir_ref = &ir;
     let (outcome, assumed_printed, dumped) = alongside(
@@ -842,6 +976,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 is_misprinted: false,
                 is_periodic,
                 is_periodic_reached: false,
+                is_declined: false,
                 is_dumped,
                 dumped: None,
                 ir,
@@ -884,9 +1019,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         print_progress(printer, &statistics, Some(start));
                         printer.flush();
                     }
-                    Event::LivenessStarted(branches, expanded) => {
-                        checking =
-                            Some(print_liveness_check(printer, branches, expanded, "current"));
+                    Event::LivenessStarted(branches, states) => {
+                        checking = Some(print_liveness_check(printer, branches, states, "current"));
                     }
                     Event::LivenessFinished => {
                         if let Some(checking) = checking.take() {
@@ -906,6 +1040,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         is_periodic_reached = true;
                         break;
                     }
+                    Event::Continued(report) => print_continued(printer, &report),
+                    Event::Declined(reason) => {
+                        declined = Some(reason);
+                        break;
+                    }
                     Event::Dumped(text) => {
                         let path = Path::new(dump.as_deref().unwrap_or_default());
                         is_dump_unwritten |= !printer.host.write_file(path, &text, true);
@@ -915,6 +1054,9 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             drop(receiver);
         },
     );
+    if let Some(reason) = declined {
+        return report_not_native(printer, &reason);
+    }
     if is_dump_unwritten {
         return report_not_native(printer, "-dump into a file it can't write");
     }
@@ -939,6 +1081,16 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             | SearchOutcome::ConfigError { .. }
             | SearchOutcome::AssumptionFailed { .. }
     );
+    // Under -continue TLC reports an error or a deadlock otherwise than it does without it, with
+    // other traces and exit codes, which the binary doesn't follow.
+    if is_continued
+        && !matches!(
+            outcome,
+            SearchOutcome::Complete { .. } | SearchOutcome::Declined(_)
+        )
+    {
+        return report_not_native(printer, "-continue to a search that stops");
+    }
     // Where an invariant fails to evaluate, TLC expands the state again to print the call stack,
     // and writes the new states it finds then too.
     let is_replayed = matches!(
@@ -1298,11 +1450,18 @@ fn print_liveness_started(
 ) -> Instant {
     print_progress(printer, statistics, None);
     let branches = branches as u64;
-    print_liveness_check(printer, branches, statistics.distinct, "complete")
+    // Each branch's behavior graph has every state once the search is complete.
+    print_liveness_check(
+        printer,
+        branches,
+        branches * statistics.distinct,
+        "complete",
+    )
 }
 
-/// TLC checks the temporal properties of its branches on the graph of `states` states, of the
-/// complete or the current state space: returns when it started.
+/// TLC checks the temporal properties of its branches on behavior graphs of `states` states in
+/// all, summed over the branches, of the complete or the current state space: returns when it
+/// started.
 fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space: &str) -> Instant {
     let checking = Instant::now();
     let branch_text = if branches > 1 {
@@ -1314,8 +1473,7 @@ fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space
         code::CHECKING_TEMPORAL,
         Level::None,
         &format!(
-            "Checking {branch_text}temporal properties for the {space} state space with {} total distinct states at ({})",
-            branches * states,
+            "Checking {branch_text}temporal properties for the {space} state space with {states} total distinct states at ({})",
             printer.date()
         ),
     );
@@ -1420,28 +1578,13 @@ fn print_violation(
         }
         _ => None,
     };
-    // An owner past the configuration's invariants is a property checked as one.
     let model = &ir.model;
-    let invariant_name = |owner: usize| {
-        let name = match owner.checked_sub(model.invariants.len()) {
-            None => model.invariants[owner].root.name,
-            Some(property) => *model
-                .property_invariant_names
-                .get(property)
-                .ok_or(NOT_IN_IR)?,
-        };
-        Ok(&ir.texts[name as usize])
-    };
-    let action_label = |action: u32| {
-        let action = model.actions.get(action as usize).ok_or(NOT_IN_IR)?;
-        Ok(ir.texts[action.label as usize].as_ref())
-    };
     let (code, text, exit_code) = match violation.kind {
         ViolationKind::InitialInvariant(owner) => (
             code::INVARIANT_VIOLATED_INITIAL,
             format!(
                 "Invariant {} is violated by the initial state:",
-                invariant_name(owner)?
+                invariant_name(ir, owner)?
             ),
             SAFETY_VIOLATION,
         ),
@@ -1458,8 +1601,13 @@ fn print_violation(
         ),
         ViolationKind::Invariant(owner) => (
             code::INVARIANT_VIOLATED_BEHAVIOR,
-            format!("Invariant {} is violated.", invariant_name(owner)?),
+            format!("Invariant {} is violated.", invariant_name(ir, owner)?),
             SAFETY_VIOLATION,
+        ),
+        ViolationKind::ActionProperty(position) => (
+            code::ACTION_PROPERTY_VIOLATED_BEHAVIOR,
+            action_property_headline(ir, position)?,
+            LIVENESS_VIOLATION,
         ),
         ViolationKind::Deadlock { .. } => {
             (code::DEADLOCK_REACHED, "Deadlock reached.".into(), DEADLOCK)
@@ -1517,7 +1665,7 @@ fn print_violation(
             }
             // TLC labels the step back into the cycle (`printBackToState`), but a stuttering one.
             let label = match loop_label.or(trace.loop_action) {
-                Some(action) => Some(action_label(action)?),
+                Some(action) => Some(action_label(ir, action)?),
                 None if is_stuttering => None,
                 None => return Err("a step back into the cycle whose action the trace lacks"),
             };
@@ -1525,21 +1673,10 @@ fn print_violation(
         }
         _ => None,
     };
-    // TLC labels each step with the action it finds taking it as it rebuilds the trace.
-    let get_labels = |trace: &PrintedTrace| {
-        let mut labels = vec!["Initial predicate"];
-        for state in trace.states.iter().skip(1) {
-            let action = state
-                .action
-                .ok_or("a step whose action the rebuilt trace lacks")?;
-            labels.push(action_label(action)?);
-        }
-        Ok::<_, &'static str>(labels)
-    };
-    let labels = get_labels(&trace)?;
+    let labels = trace_labels(ir, &trace)?;
     let accepted = match accepted {
         Some((accepted, headline)) => {
-            let labels = get_labels(&accepted)?;
+            let labels = trace_labels(ir, &accepted)?;
             Some((accepted, headline.ok_or(NOT_IN_IR)?, labels))
         }
         None => None,
@@ -1720,6 +1857,83 @@ fn print_violation(
 }
 
 // A trace's states, each after what the spec printed as TLC rebuilt it.
+// How TLC names an invariant: an owner past the configuration's invariants is a property checked
+// as one.
+fn invariant_name(ir: &tla_ir::Ir, owner: usize) -> Result<&str, &'static str> {
+    let model = &ir.model;
+    let name = match owner.checked_sub(model.invariants.len()) {
+        None => model.invariants[owner].root.name,
+        Some(property) => *model
+            .property_invariant_names
+            .get(property)
+            .ok_or(NOT_IN_IR)?,
+    };
+    Ok(&ir.texts[name as usize])
+}
+
+// TLC's report of a step that violates the action property at this position.
+fn action_property_headline(ir: &tla_ir::Ir, position: usize) -> Result<String, &'static str> {
+    let property = ir.model.action_properties.get(position).ok_or(NOT_IN_IR)?;
+    Ok(format!(
+        "Action property {} is violated.",
+        ir.texts[property.name as usize]
+    ))
+}
+
+fn action_label(ir: &tla_ir::Ir, action: u32) -> Result<&str, &'static str> {
+    let action = ir.model.actions.get(action as usize).ok_or(NOT_IN_IR)?;
+    Ok(&ir.texts[action.label as usize])
+}
+
+// TLC labels each step with the action it finds taking it as it rebuilds the trace.
+fn trace_labels<'i>(
+    ir: &'i tla_ir::Ir,
+    trace: &PrintedTrace,
+) -> Result<Vec<&'i str>, &'static str> {
+    let mut labels = vec!["Initial predicate"];
+    for state in trace.states.iter().skip(1) {
+        let action = state
+            .action
+            .ok_or("a step whose action the rebuilt trace lacks")?;
+        labels.push(action_label(ir, action)?);
+    }
+    Ok(labels)
+}
+
+// A violation under -continue as TLC prints it, without the statistics that end a stop: an
+// initial state in the headline's message, any other with its trace.
+fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
+    let trace = &report.trace;
+    if report.is_initial {
+        let state = trace.states.first().map_or("", |state| &state.text);
+        printer.print(
+            report.code,
+            Level::Error,
+            &format!("{}\n{state}", report.headline),
+        );
+        return;
+    }
+    printer.print(report.code, Level::Error, &report.headline);
+    for line in trace
+        .states
+        .first()
+        .into_iter()
+        .flat_map(|state| &state.output)
+    {
+        printer.line(line);
+    }
+    printer.print(
+        code::BEHAVIOR_UP_TO_THIS_POINT,
+        Level::Error,
+        "The behavior up to this point is:",
+    );
+    let labels: Vec<&str> = report.labels.iter().map(String::as_str).collect();
+    print_states(printer, trace, &labels);
+    for line in &trace.trace_output {
+        printer.line(line);
+    }
+}
+
 fn print_states(printer: &mut Printer, trace: &PrintedTrace, labels: &[&str]) {
     for (position, (state, label)) in trace.states.iter().zip(labels).enumerate() {
         if position > 0 {
@@ -2008,6 +2222,7 @@ mod tests {
             is_warning_enabled: true,
             is_spec_described: true,
             random_seed: 0,
+            is_trace_recorded: false,
         };
         let bytes =
             tla_front::model::lower_model(&spec, "SPECIFICATION Spec\nPROPERTY Prop\n", &options)

@@ -223,22 +223,16 @@ mod tests {
     use crate::pure::object_logic::atomize_prems_tac;
     use crate::pure::raw_simplifier::{add_prems, extract_safe_rrules, insert_rrule, mk_procrule};
     use crate::pure::rewriter::rewrite_cterm;
-    use crate::pure::simp_testing::{SimpLogic, fixture_goal, get_fact, get_simpset, simp_logic};
+    use crate::pure::simp_testing::fixture_goal;
     use crate::pure::term::{Term, maxidx_of_term};
     use crate::pure::testing::{attempt, check_problems, parse_term};
     use crate::pure::thm::tests::{digest, many, one, show_thm};
     use crate::pure::thm::{assume, axiom_thm, trivial};
+    use crate::tla::classical_setup::get_fact;
+    use crate::tla::context::ATOMIZE_RULES;
+    use crate::tla::logic::{TlaLogic, load_logic};
+    use crate::tla::simpdata::get_simpset;
     use prove_decide::Limits;
-
-    const ATOMIZE_RULES: [&str; 7] = [
-        "Zenon.atomize_object_bAll",
-        "Zenon.atomize_meta_bAll",
-        "PredicateLogic.atomize_conj",
-        "PredicateLogic.atomize_eq",
-        "PredicateLogic.atomize_not",
-        "PredicateLogic.atomize_imp",
-        "PredicateLogic.atomize_all",
-    ];
 
     fn mode_of(code: &str) -> RewriteMode {
         let bits = code.as_bytes();
@@ -263,7 +257,7 @@ mod tests {
     }
 
     struct Problems {
-        logic: SimpLogic,
+        logic: Rc<TlaLogic>,
         simpset: Simpset,
     }
 
@@ -349,7 +343,7 @@ mod tests {
                 "atomize" => self.run("Infinity", |lines| {
                     let rules: Vec<Thm> = ATOMIZE_RULES
                         .iter()
-                        .map(|name| get_fact(&self.logic, name))
+                        .map(|name| get_fact(&self.logic, name).unwrap())
                         .collect();
                     many(lines, "results", fields[0].parse().unwrap(), || {
                         atomize_prems_tac(&rules)?(1)(trivial(&read_goal(fields[1]))?)
@@ -424,7 +418,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(256 * 1024 * 1024)
             .spawn(move || {
-                let logic = simp_logic();
+                let logic = load_logic();
                 let simpset = get_simpset(&logic).unwrap();
                 let problems = Problems { logic, simpset };
                 check_problems(text, |kind, fields| problems.solve(kind, fields));

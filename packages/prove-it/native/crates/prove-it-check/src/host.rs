@@ -23,14 +23,18 @@ pub struct Machine {
     pub pid: u32,
 }
 
-/// What names the files of a spec's modules as TLC prints them: the spec, the libraries, and the
-/// JVM's temporary directory and -metadir where the launch sets them.
+/// What names the files of a spec's modules as TLC prints them: the spec, the libraries, the
+/// JVM's temporary directory and -metadir where the launch sets them, and the tla2tools.jar on the
+/// class path, which TLC copies the standard modules from.
 pub struct Files<'a> {
     pub spec: &'a Path,
     pub libraries: &'a [String],
     pub temporary: Option<&'a str>,
     pub metadir: Option<&'a str>,
+    pub jar: Option<&'a str>,
     pub is_174: bool,
+    /// TLC records the trace for its trace exploration spec, so SANY parses `_TLCTrace` too.
+    pub is_trace_recorded: bool,
 }
 
 /// The path TLC prints for the file it parses a module from, by the module's name and origin.
@@ -39,6 +43,8 @@ pub type FileDescription<'h> = Box<dyn Fn(&str, ModuleOrigin) -> String + 'h>;
 pub trait Host {
     fn is_file(&self, path: &Path) -> bool;
     fn read_text(&self, path: &Path) -> Option<String>;
+    /// The bytes of a file, such as a tla2tools.jar.
+    fn read_bytes(&self, path: &Path) -> Option<Vec<u8>>;
     /// A module's text: `<name>.tla` in the first of the directories that has it.
     fn load_module(&self, directories: &[&Path], name: &str) -> Option<String>;
     /// The Java override TLC loads for a module: `<name>.class` in the directory.
@@ -130,6 +136,10 @@ impl Host for SystemHost {
             .open(path)
             .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()))
             .is_ok()
+    }
+
+    fn read_bytes(&self, path: &Path) -> Option<Vec<u8>> {
+        std::fs::read(path).ok()
     }
 
     fn load_module(&self, directories: &[&Path], name: &str) -> Option<String> {

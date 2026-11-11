@@ -58,6 +58,7 @@ fn lower(property: &str) -> FrontError {
         is_warning_enabled: true,
         is_spec_described: false,
         random_seed: 0,
+        is_trace_recorded: false,
     };
     let config = format!("SPECIFICATION Spec\nPROPERTY {property}\n");
     let lowered = lower_model(&path, &config, &options);
@@ -130,6 +131,7 @@ fn get_property_invariant_names(config: &str) -> Vec<String> {
         is_warning_enabled: true,
         is_spec_described: false,
         random_seed: 0,
+        is_trace_recorded: false,
     };
     let config = std::fs::read_to_string(fixtures.join(config)).expect("the configuration");
     let ir = lower_model(&fixtures.join("Main.tla"), &config, &options).expect("the model");

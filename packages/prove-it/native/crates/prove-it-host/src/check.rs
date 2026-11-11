@@ -10,8 +10,9 @@
 //!   printed before.
 //!
 //! The keys it reads, besides SANY's `module:` and `file:`, are `text:<path>`, the text of the file
-//! at a path the command line names (the spec and its configuration), and `class:<name>`, the
-//! Java override for a module, as a Uint8Array. `machine` gives what TLC's banner and dates
+//! at a path the command line names (the spec and its configuration), `bytes:<path>`, the bytes of
+//! the tla2tools.jar on a Java launch's class path, and `class:<name>`, the Java override for a
+//! module, both as a Uint8Array. `machine` gives what TLC's banner and dates
 //! describe: `[system, release, arch, cores, memoryMegabytes, pid, now, zone, variables]`, with
 //! `now` in milliseconds since the epoch, `zone` a POSIX TZ rule, and `variables` the
 //! environment's `[name, value]` pairs the check reads.
@@ -63,6 +64,10 @@ impl Host for SourcesHost {
 
     fn read_text(&self, path: &Path) -> Option<String> {
         self.get(format!("text:{}", path.display()))
+    }
+
+    fn read_bytes(&self, path: &Path) -> Option<Vec<u8>> {
+        self.sources.get_bytes(format!("bytes:{}", path.display()))
     }
 
     fn load_module(&self, _directories: &[&Path], name: &str) -> Option<String> {

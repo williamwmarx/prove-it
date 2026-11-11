@@ -80,6 +80,9 @@ pub struct Settings {
     /// Whether the search hands every state it found to [`Reporter::dumped`] as it ends, for
     /// `-dump`.
     pub is_dumped: bool,
+    /// `-continue`: the search reports each invariant violated to [`Reporter::continued`] and goes
+    /// on, on one thread, in the order TLC's worker finds them.
+    pub is_continued: bool,
     /// What the caller tells the system of a large region of memory the search has just allocated
     /// and not yet touched, its address and length in bytes: the state table, from 32 MB, whose
     /// probes land anywhere in it. The CLI asks Linux to back it with huge pages.
@@ -117,6 +120,7 @@ impl Default for Settings {
             is_liveness_periodic: false,
             test_live_check_at: None,
             is_dumped: false,
+            is_continued: false,
             large_region_advice: None,
         }
     }
@@ -129,9 +133,17 @@ pub trait Reporter {
     fn initial_states(&mut self, generated: u64, distinct: u64);
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64);
     /// TLC starts to check the temporal properties of its `branches` on the graph of the first
-    /// `expanded` states, part way through the search: `counts` are the states generated, the
-    /// states found and the depth so far.
-    fn liveness_started(&mut self, _branches: u64, _expanded: u64, _counts: [u64; 3]) {}
+    /// `expanded` states, part way through the search, whose behavior graphs have `states` states
+    /// summed over the branches: `counts` are the states generated, the states found and the
+    /// depth so far.
+    fn liveness_started(
+        &mut self,
+        _branches: u64,
+        _expanded: u64,
+        _states: u64,
+        _counts: [u64; 3],
+    ) {
+    }
     /// The check part way through the search found the properties hold so far.
     fn liveness_finished(&mut self) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
@@ -164,6 +176,35 @@ pub trait Reporter {
     /// `Settings::is_dumped`. A search that ends without calling it, such as one stopped computing
     /// its initial states, leaves the dump to its caller.
     fn dumped(&mut self, _store: &Store, _states: &[Id], _width: usize) {}
+    /// Under `-continue`, a violation the search goes on past, as TLC reports it when it finds
+    /// it.
+    fn continued(&mut self, _trace: ContinuedTrace<'_>) {}
+}
+
+/// A violation a search under `-continue` goes on past, with what rebuilding its trace as TLC
+/// prints it takes, as a [`Violation`] holds it.
+pub struct ContinuedTrace<'s> {
+    pub kind: Continued,
+    /// The states from an initial state to the one that violates, ids of `store`.
+    pub states: Vec<Vec<Id>>,
+    pub store: &'s Store,
+    pub startup: &'s [Id],
+    pub startup_random: u64,
+    /// The state of the generator TLC's worker goes on drawing from as it finds the last state
+    /// again; none for an initial state.
+    pub random: Option<u64>,
+    pub registers: &'s Registers,
+}
+
+/// A violation a search under `-continue` reports and goes on past.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Continued {
+    /// An initial state violates the invariant at this position in the model's invariants.
+    InitialInvariant(usize),
+    /// A state violates the invariant at this position in the model's invariants.
+    Invariant(usize),
+    /// A step violates the action property at this position in the model's action properties.
+    ActionProperty(usize),
 }
 
 /// Why the engine leaves an assumption to its caller.
@@ -358,6 +399,9 @@ pub enum ViolationKind {
     InitialPredicate(usize),
     /// The last state of the trace violates an invariant, as an `InitialInvariant` names it.
     Invariant(usize),
+    /// The last step of the trace violates the action property at this position in the model's
+    /// action properties.
+    ActionProperty(usize),
     /// The last state of the trace has no successors. TLC adds it to the behavior graphs after it
     /// reports the deadlock, where it may reach a tableau node that accepts every behavior, which
     /// it reports next, as on its Github710d.
@@ -587,6 +631,9 @@ struct Graph {
     edge_offsets: Vec<u32>,
     edges: Vec<u32>,
     labels: Option<Vec<u32>>,
+    /// Each step's bits of the action atoms whose pieces of Next the walk that took it passed
+    /// through, kept only where an atom is made of them.
+    pieces: Option<Vec<u8>>,
     initial_counts: Vec<u64>,
     /// Under SYMMETRY or a VIEW, the state each step reached, `width` ids each, which the liveness
     /// checker checks rather than the state stored for it.
@@ -903,6 +950,8 @@ trait Reached {
     fn add(&mut self, state: &[Id], key: &[Id], fingerprint: u64, slot: usize, parent: i32);
     // The index of the state in a slot, for an edge of the graph.
     fn index(&self, slot: usize) -> u32;
+    // The states from an initial state to the one found at this index, for a trace.
+    fn path(&self, index: usize) -> Vec<Vec<Id>>;
     // Whether an invariant that fails of a new state, false or failing to evaluate, waits to stop
     // the search until it is known that no other thread found another state with its key first.
     fn defers_violation(&mut self, _parent: usize, _fingerprint: u64) -> bool {
@@ -940,6 +989,13 @@ impl Reached for States {
     fn index(&self, slot: usize) -> u32 {
         self.set.index(slot)
     }
+
+    fn path(&self, index: usize) -> Vec<Vec<Id>> {
+        self.path_to(index)
+            .into_iter()
+            .map(|index| self.state(index).to_vec())
+            .collect()
+    }
 }
 
 // The search's state besides the machine, which the walks' continuations update.
@@ -947,6 +1003,10 @@ struct Search<'r, T, E = Dense> {
     states: T,
     reporter: &'r mut dyn Reporter,
     is_distinct_read: bool,
+    // `-continue`: report each invariant violated and go on.
+    is_continued: bool,
+    // Under `-continue`, the values the startup definitions computed, once a trace needs them.
+    startup: Option<Vec<Id>>,
     generated: u64,
     initial_generated: u64,
     depth: u64,
@@ -979,9 +1039,11 @@ struct Search<'r, T, E = Dense> {
     is_lambda_built: bool,
     // The violation the search stops at, when it knows what TLC reports for it.
     violation: Option<Found>,
-    // The successor waiting to be checked, and its fingerprint.
+    // The successor waiting to be checked, its fingerprint, and the bits of the pieces the walk
+    // that took it was in.
     pending: Vec<Id>,
     pending_fingerprint: Option<u64>,
+    pending_pieces: u8,
     // For each _POSSIBLE predicate, how many states or steps it has held of, or -1 before TLC has
     // evaluated it.
     possible: Vec<i64>,
@@ -1005,6 +1067,8 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             states,
             reporter,
             is_distinct_read,
+            is_continued: false,
+            startup: None,
             generated: 0,
             initial_generated: 0,
             depth: 0,
@@ -1029,6 +1093,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
+            pending_pieces: 0,
             possible: Vec::new(),
             held: None,
             is_exit_followed: false,
@@ -1172,9 +1237,24 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                 self.set_distinct(machine, self.states.count() + 1)?;
             }
             let mut failing = None;
+            // Under -continue, the invariant whose conjuncts the loop skips once one of them
+            // failed, as TLC evaluates the invariant whole.
+            let mut violated_owner = None;
             for (position, invariant) in context.initial_invariants.iter().enumerate() {
+                let owner = context.initial_invariant_owners[position];
+                if violated_owner == Some(owner) {
+                    continue;
+                }
                 match crate::context::holds(machine, invariant) {
                     Ok(true) => {}
+                    // TLC goes on past each invariant an initial state violates
+                    // (ModelChecker.DoInitFunctor).
+                    Ok(false) if self.is_continued => {
+                        violated_owner = Some(owner);
+                        let states = vec![machine.current().to_vec()];
+                        let kind = Continued::InitialInvariant(owner);
+                        self.report_continued(machine, context, kind, states, None)?;
+                    }
                     Ok(false) => {
                         failing = Some(position);
                         break;
@@ -1276,6 +1356,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         self.pending.clear();
         self.pending.extend_from_slice(machine.next());
         self.pending_fingerprint = Some(fingerprint);
+        self.pending_pieces = machine.piece_bits;
         Ok(())
     }
 
@@ -1287,9 +1368,53 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             return Ok(());
         };
         std::mem::swap(&mut machine.next, &mut self.pending);
+        std::mem::swap(&mut machine.piece_bits, &mut self.pending_pieces);
         let result = self.check_successor(machine, context, Some(fingerprint));
+        std::mem::swap(&mut machine.piece_bits, &mut self.pending_pieces);
         std::mem::swap(&mut machine.next, &mut self.pending);
         result
+    }
+
+    // Hands a violation the search goes on past under -continue to the reporter, with what its
+    // trace is rebuilt from.
+    fn report_continued(
+        &mut self,
+        machine: &mut Machine<'_>,
+        context: &EngineContext,
+        kind: Continued,
+        states: Vec<Vec<Id>>,
+        random: Option<u64>,
+    ) -> Outcome<()> {
+        if self.startup.is_none() {
+            self.startup = Some(startup_values(machine, context)?);
+        }
+        self.reporter.continued(ContinuedTrace {
+            kind,
+            states,
+            store: &machine.store,
+            startup: self.startup.as_deref().unwrap_or_default(),
+            startup_random: machine.startup_random,
+            random,
+            registers: &machine.registers,
+        });
+        Ok(())
+    }
+
+    // The counts TLC prints where a step from the state being expanded stops the search: TLC
+    // counts the step's state as found before it checks it.
+    fn stop_counts(&self, is_new: bool) -> StopCounts {
+        let count = self.states.count() as u64;
+        StopCounts {
+            generated: self.generated,
+            distinct: count + u64::from(is_new),
+            queued: count - self.expanding as u64 - 1,
+            depth: if is_new {
+                self.depth.max(self.level + 1)
+            } else {
+                self.depth
+            },
+            ..StopCounts::default()
+        }
     }
 
     // Where TLCSet("exit", TRUE) ran outside an invariant, TLC's progress then isn't followed.
@@ -1389,8 +1514,11 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         self.check_exit_followed(machine)?;
         if !is_in_model || is_new {
             self.swap_successor(machine, successor_epoch, self.next_level_id);
-            let failing =
-                first_failing_changed(machine, &context.invariants, &self.successor, &self.current);
+            let failing = if self.is_continued {
+                crate::context::first_failing(machine, &context.invariants)
+            } else {
+                first_failing_changed(machine, &context.invariants, &self.successor, &self.current)
+            };
             self.swap_successor(machine, self.expansion_epoch, self.level_id);
             // TLC's main thread, woken by the stop, may print its progress as the worker goes
             // on, or not, as the threads race: the binary prints none.
@@ -1399,8 +1527,16 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             }
             let failed = match failing {
                 Ok(None) => None,
+                // TLC reports the first invariant a state violates and goes on (Worker.java).
+                Ok(Some(failing)) if self.is_continued => {
+                    let mut states = self.states.path(self.expanding);
+                    states.push(self.successor.clone());
+                    let kind = Continued::Invariant(context.invariant_owners[failing]);
+                    let random = Some(machine.random.state());
+                    self.report_continued(machine, context, kind, states, random)?;
+                    None
+                }
                 Ok(Some(failing)) => {
-                    let count = self.states.count() as u64;
                     self.violation = Some(Found {
                         kind: ViolationKind::Invariant(context.invariant_owners[failing]),
                         parent: Some(self.expanding),
@@ -1408,23 +1544,12 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                         fingerprint: None,
                         random: Some(machine.random.state()),
                         replayed: None,
-                        counts: StopCounts {
-                            generated: self.generated,
-                            distinct: count + u64::from(is_new),
-                            queued: count - self.expanding as u64 - 1,
-                            depth: if is_new {
-                                self.depth.max(self.level + 1)
-                            } else {
-                                self.depth
-                            },
-                            ..StopCounts::default()
-                        },
+                        counts: self.stop_counts(is_new),
                     });
                     Some(Bail("an invariant violated"))
                 }
                 Err((failing, bail)) => {
                     if !is_engine_limit(bail.0) {
-                        let count = self.states.count() as u64;
                         self.violation = Some(Found {
                             kind: ViolationKind::Error {
                                 site: ErrorSite::Invariant(
@@ -1437,14 +1562,6 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                             random: None,
                             replayed: None,
                             counts: StopCounts {
-                                generated: self.generated,
-                                distinct: count + u64::from(is_new),
-                                queued: count - self.expanding as u64 - 1,
-                                depth: if is_new {
-                                    self.depth.max(self.level + 1)
-                                } else {
-                                    self.depth
-                                },
                                 // TLC counts the new state before it checks the invariants. The
                                 // search loop adds the expansions it completed.
                                 out_degrees: std::array::from_fn(|bucket| {
@@ -1452,6 +1569,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
                                     let failing = (new_states as usize).min(OUT_DEGREE_BUCKETS - 1);
                                     u64::from(bucket == failing)
                                 }),
+                                ..self.stop_counts(is_new)
                             },
                         });
                     }
@@ -1478,15 +1596,44 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             if let Some(labels) = &mut graph.labels {
                 labels.push(self.action);
             }
+            if let Some(pieces) = &mut graph.pieces {
+                pieces.push(machine.piece_bits);
+            }
             if let Some(reals) = &mut graph.reals {
                 reals.extend_from_slice(&self.successor);
             }
         }
-        for (action, unchanged) in &context.action_properties {
+        for (position, (action, unchanged)) in context.action_properties.iter().enumerate() {
             if !crate::context::holds(machine, action)?
                 && !crate::context::holds(machine, unchanged)?
             {
-                return Err(Bail("an action property violated"));
+                // TLC reports the first action property a step violates, and stops or, under
+                // -continue, goes on (Worker.doNextCheckImplied).
+                if self.is_continued {
+                    let mut states = self.states.path(self.expanding);
+                    states.push(self.successor.clone());
+                    let kind = Continued::ActionProperty(position);
+                    let random = Some(machine.random.state());
+                    self.report_continued(machine, context, kind, states, random)?;
+                    break;
+                }
+                self.violation = Some(Found {
+                    kind: ViolationKind::ActionProperty(position),
+                    parent: Some(self.expanding),
+                    last: Some(self.successor.clone()),
+                    fingerprint: None,
+                    random: Some(machine.random.state()),
+                    replayed: None,
+                    counts: self.stop_counts(is_new),
+                });
+                let is_deferred = is_new
+                    && fingerprint.is_some_and(|fingerprint| {
+                        self.states.defers_violation(self.expanding, fingerprint)
+                    });
+                if !is_deferred {
+                    return Err(Bail("an action property violated"));
+                }
+                break;
             }
         }
         if let (Some(Err(slot)), Some(fingerprint)) = (found, fingerprint) {
@@ -1755,6 +1902,10 @@ impl Reached for Candidates<'_> {
         }
     }
 
+    fn path(&self, _index: usize) -> Vec<Vec<Id>> {
+        unreachable!("a search that goes on past violations runs on one thread")
+    }
+
     // Where the key isn't the state, a thread that takes a state for new may have missed another
     // with the same key that another thread found first, whose invariant TLC checks instead.
     fn defers_violation(&mut self, parent: usize, fingerprint: u64) -> bool {
@@ -1867,6 +2018,7 @@ struct Shared<'s> {
 #[derive(Clone, Copy)]
 struct Recording {
     is_labelled: bool,
+    is_pieced: bool,
     is_real: bool,
 }
 
@@ -1896,6 +2048,7 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     search.graph = shared.recording.map(|recording| Graph {
         edge_offsets: vec![0],
         labels: recording.is_labelled.then(Vec::new),
+        pieces: recording.is_pieced.then(Vec::new),
         reals: recording.is_real.then(Vec::new),
         ..Graph::default()
     });
@@ -1986,6 +2139,7 @@ impl Search<'_, States> {
             actions,
             recording: self.graph.as_ref().map(|graph| Recording {
                 is_labelled: graph.labels.is_some(),
+                is_pieced: graph.pieces.is_some(),
                 is_real: graph.reals.is_some(),
             }),
         };
@@ -2207,6 +2361,9 @@ impl Search<'_, States> {
                         }));
                     if let (Some(labels), Some(labels_of)) = (&mut graph.labels, &steps_of.labels) {
                         labels.extend_from_slice(&labels_of[steps.clone()]);
+                    }
+                    if let (Some(pieces), Some(pieces_of)) = (&mut graph.pieces, &steps_of.pieces) {
+                        pieces.extend_from_slice(&pieces_of[steps.clone()]);
                     }
                     if let (Some(reals), Some(reals_of)) = (&mut graph.reals, &steps_of.reals) {
                         import(
@@ -2554,12 +2711,18 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !is_lambda_built
         && !compiler.is_cached
         && !is_distinct_read
+        && !settings.is_continued
         && !(model.is_recording_graph && settings.test_live_check_at.is_some())
         // The online checker adds each state as it is expanded, between the expansions, and the
         // held prints come out between them: neither may meet a level the threads share.
         && !(model.is_recording_graph && (context.is_live_registered || compiler.is_printing))
         && !settings.is_live_checked
-        && context.possible.is_empty();
+        && context.possible.is_empty()
+        // Under a VIEW or symmetry a thread waits to report an invariant a new state violates
+        // until no other thread found its key first, but an action property is of the step, which
+        // violates it whichever thread found the key.
+        && !(!context.action_properties.is_empty()
+            && (model.view.is_some() || model.startup.symmetry.is_some()));
     // The liveness checker's atoms are answered on the threads too, unless ToString ranks strings,
     // TLCCache caches (TLC keeps one cache for the run, which the search's machine holds, and fills
     // it in the order it first evaluates each expression), or anything prints, draws or reads or
@@ -2721,6 +2884,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         is_pipelined,
         program.polynomial(),
     );
+    search.is_continued = settings.is_continued;
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
     search.is_lambda_built = is_lambda_built;
@@ -2732,6 +2896,14 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             .as_ref()
             .filter(|_| model.is_labelled)
             .map(|_| Vec::new()),
+        // Under SYMMETRY or a VIEW the liveness checker reads the real successors, which the
+        // pieces' bits don't follow.
+        pieces: context
+            .atoms
+            .iter()
+            .any(|atom| matches!(atom, Atom::Action { piece: Some(_), .. }))
+            .then(Vec::new)
+            .filter(|_| search.states.key_width.is_none()),
         reals: search.states.key_width.map(|_| Vec::new()),
         ..Graph::default()
     });
@@ -2822,6 +2994,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: reals.labels.as_deref(),
                 is_enabled_exact,
                 is_next_taken,
+                pieces: None,
                 levels: None,
             },
             None => LiveGraph {
@@ -2834,6 +3007,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
                 is_enabled_exact,
                 is_next_taken,
+                pieces: graph.pieces.as_ref().map(|pieces| &pieces[..edge_count]),
                 levels: levels.as_deref(),
             },
         };
@@ -2889,11 +3063,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         search.set_distinct(&mut machine, 0)?;
         search.reporter.initial_states_started();
         // An action atom answered from the steps needs the shapes of what the walks assign.
-        if context
-            .atoms
-            .iter()
-            .any(|atom| matches!(atom, Atom::Action { is_next: true, .. }))
-        {
+        if context.atoms.iter().any(|atom| {
+            matches!(
+                atom,
+                Atom::Action { is_next: true, .. } | Atom::Action { piece: Some(_), .. }
+            )
+        }) {
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
         }
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
@@ -3046,7 +3221,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 periodic_size = expanded;
                 let tables =
                     graph_tables(machine, search, expanded, count, None, None).map_err(Bail)?;
-                let liveness =
+                let (liveness, size) =
                     check_liveness(model, search, &tables, None, false, &context, thread_count);
                 periodic_time += at.elapsed();
                 // Whatever the checker leaves undecided, the check of the complete graph decides,
@@ -3060,6 +3235,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 search.reporter.liveness_started(
                     branches as u64,
                     expanded as u64,
+                    size,
                     [search.generated, count as u64, search.depth.max(1)],
                 );
                 if liveness.verdict == Verdict::Holds {
@@ -3504,7 +3680,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             Ok(tables) => tables,
                             Err(reason) => return SearchOutcome::Invariant(reason.into()),
                         };
-                        let mut liveness = check_liveness(
+                        let (mut liveness, _) = check_liveness(
                             model,
                             &search,
                             &tables,
@@ -5127,7 +5303,7 @@ fn check_liveness(
     is_effectful: bool,
     context: &EngineContext,
     threads: usize,
-) -> Liveness {
+) -> (Liveness, u64) {
     let (diameter_atoms, level_atoms) = (&context.diameter_atoms, &context.level_atoms);
     let graph = search.graph.as_ref().expect("a graph");
     // Under SYMMETRY or a VIEW, TLC names the violated properties from the trace it rebuilds, of
