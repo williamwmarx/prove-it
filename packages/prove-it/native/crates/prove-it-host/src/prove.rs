@@ -7,14 +7,18 @@
 //!   `decide:<key>` as `<verdict> <timeUsedMs>`, or `error:<message>` for the `TlaProverError` a
 //!   backend throws. `reports` are the obligations settled so far, in order;
 //! - `{ kind: "proved", reports, missingProofCount, omittedProofCount }`;
-//! - `{ kind: "error", name, message, failure, exception }`, an error `getObligations` or the
-//!   driver throws: `failure` and `exception` only for a `TlaProofError`.
+//! - `{ kind: "error", name, message, failure, exception, reports }`, an error `getObligations` or
+//!   the driver throws, after the obligations settled before it: `failure` and `exception` only for
+//!   a `TlaProofError`.
+//!
+//! An answer that isn't one of these fails the call, as JavaScript never writes one.
 //!
 //! A report is a `ProofObligation`: `{ id, location, text, status }`, with the `prover` that proved
 //! it, or the `reason` it is unproved.
 
 use prove_it_prover::Verdict;
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use prove_it_prover::driver::{Answer, Cache, Report, Status, prove_obligations};
 use prove_obligations::errors::ObligationError;
@@ -39,7 +43,7 @@ pub fn prove(arguments: &[HostValue]) -> HookResult {
     let file = get_text(file, "the file name")?;
     let source = get_text(source, "the source")?;
     let sources = Sources::new(known)?;
-    on_deep_stack(move || Ok(prove_here(file, source, sources)))
+    on_deep_stack(move || prove_here(file, source, sources))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -107,21 +111,40 @@ thread_local! {
     static RUN: RefCell<Option<Run>> = const { RefCell::new(None) };
 }
 
-fn prove_here(file: String, source: String, sources: Sources) -> HostValue {
-    let mut key = format!("{file}\0{source}");
-    for (name, text) in sources.get_answered_with("module:") {
-        key.push_str(&format!("\0{name}\0{}", text.unwrap_or_default()));
+// Each part of a run's key with its length, so that no two runs share one.
+fn push_key(key: &mut String, part: Option<&str>) {
+    match part {
+        Some(text) => key.push_str(&format!("{}:{text}", text.len())),
+        None => key.push('-'),
     }
-    RUN.with_borrow_mut(|run| {
+}
+
+fn prove_here(file: String, source: String, sources: Sources) -> HookResult {
+    let mut key = String::new();
+    push_key(&mut key, Some(&file));
+    push_key(&mut key, Some(&source));
+    for (name, text) in sources.get_answered_with("module:") {
+        push_key(&mut key, Some(&name));
+        push_key(&mut key, text.as_deref());
+    }
+    let mut answers = HashMap::new();
+    for (key, text) in sources.get_answered_with("decide:") {
+        let answer = text
+            .as_deref()
+            .and_then(get_answer)
+            .ok_or_else(|| format!("prove can't read the answer to {key}"))?;
+        answers.insert(key["decide:".len()..].to_owned(), answer);
+    }
+    Ok(RUN.with_borrow_mut(|run| {
         if run.as_ref().is_some_and(|run| run.key == key) {
-            return prove_round(run.as_mut().expect("a run"), &sources);
+            return prove_round(run.as_mut().expect("a run"), &answers);
         }
         *run = None;
         match load_run(key, file, source, &sources) {
-            Ok(loaded) => prove_round(run.insert(loaded), &sources),
+            Ok(loaded) => prove_round(run.insert(loaded), &answers),
             Err(result) => result,
         }
-    })
+    }))
 }
 
 // A new run's obligations, or what to return in place of a round: the modules it needs, or the
@@ -174,17 +197,24 @@ fn get_needed(sources: &Sources) -> HostValue {
     HostValue::Object(needed)
 }
 
-fn prove_round(run: &mut Run, sources: &Sources) -> HostValue {
+fn prove_round(run: &mut Run, answers: &HashMap<String, Answer>) -> HostValue {
     let modules = &run.modules;
     let round = match prove_obligations(
         &run.obligations,
-        &|key| get_answer(&sources.get_answered(&format!("decide:{key}"))?),
+        &|key| answers.get(key).cloned(),
         &mut run.cache,
     ) {
         Ok(round) => round,
         Err(error) => return get_error(&error),
     };
     let reports = HostValue::Array(round.reports.iter().map(get_report).collect());
+    if let Some(error) = round.error {
+        let HostValue::Object(mut properties) = get_error(&error) else {
+            return HostValue::Undefined;
+        };
+        properties.push(("reports", reports));
+        return HostValue::Object(properties);
+    }
     if !round.requests.is_empty() {
         let requests = round
             .requests
@@ -195,6 +225,7 @@ fn prove_round(run: &mut Run, sources: &Sources) -> HostValue {
                     ("prover", HostValue::text(&request.prover)),
                     ("text", HostValue::text(&request.text)),
                     ("timeLimitMs", HostValue::Number(request.time_limit_ms)),
+                    ("priority", HostValue::Number(request.priority as f64)),
                 ])
             })
             .collect();

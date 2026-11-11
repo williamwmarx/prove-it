@@ -30,6 +30,9 @@ pub struct Request {
     pub prover: String,
     pub text: String,
     pub time_limit_ms: f64,
+    /// The obligation's position in the run, by which the TypeScript's pool decides the earliest
+    /// first.
+    pub priority: usize,
 }
 
 /// How the caller answered a request: the backend's verdict, or the message of the
@@ -72,6 +75,9 @@ pub struct Report {
 pub struct Round {
     pub reports: Vec<Report>,
     pub requests: Vec<Request>,
+    /// An error that is neither unsupported nor a prover's, which ends the run as
+    /// `proveObligations` rethrows it, once the obligations before it are reported.
+    pub error: Option<ObligationError>,
 }
 
 // Why a method left an obligation unproved: a prover decided so, or Prove It couldn't try it.
@@ -170,13 +176,16 @@ enum Proving {
 
 impl Run<'_> {
     // The answer to a decision, or None after asking for it.
+    // A decision is the obligation's, as the TypeScript decides each obligation's texts anew, even
+    // one an earlier obligation sent the same backend.
     fn get_answer(
         &mut self,
+        position: usize,
         prover: &str,
         text: String,
         time_limit_ms: f64,
     ) -> Result<Option<Answer>> {
-        let key = format!("{prover}/{time_limit_ms}/{}", get_digest(&text));
+        let key = format!("{position}/{prover}/{time_limit_ms}/{}", get_digest(&text));
         match self.texts.get(&key) {
             // Two texts that share a key would share an answer.
             Some(known) if *known != text => return Err(ObligationError::assert_failure()),
@@ -192,6 +201,7 @@ impl Run<'_> {
                 prover: prover.to_owned(),
                 text,
                 time_limit_ms,
+                priority: position,
             });
         }
         Ok(answer)
@@ -361,16 +371,18 @@ impl Run<'_> {
                 self.case_errors = end;
             }
             let answer = match encoded {
-                Ok(text) => match self.get_answer(&method.prover, text, method.time_limit_ms)? {
-                    Some(answer) => answer,
-                    None => {
-                        self.is_count_open |= methods.provers[index + 1..]
-                            .iter()
-                            .any(|later| is_numbered_for(&later.prover));
-                        self.waiting_fingerprints.push(fingerprint);
-                        return Ok(Proving::Waiting);
+                Ok(text) => {
+                    match self.get_answer(position, &method.prover, text, method.time_limit_ms)? {
+                        Some(answer) => answer,
+                        None => {
+                            self.is_count_open |= methods.provers[index + 1..]
+                                .iter()
+                                .any(|later| is_numbered_for(&later.prover));
+                            self.waiting_fingerprints.push(fingerprint);
+                            return Ok(Proving::Waiting);
+                        }
                     }
-                },
+                }
                 Err(ObligationError::Prover(message)) => Answer::Failed(message),
                 Err(ObligationError::Unsupported(message)) => {
                     skip(
@@ -455,8 +467,7 @@ impl Run<'_> {
     }
 }
 
-/// One round of proving `obligations`, with the decisions `answers` gives by key. An error that is
-/// neither unsupported nor a prover's fails the run, as `proveObligations` rethrows it.
+/// One round of proving `obligations`, with the decisions `answers` gives by key.
 pub fn prove_obligations(
     obligations: &[PrintedObligation],
     answers: &dyn Fn(&str) -> Option<Answer>,
@@ -496,7 +507,10 @@ pub fn prove_obligations(
             // It surfaces once every earlier obligation is settled, as the TypeScript reports in
             // order.
             Err(_) if run.is_waiting => break,
-            Err(error) => return Err(error),
+            Err(error) => {
+                round.error = Some(error);
+                break;
+            }
         };
         match proving {
             Proving::Settled(report) if !run.is_waiting => round.reports.push(report),

@@ -124,6 +124,7 @@ export interface NativeDecideRequest {
   prover: string;
   text: string;
   timeLimitMs: number;
+  priority: number;
 }
 
 // The obligations proved so far, and the modules and decisions the driver needs, or why it failed.
@@ -140,7 +141,14 @@ export type NativeProve =
       missingProofCount: number;
       omittedProofCount: number;
     }
-  | { kind: "error"; name: string; message: string; failure?: string; exception?: string };
+  | {
+      kind: "error";
+      name: string;
+      message: string;
+      failure?: string;
+      exception?: string;
+      reports?: ProofObligation[];
+    };
 
 export interface NativeAddon extends NativeStoreHooks {
   abiVersion: () => number;

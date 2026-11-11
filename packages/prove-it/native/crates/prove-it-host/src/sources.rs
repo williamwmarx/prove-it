@@ -88,15 +88,6 @@ impl Sources {
         }
     }
 
-    /// The text of a key JavaScript answered, without asking for it where it hasn't: for an
-    /// export that asks for such keys in its own way.
-    pub fn get_answered(&self, key: &str) -> Option<String> {
-        match self.known.get(key)? {
-            Some(Known::Text(text)) => Some(text.clone()),
-            _ => None,
-        }
-    }
-
     /// The keys JavaScript answered that start with `prefix`, with their texts, in key order.
     pub fn get_answered_with(&self, prefix: &str) -> Vec<(String, Option<String>)> {
         let mut answered: Vec<_> = self
