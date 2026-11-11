@@ -69,3 +69,23 @@ describe("prove without process.dlopen", () => {
     },
   );
 });
+
+// A worker that can't decide fails the proof rather than leaving it waiting: here no engine loads,
+// as the named addon is missing, and Zenon has no TypeScript decider.
+describe("prove with workers and no engine", () => {
+  it("rejects", () => {
+    const script = [
+      `const { prove } = await import(${JSON.stringify(DIST)});`,
+      'const source = "---- MODULE M ----\\nEXTENDS TLAPS\\nTHEOREM \\\\A x : x = x BY Zenon\\n====\\n";',
+      "await prove({ source, workers: 2 }).then(",
+      '  () => console.log("resolved"),',
+      '  () => console.log("rejected"),',
+      ");",
+    ].join("\n");
+    const run = spawnSync("bun", ["-e", script], {
+      encoding: "utf8",
+      env: { ...process.env, PROVE_IT_ENGINE_ADDON: join(DIRECTORY, "missing.node") },
+    });
+    expect(run.stdout.trim()).toBe("rejected");
+  });
+});
