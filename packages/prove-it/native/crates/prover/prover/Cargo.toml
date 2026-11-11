@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 prove-decide = { path = "../decide" }
 prove-isabelle = { path = "../isabelle" }
+prove-obligations = { path = "../obligations" }
 prove-ptl = { path = "../ptl" }
 prove-smt = { path = "../smt" }
 prove-zenon = { path = "../zenon" }
