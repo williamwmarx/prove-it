@@ -16,7 +16,7 @@ use crate::tools::intuitionistic::IntuitionisticContext;
 use super::classical_setup::{
     get_claset, get_classical_data, get_fact, get_hypsubst_data, to_net_pair,
 };
-use super::logic::TlaLogic;
+use super::logic::{TlaLogic, load_logic};
 use super::simpdata::get_simpset;
 
 /// The atomize rules, newest first as Object_Logic keeps them.
@@ -86,4 +86,20 @@ pub fn get_proof_context(logic: &Rc<TlaLogic>) -> Res<ProofContext> {
                 .ok_or_else(|| error_exn(format!("Undefined fact: {name}")))
         }),
     })
+}
+
+thread_local! {
+    static PROOF_CONTEXT: std::cell::OnceCell<Rc<ProofContext>> = const { std::cell::OnceCell::new() };
+}
+
+/// The proof context of the logic `load_logic` gives, built once per thread like the logic itself.
+/// Building it takes no step and nothing in it changes, so a decision can't tell a context built
+/// for it from one built for an earlier decision on the thread.
+pub fn load_proof_context() -> Res<Rc<ProofContext>> {
+    if let Some(context) = PROOF_CONTEXT.with(|cell| cell.get().cloned()) {
+        return Ok(context);
+    }
+    let context = Rc::new(get_proof_context(&load_logic())?);
+    PROOF_CONTEXT.with(|cell| cell.set(context.clone()).ok());
+    Ok(context)
 }

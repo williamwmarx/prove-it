@@ -3,8 +3,6 @@
 //!
 //! (`decide.ts`.) The statistics are what stopped a proof that gave up, `stop`, and the steps.
 
-use std::rc::Rc;
-
 use prove_decide::{DecideError, Decision, Limits, Statistic, Verdict};
 
 use crate::error::{Error, Res};
@@ -16,7 +14,7 @@ use crate::pure::interrupt::with_limits;
 use crate::pure::logic::protect;
 use crate::pure::seq::seq_head;
 use crate::pure::term::aconv;
-use crate::tla::context::get_proof_context;
+use crate::tla::context::load_proof_context;
 use crate::tla::logic::load_logic;
 
 /// Whether the proof proves the statement.
@@ -29,7 +27,7 @@ fn is_proved(text: &str) -> Res<bool> {
     } else {
         Vec::new()
     };
-    let context = Rc::new(get_proof_context(&logic)?);
+    let context = load_proof_context()?;
     let proof = parse_proof_text(&theory.method)?;
     let result = seq_head(&terminal_proof(
         &context,
