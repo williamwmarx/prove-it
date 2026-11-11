@@ -2121,6 +2121,10 @@ impl<'ir> Evaluator<'ir> {
                         is_same_state(current, &self.current) && is_same_state(next, &self.next)
                     })
                 {
+                    // A value that holds the states holds them for what uses it too.
+                    if kept.states.is_some() {
+                        self.captures += 1;
+                    }
                     return Ok(kept.value.clone());
                 }
                 let inner = own_context(bound, frame, *is_self).primed(is_primed);
@@ -2408,7 +2412,7 @@ impl<'ir> Evaluator<'ir> {
         {
             return fail("a value TLC computed at startup with effects");
         }
-        let reads = self.reads;
+        let (reads, captures) = (self.reads, self.captures);
         let printed = self.printed.len();
         // TLC computes a definition of constant level as it starts, with its plain `Tool`, whose
         // values have no source (`processConstantDefns`). One that fails, or that holds a set it
@@ -2448,7 +2452,8 @@ impl<'ir> Evaluator<'ir> {
             }
             DefinitionForm::Operator(_) => return fail("an operator used as a value"),
         };
-        if self.reads == reads && self.printed.len() == printed {
+        // A definition that built a lazy value holding the states reads them where it is applied.
+        if self.reads == reads && self.captures == captures && self.printed.len() == printed {
             // TLC computed the value of a definition that reads no state as it started, and
             // sorted it.
             if matches!(&definition.form, DefinitionForm::Operator(_)) {

@@ -402,7 +402,10 @@ definition that drew keeps its value for the uses that follow, as TLC's `LazyVal
 `T` in `Same(RandomSubset(1, S))` is one subset. An operator's argument, and a LET definition in an
 expression, keeps its value too where evaluating it read no state and printed nothing, as
 `LazyValue` keeps it for the states it evaluated it in; where it built a lazy function or filter,
-which holds the states to evaluate later, only while the evaluator holds the same states (`getOpContext` binds every argument cachable, and `Tool.java:1856` a LET's
+which holds the states to evaluate later, only while the evaluator holds the same states, and
+what uses such a kept value holds the states too. For the same reason a zero-arity definition
+that TLC doesn't compute at startup and that builds such a value isn't cached, so `D == [i \in Nat
+|-> x']` is applied in each successor's states (`getOpContext` binds every argument cachable, and `Tool.java:1856` a LET's
 definitions); a LET of an action or the initial predicate keeps none, as TLC binds no `LazyValue`
 there. Evaluating an argument again at each use made TransitiveClosure's first assumption take
 154 s where TLC takes 1.4 s. A negative count of a set enumeration or an
