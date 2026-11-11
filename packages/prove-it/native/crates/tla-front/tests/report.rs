@@ -26,6 +26,7 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
             file_name: None,
             load_module: &|_| None,
             describe_file: &|name, origin| format!("{name} {origin:?}"),
+            root_extendees: &[],
             is_xml_export: false,
         },
     );
@@ -67,6 +68,7 @@ fn reports_every_recursive_shape_as_sany_does() {
                     ModuleOrigin::Standard => format!("/tmp/tlc-_/{module}.tla"),
                     ModuleOrigin::File | ModuleOrigin::RootFile => format!("{module}.tla"),
                 },
+                root_extendees: &[],
                 is_xml_export: false,
             },
         )

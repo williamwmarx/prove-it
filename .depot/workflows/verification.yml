@@ -160,6 +160,9 @@ jobs:
               grep -q '^The native engine is unavailable: no @atemp/prove-it-linux-x64-gnu' engine.log
               PROVE_IT_ENGINE=0 npx --no prove-it Commit.cfg | grep -q '251 distinct states found'
               npm install --ignore-scripts --no-audit --no-fund "$packs/$main"
+              # A state log leaves the check to the TypeScript check, which searches the engine IR
+              # past the binary's own check; where the log can't be created, the engine writes none.
+              export PROVE_IT_STATE_LOG=missing/states.jsonl
               PROVE_IT_ENGINE=debug npx --no prove-it Commit.cfg 2> engine.log > /dev/null
               grep -q '^\[engine\] native: complete: ' engine.log
               npm install --ignore-scripts --no-audit --no-fund "$packs"/atemp-prove-it-linux-x64-gnu-*.tgz

@@ -66,6 +66,7 @@ fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
             is_warning_enabled: true,
             is_spec_described: true,
             random_seed: 0,
+            is_trace_recorded: false,
         },
     )
     .expect("a model tla-front lowers");

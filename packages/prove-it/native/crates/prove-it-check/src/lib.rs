@@ -8,12 +8,15 @@ mod failure;
 mod files;
 mod front;
 mod host;
+mod inflate;
+mod jar;
 mod messages;
 mod stack;
 mod summary;
 mod time;
 mod trace;
 mod xml_exporter;
+mod zip;
 pub mod zone;
 
 pub use check::run;

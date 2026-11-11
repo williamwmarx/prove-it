@@ -97,9 +97,12 @@ const checks = [
         {
           directory: "tests/fixtures/commit",
           args: ["Commit.cfg"],
+          // A state log leaves the check to the TypeScript check, which searches the engine IR
+          // past the binary's own check; where the log can't be created, the engine writes none.
           env: {
             PROVE_IT_ENGINE: "debug",
             PROVE_IT_ENGINE_ADDON: undefined,
+            PROVE_IT_STATE_LOG: join("missing", "states.jsonl"),
           },
           expected: ["[engine] native: complete: ", " on 1 thread "],
         },

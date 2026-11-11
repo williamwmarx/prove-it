@@ -300,6 +300,7 @@ fn rebuild_violation<T: Send>(
         let (ending, cycle_start) = match violation.kind {
             ViolationKind::Deadlock { .. } => (Ending::Kept, None),
             ViolationKind::Invariant(_)
+            | ViolationKind::ActionProperty(_)
             | ViolationKind::InitialInvariant(_)
             | ViolationKind::InitialPredicate(_) => (Ending::Violation, None),
             ViolationKind::Lasso { loop_start, .. } => (Ending::Lasso, Some(loop_start)),
