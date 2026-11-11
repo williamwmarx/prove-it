@@ -74,11 +74,14 @@ fn is_startup_definition(
 /// The builtins whose effects show each time TLC evaluates them again: they print, set a
 /// register, draw at random, or read the clock or TLC's registers. Reading a file or the process's
 /// environment again reads the same.
-const SHOWN_EFFECTS: [&str; 9] = [
+const SHOWN_EFFECTS: [&str; 12] = [
     "Print",
     "PrintT",
+    "AssertEq",
     "TLCSet",
     "TLCGet",
+    "TLCGetAndSet",
+    "TLCGetOrDefault",
     "JavaTime",
     "RandomElement",
     "RandomSubset",
