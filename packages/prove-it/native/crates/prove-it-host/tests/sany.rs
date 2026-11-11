@@ -42,6 +42,8 @@ fn write(source: &str, read: impl Fn(&str) -> Option<String>) -> (HostValue, Vec
             HostValue::text("Main"),
             HostValue::text(source),
             HostValue::text("Main"),
+            HostValue::text("master"),
+            HostValue::Array(Vec::new()),
             HostValue::Array(entries),
         ])
         .expect("a result");

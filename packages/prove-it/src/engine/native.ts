@@ -7,6 +7,7 @@ import type { CheckProgress, CheckStatus } from "../check";
 import { EngineInvariantError } from "../errors";
 import type { Statistics, Verdict } from "../prover/verdict";
 import type { LiveEnabled, LiveExpression } from "../tableau";
+import type { TlcVersion } from "../tlc/version";
 import {
   createStateDecoder,
   FALSE_TAG,
@@ -174,8 +175,10 @@ export interface NativeAddon extends NativeStoreHooks {
   ) => NativeCheckSources;
   sanyText: (
     root: string,
-    source: string,
+    source: string | null,
     fileName: string | undefined,
+    version: TlcVersion,
+    rootExtendees: string[],
     known: [string, string | undefined][],
   ) => NativeSanyText;
   sanyXml: (
@@ -355,7 +358,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 16;
+const ABI_VERSION = 17;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

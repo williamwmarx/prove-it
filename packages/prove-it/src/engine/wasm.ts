@@ -303,10 +303,15 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
       callCurrent("prove_it_decide", [prover, text, timeLimitMs, stepLimit]) as ReturnType<
         NativeAddon["decide"]
       >,
-    sanyText: (root, source, fileName, known) =>
-      callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
-        NativeAddon["sanyText"]
-      >,
+    sanyText: (root, source, fileName, version, rootExtendees, known) =>
+      callCurrent("prove_it_sany_text", [
+        root,
+        source,
+        fileName,
+        version,
+        rootExtendees,
+        known,
+      ]) as ReturnType<NativeAddon["sanyText"]>,
     sanyXml: (root, source, fileName, flags, known) =>
       callCurrent("prove_it_sany_xml", [root, source, fileName, flags, known]) as ReturnType<
         NativeAddon["sanyXml"]
