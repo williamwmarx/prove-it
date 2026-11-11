@@ -2220,9 +2220,8 @@ pub(crate) fn print_violation(
                 "-dumpTrace of a trace whose successor TLC fails to find again",
             ));
         }
-        printer.print(
+        printer.report(
             code::GENERAL,
-            Level::Error,
             "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: Cannot read field \"state\" because \"currentStateInfo\" is null",
         );
     }
