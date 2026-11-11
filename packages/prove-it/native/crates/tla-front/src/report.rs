@@ -118,6 +118,20 @@ fn get_nesting_depth(text: &str) -> usize {
     deepest
 }
 
+/// SANY's character stream ends a line at a carriage return alone too, which the front end reads
+/// as the line feed it stands for, keeping each offset.
+fn end_lines_at_carriage_returns(text: &str) -> std::borrow::Cow<'_, str> {
+    let bytes = text.as_bytes();
+    let is_lone = |index: usize| bytes[index] == b'\r' && bytes.get(index + 1) != Some(&b'\n');
+    if !(0..bytes.len()).any(is_lone) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let ended: Vec<u8> = (0..bytes.len())
+        .map(|index| if is_lone(index) { b'\n' } else { bytes[index] })
+        .collect();
+    std::borrow::Cow::Owned(String::from_utf8(ended).expect("ASCII replaced by ASCII"))
+}
+
 struct Loaded {
     text: String,
     module: Rc<Module>,
@@ -184,6 +198,8 @@ impl Loader<'_> {
                 parse_error: None,
             });
         };
+        let raw = text;
+        let text = end_lines_at_carriage_returns(&raw).into_owned();
         if get_nesting_depth(&text) > MAX_NESTING_DEPTH {
             return Err(not_yet(
                 "brackets nested more deeply than SANY's parser can on Java's default stack",
@@ -199,13 +215,13 @@ impl Loader<'_> {
         // `parseSource` in the generator: TLC 1.7.4's lexer first, then SANY's parser, whose
         // report replaces the front end's own where SANY's parser would accept the module.
         let lexical_error = (self.options.version == TlcVersion::V1_7_4)
-            .then(|| get_sany_174_lexical_error(&text))
+            .then(|| get_sany_174_lexical_error(&raw))
             .flatten();
         let parse_error = match (lexical_error, &parsed) {
             (Some(lexical_error), _) => Some(lexical_error),
             // SANY's parser accepts what the front end's parser doesn't.
             (None, Err(_)) => Some(
-                get_sany_parse_error(&text, self.options.version)
+                get_sany_parse_error(&raw, self.options.version)
                     .ok_or_else(|| not_yet("a module SANY's parser accepts"))?,
             ),
             (None, Ok(_)) => None,
@@ -439,6 +455,14 @@ impl Loader<'_> {
             return Err(Stop::Rejected);
         }
         Ok(())
+    }
+
+    /// The text of a module other than the root module as the front end reads it
+    /// (`end_lines_at_carriage_returns`).
+    fn read_text(&self, name: &str) -> Option<String> {
+        self.read(name)
+            .0
+            .map(|text| end_lines_at_carriage_returns(&text).into_owned())
     }
 
     /// The text of a module other than the root module and where SANY reads it from.
@@ -925,8 +949,8 @@ fn link_messages(
         Some(error) => Err(error),
         None => get_sany_messages(
             &EnvironmentOptions {
-                source: loader.source,
-                load_module: &|name| loader.read(name).0,
+                source: &end_lines_at_carriage_returns(loader.source),
+                load_module: &|name| loader.read_text(name),
                 config: &config,
                 is_unconfigured: true,
                 version: options.version,
@@ -1080,8 +1104,8 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     let generated = match options.version {
         TlcVersion::Master => get_generator_messages(
             &root,
-            source,
-            &|name| loader.read(name).0,
+            &end_lines_at_carriage_returns(source),
+            &|name| loader.read_text(name),
             options.root_extendees,
             &order,
         ),
