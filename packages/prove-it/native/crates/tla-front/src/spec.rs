@@ -239,6 +239,32 @@ impl Expansion<'_> {
         self.environment.is_substituted(definition)
     }
 
+    // Whether evaluating the expression reads what an INSTANCE put in for a declaration: a part of
+    // it, or of a definition it names, is one.
+    fn reads_substitution(&self, expression: &Expr, visited: &mut Vec<*const Definition>) -> bool {
+        if self.environment.tables.is_substitution(expression) {
+            return true;
+        }
+        let definition = (!expression.is_locally_resolved())
+            .then(|| expression.reference())
+            .flatten()
+            .and_then(|reference| get_definition(&reference, self.environment));
+        if let Some(definition) = definition
+            && !visited.contains(&Rc::as_ptr(definition))
+        {
+            visited.push(Rc::as_ptr(definition));
+            if self.reads_substitution(&definition.body, visited) {
+                return true;
+            }
+        }
+        let mut is_read = false;
+        let _ = map_children(expression, &self.environment.tables, &mut |child, _| {
+            is_read = is_read || self.reads_substitution(child, visited);
+            Ok(child.clone())
+        });
+        is_read
+    }
+
     /// `expandTemporal`.
     pub fn expand(
         &self,
@@ -267,7 +293,9 @@ impl Expansion<'_> {
                 }
                 return Ok(expanded);
             }
-            ExpressionKind::Label { body, .. } => {
+            // TLC takes a property's label whole (`SpecProcessor.processConfigProps` has no case
+            // for a LabelNode).
+            ExpressionKind::Label { body, .. } if !self.is_property => {
                 return self.expand(body, scope, expanding, is_substituted, name);
             }
             ExpressionKind::Let {
@@ -364,7 +392,9 @@ impl Expansion<'_> {
                     );
                 }
             }
-            // TLC unrolls a property's \A over constant sets, and stops at a tautology.
+            // TLC unrolls a property's \A over constant sets, and stops at a tautology. Under an
+            // INSTANCE's substitution it evaluates the sets without it, so it takes whole a \A
+            // whose sets read a declaration the INSTANCE substitutes, which fail.
             ExpressionKind::Quantified {
                 quantifier: Quantifier::Forall,
                 bounds,
@@ -372,7 +402,11 @@ impl Expansion<'_> {
             } if self.is_property
                 && bounds
                     .iter()
-                    .all(|bound| self.level(&bound.set, scope) == Level::Constant) =>
+                    .all(|bound| self.level(&bound.set, scope) == Level::Constant)
+                && !(is_substituted
+                    && bounds
+                        .iter()
+                        .any(|bound| self.reads_substitution(&bound.set, &mut Vec::new()))) =>
             {
                 let Some(evaluator) = self.evaluator else {
                     return Err(not_yet("a property's \\A that TLC unrolls"));

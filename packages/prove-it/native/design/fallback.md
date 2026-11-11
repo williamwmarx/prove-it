@@ -278,9 +278,13 @@ a declaration of the module it instantiates, TLC's `SubstInNode` keeps the decla
 binds it to the expression's value (`Liveness.astToLive`), so TLC names the declaration where the
 instantiated module writes it, which the front end doesn't keep: that declines wherever the part
 is, or is within, a substitute or what the front end makes of one (a LET or IF it folds, an
-operator it calls, a substitute a later INSTANCE or a renaming copies). A grid of 82 small specs
-(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 536 of its 656 runs; 24 decline
-for the constant evaluator's gaps, and 96 for a substituted declaration. Four name an
+operator it calls, a substitute a later INSTANCE or a renaming copies). TLC takes a property's
+label whole, and a property's \A whole where its sets read a substituted declaration, which it
+evaluates without the substitution (`SpecProcessor.processConfigProps`); so does the front end,
+which declines such a \A whose body fails, where TLC wraps the failure in
+`EC.TLC_LIVE_CANNOT_HANDLE_FORMULA`. A grid of 87 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 544 of its 696 runs; 24 decline
+for the constant evaluator's gaps, 96 for a substituted declaration, and 32 for such a \A. Four name an
 INSTANCE's definition before the INSTANCE, which SANY doesn't know there.
 
 Nothing reaches these liveness declines, so they stay declines until a test or a model does:
