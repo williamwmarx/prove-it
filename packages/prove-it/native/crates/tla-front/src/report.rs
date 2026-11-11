@@ -7,7 +7,7 @@ use std::rc::Rc;
 use crate::TlcVersion;
 use crate::ast::{Declaration, DefinitionKind, Module, ModuleUnit};
 use crate::config::parse_config;
-use crate::environment::{EnvironmentOptions, get_sany_messages};
+use crate::environment::{EnvironmentOptions, ModuleMessages, get_sany_messages};
 use crate::errors::{FrontError, SanyError};
 use crate::get_standard_module;
 use crate::hash::{FastMap, FastSet};
@@ -811,6 +811,62 @@ fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
     Ok(None)
 }
 
+/// SANY's messages as linking derives them, or why it doesn't.
+fn link_messages(
+    loader: &Loader,
+    order: &[Rc<str>],
+    undecided: Option<FrontError>,
+    is_user_module_added: bool,
+) -> Result<Vec<ModuleMessages>> {
+    // Linking takes the standard modules as TLC ships them, so their messages are none, which a
+    // module of the user's named like one they read may not keep.
+    let is_standard_replaced = order.iter().any(|name| {
+        let dependencies = loader.get_dependencies(name);
+        loader.read(name).1 == ModuleOrigin::Standard
+            && dependencies
+                .extendees
+                .iter()
+                .chain(&dependencies.instancees)
+                .any(|dependency| loader.read(dependency).1 != ModuleOrigin::Standard)
+    });
+    if is_standard_replaced {
+        return Err(not_yet(
+            "SANY's messages of the standard modules with one of them replaced",
+        ));
+    }
+    // SANY analyzes the modules TLC adds for its post conditions with the spec's, but linking
+    // takes only those the spec uses: one of the user's among them may fail SANY's analysis, which
+    // linking wouldn't report.
+    if is_user_module_added {
+        return Err(not_yet(
+            "a module of the user's that the trace exploration spec uses",
+        ));
+    }
+    let options = loader.options;
+    let config =
+        parse_config("", options.version).map_err(|error| FrontError::Config(error.message))?;
+    let linked = match undecided {
+        Some(error) => Err(error),
+        None => get_sany_messages(
+            &EnvironmentOptions {
+                source: loader.source,
+                load_module: &|name| loader.read(name).0,
+                config: &config,
+                is_unconfigured: true,
+                version: options.version,
+                is_level_checked: true,
+                load_class: None,
+            },
+            order,
+        ),
+    };
+    match linked {
+        Ok(linked) => Ok(linked),
+        Err(linking @ FrontError::NotYet(_)) => Err(Stop::Front(linking)),
+        Err(_) => Err(not_yet("an error that stops linking")),
+    }
+}
+
 /// The modules each parse unit extends and those it instantiates, as SANY has resolved them so far.
 type Referencees = FastMap<Rc<str>, (Vec<Rc<str>>, Vec<Rc<str>>)>;
 
@@ -904,9 +960,6 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     }
     let mut order = Vec::new();
     loader.get_analysis_order(&root, &mut Vec::new(), &mut FastSet::default(), &mut order)?;
-    // SANY analyzes the modules TLC adds for its post conditions with the spec's, but linking
-    // takes only those the spec uses: one of the user's among them may fail SANY's analysis, which
-    // linking wouldn't report.
     let mut added = Vec::new();
     for extendee in options.root_extendees {
         let extendee: Rc<str> = Rc::from(*extendee);
@@ -953,7 +1006,8 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         )),
     };
     // Where a message of the generator has a shape no recording shows, linking's messages are
-    // printed only if they are the generator's.
+    // printed only if they are the generator's. Where linking can't give them, the generator's
+    // are, as the TypeScript report, its port, printed them.
     let (generated, unproven) = match generated {
         Ok(Generated::Unproven(messages, message)) => (None, Some((messages, message))),
         Ok(generated) => (Some(generated), None),
@@ -961,58 +1015,19 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     };
     let messages = match generated {
         Some(generated) => generated,
-        None => {
-            // Linking takes the standard modules as TLC ships them, so their messages are none,
-            // which a module of the user's named like one they read may not keep.
-            let is_standard_replaced = order.iter().any(|name| {
-                let dependencies = loader.get_dependencies(name);
-                loader.read(name).1 == ModuleOrigin::Standard
-                    && dependencies
-                        .extendees
-                        .iter()
-                        .chain(&dependencies.instancees)
-                        .any(|dependency| loader.read(dependency).1 != ModuleOrigin::Standard)
-            });
-            if is_standard_replaced {
-                return Err(not_yet(
-                    "SANY's messages of the standard modules with one of them replaced",
-                ));
+        None => match (
+            link_messages(loader, &order, undecided, is_user_module_added),
+            unproven,
+        ) {
+            (Ok(linked), Some((generated, message))) if generated != linked => {
+                return Err(not_yet(&format!(
+                    "SANY's messages, which linking gives apart from SANY's generator, one of whose messages no recording shows: {message}"
+                )));
             }
-            if is_user_module_added {
-                return Err(not_yet(
-                    "a module of the user's that the trace exploration spec uses",
-                ));
-            }
-            let config = parse_config("", options.version)
-                .map_err(|error| FrontError::Config(error.message))?;
-            let linked = match undecided {
-                Some(error) => Err(error),
-                None => get_sany_messages(
-                    &EnvironmentOptions {
-                        source,
-                        load_module: &|name| loader.read(name).0,
-                        config: &config,
-                        is_unconfigured: true,
-                        version: options.version,
-                        is_level_checked: true,
-                        load_class: None,
-                    },
-                    &order,
-                ),
-            };
-            match linked {
-                Ok(linked) => match unproven {
-                    Some((generated, message)) if generated != linked => {
-                        return Err(not_yet(&format!(
-                            "SANY's messages, which linking gives apart from SANY's generator, one of whose messages no recording shows: {message}"
-                        )));
-                    }
-                    _ => Generated::Messages(linked),
-                },
-                Err(linking @ FrontError::NotYet(_)) => return Err(Stop::Front(linking)),
-                Err(_) => return Err(not_yet("an error that stops linking")),
-            }
-        }
+            (Ok(linked), _) => Generated::Messages(linked),
+            (Err(_), Some((generated, _))) => Generated::Messages(generated),
+            (Err(stop), None) => return Err(stop),
+        },
     };
     let messages = match messages {
         Generated::Messages(messages) | Generated::Unproven(messages, _) => messages,

@@ -115,6 +115,15 @@ impl SelectorItem {
             _ => self.name.to_string(),
         }
     }
+
+    /// `sel.opNames[idx]`: the kind of SANY's syntax node for a numbered selector or arguments.
+    fn get_node_name(&self) -> String {
+        match self.op {
+            SelectorOp::Operand(_) => "N_StructOp".to_owned(),
+            SelectorOp::Null => "N_OpArgs".to_owned(),
+            _ => self.name.to_string(),
+        }
+    }
 }
 
 /// `getNameParts`: the parts of a name like `I!Op` or `Op!lab`, except for an operator such as
@@ -615,7 +624,9 @@ pub fn selector_to_node<G: SelectorGenerator>(
                                         .add_error(item_location(walk.index), nonexistent_error));
                                 };
                                 walk.node = get_operand(number);
-                            } else if is_op_def(graph, operator, DefKind::BuiltIn) {
+                            // SANY's nullOAN applies its nullODN, which is no builtin.
+                            } else if !appl.is_null && is_op_def(graph, operator, DefKind::BuiltIn)
+                            {
                                 if operator_name == "$RcdConstructor"
                                     || operator_name == "$SetOfRcds"
                                 {
@@ -727,7 +738,7 @@ pub fn selector_to_node<G: SelectorGenerator>(
                                     item_location(walk.index),
                                     format!(
                                         "Choosing operand `{}' of subexpression with no operands.",
-                                        item.name
+                                        item.get_display_name()
                                     ),
                                 ));
                             }
@@ -792,7 +803,7 @@ pub fn selector_to_node<G: SelectorGenerator>(
                                     item_location(walk.index),
                                     format!(
                                         "Cannot use !{} to select subexpression of a LAMBDA.",
-                                        item.name
+                                        item.get_node_name()
                                     ),
                                 ));
                             }
@@ -829,7 +840,10 @@ pub fn selector_to_node<G: SelectorGenerator>(
                         }
                     }
                 }
-                let Some(mut node) = walk.node else {
+                let Some(mut node) = walk
+                    .node
+                    .filter(|&node| !generator.graph().node(node).is_absent())
+                else {
                     return Ok(generator.add_error(
                         item_location(walk.index),
                         format!(

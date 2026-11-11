@@ -71,21 +71,23 @@ reports 24 (tests/report-cases/38), which the generator now writes. Where the ge
 such a spec, linking declines too ("SANY's messages of the standard modules with one of them
 replaced").
 
-An adversarial run against TLC at d8fb231 (about 1,440 runs of 620 specs, in TLC's default mode and
-with `-noGenerateSpecTE`) found the report wrong or declining for 519; each is a case of
-tla-front's `tests/sany-cases`, recorded in `sany-cases.json`. All but nine print what TLC prints.
-The nine decline:
-- a definition of the postfix operator `'` (`a' == a`), which the front end's parser rejects and
-  SANY's accepts (main's binary declined, and the TypeScript report printed otherwise);
+Two adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, then 680 more specs,
+in TLC's default mode and with `-noGenerateSpecTE`) found the report wrong or declining for 763;
+each is a case of tla-front's `tests/sany-cases`, recorded in `sany-cases.json`. All but ten print
+what TLC prints. The ten decline:
+- a definition of the postfix operator `'` (`a' == a`, `a ' == 1`), which the front end's parser
+  rejects and SANY's accepts (main's binary declined, and the TypeScript report printed
+  otherwise);
 - `EXTENDS SequencesExt` or `Functions`, a module of the CommunityModules: TLC finds it where
   CommunityModules.jar is beside tla2tools.jar, and else reports it missing, which the
   TypeScript report printed;
 - SANY's generator throwing on the root module after a module of the user's (main's binary
   declined).
 
-A message of the generator whose shape no recording shows is printed only where linking gives
-the same messages; otherwise the report declines ("SANY's messages, which linking gives apart
-from SANY's generator").
+A message of the generator whose shape no recording shows is printed where linking gives the same
+messages, and where linking can't give them, as the TypeScript report, a port of the same
+generator, printed them; where linking gives others, the report declines ("SANY's messages,
+which linking gives apart from SANY's generator").
 
 The engine reads nothing itself: an export that reads what JavaScript holds, such as a spec's
 modules, names what it needs and is called again with it (`prove-it-host`'s `sources`), so the
