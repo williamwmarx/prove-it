@@ -191,7 +191,7 @@ mod tests {
             })
     }
 
-    // isabelle.test.ts: decideIsabelle gives Isabelle's verdict on tlapm's theories.
+    // decideIsabelle gives Isabelle's verdict on tlapm's theories.
     #[test]
     fn gives_isabelles_verdict_on_tlapms_theories() {
         let cases = [
@@ -260,8 +260,7 @@ mod tests {
         );
     }
 
-    // isabelle.test.ts: decideIsabelle doesn't prove what doesn't follow. Isabelle fails on each of
-    // these too.
+    // decideIsabelle doesn't prove what doesn't follow. Isabelle fails on each of these too.
     #[test]
     fn doesnt_prove_a_theory_without_its_assumptions() {
         for name in [
