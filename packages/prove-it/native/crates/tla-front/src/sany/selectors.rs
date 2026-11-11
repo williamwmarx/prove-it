@@ -848,7 +848,7 @@ pub fn selector_to_node<G: SelectorGenerator>(
                         item_location(walk.index),
                         format!(
                             "An unexpected null node specified by '{}'.\nThis is probably due to a previous error.",
-                            item.name
+                            item.get_display_name()
                         ),
                     ));
                 };
