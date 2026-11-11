@@ -1,0 +1,3 @@
+---- MODULE I ----
+INSTANCE Naturals
+====
