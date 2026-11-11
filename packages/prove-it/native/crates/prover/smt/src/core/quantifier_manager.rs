@@ -32,14 +32,13 @@ const QI_MAX_EAGER_MULTIPATTERNS: usize = 0;
 const QI_MAX_LAZY_MULTIPATTERN_MATCHING: u32 = 2;
 
 /// Model-based quantifier instantiation: the finder completes candidate models, the checker
-/// refutes them with instances.
-#[derive(Clone, Debug)]
-struct Mbqi {
-    finder: ModelFinder,
-    checker: ModelChecker,
+/// refutes them with instances. The finder's and the checker's methods that reach the context move
+/// it out of `mbqi` while they run (`model_finder.rs`).
+pub(crate) struct Mbqi {
+    pub(crate) finder: ModelFinder,
+    pub(crate) checker: ModelChecker,
 }
 
-#[derive(Clone, Debug)]
 pub struct DefaultQuantifierManager {
     pub quantifiers: Vec<Expr>,
     generations: HashMap<Expr, u32>,
@@ -50,7 +49,7 @@ pub struct DefaultQuantifierManager {
     is_active: bool,
     /// What the trail closure of `finalCheckEh` restores (`TrailClosure::LazyMatchingIndex`).
     pub lazy_matching_index: u32,
-    mbqi: Option<Mbqi>,
+    pub(crate) mbqi: Option<Box<Mbqi>>,
 }
 
 impl DefaultQuantifierManager {
@@ -60,10 +59,10 @@ impl DefaultQuantifierManager {
         let qi_queue = QiQueue::new(m);
         let mbqi = if is_mbqi {
             let finder = ModelFinder::new(m);
-            Some(Mbqi {
+            Some(Box::new(Mbqi {
                 finder,
                 checker: ModelChecker::new(m),
-            })
+            }))
         } else {
             None
         };

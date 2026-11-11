@@ -20,6 +20,7 @@ fn graph() -> Graph<'static> {
         fingerprints: &FINGERPRINTS,
         reals: None,
         diameters: None,
+        levels: None,
     }
 }
 
@@ -231,7 +232,9 @@ impl Answers for Asked<'_> {
 
     fn position(&self, _atom: u32, slot: Slot, _diameter: u32) -> usize {
         match slot {
-            Slot::State(state) | Slot::Stutter(state) => state as usize,
+            Slot::State(state) | Slot::Reached { state, .. } | Slot::Stutter(state) => {
+                state as usize
+            }
             Slot::Step { edge, .. } => edge as usize,
         }
     }
@@ -259,6 +262,7 @@ fn asks_each_atom_as_the_search_adds_its_state() {
                 fingerprints: &FINGERPRINTS,
                 reals: None,
                 diameters: None,
+                levels: None,
             };
             let source = Source {
                 graph: &graph,
