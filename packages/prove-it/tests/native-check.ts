@@ -13,7 +13,11 @@ export interface NativeCheck {
 
 const DECLINED = /^\[engine\] native: (?:check declined|check takes the TypeScript path): (.*)$/s;
 
-export const checkNatively = async (options: CheckOptions): Promise<NativeCheck> => {
+// `check` reports a decline only through console.error under PROVE_IT_ENGINE=debug, both global,
+// so the calls run one at a time and each sees only its own reports.
+let queue: Promise<unknown> = Promise.resolve();
+
+const checkCapturing = async (options: CheckOptions): Promise<NativeCheck> => {
   // Without the addon `check` takes the TypeScript path without a word.
   const addon = getNativeAddon();
   if (typeof addon === "string") throw new Error(`no native engine: ${addon}`);
@@ -35,6 +39,12 @@ export const checkNatively = async (options: CheckOptions): Promise<NativeCheck>
     if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
     else process.env.PROVE_IT_ENGINE = setting;
   }
+};
+
+export const checkNatively = (options: CheckOptions): Promise<NativeCheck> => {
+  const checked = queue.then(() => checkCapturing(options));
+  queue = checked.catch(() => undefined);
+  return checked;
 };
 
 // TLC's report of an assumption that fails to evaluate, whose text starts at column 8 of `line`.
