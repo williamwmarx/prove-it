@@ -546,3 +546,48 @@ fn prints_a_simulations_alias_that_reads_trace_as_tlc() {
         "{error}"
     );
 }
+
+// The actions TLC's simulation gives Trace's records differ from state to state and are records,
+// which an alias can tell apart by type, by position or by comparing two states equal but for
+// their actions: each declines.
+#[test]
+fn declines_a_simulations_alias_that_tells_trace_actions_apart() {
+    let spec = |alias: &str| {
+        format!(
+            "---- MODULE Act ----\nEXTENDS Naturals, TLC, Sequences, TLCExt\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nUp == x = 0 /\\ x' = 1 /\\ n' = n + 1\nDown == x = 1 /\\ x' = 0 /\\ n' = n + 1\nNext == Up \\/ Down\nInv == n < 4\nAl == {alias}\n====\n"
+        )
+    };
+    for alias in [
+        "[x |-> x, t |-> Trace[Len(Trace)]._action = Trace[1]._action]",
+        "[x |-> x, t |-> Trace[1]._action \\in STRING]",
+        "[x |-> x, t |-> Len(ToString(Trace[1]))]",
+        "[x |-> x, t |-> Len(Trace) > 2 /\\ [Trace[1] EXCEPT !.n = 0] = [Trace[3] EXCEPT !.n = 0]]",
+        "IF Trace[1]._action = \"a\" THEN (1 :> x) ELSE (2 :> x)",
+    ] {
+        let (output, directory) = run_named(
+            "simulate-alias-actions",
+            "Act",
+            (
+                &spec(alias),
+                "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Al\n",
+            ),
+            &[
+                "-noTE",
+                "-seed",
+                "1",
+                "-simulate",
+                "num=1",
+                "-depth",
+                "10",
+                "Act",
+            ],
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+        assert_eq!(output.status.code(), Some(1), "{alias}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("an ALIAS that reads the actions of a simulation's Trace"),
+            "{alias}: {error}"
+        );
+    }
+}

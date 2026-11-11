@@ -41,8 +41,9 @@ impl Rebuilder<'_> {
     /// TLC binds the builtin Trace at each position to the trace's first states, as many as
     /// `prefixes` says; with no `prefixes`, the alias isn't followed where it reads Trace. A
     /// simulation's records carry each state's action as an `_action` field
-    /// (`TLCExt.getTrace`), which the rebuild doesn't hold: the alias is evaluated with two
-    /// stand-ins for it, and followed only where both give the same text.
+    /// (`TLCExt.getTrace`), which the rebuild doesn't hold: the alias is evaluated with three
+    /// stand-ins for it, one string for every state, a string for each and a number for each,
+    /// and followed only where each state's value, or failure, is the same under all three.
     pub fn alias(
         &mut self,
         trace: &Trace,
@@ -52,14 +53,25 @@ impl Rebuilder<'_> {
         is_simulated: bool,
     ) -> Result<Option<Vec<Alias>>, Unsupported> {
         if !is_simulated || prefixes.is_none() {
-            return self.alias_with(trace, cycle_start, prefixes, is_tool, None);
+            return Ok(self
+                .alias_with(trace, cycle_start, prefixes, is_tool, None)?
+                .map(|evaluated| evaluated.aliases));
         }
-        let first = self.alias_with(trace, cycle_start, prefixes, is_tool, Some("a"))?;
-        let second = self.alias_with(trace, cycle_start, prefixes, is_tool, Some("b"))?;
-        if get_texts(first.as_deref()) != get_texts(second.as_deref()) {
+        let mut evaluated = Vec::new();
+        for stand_in in [StandIn::Same, StandIn::Each, StandIn::Number] {
+            evaluated.push(self.alias_with(
+                trace,
+                cycle_start,
+                prefixes,
+                is_tool,
+                Some(stand_in),
+            )?);
+        }
+        let texts = |position: usize| evaluated[position].as_ref().map(|each| &each.texts);
+        if texts(0) != texts(1) || texts(0) != texts(2) {
             return unsupported("that reads the actions of a simulation's Trace");
         }
-        Ok(first)
+        Ok(evaluated.swap_remove(0).map(|each| each.aliases))
     }
 
     fn alias_with(
@@ -68,8 +80,8 @@ impl Rebuilder<'_> {
         cycle_start: Option<usize>,
         prefixes: Option<&[usize]>,
         is_tool: bool,
-        action: Option<&str>,
-    ) -> Result<Option<Vec<Alias>>, Unsupported> {
+        action: Option<StandIn>,
+    ) -> Result<Option<Evaluated>, Unsupported> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         let Some(alias) = &ir.model.alias else {
@@ -121,7 +133,7 @@ impl Rebuilder<'_> {
         // Each state as the record of its variables TLC binds Trace to, in the order of the
         // state's variables (`RecordValue(TLCState)`).
         let mut records = Vec::new();
-        for state in states.iter().filter(|_| prefixes.is_some()) {
+        for (position, state) in states.iter().enumerate().filter(|_| prefixes.is_some()) {
             let mut fields: Vec<_> = ir
                 .tlc_order
                 .iter()
@@ -133,16 +145,22 @@ impl Rebuilder<'_> {
                     )
                 })
                 .collect();
-            if let Some(action) = action {
-                fields.push((
-                    evaluator.text_of("_action".encode_utf16().collect()),
-                    Value::Str(evaluator.text_of(action.encode_utf16().collect())),
-                ));
+            if let Some(stand_in) = action {
+                let value = match stand_in {
+                    StandIn::Same => Value::Str(evaluator.text_of("a".encode_utf16().collect())),
+                    StandIn::Each => Value::Str(
+                        evaluator.text_of(format!("b{position}").encode_utf16().collect()),
+                    ),
+                    StandIn::Number => Value::Int(position as i32),
+                };
+                fields.push((evaluator.text_of("_action".encode_utf16().collect()), value));
             }
             records.push(run(Value::record(fields))?);
         }
         let records: std::rc::Rc<[Value]> = records.into();
         let mut aliases = Vec::with_capacity(states.len());
+        // Each state's value of the alias, or its failure, as text.
+        let mut texts = Vec::with_capacity(states.len());
         // TLC evaluates the alias of each state as it prints it, between its rebuilds of the
         // states, so an alias that uses the registers those rebuilds set reads them part way.
         let (reads, writes) = (evaluator.register_reads, evaluator.register_writes);
@@ -173,6 +191,10 @@ impl Rebuilder<'_> {
             };
             evaluator.next_level = None;
             evaluator.trace = None;
+            texts.push(match &result {
+                Ok(value) => format_pretty(value),
+                Err(error) => format!("{:?}", error.message.as_ref().map(|message| &message.text)),
+            });
             if !evaluator.printed.is_empty() {
                 return unsupported("that prints");
             }
@@ -246,21 +268,23 @@ impl Rebuilder<'_> {
                 _ => Alias::State,
             });
         }
-        Ok(Some(aliases))
+        Ok(Some(Evaluated { aliases, texts }))
     }
 }
 
-// The text of each state as the alias gives it.
-fn get_texts(aliases: Option<&[Alias]>) -> Vec<Vec<(String, String)>> {
-    aliases
-        .unwrap_or_default()
-        .iter()
-        .map(|alias| match alias {
-            Alias::Record(fields) => fields
-                .iter()
-                .map(|(name, value)| (name.clone(), format_pretty(value)))
-                .collect(),
-            Alias::State => Vec::new(),
-        })
-        .collect()
+// What a simulation's Trace records hold as each state's action, which the rebuild doesn't know.
+#[derive(Clone, Copy)]
+enum StandIn {
+    // The same string for every state.
+    Same,
+    // A string of each state's own.
+    Each,
+    // A number of each state's own.
+    Number,
+}
+
+// Each state of a trace as the alias gives it, and its value of the alias, or its failure, as text.
+struct Evaluated {
+    aliases: Vec<Alias>,
+    texts: Vec<String>,
 }

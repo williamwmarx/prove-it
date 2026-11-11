@@ -716,7 +716,8 @@ Declined, each with its reason:
   that holds a record of several fields where the store can't print it;
 - an ALIAS whose text shows the actions of TLCExt's Trace: the simulation binds Trace to records
   of its states with each state's action as `_action` (`TLCExt.getTrace`), which the trace
-  evaluator evaluates with two stand-ins for the action, and follows where both print alike;
+  evaluator evaluates with three stand-ins for the actions (one string for every state, a string
+  for each, a number for each), and follows where each state's value is the same under all three;
 - a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),
   which the simulation builds only as it checks a trace.
 
