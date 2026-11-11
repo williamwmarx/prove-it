@@ -24,3 +24,7 @@ later fixes move (`flatten_clauses`'s shared disjunction, `false`'s value in the
 rewriter's last result and the root's `is_shared` answer, `native/design/prover.md`) were printed by
 the same scripts at f5b7bef with the same fixes made to the TypeScript; the other tables print as
 before with them.
+
+Two lines move again with `flatten_clauses` and `is_shared` as Z3 4.8.9 has them: `tactics.txt`'s
+`asserted` run, whose shared conjunction 4.8.9 distributes, and `mbqi.txt`'s `rounds`. They are the
+Rust's output.

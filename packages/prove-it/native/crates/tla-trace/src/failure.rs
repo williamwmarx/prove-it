@@ -427,8 +427,16 @@ impl<'ir> Rebuilder<'ir> {
             return self.evaluate_next_atom(store, states, actions, atom, is_extra);
         }
         let mut is_successor_generated = false;
+        let reads = self.evaluator().register_reads;
         let mut failure =
             self.evaluate_failure_at(store, states, actions, site, &mut is_successor_generated)?;
+        // The search sets the registers in the order it explores the states, which the path
+        // TLC's report replays doesn't follow.
+        if self.evaluator().register_reads != reads {
+            return Err(Unsupported(
+                "evaluating the failure again: a failure that reads a register".into(),
+            ));
+        }
         failure.replay.is_successor_generated = is_successor_generated;
         Ok(failure)
     }

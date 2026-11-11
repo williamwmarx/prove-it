@@ -32,6 +32,9 @@ pub struct PrintedTrace {
     /// lasso violates.
     pub loop_action: Option<u32>,
     pub violated: Option<Vec<usize>>,
+    /// Whether TLC fails to find the violating successor of the initial state again, and so
+    /// prints the initial state alone (`Trace::is_successor_lost`).
+    pub is_successor_lost: bool,
 }
 
 /// What TLCGet reads after the search, for the postconditions.
@@ -270,6 +273,14 @@ fn rebuild(
             if let Some(group) = recorded.symmetry {
                 rebuilder.set_symmetry(group);
             }
+            // TLC fails as it prints a successor of an invariant violation it didn't find again,
+            // having printed the initial state, before any ALIAS or postcondition reads it.
+            if matches!(kind, ViolationKind::Invariant(_))
+                && ir.model.alias.is_none()
+                && postconditions.is_none()
+            {
+                rebuilder.keep_lost_successor();
+            }
             rebuilder.set_registers(Registers::from_store(
                 recorded.store,
                 &recorded.registers.numbered,
@@ -389,6 +400,7 @@ fn rebuild(
                     dumped,
                     loop_action,
                     violated,
+                    is_successor_lost: trace.is_successor_lost,
                     states: trace
                         .states
                         .iter()

@@ -11,6 +11,19 @@ const loadClass = (name: string) => {
   return existsSync(path) ? readFileSync(path) : undefined;
 };
 
+// Checks the spec of a tests/fixtures/override-shapes directory with its classes.
+const checkShape = (shape: string) => {
+  const directory = join(import.meta.dirname, "../fixtures/override-shapes", shape);
+  return check({
+    source: readFileSync(join(directory, "P.tla"), "utf8"),
+    config: readFileSync(join(directory, "P.cfg"), "utf8"),
+    loadClass: (name) => {
+      const path = join(directory, `${name}.class`);
+      return existsSync(path) ? readFileSync(path) : undefined;
+    },
+  });
+};
+
 describe("Java module overrides match TLC", () => {
   it("replaces each operator with the method of the same name and arity", async () => {
     const result = await check({
@@ -73,22 +86,24 @@ describe("Java module overrides match TLC", () => {
       ["field", "A Java override class with fields"],
       ["super", "A Java override class with a superclass"],
       ["overload", "A Java override class with methods of one name"],
-      ["annotation", "A Java override class with annotations"],
-      ["trycatch", "The Java override P.K computes its value"],
       ["registry", "A Java override of a name TLC maps to an operator's"],
     ]) {
-      const directory = join(import.meta.dirname, "../fixtures/override-shapes", shape);
-      await expect(
-        check({
-          source: readFileSync(join(directory, "P.tla"), "utf8"),
-          config: readFileSync(join(directory, "P.cfg"), "utf8"),
-          loadClass: (name) => {
-            const path = join(directory, `${name}.class`);
-            return existsSync(path) ? readFileSync(path) : undefined;
-          },
-        }),
-      ).rejects.toThrow(`${reason}, which tla-ts cannot run`);
+      await expect(checkShape(shape)).rejects.toThrow(`${reason}, which tla-ts cannot run`);
     }
+  });
+
+  it("skips a method annotated as an operator a TLCOverrides index loads", async () => {
+    // TLC at d8fb231 loads no override, so K stays 1 and Inv holds.
+    expect((await checkShape("annotation")).status).toBe("success");
+  });
+
+  it("runs a method that catches an exception up to its first return", async () => {
+    // TLC at d8fb231 loads K, whose try block returns 0, and reports x = 0 violating Inv.
+    const result = await checkShape("trycatch");
+    expect([
+      result.status,
+      result.violations[0]?.states.map((step) => step.variables.x?.text),
+    ]).toEqual(["invariant-violation", ["0"]]);
   });
 
   it("rejects an override whose method computes its value", async () => {

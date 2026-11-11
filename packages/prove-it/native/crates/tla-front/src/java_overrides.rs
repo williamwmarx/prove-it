@@ -5,6 +5,7 @@
 use std::rc::Rc;
 
 use crate::ast::{Definition, DefinitionKind, Expr, Expression, ExpressionKind, Location, Module};
+use crate::environment::ClassLoader;
 use crate::errors::FrontError;
 use crate::resolve::Result;
 
@@ -33,8 +34,6 @@ struct JavaMethod {
     arity: usize,
     signature: String,
     code: Option<Vec<u8>>,
-    /// Whether the bytecode catches an exception (an exception table).
-    is_catching: bool,
 }
 
 const CLASS_MAGIC: u32 = 0xcafe_babe;
@@ -171,6 +170,44 @@ fn get_type_names(descriptor: &str) -> Result<Vec<String>> {
     Ok(names)
 }
 
+/// The annotations `Method#getAnnotation` finds that make TLC skip a method of the class named after
+/// a module, which only a `TLCOverrides` index loads.
+const SKIPPING_ANNOTATIONS: [&str; 2] = [
+    "Ltlc2/overrides/TLAPlusOperator;",
+    "Ltlc2/overrides/Evaluation;",
+];
+
+// Reads past an annotation's element_value (JVM specification, section 4.7.16.1).
+fn skip_element_value(reader: &mut Reader) -> Result<()> {
+    match reader.u8()? {
+        b'e' => {
+            reader.u32()?;
+        }
+        b'@' => {
+            read_annotation(reader)?;
+        }
+        b'[' => {
+            for _ in 0..reader.u16()? {
+                skip_element_value(reader)?;
+            }
+        }
+        _ => {
+            reader.u16()?;
+        }
+    }
+    Ok(())
+}
+
+// An annotation's type, past its elements.
+fn read_annotation(reader: &mut Reader) -> Result<u16> {
+    let type_index = reader.u16()?;
+    for _ in 0..reader.u16()? {
+        reader.u16()?;
+        skip_element_value(reader)?;
+    }
+    Ok(type_index)
+}
+
 fn get_entry(pool: &[PoolEntry], index: u16) -> Result<&PoolEntry> {
     pool.get(index as usize)
         .ok_or_else(|| not_yet("a Java class file's constant out of its pool"))
@@ -180,18 +217,8 @@ fn get_class_name(pool: &[PoolEntry], index: u16) -> Result<String> {
     Ok(get_entry(pool, get_entry(pool, index)?.first)?.text.clone())
 }
 
-// The public static methods of a class file and their bytecode, in the order of the class file.
-fn read_class_file(bytes: &[u8]) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
-    let mut reader = Reader { bytes, offset: 0 };
-    if reader.u32()? != CLASS_MAGIC {
-        return Err(not_yet("a module override that isn't a class file"));
-    }
-    reader.u16()?;
-    if reader.u16()? > MAXIMUM_MAJOR_VERSION {
-        return Err(not_yet(
-            "a Java class file of a version the front end doesn't read",
-        ));
-    }
+// A class file's constant pool (JVM specification, section 4.4).
+fn read_pool(reader: &mut Reader) -> Result<Vec<PoolEntry>> {
     let pool_size = reader.u16()?;
     let mut pool = vec![PoolEntry::default(); pool_size as usize];
     let mut index = 1;
@@ -236,6 +263,22 @@ fn read_class_file(bytes: &[u8]) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
         pool[index as usize] = entry;
         index += 1;
     }
+    Ok(pool)
+}
+
+// The public static methods of a class file and their bytecode, in the order of the class file.
+fn read_class_file(bytes: &[u8], has_index: bool) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
+    let mut reader = Reader { bytes, offset: 0 };
+    if reader.u32()? != CLASS_MAGIC {
+        return Err(not_yet("a module override that isn't a class file"));
+    }
+    reader.u16()?;
+    if reader.u16()? > MAXIMUM_MAJOR_VERSION {
+        return Err(not_yet(
+            "a Java class file of a version the front end doesn't read",
+        ));
+    }
+    let pool = read_pool(&mut reader)?;
     // Java runs a class's static initializer, its fields' and its superclasses', before it calls
     // an override, which the front end doesn't run: it reads only a plain class with none.
     if reader.u16()? & UNPLAIN_CLASS != 0 {
@@ -262,8 +305,9 @@ fn read_class_file(bytes: &[u8]) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
             return Err(not_yet("a Java override class with a static initializer"));
         }
         let mut code = None;
-        let mut is_catching = false;
         let mut exceptions = Vec::new();
+        let mut is_annotated = false;
+        let mut is_skipped = false;
         for _ in 0..reader.u16()? {
             let attribute = get_entry(&pool, reader.u16()?)?.text.clone();
             let length = reader.u32()? as usize;
@@ -271,21 +315,37 @@ fn read_class_file(bytes: &[u8]) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
                 bytes: reader.bytes(length)?,
                 offset: 0,
             };
-            if attribute.contains("Annotation") {
-                return Err(not_yet("a Java override class with annotations"));
+            if attribute == "RuntimeVisibleAnnotations" {
+                for _ in 0..body.u16()? {
+                    let annotation = get_entry(&pool, read_annotation(&mut body)?)?;
+                    is_skipped |= SKIPPING_ANNOTATIONS.contains(&annotation.text.as_str());
+                }
             }
-            if attribute == "Code" {
-                // max_stack and max_locals come before the length of the bytecode, and the
-                // exception table after it.
+            if attribute.contains("Annotation") {
+                is_annotated = true;
+            } else if attribute == "Code" {
+                // max_stack and max_locals come before the length of the bytecode.
                 body.bytes(4)?;
                 let length = body.u32()? as usize;
                 code = Some(body.bytes(length)?.to_vec());
-                is_catching = body.u16()? != 0;
             } else if attribute == "Exceptions" {
                 for _ in 0..body.u16()? {
                     exceptions.push(get_class_name(&pool, body.u16()?)?.replace('/', "."));
                 }
             }
+        }
+        // `processModuleOverrides` skips a method annotated as an operator a TLCOverrides index
+        // loads, which a class TLC finds beside the spec could be.
+        if is_skipped {
+            if has_index {
+                return Err(not_yet(
+                    "a Java override class TLC may load through a TLCOverrides index",
+                ));
+            }
+            continue;
+        }
+        if is_annotated {
+            return Err(not_yet("a Java override class with annotations"));
         }
         if access & ACCESS_PUBLIC == 0 || access & ACCESS_STATIC == 0 {
             continue;
@@ -317,7 +377,6 @@ fn read_class_file(bytes: &[u8]) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
             ),
             name,
             code,
-            is_catching,
         });
     }
     for _ in 0..reader.u16()? {
@@ -374,7 +433,8 @@ fn literal(kind: ExpressionKind, location: &Location) -> Expr {
 
 // Runs the bytecode of an override that returns a constant TLC value, such as
 // BoolValue.ValTrue, IntValue.gen(3), or new StringValue("a"), and returns that value as a literal.
-// One that computes its value TLC runs as Java, which the front end doesn't.
+// One that computes its value TLC runs as Java, which the front end doesn't. The instructions it
+// runs, from the first to the first return, don't branch or throw, so no exception handler runs.
 fn get_returned_literal(
     method: &JavaMethod,
     pool: &[PoolEntry],
@@ -382,9 +442,6 @@ fn get_returned_literal(
 ) -> Result<Expr> {
     let unsupported = || not_yet("a Java override that computes its value");
     let code = method.code.as_ref().ok_or_else(unsupported)?;
-    if method.is_catching {
-        return Err(unsupported());
-    }
     let mut stack: Vec<Item> = Vec::new();
     let constant = |index: u16| -> Result<Item> {
         let entry = get_entry(pool, index)?;
@@ -505,13 +562,13 @@ fn get_returned_literal(
                 }
                 offset += 3;
             }
-            // areturn, of the only value, as the method's last instruction
+            // areturn, of the only value
             0xb0 => {
                 let value = match stack.pop() {
                     Some(Item::Literal(value)) | Some(Item::Object(_, Some(value))) => value,
                     _ => return Err(unsupported()),
                 };
-                if !stack.is_empty() || offset + 1 != code.len() {
+                if !stack.is_empty() {
                     return Err(unsupported());
                 }
                 return Ok(value);
@@ -522,15 +579,25 @@ fn get_returned_literal(
     Err(unsupported())
 }
 
+/// Whether TLC finds a `tlc2.overrides.TLCOverrides` index beside the spec or on the class path,
+/// named as the class or at its package's path (`TLAClass.loadClass`).
+pub fn has_index(load_class: &ClassLoader) -> bool {
+    ["tlc2.overrides.TLCOverrides", "tlc2/overrides/TLCOverrides"]
+        .iter()
+        .any(|name| load_class(name).is_some())
+}
+
 /// `overrideDefinitions`: TLC loads a class named after each module and replaces each operator of
 /// the module that the root module sees with the public static method of the same name and
-/// arity. It reports whether each method matched an operator.
+/// arity. It reports whether each method matched an operator. TLC also loads the overrides a
+/// `tlc2.overrides.TLCOverrides` index class lists (`has_index`).
 pub fn override_definitions(
     module: &Rc<Module>,
     bytes: &[u8],
     is_root: bool,
+    load_class: &ClassLoader,
 ) -> Result<(Rc<Module>, Vec<JavaOverride>)> {
-    let (pool, methods) = read_class_file(bytes)?;
+    let (pool, methods) = read_class_file(bytes, has_index(load_class))?;
     let get_arity = |name: &str| {
         module
             .definitions

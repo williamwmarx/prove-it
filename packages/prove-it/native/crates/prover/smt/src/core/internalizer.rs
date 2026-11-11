@@ -615,7 +615,6 @@ impl Context {
         );
         for index in 0..num_args as u32 {
             let root = self.enode_arena.get_arg_root(node, index);
-            self.node_mut(root).set_is_shared(None);
             self.node_mut(root).add_parent(node);
         }
         if self.m.is_unique_value(expr) {

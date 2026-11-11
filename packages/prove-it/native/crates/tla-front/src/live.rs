@@ -17,6 +17,7 @@ use crate::spec::{
     Binding, Expanded, Property, Scope, ScopeOf, bind_definitions, bind_operator_arguments,
     get_definition, get_level, lookup_scope, resolve_apply_operator,
 };
+use crate::tlc_messages::is_eval_exception;
 
 const MAXIMUM_EXPANSION_DEPTH: usize = 100;
 
@@ -376,34 +377,34 @@ impl Converter<'_> {
                 let is_constant = bounds
                     .iter()
                     .all(|bound| self.level(&bound.set, scope) == Level::Constant);
-                if !is_constant {
-                    return if level <= Level::Action {
-                        self.atom(expression, scope, level)
-                    } else {
-                        Err(cannot_handle(expression))
-                    };
+                if !is_constant && level <= Level::Action {
+                    return self.atom(expression, scope, level);
+                }
+                if !is_constant && !is_forall {
+                    return Err(cannot_handle(expression));
                 }
                 let reason = "a temporal quantifier over a set TLC fails to list";
-                let bindings = match self.get_evaluator(reason)?.get_bindings(bounds, scope) {
-                    Err(FrontError::Evaluation(_)) => return Err(not_yet(reason)),
-                    bindings => bindings?,
-                };
-                // TLC takes a quantified formula whose body fails for one it can't handle, and
-                // under \A it adds the message of a failure that isn't an EvalException.
-                let operands = match bindings
-                    .iter()
-                    .map(|bound| self.convert(body, bound.as_ref()))
-                    .collect::<Result<Vec<_>>>()
-                {
+                let bindings = self.get_evaluator(reason)?.get_bindings(bounds, scope);
+                // TLC takes a quantified formula whose sets or body fail for one it can't handle,
+                // and under \A it adds the message of a failure that isn't an EvalException.
+                let operands = match bindings.and_then(|bindings| {
+                    bindings
+                        .iter()
+                        .map(|bound| self.convert(body, bound.as_ref()))
+                        .collect::<Result<Vec<_>>>()
+                }) {
                     Err(FrontError::Evaluation(_)) if level <= Level::Action => {
                         return self.atom(expression, scope, level);
                     }
-                    Err(FrontError::Evaluation(_)) if !is_forall => {
-                        return Err(cannot_handle(expression));
+                    Err(FrontError::Evaluation(message))
+                        if is_forall && !is_eval_exception(&message) =>
+                    {
+                        return Err(FrontError::Evaluation(format!(
+                            "TLC cannot handle the temporal formula {}:\n{message}",
+                            describe_range(expression)
+                        )));
                     }
-                    Err(FrontError::Evaluation(_)) => {
-                        return Err(not_yet("a temporal \\A whose body TLC can't handle"));
-                    }
+                    Err(FrontError::Evaluation(_)) => return Err(cannot_handle(expression)),
                     operands => operands?,
                 };
                 if operands.is_empty() {

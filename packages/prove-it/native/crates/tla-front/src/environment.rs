@@ -36,6 +36,7 @@ use crate::standard_builtins::{
 };
 use crate::standard_modules;
 use crate::subexpressions::{resolve_instance_subexpressions, resolve_module_subexpressions};
+use crate::tlc_messages::is_eval_exception;
 use crate::values::ValueOrder;
 
 /// A builtin the environment holds: its name, arity and flags (state-level, level-constant,
@@ -62,6 +63,9 @@ pub struct Environment {
     pub substitutions: OrderedMap<Name, Name>,
     /// The values the configuration assigns, by key.
     pub constants: OrderedMap<Name, ConfigValue>,
+    /// The values the configuration assigns operators with parameters, by key, which TLC gives
+    /// any application of the operator without evaluating its arguments (`Tool.evalAppl`).
+    pub operator_constants: OrderedMap<Name, ConfigValue>,
     pub variables: Vec<Name>,
     /// Where the root module declares each of its variables (`variableLocations`).
     pub variable_locations: Vec<Location>,
@@ -88,6 +92,8 @@ pub struct Environment {
     /// The methods of the Java class that overrides a module's operators, which TLC reports as it
     /// starts.
     pub java_overrides: Vec<crate::java_overrides::JavaOverride>,
+    /// The modules the spec links, in the order it links them.
+    pub modules: Vec<Rc<Module>>,
 }
 
 impl Environment {
@@ -534,11 +540,15 @@ impl Linker<'_> {
 
     /// `overrideDefinitions` with the class TLC loads for the module, if any.
     fn override_module(&self, module: Rc<Module>, is_root: bool) -> Result<Rc<Module>> {
-        let Some(bytes) = self.options.load_class.and_then(|load| load(&module.name)) else {
+        let Some((load, bytes)) = self
+            .options
+            .load_class
+            .and_then(|load| Some((load, load(&module.name)?)))
+        else {
             return Ok(module);
         };
         let (module, overrides) =
-            crate::java_overrides::override_definitions(&module, &bytes, is_root)?;
+            crate::java_overrides::override_definitions(&module, &bytes, is_root, load)?;
         let mut java_overrides = self.java_overrides.borrow_mut();
         // TLC reports the overrides in the order it links the modules, which matters only for
         // two of them.
@@ -2043,8 +2053,13 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         &tokenize(options.source)?,
         options.version,
     )?);
-    let (root, root_overrides) = match options.load_class.and_then(|load| load(&parsed.name)) {
-        Some(bytes) => crate::java_overrides::override_definitions(&parsed, &bytes, true)?,
+    let (root, root_overrides) = match options
+        .load_class
+        .and_then(|load| Some((load, load(&parsed.name)?)))
+    {
+        Some((load, bytes)) => {
+            crate::java_overrides::override_definitions(&parsed, &bytes, true, load)?
+        }
         None => (parsed, Vec::new()),
     };
     let linker = create_linker(options, &root);
@@ -2117,16 +2132,45 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         };
     let mut constants: OrderedMap<Name, ConfigValue> = OrderedMap::new();
     let mut operator_keys: FastSet<Name> = FastSet::default();
-    let mut set_operator =
-        |key: &Name,
-         builtin: Builtin,
-         definitions: &mut OrderedMap<Name, Rc<Definition>>,
-         constants: &mut OrderedMap<Name, ConfigValue>| {
-            builtins.insert(key.clone(), builtin);
-            definitions.remove(key);
-            constants.remove(key);
-            operator_keys.insert(key.clone());
-        };
+    let mut operator_constants: OrderedMap<Name, ConfigValue> = OrderedMap::new();
+    let mut set_operator = |key: &Name,
+                            builtin: Builtin,
+                            definitions: &mut OrderedMap<Name, Rc<Definition>>,
+                            constants: &mut OrderedMap<Name, ConfigValue>,
+                            value: Option<&ConfigValue>| {
+        builtins.insert(key.clone(), builtin);
+        definitions.remove(key);
+        constants.remove(key);
+        operator_keys.insert(key.clone());
+        operator_constants.remove(key);
+        if let Some(value) = value {
+            operator_constants.insert(key.clone(), value.clone());
+        }
+    };
+    // `makeConstantTable` adds a row of an operator's table to the value the configuration gave
+    // its name before, which it casts to a table.
+    for (position, assignment) in config.constants.iter().enumerate() {
+        let assigned = config.constants[..position].iter().find(|earlier| {
+            earlier.name == assignment.name
+                && earlier.args.is_none()
+                && earlier.module.is_none()
+                && assignment.module.is_none()
+        });
+        if let Some(earlier) = assigned.filter(|_| assignment.args.is_some()) {
+            let class = match earlier.value {
+                ConfigValue::Number(_) => "IntValue",
+                ConfigValue::String(_) => "StringValue",
+                ConfigValue::Boolean(_) => "BoolValue",
+                ConfigValue::ModelValue(_) => "ModelValue",
+                ConfigValue::Set(_) => "SetEnumValue",
+                ConfigValue::Record(_) => "RecordValue",
+            };
+            return Err(FrontError::Evaluation(format!(
+                "{}java.lang.ClassCastException\n: class tlc2.value.impl.{class} cannot be cast to class tlc2.value.impl.OpRcdValue (tlc2.value.impl.{class} and tlc2.value.impl.OpRcdValue are in unnamed module of loader 'app')",
+                crate::errors::UNEXPECTED_HEAD
+            )));
+        }
+    }
     for assignment in config
         .constants
         .iter()
@@ -2148,6 +2192,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                     },
                     &mut definitions,
                     &mut constants,
+                    Some(&assignment.value),
                 );
             }
         }
@@ -2207,6 +2252,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                 },
                 &mut definitions,
                 &mut constants,
+                None,
             );
         }
     }
@@ -2377,6 +2423,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         builtins,
         substitutions,
         constants,
+        operator_constants,
         variables,
         variable_locations: linked_root.variable_locations.clone(),
         variable_index,
@@ -2387,6 +2434,12 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         instance_names: linker.instance_names.take(),
         printed,
         java_overrides: linker.java_overrides.take(),
+        modules: linker
+            .link_order
+            .borrow()
+            .iter()
+            .map(|linked| linked.module.clone())
+            .collect(),
     };
     // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
     // the level bound it computes is above constant. The bound counts the operators that TLC's
@@ -2417,10 +2470,16 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                 continue;
             }
             match evaluator.evaluate(&definition.body, None) {
-                // TLC's SpecProcessor adds the message of a TLCRuntimeException, which these are.
+                // TLC's SpecProcessor adds the message of a TLCRuntimeException, not an
+                // EvalException's.
                 Err(FrontError::Evaluation(message)) => {
+                    let addendum = if is_eval_exception(&message) {
+                        String::new()
+                    } else {
+                        format!(" - specifically: {message}")
+                    };
                     return Err(FrontError::Config(format!(
-                        "The configuration file substitutes constant {name} with non-constant {target} - specifically: {message}"
+                        "The configuration file substitutes constant {name} with non-constant {target}{addendum}"
                     )));
                 }
                 Err(error) => return Err(error),

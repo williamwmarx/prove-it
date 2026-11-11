@@ -1,0 +1,3 @@
+exit 151
+Error: TLC found an error in the configuration file:
+escape sequences are not supported in strings at line 2

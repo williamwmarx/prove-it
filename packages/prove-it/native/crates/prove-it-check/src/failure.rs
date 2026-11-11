@@ -331,13 +331,14 @@ pub fn print_failure(
 }
 
 // Whether an atom of the temporal properties may print as TLC evaluates it: one read in an
-// instance's scope, or one that reaches Print or PrintT, through the definitions it names.
+// instance's scope, or one that reaches Print, PrintT or AssertEq, through the definitions it
+// names.
 fn atoms_print(ir: &Ir) -> bool {
     ir.model.atoms.iter().any(|atom| atom.scope.is_some())
         || reaches(
             ir,
             ir.model.atoms.iter().map(|atom| atom.expression).collect(),
-            |text, _| matches!(text, "Print" | "PrintT"),
+            |text, _| matches!(text, "Print" | "PrintT" | "AssertEq"),
         )
 }
 
@@ -520,6 +521,7 @@ fn evaluate(
             Trace {
                 states: Vec::new(),
                 trace_output: Vec::new(),
+                is_successor_lost: false,
             }
         } else {
             // An atom's state past the path is no state of the trace.

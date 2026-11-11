@@ -1,0 +1,9 @@
+exit 151
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Error: The configuration file substitutes constant C with non-constant Foo
