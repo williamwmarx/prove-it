@@ -846,20 +846,33 @@ fn declines_an_alias_that_reads_trace_twice_and_sorts_it() {
     );
 }
 
-// TLC names an initial predicate a LET defines by its name, where its definition is written.
+// TLC names an initial predicate a LET defines by the LET and takes it whole, which the binary
+// doesn't follow in a simulation's trace: it declines.
 #[test]
-fn names_an_initial_predicate_a_let_defines_as_tlc() {
+fn declines_a_simulations_initial_predicate_a_let_defines() {
     let spec = "---- MODULE Spec ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = x + 1 /\\ y' = y\nInv == x < 2\nAl == [x |-> x, t |-> Trace]\nSpec == LET In == Init IN In /\\ [][Next]_<<x, y>>\n====\n";
-    let (code, text) = simulate(
+    let (output, directory) = run_named(
         "simulate-let-init",
         "Spec",
         (spec, "SPECIFICATION Spec\nINVARIANT Inv\nALIAS Al\n"),
-        &["-seed", "1", "-simulate", "num=1", "-depth", "10"],
+        &[
+            "-noTE",
+            "-seed",
+            "1",
+            "-simulate",
+            "num=1",
+            "-depth",
+            "10",
+            "Spec",
+        ],
     );
-    assert_eq!(code, Some(12), "{text}");
+    std::fs::remove_dir_all(directory).expect("removed");
+    assert_eq!(output.status.code(), Some(1));
     assert!(
-        text.contains("State 1: <In line 8, col 19 to line 8, col 22 of module Spec>\n/\\ x = 0\n/\\ t = <<[_action |-> [name |-> \"In\", location |-> [beginLine |-> 8, beginColumn |-> 19, endLine |-> 8, endColumn |-> 22, module |-> \"Spec\"]], x |-> 0, y |-> 0]>>\n"),
-        "{text}"
+        stderr(&output)
+            .contains("an ALIAS of a simulation whose initial predicate has no location"),
+        "{}",
+        stderr(&output)
     );
 }
 
@@ -896,6 +909,20 @@ fn prints_an_alias_that_reads_trace_without_showing_it() {
             "[x |-> x, t |-> Trace[1] = Trace[Len(Trace)]]",
             ["t = TRUE", "t = FALSE", "t = FALSE"],
         ),
+        (
+            "Next == \\E s \\in {[a |-> 1, b |-> 2]} : A(s)",
+            "[x |-> x, n |-> Len(Trace)]",
+            ["n = 1", "n = 2", "n = 3"],
+        ),
+        (
+            "Next == A(1)",
+            "[x |-> x, b |-> Trace[1] = Trace[1], s |-> ToString(x)]",
+            [
+                "b = TRUE\n/\\ s = \"0\"",
+                "b = TRUE\n/\\ s = \"1\"",
+                "b = TRUE\n/\\ s = \"2\"",
+            ],
+        ),
     ] {
         let spec = format!(
             "---- MODULE Spec ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLES x, y\nA(i) == x < 3 /\\ x' = x + 1 /\\ y' = 0\nInv == x < 2\n{next}\nAl == {alias}\nSpec == x = 0 /\\ y = 0 /\\ [][Next]_<<x, y>>\n====\n"
@@ -914,4 +941,50 @@ fn prints_an_alias_that_reads_trace_without_showing_it() {
             );
         }
     }
+}
+
+// TLC names an initial predicate the configuration substitutes by its definition's name, where
+// an extended module defines it.
+#[test]
+fn names_a_substituted_initial_predicate_of_an_extended_module_as_tlc() {
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-simulate-extended-init-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("M.tla"),
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit2 == x = 0 /\\ TRUE\nNext2 == x' = (x + 1) % 3\n====\n",
+    )
+    .expect("a module");
+    std::fs::write(
+        directory.join("Ext.tla"),
+        "---- MODULE Ext ----\nEXTENDS M, TLC, TLCExt, Sequences\nInit == FALSE\nNext == x' = (x + 1) % 3\nInv == x < 2\n====\n",
+    )
+    .expect("a spec");
+    std::fs::write(
+        directory.join("Ext.cfg"),
+        "INIT Init\nNEXT Next\nCONSTANT Init <- Init2\nINVARIANT Inv\n",
+    )
+    .expect("a configuration");
+    let output = run(
+        &directory,
+        &[
+            "-noTE",
+            "-seed",
+            "1",
+            "-simulate",
+            "num=1",
+            "-depth",
+            "10",
+            "Ext",
+        ],
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains("State 1: <Init2 line 4, col 10 to line 4, col 22 of module M>\nx = 0\n"),
+        "{text}"
+    );
 }

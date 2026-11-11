@@ -113,12 +113,10 @@ impl Rebuilder<'_> {
         // Each state as the record of its variables TLC binds Trace to, in the order of the
         // state's variables (`RecordValue(TLCState)`).
         let mut records = Vec::new();
-        // Whether a step's action binds a parameter to a record of several fields, which TLC
-        // sorts, as it fingerprints it, at a point of its simulation the trace evaluator doesn't
-        // follow; and the sets steps' actions bind parameters to, which TLC may hold as an
-        // interval or lazily.
-        let mut is_record_bound = false;
-        let mut bound_sets = Vec::new();
+        // The records and sets steps' actions bind parameters to: TLC sorts a record, as it
+        // fingerprints it, at a point of its simulation the trace evaluator doesn't follow, and
+        // may hold a set as an interval or lazily.
+        let mut bound_values = Vec::new();
         for (position, state) in states.iter().enumerate().filter(|_| prefixes.is_some()) {
             let action = match initial {
                 None => None,
@@ -133,9 +131,8 @@ impl Rebuilder<'_> {
                         return unsupported("of a simulation's step whose action the trace lacks");
                     };
                     let bound = action_parameters(evaluator, action)?;
-                    is_record_bound |= bound.iter().any(|(_, value)| holds_record(value));
                     for (_, value) in &bound {
-                        collect_nodes(value, false, &mut bound_sets);
+                        collect_nodes(value, true, &mut bound_values);
                     }
                     Some(action_record(evaluator, action, &bound, false)?)
                 }
@@ -181,6 +178,7 @@ impl Rebuilder<'_> {
                 length: prefixes[position],
                 built: RefCell::new(None),
                 reads: Cell::new(0),
+                stringified: RefCell::new(Vec::new()),
             });
             // TLC prints an alias that fails with its message as a field of the state
             // (`_ALIASEvalError`, `Tool.evalAlias`).
@@ -198,12 +196,17 @@ impl Rebuilder<'_> {
                 .is_some_and(|prefix| prefix.built.borrow().is_some());
             // TLC builds the records anew each time the alias reads Trace (`TLCExt.getTrace`):
             // one read that sorts them leaves the others' as built.
-            // What the alias's value can show of the records and the parameters' sets: the
-            // records or sets themselves, or text made of them.
+            // What the alias's value can show of the records and the parameters' records and
+            // sets: the values themselves, or text made of them.
+            let stringified = prefix
+                .as_ref()
+                .map(|prefix| prefix.stringified.take())
+                .unwrap_or_default();
             let shows = |targets: &[usize]| {
                 result
                     .as_ref()
                     .map_or(!targets.is_empty(), |value| is_shown(value, targets))
+                    || stringified.iter().any(|value| is_shown(value, targets))
             };
             if let Some(prefix) = &prefix
                 && prefix.reads.get() > 1
@@ -220,7 +223,7 @@ impl Rebuilder<'_> {
                     return unsupported("that reads Trace more than once and sorts its records");
                 }
             }
-            if is_trace_read && (is_record_bound || shows(&bound_sets)) {
+            if is_trace_read && shows(&bound_values) {
                 return unsupported(
                     "that reads a simulation's Trace whose actions bind a parameter to a record or a set",
                 );
@@ -302,29 +305,8 @@ impl Rebuilder<'_> {
     }
 }
 
-// Whether a value holds a record of more than one field, or a function of strings TLC prints as
-// one.
-fn holds_record(value: &Value) -> bool {
-    match value {
-        Value::Function(function) => {
-            (function.domain.len() > 1
-                && function
-                    .domain
-                    .iter()
-                    .all(|key| matches!(key, Value::Str(_))))
-                || function
-                    .domain
-                    .iter()
-                    .chain(&function.range)
-                    .any(holds_record)
-        }
-        Value::Set(elements) => elements.iter().any(holds_record),
-        _ => false,
-    }
-}
-
-// The sets a value holds, and the functions that hold them or, with `is_record`, records, by
-// address.
+// The sets a value holds, and the functions that hold them or, with `is_record`, records of more
+// than one field, by address.
 fn collect_nodes(value: &Value, is_record: bool, nodes: &mut Vec<usize>) {
     match value {
         Value::Function(function) => {
@@ -334,7 +316,12 @@ fn collect_nodes(value: &Value, is_record: bool, nodes: &mut Vec<usize>) {
                 .iter()
                 .chain(&function.range)
                 .for_each(|inner| collect_nodes(inner, is_record, nodes));
-            if nodes.len() > before || (is_record && function.class.get() == Class::Record) {
+            let is_sortable = function.domain.len() > 1
+                && function
+                    .domain
+                    .iter()
+                    .all(|key| matches!(key, Value::Str(_)));
+            if nodes.len() > before || (is_record && is_sortable) {
                 nodes.push(Rc::as_ptr(function) as *const () as usize);
             }
         }
@@ -348,8 +335,7 @@ fn collect_nodes(value: &Value, is_record: bool, nodes: &mut Vec<usize>) {
     }
 }
 
-// Whether a value holds one of `targets`, a text, which it may have made of them, or a value the
-// evaluator keeps lazy.
+// Whether a value holds one of `targets`, or a value the evaluator keeps lazy, which may.
 fn is_shown(value: &Value, targets: &[usize]) -> bool {
     match value {
         Value::Function(function) => {
@@ -364,7 +350,7 @@ fn is_shown(value: &Value, targets: &[usize]) -> bool {
             targets.contains(&(Rc::as_ptr(elements) as *const () as usize))
                 || elements.iter().any(|inner| is_shown(inner, targets))
         }
-        Value::Str(_) => !targets.is_empty(),
+        Value::Str(_) => false,
         Value::Bool(_) | Value::Int(_) | Value::Model(_) | Value::Interval(..) => false,
         _ => !targets.is_empty(),
     }

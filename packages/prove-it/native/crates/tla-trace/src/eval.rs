@@ -387,6 +387,8 @@ pub struct TracePrefix {
     pub built: RefCell<Option<Value>>,
     /// How many times the alias read Trace.
     pub reads: Cell<u32>,
+    /// The values the alias turned to text, which show what they hold.
+    pub stringified: RefCell<Vec<Value>>,
 }
 
 pub struct Evaluator<'ir> {
@@ -5226,6 +5228,9 @@ impl<'ir> Evaluator<'ir> {
             "ToString" => {
                 arity(1)?;
                 let value = self.operand(&operands[0])?;
+                if let Some(prefix) = &self.trace {
+                    prefix.stringified.borrow_mut().push(value.clone());
+                }
                 let checked = check_unchecked(&value);
                 if let Err(EvalError {
                     message: Some(message),
