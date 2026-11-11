@@ -74,6 +74,9 @@ pub struct LoweredModel {
     /// What TLC prints of the Java overrides it loads, right after `Starting...`, before it
     /// computes the constant definitions.
     pub override_messages: Vec<StartupMessage>,
+    /// The names TLC's `Defns` holds: the definitions, the standard modules' operators and the
+    /// declared constants.
+    pub defined_names: Vec<String>,
     /// How a simulation labels an initial state, as `TLCStateInfo` labels the last of TLC's
     /// initial predicates (`initPredVec`): `Init line 4, col 9 to line 4, col 13 of module M`, or
     /// `Initial predicate` and where an unnamed one is written. None where the front end can't
@@ -419,6 +422,29 @@ fn lower_ranked(
                 override_messages,
                 ir: tla_ir::encode(&ir),
                 startup_messages,
+                // TLC's `Defns`: what the root module defines and declares, which a named
+                // THEOREM or ASSUME isn't.
+                defined_names: environment
+                    .definitions
+                    .keys()
+                    .chain(environment.builtins.keys())
+                    .chain(
+                        environment
+                            .root_constants
+                            .iter()
+                            .map(|constant| &constant.name),
+                    )
+                    .filter(|name| {
+                        !matches!(
+                            environment
+                                .root_symbols
+                                .get(*name)
+                                .map(|symbol| &symbol.kind),
+                            Some(crate::resolve::SymbolKind::Theorem)
+                        )
+                    })
+                    .map(|name| name.to_string())
+                    .collect(),
                 initial_label,
             },
             startup,

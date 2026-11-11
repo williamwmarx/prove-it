@@ -36,6 +36,8 @@ pub struct Failure {
 /// it starts, comes from the engine's startup.
 pub struct Front {
     pub ir: Vec<u8>,
+    /// The names TLC's `Defns` holds, which the trace exploration spec reads.
+    pub defined_names: Vec<String>,
     /// None for the IR a test names, which has no source to report on.
     pub sany: Option<String>,
     /// What TLC prints of the Java overrides it loads, right after `Starting...`.
@@ -61,9 +63,7 @@ pub fn read_front(
 ) -> Result<Read, String> {
     let spec = Path::new(spec_path);
     let directory = spec.parent().unwrap_or(Path::new("."));
-    let directories: Vec<&Path> = std::iter::once(directory)
-        .chain(files.libraries.iter().map(Path::new))
-        .collect();
+    let directories: Vec<&Path> = files.directories.iter().map(Path::new).collect();
     let load_module = |name: &str| host.load_module(&directories, name);
     let load_class = |name: &str| host.load_class(directory, name);
     let source = host.read_text(spec);
@@ -81,6 +81,7 @@ pub fn read_front(
             .map_err(|error| format!("the IR PROVE_IT_TEST_IR names: {error}"))?;
         return Ok(Read::Model(Front {
             ir,
+            defined_names: Vec::new(),
             sany: None,
             override_messages: Vec::new(),
             startup_messages: Vec::new(),
@@ -111,13 +112,14 @@ pub fn read_front(
         sources.as_ref(),
         config_text,
         is_warning_enabled,
-        files.libraries,
+        files.directories,
         seed as u64,
         files.root_extendees,
     ) {
         Ok(lowered) => {
             return Ok(Read::Model(Front {
                 ir: lowered.ir,
+                defined_names: lowered.defined_names,
                 sany: Some(sany.text),
                 startup_messages: lowered.startup_messages?,
                 override_messages: lowered.override_messages,
@@ -144,14 +146,14 @@ fn lower(
     sources: Option<&ModelSources>,
     config_text: &str,
     is_warning_enabled: bool,
-    libraries: &[String],
+    directories: &[String],
     random_seed: u64,
     root_extendees: &[&str],
 ) -> Result<LoweredModel, FrontError> {
     let sources = sources.ok_or_else(|| FrontError::Config("the spec can't be read".into()))?;
-    let libraries: Vec<&Path> = libraries.iter().map(Path::new).collect();
+    let directories: Vec<&Path> = directories.iter().map(Path::new).collect();
     let options = ModelOptions {
-        libraries: &libraries,
+        libraries: &directories,
         version: None,
         is_warning_enabled,
         is_spec_described: true,

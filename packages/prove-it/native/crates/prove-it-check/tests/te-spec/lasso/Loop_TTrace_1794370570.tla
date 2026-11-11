@@ -1,0 +1,148 @@
+---- MODULE Loop_TTrace_1794370570 ----
+EXTENDS Loop, Sequences, TLCExt, Loop_TEConstants, Toolbox, Naturals, TLC
+
+_expression ==
+    LET Loop_TEExpression == INSTANCE Loop_TEExpression
+    IN Loop_TEExpression!expression
+----
+
+_trace ==
+    LET Loop_TETrace == INSTANCE Loop_TETrace
+    IN Loop_TETrace!trace
+----
+
+_prop ==
+    ~(([]<>(
+            x = (2)
+    ))/\([]<>(
+            x = (0)
+    )))
+----
+
+_init ==
+    /\ x = _TETrace[1].x
+----
+
+_next ==
+    /\ \E i,j \in DOMAIN _TETrace:
+        /\ \/ /\ j = i + 1
+              /\ i = TLCGet("level")
+           \/ /\ i = _TTraceLassoEnd
+              /\ j = _TTraceLassoStart
+        /\ x  = _TETrace[i].x
+        /\ x' = _TETrace[j].x
+
+\* Uncomment the ASSUME below to write the states of the error trace
+\* to the given file in Json format. Note that you can pass any tuple
+\* to `JsonSerialize`. For example, a sub-sequence of _TETrace.
+    \* ASSUME
+    \*     LET J == INSTANCE Json
+    \*         IN J!JsonSerialize("Loop_TTrace_1794370570.json", _TETrace)
+
+
+_view ==
+    <<x, IF TLCGet("level") = _TTraceLassoEnd + 1 THEN _TTraceLassoStart ELSE TLCGet("level")>>
+=============================================================================
+
+ Note that you can extract this module `Loop_TEExpression`
+  to a dedicated file to reuse `expression` (the module in the 
+  dedicated `Loop_TEExpression.tla` file takes precedence 
+  over the module `Loop_TEExpression` below).
+
+---- MODULE Loop_TEExpression ----
+EXTENDS Loop, Sequences, TLCExt, Loop_TEConstants, Toolbox, Naturals, TLC
+
+expression == 
+    [
+        \* To hide variables of the `Loop` spec from the error trace,
+        \* remove the variables below.  The trace will be written in the order
+        \* of the fields of this record.
+        x |-> x
+        
+        \* Put additional constant-, state-, and action-level expressions here:
+        \* ,_stateNumber |-> _TEPosition
+        \* ,_xUnchanged |-> x = x'
+        
+        \* Format the `x` variable as Json value.
+        \* ,_xJson |->
+        \*     LET J == INSTANCE Json
+        \*     IN J!ToJson(x)
+        
+        \* Lastly, you may build expressions over arbitrary sets of states by
+        \* leveraging the _TETrace operator.  For example, this is how to
+        \* count the number of times a spec variable changed up to the current
+        \* state in the trace.
+        \* ,_xModCount |->
+        \*     LET F[s \in DOMAIN _TETrace] ==
+        \*         IF s = 1 THEN 0
+        \*         ELSE IF _TETrace[s].x # _TETrace[s-1].x
+        \*             THEN 1 + F[s-1] ELSE F[s-1]
+        \*     IN F[_TEPosition - 1]
+    ]
+
+=============================================================================
+
+
+
+Parsing and semantic processing can take forever if the trace below is long.
+ In this case, it is advised to uncomment the module below to deserialize the
+ trace from a generated binary file.
+
+\*
+\*---- MODULE Loop_TETrace ----
+\*EXTENDS Loop, IOUtils, Loop_TEConstants, TLC
+\*
+\*trace == IODeserialize("Loop_TTrace_1794370570.bin", TRUE)
+\*
+\*=============================================================================
+\*
+
+---- MODULE Loop_TETrace ----
+EXTENDS Loop, Loop_TEConstants, TLC
+
+trace == 
+    <<
+    ([x |-> 0]),
+    ([x |-> 1]),
+    ([x |-> 2])
+    >>
+----
+
+
+=============================================================================
+
+---- MODULE Loop_TEConstants ----
+EXTENDS Loop
+
+CONSTANTS _TTraceLassoStart, _TTraceLassoEnd
+
+=============================================================================
+
+---- CONFIG Loop_TTrace_1794370570 ----
+CONSTANTS
+_TTraceLassoStart = 1
+_TTraceLassoEnd = 3
+
+PROPERTY
+    _prop
+
+CHECK_DEADLOCK
+    \* CHECK_DEADLOCK off because of PROPERTY or INVARIANT above.
+    FALSE
+
+INIT
+    _init
+
+NEXT
+    _next
+
+VIEW
+    _view
+
+CONSTANT
+    _TETrace <- _trace
+
+ALIAS
+    _expression
+=============================================================================
+\* Generated on Wed Nov 11 04:16:11 UTC 2026
