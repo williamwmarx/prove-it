@@ -2141,6 +2141,30 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
             operator_constants.insert(key.clone(), value.clone());
         }
     };
+    // `makeConstantTable` adds a row of an operator's table to the value the configuration gave
+    // its name before, which it casts to a table.
+    for (position, assignment) in config.constants.iter().enumerate() {
+        let assigned = config.constants[..position].iter().find(|earlier| {
+            earlier.name == assignment.name
+                && earlier.args.is_none()
+                && earlier.module.is_none()
+                && assignment.module.is_none()
+        });
+        if let Some(earlier) = assigned.filter(|_| assignment.args.is_some()) {
+            let class = match earlier.value {
+                ConfigValue::Number(_) => "IntValue",
+                ConfigValue::String(_) => "StringValue",
+                ConfigValue::Boolean(_) => "BoolValue",
+                ConfigValue::ModelValue(_) => "ModelValue",
+                ConfigValue::Set(_) => "SetEnumValue",
+                ConfigValue::Record(_) => "RecordValue",
+            };
+            return Err(FrontError::Evaluation(format!(
+                "{}java.lang.ClassCastException\n: class tlc2.value.impl.{class} cannot be cast to class tlc2.value.impl.OpRcdValue (tlc2.value.impl.{class} and tlc2.value.impl.OpRcdValue are in unnamed module of loader 'app')",
+                crate::errors::UNEXPECTED_HEAD
+            )));
+        }
+    }
     for assignment in config
         .constants
         .iter()

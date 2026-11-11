@@ -325,11 +325,7 @@ impl FrontError {
                 INVARIANT_VIOLATED_LEVEL => SAFETY_EVALUATION_FAILURE,
                 LIVE_FORMULA_TAUTOLOGY => LIVENESS_EVALUATION_FAILURE,
                 LIVE_CANNOT_HANDLE_FORMULA | LIVE_WRONG_FORMULA_FORMAT => GENERAL_ERROR,
-                _ if message.starts_with(crate::errors::UNEXPECTED_EXCEPTION)
-                    || message.starts_with(crate::errors::UNEXPECTED_EVAL_EXCEPTION) =>
-                {
-                    GENERAL_ERROR
-                }
+                _ if message.starts_with(crate::errors::UNEXPECTED_HEAD) => GENERAL_ERROR,
                 _ => exit_code,
             },
         })
