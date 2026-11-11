@@ -615,15 +615,11 @@ declines TLC 1.7.4's jar and a manifest it can't read with certainty. Of the 117
 now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator.
 
 Since #250 the binary prints SANY's report of the trace exploration spec too, and checks TLC's
-default natively. After an error trace of two states or more it writes the spec TLC writes,
-`<Spec>_TTrace_<epoch>.tla`, and its path after `Finished in` (`te_spec.rs`). It still declines
-where TLC writes the trace's file, `<Spec>_TTrace_<epoch>.bin`, for a counterexample: TLC gzips it
-with Java's Deflater, whose compressed bytes the binary doesn't reproduce, and writes each string's
-token in TLC's run. An error after a behavior, as an Assert that fails in an action, has no trace
-file and is native. On the 733 corpus models in TLC's default, against TLC's recordings of that
-mode, 569 print and write what TLC does, 161 decline at the trace file, and 3 differ as they do
-with `-noGenerateSpecTE`, by TLC's runtime (a Java stack overflow, where TLC is installed, and a
-NullPointerException in TLC).
+default natively until TLC would write the trace's files: after any error it printed a behavior for,
+a counterexample or not, it declines with "the trace exploration spec TLC writes for a
+counterexample". On the 733 corpus models in TLC's default, against TLC's recordings of that mode,
+529 print TLC's output, 202 decline so, and 2 differ as they do with `-noGenerateSpecTE`, by TLC's
+runtime (a Java stack overflow, and where TLC is installed).
 
 ### The public API afterwards
 
