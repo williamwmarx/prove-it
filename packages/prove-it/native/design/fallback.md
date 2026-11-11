@@ -517,10 +517,10 @@ distinct decline messages in the group.
 | TLC 1.7.4 | 63 | 1 | retired: declines until the TypeScript goes |
 | An assumption that fails to evaluate, evaluated again | 57 | 25 | front session |
 | Temporal properties and liveness | 50 | 19 | liveness session |
-| The engine stopping where TLC reports an error | 46 | 25 | memo session |
+| The engine stopping where TLC reports an error | 48 | 27 | memo session |
 | What the constant evaluator doesn't compute | 29 | 9 | front session |
 | Other failures evaluated again | 29 | 18 | memo session |
-| The engine declining an operator or builtin | 19 | 15 | memo session |
+| The engine declining an operator or builtin | 13 | 11 | memo session |
 | Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
 | `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
 | Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
