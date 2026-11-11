@@ -1262,7 +1262,8 @@ impl Parser {
     fn parse_case(&mut self, start: &Token) -> Parsed<Expression> {
         let mut arms = Vec::new();
         loop {
-            if self.accept("OTHER") {
+            // OTHER ends the arms, so it can't be the first.
+            if !arms.is_empty() && self.accept("OTHER") {
                 self.expect("->")?;
                 let other = Some(Rc::new(self.parse_expression(0)?));
                 return Ok(located(

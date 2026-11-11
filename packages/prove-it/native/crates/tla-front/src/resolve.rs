@@ -374,7 +374,10 @@ fn is_bindable(name: &str, current: Option<&Binding>, added: &Binding, unit: &Un
     if current.kind == SymbolKind::Builtin {
         unit.error(
             location,
-            format!("Symbol {name} is a built-in operator, and cannot be redefined."),
+            format!(
+                "Symbol {} is a built-in operator, and cannot be redefined.",
+                crate::sany::generator::resolve_synonym(name)
+            ),
         );
     } else if added.kind == SymbolKind::Parameter
         || current.kind != added.kind
@@ -1570,7 +1573,10 @@ fn resolve_definition(
         report(if is_function {
             format!("Function name `{name}' already defined or declared.")
         } else {
-            format!("Operator {name} already defined or declared.")
+            format!(
+                "Operator {} already defined or declared.",
+                crate::sany::generator::resolve_synonym(name)
+            )
         });
     }
     // SANY analyzes the body with the arity of the RECURSIVE declaration, and compares only the
@@ -2549,7 +2555,9 @@ fn check_use_or_hide(use_or_hide: &UseOrHide, scope: &Scope, unit: &Unit) -> Res
             "an empty USE or HIDE without a place".to_owned(),
         ));
     };
-    report_bare_use_or_hide(use_or_hide.is_only, range, unit);
+    if use_or_hide.defs.is_empty() {
+        report_bare_use_or_hide(use_or_hide.is_only, range, unit);
+    }
     unit.error(
         format_range(range),
         "Empty USE or HIDE statement.".to_owned(),

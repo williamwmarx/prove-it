@@ -107,26 +107,57 @@ fn get_recorded_report(recording: &str) -> String {
 
 // Cases of SANY's report that the TypeScript report's tests held, each a directory of modules with
 // the root module and TLC's version in `case.json`. `report-cases.json` records what TLC prints for
-// each, TLC 1.7.4's in `report-cases-174.json`; the front end writes it or, for the cases DECLINED names, declines.
+// each, TLC 1.7.4's in `report-cases-174.json`; the front end writes it or, for the cases DECLINED
+// names, declines.
 #[test]
 fn reports_each_recorded_case_as_sany_does_or_declines() {
     // TLC 1.7.4's semantic errors, which the front end doesn't write.
     const DECLINED: &[&str] = &["19", "20", "22", "34", "35"];
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/report-cases");
     let mut recordings = get_recordings(include_str!(
         "../../../../tests/conformance/sany-stdout/report-cases.json"
     ));
     recordings.extend(get_recordings(include_str!(
         "../../../../tests/conformance/sany-stdout/report-cases-174.json"
     )));
-    let mut cases: Vec<_> = std::fs::read_dir(&directory)
+    check_recorded_cases("report-cases", &recordings, DECLINED);
+}
+
+// tests/sany-cases: the specs that adversarial runs against TLC at d8fb231 found the report of
+// SANY's parsing and semantic analysis wrong or declining for, each a directory as report-cases'
+// are, whose `case.json` names TLC's default mode where TLC ran without -noGenerateSpecTE and so
+// adds _TLCTrace to the root module's EXTENDS. `sany-cases.json` records what TLC prints for
+// each; the front end writes it or, for the cases DECLINED names, declines.
+#[test]
+fn reports_each_adversarial_case_as_sany_does_or_declines() {
+    const DECLINED: &[&str] = &[
+        // A definition of the postfix operator ', which the front end's parser rejects.
+        "c-bi34", "st-bi34", "te-bi34",
+        // A module of the CommunityModules, whose report depends on whether TLC finds
+        // CommunityModules.jar beside tla2tools.jar.
+        "c-dc01", "c-dc02", "st-dc01", "st-dc02",
+        // SANY's generator throwing on the root module after a module of the user's.
+        "c-dc03", "st-dc03",
+    ];
+    let recordings = get_recordings(include_str!(
+        "../../../../tests/conformance/sany-stdout/sany-cases.json"
+    ));
+    check_recorded_cases("sany-cases", &recordings, DECLINED);
+}
+
+/// Checks the front end's report of each case of `tests/<cases>` against `recordings`, keyed
+/// `<cases>/<case>`: the same text, or a decline for the cases `declined` names.
+fn check_recorded_cases(cases: &str, recordings: &BTreeMap<String, String>, declined: &[&str]) {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join(cases);
+    let mut paths: Vec<_> = std::fs::read_dir(&directory)
         .expect("the cases")
         .map(|entry| entry.expect("an entry").path())
         .collect();
-    cases.sort();
-    assert_eq!(cases.len(), recordings.len());
+    paths.sort();
+    assert_eq!(paths.len(), recordings.len());
     let mut wrong = Vec::new();
-    for case in cases {
+    for case in paths {
         let name = case
             .file_name()
             .and_then(|name| name.to_str())
@@ -134,17 +165,21 @@ fn reports_each_recorded_case_as_sany_does_or_declines() {
             .to_owned();
         let description = std::fs::read_to_string(case.join("case.json")).expect("a case");
         let field = |key: &str| {
-            let start = description
-                .find(&format!("\"{key}\": \""))
-                .expect("a field")
-                + key.len()
-                + 5;
-            description[start..start + description[start..].find('"').expect("an end")].to_owned()
+            let start = description.find(&format!("\"{key}\": \""))? + key.len() + 5;
+            Some(
+                description[start..start + description[start..].find('"').expect("an end")]
+                    .to_owned(),
+            )
         };
-        let root = field("root");
-        let version = match field("version").as_str() {
-            "1.7.4" => TlcVersion::V1_7_4,
+        let root = field("root").expect("a root");
+        let version = match field("version").as_deref() {
+            Some("1.7.4") => TlcVersion::V1_7_4,
             _ => TlcVersion::Master,
+        };
+        let root_extendees: &[&str] = if field("mode").as_deref() == Some("default") {
+            &["_TLCTrace"]
+        } else {
+            &[]
         };
         let report = get_sany_text(
             &case.join(format!("{root}.tla")),
@@ -158,12 +193,12 @@ fn reports_each_recorded_case_as_sany_does_or_declines() {
                     ModuleOrigin::Standard => format!("/tmp/tlc-_/{module}.tla"),
                     ModuleOrigin::File | ModuleOrigin::RootFile => format!("{module}.tla"),
                 },
-                root_extendees: &[],
+                root_extendees,
                 is_xml_export: false,
             },
         );
-        let expected = get_recorded_report(&recordings[&format!("report-cases/{name}")]);
-        let is_declined = DECLINED.contains(&name.as_str());
+        let expected = get_recorded_report(&recordings[&format!("{cases}/{name}")]);
+        let is_declined = declined.contains(&name.as_str());
         match report {
             Ok(report) if !is_declined && report.text == expected => {}
             Err(FrontError::NotYet(_)) if is_declined => {}
@@ -443,21 +478,21 @@ fn reports_def_entries_that_name_no_defined_operator() {
             "{name}"
         );
     }
-    // A selection of nothing in a module is not followed.
-    assert!(matches!(
-        get_report(
+    // A selection of nothing in a module is unknown.
+    assert_eq!(
+        get_text(
             "defs-selection",
             "---- MODULE Main ----\n---- MODULE Inner ----\nH == 0\n====\nV == INSTANCE Inner\nUSE DEF V!Missing\n====\n",
         ),
-        Err(FrontError::NotYet(_))
-    ));
-    assert!(matches!(
-        get_report(
+        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 3\n\nline 6, col 9 to line 6, col 17 of module Main\n\nUnknown operator: `V!Missing'.\n\n\nline 6, col 9 to line 6, col 17 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 6, col 1 to line 6, col 17 of module Main\n\nEmpty USE or HIDE statement.\n\n\n"
+    );
+    assert_eq!(
+        get_text(
             "defs-unknown-symbol",
             "---- MODULE Main ----\nUSE DEF Missing, +\n====\n",
         ),
-        Err(FrontError::NotYet(_))
-    ));
+        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 5\n\nline 2, col 9 to line 2, col 15 of module Main\n\nUnknown operator: `Missing'.\n\n\nline 2, col 9 to line 2, col 15 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 2, col 18 to line 2, col 18 of module Main\n\nUnknown operator: `+'.\n\n\nline 2, col 18 to line 2, col 18 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 2, col 1 to line 2, col 18 of module Main\n\nEmpty USE or HIDE statement.\n\n\n"
+    );
 }
 
 // E4223: a nested module named like a module SANY has already read.

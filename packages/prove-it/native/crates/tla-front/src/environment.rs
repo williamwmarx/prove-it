@@ -375,7 +375,7 @@ struct Collected {
 }
 
 /// SANY's messages for a module: its warnings and its errors.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModuleMessages {
     pub warnings: Vec<SanyError>,
     pub errors: Vec<SanyError>,
