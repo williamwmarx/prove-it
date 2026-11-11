@@ -1,6 +1,6 @@
 // Compares what the TypeScript writes for each module of proofs.json with what obligations-dump
-// (native/crates/prover/obligations) writes, one JSON line per module, for
-// obligation-differential.ts. Modules are read where tlapm finds them, as proof-records.ts does:
+// (native/crates/prover/obligations) writes, one JSON line per module, for obligation-differential.ts
+// and encoder-differential.ts. Modules are read where tlapm finds them, as proof-records.ts does:
 // beside the module, then the corpora's library, then tlapm's standard library. Without --rust
 // <dump>, it builds obligations-dump with cargo first.
 
