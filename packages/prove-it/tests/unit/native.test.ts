@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { WebAssemblyStackError } from "../../src";
+
 const COMMIT = join(import.meta.dirname, "../fixtures/commit");
 const SOURCE_CLI = join(import.meta.dirname, "../../src/cli.ts");
 const BUILT_CLI = join(import.meta.dirname, "../../dist/cli.js");
@@ -217,6 +219,42 @@ describe("the native engine", () => {
     SPAWN_LIMIT_MS,
   );
 
+  // The engine as WebAssembly stops a recursion at 1,000 calls, where the addon and the binary go on
+  // to 20,000 (fallback.md, "WebAssembly's stack"): the library's check answers this model with the
+  // addon, and rejects it with WebAssemblyStackError as WebAssembly.
+  it.if(WASM !== undefined && ADDON !== undefined)(
+    "rejects with WebAssemblyStackError a recursion the addon checks",
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), "prove-it-wasm-depth-"));
+      const script = join(directory, "check.ts");
+      try {
+        writeFileSync(
+          script,
+          [
+            `import { check, WebAssemblyStackError } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, "../../src/index.ts")).href)};`,
+            'const source = "---- MODULE Deep ----\\nEXTENDS Naturals\\nRECURSIVE F(_)\\nF(n) == IF n = 0 THEN 0 ELSE 1 + F(n - 1)\\nVARIABLE x\\nInit == x = 0\\nNext == x < 1 /\\\\ x\' = F(1500) - 1499\\n====";',
+            'const answer = await check({ source, config: "INIT Init\\nNEXT Next\\nCHECK_DEADLOCK FALSE" }).then(',
+            "  (result) => [result.status, result.distinctStates],",
+            "  (error) => [error instanceof WebAssemblyStackError, error.message],",
+            ");",
+            "console.log(JSON.stringify(answer));",
+          ].join("\n"),
+        );
+        const runDeep = (env: Record<string, string | undefined>) =>
+          spawnSync("bun", [script], { encoding: "utf8", env: { ...process.env, ...env } }).stdout;
+        expect(runDeep({ PROVE_IT_ENGINE_WASM: undefined, PROVE_IT_ENGINE_ADDON: ADDON })).toBe(
+          `${JSON.stringify(["success", 2])}\n`,
+        );
+        expect(runDeep({ PROVE_IT_ENGINE_WASM: WASM })).toBe(
+          `${JSON.stringify([true, new WebAssemblyStackError().message])}\n`,
+        );
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    SPAWN_LIMIT_MS,
+  );
+
   // A recursion as deep as this exhausts the stack the engine has as WebAssembly, and the
   // interpreter searches again from the start, after the search had printed.
   it.if(WASM !== undefined)(
@@ -249,7 +287,9 @@ describe("the native engine", () => {
         const native = runDeep({ PROVE_IT_ENGINE: "debug", PROVE_IT_ENGINE_WASM: WASM ?? "" });
         // WebAssembly's frames are on the host's stack, so its engine stops recursing at 1,000
         // calls and hands the search over, where the addon would go on.
-        expect(native.stderr).toContain("native: stopped: recursion too deep");
+        expect(native.stderr).toContain(
+          "native: stopped: recursion deeper than WebAssembly's stack holds",
+        );
         const interpreter = runDeep({ PROVE_IT_ENGINE: "0" });
         expect(printed(native.stdout)).toEqual(['"init"', "0", "1"]);
         expect(printed(native.stdout)).toEqual(printed(interpreter.stdout));
