@@ -37,6 +37,13 @@ enum Binding {
     Let { depth: i32, expr: Expr },
 }
 
+/// What the script hands the solver as it is read: an assertion, or (reset), after which the
+/// manager is a new one.
+pub enum Command {
+    Assert(Expr),
+    Reset,
+}
+
 pub struct SmtProblem {
     pub assertions: Vec<Expr>,
     // Z3 prints no answer for a script without check-sat.
@@ -831,19 +838,23 @@ impl<'a> SmtlibParser<'a> {
     }
 }
 
-/// Parses a script, and hands each assertion to assert_expr as Z3's cmd_context does, before it
-/// parses the next command. Expressions are created in the order of Z3's parser, and live as long
-/// as there.
+fn get_builtin_sorts<'a>() -> HashMap<&'a str, Sort> {
+    HashMap::from([("Bool", SORT_BOOL), ("Int", SORT_INT), ("Real", SORT_REAL)])
+}
+
+/// Parses a script, and hands each assertion and reset to on_command as Z3's cmd_context does,
+/// before it parses the next command. Expressions are created in the order of Z3's parser, and live
+/// as long as there.
 pub fn parse_smtlib(
     text: &str,
     m: &mut AstManager,
-    mut assert_expr: impl FnMut(&mut AstManager, Expr) -> Result<(), SmtError>,
+    mut on_command: impl FnMut(&mut AstManager, Command) -> Result<(), SmtError>,
 ) -> Result<SmtProblem, SmtError> {
     let tokens = tokenize(text)?;
     let (nodes, commands) = read_sexprs(&tokens)?;
     let mut parser = SmtlibParser {
         nodes: &nodes,
-        sorts: HashMap::from([("Bool", SORT_BOOL), ("Int", SORT_INT), ("Real", SORT_REAL)]),
+        sorts: get_builtin_sorts(),
         funcs: HashMap::new(),
         scopes: Vec::new(),
         depth: 0,
@@ -900,7 +911,22 @@ pub fn parse_smtlib(
                 let assertion = expect_bool(m, assertion)?;
                 m.inc_ref(assertion);
                 assertions.push(assertion);
-                assert_expr(m, assertion)?;
+                on_command(m, Command::Assert(assertion))?;
+            }
+            "reset" => {
+                if list.len() > 1 {
+                    return Err(SmtError::Parse(
+                        "invalid reset command, ')' expected".into(),
+                    ));
+                }
+                // cmd_context::reset forgets the declarations, the named terms and the assertions,
+                // and deletes the manager; the next command makes a new one, with its solver.
+                parser.sorts = get_builtin_sorts();
+                parser.funcs.clear();
+                assertions.clear();
+                m.limit.restart();
+                *m = AstManager::new(m.limit.clone());
+                on_command(m, Command::Reset)?;
             }
             "check-sat" => {
                 has_check_sat = true;

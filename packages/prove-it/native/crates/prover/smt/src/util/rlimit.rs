@@ -43,6 +43,8 @@ impl StopReason {
 pub struct ResourceLimit {
     limits: Limits,
     stop_reason: Rc<Cell<Option<StopReason>>>,
+    // The decision's steps when the manager that owns m_count was made: (reset) makes a new one.
+    start: Rc<Cell<u64>>,
 }
 
 impl ResourceLimit {
@@ -50,12 +52,20 @@ impl ResourceLimit {
         ResourceLimit {
             limits: limits.clone(),
             stop_reason: Rc::new(Cell::new(None)),
+            start: Rc::new(Cell::new(0)),
         }
     }
 
     /// m_count: the steps taken, which MBQI also uses as a random seed.
     pub fn count(&self) -> u64 {
-        self.limits.steps()
+        self.limits.steps() - self.start.get()
+    }
+
+    /// The reslimit of the new manager that cmd_context::reset makes: m_count starts again from 0,
+    /// while the decision's deadline, step limit and stop reason stay, as the time limit tlapm
+    /// gives the whole script does.
+    pub fn restart(&self) {
+        self.start.set(self.limits.steps());
     }
 
     /// Why the work was canceled, once it is.
@@ -143,5 +153,19 @@ mod tests {
         let other = ResourceLimit::new(&Limits::new(f64::INFINITY, None, None));
         other.clone().stop(StopReason::Heap);
         assert_eq!(other.stop_reason(), Some(StopReason::Heap));
+    }
+
+    #[test]
+    fn a_restart_counts_from_0_within_the_same_step_limit() {
+        let limits = Limits::new(f64::INFINITY, Some(2), None);
+        let limit = ResourceLimit::new(&limits);
+        assert!(limit.inc());
+        limit.clone().restart();
+        assert_eq!(limit.count(), 0);
+        assert!(limit.inc());
+        assert!(!limit.inc());
+        assert_eq!(limit.count(), 2);
+        assert_eq!(limits.steps(), 3);
+        assert_eq!(limit.stop_reason(), Some(StopReason::Steps));
     }
 }

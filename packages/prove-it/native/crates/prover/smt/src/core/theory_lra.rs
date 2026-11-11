@@ -101,7 +101,7 @@ mod tests {
     use crate::core::context::{Context, SmtParams};
     use crate::core::proto_model::tests::print_model;
     use crate::core::quant_tactics::apply_ufnia_tactic;
-    use crate::core::smtlib_parser::parse_smtlib;
+    use crate::core::smtlib_parser::{Command, parse_smtlib};
     use crate::util::error::SmtError;
     use crate::util::lbool::LBool;
     use crate::util::rlimit::ResourceLimit;
@@ -200,7 +200,10 @@ mod tests {
     fn prepare_fixture(m: &mut AstManager, text: &str) -> Result<Prepared, SmtError> {
         let mut incremental = AssertedFormulas::new(m);
         m.limit.inc();
-        let problem = parse_smtlib(text, m, |m, assertion| {
+        let problem = parse_smtlib(text, m, |m, command| {
+            let Command::Assert(assertion) = command else {
+                unreachable!("the fixtures do not reset");
+            };
             m.limit.inc();
             incremental.assert_expr(m, assertion)
         })?;

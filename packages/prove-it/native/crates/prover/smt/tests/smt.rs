@@ -472,3 +472,143 @@ fn releases_a_builtin_declaration_of_a_model_as_the_typescript_does() {
         Ok("unknown instances=11 steps=20007 stop=steps".into())
     );
 }
+
+/// Scripts with (reset), each with what Z3 5.3.3 prints on it, run as tlapm runs it: `z3 -smt2
+/// -v:0 AUTO_CONFIG=false smt.MBQI=true -T:5`.
+const RESETS: [(&str, &str); 20] = [
+    ("(assert false)(reset)(check-sat)", "sat"),
+    ("(assert false)(reset)(assert false)(check-sat)", "unsat"),
+    ("(reset)(reset)(assert false)(check-sat)", "unsat"),
+    ("(reset)\n(assert false)\n(check-sat)", "unsat"),
+    ("(assert false)(check-sat)(reset)", "unsat"),
+    ("(assert false)(reset)", ""),
+    (
+        "(declare-const x Bool)(assert x)(reset)(assert (not x))(check-sat)",
+        "(error \"line 1 column 53: unknown constant x\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(reset)(declare-const x Int)(assert (> x 0))(check-sat)",
+        "sat",
+    ),
+    (
+        "(declare-fun f (Int) Int)(assert (= (f 1) 2))(reset)(assert (= (f 1) 3))(check-sat)",
+        "(error \"line 1 column 68: unknown constant f (Int) \")\nsat",
+    ),
+    (
+        "(set-logic UFNIA)(declare-sort U 0)(reset)(declare-const u U)(check-sat)",
+        "(error \"line 1 column 60: Invalid constant declaration: unknown sort 'U'\")\nsat",
+    ),
+    (
+        "(declare-sort U 0)(declare-fun c () U)(reset)(declare-sort U 0)(declare-fun c () U)\
+         (assert (= c c))(check-sat)",
+        "sat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :named a))(reset)(assert a)(check-sat)",
+        "(error \"line 1 column 61: unknown constant a\")\nsat",
+    ),
+    (
+        "(declare-const x Bool)(assert (! x :named a))(reset)(declare-const a Bool)\
+         (assert (not a))(check-sat)",
+        "sat",
+    ),
+    (
+        "(declare-const x Int)(assert (! (> x 0) :named a))(reset)(declare-const x Int)\
+         (assert (! (< x 0) :named a))(check-sat)",
+        "sat",
+    ),
+    (
+        "(set-logic UFNIA)(assert false)(reset)(set-logic UFNIA)(check-sat)",
+        "sat",
+    ),
+    (
+        "(set-option :produce-unsat-cores true)(assert false)(reset)(check-sat)",
+        "sat",
+    ),
+    (
+        "(reset 1)(assert false)(check-sat)",
+        "(error \"line 1 column 8: invalid reset command, ')' expected\")\nunsat",
+    ),
+    ("(push 1)(assert false)(reset)(check-sat)", "sat"),
+    (
+        "(push 1)(assert false)(reset)(pop 1)(check-sat)",
+        "(error \"line 1 column 36: invalid pop command, argument is greater than the current \
+         stack depth\")\nsat",
+    ),
+    (
+        "(reset",
+        "(error \"line 2 column 0: invalid reset command, ')' expected\")",
+    ),
+];
+
+// cmd_context::reset forgets the assertions, the declarations, the named terms, the scopes and the
+// logic. Where Z3 prints an error, which tlapm counts as a failure, the port fails with
+// DecideError::Prover. Push and pop are outside the subset the port supports.
+#[test]
+fn resets_as_z3_does() {
+    for (script, z3) in RESETS {
+        let decision = decide_with(script, None);
+        if script.contains("(push") {
+            assert_eq!(
+                decision.map(|decision| get_decision_text(&decision)),
+                Ok("unknown stop=unsupported steps=1".into()),
+                "{script}"
+            );
+        } else if z3.contains("(error") {
+            assert!(
+                matches!(decision, Err(DecideError::Prover(_))),
+                "{script}: {decision:?}"
+            );
+        } else {
+            let verdict = if z3.is_empty() { "unknown" } else { z3 };
+            assert_eq!(
+                decision.map(|decision| decision.verdict.name()),
+                Ok(verdict),
+                "{script}"
+            );
+        }
+    }
+}
+
+// cmd_context::reset deletes the manager, and the next command makes a new one with its solver and
+// its resource limit, whose count starts from 0: what follows a reset is decided as a script of its
+// own, with the same ids, steps and instances. Z3 counts the same rlimit on Allocator-37 with this
+// prefix as without it (5085).
+#[test]
+fn decides_what_follows_a_reset_as_a_script_of_its_own() {
+    let prefix = "(declare-sort Idv 0)(declare-fun a () Idv)(assert (forall ((x Idv)) (= x a)))\
+                  (assert false)(reset)";
+    let decide = |text: &str| {
+        on_deep_stack(|| {
+            prove_smt::decide(
+                text,
+                &Limits::new(f64::INFINITY, Some(REFERENCE_STEP_LIMIT), None),
+            )
+        })
+        .map(|decision| get_decision_text(&decision))
+    };
+    for name in ["Allocator-37.smt", "Barriers-63.smt", "CRDT_proof-49.smt"] {
+        let text = read(name);
+        assert_eq!(decide(&format!("{prefix}{text}")), decide(&text), "{name}");
+    }
+}
+
+// The step limit stands for tlapm's time limit, which is the whole script's: a reset starts the
+// count of the new manager again, not the budget. The prefix takes 3 steps, the solver's and one
+// per assertion.
+#[test]
+fn a_reset_keeps_the_step_limit_of_the_decision() {
+    let text = read("Allocator-37.smt");
+    let decide = |text: &str, step_limit: u64| {
+        on_deep_stack(|| {
+            prove_smt::decide(text, &Limits::new(f64::INFINITY, Some(step_limit), None))
+        })
+        .map(|decision| get_decision_text(&decision))
+    };
+    let decision = decide(&text, 1000);
+    assert_eq!(decision, Ok("unknown steps=1001 stop=steps".into()));
+    assert_eq!(
+        decide(&format!("(assert true)(assert true)(reset){text}"), 1003),
+        decision
+    );
+}

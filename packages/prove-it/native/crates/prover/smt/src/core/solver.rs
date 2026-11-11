@@ -8,7 +8,7 @@ use crate::core::asserted_formulas::AssertedFormulas;
 use crate::core::ast::AstManager;
 use crate::core::context::{Context, SmtParams};
 use crate::core::quant_tactics::apply_ufnia_tactic;
-use crate::core::smtlib_parser::parse_smtlib;
+use crate::core::smtlib_parser::{Command, parse_smtlib};
 use crate::util::error::SmtError;
 use crate::util::lbool::LBool;
 use crate::util::rlimit::ResourceLimit;
@@ -29,9 +29,17 @@ pub fn check_smt(text: &str, limit: ResourceLimit) -> Result<SmtCheck, SmtError>
     // solver::assert_expr counts one for each assertion.
     let mut incremental = AssertedFormulas::new(&manager);
     manager.limit.inc();
-    let problem = parse_smtlib(text, &mut manager, |manager, assertion| {
-        manager.limit.inc();
-        incremental.assert_expr(manager, assertion)
+    let problem = parse_smtlib(text, &mut manager, |manager, command| match command {
+        Command::Assert(assertion) => {
+            manager.limit.inc();
+            incremental.assert_expr(manager, assertion)
+        }
+        // The new manager's solver, as at the start.
+        Command::Reset => {
+            incremental = AssertedFormulas::new(manager);
+            manager.limit.inc();
+            Ok(())
+        }
     })?;
     if !problem.has_check_sat {
         return Ok(SmtCheck {
