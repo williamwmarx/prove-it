@@ -276,6 +276,17 @@ it from one that printed something else. Each is outside the corpus and the test
   declines the binding, since `ContextEnumerator` binds a tuple pattern only to a `TupleValue`
   (#245).
 
+#### Known wrong outputs
+
+These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
+with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
+
+| Shape | Repro | TLC | Native |
+|---|---|---:|---:|
+| A held SUBSET or set of functions `\cup` a set that overlaps it | `Init == s = 0 /\ x = 0`, `Next == s' = SUBSET {1} /\ x' \in s' \cup {{1}}` | 10 | 7 |
+| A constant definition normalized elsewhere, then streamed | `C == UNION {1..2, 2..3}`, `Init == s = C /\ x = 0`, `Next == s' = s /\ x' \in C` | 13 | 17 |
+| Stream order alone, with no duplicates | `Init == s = 0 /\ x = {3}`, `Next == s' = (SUBSET {2}) \cup {{1}} /\ x' \in s'`, `INVARIANT x # {1} /\ x # {2}` (states generated at the violation) | 2 | 3 |
+
 #### Every reason
 
 | Runs | Reason | Tests |
@@ -622,6 +633,11 @@ run with and without `-noGenerateSpecTE`):
 | TLC 1.7.4's output | 5 | retired: it declines until the TypeScript goes |
 | `-dump`, `-continue` | 7 | S2 |
 | the 518 of the library's `check` calls, by mechanism (above) | the rest | as staffed |
+
+Since then, the binary reads the version of the jar on the class path from its manifest, with a
+zip reader and inflater of its own (`zip.rs`, `inflate.rs`), and checks a master TLC's launch. It
+declines TLC 1.7.4's jar and a manifest it can't read with certainty. Of the 117 CLI test runs, 56
+now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator.
 
 ### The public API afterwards
 

@@ -529,8 +529,41 @@ fn sort(function: &Function) {
     function.written.borrow_mut().take();
 }
 
+thread_local! {
+    // While `failing_comparison` runs, the left operands of the comparisons in progress,
+    // outermost first, which a failure leaves in place: the values in whose `compareTo` TLC's
+    // exception passes as it unwinds. `None` otherwise, so that no other comparison keeps values.
+    static COMPARING: RefCell<Option<Vec<Value>>> = const { RefCell::new(None) };
+}
+
 /// TLC's `compareTo`, as the store's `compare`: an error where TLC can't compare the two.
 pub fn compare(left: &Value, right: &Value) -> Evaluated<Ordering> {
+    COMPARING.with_borrow_mut(|comparing| {
+        if let Some(comparing) = comparing {
+            comparing.push(left.clone());
+        }
+    });
+    let compared = compare_values(left, right);
+    if compared.is_ok() {
+        COMPARING.with_borrow_mut(|comparing| {
+            if let Some(comparing) = comparing {
+                comparing.pop();
+            }
+        });
+    }
+    compared
+}
+
+/// The values in whose `compareTo` comparing `left` with `right` fails, outermost first, or none
+/// where it doesn't fail.
+pub fn failing_comparison(left: &Value, right: &Value) -> Vec<Value> {
+    COMPARING.set(Some(Vec::new()));
+    let is_failed = compare(left, right).is_err();
+    let comparing = COMPARING.take().unwrap_or_default();
+    if is_failed { comparing } else { Vec::new() }
+}
+
+fn compare_values(left: &Value, right: &Value) -> Evaluated<Ordering> {
     normalize(left);
     normalize(right);
     match (left, right) {
@@ -1473,4 +1506,20 @@ pub fn permute(value: &Value, permutation: &[(Rc<Text>, Rc<Text>)]) -> Evaluated
         Value::Lazy(_) => return fail("permuting a lazy set"),
         _ => value.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A comparison that fails outside `failing_comparison`, as sorting a set's elements does,
+    // keeps none of its operands, while `failing_comparison` gives the operand that failed.
+    #[test]
+    fn keeps_comparisons_only_while_finding_a_failing_one() {
+        let set = Value::Set(Rc::new(vec![Value::Int(1)]));
+        assert!(compare(&set, &Value::Int(2)).is_err());
+        assert!(COMPARING.with_borrow(Option::is_none));
+        assert_eq!(failing_comparison(&set, &Value::Int(2)).len(), 1);
+        assert!(COMPARING.with_borrow(Option::is_none));
+    }
 }

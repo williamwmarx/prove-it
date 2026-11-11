@@ -412,7 +412,7 @@ export const overrideDefinitions = (
   const classFile = readClassFile(bytes);
   const arities = new Map(
     module.definitions
-      .filter((definition) => isRoot || !definition.isLocal)
+      .filter((definition) => isRoot || !definition.isLocal || definition.isRecursive)
       .map((definition) => [
         definition.name,
         definition.kind === "Operator" ? definition.params.length : 0,
