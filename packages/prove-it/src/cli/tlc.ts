@@ -635,6 +635,7 @@ const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
 
 const checkSpec = async (
   specPath: string,
+  givenPath: string,
   directories: string[],
   args: ParsedArgs,
   java: JavaProperties,
@@ -741,6 +742,12 @@ const checkSpec = async (
     return EXIT_STATUS.error;
   }
   if (config instanceof TlaConfigError) return printFailure(config);
+  // TLC strips .tla only as written, where SANY strips it in any case and reads the file of the
+  // name that remains, and names the module of the spec .tla by the empty name.
+  if (basename(specPath).toLowerCase().endsWith(".tla.tla")) {
+    return declineNatively("a spec named with .tla twice");
+  }
+  if (basename(specPath) === ".tla") return declineNatively("a spec named .tla");
   if (args.has("-deadlock")) config.checkDeadlock = false;
   const directory = dirname(specPath);
   const loadModule = createModuleLoader(directories);
@@ -751,7 +758,8 @@ const checkSpec = async (
   // TLC.handleParameters: SANY names the spec as TLC's arguments do, except that TLC runs from the
   // directory of a spec given by an absolute path, and names it by its file name.
   const isAbsoluteSpec = isAbsolute(specPath);
-  const specName = isAbsoluteSpec ? fileName : specPath.replace(/\.tla$/, "");
+  // TLC names a spec it finds on the library path as it was given.
+  const specName = isAbsolute(givenPath) ? fileName : givenPath.replace(/\.tla$/, "");
   const jar = getToolsJar(java);
   const reportMissingFile =
     version === "1.7.4" ? createMissingFilePrinter174(specPath, java, jar) : undefined;
@@ -988,17 +996,12 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
-  // TLC strips one .tla, in any case, where SANY reads the file of the name that remains.
-  if (specPaths.some((path) => path.toLowerCase().endsWith(".tla.tla"))) {
-    return declineNatively("a spec named with .tla twice");
-  }
-  // TLC names the module of the spec .tla by the empty name.
-  if (specPaths.some((path) => basename(path) === ".tla")) {
-    return declineNatively("a spec named .tla");
-  }
   const paths = [
     ...new Map(
-      specPaths.map((path) => [findSpec(path, java), getModuleDirectories(path, java.libraries)]),
+      specPaths.map((path) => [
+        findSpec(path, java),
+        { given: path, directories: getModuleDirectories(path, java.libraries) },
+      ]),
     ),
   ];
   // SANY's report needs the engine, which may be WebAssembly to compile first.
@@ -1006,7 +1009,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   // Each spec is checked as TLC would in a process of its own, so an error in one leaves the others
   // to report. The exit code is the first that is not success.
   const exitCodes: number[] = [];
-  for (const [index, [path, directories]] of paths.entries()) {
+  for (const [index, [path, { given, directories }]] of paths.entries()) {
     if (index > 0) console.log("");
     // TLC checks one spec, so tla-ts names each of several it checks.
     if (paths.length > 1)
@@ -1017,7 +1020,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       java.tlcVersion ?? "master",
     );
     exitCodes.push(
-      await reportErrors(() => checkSpec(path, directories, parsed, java, printer), printer),
+      await reportErrors(() => checkSpec(path, given, directories, parsed, java, printer), printer),
     );
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;

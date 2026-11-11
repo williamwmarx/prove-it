@@ -54,6 +54,7 @@ pub struct Front {
 /// why tla-front doesn't find either.
 pub fn read_front(
     spec_path: &str,
+    main_file: &str,
     config_text: &str,
     is_warning_enabled: bool,
     files: &Files,
@@ -98,6 +99,7 @@ pub fn read_front(
     let describe = host.get_file_describer(files);
     let sany = native_sany(
         spec_path,
+        main_file,
         sources.as_ref(),
         &*describe,
         files.root_extendees,
@@ -177,18 +179,22 @@ fn lower(
     lower_front_ranking_of(sources, config_text, &options, &get_startup_texts)
 }
 
+/// SANY's report of the spec at `spec_path`, which TLC was given as `main_file`, without .tla,
+/// and may have found on the library path.
 fn native_sany(
     spec_path: &str,
+    main_file: &str,
     sources: Option<&ModelSources>,
     describe_file: &dyn Fn(&str, ModuleOrigin) -> String,
     root_extendees: &[&str],
 ) -> Result<SanyText, FrontError> {
     let spec = Path::new(spec_path);
-    // TLC gives SANY the spec as the command line names it, without .tla, unless it's absolute.
-    let file_name = if spec.is_absolute() {
-        spec.file_stem().and_then(|stem| stem.to_str())
+    // TLC gives SANY the spec as the command line names it, unless it's absolute.
+    let given = Path::new(main_file);
+    let file_name = if given.is_absolute() {
+        given.file_name().and_then(|name| name.to_str())
     } else {
-        Some(spec_path.strip_suffix(".tla").unwrap_or(spec_path))
+        Some(main_file)
     };
     let root = spec
         .file_stem()

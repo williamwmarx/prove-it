@@ -153,21 +153,6 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             None => format!("{path}.tla"),
         })
         .collect();
-    // TLC strips one .tla, in any case, where SANY reads the file of the name that remains.
-    if spec_paths
-        .iter()
-        .any(|path| path.to_ascii_lowercase().ends_with(".tla.tla"))
-    {
-        return not_native(output, "a spec named with .tla twice");
-    }
-    // TLC names the module of the spec `.tla` by the empty name.
-    if spec_paths.iter().any(|path| {
-        Path::new(path)
-            .file_name()
-            .is_some_and(|name| name == ".tla")
-    }) {
-        return not_native(output, "a spec named .tla");
-    }
     if spec_paths.is_empty() {
         let _ = writeln!(output.err, "{USAGE}");
         return 1;
@@ -900,6 +885,15 @@ fn check_spec(
         );
         return CONFIG_PARSE_ERROR;
     };
+    // TLC strips .tla only as written, where SANY strips it in any case and reads the file of the
+    // name that remains, and names the module of the spec `.tla` by the empty name.
+    let main_name = file_name(main_file);
+    if main_name.to_ascii_lowercase().ends_with(".tla") {
+        return report_not_native(printer, "a spec named with .tla twice");
+    }
+    if main_name.is_empty() {
+        return report_not_native(printer, "a spec named .tla");
+    }
     let start = Instant::now();
     // TLC reads the configuration file before it parses the spec, and reports one it can't parse
     // as it reports a TlaConfigError (`printFailure`).
@@ -928,6 +922,7 @@ fn check_spec(
     );
     let front = match read_front(
         spec_path,
+        main_file,
         config_text.as_deref().unwrap_or_default(),
         !args.has("-nowarning"),
         &Files {
