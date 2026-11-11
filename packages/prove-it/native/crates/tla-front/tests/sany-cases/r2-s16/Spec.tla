@@ -1,0 +1,3 @@
+---- MODULE Spec ----
+VARIABLE @
+====

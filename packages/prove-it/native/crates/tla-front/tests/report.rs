@@ -131,7 +131,7 @@ fn reports_each_recorded_case_as_sany_does_or_declines() {
 fn reports_each_adversarial_case_as_sany_does_or_declines() {
     const DECLINED: &[&str] = &[
         // A definition of the postfix operator ', which the front end's parser rejects.
-        "c-bi34", "st-bi34", "te-bi34",
+        "c-bi34", "st-bi34", "te-bi34", "r2-bd27",
         // A module of the CommunityModules, whose report depends on whether TLC finds
         // CommunityModules.jar beside tla2tools.jar.
         "c-dc01", "c-dc02", "st-dc01", "st-dc02",
