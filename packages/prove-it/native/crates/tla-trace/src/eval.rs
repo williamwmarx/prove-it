@@ -545,6 +545,7 @@ fn as_java_runtime_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluate
     }
 }
 
+const ASSERT_ERROR: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 const SELECT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 const SORT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
@@ -4342,21 +4343,33 @@ impl<'ir> Evaluator<'ir> {
             // `TLCExt.assertError`: whether evaluating the expression fails with this message.
             "AssertError" => {
                 arity(2)?;
+                // TLC takes only a string written as the message, and says where any other is
+                // written as SANY's `toString` gives it.
+                match &operands[0] {
+                    Operand::Node(node, _) if matches!(self.kind(*node), NodeKind::String(_)) => {}
+                    Operand::Node(node, _) => {
+                        let written = (self.ir.nodes.arena[self.resolved(*node) as usize].range)
+                            .and_then(|_| self.describe_node(*node));
+                        let Some(written) = written else {
+                            return fail("AssertError of a message that isn't a string");
+                        };
+                        return as_java_failure(
+                            ASSERT_ERROR,
+                            fail_runtime(
+                                "AssertError of a message that isn't a string",
+                                format!(
+                                    "In computing AssertError, a non-string expression ({written}) was used as the err of an AssertError(err, exp)."
+                                ),
+                            ),
+                        );
+                    }
+                    Operand::Value(_) => {
+                        return fail("AssertError of a message that isn't a string");
+                    }
+                }
                 let Some(is_tool) = self.is_tool else {
                     return fail("AssertError, whose messages depend on -tool");
                 };
-                let is_literal = match &operands[0] {
-                    Operand::Node(node, _) => {
-                        matches!(
-                            self.ir.nodes.arena[*node as usize].kind,
-                            NodeKind::String(_)
-                        )
-                    }
-                    Operand::Value(_) => false,
-                };
-                if !is_literal {
-                    return fail("AssertError of a message that isn't a string");
-                }
                 self.asserting += 1;
                 let asserted = self.operand(&operands[1]);
                 self.asserting -= 1;

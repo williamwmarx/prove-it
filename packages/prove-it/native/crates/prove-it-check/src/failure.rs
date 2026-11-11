@@ -364,7 +364,7 @@ pub fn print_assumption_failure(
     let failure = evaluate_on_search_stack(|| {
         Rebuilder::new(ir).and_then(|mut rebuilder| {
             rebuilder.set_workers(workers);
-            rebuilder.evaluate_assumption(position)
+            rebuilder.evaluate_assumption(position, printer.is_tool)
         })
     })?;
     // What TLC prints of the assumptions before this one, which hold, and of this one.

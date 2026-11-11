@@ -385,7 +385,7 @@ impl Relay<'_> {
                     break;
                 };
                 texts.extend(checked.printed.iter().map(|print| format_print(print)));
-                if !checked.holds {
+                if checked.holds != Some(true) {
                     break;
                 }
             }
