@@ -239,7 +239,7 @@ const pack = (argument: string | undefined) => {
   const missing = PLATFORMS.filter((platform) => !built.includes(platform.name));
   if (missing.length > 0) {
     console.error(
-      `Not built, so their users can check only with the interpreter (PROVE_IT_ENGINE=0): ${missing.map((platform) => platform.name).join(", ")}`,
+      `Not built, so their users check with the engine as WebAssembly: ${missing.map((platform) => platform.name).join(", ")}`,
     );
   }
 };

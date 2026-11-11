@@ -173,9 +173,11 @@ impl Host for SourcesHost {
     }
 
     // The library names a module by its name alone, which several specs in different directories
-    // could each resolve to another file.
+    // could each resolve to another file. For the CLI, a spec that declines after another one fails
+    // would end in the other's exit code, which `check` doesn't take for a decline, so the
+    // TypeScript check checks each spec.
     fn is_checking_several(&self) -> bool {
-        !self.is_library
+        false
     }
 }
 

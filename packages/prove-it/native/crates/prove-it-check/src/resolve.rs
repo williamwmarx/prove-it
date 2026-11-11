@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use tla_front::report::ModuleOrigin;
 use tla_front::{TlcVersion, get_standard_module};
 
-use crate::args::{Java, Parsed, get_java_launch};
+use crate::args::{Java, get_java_launch};
 use crate::files::FileDescriber;
 use crate::host::{FileKind, Files, Host};
 use crate::jar::{get_standard_modules_url, get_tools_jar, is_174};
@@ -243,9 +243,11 @@ pub enum Resolved {
     NotNative(String),
 }
 
-/// Resolves `request` for the spec `given`, with `.tla`, on the command line `args`: `spec`,
-/// `module:<name>`, `class:<name>`, `file:<origin>:<name>` (`file`, `root file` or `standard`), or
-/// `missing:<file name>`, what TLC 1.7.4 prints of a module file it doesn't find.
+/// Resolves `request` for the spec `given`, with `.tla`: `spec`, `module:<name>`, `class:<name>`,
+/// `file:<origin>:<name>` (`file`, `root file` or `standard`), or `missing:<file name>`, what TLC
+/// 1.7.4 prints of a module file it doesn't find. `args` is the Java launch, if any, then only the
+/// options that name files, `-config` and `-metadir` each with its value, as the TypeScript check
+/// parsed them: it takes options the binary's parser declines.
 pub fn resolve_files(args: &[String], given: &str, request: &str, host: &dyn Host) -> Resolved {
     let (args, java) = match get_java_launch(args) {
         Some(launch) => (launch.args, launch.java),
@@ -261,9 +263,12 @@ pub fn resolve_files(args: &[String], given: &str, request: &str, host: &dyn Hos
         },
         (None, None) => TlcVersion::Master,
     };
-    // The TypeScript check reports an option TLC rejects itself, after it finds the files.
-    let parsed = Parsed::parse(&args, false).ok();
-    let get_option = |name: &str| parsed.as_ref().and_then(|parsed| parsed.first(name));
+    let get_option = |name: &str| {
+        args.chunks(2)
+            .find(|option| option[0] == name)
+            .and_then(|option| option.get(1))
+            .map(String::as_str)
+    };
     let main_file = given.strip_suffix(".tla").unwrap_or(given);
     let directories = get_module_directories(main_file, &java.libraries);
     let spec = find_spec(host, given, &java.libraries);

@@ -549,20 +549,15 @@ const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
   return version !== "1.7.4" && isSpecGenerated && !hasFlag("-noGenerateSpecTEBin", "-noTEBin");
 };
 
-// Where TLC finds the files of the spec it was `given` on the command line, as the binary finds
-// them (prove-it-host's resolveFiles), throwing where the binary declines what TLC does. The TLC
-// version the launch already read from its jar goes first as a property, so that no request reads
-// the jar again.
-const createFileResolver = (commandLine: string[], given: string, java: JavaProperties) => {
+// Where TLC finds the files of the spec it was `given`, as the binary finds them (prove-it-host's
+// resolveFiles), throwing where the binary declines what TLC does. `resolverLine` is the Java launch
+// and the options that name files, which this check parsed (getResolverLine).
+const createFileResolver = (resolverLine: string[], given: string) => {
   const addon = getNativeAddon();
   if (typeof addon === "string") throw new EngineUnavailableError(addon, false);
   const known = new Map<string, string | Uint8Array | undefined>();
-  const resolvedLine =
-    java.tlcVersion === undefined
-      ? commandLine
-      : [`-Dtla-ts.tlc=${java.tlcVersion}`, ...commandLine];
   const resolveFile = (request: string) => {
-    const resolved = resolveAllFiles(addon, resolvedLine, given, request, readFileKey, known);
+    const resolved = resolveAllFiles(addon, resolverLine, given, request, readFileKey, known);
     if (resolved.kind === "declined") throw new TlaUnsupportedError(resolved.reason);
     return resolved;
   };
@@ -593,7 +588,7 @@ const createFileResolver = (commandLine: string[], given: string, java: JavaProp
 };
 
 const checkSpec = async (
-  commandLine: string[],
+  resolverLine: string[],
   given: string,
   args: ParsedArgs,
   java: JavaProperties,
@@ -637,7 +632,7 @@ const checkSpec = async (
   const version = printer.version;
   printWelcome(printer);
   printStartupBanner(printer, seed, workers);
-  const files = createFileResolver(commandLine, given, java);
+  const files = createFileResolver(resolverLine, given);
   const spec = files.getSpec();
   if (spec.missingConfig !== undefined) {
     printer.print(
@@ -888,14 +883,23 @@ export const checkSpecs = async (
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
+  // The command line the resolver reads: the Java launch, before TLC's `args`, with the TLC version
+  // the launch already read from its jar first, so that no request reads the jar again; then the
+  // options that name files, as this check parsed them, since the binary's parser declines some
+  // options this check takes.
+  const resolverLine = [
+    ...(java.tlcVersion === undefined ? [] : [`-Dtla-ts.tlc=${java.tlcVersion}`]),
+    ...commandLine.slice(0, commandLine.length - args.length),
+    ...["-config", "-metadir"].flatMap((name) => {
+      const value = parsed.get(name)?.[0];
+      return value === undefined ? [] : [name, value];
+    }),
+  ];
   // TLC checks a spec it finds on the library path once however it is named.
   await loadWasmEngine();
   const paths = [
     ...new Map(
-      specPaths.map((given) => [
-        createFileResolver(commandLine, given, java).getSpec().path,
-        given,
-      ]),
+      specPaths.map((given) => [createFileResolver(resolverLine, given).getSpec().path, given]),
     ).entries(),
   ];
   // Each spec is checked as TLC would in a process of its own, so an error in one leaves the others
@@ -912,7 +916,7 @@ export const checkSpecs = async (
       java.tlcVersion ?? "master",
     );
     exitCodes.push(
-      await reportErrors(() => checkSpec(commandLine, given, parsed, java, printer), printer),
+      await reportErrors(() => checkSpec(resolverLine, given, parsed, java, printer), printer),
     );
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;

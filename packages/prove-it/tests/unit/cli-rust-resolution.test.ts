@@ -107,3 +107,22 @@ it("XMLExporter names where it looked for a root module it doesn't find", () =>
       `File does not exist: ${directory}/./Nope.tla while looking in these directories: ${directory}, , classpath:/tla2sany/StandardModules, classpath:/\n`,
     );
   }));
+
+// TLC checks the config -config names, where the binary's parser declines another option on the
+// command line and the TypeScript check takes it: here TLC reports Other.cfg's invariant violated.
+it("finds the config -config names beside an option the binary declines", () =>
+  useDirectory("prove-it-config-option-", (directory) => {
+    writeFileSync(
+      join(directory, "Spec.tla"),
+      "---- MODULE Spec ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nInv == x = 1\n====\n",
+    );
+    writeFileSync(join(directory, "Spec.cfg"), "INIT Init\nNEXT Next\n");
+    writeFileSync(join(directory, "Other.cfg"), "INIT Init\nNEXT Next\nINVARIANT Inv\n");
+    const run = spawnSync(
+      "bun",
+      [CLI, "-noGenerateSpecTE", "-lncheck", "off", "-config", "Other.cfg", "Spec"],
+      { cwd: directory, encoding: "utf8" },
+    );
+    expect(run.status).toBe(12);
+    expect(run.stdout).toContain("Error: Invariant Inv is violated by the initial state:");
+  }));

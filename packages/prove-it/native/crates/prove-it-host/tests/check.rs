@@ -162,19 +162,23 @@ fn reports_a_missing_configuration_as_tlc_does() {
     assert_eq!(get(&result, "outcome"), HostValue::Undefined);
 }
 
-// The library names a module by its name alone, which each spec could find in another file.
+// Each spec is checked on its own: the library names a module by its name alone, which each spec
+// could find in another file, and the CLI would end in the exit code of a spec that fails before
+// another declines.
 #[test]
-fn declines_several_specs_whose_modules_it_would_name_alike() {
-    let (result, _) = check_on(
-        &["-noGenerateSpecTE", "/a/One.tla", "/b/Two.tla"],
-        true,
-        &[("/a/One.tla", ""), ("/b/Two.tla", "")],
-    );
-    assert_eq!(text(&get(&result, "kind")), "declined");
-    assert_eq!(
-        text(&get(&result, "reason")),
-        "several specifications in one check of a host's sources"
-    );
+fn declines_several_specs() {
+    for is_library in [true, false] {
+        let (result, _) = check_on(
+            &["-noGenerateSpecTE", "/a/One.tla", "/b/Two.tla"],
+            is_library,
+            &[("/a/One.tla", ""), ("/b/Two.tla", "")],
+        );
+        assert_eq!(text(&get(&result, "kind")), "declined");
+        assert_eq!(
+            text(&get(&result, "reason")),
+            "several specifications in one check of a host's sources"
+        );
+    }
 }
 
 // The CLI reads only what the check prints, so the check keeps none of the spec's prints for an

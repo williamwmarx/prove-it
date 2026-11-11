@@ -158,8 +158,17 @@ jobs:
               npx --no prove-it Commit.cfg 2> engine.log > /dev/null || status=$?
               test "$status" -eq 255
               grep -q '^The native engine is unavailable: no @atemp/prove-it-linux-x64-gnu' engine.log
-              PROVE_IT_ENGINE=0 npx --no prove-it Commit.cfg | grep -q '251 distinct states found'
+              # The CLI finds the spec's files only with an engine, so PROVE_IT_ENGINE=0, which
+              # leaves the search to the interpreter, doesn't check without one, and isn't offered.
+              status=0
+              PROVE_IT_ENGINE=0 npx --no prove-it Commit.cfg 2> engine.log > /dev/null || status=$?
+              test "$status" -eq 255
+              grep -q '^The native engine is unavailable: no @atemp/prove-it-linux-x64-gnu' engine.log
+              if grep -q 'PROVE_IT_ENGINE=0' engine.log; then exit 1; fi
+              # The package with the engine as WebAssembly checks without the platform package,
+              # with PROVE_IT_ENGINE=0 too.
               npm install --ignore-scripts --no-audit --no-fund "$packs/$main"
+              PROVE_IT_ENGINE=0 npx --no prove-it Commit.cfg | grep -q '251 distinct states found'
               # A state log leaves the check to the TypeScript check, which searches the engine IR
               # past the binary's own check; where the log can't be created, the engine writes none.
               export PROVE_IT_STATE_LOG=missing/states.jsonl
