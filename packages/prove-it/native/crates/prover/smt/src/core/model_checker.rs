@@ -620,10 +620,8 @@ mod tests {
     //! against the table `scripts/smt-mbqi-reference.ts` prints for the TypeScript kernel with
     //! MBQI on the same expressions, made in the same order (`tests/tables/mbqi.txt`): the result,
     //! the conflicts, the steps, the instances and the number of ASTs, and the model of a
-    //! satisfiable problem. The script skips the init of the TypeScript's arithmetic theory in
-    //! every context, the model checker's auxiliary contexts included, and leaves out the steps of
-    //! its methods, which the theory stub here neither makes nor takes, so the ids and the steps
-    //! are the TypeScript's.
+    //! satisfiable problem, with the arithmetic theory of every context, the model checker's
+    //! auxiliary contexts included.
 
     use prove_decide::Limits;
 

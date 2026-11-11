@@ -19,11 +19,13 @@ fn lower(source: &str, name: &str) -> Ir {
         load_class: None,
     })
     .expect("an environment");
+    let wide = Default::default();
     let mut lowering = Lowering::new(
         &environment,
         RankedTexts {
             texts: &[],
             ranks: Default::default(),
+            wide: &wide,
         },
     );
     let invariant = lowering.config_name(name);

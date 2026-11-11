@@ -1,7 +1,14 @@
 // Records TLC's outcome on each corpus model in tests/conformance/expected.json, or with --stdout
-// its full output, in the default and -tool modes, in tests/conformance/tlc-stdout (see
-// tlc-recordings.ts). --stdout records only the models expected.json lists with TLC under
-// --max-tlc-ms, and only those it has no recording of yet.
+// its full output, in the default and -tool modes and in TLC's own default, which writes the trace
+// exploration files, in tests/conformance/tlc-stdout (see tlc-recordings.ts). --stdout records
+// only the models expected.json lists with TLC under --max-tlc-ms, and only those it has no
+// recording of yet.
+// TLA2TOOLS_JAR must be tla2tools.jar as tlatools' `dist` target builds it, at
+// /tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar, where the recordings were made,
+// since TLCGet("config") prints where it is: TLC's classes compiled with -g, which Java's messages
+// name variables by, and only the libraries `dist` folds in (javax.mail, jline, gson). A jar that
+// folds in the rest of lib/, as CommunityModules.jar, loads its Java overrides of the community
+// modules and records another TLC.
 // Usage: TLA2TOOLS_JAR=path [TLC_COMMIT=commit] bun scripts/run.ts record-tlc [--stdout]
 //        [--keep-unfinished] [--max-tlc-ms 20000] [--filter text] [--concurrency 2]
 
@@ -22,9 +29,10 @@ import {
   getRecordingPath,
   getTlcArguments,
   LIBRARY_OPTION,
-  OUTPUT_MODES,
   type OutputMode,
   readRecording,
+  RECORDED_MODES,
+  runTakingTraceFiles,
   TLC_COMMIT,
   TLC_STDOUT_DIRECTORY,
   type TlcRecording,
@@ -173,7 +181,7 @@ if (isStdout && process.env.TLC_COMMIT !== TLC_COMMIT) {
   process.exit(1);
 }
 
-const recordOutput = (model: CorpusModel, mode: OutputMode) =>
+const runOutput = (model: CorpusModel, mode: OutputMode) =>
   new Promise<TlcRecording>((resolve) => {
     const metadataDirectory = mkdtempSync(join(tmpdir(), "prove-it-tlc-"));
     const child = spawnTlc(model, mode, metadataDirectory);
@@ -183,18 +191,27 @@ const recordOutput = (model: CorpusModel, mode: OutputMode) =>
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("close", (exitCode) => {
       rmSync(metadataDirectory, { recursive: true, force: true });
-      const recording: TlcRecording = {
+      resolve({
         id: model.id,
         mode,
         tlcCommit: TLC_COMMIT,
         exitCode: exitCode ?? -1,
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: Buffer.concat(stderr).toString("utf8"),
-      };
-      writeFileSync(getRecordingPath(model, mode), `${JSON.stringify(recording, null, 2)}\n`);
-      resolve(recording);
+      });
     });
   });
+
+const recordOutput = async (model: CorpusModel, mode: OutputMode) => {
+  const run =
+    mode === "te"
+      ? await runTakingTraceFiles(dirname(model.specPath), () => runOutput(model, mode))
+      : { result: await runOutput(model, mode), files: {} };
+  const recording =
+    Object.keys(run.files).length === 0 ? run.result : { ...run.result, files: run.files };
+  writeFileSync(getRecordingPath(model, mode), `${JSON.stringify(recording, null, 2)}\n`);
+  return recording;
+};
 
 // The recordings run TLC as the outcomes do, so they give expected.json the fingerprint estimate of
 // each model they agree with on the counts.
@@ -232,7 +249,7 @@ const recordOutputs = async () => {
     );
   });
   const runs = models
-    .flatMap((model) => OUTPUT_MODES.map((mode) => ({ model, mode })))
+    .flatMap((model) => RECORDED_MODES.map((mode) => ({ model, mode })))
     .filter((run) => !existsSync(getRecordingPath(run.model, run.mode)));
   mkdirSync(TLC_STDOUT_DIRECTORY, { recursive: true });
   const progress = { next: 0, done: 0 };

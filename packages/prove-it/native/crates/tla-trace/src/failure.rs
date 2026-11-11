@@ -12,7 +12,7 @@ use crate::fingerprint::{fingerprint_failure, state_fingerprint};
 use crate::print::format_value;
 use crate::rebuild::{Rebuilder, is_in_model, is_same, run};
 use crate::value::{
-    Evaluated, Lazy, TlcMessage, Value, clear_unnormalized, equals, fail, fail_with,
+    EvalError, Evaluated, Lazy, TlcMessage, Value, clear_unnormalized, equals, fail, fail_with,
     normalize_failure, settle,
 };
 use crate::{Ending, Trace, Unsupported};
@@ -187,7 +187,9 @@ fn report(message: &TlcMessage, is_next_state: bool) -> (u32, String, String) {
 
 /// An assumption as TLC checks it, where the engine checked those before it.
 pub struct Assumption {
-    pub holds: bool,
+    /// Whether it holds, or `None` where it fails to evaluate with a message of TLC's, which
+    /// `evaluate_assumption` reports.
+    pub holds: Option<bool>,
     /// What the assumptions before it printed, each print's values as `Trace` holds them.
     pub printed_before: Vec<Vec<String>>,
     /// What it printed.
@@ -203,6 +205,23 @@ impl<'ir> Rebuilder<'ir> {
     /// sets a register, which the search would read, and where the startup evaluates what the
     /// evaluator doesn't follow: the configuration's predicates or the symmetry.
     pub fn check_assumption(
+        &mut self,
+        position: u32,
+        is_tool: bool,
+    ) -> Result<Assumption, Unsupported> {
+        self.ranking_made_texts(|rebuilder| rebuilder.check_ranked_assumption(position, is_tool))
+    }
+
+    // TLC interns what the startup and the assumptions make as it makes them, which the
+    // evaluator follows in TLC's order there, unlike in the search.
+    fn ranking_made_texts<T>(&mut self, check: impl FnOnce(&mut Self) -> T) -> T {
+        self.evaluator().start_ranking();
+        let result = check(self);
+        self.evaluator().stop_ranking();
+        result
+    }
+
+    fn check_ranked_assumption(
         &mut self,
         position: u32,
         is_tool: bool,
@@ -238,8 +257,11 @@ impl<'ir> Rebuilder<'ir> {
         let writes = evaluator.register_writes;
         let printed_before = std::mem::take(&mut evaluator.printed);
         let holds = match evaluator.evaluate(node, &Context::default()) {
-            Ok(Value::Bool(holds)) => holds,
+            Ok(Value::Bool(holds)) => Some(holds),
             Ok(_) => return Err(Unsupported("an assumption that isn't a boolean".into())),
+            Err(EvalError {
+                message: Some(_), ..
+            }) => None,
             Err(error) => {
                 return Err(Unsupported(format!(
                     "an assumption the engine doesn't evaluate that fails to: {}",
@@ -288,8 +310,20 @@ impl<'ir> Rebuilder<'ir> {
     /// Evaluates again the assumption at `position` of the model's assumptions, which failed to
     /// evaluate as TLC started, after the startup's definitions, and returns TLC's report of it
     /// (`checkAssumptions`), with what the assumptions before it printed and what it printed
-    /// before it failed.
-    pub fn evaluate_assumption(&mut self, position: u32) -> Result<Failure, Unsupported> {
+    /// before it failed, with or without -tool, which AssertError's messages depend on.
+    pub fn evaluate_assumption(
+        &mut self,
+        position: u32,
+        is_tool: bool,
+    ) -> Result<Failure, Unsupported> {
+        self.ranking_made_texts(|rebuilder| rebuilder.evaluate_ranked_assumption(position, is_tool))
+    }
+
+    fn evaluate_ranked_assumption(
+        &mut self,
+        position: u32,
+        is_tool: bool,
+    ) -> Result<Failure, Unsupported> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         let Some(&(node, name)) = ir.model.startup.assumptions.get(position as usize) else {
@@ -299,6 +333,7 @@ impl<'ir> Rebuilder<'ir> {
         evaluator.current = vec![None; width];
         evaluator.next = vec![None; width];
         evaluator.level = 0;
+        evaluator.is_tool = Some(is_tool);
         // The startup printed its definitions and the assumptions before this one already, and
         // those set what the registers hold when TLC evaluates this one.
         run(evaluator.compute_startup())?;

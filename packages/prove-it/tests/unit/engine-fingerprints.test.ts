@@ -21,6 +21,7 @@ import {
   createRecord,
   createSet,
   createTuple,
+  setStringOrder,
   type Value,
 } from "../../src/values";
 
@@ -57,7 +58,8 @@ const STORES: [string, typeof localStore][] = [
 describe.each(STORES)("the fingerprints of %s's states", (_, store) => {
   it("match TLC's whichever parent each state names", () => {
     // A search resets the store before it interns values, as this test does, and the fingerprints
-    // of values along with it, whose ids they are by.
+    // of values along with it, whose ids they are by. The spec's strings TLC interned as it started.
+    setStringOrder(["a", "ack", "b", "long string ".repeat(30), "n", "req", "type"]);
     store.resetStore();
     store.resetFingerprints();
     // Several values share a length, so that many changes from a parent keep the lengths.

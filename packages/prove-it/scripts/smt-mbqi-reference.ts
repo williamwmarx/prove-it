@@ -6,18 +6,10 @@
 // satisfiable problem the model get_model makes. The quantifiers have no patterns, so every
 // instance comes from MBQI. The Rust tests read the output as the table mbqi.txt:
 //   bun scripts/smt-mbqi-reference.ts > native/crates/prover/smt/tests/tables/mbqi.txt
-//
-// The Rust port's arithmetic theory is still a stub, which makes none of the numerals and enodes
-// that TheoryLra's init makes, and takes none of the steps of its methods. So init is skipped here
-// for every context, the auxiliary contexts of the model checker included, the steps print
-// without the theory's, and the random values the theory draws from its context (assume_eqs in
-// its final check) are given back, so that the ids, the steps and the searches of both agree.
-// Re-record once theory_lra lands.
 import { AstManager, SORT_BOOL } from "../src/prover/smt/solver/ast";
 import { Context } from "../src/prover/smt/solver/context";
 import type { FuncInterp, ProtoModel } from "../src/prover/smt/solver/proto-model";
 import { ResourceLimit } from "../src/prover/smt/solver/rlimit";
-import { TheoryLra } from "../src/prover/smt/solver/theory-lra";
 
 const show = (m: AstManager, expr: number | null | undefined) =>
   expr === null || expr === undefined || expr === -1
@@ -51,49 +43,8 @@ const printModel = (m: AstManager, model: ProtoModel, sorts: number[]) => {
     );
 };
 
-interface TheoryCounter {
-  steps: number;
-  depth: number;
-  m: AstManager | null;
-}
-
-const THEORY_METHODS = [
-  "canPropagate",
-  "propagate",
-  "pushScopeEh",
-  "popScopeEh",
-  "finalCheckEh",
-  "restartEh",
-  "initSearchEh",
-  "initModel",
-  "mkValue",
-];
-
-// The steps every theory took inside its methods, once per outermost call, and the random seed of
-// its context as it was before the call.
-const theory: TheoryCounter = { steps: 0, depth: 0, m: null };
-for (const name of THEORY_METHODS) {
-  const original: unknown = Reflect.get(TheoryLra.prototype, name);
-  if (typeof original !== "function") continue;
-  Reflect.set(TheoryLra.prototype, name, function (this: object, ...args: unknown[]) {
-    const m = theory.m;
-    const start = m === null ? 0 : m.limit.count;
-    const context: unknown = Reflect.get(this, "context");
-    const seed: unknown = context instanceof Context ? Reflect.get(context, "randomSeed") : 0;
-    theory.depth++;
-    const result: unknown = Reflect.apply(original, this, args);
-    theory.depth--;
-    if (theory.depth === 0 && m !== null) theory.steps += m.limit.count - start;
-    if (theory.depth === 0 && context instanceof Context) Reflect.set(context, "randomSeed", seed);
-    return result;
-  });
-}
-Reflect.set(TheoryLra.prototype, "init", () => undefined);
-
 const mk = () => {
   const m = new AstManager(new ResourceLimit(Infinity));
-  theory.m = m;
-  theory.steps = 0;
   const context = new Context(m, { isMbqi: true, relevancyLevel: 2 });
   context.setupContext();
   const u = m.mkSort("U");
@@ -115,11 +66,11 @@ const mk = () => {
     console.log(`== ${name} ==`);
     const result = context.search();
     console.log(
-      `result=${result} conflicts=${context.getNumConflicts()} steps=${m.limit.count - theory.steps} instances=${context.qmanager.getNumInstances()} asts=${m.getNumAsts()}`,
+      `result=${result} conflicts=${context.getNumConflicts()} steps=${m.limit.count} instances=${context.qmanager.getNumInstances()} asts=${m.getNumAsts()}`,
     );
     if (result !== 1) return;
     printModel(m, context.getModel(), [u]);
-    console.log(`modeled: steps=${m.limit.count - theory.steps} asts=${m.getNumAsts()}`);
+    console.log(`modeled: steps=${m.limit.count} asts=${m.getNumAsts()}`);
   };
   return { m, u, fn, app, constant, forall, assert, report };
 };

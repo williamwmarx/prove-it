@@ -1137,6 +1137,7 @@ is next.
   encoder half of the differential (every method's text and the fingerprint, by `prover/digest`
   against `prover-inputs.json`); then the `prove_obligations` boundary of 3.2, agreed with the
   prover lead first.
+
 - P6b part 1, tlapm's state: `prove-obligations::marshal` ports `ocaml-marshal.ts` (LGPL, in its
   own file and in the notices' OCaml section), and `prove-it-prover::tlapm_cache` ports
   `cache.ts`: `load_fingerprints`, `KnownResults::new`, `KnownResults::save`, and `save_history`.
@@ -1155,6 +1156,146 @@ is next.
   - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
 
 ### TypeScript deviations from Z3
+
+Where a TypeScript back end does what the tool it ports does not, the Rust mirrors the TypeScript,
+so that the differential stays exact, until the two are fixed together and the inputs it moves are
+re-recorded. smt-core.md §4 lists the SMT core's and points here for the evidence. Lines are as of
+b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
+
+- **A model's hold on a builtin declaration (`div0`, `mod0`, `/0`)** moves smt/0c812b0a8aa1347b,
+  c0119d516427b279, f57d6baf800a11d6, 44fea97e4ee0312c and a50910e8b0798813 (all `unknown` at
+  the step limit in the record).
+  - *TypeScript.* theory_lra's divisions by zero are interpreted by the model
+    (`model-generator.ts:26-31`, registered at `:91`). `ProtoModel.registerFunc` holds the
+    declaration with `incDeclRef` (`proto-model.ts:267-275`); `unregisterDecl` (`:480-498`),
+    `release` (`:511-524`) and `mkModel` (`:528-540`, which moves it to the new model) drop it with
+    `decDeclRef`. The applications of `div0` count it under its signature (`ast.ts` `holdDecl`,
+    `releaseDecl`, `:432-469`), but `incDeclRef` and `decDeclRef` (`:476-509`) count it in
+    `declRefCounts` (`:303`), which holds only user declarations: `undefined++` is NaN and
+    `NaN > 0` is false, so every drop deletes the declaration (`numDecls--`, its small id, `-1`
+    from `Z3_SMALL_IDS` at `:340`, pushed on `freeSmallIds`) and the next hold makes it again with a
+    new small id (`:489`), while its applications still hold it. `getNumAsts` (`:354-356`) counts
+    `numDecls`. It seeds the Boolean `RandomGen` of every `ProtoModel` (`proto-model.ts:245`) and
+    `getSomeValue`'s pick in a finite sort (`:336-342`), which model completion calls
+    (`model-evaluator.ts:93,160,233-238`, `proto-model.ts:395,418`, `auf-solver.ts:499`) on the
+    models MBQI checks.
+  - *Rust.* `ast.rs` mirrors it with `decl_ref_counts: Vec<Option<i32>>` (`:429`, `None` is the
+    NaN; `inc_decl_ref`, `dec_decl_ref`, `:751-811`; `get_num_asts`, `:551`), since 3e31515;
+    `proto_model.rs` holds and drops as the TypeScript (`register_func` `:456-469`,
+    `unregister_decl` `:822-843`, `release` `:862-879`, `mk_model` `:888-905`) and seeds from
+    `get_num_asts` (`:389`, `:585`). Regression input `smt/tests/inputs/builtin-decl-release.smt`.
+  - *Z3.* `arith_decl_plugin.cpp:423-425` makes `/0`, `div0` and `mod0` with
+    `ast_manager::mk_func_decl` on each request, hash-consed to one `func_decl`
+    (`ast.cpp:1963`, `register_node_core` `:1665-1674`); the plugin keeps no reference. That one node
+    has one count, `ast::m_ref_count` (`ast.h:483,491-499`, `ast_manager::inc_ref`/`dec_ref`
+    `ast.h:1705-1715`), which its applications (`ast.cpp:1714`, released at `:1823`) and models
+    (`model_core::update_func_interp` `model_core.cpp:84-103`, `unregister_decl` `:106-130`,
+    `~model_core` `:22-33`, `proto_model::mk_model` `proto_model.cpp:373-383`) share.
+    `delete_node` (`ast.cpp:1778`) frees it and recycles its id (`:1795`, `id_gen.h:30-47`) only
+    when the last of them goes, so a model dropping `div0` while an application holds it changes
+    nothing. `get_num_asts` is `m_ast_table.size()` (`ast.h:1701`); it seeds `basic_factory`
+    (`proto_model.cpp:35`, `value_factory.cpp:28-36`) and `user_sort_factory::get_some_value`
+    (`value_factory.cpp:76-92`), which model completion reaches on the models
+    `smt_model_checker` checks (`smt_model_checker.cpp:399-431`), whose divisions by zero theory_lra
+    asks for (`theory_lra.cpp:4244-4251`, `smt_model_generator.cpp:412-450`).
+  - *Verdicts.* It changes verdicts, not only statistics. A different number of ASTs seeds model
+    completion differently, so MBQI checks other models and adds other instances, and the search
+    under the step limit is another one, which can close in time where the other does not. On
+    smt/0c812b0a8aa1347b (step limit 2,305,796) the TypeScript gives `unknown` at the limit
+    (153,469 instances, 2,305,801 steps) and the Rust as it was before 3e31515, counting the
+    declaration from 0, `unsat` (24,889 instances, 881,375 steps). It cannot make a verdict wrong:
+    a model only chooses instances, and each instance is sound, so it moves inputs between
+    `unknown` and a decided verdict. Counting from 0 is not Z3 either: a count of its own still
+    releases the declaration when the model's last hold goes, while an application holds it.
+  - *a50910e8b0798813* belongs here, though 3e31515 did not list it: the Rust before 3e31515 gives
+    `unknown` with 131,956 instances and 3,307,788 steps, and with it the record, `unknown` with
+    3,307,783 steps and no instances (the limit stopped a step that throws).
+  - *Fixed* on both sides: `incDeclRef`/`inc_decl_ref` and `decDeclRef`/`dec_decl_ref` count a
+    model's hold on a builtin declaration with a signature under that signature, with its
+    applications, as Z3 counts the one `func_decl`; other builtin declarations, which Z3's plugins
+    keep, are not counted (`smt-ast.test.ts`, `tests/ast.rs`). Decided again by the fixed
+    TypeScript (`prover-differential --side ts --prover smt`), 10,316 of the 10,320 smt inputs give
+    the record and four move, which the record must take with `prover-inputs --record`:
+
+    | Input | Record | Fixed |
+    |---|---|---|
+    | smt/0c812b0a8aa1347b | `unknown` instances=153469 steps=2305801 | `unsat` instances=24889 steps=881375 |
+    | smt/44fea97e4ee0312c | `unknown` instances=37134 steps=1629193 | `unknown` instances=65627 steps=1629192 |
+    | smt/a50910e8b0798813 | `unknown` steps=3307783 | `unknown` instances=131956 steps=3307788 |
+    | smt/c0119d516427b279 | `unknown` steps=2572033 | `unknown` instances=28904 steps=2572037 |
+
+    smt/f57d6baf800a11d6 gives the record again. The fixed Rust gives the fixed TypeScript's answer
+    on all 10,320, the four that move included. Of the tables, only `models.txt` moves: its `partial-theory` model, which
+    interprets `div0`, now leaves the declaration to its application when it is released
+    (`asts=181`, was 180). `builtin-decl-release.smt` is replayed from `tables/decide-inputs.txt`,
+    which `scripts/smt-decide-reference.ts` writes.
+  - *Audit against Z3 5.3.3: neither side is Z3.* Z3 5.3.3 from PyPI (`z3-solver==5.3.3.0`), run as
+    tlapm runs it (`-smt2 AUTO_CONFIG=false smt.MBQI=true`) with `rlimit` set to the record's step
+    limit, and with `trace=true` to log its instances (each `[instance]` line, keyed through its
+    `[new-match]` or `[inst-discovered] MBQI` line to the quantifier and binding ids). The
+    TypeScript's instances were logged with the same Z3 ids (`AstManager.ids`) from
+    `QiQueue.instantiateEntry`, before the fix (98b901c) and after (ea83e9c; HEAD, with
+    b830769's nlsat steps, gives the same streams). At 200,000 steps both give Z3's first 1,214
+    instances exactly.
+
+    | Input | Z3 at the limit (instances, rlimit-count) | Before | Fixed | First instance off Z3 (before / fixed) |
+    |---|---|---|---|---|
+    | 0c812b0a8aa1347b | `unknown` 120,761, 2,306,586 | `unknown` 153,469 | `unsat` 24,889 | none / 1,255 |
+    | a50910e8b0798813 | `unknown` 93,193, 3,308,327 | `unknown` ~62,900 | `unknown` 131,956 | 252 / 3,299 |
+    | c0119d516427b279 | `unknown` 48,386, 2,572,601 | `unknown` ~31,600 | `unknown` 28,904 | 155 / 155 |
+    | 44fea97e4ee0312c | `unknown` 60,308, 1,630,104 | `unknown` 37,134 | `unknown` 65,627 | 74 / 74 |
+
+    Before the fix, the TypeScript makes all of Z3's instances on 0c812b0a8aa1347b (120,761 at
+    the limit, and all 239,484 at `rlimit=4000000`), where the fix leaves Z3 at the 1,255th; on
+    a50910e8b0798813 the fix keeps to Z3 longer (3,299 against 252). c0119d516427b279 and
+    44fea97e4ee0312c leave Z3 at the same instance either way, by another deviation. Over the 77
+    smt inputs with `div` or `mod`, at their limits, no other input tells the two apart. No count
+    at the limit matches Z3's, for a deviation of its own: the TypeScript's steps run behind
+    Z3's `rlimit-count` (on 0c812b0a8aa1347b it makes Z3's 120,761 instances and 32,708 more
+    within the limit). Z3 does not prove 0c812b0a8aa1347b in 20 s (840,277 instances), so the
+    fixed `unsat` is not Z3's answer.
+  - *How it moves the search.* Not through `getNumAsts`: forcing every value it returns, or only
+    the seeds of `ProtoModel`'s `RandomGen`, to the other side's sequence leaves each stream as
+    it was. It moves the small ids: `freeSmallIds` is Z3's LIFO `id_gen` (`id_gen.h:30-47`), so
+    when `div0` and `mod0` give back their ids decides which ids the aux context's next skolem,
+    `poly` and numeral declarations get, and those order `propagate_values`
+    (`asserted-formulas.ts` `isGreater`) and `rematch`. On 0c812b0a8aa1347b, forcing the one
+    numeral declaration the fixed TypeScript makes after the 1,214th instance (id 490) to any id
+    below 488 makes it follow Z3; the NaN gives it 480. The NaN is not Z3 either: it pushes the
+    declaration's `funcDecls` small id, `-1`, on `freeSmallIds`, frees an id twice and hands out
+    `-1`; it matches 0c812b0a8aa1347b by the order it happens to give.
+  - *What Z3 does.* By its source the fix counts as Z3 does: the plugin makes `div0`, `mod0` and
+    `/0` with `mk_func_decl` on each request (`arith_decl_plugin.cpp:423-425`), hash-consed to one
+    node (`register_node_core`, `ast.cpp:1665-1691`), whose one `m_ref_count`
+    (`ast.h:483-499,1705-1715`) its applications (`ast.cpp:1712-1714`) and models
+    (`model_core.cpp:84-103`, released in `unregister_decl` `:106-130` and `~model_core`
+    `:22-33`; `proto_model::mk_model` moves them, `proto_model.cpp:373-386`) share; the node
+    leaves `m_ast_table` (so `get_num_asts`, `ast.h:1701`) and recycles its id
+    (`RECYCLE_FREE_AST_INDICES`, `ast.h:55`, `ast.cpp:1792-1798`) only in `delete_node`, at the
+    last `dec_ref`. But Z3's runs behave as if no model holds them when the model checker's aux
+    scope is popped. The `div0` and `mod0` applications on 0c812b0a8aa1347b are the aux
+    context's (theory_lra's `found_underspecified`, `theory_lra.cpp:304-334`), released by the
+    pop at the end of `model_checker::check(q)` (`scoped_ctx_push`,
+    `smt_model_checker.cpp:361-433`). The TypeScript's aux context still holds the model of the
+    last restricted counterexample there (the loop stopped at `m_max_cexs`), and gives the
+    declarations back at the next `search`'s `reset_model` (`smt_context.cpp:4038`), after the
+    next quantifier's skolems and `poly` assumption. Releasing that model before the pop
+    (`Context.resetModel` before `pop`, with the fixed counting), or not counting a model's hold
+    on these declarations at all, gives Z3's stream on every input above: all 239,484 on
+    0c812b0a8aa1347b and 3,299 on a50910e8b0798813. Z3's source, as read
+    (`smt_model_checker.cpp:378-433`, `smt_context.cpp:3836-3880,4024-4038,4940-5016,3183-3188`),
+    keeps `m_model` until that `reset_model` too, so where Z3 lets the model go is not found
+    yet; an instrumented Z3 (printing `get_num_asts` and the declarations' ids and counts at
+    `model_core`'s holds and drops) would settle it.
+  - *Status: reverted, open.* The fix (ea83e9c) and its re-recording (9621162) are reverted:
+    on smt/0c812b0a8aa1347b it leaves Z3's stream at the 1,255th instance and proves what Z3 does
+    not, while main's TypeScript makes all of Z3's instances there, and a change of ours must not
+    put a verdict Z3 doesn't give into the record. So the TypeScript keeps its NaN count, the Rust
+    mirrors it (`decl_ref_counts: Vec<Option<i32>>`, 3e31515), and the record is main's. Neither is
+    Z3; the change that matches Z3's runs on every input that tells them apart (the fixed counting
+    plus releasing the aux context's model when the model checker pops its scope) waits for the
+    line in Z3 that releases that model, which an instrumented Z3 would show. It is then made on
+    both sides with `prover-differential --side ts --update`.
 
 The record holds what the TypeScript answers, so it cannot show where the TypeScript leaves Z3.
 `scripts/z3-parity.ts` runs Z3 5.3.3, the version the solver ports, on every `smt` and `z3` input

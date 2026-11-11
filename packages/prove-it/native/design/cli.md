@@ -270,9 +270,63 @@ Still to do:
 TLC dumps a violation's counterexample with postconditions of its trace modules, which it parses
 with the spec: `_TLCTrace` for `-dumpTrace tlc` and the trace exploration spec's
 `<Spec>_TTrace_<epoch>.bin`, `_JsonTrace` for `-dumpTrace json`. Each writes
-`[counterexample |-> CounterExample, vars |-> vars]`. `tla-trace` writes both files; the binary
-doesn't call it yet (its arguments, SANY's report of the extra modules, and the postconditions'
-order are the binary's).
+`[counterexample |-> CounterExample, vars |-> vars]`.
+
+The binary (`prove-it-check`'s `dump_trace.rs`) does what TLC does with `-dumpTrace tlc <file>` and
+`-dumpTrace json <file>`:
+
+- `args.rs` reads `-dumpTrace <format> <file>` as `handleParameters` does: the flag and the format
+  in any case, any number of times, the two arguments after the flag whatever they are, with TLC's
+  messages for a missing pair and an unknown format. `tla`, `tlcplain`, `tlcTESpec`, `tlcaction`,
+  `dot` and `cbor` stay not native: their modules import the CommunityModules
+  (`checkDumpTraceModules`).
+- TLC adds each format's module to the root module's EXTENDS in the order of the options, and the
+  trace exploration spec's `_TLCTrace` after them where it records the trace
+  (`ParameterizedSpecObj`). The binary gives tla-front the same list (`Files::root_extendees`,
+  `ModelOptions::root_extendees`), so SANY's report, the order TLC interns strings in, and Integers'
+  methods over Naturals' are TLC's. `_JsonTrace` brings `Json` and its modules as TLC lists them.
+- The postconditions run where the binary already checks the configuration's after a violation, and
+  before them (`getPostConditionSpecs`): after an invariant's or an action property's violation, a
+  deadlock, a temporal property's lasso, after the step back into its cycle, and an initial state's
+  violation of an invariant or a property, after the state. TLC builds the counterexample as
+  `Worker.doPostCondition` does (`Rebuilder::rebuild_counter_example` for a violation it holds).
+  Each writes its file in argument order, relative to the working directory, and prints
+  `"CounterExample written: <file>"`, as PrintT does, plain and with -tool. A run without a
+  counterexample writes and prints nothing more.
+- The modules share their constant (`_TLCTraceFile`, `_JsonTraceFile`), which TLC sets for each
+  postcondition in turn (`processConstantsForModule`), so each option of a format writes, and
+  names, the file of the last of that format: `-dumpTrace tlc a.bin -dumpTrace tlc b.bin` writes
+  `b.bin` twice and never `a.bin`.
+- `to_tlc` takes the configuration's model values (`ModelConfig::get_model_values`).
+
+Not native: where TLC also records the trace (its default without `-tool`, `-noTE` or
+`-continue`), a counterexample, whose `.bin` the trace exploration spec's postcondition writes with
+the same constant; a failure evaluating the spec past the initial states, after which TLC may check
+the postconditions on a trace it can't find again; a spec that draws RandomElement or
+RandomSubset, whose trace TLC may not find again, writing nothing; a deadlock that violates a
+temporal property; a file name that isn't printable ASCII or holds a quote or a backslash; a file
+in a directory that doesn't exist; `-dumpTrace` with `-continue`; a configuration POSTCONDITION TLC
+rejects, as TLC then writes no dump (it collects every postcondition before it checks any,
+`Spec.getPostConditionSpecs`); a module of the user's that a
+trace module uses, such as a `Json.tla` beside the spec, which SANY loads in place of the standard
+one, failing TLC's run in `_JsonTrace`'s analysis ("Unknown operator: `JsonSerialize'.") where
+it lacks what `_JsonTrace` uses (SANY's report of the extra modules declines it as it does for the
+trace exploration spec's `_TLCTrace`); and what `dump_trace` declines.
+
+`tests/dump_trace.rs` holds the binary to what the jar (tlaplus d8fb231) printed and wrote, with
+`-tool` and without, both orders of the two formats: an invariant violation, a deadlock, a lasso, an
+initial state's violation and a run without a counterexample (`tests/dump-trace`).
+
+Swept (2026-11-11) over the 721 corpus models whose recorded TLC run with -tool took at most 10 s,
+each run by the jar and the binary from a working directory of its own with
+`-tool -modelcheck -dumpTrace tlc A.bin -dumpTrace json A.json`: stdout normalised, the JSON byte for
+byte and the `.bin` but for its tokens. 609 match (71 of them writing both files), 110 decline, 2
+differ as they do without -dumpTrace (a jar path TLCGet reads, and TLC's stack overflowing), and
+none differ otherwise. The declines: a substitute made again (45), a failure evaluating the spec
+(25), an argument or a LET definition made again (24), an ALIAS (7), a random draw (5), an action's
+parameter (3), and a deadlock that violates a temporal property (1). Without -tool and with
+`-dumpTrace json` first, over the 174 that stop at a counterexample: 88 match, 85 decline, 1
+differs as it does without -dumpTrace.
 
 - `Rebuilder::dump_trace(&CounterExample) -> Result<TraceDump, Unsupported>` builds the value, with
   `Rebuilder::rebuild_counter_example(store, states, labels)` giving an invariant violation's trace
@@ -303,6 +357,14 @@ order are the binary's).
   the configuration doesn't make. The sharing follows the evaluator's, which these specs check; where
   TLC's state queue spilled the held state to disk and read it back, TLC's literals are new
   objects, which the dump doesn't follow.
+- The corpus sweep found where the evaluator's sharing wasn't TLC's, now followed:
+  `[S -> T]` enumerates a lazy `T` once for each element of `S` (`SetOfFcnsValue.Enumerator`), so
+  no two arguments share a value; SubSeq and SelectSeq give TLC's one empty sequence
+  (`TupleValue.EmptyTuple`) and `\o` gives back the other operand where one is empty; DOMAIN of a
+  record makes new strings (`RecordValue.getDomain`). And where it isn't, declined
+  (`Evaluator::unshared`): an argument or a LET definition evaluated again to a value with an
+  identity, which TLC keeps for a next state (`LazyValue`), and a constant the configuration
+  substitutes a definition for, which TLC evaluates at each use while the evaluator keeps one value.
 
 ## Specs TLC stops at before the search
 
@@ -378,14 +440,16 @@ order are the binary's).
 `args.rs` reads the arguments as `TLC.handleParameters` does, in order, and stops at the first one
 TLC rejects with TLC's message (1102 and the usage line, marked only where `-tool` came before it):
 an option TLC doesn't know, a missing or malformed value of `-seed`, `-workers`, `-fp`, `-config`,
-`-lncheck` or `-metadir`, and, on the `tlc2.TLC` form, a second module or none. Each message was
+`-lncheck` or `-metadir`, a `-dumpTrace` without a format and a file or with a format TLC doesn't
+know, and, on the `tlc2.TLC` form, a second module or none. Each message was
 compared with a TLC built from the clone at d8fb231.
 
 It models `-config` (with or without `.cfg`, as TLC), `-continue`, `-coverage`, `-deadlock`,
-`-dump`, `-fp`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
+`-dump`, `-dumpTrace tlc` and `-dumpTrace json` (below), `-fp`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
 trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`,
-`-noGenerateSpecTEBin`/`-noTEBin`). Every other option TLC reads (`-simulate`, `-difftrace`,
-`-maxSetSize`, `-dfid`, ...) is not native, as are the shapes where TLC
+`-noGenerateSpecTEBin`/`-noTEBin`), and `-simulate`, `-depth` and `-aril` (below). Every other
+option TLC reads (`-generate`, `-difftrace`, `-maxSetSize`, `-dfid`, ...) is not native, as are the
+shapes where TLC
 throws (`-dump` last, an empty argument), an argument that isn't ASCII, and `Spec.cfg` named as
 the module on the `tlc2.TLC` form. `-lncheck off` is not native either: TLC then checks no temporal property (`LiveCheck.java:238`).
 `-fp N` picks `FP64.Polys[N]`, one of TLC's 131 irreducible polynomials, which every fingerprint
@@ -536,6 +600,70 @@ filter), MCMultiNode (an operator taking an operator), Detlefs and FastPaxos (SY
 cf1s_folklore and SpanTreeRandom (temporal properties). The pass, a tree-walking replay, runs at
 about a quarter of TLC's speed. The approved follow-up counts the cost model in the engine's own
 search, which would retire the replay.
+
+## -simulate
+
+`-simulate [num=N]` runs TLC's random simulation (`Simulator`, `SimulationWorker`) in the engine
+(`tla-engine/src/simulate.rs`), on one worker, drawing what TLC draws in its order, so a run with
+the same `-seed` and `-aril` takes TLC's traces and prints TLC's output:
+
+- `TLC.process` seeds a `RandomGenerator` with `-seed` (0 without one, where TLC draws a seed),
+  skips `-aril` draws of `nextDouble` (only with `-seed`), and draws the worker's seed with
+  `nextLong`; the worker seeds its own generator with it.
+- A trace starts at an initial state drawn by `floor(nextDouble() * n)` among the initial states
+  in the model, in the initial predicate's order, duplicates kept.
+- Each step draws an action index the same way, then `nextPrime()` (a `nextDouble` index into the
+  1341 primes from 1277011), and walks TLC's actions from that index, striding by the prime modulo
+  their number, until one has successors in the model. The successor is drawn by
+  `floor(nextDouble() * n)` among them in the walk's order.
+- Every successor the walk completes counts as checked and is checked against the invariants,
+  then the action properties; it is kept where the constraints and action constraints hold. A
+  state with no successor kept is a deadlock unless `-deadlock` (or `CHECK_DEADLOCK FALSE`).
+- A trace ends after `-depth` steps (100 by default; `-depth -1` has no bound) and adds
+  `min(depth, level)` to TLC's integer Welford mean and squared deviations, packed in one long as
+  TLC keeps them, which the progress line prints.
+- RandomElement and RandomSubset draw, past the startup and the initial states, from a generator
+  of the worker's thread seeded with `-seed` and never reseeded (`RandomEnumerableValues`).
+- TLCGet("level") counts the trace's steps, stuttering ones too; TLCGet("config") is the
+  simulation's record (`Simulator.createConfig`). Any other key of the run declines, and so does an
+  assumption left to the trace evaluator in a spec that reads TLCGet, which it answers as the
+  model checker.
+
+The report: the banner `Running Random Simulation with seed ...`, `Computed N initial states...`,
+`Finished computing initial states: K distinct state generated` (no plural), then for a violation
+its headline and the trace without its finite stuttering (`getTrace`), each state labelled with
+its action, the first with the last of TLC's initial predicates (`initial_label`, which
+tla-front finds as `initPredVec`); with `-depth -1` the error state alone. Then the summary
+(`The number of states generated`, the seed and aril) and the final progress line, in TLC's order.
+`getTrace` drops a state equal to the one before it, from the last state back, comparing the
+values in TLC's order of the variables up to the first that differs, which fails where TLC can't
+compare them (TLC's Github743). A trace's states print from the store where no value's text depends
+on how TLC built it, and else as the trace evaluator rebuilds them along the actions taken, unless
+a state holds a record of several fields: the evaluator sorts its fields as TLC's fingerprints do,
+and the simulation fingerprints no state, sorting a record only where it happens to compare it.
+
+Declined, each with its reason:
+
+- several workers; `-generate`; `file=`, `stats=` and `sched=`;
+- `-coverage`, whose report TLC's simulator prints too (`Simulator.reportCoverage`), where the
+  coverage pass replays the model checker's search;
+- `-dumpTrace`, a postcondition TLC's simulator checks as it checks the model's;
+- temporal properties (TLC's `LiveCheck1` per trace), POSTCONDITION, `_POSSIBLE`, SYMMETRY,
+  `_PERIODIC` (evaluated with each progress report), a model without a next-state relation or
+  whose relation the engine doesn't split into TLC's actions;
+- a violation before the last trace, or without `num=`: TLC's worker goes on generating traces
+  as the main thread prints the trace, and is stopped at no particular one, so the counts race.
+  In one run of an MCConsensus model on the jar, the summary said 23 states generated where the
+  progress line, printed after it, said 24. The sweep declines 60
+  runs for this; the tests pin `num=1`, where the violation is in the last trace;
+- a failure evaluating the model, an incomplete state, an action property violated, an initial
+  state outside a constraint or none;
+- a violation under `-continue`, after which TLC's simulator goes on generating traces
+  (`TLCGlobals.continuation`) and exits with 0;
+- a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS, or
+  that holds a record of several fields where the store can't print it;
+- a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),
+  which the simulation builds only as it checks a trace.
 
 ## Handoff
 

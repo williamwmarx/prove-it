@@ -1,31 +1,14 @@
-// Runs the TypeScript SMT kernel on the quantified problems of core/quantifier_manager.rs's Rust unit tests,
-// building the same expressions in the same order without model-based instantiation, and prints the
-// result, conflicts, steps and quantifier instances each test expects, with the steps taken in what
-// the Rust port still stubs (the arithmetic theory and the rewriter) and whether the rewriter left
-// every instance as it was. It then prints the code trees the MAM compiler makes for a few patterns, which
-// core/mam_compiler.rs's unit test expects:
+// Runs the TypeScript SMT kernel on the quantified problems of core/quantifier_manager.rs's Rust
+// unit tests, building the same expressions in the same order without model-based instantiation,
+// and prints the result, conflicts, steps and quantifier instances each test expects. It then prints
+// the code trees the MAM compiler makes for a few patterns, which core/mam_compiler.rs's unit test
+// expects:
 //   bun scripts/smt-ematching-reference.ts
 import { AstManager, SORT_BOOL } from "../src/prover/smt/solver/ast";
 import { Context } from "../src/prover/smt/solver/context";
 import type { Mam } from "../src/prover/smt/solver/e-matching";
 import { type CodeTree, Compiler, type Instruction } from "../src/prover/smt/solver/mam-compiler";
 import { ResourceLimit } from "../src/prover/smt/solver/rlimit";
-
-interface StepCounter {
-  steps: number;
-  depth: number;
-}
-
-const THEORY_METHODS = [
-  "init",
-  "canPropagate",
-  "propagate",
-  "pushScopeEh",
-  "popScopeEh",
-  "finalCheckEh",
-  "restartEh",
-  "initSearchEh",
-];
 
 const OP_NAMES = [
   "INIT",
@@ -44,38 +27,10 @@ const OP_NAMES = [
   "IS_CGR",
 ];
 
-// Counts the steps taken inside a method, once per outermost call.
-const countSteps = (target: object, name: string, m: AstManager, counter: StepCounter) => {
-  const original: unknown = Reflect.get(target, name);
-  if (typeof original !== "function") return;
-  Reflect.set(target, name, (...args: unknown[]) => {
-    const start = m.limit.count;
-    counter.depth++;
-    const result: unknown = Reflect.apply(original, target, args);
-    counter.depth--;
-    if (counter.depth === 0) counter.steps += m.limit.count - start;
-    return result;
-  });
-};
-
-// The compiler's trees are printed without setupContext, whose arithmetic theory makes numerals
-// that the Rust port's stubbed theory does not, so that the ids of both agree.
-const mk = (isSetup = true) => {
+const mk = () => {
   const m = new AstManager(new ResourceLimit(Infinity));
   const context = new Context(m, { isMbqi: false, relevancyLevel: 2 });
-  if (isSetup) context.setupContext();
-  const theory: StepCounter = { steps: 0, depth: 0 };
-  if (isSetup) for (const name of THEORY_METHODS) countSteps(context.theory, name, m, theory);
-  const rewriter: StepCounter = { steps: 0, depth: 0 };
-  let isIdentity = true;
-  const rewrite = context.rewriter.rewrite.bind(context.rewriter);
-  context.rewriter.rewrite = (expr: number) => {
-    const start = m.limit.count;
-    const result = rewrite(expr);
-    rewriter.steps += m.limit.count - start;
-    if (result !== expr) isIdentity = false;
-    return result;
-  };
+  context.setupContext();
   const u = m.mkSort("U");
   const fn = (name: string, domain: number[], range = u) => m.mkFuncDecl(name, domain, range);
   const app = (decl: number, args: number[], sort = u) => m.mkApp(decl, args, sort);
@@ -93,7 +48,7 @@ const mk = (isSetup = true) => {
   const report = (name: string) => {
     const result = context.search();
     console.log(
-      `${name}: result=${result} conflicts=${context.getNumConflicts()} steps=${m.limit.count} instances=${context.qmanager.getNumInstances()} theory=${theory.steps} rewriter=${rewriter.steps} identity=${isIdentity}`,
+      `${name}: result=${result} conflicts=${context.getNumConflicts()} steps=${m.limit.count} instances=${context.qmanager.getNumInstances()}`,
     );
   };
   return { m, context, u, fn, app, constant, forall, report };
@@ -253,7 +208,7 @@ const dumpTree = (tree: CodeTree) => {
 };
 
 (() => {
-  const { m, context, u, fn, app, constant, forall } = mk(false);
+  const { m, context, u, fn, app, constant, forall } = mk();
   const f = fn("f", [u, u]);
   const g = fn("g", [u]);
   const h = fn("h", [u]);

@@ -53,6 +53,32 @@ pub struct ModelConfig {
     pub rl_reward: Option<String>,
 }
 
+impl ModelConfig {
+    /// The model values in the order TLC makes them as it parses the configuration
+    /// (`ModelValue.make` in `ModelConfig.parse`): each constant's arguments, then its value.
+    pub fn get_model_values(&self) -> Vec<&str> {
+        fn collect<'c>(value: &'c ConfigValue, names: &mut Vec<&'c str>) {
+            match value {
+                ConfigValue::ModelValue(name) if !names.contains(&name.as_str()) => {
+                    names.push(name)
+                }
+                ConfigValue::Set(values) => values.iter().for_each(|value| collect(value, names)),
+                _ => {}
+            }
+        }
+        let mut names = Vec::new();
+        for constant in &self.constants {
+            constant
+                .args
+                .iter()
+                .flatten()
+                .for_each(|value| collect(value, &mut names));
+            collect(&constant.value, &mut names);
+        }
+        names
+    }
+}
+
 /// `TlaConfigError`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigError {

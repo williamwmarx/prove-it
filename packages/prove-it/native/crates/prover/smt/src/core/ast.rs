@@ -423,8 +423,10 @@ pub struct AstManager {
     signature_decls: HashMap<SignatureKey, SignatureDecl>,
     // The references to each user declaration: the script holds the declared ones, and applications
     // and models hold the fresh ones. A deleted declaration keeps its small id here, in case an
-    // application of it is created again.
-    decl_ref_counts: Vec<i32>,
+    // application of it is created again. A builtin declaration (a model's div0, say) has no count:
+    // the TypeScript reads undefined there, which counting makes NaN, never above 0, so each release
+    // of it deletes it and each hold after that gives it a new small id. None is that NaN.
+    decl_ref_counts: Vec<Option<i32>>,
     // The named expressions of the recfun plugin, by declaration, hashed by `get_decl_hash`.
     pub macros: ObjMap<Expr>,
     deleted_decls: HashSet<Decl>,
@@ -597,9 +599,9 @@ impl AstManager {
     fn set_decl_ref_count(&mut self, decl: Decl, count: i32) {
         let index = decl as usize;
         if self.decl_ref_counts.len() <= index {
-            self.decl_ref_counts.resize(index + 1, 0);
+            self.decl_ref_counts.resize(index + 1, None);
         }
-        self.decl_ref_counts[index] = count;
+        self.decl_ref_counts[index] = Some(count);
     }
 
     /// insert_macro: cmd_context keeps a named expression as a recursive function with one case,
@@ -721,8 +723,7 @@ impl AstManager {
     fn release_decl(&mut self, expr: Expr) -> Result<i32, SmtError> {
         let decl = self.decls[expr as usize];
         if self.func_decls[decl as usize].family == FAMILY_USER {
-            self.decl_ref_counts[decl as usize] -= 1;
-            if self.decl_ref_counts[decl as usize] > 0 {
+            if self.dec_decl_ref_count(decl) {
                 return Ok(-1);
             }
             self.deleted_decls.insert(decl);
@@ -768,12 +769,20 @@ impl AstManager {
         if self.deleted_decls.remove(&decl) {
             self.func_decls[decl as usize].small_id = self.mk_small_id();
         }
-        // A builtin declaration (a model's div0, say) has no count yet; the TypeScript reads
-        // undefined there.
-        if self.decl_ref_counts.len() <= decl as usize {
-            self.decl_ref_counts.resize(decl as usize + 1, 0);
+        if let Some(Some(count)) = self.decl_ref_counts.get_mut(decl as usize) {
+            *count += 1;
         }
-        self.decl_ref_counts[decl as usize] += 1;
+    }
+
+    // Counts a released reference to a declaration, and returns whether references remain.
+    fn dec_decl_ref_count(&mut self, decl: Decl) -> bool {
+        match self.decl_ref_counts.get_mut(decl as usize) {
+            Some(Some(count)) => {
+                *count -= 1;
+                *count > 0
+            }
+            _ => false,
+        }
     }
 
     pub fn dec_decl_ref(&mut self, decl: Decl) -> Result<(), SmtError> {
@@ -790,8 +799,7 @@ impl AstManager {
             self.num_decls -= 1;
             return Ok(());
         }
-        self.decl_ref_counts[decl as usize] -= 1;
-        if self.decl_ref_counts[decl as usize] > 0 {
+        if self.dec_decl_ref_count(decl) {
             return Ok(());
         }
         self.deleted_decls.insert(decl);
@@ -855,6 +863,18 @@ impl AstManager {
         let result = body(self)?;
         self.temporaries_mark = outer;
         Ok(result)
+    }
+
+    /// without_temporaries without a closure, for a body that needs more than the manager: the
+    /// caller passes what suspend_temporaries returns to restore_temporaries.
+    pub fn suspend_temporaries(&mut self) -> isize {
+        let outer = self.temporaries_mark;
+        self.temporaries_mark = -1;
+        outer
+    }
+
+    pub fn restore_temporaries(&mut self, outer: isize) {
+        self.temporaries_mark = outer;
     }
 
     /// Hands a reference the caller owns to the innermost with_temporaries, or releases it now.
@@ -1262,7 +1282,7 @@ impl AstManager {
         };
         self.fresh_id += 1;
         let decl = self.mk_func_decl(name, domain, range, is_skolem);
-        self.decl_ref_counts[decl as usize] = 0;
+        self.set_decl_ref_count(decl, 0);
         decl
     }
 

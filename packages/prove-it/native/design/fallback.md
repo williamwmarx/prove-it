@@ -164,7 +164,9 @@ Besides the 15 declines, it does the following in the library:
 - **A WebAssembly stack overflow.** The interpreter searches from the start.
 - **`PROVE_IT_LIVE_CHECK=1`.** It cross-checks the native liveness verdict.
 
-Neither side implements `-simulate`, `-generate`, `-debug`, `-dumpTrace` or `-loadTrace`.
+Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The binary writes
+`-dumpTrace tlc` and `-dumpTrace json`, and declines the other formats and the cases cli.md's
+"-dumpTrace" lists; the interpreter writes none.
 `src/pcal` only validates for SANY, `src/obligations` imports nothing from the interpreter, and
 `src/prover` imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
 `getParentPort`). Those move to the prover. `tlc/version.ts`, `tlc/jar-data.ts` and
@@ -230,27 +232,25 @@ Measured at main 6871cd2, with the log as this section gives it:
 
 #### Liveness
 
-310 of the checks have temporal properties: 204 are native and 106 are not. 43 of those 106 are the
-liveness part of this plan:
-- an atom of the temporal properties that may fail to evaluate (14), and a failure in a model with
-  temporal properties (3);
+Measured again at main 33b0d56, after #217, #239, #244, #253, #265 and #277, with `check-log`
+counting TLC 1.7.4's checks apart (63, retired with the interpreter): 286 of the other checks have
+temporal properties, 232 are native and 54 are not. 22 of those 54 are the liveness part of this
+plan, down from 43:
+- a failure in a model with temporal properties: an atom of the temporal properties that may fail
+  to evaluate (2), and SUBSET of a non-set evaluated again after Next fails (1);
 - the search's stops in a model with temporal properties: deadlock (3), an invariant (1), a
   division by zero (1);
 - a property TLC finds a tautology (3), or a constant part of a temporal formula that isn't a
   boolean (2);
-- printing where the native checker doesn't check the temporal properties (5);
-- a lasso the engine doesn't hand over (5), now native: the 2 of specs whose actions print, which
-  the rebuild labels by running the actions again, and the 3 that end in the first state of their
-  cycle;
-- an atom the engine doesn't answer (2);
-- a late node at another diameter, a step back into the cycle of a spec that prints, several states
-  under VIEW or SYMMETRY, and a lasso TLC fails to rebuild under a VIEW (1 each).
+- printing where the native checker doesn't check the temporal properties (5): prints it doesn't
+  place in TLC's order (2), a node that accepts every behavior, a predicate the engine leaves to the
+  interpreter, and steps from states it didn't store (1 each);
+- an atom the engine doesn't answer, a late node at another diameter, a step back into the cycle of
+  a spec that prints, and several states under VIEW or SYMMETRY (1 each).
 
-Of the other 63:
-- 29 decline on the command line (TLC 1.7.4, 25; `-dump`, 4);
-- 6 are the action property violated, for `-continue`'s native report;
-- the rest are constant evaluation, a constraint or VIEW that fails on a successor, and the
-  evaluator's other gaps.
+Of the other 32: constant evaluation (9), a constraint, a VIEW or an action property that fails on
+a successor (8), a power set too large to build (3), `-dump` (3), the builtin Trace and PrintT
+(2 each), and five more of the evaluator's and the front end's gaps (1 each).
 
 The corpus has no temporal decline: `differential --native-only` matches 1,460 of 1,466 runs, and
 the 6 known differences aren't about liveness.
@@ -482,12 +482,26 @@ distinct decline messages in the group.
 | `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
 | Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
 | SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
-| Rebuilding a trace through the builtin Trace | 4 | 1 | memo session |
-| The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, an ALIAS without a definition, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 9 | 7 | unassigned |
+| The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 8 | 6 | unassigned |
 
 The groups are checked in this order, so a decline counts once, in the first group that takes it.
-The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
+The 1.7.4 runs leave with the TypeScript, and `check-log` now counts them apart, as retired with
+the interpreter, without running them. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
+
+#### Declines to win back
+
+Checks the binary answered and now declines, because the answer matched TLC only by chance.
+
+- **Strings made during the search** (the string-order change; check-log on the same log, 1386
+  native on main, 1384 after): `unit/check.test.ts:704` and `unit/parallel.test.ts:18` with
+  `-workers 2`, both `fixtures/strings/RuntimeStrings`, where `CHOOSE` picks among
+  `"q" \o ToString(n)` strings the search makes. TLC orders two strings by when it interned them,
+  and it interns a string the search makes as it makes it. The store ordered two that no rank covers
+  by their text, which matched TLC's creation order there by chance. It now stops on them (`an order
+  of strings the search made`), and the library's tests assert TLC's output through the interpreter.
+  Winning them back takes the engine ranking what it makes in TLC's order of evaluation: one worker,
+  every successor and every expression in TLC's order, which a later change would have to show.
 
 ### After the FingerprintException burn-down (measured 2026-11-11)
 
@@ -591,6 +605,13 @@ Since then, the binary reads the version of the jar on the class path from its m
 zip reader and inflater of its own (`zip.rs`, `inflate.rs`), and checks a master TLC's launch. It
 declines TLC 1.7.4's jar and a manifest it can't read with certainty. Of the 117 CLI test runs, 56
 now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator.
+
+Since #250 the binary prints SANY's report of the trace exploration spec too, and checks TLC's
+default natively until TLC would write the trace's files: after any error it printed a behavior for,
+a counterexample or not, it declines with "the trace exploration spec TLC writes for a
+counterexample". On the 733 corpus models in TLC's default, against TLC's recordings of that mode,
+529 print TLC's output, 202 decline so, and 2 differ as they do with `-noGenerateSpecTE`, by TLC's
+runtime (a Java stack overflow, and where TLC is installed).
 
 ### The public API afterwards
 

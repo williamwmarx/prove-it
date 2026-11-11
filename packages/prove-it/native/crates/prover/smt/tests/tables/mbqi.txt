@@ -1,71 +1,71 @@
 == diseq-sat ==
-result=1 conflicts=0 steps=55 instances=0 asts=195
-const a = U!val!0#34
-const c = U!val!1#35
-const b = U!val!0#34
-func f else U!val!1#35
-universe U: U!val!1#35 U!val!0#34
-modeled: steps=55 asts=195
+result=1 conflicts=0 steps=216 instances=1 asts=211
+const a = U!val!2#44
+const c = U!val!1#39
+const b = U!val!0#38
+func f else U!val!1#39
+universe U: U!val!2#44 U!val!1#39 U!val!0#38
+modeled: steps=216 asts=211
 == or-sat ==
-result=1 conflicts=0 steps=392 instances=2 asts=211
-const a = U!val!0#33
-const b = U!val!1#34
-func q else (q!9 (k!8 (:var 0)))#40
-func p else (p!10 (k!8 (:var 0)))#41
-func p!10 [U!val!1#34 -> true#1] else false#2
-func k!8 [U!val!1#34 -> U!val!1#34] else U!val!0#33
-func q!9 [U!val!0#33 -> true#1] else false#2
-universe U: U!val!1#34 U!val!0#33
-modeled: steps=392 asts=211
-== or-unsat ==
-result=-1 conflicts=1 steps=83 instances=1 asts=195
-== macro-unsat ==
-result=-1 conflicts=1 steps=80 instances=1 asts=201
-== macro-sat ==
-result=1 conflicts=0 steps=185 instances=1 asts=213
+result=1 conflicts=0 steps=417 instances=2 asts=219
 const a = U!val!0#37
-const c = U!val!2#41
-const d = U!val!3#38
-const b = U!val!1#40
-func f [U!val!0#37 -> U!val!1#40] else (h (:var 0))#28
-func h [U!val!0#37 -> U!val!1#40] else U!val!3#38
-universe U: U!val!2#41 U!val!1#40 U!val!0#37 U!val!3#38
-modeled: steps=185 asts=213
+const b = U!val!1#38
+func q else (q!9 (k!8 (:var 0)))#44
+func p else (p!10 (k!8 (:var 0)))#45
+func p!10 [U!val!1#38 -> true#1] else false#2
+func k!8 [U!val!1#38 -> U!val!1#38] else U!val!0#37
+func q!9 [U!val!0#37 -> true#1] else false#2
+universe U: U!val!1#38 U!val!0#37
+modeled: steps=417 asts=219
+== or-unsat ==
+result=-1 conflicts=1 steps=96 instances=1 asts=203
+== macro-unsat ==
+result=-1 conflicts=1 steps=93 instances=1 asts=209
+== macro-sat ==
+result=1 conflicts=0 steps=201 instances=1 asts=221
+const a = U!val!0#41
+const c = U!val!2#45
+const d = U!val!3#42
+const b = U!val!1#44
+func f [U!val!0#41 -> U!val!1#44] else (h (:var 0))#32
+func h [U!val!0#41 -> U!val!1#44] else U!val!3#42
+universe U: U!val!2#45 U!val!1#44 U!val!0#41 U!val!3#42
+modeled: steps=201 asts=221
 == quasi-macro ==
-result=1 conflicts=0 steps=191 instances=1 asts=212
-const a = U!val!1#39
-const c = U!val!2#37
-const b = U!val!0#36
-func f [U!val!0#36 U!val!1#39 -> U!val!2#37] else (g (:var 0))#27
-func g [U!val!0#36 -> U!val!2#37] else U!val!0#36
-universe U: U!val!2#37 U!val!1#39 U!val!0#36
-modeled: steps=191 asts=212
+result=1 conflicts=0 steps=207 instances=1 asts=220
+const a = U!val!1#43
+const c = U!val!2#41
+const b = U!val!0#40
+func f [U!val!0#40 U!val!1#43 -> U!val!2#41] else (g (:var 0))#31
+func g [U!val!0#40 -> U!val!2#41] else U!val!0#40
+universe U: U!val!2#41 U!val!1#43 U!val!0#40
+modeled: steps=207 asts=220
 == quasi-macro-unsat ==
-result=-1 conflicts=1 steps=96 instances=1 asts=211
+result=-1 conflicts=1 steps=109 instances=1 asts=219
 == rounds ==
-result=-1 conflicts=1 steps=1199 instances=3 asts=268
+result=-1 conflicts=1 steps=1230 instances=3 asts=276
 == two-vars ==
-result=-1 conflicts=1 steps=229 instances=1 asts=201
+result=-1 conflicts=1 steps=242 instances=1 asts=209
 == two-vars-sat ==
-result=1 conflicts=1 steps=1374 instances=3 asts=244
-const a = U!val!0#36
-const c = U!val!1#37
-const b = U!val!1#37
-func k!15 [U!val!0#36 -> U!val!0#36] else U!val!1#37
-func k!14 [U!val!1#37 -> U!val!1#37] else U!val!0#36
-func r!16 [U!val!0#36 U!val!0#36 -> true#1] else false#2
-func r else (r!16 (k!15 (:var 0)) (k!14 (:var 1)))#51
-universe U: U!val!1#37 U!val!0#36
-modeled: steps=1374 asts=244
+result=1 conflicts=1 steps=1384 instances=3 asts=252
+const a = U!val!0#40
+const c = U!val!1#41
+const b = U!val!1#41
+func k!15 [U!val!0#40 -> U!val!0#40] else U!val!1#41
+func k!14 [U!val!1#41 -> U!val!1#41] else U!val!0#40
+func r!16 [U!val!0#40 U!val!0#40 -> true#1] else false#2
+func r else (r!16 (k!15 (:var 0)) (k!14 (:var 1)))#55
+universe U: U!val!1#41 U!val!0#40
+modeled: steps=1384 asts=252
 == injective ==
-result=-1 conflicts=1 steps=392 instances=1 asts=213
+result=-1 conflicts=1 steps=405 instances=1 asts=221
 == chained-macros ==
-result=-1 conflicts=1 steps=208 instances=2 asts=214
+result=-1 conflicts=1 steps=230 instances=2 asts=222
 == exceptions-sat ==
-result=1 conflicts=0 steps=57 instances=0 asts=202
-const a = U!val!0#36
-const c = U!val!1#37
-const b = U!val!2#38
-func f [U!val!0#36 -> U!val!1#37] else U!val!2#38
-universe U: U!val!2#38 U!val!1#37 U!val!0#36
-modeled: steps=57 asts=202
+result=1 conflicts=0 steps=62 instances=0 asts=210
+const a = U!val!0#40
+const c = U!val!1#41
+const b = U!val!2#42
+func f [U!val!0#40 -> U!val!1#41] else U!val!2#42
+universe U: U!val!2#42 U!val!1#41 U!val!0#40
+modeled: steps=62 asts=210

@@ -1,0 +1,8 @@
+{
+  "id": "pingcap/DistributedTransaction/Test4.cfg",
+  "mode": "te",
+  "tlcCommit": "d8fb231de4e4b5d02c1b2ed1ac759c086f694021",
+  "exitCode": 150,
+  "stdout": "TLC2 Version 2026.11.11.032712\nRunning breadth-first search Model-Checking with fp 0 and seed 4 with 1 worker on 4 cores with 683MB heap and 64MB offheap memory [pid: 14309] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).\nParsing file /home/user/prove-it/packages/prove-it/tests/conformance/.corpora/pingcap/DistributedTransaction/Test4.tla\n\nFatal errors while parsing TLA+ spec in file Test4\n\nUnknown location\n\nFile name 'Test4' does not match the name 'Test3' of the top level module it contains.\n*** Errors: 1\n\nUnknown location\n\nFile name 'Test4' does not match the name 'Test3' of the top level module it contains.\n\n\n\nStarting... (2026-11-11 03:27:13)\nError: Parsing or semantic analysis failed.\nFinished in 00s at (2026-11-11 03:27:13)\n",
+  "stderr": ""
+}

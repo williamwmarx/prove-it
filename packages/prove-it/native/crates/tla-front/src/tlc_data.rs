@@ -512,6 +512,7 @@ pub const TLC_RUNTIME_STRINGS: &[&str] = &[
     "id",
     "behavior",
     "all",
+    "all:named",
     "mode",
     "deadlock",
     "seed",
@@ -537,6 +538,7 @@ pub const TLC_RUNTIME_STRINGS: &[&str] = &[
     "variables",
     "actionconstraints",
     "constraints",
+    "level",
     "stats",
     "duration",
     "generated",
@@ -548,5 +550,4 @@ pub const TLC_RUNTIME_STRINGS: &[&str] = &[
     "distinctvalues",
     "levelmean",
     "levelvariance",
-    "bfs",
 ];

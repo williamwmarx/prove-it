@@ -377,7 +377,7 @@ pub fn print_assumption_failure(
     let failure = evaluate_on_search_stack(|| {
         Rebuilder::new(ir).and_then(|mut rebuilder| {
             rebuilder.set_workers(workers);
-            rebuilder.evaluate_assumption(position)
+            rebuilder.evaluate_assumption(position, printer.is_tool)
         })
     })?;
     // What TLC prints of the assumptions before this one, which hold, and of this one.
@@ -474,7 +474,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
         // TLC prints a state it was expanding alone, an initial one, as it is, and every other
         // trace through the ALIAS (`TLCTrace.printTrace`).
         let aliases = if stop.is_aliased && trace.states.len() > 1 {
-            rebuilder.alias(&trace, None, is_tool)?
+            rebuilder.alias(&trace, None, None, is_tool)?
         } else {
             None
         };

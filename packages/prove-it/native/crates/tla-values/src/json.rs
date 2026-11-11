@@ -331,39 +331,12 @@ impl Parser<'_> {
     }
 }
 
-/// `toInteger`: TLC reads a JSON number with Gson's intValue, which truncates the exact decimal
-/// toward zero and keeps its low 32 bits, so 3000000000 is -1294967296 and 1.5 is 1.
-fn to_integer(source: &[u16]) -> i32 {
-    let text = String::from_utf16_lossy(source);
-    let (sign, unsigned) = match text.strip_prefix('-') {
-        Some(rest) => (-1i64, rest),
-        None => (1, text.as_str()),
-    };
-    let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
-        Some(at) => (
-            &unsigned[..at],
-            unsigned[at + 1..].parse::<i64>().unwrap_or(0),
-        ),
-        None => (unsigned, 0),
-    };
-    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let digits = format!("{whole}{fraction}");
-    let shift = exponent - fraction.len() as i64;
-    // The exact integer's decimal digits, truncated toward zero, then kept modulo 2^32.
-    let kept = if shift >= 0 {
-        digits.len()
-    } else {
-        digits.len().saturating_sub(shift.unsigned_abs() as usize)
-    };
-    let mut low: u32 = 0;
-    for byte in digits.bytes().take(kept) {
-        low = low.wrapping_mul(10).wrapping_add(u32::from(byte - b'0'));
-    }
-    // 10^32 is a multiple of 2^32, so more zeros keep the low bits 0.
-    for _ in 0..shift.clamp(0, 32) {
-        low = low.wrapping_mul(10);
-    }
-    (if sign < 0 { low.wrapping_neg() } else { low }) as i32
+/// `toInteger`: TLC reads a JSON number by its text with Integer.parseInt (`Json.getValue`), so
+/// it fails on any but a 32-bit integer, which the engine doesn't report.
+fn to_integer(source: &[u16]) -> Outcome<i32> {
+    String::from_utf16_lossy(source)
+        .parse()
+        .map_err(|_| Bail("a JSON number that isn't a 32-bit integer, which TLC fails on"))
 }
 
 /// A string ranked as `rankString` ranks it.
@@ -381,7 +354,7 @@ fn ranked_string(store: &mut Store, text: &[u16]) -> Outcome<Id> {
 fn from_json(store: &mut Store, json: Json) -> Outcome<Id> {
     match json {
         Json::Bool(value) => Ok(if value { TRUE } else { FALSE }),
-        Json::Number(source) => store.int(i64::from(to_integer(&source))),
+        Json::Number(source) => store.int(i64::from(to_integer(&source)?)),
         Json::Text(text) => ranked_string(store, &text),
         Json::Array(elements) => {
             let values = elements
