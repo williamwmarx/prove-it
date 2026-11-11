@@ -52,6 +52,7 @@ enum Binding {
         node: NodeId,
         context: Context,
         is_self: bool,
+        kept: Option<Kept>,
     },
     Operator(Rc<Operator>),
     /// A function a LET defines, which TLC keeps lazy: applied without being built. A recursive
@@ -62,6 +63,11 @@ enum Binding {
         is_self: bool,
     },
 }
+
+/// The value of an argument or an expression's LET definition once evaluated, primed or not, which
+/// TLC keeps (`LazyValue`'s cache) where evaluating it read no state, drew nothing and printed
+/// nothing. A LET of an action or the initial predicate binds none (`Tool#getNextStates`).
+type Kept = Rc<std::cell::RefCell<Option<(bool, Value)>>>;
 
 pub struct Operator {
     params: Vec<Param>,
@@ -211,6 +217,7 @@ pub(crate) fn bound_expression(context: &Context, name: TextId) -> Option<(NodeI
             node,
             context: inner,
             is_self,
+            ..
         } => Some((*node, own_context(inner, &frame, *is_self))),
         Binding::Operator(operator) => match operator.body {
             Body::Node(node) => Some((
@@ -1714,7 +1721,7 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let(definitions, context)?;
+                let inner = self.bind_let(definitions, context, true)?;
                 self.evaluate(*body, &inner)
             }
             NodeKind::Forall { bounds, body } => {
@@ -1983,6 +1990,7 @@ impl<'ir> Evaluator<'ir> {
                 node,
                 context: bound,
                 is_self,
+                kept,
             } => {
                 // TLC keeps the value of an argument or a LET definition once it has evaluated
                 // it (`LazyValue`), so what it drew from the generator isn't drawn again.
@@ -1990,12 +1998,24 @@ impl<'ir> Evaluator<'ir> {
                 if let Some((_, value)) = self.drawn.get(&key) {
                     return Ok(value.clone());
                 }
-                let inner = own_context(bound, frame, *is_self)
-                    .primed(context.is_primed || bound.is_primed);
+                let is_primed = context.is_primed || bound.is_primed;
+                if let Some(kept) = kept
+                    && let Some((was_primed, value)) = &*kept.borrow()
+                    && *was_primed == is_primed
+                {
+                    return Ok(value.clone());
+                }
+                let inner = own_context(bound, frame, *is_self).primed(is_primed);
                 let state = self.random.as_ref().map(JavaRandom::state);
+                let (reads, printed) = (self.reads, self.printed.len());
                 let value = self.evaluate(*node, &inner)?;
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
+                } else if let Some(kept) = kept
+                    && self.reads == reads
+                    && self.printed.len() == printed
+                {
+                    *kept.borrow_mut() = Some((is_primed, value.clone()));
                 }
                 Ok(value)
             }
@@ -2257,6 +2277,7 @@ impl<'ir> Evaluator<'ir> {
         &mut self,
         definitions: &[NodeId],
         context: &Context,
+        is_expression: bool,
     ) -> Evaluated<Context> {
         let mut inner = context.clone();
         for &node in definitions {
@@ -2277,6 +2298,7 @@ impl<'ir> Evaluator<'ir> {
                         node: definition.body,
                         context: inner.clone(),
                         is_self: false,
+                        kept: is_expression.then(Kept::default),
                     }
                 }
                 DefinitionForm::Operator(params) => Binding::Operator(Rc::new(Operator {
@@ -2315,6 +2337,7 @@ impl<'ir> Evaluator<'ir> {
                 node: *expression,
                 context: context_of(self, *scope)?,
                 is_self: *scope == Some(index),
+                kept: None,
             },
             ScopeBinding::Closure {
                 params,
@@ -2351,6 +2374,7 @@ impl<'ir> Evaluator<'ir> {
                             node,
                             context: bound,
                             is_self,
+                            ..
                         } => Some((
                             *node,
                             own_context(bound, &frame, *is_self)
@@ -2422,6 +2446,7 @@ impl<'ir> Evaluator<'ir> {
                     node: argument,
                     context: caller.clone(),
                     is_self: false,
+                    kept: Some(Kept::default()),
                 }
             };
             inner = inner.bind(param.name, binding);
@@ -3621,6 +3646,7 @@ impl<'ir> Evaluator<'ir> {
                     node,
                     context: bound,
                     is_self,
+                    ..
                 } => match self.kind(*node) {
                     NodeKind::FunctionConstruction {
                         is_recursive: true,
