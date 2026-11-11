@@ -133,11 +133,12 @@ fn get_untimed(text: &str) -> String {
         .collect()
 }
 
-#[test]
-fn generates_the_states_tlc_generates_from_a_lazy_set_or_declines() {
+// Checks each spec, named by its cell, on one thread and with every level shared between four:
+// what differs from `lazy-grid/<cell>.out`, TLC's output or "not native yet" for a decline.
+fn get_differences(test: &str, cells: &[(String, String)]) -> Vec<String> {
     let grid = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lazy-grid");
     let directory =
-        std::env::temp_dir().join(format!("prove-it-cli-lazy-grid-{}", std::process::id()));
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     std::fs::write(
         directory.join("M.cfg"),
@@ -145,41 +146,88 @@ fn generates_the_states_tlc_generates_from_a_lazy_set_or_declines() {
     )
     .expect("a configuration");
     let mut differences = Vec::new();
-    for (name, source, extra) in SOURCES {
-        for route in ROUTES {
-            for (context, is_next) in [("init", false), ("next", true)] {
-                let cell = format!("{name}.{route}.{context}");
-                std::fs::write(
-                    directory.join("M.tla"),
-                    get_spec(source, extra, route, is_next),
-                )
-                .expect("a spec");
-                let expected = std::fs::read_to_string(grid.join(format!("{cell}.out")))
-                    .expect("TLC's output");
-                let is_declined = expected == "not native yet\n";
-                for threads in ["1", "4"] {
-                    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
-                        .args(["-noGenerateSpecTE", "M"])
-                        .current_dir(&directory)
-                        .env("PROVE_IT_WORKERS", threads)
-                        .env("PROVE_IT_SHARED_LEVEL", "1")
-                        .output()
-                        .expect("the binary runs");
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let is_as_expected = if is_declined {
-                        stderr.contains("prove-it: not native yet: ")
-                            && !stdout.contains("states generated")
-                    } else {
-                        get_untimed(&stdout) == expected
-                    };
-                    if !is_as_expected {
-                        differences.push(format!("{cell} on {threads}:\n{stdout}{stderr}"));
-                    }
-                }
+    for (cell, spec) in cells {
+        std::fs::write(directory.join("M.tla"), spec).expect("a spec");
+        let expected =
+            std::fs::read_to_string(grid.join(format!("{cell}.out"))).expect("TLC's output");
+        let is_declined = expected == "not native yet\n";
+        for threads in ["1", "4"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+                .args(["-noGenerateSpecTE", "M"])
+                .current_dir(&directory)
+                .env("PROVE_IT_WORKERS", threads)
+                .env("PROVE_IT_SHARED_LEVEL", "1")
+                .output()
+                .expect("the binary runs");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let is_as_expected = if is_declined {
+                stderr.contains("prove-it: not native yet: ")
+                    && !stdout.contains("states generated")
+            } else {
+                get_untimed(&stdout) == expected
+            };
+            if !is_as_expected {
+                differences.push(format!("{cell} on {threads}:\n{stdout}{stderr}"));
             }
         }
     }
     std::fs::remove_dir_all(directory).expect("removed");
+    differences
+}
+
+#[test]
+fn generates_the_states_tlc_generates_from_a_lazy_set_or_declines() {
+    let mut cells = Vec::new();
+    for (name, source, extra) in SOURCES {
+        for route in ROUTES {
+            for (context, is_next) in [("init", false), ("next", true)] {
+                cells.push((
+                    format!("{name}.{route}.{context}"),
+                    get_spec(source, extra, route, is_next),
+                ));
+            }
+        }
+    }
+    let differences = get_differences("lazy-grid", &cells);
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
+}
+
+// A variable assigned a UNION that streams 2 twice, sized before it is streamed: Cardinality
+// caches the set as its normalized set, in the branches after it too, whether or not the guard
+// holds, so TLC streams 2 once (`sized.*.out`). Streamed before it is sized, it streams 2 twice,
+// which the binary declines.
+#[test]
+fn streams_a_variable_sized_before_as_its_normalized_set() {
+    let cases = [
+        (
+            "cardfirst",
+            "Init == s = 0 /\\ x = 0\nNext == s' = UNION {1..2, 2..3} /\\ Cardinality(s') > 0 /\\ x' \\in s'",
+        ),
+        (
+            "cardfirstInit",
+            "Init == s = UNION {1..2, 2..3} /\\ Cardinality(s) > 0 /\\ x \\in s\nNext == UNCHANGED <<s, x>>",
+        ),
+        (
+            "cardBranch",
+            "Init == s = 0 /\\ x = 0\nNext == s' = UNION {1..2, 2..3} /\\ ((Cardinality(s') > 9 /\\ x' = 0) \\/ x' \\in s')",
+        ),
+        (
+            "cardAfter",
+            "Init == s = 0 /\\ x = 0\nNext == s' = UNION {1..2, 2..3} /\\ x' \\in s' /\\ Cardinality(s') > 0",
+        ),
+    ];
+    let cells: Vec<(String, String)> = cases
+        .into_iter()
+        .map(|(name, body)| {
+            (
+                format!("sized.{name}"),
+                format!(
+                    "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLES s, x\n{body}\n====\n"
+                ),
+            )
+        })
+        .collect();
+    let differences = get_differences("lazy-sized", &cells);
     assert!(differences.is_empty(), "{}", differences.join("\n"));
 }

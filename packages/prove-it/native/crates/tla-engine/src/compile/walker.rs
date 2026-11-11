@@ -1556,6 +1556,46 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    // The variable whose set a guard `Cardinality(v) < e`, or another comparison of it, sizes,
+    // in the step that assigns it. TLC evaluates both sides of the comparison, and Cardinality
+    // asks the set its size (`FiniteSets.Cardinality`), which a set TLC keeps lazy answers by
+    // caching itself as its normalized set (`UnionValue.size`, `SetCupValue.size`,
+    // `SetPredValue.size`, `SetCapValue.size`, `SetDiffValue.size`).
+    fn sized_variable(&self, node: NodeId, is_init: bool) -> Option<u32> {
+        let builtin = |node: NodeId| match self.node(node).1 {
+            NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                Resolution::Builtin(index) => Some((self.builtin_name(index), &args[..])),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (comparison, operands) = builtin(node)?;
+        if !matches!(comparison, "=" | "#" | "<" | ">" | "<=" | ">=") {
+            return None;
+        }
+        operands.iter().find_map(|&operand| {
+            let ("Cardinality", [set]) = builtin(operand)? else {
+                return None;
+            };
+            let read = match self.node(*set).1 {
+                NodeKind::Prime(inner) if !is_init => self.node(*inner).1,
+                kind if is_init => kind,
+                _ => return None,
+            };
+            let NodeKind::Identifier(name) = read else {
+                return None;
+            };
+            match name.resolution {
+                Resolution::Variable(variable)
+                    if !name.is_local && self.held_streams.get(variable as usize).is_some() =>
+                {
+                    Some(variable)
+                }
+                _ => None,
+            }
+        })
+    }
+
     // The reads of variables and bound names a set streams, each with whether it is the set
     // itself, or else one it is built of: the set, a branch of an IF or CASE, an operand of a
     // UNION, `\cup`, `\cap` or `\`, the set a filter filters, the range of a set of functions,
@@ -2375,7 +2415,23 @@ impl<'a> Compiler<'a> {
                         leading = Leading::of(&compiled);
                         first_guard = compiled.predicate.as_deref().cloned();
                     }
-                    ops.push(guard(compiled));
+                    // A guard that sizes the set a variable holds caches it as its normalized set,
+                    // whether or not it holds, which the walk streams from then on, in the
+                    // branches after it too (`Machine::held`).
+                    let op = match self.sized_variable(item.node, is_init) {
+                        Some(variable) => {
+                            let inner = compiled.eval.clone();
+                            Op::Check(
+                                eval(move |machine| {
+                                    machine.held[variable as usize] = None;
+                                    inner(machine)
+                                }),
+                                "a conjunct that isn't a boolean",
+                            )
+                        }
+                        None => guard(compiled),
+                    };
+                    ops.push(op);
                 }
                 Shape::Assign(variable, value) => {
                     let variable = *variable;
