@@ -1209,11 +1209,12 @@ is next.
       bytes as the TypeScript re-saves them;
     - every encoded result, re-encoded at its stored date and version.
   - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
-### TypeScript deviations from Z3
+### Deviations from Z3
 
-Where a TypeScript back end does what the tool it ports does not, the Rust mirrors the TypeScript,
-so that the differential stays exact, until the two are fixed together and the inputs it moves are
-re-recorded. smt-core.md §4 lists the SMT core's and points here for the evidence. Lines are as of
+Where a back end does what the tool it ports does not. The Rust mirrored the TypeScript, so that
+the differential stayed exact; with the TypeScript SMT deleted, these are fixed in the Rust alone and
+the inputs they move re-recorded from it. smt-core.md §4 lists the SMT core's and points here for
+the evidence. Lines are as of
 b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
 
 - **A model's hold on a builtin declaration (`div0`, `mod0`, `/0`)** moves smt/0c812b0a8aa1347b,
@@ -1532,8 +1533,11 @@ Of the 13 inputs above, 12 follow Z3:
   and 86,967 instances, against Z3's streams on the text with the names written in, which on these
   four are Z3's own.
 - `0c812b0a8aa1347b` stops at its step limit, as Z3 times out, but its stream is Z3's for 365,521
-  instances only: the 365,522nd is Z3's `k!52` and the Rust's `k!42`. Not traced yet; the hold on a
-  builtin declaration above, which the Rust still counts as the TypeScript did, is not ruled out.
+  instances only: the 365,522nd is Z3's `k!52` and the Rust's `k!42`. Not traced yet. The
+  hypothesis is the hold on a builtin declaration above, which the Rust still counts as the
+  TypeScript did (the NaN); the candidate fix is smt-core.md §4's: release the aux context's last
+  counterexample model before the model checker pops its scope, which gave Z3's stream on every
+  input that told the two apart, once the line in Z3 that releases it is found.
 
 The step-limit cases need no decider fix: at the recalibrated limits the Rust proves the 24 that the
 fixes had left at the TypeScript's limits, and `5c4b35bdc13bbc89`, each with Z3's number of
