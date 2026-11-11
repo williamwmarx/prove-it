@@ -232,27 +232,32 @@ Measured at main 6871cd2, with the log as this section gives it:
 
 #### Liveness
 
-Measured again at main 33b0d56, after #217, #239, #244, #253, #265 and #277, with `check-log`
-counting TLC 1.7.4's checks apart (63, retired with the interpreter): 286 of the other checks have
-temporal properties, 232 are native and 54 are not. 22 of those 54 are the liveness part of this
-plan, down from 43:
+Measured again on main f941e35 with a check that fails on a deadlocked state, what a model with
+temporal properties prints at a stop, and TLC's errors for a tautology and a non-boolean constant
+part, with `check-log` counting TLC 1.7.4's checks apart (63, retired with the interpreter): 287 of
+the other checks have temporal properties, 245 are native and 42 are not. 12 of those 42 are the
+liveness part of this plan, down from 22:
 - a failure in a model with temporal properties: an atom of the temporal properties that may fail
-  to evaluate (2), and SUBSET of a non-set evaluated again after Next fails (1);
-- the search's stops in a model with temporal properties: deadlock (3), an invariant (1), a
-  division by zero (1). Two of the deadlocks, `tlc-replay`'s, are native now: TLC prints the call
-  stack of the check that fails as it adds the deadlocked state to the behavior graphs
-  ([liveness.md](liveness.md)). The third prints in Next, which TLC runs again for a late node;
-- a property TLC finds a tautology (3), or a constant part of a temporal formula that isn't a
-  boolean (2);
+  to evaluate, and SUBSET of a non-set evaluated again after Next fails (1 each);
+- a division by zero in Next where a late node of that state runs Next again, which TLC fails on a
+  second time, evaluating the checks again (1);
 - printing where the native checker doesn't check the temporal properties (5): prints it doesn't
   place in TLC's order (2), a node that accepts every behavior, a predicate the engine leaves to the
   interpreter, and steps from states it didn't store (1 each);
 - an atom the engine doesn't answer, a late node at another diameter, a step back into the cycle of
   a spec that prints, and several states under VIEW or SYMMETRY (1 each).
 
-Of the other 32: constant evaluation (9), a constraint, a VIEW or an action property that fails on
-a successor (8), a power set too large to build (3), `-dump` (3), the builtin Trace and PrintT
-(2 each), and five more of the evaluator's and the front end's gaps (1 each).
+Of the other 30: constant evaluation (9), a constraint, a VIEW or an action property that fails on
+a successor (8), a power set too large to build (3), `-dump` (3), PrintT where the engine can't
+place it (2), and five more of the evaluator's and the front end's gaps (1 each).
+
+A deadlock in a model with temporal properties prints TLC's output where a check fails as TLC adds
+the deadlocked state to the behavior graphs: the deadlock, the trace, then that check's call stack
+([liveness.md](liveness.md)). A spec that prints, stopped by a deadlock, a violated invariant or
+action property, or a failure of Next or an invariant, prints what TLC prints at the stop, in TLC's
+order, the prints of adding the stopped state after the trace included (liveness.md, "Print at a
+stop"). It declines a late node of a state whose next states fail, and one whose full Next takes
+other steps than the search took.
 
 The corpus has no temporal decline: `differential --native-only` matches 1,460 of 1,466 runs, and
 the 6 known differences aren't about liveness.
