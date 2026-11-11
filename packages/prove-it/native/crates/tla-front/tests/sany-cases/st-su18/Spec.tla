@@ -1,0 +1,6 @@
+---- MODULE Spec ----
+ZZ == 1 \star 2
+THEOREM TRUE
+<*>a. ASSUME TRUE PROVE TRUE OBVIOUS
+<*> QED OBVIOUS
+====

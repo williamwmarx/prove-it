@@ -33,9 +33,9 @@ use crate::sany::selectors::{
 };
 use crate::sany::source::{
     SanyReading, SanyReadings, SourceFile, TokenSpan, create_source_file, find_name_tokens,
-    find_token, get_argument_span, get_expression_span, get_matching_index, get_pre_comments,
-    get_range_span, get_span_location, get_token_index, get_token_location, is_token,
-    read_sany_text,
+    find_token, get_argument_span, get_expression_span, get_matching_index, get_parenthesized_span,
+    get_pre_comments, get_range_span, get_span_location, get_token_index, get_token_location,
+    is_token, read_sany_text,
 };
 use crate::sany::{Result, SanySpecification, not_yet};
 use crate::sany_parse_error::get_sany_parse_error;
@@ -54,7 +54,7 @@ fn get_synonyms() -> &'static FastMap<&'static str, &'static str> {
 
 /// `resolveSynonym`: tla2sany.parser.Operators.resolveSynonym, applied to each part of a name like
 /// I!\cup.
-fn resolve_synonym(name: &str) -> Name {
+pub(crate) fn resolve_synonym(name: &str) -> Name {
     let parts: Vec<&str> = name
         .split('!')
         .map(|part| {
@@ -1686,6 +1686,13 @@ impl<'a> ModuleGenerator<'a> {
         Ok(lambda)
     }
 
+    /// SANY's parser reads `@` as a name, which `selectorToNode` finds no operator of where an
+    /// operator is required, and gives its nullOAN.
+    fn report_unknown_at(&mut self, location: &SanyLocation) -> NodeId {
+        self.add_error(location, "Unknown operator: `@'.");
+        self.create_null_node()
+    }
+
     /// `getOperatorArgumentName`: an operator symbol passed as an argument, such as SUBSET or -.,
     /// is desugared into a LAMBDA without a range.
     fn get_operator_argument_name(&self, argument: &Expr) -> Name {
@@ -1708,8 +1715,18 @@ impl<'a> ModuleGenerator<'a> {
     /// `generateOperatorArgument`: Generator.generateOpArg, after an error SANY gives its
     /// nullOpArg.
     fn generate_operator_argument(&mut self, argument: &Expr, target: NodeId) -> Result<NodeId> {
-        let location = self.get_location(argument);
-        if let ExpressionKind::Lambda { operator, .. } = &argument.kind {
+        let mut location = self.get_location(argument);
+        let file = self.file.clone();
+        let span = get_expression_span(&file, argument);
+        let substituted_span = get_parenthesized_span(&file, span);
+        // A parenthesized expression is no operator.
+        let is_parenthesized = substituted_span != span;
+        if is_parenthesized {
+            location = get_span_location(&file, substituted_span);
+        }
+        if let ExpressionKind::Lambda { operator, .. } = &argument.kind
+            && !is_parenthesized
+        {
             let op = match operator {
                 None => self.generate_lambda(argument)?,
                 Some(_) => {
@@ -1718,9 +1735,12 @@ impl<'a> ModuleGenerator<'a> {
             };
             return Ok(self.create_op_arg(op, location));
         }
+        if !is_parenthesized && matches!(argument.kind, ExpressionKind::ExceptAt) {
+            return Ok(self.report_unknown_at(&location));
+        }
         let target_node = self.spec.graph.node(target);
         let target_arity = get_symbol_arity(&self.spec.graph, target);
-        if !is_operator_argument(argument) {
+        if is_parenthesized || !is_operator_argument(argument) {
             let text = format!(
                 "Arity {target_arity} operator (not an expression) is expected \nto substitute for CONSTANT '{}'.",
                 target_node.symbol_name().expect("a symbol")
@@ -1777,6 +1797,9 @@ impl<'a> ModuleGenerator<'a> {
         let location = get_span_location(&file, span);
         let position = format!("{} (counting from 1)", index + 1);
         let argument_span = get_argument_span(&file, span);
+        if argument_span == span && matches!(argument.kind, ExpressionKind::ExceptAt) {
+            return Ok(self.report_unknown_at(&location));
+        }
         if argument_span != span || !is_operator_argument(argument) {
             self.add_error(
                 &get_span_location(&file, argument_span),

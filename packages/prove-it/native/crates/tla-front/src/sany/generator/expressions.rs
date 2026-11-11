@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use crate::ast::{
     Bound, BoundPattern, Declaration, Definition, DefinitionKind, ExceptPathStep, Expr,
-    ExpressionKind, Instance, Location, Name, OperatorParam, Position, Quantifier, SourceRange,
+    ExpressionKind, Instance, Location, Name, OperatorParam, Position, Quantifier,
 };
 use crate::lexer::TokenKind;
 use crate::sany::nodes::{Decimal, DefKind, Label, LetIn, NodeId, NodeKind, SanyLocation};
@@ -350,59 +350,14 @@ impl ModuleGenerator<'_> {
         }
     }
 
-    /// `getRecursiveDeclarations` (generator.ts 1299–1324): the declarations of a RECURSIVE
-    /// statement from the token at `start`, which the syntax tree of a LET leaves out.
-    pub(super) fn get_recursive_declarations(&self, start: usize) -> Vec<Rc<Declaration>> {
-        let file = &self.file;
-        let mut declarations = Vec::new();
-        let mut index = start;
-        while file
-            .tokens
-            .get(index)
-            .is_some_and(|token| token.kind == TokenKind::Identifier)
-        {
-            let end = if is_token(file, index + 1, "(") {
-                get_matching_index(file, index + 1)
-            } else {
-                index
-            };
-            let arity = file
-                .tokens
-                .get(index + 1..end)
-                .unwrap_or_default()
-                .iter()
-                .filter(|token| &*token.text == "_")
-                .count();
-            let position = self.get_token_position(index);
-            declarations.push(Rc::new(Declaration {
-                name: file.tokens[index].text.clone(),
-                arity,
-                location: Location {
-                    line: position.line,
-                    column: position.column,
-                    range: Some(SourceRange {
-                        module: file.name.clone(),
-                        start: position,
-                        end: self.get_token_position(end),
-                    }),
-                },
-            }));
-            if !is_token(file, end + 1, ",") {
-                break;
-            }
-            index = end + 2;
-        }
-        declarations
-    }
-
     /// `getLetUnits` (generator.ts 1326–1354): the units of a LET in source order, with its
     /// RECURSIVE statements found among its tokens. `expression` is a `Let`.
     pub(super) fn get_let_units(&self, expression: &Expr) -> Vec<LetUnit> {
         let ExpressionKind::Let {
             definitions,
             instances,
+            recursive,
             body,
-            ..
         } = &expression.kind
         else {
             return Vec::new();
@@ -425,16 +380,36 @@ impl ModuleGenerator<'_> {
             .collect();
         let let_start = get_expression_span(file, expression).start;
         let body_start = get_parenthesized_span(file, get_expression_span(file, body)).start;
-        let recursives: Vec<(LetUnit, TokenSpan)> = (let_start + 1..body_start)
+        let statements: Vec<usize> = (let_start + 1..body_start)
             .filter(|&index| {
                 let is_in_unit = units
                     .iter()
                     .any(|(_, span)| span.start <= index && index <= span.end);
                 is_token(file, index, "RECURSIVE") && !is_in_unit
             })
-            .map(|index| {
+            .collect();
+        // Each RECURSIVE statement declares the parser's declarations from its keyword to the next
+        // statement's, or to the body.
+        let get_place = |index: usize| {
+            let position = self.get_token_position(index);
+            (position.line, position.column)
+        };
+        let recursives: Vec<(LetUnit, TokenSpan)> = statements
+            .iter()
+            .enumerate()
+            .map(|(order, &index)| {
+                let start = get_place(index);
+                let end = get_place(statements.get(order + 1).copied().unwrap_or(body_start));
+                let declarations = recursive
+                    .iter()
+                    .filter(|declaration| {
+                        let place = (declaration.location.line, declaration.location.column);
+                        start < place && place < end
+                    })
+                    .cloned()
+                    .collect();
                 (
-                    LetUnit::Recursive(self.get_recursive_declarations(index + 1)),
+                    LetUnit::Recursive(declarations),
                     TokenSpan {
                         start: index,
                         end: index,

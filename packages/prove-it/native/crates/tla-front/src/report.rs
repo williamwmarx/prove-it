@@ -132,23 +132,6 @@ struct Loader<'a> {
     is_failed: bool,
     exception: Option<String>,
 }
-
-/// The modules a module and its inner modules extend, other than its inner modules.
-fn get_extendees(module: &Module) -> Vec<Rc<str>> {
-    fn visit(module: &Module, inner_names: &mut Vec<Rc<str>>, extendees: &mut Vec<Rc<str>>) {
-        inner_names.push(module.name.clone());
-        extendees.extend(module.extends.iter().cloned());
-        for inner in &module.modules {
-            visit(inner, inner_names, extendees);
-        }
-    }
-    let mut inner_names = Vec::new();
-    let mut extendees = Vec::new();
-    visit(module, &mut inner_names, &mut extendees);
-    extendees.retain(|extendee| !inner_names.contains(extendee));
-    extendees
-}
-
 impl Loader<'_> {
     fn get_dependencies(&self, name: &str) -> Rc<ModuleDependencies> {
         self.modules[name].dependencies.clone()
@@ -251,17 +234,6 @@ impl Loader<'_> {
             }
         }
         let dependencies = Rc::new(dependencies);
-        // SANY validates the PlusCal of the root module once it parses, and of a module each
-        // time it resolves another module's EXTENDS of it, as `loadValidatedModule` does.
-        let extenders = self
-            .loaded
-            .iter()
-            .filter(|loaded| get_extendees(&self.modules[*loaded].module).contains(name))
-            .count();
-        let extendees: Vec<Rc<str>> = get_extendees(&module)
-            .into_iter()
-            .filter(|extendee| extendee != name && self.modules.contains_key(extendee))
-            .collect();
         self.modules.insert(
             name.clone(),
             Loaded {
@@ -271,16 +243,14 @@ impl Loader<'_> {
             },
         );
         self.loaded.push(name.clone());
-        for _ in 0..extenders {
-            self.validate(name)?;
-        }
-        for extendee in &extendees {
-            self.validate(extendee)?;
-        }
         self.push_progress(parsing_line);
-        if *name == self.root() {
-            self.validate(name)?;
-        }
+        Ok(())
+    }
+
+    /// `SpecObj.validateParseUnit`, which `loadSpec` calls on the root module once it parses, and
+    /// on a module each time it resolves an EXTENDS of it, after it finds or parses it.
+    fn validate_parse_unit(&mut self, name: &Rc<str>) -> Result<()> {
+        self.validate(name)?;
         self.print_validations();
         Ok(())
     }
@@ -291,11 +261,6 @@ impl Loader<'_> {
             self.lines.push(line);
         }
     }
-
-    fn root(&self) -> Rc<str> {
-        self.loaded[0].clone()
-    }
-
     fn print_validations(&mut self) {
         for validation in self.validations.drain(..) {
             self.lines.push(format!("{validation}\n"));
@@ -643,9 +608,13 @@ pub fn get_sany_text_of(
             exception: None,
         }),
         // The fatal error follows the messages of the parsing phase.
-        Err(Stop::Fatal { .. }) if !loader.parse_messages.is_empty() => Err(FrontError::NotYet(
-            "SANY's parse messages with a fatal error".to_owned(),
-        )),
+        Err(Stop::Fatal { .. })
+            if options.version == TlcVersion::V1_7_4 && !loader.parse_messages.is_empty() =>
+        {
+            Err(FrontError::NotYet(
+                "TLC 1.7.4's parse messages with a fatal error".to_owned(),
+            ))
+        }
         Err(Stop::Fatal {
             location,
             message,
@@ -674,7 +643,42 @@ pub fn get_sany_text_of(
             } else if is_tlc_174 {
                 format!("tla2sany.semantic.AbortException\n*** Abort messages: 1\n\n{fatal}\n\n\n")
             } else {
-                format!("{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n")
+                // `Errors.toString`: the errors of the parsing phase so far, then the fatal error,
+                // then the warnings.
+                let format_messages = |messages: &mut dyn Iterator<Item = String>| {
+                    messages
+                        .map(|text| format!("{text}\n\n\n"))
+                        .collect::<String>()
+                };
+                let (warnings, errors): (Vec<_>, Vec<_>) = loader
+                    .parse_messages
+                    .iter()
+                    .partition(|message| message.is_warning);
+                let mut errors = errors
+                    .iter()
+                    .map(|error| format!("In module {}\n\n{}", error.module, error.text))
+                    .chain([fatal.clone()]);
+                let error_count = loader
+                    .parse_messages
+                    .iter()
+                    .filter(|message| !message.is_warning)
+                    .count()
+                    + 1;
+                let mut text = format!(
+                    "{fatal}\n*** Errors: {error_count}\n\n{}",
+                    format_messages(&mut errors)
+                );
+                if !warnings.is_empty() {
+                    text.push_str(&format!(
+                        "*** Warnings: {}\n\n{}",
+                        warnings.len(),
+                        format_messages(&mut warnings.iter().map(|warning| {
+                            format!("In module {}\n\n{}", warning.module, warning.text)
+                        }))
+                    ));
+                }
+                text.push('\n');
+                text
             };
             Ok(SanyText {
                 text: format!(
@@ -807,30 +811,102 @@ fn get_generator_exception(module: &Module) -> Result<Option<&'static str>> {
     Ok(None)
 }
 
+/// The modules each parse unit extends and those it instantiates, as SANY has resolved them so far.
+type Referencees = FastMap<Rc<str>, (Vec<Rc<str>>, Vec<Rc<str>>)>;
+
+/// `SpecObj.nonCircularityTest`: once SANY resolves a module's name, it aborts where the module
+/// reaches itself through the modules each parse unit extends or instantiates so far, its
+/// extendees first.
+fn check_circularity(referencees: &Referencees, unit: &Rc<str>) -> Result<()> {
+    fn visit(
+        referencees: &Referencees,
+        unit: &Rc<str>,
+        candidate: &Rc<str>,
+        visited: &mut FastSet<Rc<str>>,
+        path: &mut Vec<Rc<str>>,
+    ) -> Result<()> {
+        if !visited.insert(candidate.clone()) {
+            return Ok(());
+        }
+        let (extendees, instancees) = referencees.get(candidate).cloned().unwrap_or_default();
+        let instancees = instancees
+            .into_iter()
+            .filter(|instancee| !extendees.contains(instancee));
+        for referencee in extendees
+            .iter()
+            .cloned()
+            .chain(instancees)
+            .collect::<Vec<_>>()
+        {
+            let referencee = &referencee;
+            if referencee == unit {
+                let cycle: Vec<String> = path
+                    .iter()
+                    .chain([unit])
+                    .map(|item| format!("{item}.tla"))
+                    .collect();
+                return Err(Stop::Fatal {
+                    location: None,
+                    message: format!(
+                        "Circular dependency among .tla files; dependency cycle is:\n\n  {}",
+                        cycle.join(" --> ")
+                    ),
+                    parse_error: None,
+                });
+            }
+            path.push(referencee.clone());
+            visit(referencees, unit, referencee, visited, path)?;
+            path.pop();
+        }
+        Ok(())
+    }
+    visit(
+        referencees,
+        unit,
+        unit,
+        &mut FastSet::default(),
+        &mut vec![unit.clone()],
+    )
+}
+
 fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     let options = loader.options;
     let source = loader.source;
     let root = root.clone();
     loader.load(&root, Some(source.to_owned()), ModuleOrigin::File, &root)?;
+    loader.validate_parse_unit(&root)?;
     let mut resolutions: FastSet<(Rc<str>, Rc<str>)> = FastSet::default();
+    let mut referencees: Referencees = FastMap::default();
     loop {
         let next = [true, false].into_iter().find_map(|is_extension| {
-            loader.find_unresolved(&root, is_extension, &mut FastSet::default(), &resolutions)
+            loader
+                .find_unresolved(&root, is_extension, &mut FastSet::default(), &resolutions)
+                .map(|found| (found, is_extension))
         });
-        let Some((name, importer, naming_module)) = next else {
+        let Some(((name, importer, naming_module), is_extension)) = next else {
             break;
         };
         if !loader.modules.contains_key(&name) {
             let (text, origin) = loader.read(&name);
             loader.load(&name, text, origin, &naming_module)?;
         }
+        if is_extension {
+            loader.validate_parse_unit(&name)?;
+        }
+        let unit_referencees = referencees.entry(importer.clone()).or_default();
+        if is_extension {
+            unit_referencees.0.push(name.clone());
+        } else {
+            unit_referencees.1.push(name.clone());
+        }
+        check_circularity(&referencees, &name)?;
         resolutions.insert((importer, name));
     }
     let mut order = Vec::new();
     loader.get_analysis_order(&root, &mut Vec::new(), &mut FastSet::default(), &mut order)?;
-    // SANY analyzes the modules TLC adds for its post conditions with the spec's, but the front end
-    // links only those the spec uses: one of the user's among them may fail SANY's analysis, which
-    // the front end wouldn't report.
+    // SANY analyzes the modules TLC adds for its post conditions with the spec's, but linking
+    // takes only those the spec uses: one of the user's among them may fail SANY's analysis, which
+    // linking wouldn't report.
     let mut added = Vec::new();
     for extendee in options.root_extendees {
         let extendee: Rc<str> = Rc::from(*extendee);
@@ -841,14 +917,9 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             &mut added,
         )?;
     }
-    if added
+    let is_user_module_added = added
         .iter()
-        .any(|name| loader.read(name).1 != ModuleOrigin::Standard)
-    {
-        return Err(not_yet(
-            "a module of the user's that the trace exploration spec uses",
-        ));
-    }
+        .any(|name| loader.read(name).1 != ModuleOrigin::Standard);
     loader.report_parse_messages(options.file_name.unwrap_or(&root))?;
     // SANY's generator throws on the root module before it reports its messages, and
     // `SANY.parse` prints the exception. The standard modules before it have none.
@@ -881,9 +952,16 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             "SANY's generator of TLC 1.7.4".to_owned(),
         )),
     };
+    // Where a message of the generator has a shape no recording shows, linking's messages are
+    // printed only if they are the generator's.
+    let (generated, unproven) = match generated {
+        Ok(Generated::Unproven(messages, message)) => (None, Some((messages, message))),
+        Ok(generated) => (Some(generated), None),
+        Err(_) => (None, None),
+    };
     let messages = match generated {
-        Ok(generated) => generated,
-        Err(_) => {
+        Some(generated) => generated,
+        None => {
             // Linking takes the standard modules as TLC ships them, so their messages are none,
             // which a module of the user's named like one they read may not keep.
             let is_standard_replaced = order.iter().any(|name| {
@@ -898,6 +976,11 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             if is_standard_replaced {
                 return Err(not_yet(
                     "SANY's messages of the standard modules with one of them replaced",
+                ));
+            }
+            if is_user_module_added {
+                return Err(not_yet(
+                    "a module of the user's that the trace exploration spec uses",
                 ));
             }
             let config = parse_config("", options.version)
@@ -918,14 +1001,21 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
                 ),
             };
             match linked {
-                Ok(linked) => Generated::Messages(linked),
+                Ok(linked) => match unproven {
+                    Some((generated, message)) if generated != linked => {
+                        return Err(not_yet(&format!(
+                            "SANY's messages, which linking gives apart from SANY's generator, one of whose messages no recording shows: {message}"
+                        )));
+                    }
+                    _ => Generated::Messages(linked),
+                },
                 Err(linking @ FrontError::NotYet(_)) => return Err(Stop::Front(linking)),
                 Err(_) => return Err(not_yet("an error that stops linking")),
             }
         }
     };
     let messages = match messages {
-        Generated::Messages(messages) => messages,
+        Generated::Messages(messages) | Generated::Unproven(messages, _) => messages,
         // SANY's generator throws on the root module, the last SANY analyzes.
         Generated::Exception(index) if index + 1 == order.len() => {
             return push_generator_exception(loader, &order, &root, GENERATOR_EXCEPTION);
