@@ -1,0 +1,65 @@
+exit 255
+@!@!@STARTMSG 2262:0 @!@!@
+@!@!@ENDMSG 2262 @!@!@
+@!@!@STARTMSG 2187:0 @!@!@
+@!@!@ENDMSG 2187 @!@!@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Angle019
+Linting of module Angle019
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2212:0 @!@!@
+Implied-temporal checking--satisfiability problem has 1 branches.
+@!@!@ENDMSG 2212 @!@!@
+@!@!@STARTMSG 2189:0 @!@!@
+Computing initial states...
+@!@!@ENDMSG 2189 @!@!@
+@!@!@STARTMSG 2190:0 @!@!@
+@!@!@ENDMSG 2190 @!@!@
+<<"A", 0, 0>>
+<<"A", 0, 0>>
+@!@!@STARTMSG 2103:1 @!@!@
+The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 11, column 10 to line 11, column 14 in Angle019
+1. Line 11, column 11 to line 11, column 11 in Angle019
+2. Line 10, column 6 to line 10, column 57 in Angle019
+3. Line 10, column 32 to line 10, column 57 in Angle019
+4. Line 10, column 32 to line 10, column 53 in Angle019
+
+
+@!@!@ENDMSG 2103 @!@!@
+@!@!@STARTMSG 2179:1 @!@!@
+The second argument of \div is 0.
+@!@!@ENDMSG 2179 @!@!@
+@!@!@STARTMSG 2121:1 @!@!@
+The behavior up to this point is:
+@!@!@ENDMSG 2121 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2200:0 @!@!@
+@!@!@ENDMSG 2200 @!@!@
+@!@!@STARTMSG 2199:0 @!@!@
+3 states generated, 3 distinct states found, 2 states left on queue.
+@!@!@ENDMSG 2199 @!@!@
+@!@!@STARTMSG 2194:0 @!@!@
+The depth of the complete state graph search is 2.
+@!@!@ENDMSG 2194 @!@!@
+@!@!@STARTMSG 2268:0 @!@!@
+The average outdegree of the complete state graph is 2 (minimum is 2, the maximum 2 and the 95th percentile is 2).
+@!@!@ENDMSG 2268 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+@!@!@ENDMSG 2186 @!@!@

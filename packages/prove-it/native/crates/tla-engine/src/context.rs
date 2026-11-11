@@ -814,6 +814,11 @@ fn compile_subscript(
     if compiled.reads_level() {
         return Err("unsupported: TLCGet(\"level\") in a subscript".into());
     }
+    // TLC evaluates a subscript in both states of each step it checks, where the engine reads its
+    // value once for each state.
+    if compiled.is_printing() {
+        return Err("unsupported: a subscript that prints".into());
+    }
     Ok(compiled)
 }
 

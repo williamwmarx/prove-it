@@ -487,6 +487,40 @@ it from one that printed something else. Each is outside the corpus and the test
 | 1 | the liveness checker declined: a late node TLC adds at another diameter | `unit/native-search.test.ts:1103` |
 | 1 | TLCGet, which the constant evaluator doesn't compute | `unit/check.test.ts:1034` |
 
+### After the CLI's flip (measured 2026-11-11)
+
+Measured at main 8165d917, after #224 flipped the CLI, with `bun scripts/run.ts check-log`:
+
+- 1,887 checks. 1,386 print TLC's output natively and 501 are not native yet. None answered
+  differently on one thread and four.
+- In TLC's default mode, which writes the trace exploration spec, 245 are native. The rest wait on
+  SANY's report of that spec, which the XML session owns with the other SANY reports.
+
+What the 501 decline at, grouped by the mechanism that would make them native. "Reasons" counts the
+distinct decline messages in the group.
+
+| Mechanism | Runs | Reasons | Owner |
+|---|---:|---:|---|
+| Values whose text depends on how TLC built them, and sets TLC keeps lazy | 82 | 12 | S1 (lazy-values, after the memo session's guard) |
+| A failure TLC words as a FingerprintException | 70 | 14 | fingerprint session |
+| TLC 1.7.4 | 63 | 1 | retired: declines until the TypeScript goes |
+| An assumption that fails to evaluate, evaluated again | 57 | 25 | front session |
+| Temporal properties and liveness | 50 | 19 | liveness session |
+| The engine stopping where TLC reports an error | 46 | 25 | memo session |
+| What the constant evaluator doesn't compute | 29 | 9 | front session |
+| Other failures evaluated again | 29 | 18 | memo session |
+| The engine declining an operator or builtin | 19 | 15 | memo session |
+| Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
+| `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
+| Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
+| SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
+| Rebuilding a trace through the builtin Trace | 4 | 1 | memo session |
+| The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, an ALIAS without a definition, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 9 | 7 | unassigned |
+
+The groups are checked in this order, so a decline counts once, in the first group that takes it.
+The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
+progress events for the library's `onProgress` (see "The public API afterwards").
+
 ### What uses it as the reference, and what replaces it
 
 | User | Replacement |
