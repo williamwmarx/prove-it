@@ -68,51 +68,34 @@ enum Binding {
     },
 }
 
-/// The value of an argument or an expression's LET definition once evaluated, primed or not, which
-/// TLC keeps for the states it evaluated it in (`LazyValue`'s cache), so that what it printed it
-/// prints once: here where evaluating it read no state, register or generator, and, where it built
-/// a lazy value that holds the states, only for those states. A LET of an action or the initial
-/// predicate binds none (`Tool#getNextStates`).
+/// The value of an argument or an expression's LET definition once evaluated, which TLC keeps
+/// (`LazyValue`'s cache) and reuses where the evaluation's control is the same, primed and in
+/// ENABLED or not (`EvalControl.semanticallyEquivalent`), and each variable the states it was
+/// evaluated in assigned holds an equal value still (`TLCState.isSubset`). A LET of an action or the
+/// initial predicate binds none (`Tool#getNextStates`).
 type Kept = Rc<std::cell::RefCell<Option<KeptValue>>>;
 
-/// A kept value, whether primed, and the states a lazy value in it holds, which it is kept for.
 struct KeptValue {
     is_primed: bool,
-    states: Option<States>,
+    is_enabling: bool,
+    current: Vec<Option<Value>>,
+    next: Vec<Option<Value>>,
+    /// Whether evaluating it read the state, a register or the generator, and whether it built a
+    /// lazy value holding the states, which a reuse tells what encloses it, as evaluating it again
+    /// would.
+    is_read: bool,
+    is_captured: bool,
     value: Value,
 }
 
-/// What a lazy function or filter holds to evaluate later in: the current state's values, the next
-/// state's, and the current state's level.
-struct States {
-    current: Vec<Option<Value>>,
-    next: Vec<Option<Value>>,
-    level: i32,
-}
-
-// Whether two states hold the same values: the same scalars and the same shared values, as a
-// state's values are cloned from it. Any other pair counts as different, so the value is evaluated
-// again.
-fn is_same_state(left: &[Option<Value>], right: &[Option<Value>]) -> bool {
-    left.len() == right.len()
-        && left.iter().zip(right).all(|pair| match pair {
-            (None, None) => true,
-            (Some(left), Some(right)) => match (left, right) {
-                (Value::Bool(left), Value::Bool(right)) => left == right,
-                (Value::Int(left), Value::Int(right)) => left == right,
-                (Value::Interval(low, high), Value::Interval(other_low, other_high)) => {
-                    low == other_low && high == other_high
-                }
-                (Value::Str(left), Value::Str(right))
-                | (Value::Model(left), Value::Model(right)) => Rc::ptr_eq(left, right),
-                (Value::Set(left), Value::Set(right))
-                | (Value::Unsorted(left), Value::Unsorted(right)) => Rc::ptr_eq(left, right),
-                (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
-                (Value::Lazy(left), Value::Lazy(right)) => Rc::ptr_eq(left, right),
-                (Value::Lambda(left), Value::Lambda(right)) => Rc::ptr_eq(left, right),
-                _ => false,
-            },
-            _ => false,
+// Whether each variable `kept` assigns holds an equal value in `state` (`TLCState.isSubset`): a
+// comparison that fails counts as unequal.
+fn is_kept_state(kept: &[Option<Value>], state: &[Option<Value>]) -> bool {
+    kept.len() == state.len()
+        && kept.iter().zip(state).all(|pair| match pair {
+            (None, _) => true,
+            (Some(kept), Some(value)) => equals(kept, value).unwrap_or(false),
+            (Some(_), None) => false,
         })
 }
 
@@ -2122,16 +2105,12 @@ impl<'ir> Evaluator<'ir> {
                 if let Some(kept) = kept
                     && let Some(kept) = &*kept.borrow()
                     && kept.is_primed == is_primed
-                    && kept.states.as_ref().is_none_or(|states| {
-                        states.level == self.level
-                            && is_same_state(&states.current, &self.current)
-                            && is_same_state(&states.next, &self.next)
-                    })
+                    && kept.is_enabling == self.is_enabling
+                    && is_kept_state(&kept.current, &self.current)
+                    && is_kept_state(&kept.next, &self.next)
                 {
-                    // A value that holds the states holds them for what uses it too.
-                    if kept.states.is_some() {
-                        self.captures += 1;
-                    }
+                    self.reads += u64::from(kept.is_read);
+                    self.captures += u64::from(kept.is_captured);
                     return Ok(kept.value.clone());
                 }
                 let inner = own_context(bound, frame, *is_self).primed(is_primed);
@@ -2140,16 +2119,14 @@ impl<'ir> Evaluator<'ir> {
                 let value = self.evaluate(*node, &inner)?;
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
-                } else if let Some(kept) = kept
-                    && self.reads == reads
-                {
+                } else if let Some(kept) = kept {
                     *kept.borrow_mut() = Some(KeptValue {
                         is_primed,
-                        states: (self.captures != captures).then(|| States {
-                            current: self.current.clone(),
-                            next: self.next.clone(),
-                            level: self.level,
-                        }),
+                        is_enabling: self.is_enabling,
+                        current: self.current.clone(),
+                        next: self.next.clone(),
+                        is_read: self.reads != reads,
+                        is_captured: self.captures != captures,
                         value: value.clone(),
                     });
                 }

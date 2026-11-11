@@ -494,17 +494,21 @@ control it evaluated it in (`LazyValue.getValue`). A LET of an action or the ini
 binds none and is evaluated at each use (`Tool.java:482-487`, `937-941`), as is an instance's
 substitution here.
 
-The trace evaluator keeps such a binding's value (`Binding::Thunk`'s `kept`) and reuses it only
-while all of these hold:
+The trace evaluator keeps such a binding's value (`Binding::Thunk`'s `kept`) with what TLC's
+cache keeps it with, and reuses it only where TLC would:
 
-- evaluating it read no state, register or generator (`reads`): a value that read one is evaluated
-  again, and one that drew is kept apart, as before (`drawn`);
-- the evaluation is primed as it was;
-- where it built a lazy function or filter, or used a kept value holding one (`captures`), the
-  evaluator holds the same current and next states and level as it did then, compared by identity
-  (`is_same_state`): a lazy value holds the states to evaluate later in them, as the walk tries
-  each successor in turn;
-- what printed is kept as well, so it prints once, as TLC prints it.
+- the evaluation's control is the same: primed or not, and in ENABLED or not
+  (`EvalControl.semanticallyEquivalent` ignores only KeepLazy, Init and Const);
+- each variable the current and next states assigned when it was evaluated holds an equal value
+  still (`TLCState.isSubset`, by `equals`; a comparison that fails counts as unequal). So a value
+  kept in one disjunct of the initial predicate is evaluated again in another whose partial state
+  differs, and one kept outside ENABLED again inside it, each giving a set TLC hasn't normalized
+  yet;
+- a draw is kept apart, as before (`drawn`).
+
+A reuse tells what encloses it whether evaluating it read the state or built a lazy value holding
+it, as evaluating it again would. What it printed, or read of a register, is kept with it, so it
+prints once, as TLC prints it.
 
 A zero-arity definition TLC doesn't compute at startup is cached only where it read no state and
 built no lazy value holding the states, so `D == [i \in Nat |-> x']` is applied in each
