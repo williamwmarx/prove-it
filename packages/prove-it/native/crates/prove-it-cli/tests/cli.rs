@@ -3518,9 +3518,9 @@ fn searches_a_functions_keys_as_tlc_does_where_one_cant_compare() {
 
 #[test]
 fn declines_a_search_that_prints_a_value_as_tlc_built_it() {
-    // TLC prints 1..2 as written, which the store forgets. The search, which never ends, stops
-    // once the print is known to differ, on one thread and on several.
-    let spec = "---- MODULE Misprinted ----\nEXTENDS TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ PrintT(1..2)\n====\n";
+    // TLC prints 1..2 as written, which the store forgets where a LET names it. The search, which
+    // never ends, stops once the print is known to differ, on one thread and on several.
+    let spec = "---- MODULE Misprinted ----\nEXTENDS TLC, Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ LET s == 1..2 IN PrintT(s)\n====\n";
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-misprinted-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");

@@ -33,8 +33,18 @@ pub type Step = Arc<dyn Fn(&mut Machine<'_>, &mut Continue<'_>) -> Outcome<()> +
 /// count of initial states, which waits with what was printed before it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Printed {
-    Values(Vec<Id>),
+    Values(Prints),
     InitialStates(u64),
+}
+
+/// What one Print or PrintT printed: the values, and in the native checker TLC's text of each,
+/// which the compiler knows where the store forgets how TLC built a value the spec writes there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prints {
+    pub values: Vec<Id>,
+    /// TLC's text of each value, before TLC's pretty-printer breaks its lines; `None` where the
+    /// engine doesn't know one, or isn't the native checker.
+    pub texts: Option<Vec<Vec<u16>>>,
 }
 
 /// A variable that has no value yet, -1 in the TypeScript registers.
