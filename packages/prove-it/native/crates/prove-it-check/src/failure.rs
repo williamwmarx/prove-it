@@ -459,7 +459,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
         // TLC prints a state it was expanding alone, an initial one, as it is, and every other
         // trace through the ALIAS (`TLCTrace.printTrace`).
         let aliases = if stop.is_aliased && trace.states.len() > 1 {
-            rebuilder.alias(&trace, None, is_tool)?
+            rebuilder.alias(&trace, None, None, is_tool)?
         } else {
             None
         };

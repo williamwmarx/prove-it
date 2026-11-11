@@ -402,6 +402,10 @@ pub struct Evaluator<'ir> {
     /// holds the code's markers, which AssertError compares with. `None` where the caller doesn't
     /// say, and AssertError isn't followed.
     pub is_tool: Option<bool>,
+    /// The builtin Trace as TLC binds it while it evaluates the ALIAS as it prints a trace
+    /// (`Tool.evalAlias`): a record of each state it holds, in TLC's order of the variables.
+    /// `None` elsewhere, where TLC evaluates the Java method, which isn't followed.
+    pub trace: Option<Value>,
     /// How many workers TLC runs, which TLCGet("config") reads. `None` where the caller doesn't
     /// say, and TLCGet("config") isn't followed.
     pub workers: Option<usize>,
@@ -681,6 +685,7 @@ impl<'ir> Evaluator<'ir> {
             register_writes: 0,
             register_reads: 0,
             is_tool: None,
+            trace: None,
             workers: None,
             asserting: 0,
             once_named: None,
@@ -4755,6 +4760,11 @@ impl<'ir> Evaluator<'ir> {
                     .expect("the runtime")
                     .possible_counts
                     .clone()
+            }
+            "Trace" if self.trace.is_some() => {
+                arity(0)?;
+                self.reads += 1;
+                self.trace.clone().expect("the trace")
             }
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;

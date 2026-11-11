@@ -525,7 +525,6 @@ distinct decline messages in the group.
 | `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
 | Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
 | SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
-| Rebuilding a trace through the builtin Trace | 4 | 1 | memo session |
 | The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 8 | 6 | unassigned |
 
 The groups are checked in this order, so a decline counts once, in the first group that takes it.

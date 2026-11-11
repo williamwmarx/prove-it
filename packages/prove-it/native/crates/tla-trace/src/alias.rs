@@ -35,10 +35,13 @@ impl Rebuilder<'_> {
     /// (`cycle_start`), and otherwise the state itself.
     /// An alias that fails to evaluate gives the state with TLC's message of the failure as its
     /// `_ALIASEvalError` field, marked as TLC marks a coded message under `-tool`.
+    /// TLC binds the builtin Trace at each position to the trace's first states, as many as
+    /// `prefixes` says; with no `prefixes`, the alias isn't followed where it reads Trace.
     pub fn alias(
         &mut self,
         trace: &Trace,
         cycle_start: Option<usize>,
+        prefixes: Option<&[usize]>,
         is_tool: bool,
     ) -> Result<Option<Vec<Alias>>, Unsupported> {
         let evaluator = self.evaluator();
@@ -76,6 +79,23 @@ impl Rebuilder<'_> {
         let context = run(evaluator.scope_context(ir.model.scope))?;
         let states = &trace.states;
         let state = |position: usize| states[position].values.iter().cloned().map(Some).collect();
+        // Each state as the record of its variables TLC binds Trace to, in the order of the
+        // state's variables (`RecordValue(TLCState)`).
+        let mut records = Vec::new();
+        for state in states.iter().filter(|_| prefixes.is_some()) {
+            let fields = ir
+                .tlc_order
+                .iter()
+                .map(|&variable| {
+                    let name = &ir.texts[ir.variables[variable as usize] as usize];
+                    (
+                        evaluator.text_of(name.encode_utf16().collect()),
+                        state.values[variable as usize].clone(),
+                    )
+                })
+                .collect();
+            records.push(run(Value::record(fields))?);
+        }
         let mut aliases = Vec::with_capacity(states.len());
         // TLC evaluates the alias of each state as it prints it, between its rebuilds of the
         // states, so an alias that uses the registers those rebuilds set reads them part way.
@@ -92,6 +112,8 @@ impl Rebuilder<'_> {
             // last state's, which is the state itself or the one its cycle starts at.
             evaluator.next_level = Some(next as i32 + 1);
             evaluator.printed.clear();
+            evaluator.trace =
+                prefixes.map(|prefixes| Value::tuple(records[..prefixes[position]].to_vec()));
             // TLC prints an alias that fails with its message as a field of the state
             // (`_ALIASEvalError`, `Tool.evalAlias`).
             let result = match &body {
@@ -102,6 +124,7 @@ impl Rebuilder<'_> {
                 }),
             };
             evaluator.next_level = None;
+            evaluator.trace = None;
             if !evaluator.printed.is_empty() {
                 return unsupported("that prints");
             }

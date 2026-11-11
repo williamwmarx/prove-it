@@ -224,10 +224,32 @@ fn rebuild(
             // TLC prints a deadlocked initial state as it is (`TLCTrace.printTrace`).
             let is_alone =
                 matches!(kind, ViolationKind::Deadlock { .. }) && trace.states.len() == 1;
+            // TLC binds the builtin Trace in the ALIAS to the states up to each it prints, that
+            // one included (`TLCTrace.printTrace`), but to none for an initial state and the
+            // successor that violates, and in a lasso to those before each state of the path to
+            // its cycle (`LiveWorker.printTrace`). For a violating initial state, the Java method
+            // gives the state alone (`TLCExt.getTrace`).
+            let length = trace.states.len();
+            let prefixes: Option<Vec<usize>> = match *kind {
+                ViolationKind::Invariant(_) | ViolationKind::ActionProperty(_) if length == 2 => {
+                    Some(vec![0; 2])
+                }
+                ViolationKind::Deadlock { .. }
+                | ViolationKind::Invariant(_)
+                | ViolationKind::ActionProperty(_)
+                | ViolationKind::InitialInvariant(_)
+                | ViolationKind::InitialPredicate(_) => Some((1..=length).collect()),
+                ViolationKind::Lasso { loop_start, .. } => Some(
+                    (0..length)
+                        .map(|position| position + usize::from(position >= loop_start))
+                        .collect(),
+                ),
+                _ => None,
+            };
             let aliases = if is_alone {
                 None
             } else {
-                rebuilder.alias(&trace, cycle_start, is_tool)?
+                rebuilder.alias(&trace, cycle_start, prefixes.as_deref(), is_tool)?
             };
             // CounterExample closes a lasso with its step back into the cycle. TLC's record of a
             // stuttering lasso, one whose cycle ends in its first state, closes it by the action
