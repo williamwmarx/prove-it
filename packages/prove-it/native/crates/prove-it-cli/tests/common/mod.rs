@@ -37,3 +37,19 @@ pub fn stdout(output: &Output) -> String {
 pub fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
+
+/// Writes the spec and its configuration as `<name>.tla` and `<name>.cfg` into a directory of the
+/// test's own, and runs the binary there with the arguments.
+pub fn run_named(
+    test: &str,
+    name: &str,
+    (spec, config): (&str, &str),
+    args: &[&str],
+) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join(format!("{name}.tla")), spec).expect("a spec");
+    std::fs::write(directory.join(format!("{name}.cfg")), config).expect("a configuration");
+    (run(&directory, args), directory)
+}

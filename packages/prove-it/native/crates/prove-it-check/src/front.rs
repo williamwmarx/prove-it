@@ -7,7 +7,7 @@ use std::path::Path;
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::model::{
-    LoweredModel, ModelOptions, ModelSources, StartupMessage, TRACE_MODULE, lower_front_ranking_of,
+    LoweredModel, ModelOptions, ModelSources, StartupMessage, lower_front_ranking_of,
 };
 use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text_of};
 use tla_front::tlc_messages::CodedError;
@@ -43,6 +43,8 @@ pub struct Front {
     /// What TLC prints itself after the constant definitions and before the assumptions (the
     /// engine's `startup_done`).
     pub startup_messages: Vec<StartupMessage>,
+    /// How a simulation labels an initial state, where the front end knows.
+    pub initial_label: Option<String>,
 }
 
 /// The front as tla-front finds it: the model it lowers, or where TLC stops before the search, as
@@ -82,6 +84,7 @@ pub fn read_front(
             sany: None,
             override_messages: Vec::new(),
             startup_messages: Vec::new(),
+            initial_label: None,
         }));
     }
     let describe = host.get_file_describer(files);
@@ -89,7 +92,7 @@ pub fn read_front(
         spec_path,
         sources.as_ref(),
         &*describe,
-        files.is_trace_recorded,
+        files.root_extendees,
     )
     .map_err(|error| match error {
         FrontError::NotYet(reason) => format!("SANY's report of {reason}"),
@@ -110,7 +113,7 @@ pub fn read_front(
         is_warning_enabled,
         files.libraries,
         seed as u64,
-        files.is_trace_recorded,
+        files.root_extendees,
     ) {
         Ok(lowered) => {
             return Ok(Read::Model(Front {
@@ -118,6 +121,7 @@ pub fn read_front(
                 sany: Some(sany.text),
                 startup_messages: lowered.startup_messages?,
                 override_messages: lowered.override_messages,
+                initial_label: lowered.initial_label,
             }));
         }
         Err(FrontError::NotYet(reason)) => return Err(reason),
@@ -142,7 +146,7 @@ fn lower(
     is_warning_enabled: bool,
     libraries: &[String],
     random_seed: u64,
-    is_trace_recorded: bool,
+    root_extendees: &[&str],
 ) -> Result<LoweredModel, FrontError> {
     let sources = sources.ok_or_else(|| FrontError::Config("the spec can't be read".into()))?;
     let libraries: Vec<&Path> = libraries.iter().map(Path::new).collect();
@@ -152,11 +156,11 @@ fn lower(
         is_warning_enabled,
         is_spec_described: true,
         random_seed,
-        is_trace_recorded,
+        root_extendees,
     };
     // The evaluator recurses, so it runs with the search's stack.
-    let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index]| {
-        on_search_stack(|| tla_trace::get_startup_texts(ir, definitions))
+    let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index], interned: usize| {
+        on_search_stack(|| tla_trace::get_startup_texts(ir, definitions, interned))
     };
     lower_front_ranking_of(sources, config_text, &options, &get_startup_texts)
 }
@@ -165,7 +169,7 @@ fn native_sany(
     spec_path: &str,
     sources: Option<&ModelSources>,
     describe_file: &dyn Fn(&str, ModuleOrigin) -> String,
-    is_trace_recorded: bool,
+    root_extendees: &[&str],
 ) -> Result<SanyText, FrontError> {
     let spec = Path::new(spec_path);
     // TLC gives SANY the spec as the command line names it, without .tla, unless it's absolute.
@@ -184,11 +188,7 @@ fn native_sany(
         file_name,
         load_module: sources.load_module,
         describe_file,
-        root_extendees: if is_trace_recorded {
-            &[TRACE_MODULE]
-        } else {
-            &[]
-        },
+        root_extendees,
         is_xml_export: false,
     };
     get_sany_text_of(root, sources.source, &options)

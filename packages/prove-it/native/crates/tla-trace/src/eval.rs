@@ -4,6 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -27,10 +28,11 @@ use crate::sets::{
     is_member_filtered, is_reducible, union,
 };
 use crate::value::{
-    Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
-    elements, equals, fail, fail_coded, fail_runtime, fail_with, failing_comparisons, find_key,
-    from_store, is_enumerable, lambda_as_function, mark_unnormalized, note_sorted, set_of,
-    sorted_function, unnormalized, unsorted_failure, written_function,
+    Class, EvalError, Evaluated, Function, Lazy, RECORD_VALUE_FIELDS, Search, Text, TlcMessage,
+    Value, compare, elements, equals, fail, fail_coded, fail_runtime, fail_with,
+    failing_comparisons, find_key, from_store, is_enumerable, lambda_as_function,
+    mark_unnormalized, note_sorted, set_of, sorted_function, take_is_record_built, unnormalized,
+    unsorted_failure, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -41,6 +43,8 @@ pub struct Frame {
     name: TextId,
     binding: Binding,
     parent: Env,
+    /// Whether a thunk's value has been evaluated once.
+    is_evaluated: Cell<bool>,
 }
 
 #[derive(Clone)]
@@ -173,6 +177,7 @@ impl Context {
             name,
             binding,
             parent: self.env.clone(),
+            is_evaluated: Cell::new(false),
         }))))
     }
 
@@ -360,6 +365,15 @@ const APPLIED_NON_BOOLEAN: &str = "a function's value the walk tests that isn't 
 /// The reason for a primed variable a state doesn't assign, before the variable's name.
 pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
 
+/// The states the builtin Trace holds at a position of a trace: the first `length` of the
+/// trace's records. The records are shared between positions, and the tuple is built only when an
+/// ALIAS reads Trace, so an ALIAS that doesn't costs nothing per state.
+#[derive(Clone)]
+pub struct TracePrefix {
+    pub records: std::rc::Rc<[Value]>,
+    pub length: usize,
+}
+
 pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
@@ -417,6 +431,10 @@ pub struct Evaluator<'ir> {
     /// holds the code's markers, which AssertError compares with. `None` where the caller doesn't
     /// say, and AssertError isn't followed.
     pub is_tool: Option<bool>,
+    /// The builtin Trace as TLC binds it while it evaluates the ALIAS as it prints a trace
+    /// (`Tool.evalAlias`): a record of each state it holds, in TLC's order of the variables.
+    /// `None` elsewhere, where TLC evaluates the Java method, which isn't followed.
+    pub trace: Option<TracePrefix>,
     /// How many workers TLC runs, which TLCGet("config") reads. `None` where the caller doesn't
     /// say, and TLCGet("config") isn't followed.
     pub workers: Option<usize>,
@@ -428,6 +446,9 @@ pub struct Evaluator<'ir> {
     keeping_lazy: u32,
     /// The function constructors a LET names once, found when first asked for.
     once_named: Option<HashSet<NodeId>>,
+    /// Where the evaluator made a value TLC shares with another, or shared one TLC made again,
+    /// which a dumped trace, writing each object once, would show.
+    pub(crate) unshared: Option<&'static str>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -565,6 +586,7 @@ fn as_java_runtime_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluate
     }
 }
 
+const ASSERT_ERROR: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 const SELECT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 const SORT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
@@ -700,10 +722,12 @@ impl<'ir> Evaluator<'ir> {
             register_writes: 0,
             register_reads: 0,
             is_tool: None,
+            trace: None,
             workers: None,
             asserting: 0,
             keeping_lazy: 0,
             once_named: None,
+            unshared: None,
         }
     }
 
@@ -719,16 +743,41 @@ impl<'ir> Evaluator<'ir> {
         text
     }
 
-    /// A text a string operator makes, which TLC interns: ranked as it is made while the startup
+    /// A text a string operator makes, which TLC interns: ranked as it is made while the evaluator
     /// ranks texts (`rankString`, for the strings TLC makes as it starts).
     fn made_text(&mut self, units: Box<[u16]>) -> Rc<Text> {
-        if let Some(ranked) = &mut self.startup_ranked
-            && !self.ranks.contains_key(&units)
-        {
-            self.ranks.insert(units.clone(), self.ranks.len() as i32);
-            ranked.push(units.clone());
-        }
+        self.rank_record_fields();
+        self.rank_made(&units);
         self.text_of(units)
+    }
+
+    fn rank_made(&mut self, units: &[u16]) {
+        if let Some(ranked) = &mut self.startup_ranked
+            && !self.ranks.contains_key(units)
+        {
+            self.ranks.insert(units.into(), self.ranks.len() as i32);
+            ranked.push(units.into());
+        }
+    }
+
+    // RecordValue's field names, which TLC interns as it builds its first record, where the
+    // evaluator has built one since it last looked.
+    fn rank_record_fields(&mut self) {
+        if self.startup_ranked.is_some() && take_is_record_built() {
+            for field in RECORD_VALUE_FIELDS {
+                self.rank_made(&field.encode_utf16().collect::<Vec<u16>>());
+            }
+        }
+    }
+
+    /// Ranks what the evaluator makes from now on, as TLC interns it.
+    pub(crate) fn start_ranking(&mut self) {
+        take_is_record_built();
+        self.startup_ranked = Some(Vec::new());
+    }
+
+    pub(crate) fn stop_ranking(&mut self) {
+        self.startup_ranked = None;
     }
 
     /// A field name of the records TLC builds of its counterexample (`RecordValue`'s statics):
@@ -739,17 +788,6 @@ impl<'ir> Evaluator<'ir> {
     /// ranks; `action` they write as a string, which TLC interns as it runs.
     pub(crate) fn counterexample_field(&self, name: &str, is_dumped: bool) -> Rc<Text> {
         const PARSED: [&str; 3] = ["state", "vars", "counterexample"];
-        const FIELDS: [&str; 9] = [
-            "beginLine",
-            "beginColumn",
-            "endLine",
-            "endColumn",
-            "module",
-            "name",
-            "location",
-            "context",
-            "parameters",
-        ];
         let units: Box<[u16]> = name.encode_utf16().collect();
         if let Some(&rank) = self.ranks.get(&units) {
             return Rc::new(Text { units, rank });
@@ -769,7 +807,7 @@ impl<'ir> Evaluator<'ir> {
         let fields = if is_dumped { &PARSED[..] } else { &[] };
         let position = fields
             .iter()
-            .chain(&FIELDS)
+            .chain(&RECORD_VALUE_FIELDS)
             .position(|field| *field == name);
         let rank = position.map_or(-1, |position| last + 1 + position as i32);
         Rc::new(Text { units, rank })
@@ -1963,7 +2001,14 @@ impl<'ir> Evaluator<'ir> {
                 };
             }
             Resolution::Definition(index) => {
-                return self.definition_value(self.ir.definitions[index as usize], context);
+                let node = self.ir.definitions[index as usize];
+                // TLC evaluates the definition the configuration substitutes for a constant each
+                // time it reads the constant (`SpecProcessor.processConstantDefns`).
+                if self.definition(node).name != name.text {
+                    self.unshared
+                        .get_or_insert("of a value a configuration's substitute made again");
+                }
+                return self.definition_value(node, context);
             }
             Resolution::Builtin(index) if self.ir.builtins[index as usize].arity == 0 => {
                 return self.builtin(index, &[], context);
@@ -1997,6 +2042,11 @@ impl<'ir> Evaluator<'ir> {
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
                 }
+                // TLC keeps the value it computes for a next state, as one object.
+                if frame.is_evaluated.replace(true) && !is_scalar(&value) {
+                    self.unshared
+                        .get_or_insert("of a value an argument or a LET definition made again");
+                }
                 Ok(value)
             }
             Binding::Function {
@@ -2025,11 +2075,19 @@ impl<'ir> Evaluator<'ir> {
     }
 
     /// The texts TLC interns as it computes the startup definitions, the substitutes and then
-    /// `definitions` (`processConstantDefns`), past those the IR ranks, in order: those Tail,
-    /// SubSeq, `\o` and ToString make, as `rankString` ranks them.
-    pub(crate) fn get_startup_texts(ir: &Ir, definitions: &[Index]) -> Vec<Box<[u16]>> {
+    /// `definitions` (`processConstantDefns`), past the first `interned` texts the IR ranks, in
+    /// order: those Tail, SubSeq, `\o` and ToString make, as `rankString` ranks them, and
+    /// RecordValue's field names where it builds its first record.
+    pub(crate) fn get_startup_texts(
+        ir: &Ir,
+        definitions: &[Index],
+        interned: usize,
+    ) -> Vec<Box<[u16]>> {
         let mut evaluator = Evaluator::new(ir);
-        evaluator.startup_ranked = Some(Vec::new());
+        evaluator
+            .ranks
+            .retain(|_, rank| (*rank as usize) < interned);
+        evaluator.start_ranking();
         evaluator.random = Some(JavaRandom::seeded(ir.model.random_seed));
         let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
         for index in substitutes.chain(definitions.iter().copied()) {
@@ -2043,13 +2101,15 @@ impl<'ir> Evaluator<'ir> {
             evaluator
                 .evaluate(evaluator.definition(node).body, &Context::default())
                 .ok();
+            evaluator.rank_record_fields();
         }
         evaluator.startup_ranked.unwrap_or_default()
     }
 
-    /// Whether evaluating a definition may make a text `made_text` ranks, or draw from the
-    /// generator or set a register that a later startup definition reads: whether it reaches, as
-    /// written or through the definitions it names, an operator that does. Tail, SubSeq and `\o`
+    /// Whether evaluating a definition may make a text `made_text` ranks, build a record, or draw
+    /// from the generator or set a register that a later startup definition reads: whether it
+    /// reaches, as written or through the definitions it names, an operator that does. TLCGet
+    /// builds a record for "config", "spec" and "stats". Tail, SubSeq and `\o`
     /// of a tuple written in place make a tuple.
     fn may_rank_texts(&self, definition: NodeId) -> bool {
         let get_operator = |name: &Name| match name.resolution {
@@ -2074,14 +2134,17 @@ impl<'ir> Evaluator<'ir> {
                     };
                     (!is_tuple_made).then_some(name)
                 }
-                // A subexpression names what the walk doesn't follow.
-                NodeKind::Subexpression(_) => return true,
+                // A subexpression names what the walk doesn't follow, and TLC interns
+                // RecordValue's names as it builds its first record.
+                NodeKind::Subexpression(_) | NodeKind::Record(_) | NodeKind::RecordSet(_) => {
+                    return true;
+                }
                 _ => None,
             };
             if let Some(name) = name {
                 if let Some(
                     "Tail" | "\\o" | "SubSeq" | "ToString" | "RandomElement" | "RandomSubset"
-                    | "TLCSet",
+                    | "TLCSet" | "TLCGet",
                 ) = get_operator(name)
                 {
                     return true;
@@ -2880,9 +2943,9 @@ impl<'ir> Evaluator<'ir> {
 
     fn nested<T>(&mut self, work: impl FnOnce(&mut Self) -> Evaluated<T>) -> Evaluated<T> {
         thread_local! {
-            static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            static DEPTH: Cell<u32> = const { Cell::new(0) };
             // Where the outermost nesting's frame is, which the stack grows from.
-            static BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+            static BASE: Cell<usize> = const { Cell::new(0) };
         }
         let depth = DEPTH.get();
         // How deep the frames are depends on the build, so the stack the nesting uses is bounded
@@ -4390,6 +4453,20 @@ impl<'ir> Evaluator<'ir> {
                     Value::Lambda(lambda) => lambda.domain.clone(),
                     Value::Function(function) => match function.interval {
                         Some((low, high)) => Value::Interval(low, high),
+                        // `RecordValue.getDomain` makes a string of each field's name.
+                        None if function.class.get() == Class::Record => Value::Set(Rc::new(
+                            function
+                                .domain
+                                .iter()
+                                .map(|key| match key {
+                                    Value::Str(name) => Value::Str(Rc::new(Text {
+                                        units: name.units.clone(),
+                                        rank: name.rank,
+                                    })),
+                                    _ => key.clone(),
+                                })
+                                .collect(),
+                        )),
                         None => Value::Set(Rc::new(function.domain.clone())),
                     },
                     // `Tool`'s OPCODE_domain, whose message the application ends with where it is.
@@ -4529,21 +4606,33 @@ impl<'ir> Evaluator<'ir> {
             // `TLCExt.assertError`: whether evaluating the expression fails with this message.
             "AssertError" => {
                 arity(2)?;
+                // TLC takes only a string written as the message, and says where any other is
+                // written as SANY's `toString` gives it.
+                match &operands[0] {
+                    Operand::Node(node, _) if matches!(self.kind(*node), NodeKind::String(_)) => {}
+                    Operand::Node(node, _) => {
+                        let written = (self.ir.nodes.arena[self.resolved(*node) as usize].range)
+                            .and_then(|_| self.describe_node(*node));
+                        let Some(written) = written else {
+                            return fail("AssertError of a message that isn't a string");
+                        };
+                        return as_java_failure(
+                            ASSERT_ERROR,
+                            fail_runtime(
+                                "AssertError of a message that isn't a string",
+                                format!(
+                                    "In computing AssertError, a non-string expression ({written}) was used as the err of an AssertError(err, exp)."
+                                ),
+                            ),
+                        );
+                    }
+                    Operand::Value(_) => {
+                        return fail("AssertError of a message that isn't a string");
+                    }
+                }
                 let Some(is_tool) = self.is_tool else {
                     return fail("AssertError, whose messages depend on -tool");
                 };
-                let is_literal = match &operands[0] {
-                    Operand::Node(node, _) => {
-                        matches!(
-                            self.ir.nodes.arena[*node as usize].kind,
-                            NodeKind::String(_)
-                        )
-                    }
-                    Operand::Value(_) => false,
-                };
-                if !is_literal {
-                    return fail("AssertError of a message that isn't a string");
-                }
                 self.asserting += 1;
                 let asserted = self.operand(&operands[1]);
                 self.asserting -= 1;
@@ -4676,8 +4765,16 @@ impl<'ir> Evaluator<'ir> {
                         .collect();
                     return Ok(Value::Str(self.made_text(units)));
                 }
-                let mut elements = sequence_of(&left)?.to_vec();
-                elements.extend(sequence_of(&right)?.iter().cloned());
+                let (left_elements, right_elements) = (sequence_of(&left)?, sequence_of(&right)?);
+                // `Sequences.Concat` gives one sequence back where the other is empty.
+                if left_elements.is_empty() && right.is_tuple_class() {
+                    return Ok(right);
+                }
+                if right_elements.is_empty() && left.is_tuple_class() {
+                    return Ok(left);
+                }
+                let mut elements = left_elements.to_vec();
+                elements.extend(right_elements.iter().cloned());
                 Value::tuple(elements)
             }
             // `Sequences.SubSeq` tests the sequence, then each bound is an integer, then each is in
@@ -4731,6 +4828,7 @@ impl<'ir> Evaluator<'ir> {
                 };
                 match &sequence {
                     Value::Str(text) => Value::Str(self.made_text(text.units[range].into())),
+                    _ if from > to => Value::empty_tuple(),
                     _ => Value::tuple(sequence_of(&sequence)?[range].to_vec()),
                 }
             }
@@ -4738,6 +4836,9 @@ impl<'ir> Evaluator<'ir> {
                 arity(2)?;
                 let sequence = self.operand(&operands[0])?;
                 let test = self.operand_operator(&operands[1])?;
+                if sequence_argument("SelectSeq", "sequence", &sequence)?.is_empty() {
+                    return Ok(Value::empty_tuple());
+                }
                 let mut kept = Vec::new();
                 for element in sequence_argument("SelectSeq", "sequence", &sequence)? {
                     let tested = self.call_with_values(&test, std::slice::from_ref(element));
@@ -4929,6 +5030,12 @@ impl<'ir> Evaluator<'ir> {
                     .expect("the runtime")
                     .possible_counts
                     .clone()
+            }
+            "Trace" if self.trace.is_some() => {
+                arity(0)?;
+                self.reads += 1;
+                let prefix = self.trace.as_ref().expect("the trace");
+                Value::tuple(prefix.records[..prefix.length].to_vec())
             }
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;
@@ -5588,6 +5695,14 @@ fn empty_sequence<T>(name: &str) -> Evaluated<T> {
         format!("{name} of the empty sequence"),
         APPLY_EMPTY_SEQ,
         format!("Attempted to apply {name} to the empty sequence."),
+    )
+}
+
+// A value a dumped trace writes as it is, without an object of its own to refer back to.
+fn is_scalar(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Bool(_) | Value::Int(_) | Value::Model(_) | Value::Interval(..)
     )
 }
 

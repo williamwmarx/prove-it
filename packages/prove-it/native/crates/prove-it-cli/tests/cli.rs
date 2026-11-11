@@ -178,10 +178,14 @@ fn reads_the_command_line_as_tlc() {
     assert_eq!(configured.status.code(), Some(0), "{}", stdout(&configured));
     for (args, what) in [
         (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
-        (&["-simulate", "TCommit"], "the TLC option -simulate"),
+        (&["-generate", "TCommit"], "the TLC option -generate"),
         (
             &["-maxSetSize", "10", "TCommit"],
             "the TLC option -maxSetSize",
+        ),
+        (
+            &["-simulate", "-coverage", "1", "TCommit"],
+            "coverage of a simulation",
         ),
         (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
@@ -2450,27 +2454,6 @@ fn stops_where_an_invariant_sets_exit_as_tlc_does() {
 }
 
 #[test]
-fn declines_a_postcondition_or_alias_tlc_computes_as_it_starts() {
-    // TLC computes a definition of constant level as it starts, then rejects it as a
-    // POSTCONDITION ("The post condition Post cannot be a constant.") or an ALIAS.
-    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x\nPost == FALSE\nAl == [y |-> 1]\n====\n";
-    for config in ["POSTCONDITION Post\n", "ALIAS Al\n"] {
-        let (output, directory) = run_lowered(
-            "precomputed",
-            spec,
-            &format!("INIT Init\nNEXT Next\n{config}"),
-        );
-        assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("prove-it: not native yet: a POSTCONDITION or an ALIAS"),
-            "{}",
-            stdout(&output)
-        );
-        std::fs::remove_dir_all(directory).expect("removed");
-    }
-}
-
-#[test]
 fn declines_an_alias_that_prints_as_it_fails() {
     // TLC prints what the alias printed before the state whose alias fails, which the binary
     // doesn't place.
@@ -2825,7 +2808,7 @@ fn rejects_a_constant_invariant_the_front_end_leaves_to_the_startup() {
         is_warning_enabled: true,
         is_spec_described: false,
         random_seed: 0,
-        is_trace_recorded: false,
+        root_extendees: &[],
     };
     let ir = tla_front::model::lower_model(&spec, config, &options).expect("an IR");
     std::fs::remove_file(&spec).expect("removed");
@@ -2877,8 +2860,8 @@ fn names_the_fairness_condition_whose_action_leaves_a_variable_unassigned() {
 
 #[test]
 fn records_the_specification_as_the_interpreter_does() {
-    // TLCGet("spec"), which tla-front describes and the split gives the actions of, as the
-    // interpreter prints it for this spec.
+    // TLCGet("spec"), which tla-front describes and the split gives the actions of, as TLC prints
+    // it for this spec at d8fb231: its records' fields in the order RecordValue interns them.
     let spec = "---- MODULE Stop ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nStep(d) == x < 3 /\\ x' = x + d /\\ y' = y\nReset == x >= 3 /\\ x' = 0 /\\ UNCHANGED y\nNext == (\\E d \\in {1, 2} : Step(d)) \\/ Reset\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nSmall == x < 10\nProp == [][x' # x]_<<x, y>> /\\ []<>(x = 0)\nBound == y < 5\nMoves == x' # x \\/ y' = y\nRecorded == PrintT(TLCGet(\"spec\"))\n====\n";
     let (output, directory) = run_lowered(
         "spec",

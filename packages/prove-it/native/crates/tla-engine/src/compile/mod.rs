@@ -810,6 +810,9 @@ pub struct Compiler<'a> {
     pub is_native: bool,
     /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
     pub workers: usize,
+    /// The simulation TLC runs (`-simulate`) rather than a search: its actions then print as they
+    /// run, TLCGet("config") reads its settings, and TLCGet reads no other key of the search.
+    pub simulation: Option<crate::simulate::Simulation>,
     /// Whether anything compiled may build a function TLC keeps lazy, which only the machine that
     /// built it can apply.
     pub is_lambda_built: bool,
@@ -900,6 +903,7 @@ impl<'a> Compiler<'a> {
             unsorted_slots: HashMap::new(),
             is_native: false,
             workers: 1,
+            simulation: None,
             is_lambda_built: false,
             is_cached: false,
             is_tlc_cache_used: false,

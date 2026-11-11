@@ -59,6 +59,9 @@ impl Rebuilder<'_> {
         if counter_example.cycle.is_none() && ir.model.alias.is_some() {
             return unsupported("of a model with an ALIAS");
         }
+        if let Some(reason) = self.evaluator().unshared {
+            return unsupported(reason);
+        }
         let value = self.counter_example_value(counter_example, None, true)?;
         let evaluator = self.evaluator();
         let variables: Vec<Box<[u16]>> = ir

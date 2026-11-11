@@ -12,6 +12,7 @@ import {
 import { TlaEvaluationError, TlaModuleError, TlaUnsupportedError } from "../errors";
 import {
   type Builtin,
+  describeNode,
   type Environment,
   evaluate,
   expectBoolean,
@@ -188,7 +189,7 @@ export const createTlcExtOperators = (
       if (message && message.kind !== "String") {
         throw createJavaOverrideError(
           ASSERT_ERROR_METHOD,
-          `In computing AssertError, a non-string expression (line ${message.location.line}, col ${message.location.column}) was used as the err of an AssertError(err, exp).`,
+          `In computing AssertError, a non-string expression (${describeNode(message)}) was used as the err of an AssertError(err, exp).`,
         );
       }
       const expected = getThunk(args, 0, "AssertError")();

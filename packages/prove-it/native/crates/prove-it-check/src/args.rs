@@ -110,8 +110,7 @@ pub enum Stop {
 }
 
 /// The options TLC reads that the binary doesn't model. TLC reads the last three in any case.
-const UNMODELLED: [&str; 25] = [
-    "-simulate",
+const UNMODELLED: [&str; 22] = [
     "-generate",
     "-difftrace",
     "-cleanup",
@@ -128,8 +127,6 @@ const UNMODELLED: [&str; 25] = [
     "-help",
     "-h",
     "-checkpoint",
-    "-depth",
-    "-aril",
     "-maxSetSize",
     "-recover",
     "-userFile",
@@ -137,7 +134,32 @@ const UNMODELLED: [&str; 25] = [
     "-fpmem",
     "-fpbits",
 ];
-const UNMODELLED_IN_ANY_CASE: [&str; 3] = ["-loadTrace", "-dumpTrace", "-postCondition"];
+const UNMODELLED_IN_ANY_CASE: [&str; 2] = ["-loadTrace", "-postCondition"];
+
+pub const DUMP_TRACE: &str = "-dumpTrace";
+
+/// The formats of -dumpTrace, as `TLC.DumpTraceFormat` names them.
+const DUMP_FORMATS: [&str; 8] = [
+    "json",
+    "tla",
+    "tlc",
+    "tlcplain",
+    "tlcTESpec",
+    "tlcaction",
+    "dot",
+    "cbor",
+];
+
+/// The formats whose files the binary writes. TLC's others are modules that import the
+/// CommunityModules, which its jar lacks (`checkDumpTraceModules`).
+const NATIVE_DUMP_FORMATS: [&str; 2] = ["tlc", "json"];
+
+/// The format -dumpTrace names, by its flag in any case (`DumpTraceFormat.of`).
+fn get_dump_format(flag: &str) -> Option<&'static str> {
+    DUMP_FORMATS
+        .into_iter()
+        .find(|format| format.eq_ignore_ascii_case(flag))
+}
 
 /// The options and specs of a check, as `TLC.handleParameters` reads them.
 #[derive(Debug, Default)]
@@ -231,6 +253,65 @@ impl Parsed {
                         ));
                     }
                     vec![seed]
+                }
+                // TLC takes the next argument as the simulation's settings when it names one:
+                // `num=`, `file=`, `stats=` or `sched`, separated by commas. It ignores any other.
+                "-simulate" => {
+                    let Some(settings) = args.get(index).filter(|next| {
+                        ["stats=", "file=", "num=", "sched"]
+                            .iter()
+                            .any(|setting| next.contains(setting))
+                    }) else {
+                        parsed.options.push((arg.into(), Vec::new()));
+                        continue;
+                    };
+                    index += 1;
+                    let mut values = Vec::new();
+                    for setting in settings.split(',') {
+                        if let Some(number) = setting.strip_prefix("num=") {
+                            // `Long.parseLong` of the setting without each `num=` in it, which
+                            // throws past TLC's checks where it isn't a number.
+                            let number = number.replace("num=", "");
+                            if number.parse::<i64>().is_err() {
+                                return Err(Stop::NotNative(format!("-simulate {setting}")));
+                            }
+                            values = vec![number];
+                        } else if setting.starts_with("file=")
+                            || ["stats=basic", "stats=full", "sched=rl", "sched=rlaction"]
+                                .contains(&setting)
+                        {
+                            return Err(Stop::NotNative(format!("-simulate {setting}")));
+                        }
+                    }
+                    values
+                }
+                "-depth" => {
+                    let depth = take(args, &mut index, "trace length required.", is_tool)?;
+                    if !depth.is_ascii() {
+                        return Err(Stop::NotNative(format!("the trace length {depth:?}")));
+                    }
+                    if depth.parse::<i32>().is_err() {
+                        return Err(error(
+                            format!(
+                                "Error: An integer for trace length required. But encountered {depth}"
+                            ),
+                            is_tool,
+                        ));
+                    }
+                    vec![depth]
+                }
+                "-aril" => {
+                    let aril = take(args, &mut index, "aril required.", is_tool)?;
+                    if !aril.is_ascii() {
+                        return Err(Stop::NotNative(format!("the aril {aril:?}")));
+                    }
+                    if aril.parse::<i64>().is_err() {
+                        return Err(error(
+                            format!("Error: An integer for aril required. But encountered {aril}"),
+                            is_tool,
+                        ));
+                    }
+                    vec![aril]
                 }
                 "-workers" => {
                     let workers = take(
@@ -338,6 +419,31 @@ impl Parsed {
                     parsed
                         .options
                         .push(("-noGenerateSpecTEBin".into(), Vec::new()));
+                    continue;
+                }
+                _ if arg.eq_ignore_ascii_case(DUMP_TRACE) => {
+                    // TLC takes a format and a file, and knows the format by its flag in any case.
+                    let [format, file] = args.get(index..index + 2).unwrap_or_default() else {
+                        return Err(error(
+                            "Error: A format and a file name for dumping traces required.".into(),
+                            is_tool,
+                        ));
+                    };
+                    index += 2;
+                    let Some(format) = get_dump_format(format) else {
+                        return Err(error(
+                            format!("Error: Unknown format {format} given to -dumpTrace."),
+                            is_tool,
+                        ));
+                    };
+                    if !NATIVE_DUMP_FORMATS.contains(&format) {
+                        return Err(Stop::NotNative(format!(
+                            "-dumpTrace {format}, whose module needs the CommunityModules"
+                        )));
+                    }
+                    parsed
+                        .options
+                        .push((DUMP_TRACE.into(), vec![format.into(), file.clone()]));
                     continue;
                 }
                 _ if UNMODELLED.contains(&arg)
@@ -529,6 +635,16 @@ mod tests {
             ),
             (&["-fp"], "expect an integer for -fp option."),
             (&["-seed"], "seed required."),
+            (&["-depth"], "trace length required."),
+            (
+                &["-depth", "x", "Spec"],
+                "An integer for trace length required. But encountered x",
+            ),
+            (&["-aril"], "aril required."),
+            (
+                &["-aril", "1.5", "Spec"],
+                "An integer for aril required. But encountered 1.5",
+            ),
             (
                 &["-seed", "x", "Spec"],
                 "An integer for seed required. But encountered x",
@@ -560,6 +676,16 @@ mod tests {
                 "more than one input files: Stop and Two",
             ),
             (&["-deadlock"], "Missing input TLA+ module."),
+            (
+                &["Spec", "-dumpTrace", "tlc"],
+                "A format and a file name for dumping traces required.",
+            ),
+            (
+                &["-dumpTrace", "xml", "out", "Spec"],
+                "Unknown format xml given to -dumpTrace.",
+            ),
+            // The format and the file are the two arguments after the option, whatever they are.
+            (&["-dumpTrace", "tlc", "Spec"], "Missing input TLA+ module."),
         ] {
             assert_eq!(get_error(args), format!("Error: {message}"));
         }
@@ -581,10 +707,14 @@ mod tests {
     fn declines_what_it_does_not_model() {
         for args in [
             &["-difftrace", "Spec"][..],
-            &["-simulate", "Spec"],
+            &["-generate", "Spec"],
+            &["-simulate", "num=3,file=trace", "Spec"],
+            &["-simulate", "stats=basic", "Spec"],
+            &["-simulate", "num=x", "Spec"],
             &["-maxSetSize", "10", "Spec"],
             &["-dfid", "3", "Spec"],
-            &["-DUMPTRACE", "json", "out.json", "Spec"],
+            &["-DUMPTRACE", "dot", "out.dot", "Spec"],
+            &["-dumpTrace", "TLCTESPEC", "out.tla", "Spec"],
             &["-lncheck", "OFF", "Spec"],
             &["-dump"],
             &["-dump", "class,Writer", "Spec"],
@@ -593,6 +723,50 @@ mod tests {
         ] {
             assert!(matches!(parse(args), Err(Stop::NotNative(_))), "{args:?}");
         }
+    }
+
+    #[test]
+    fn reads_each_dump_trace_in_order() {
+        let parsed = parse(&[
+            "-DumpTrace",
+            "JSON",
+            "a.json",
+            "Spec",
+            "-dumptrace",
+            "tlc",
+            "-tool",
+        ])
+        .expect("options");
+        assert_eq!(
+            parsed.options,
+            [
+                ("-dumpTrace".to_string(), strings(&["json", "a.json"])),
+                ("-dumpTrace".to_string(), strings(&["tlc", "-tool"])),
+            ]
+        );
+        assert!(!parsed.has("-tool"));
+    }
+
+    #[test]
+    fn reads_the_simulation_settings() {
+        let parsed = parse(&[
+            "-simulate",
+            "num=4,sched",
+            "-depth",
+            "-1",
+            "-aril",
+            "2",
+            "Spec",
+        ])
+        .expect("options");
+        assert_eq!(parsed.get("-simulate"), Some(strings(&["4"]).as_slice()));
+        assert_eq!(parsed.first("-depth"), Some("-1"));
+        assert_eq!(parsed.first("-aril"), Some("2"));
+        assert_eq!(parsed.positionals, strings(&["Spec"]));
+        // TLC takes the next argument as settings only where it names one.
+        let bare = parse(&["-simulate", "Spec"]).expect("options");
+        assert_eq!(bare.get("-simulate"), Some(&[][..]));
+        assert_eq!(bare.positionals, strings(&["Spec"]));
     }
 
     #[test]

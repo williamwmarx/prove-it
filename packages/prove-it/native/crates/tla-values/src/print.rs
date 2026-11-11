@@ -551,8 +551,11 @@ mod tests {
     use super::*;
     use crate::store::{EMPTY_SET, FALSE};
 
+    // A string of the spec's, which TLC interned as it started.
     fn text(store: &mut Store, text: &str) -> Id {
-        store.str(&text.encode_utf16().collect::<Vec<u16>>())
+        let units: Vec<u16> = text.encode_utf16().collect();
+        store.get_string_rank(&units);
+        store.str(&units)
     }
 
     fn new_store() -> Store {

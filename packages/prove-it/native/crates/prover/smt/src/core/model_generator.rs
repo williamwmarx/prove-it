@@ -191,10 +191,8 @@ pub fn mk_model(context: &mut Context) -> Result<GeneratedModel, SmtError> {
 mod tests {
     //! The satisfiable ground problems of `scripts/smt-model-reference.ts`, built in the same
     //! order, against the table it prints (`tests/tables/models.txt`): the model `get_model` makes,
-    //! the value of each root, the proto model, its validation and the value of terms under it.
-    //! The script skips the init of the TypeScript's arithmetic theory and leaves out the steps of
-    //! its methods, which the theory stub here neither makes nor takes, so the ids and the steps
-    //! are the TypeScript's.
+    //! the value of each root, the proto model, its validation and the value of terms under it,
+    //! with the TypeScript's ids and steps.
 
     use prove_decide::Limits;
 

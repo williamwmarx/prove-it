@@ -1,0 +1,15 @@
+exit 13
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module TraceInitialPredicate
+Linting of module TLCExt
+Linting of module TraceInitialPredicate
+Computing initial states...
+Error: Property Positive is violated by the initial state:
+/\ x = 0
+/\ trace = <<[x |-> 0, y |-> "a"]>>
+
