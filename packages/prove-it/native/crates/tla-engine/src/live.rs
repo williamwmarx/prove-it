@@ -46,6 +46,9 @@ pub struct LiveGraph<'g> {
     /// Whether TLC's predicate evaluation of the next-state relation holds of every step, without
     /// failing: no walk took the shortcut, and no comparison of a value a walk assigned can fail.
     pub is_next_taken: bool,
+    /// The expanded state whose next states failed, whose steps are only those the next-state
+    /// relation took before it failed: ENABLED is evaluated on it, not answered from them.
+    pub partial: Option<usize>,
     /// Each step's bits of the action atoms made of pieces of Next whose pieces the walks that took
     /// it passed through, where the search recorded them.
     pub pieces: Option<&'g [u8]>,
@@ -837,7 +840,9 @@ pub fn answer_atoms(
                     let mut answers = Vec::with_capacity(graph.count);
                     for index in 0..graph.count {
                         let from_steps = match (steps, &mut changed) {
-                            (Some(steps), Some(changed)) if index < graph.expanded => {
+                            (Some(steps), Some(changed))
+                                if index < graph.expanded && graph.partial != Some(index) =>
+                            {
                                 if changed.failed[index] {
                                     evaluator.enabled_from_steps(&mut changed.values, steps, index)
                                 } else {
