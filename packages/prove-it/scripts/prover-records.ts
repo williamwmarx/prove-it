@@ -24,6 +24,9 @@ export const PROVER_INPUTS_PATH = join(CONFORMANCE_DIRECTORY, "prover-inputs.jso
 
 export const PROVER_INPUTS_DIRECTORY = join(CONFORMANCE_DIRECTORY, ".prover-inputs");
 
+// The time limits in seconds, null for none, that prove sent each input with, by key.
+export const TIME_LIMITS_PATH = join(PROVER_INPUTS_DIRECTORY, "time-limits.json");
+
 const EXTENSIONS: Record<string, string> = {
   smt: "smt",
   z3: "smt2",
