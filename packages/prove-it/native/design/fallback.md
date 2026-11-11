@@ -59,7 +59,16 @@ SANY's report as tla-front writes it, through the addon or the WebAssembly engin
 `src/sany` is deleted, `PROVE_IT_ENGINE=0` means that the interpreter searches, not that no native
 code runs: SANY's report still needs the addon or the WebAssembly engine. Where neither loads, the
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
-the search. Until then, the CLI prints the TypeScript report where no engine loads.
+the search. The TypeScript report is deleted: what it printed, tla-front prints or declines, and
+its tests are tla-front's `tests/report-cases`, each recorded from TLC at d8fb231 or TLC 1.7.4.
+TLC 1.7.4's semantic errors decline (cases 19, 20, 22, 34 and 35), retired with 1.7.4.
+
+SANY's messages come from the port of its generator and levelCheck, which declines a message whose
+shape no recording shows, and else from linking. Linking takes the standard modules as TLC ships
+them, which a spec that replaces one another standard module reads, such as its own Naturals
+under Sequences, may not keep: main's binary printed no errors there, where the generator finds
+Sequences' `..` undefined. That report now declines ("SANY's messages of the standard modules with
+one of them replaced") until a recording shows SANY's messages.
 
 The engine reads nothing itself: an export that reads what JavaScript holds, such as a spec's
 modules, names what it needs and is called again with it (`prove-it-host`'s `sources`), so the
