@@ -1,0 +1,3 @@
+---- MODULE Sequences ----
+X == Undefined
+====

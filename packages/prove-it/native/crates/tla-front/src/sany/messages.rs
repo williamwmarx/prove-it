@@ -18,29 +18,34 @@ use crate::sany::{GENERATOR_EXCEPTION, Result, not_yet};
 /// module `Generator` throws on as it generates it.
 pub enum Generated {
     Messages(Vec<ModuleMessages>),
+    /// Messages one of which has a shape no recording shows: the first line of that one.
+    Unproven(Vec<ModuleMessages>, String),
     Exception(usize),
 }
 
-/// The first lines of the messages SANY prints in `tests/conformance/sany-stdout`'s recordings of
-/// the real SANY (`grid.json` and `corpus.json`), each word that starts with a capital letter
-/// written X (`get_message_shape`). A message of the generator whose shape isn't one of these is
-/// `NotYet`: only what a recording shows SANY printing is printed. The test below derives the
-/// list from the recordings.
+/// The shapes of the first lines of the messages SANY prints in `tests/conformance/sany-stdout`'s
+/// recordings of the real SANY (`grid.json`, `corpus.json`, `report-cases.json` and
+/// `sany-cases.json`; `get_message_shape`). A message of the generator whose shape isn't one of
+/// these is unproven: only what a recording shows SANY printing is printed. The test below derives
+/// the list from the recordings.
 const PROVEN_MESSAGES: &[&str] = &[
     "<*> and <+> cannot be used for a named step.",
     "<> followed by action not of form <<X>>_v.",
     "=> has both temporal formula and action as arguments.",
     "@ used where its meaning is not defined.",
-    "X '\\lnot' is not a legal target of a substitution. ",
-    "X 'c' is not a legal target of a substitution. ",
-    "X 'f' is defined with 1 parameters, but is applied to 2 arguments.",
-    "X 'f' is defined with 2 parameters, but is applied to 3 arguments.",
+    "X ' already defined or declared.",
+    "X ' is a built-in operator, and cannot be redefined.",
+    "X 'X' is defined with N parameters, but is applied to N arguments.",
+    "X 'X' is not a legal target of a substitution. ",
     "X -. already defined or declared.",
-    "X 1 of recursive operator X is primed",
-    "X 1 of recursive operator op is primed",
-    "X 1 operator (not an expression) is expected ",
+    "X /= already defined or declared.",
+    "X /= is a built-in operator, and cannot be redefined.",
     "X <> already defined or declared.",
     "X <> is a built-in operator, and cannot be redefined.",
+    "X N arguments but found N.",
+    "X N of recursive operator X is primed",
+    "X N of recursive operator op is primed",
+    "X N operator (not an expression) is expected ",
     "X X",
     "X X  may not appear within a recursive definition section.",
     "X X algorithm in module X has changed since its last translation.",
@@ -54,20 +59,17 @@ const PROVEN_MESSAGES: &[&str] = &[
     "X X or X statement.",
     "X X+ translation in module X has changed since its last translation.",
     "X X, X, or X",
-    "X \\lnot already defined or declared.",
-    "X \\lnot is a built-in operator, and cannot be redefined.",
-    "X `!(...)' should not have argument(s).",
+    "X [] already defined or declared.",
+    "X [] is a built-in operator, and cannot be redefined.",
     "X `X' should not have argument(s).",
+    "X `X' used with wrong number of arguments.",
     "X `X' used without being extended or instantiated.",
-    "X `lbl' used with wrong number of arguments.",
-    "X arity 1 but found operator of arity 0.",
-    "X arity 1 but found operator of arity 2.",
-    "X arity 2 but found operator of arity 0.",
-    "X arity 2 but found operator of arity 1.",
-    "X arity 2 but found operator of arity 3.",
+    "X arity N but found operator of arity N.",
     "X clause entry should describe a defined operator.",
     "X declaration may not appear within a recursive definition section.",
-    "X declaration of '+' conflicts with ",
+    "X declaration of 'X' conflicts with ",
+    "X declarations or definitions for symbol <N>N.  ",
+    "X declarations or definitions for symbol <N>a.  ",
     "X declarations or definitions for symbol X.  ",
     "X declarations or definitions for symbol op.  ",
     "X declarations or definitions for symbol recDef.  ",
@@ -79,113 +81,85 @@ const PROVEN_MESSAGES: &[&str] = &[
     "X error in applying operator op:",
     "X error in instantiating module 'X':",
     "X error when instantiating module 'X':",
+    "X error, probably due to error ",
     "X error:",
-    "X error: assumptions must be level 0 (X), ",
+    "X error: assumptions must be level N (X), ",
     "X expecting a X.",
-    "X expression appears as argument number 1 (counting from 1) to operator 'X', in a position an operator is required.",
-    "X expression appears as argument number 1 (counting from 1) to operator 'op', in a position an operator is required.",
+    "X expression appears as argument number N (counting from N) to operator 'X', in a position an operator is required.",
     "X expression type `X'.",
-    "X expression type `['.",
     "X expression used where an expression is required.",
-    "X expression with arity 1 used as argument 1 of operator `op', ",
-    "X expression with arity 2 used as argument 1 of operator `op', ",
-    "X expression with arity 3 used as argument 1 of operator `op', ",
+    "X expression with arity N used as argument N of operator `X', ",
     "X field name \"X\" in the record constructor is identical to the existing definition or declaration",
+    "X find label `X'.",
     "X find source file for module X imported in module X.",
     "X formal parameter x ",
     "X function X defined at wrong X/X level.",
     "X function recDef defined at wrong X/X level.",
+    "X has both temporal formula and action as arguments.",
     "X in instantiating module 'X':",
     "X inside X clauses are not yet implemented.",
-    "X label `lbl'.",
+    "X label `X'.",
     "X lbl declares extra parameter(s)  x  ",
-    "X lbl must contain formal parameter `x'.",
+    "X lbl must contain formal parameter `X'.",
     "X list has both temporal formula and action as arguments.",
-    "X missing for symbol X declared at line 2, col 10 to line 2, col 10 of module X ",
-    "X missing for symbol c declared at line 5, col 10 to line 5, col 10 of module X ",
+    "X missing for symbol X declared at line N, col N to line N, col N of module X ",
+    "X missing for symbol c declared at line N, col N to line N, col N of module X ",
+    "X missing for symbol v declared at line N, col N to line N, col N of module X ",
+    "X missing for symbol w declared at line N, col N to line N, col N of module X ",
     "X name 'X' does not match the name 'X' of the top level module it contains.",
     "X name X is incomplete.",
-    "X name `f' already defined or declared.",
-    "X name `it' already defined or declared.",
+    "X name `X' already defined or declared.",
     "X name import is incomplete.",
     "X name or step number here, not `X'.",
     "X not allowed within scope of declaration in nested X/X.",
-    "X not find declaration or definition of symbol '+'.",
-    "X not find declaration or definition of symbol '-'.",
-    "X not find declaration or definition of symbol '..'.",
-    "X not find declaration or definition of symbol '<'.",
-    "X not find declaration or definition of symbol '@@'.",
-    "X not find declaration or definition of symbol '\\leq'.",
+    "X not find declaration or definition of symbol 'X'.",
     "X not in definition or proof step.",
-    "X number 1 to operator 'X' ",
-    "X number 1 to operator 'op' ",
-    "X number of arguments (0) given to operator 'X', ",
-    "X number of arguments (1) given to operator 'X', ",
-    "X number of arguments (2) given to operator 'X', ",
+    "X not parse module X from file X.tla",
+    "X number N to operator 'X' ",
+    "X number of arguments (N) given to operator 'X', ",
     "X of X has different arity than its X declaration.",
     "X of op has different arity than its X declaration.",
     "X only expression allowed as a fact in a X is ",
     "X op already defined or declared.",
     "X op declared in X statement but not defined.",
-    "X operand specified by `argument selector 3'.",
+    "X operand specified by `X'.",
     "X operator X defined at wrong X/X level.",
-    "X operator X requires 0 arguments.",
-    "X operator X requires 1 arguments.",
-    "X operator X requires 2 arguments.",
-    "X operator \\union requires 2 arguments.",
-    "X operator import requires 1 arguments.",
-    "X operator must be substituted for symbol 'X', and it must have arity 1.",
-    "X operator must be substituted for symbol 'X', and it must have arity 2.",
-    "X operator op requires 0 arguments.",
-    "X operator op requires 1 arguments.",
-    "X operator op requires 2 arguments.",
+    "X operator X requires N arguments.",
+    "X operator import requires N arguments.",
+    "X operator must be substituted for symbol 'X', and it must have arity N.",
+    "X operator op requires N arguments.",
     "X operator recDef defined at wrong X/X level.",
-    "X operator: `@@'.",
     "X operator: `X'.",
-    "X operator: `bar'.",
-    "X operator: `def'.",
-    "X operator: `import!X'.",
-    "X operator: `s'.",
-    "X operator: `|'.",
-    "X parameter x of label `lbl'.",
+    "X parameter x of label `X'.",
     "X proof step selected instead of expression.",
     "X recDef declared in X statement but not defined.",
-    "X substitutions for symbol 'c' in substitution.",
+    "X selection failed, probably due to an error in the selected expression.",
+    "X substitutions for symbol 'X' in substitution.",
     "X the X algorithm and its X+ translation in module X have changed since the last translation.",
-    "X to declare '@' as a variable.",
+    "X to declare 'X' as a variable.",
     "X token found.",
     "X unexpected problem was encountered attempting to validate the specification for X",
     "X used where only temporal formula or state predicate allowed.",
     "X with incorrect arity passed as argument. ",
-    "X't resolve infix operator symbol `+'.",
-    "X't resolve infix operator symbol `-'.",
-    "X't resolve infix operator symbol `..'.",
-    "X't resolve infix operator symbol `<'.",
-    "X't resolve infix operator symbol `@@'.",
-    "X't resolve infix operator symbol `\\leq'.",
+    "X't resolve infix operator symbol `X'.",
     "X-constant X for temporal goal.",
     "X-constant X, X, or X for temporal goal.",
     "X-constant bound of temporal X.",
     "X-defined module 'X': this definition or declaration conflicts ",
-    "X-defined symbol '-.': this definition or declaration conflicts ",
-    "X-defined symbol '@': this definition or declaration conflicts ",
     "X-defined symbol 'X': this definition or declaration conflicts ",
-    "X-defined symbol 'def': this definition or declaration conflicts ",
-    "X-defined symbol 'x': this definition or declaration conflicts ",
     "X-level bound of quantified temporal formula.",
     "X-unique fields in constructor.",
     "X/X used where an expression is required.",
-    "X: the definition of '+' conflicts with ",
+    "X: the definition of 'X' conflicts with ",
     "[] followed by action not of form [X]_v.",
     "[]X matched by X instead of []X",
     "[]X used within the scope of an ordinary X's assumptions",
-    "\\equiv has both temporal formula and action as arguments.",
-    "\\land has both temporal formula and action as arguments.",
-    "\\lor has both temporal formula and action as arguments.",
 ];
 
 /// The shape of a message: its first line, with each run of word characters (`[A-Za-z0-9_]`)
-/// that starts with a capital letter written X, as the recordings' shapes are.
+/// that starts with a capital letter written X, each number N, each quoted name `X' or 'X' and
+/// each operator spelled with a backslash X, as the recordings' shapes are: what a message says of
+/// the spec is a parameter of its wording.
 fn get_message_shape(text: &str) -> String {
     let line = text.lines().next().unwrap_or_default();
     let mut shape = String::new();
@@ -193,18 +167,57 @@ fn get_message_shape(text: &str) -> String {
     let flush = |word: &mut String, shape: &mut String| {
         if word.starts_with(|first: char| first.is_ascii_uppercase()) {
             shape.push('X');
+        } else if !word.is_empty() && word.chars().all(|digit| digit.is_ascii_digit()) {
+            shape.push('N');
         } else {
             shape.push_str(word);
         }
         word.clear();
     };
-    for character in line.chars() {
+    let characters: Vec<char> = line.chars().collect();
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
+        // A name SANY quotes, `name' or 'name', is a parameter of the message, written `X' or 'X'.
+        let is_quote = character == '`'
+            || (character == '\''
+                && characters
+                    .get(index.wrapping_sub(1))
+                    .is_none_or(|before| !before.is_ascii_alphanumeric()));
+        let end = is_quote
+            .then(|| characters[index + 1..].iter().position(|&end| end == '\''))
+            .flatten();
+        if let Some(length) = end {
+            flush(&mut word, &mut shape);
+            shape.push(character);
+            shape.push_str("X'");
+            index += length + 2;
+            continue;
+        }
+        // An operator SANY spells with a backslash, such as \lnot, is a name too.
+        if character == '\\'
+            && characters
+                .get(index + 1)
+                .is_some_and(char::is_ascii_alphabetic)
+        {
+            flush(&mut word, &mut shape);
+            shape.push('X');
+            index += 1;
+            while characters
+                .get(index)
+                .is_some_and(char::is_ascii_alphanumeric)
+            {
+                index += 1;
+            }
+            continue;
+        }
         if character.is_ascii_alphanumeric() || character == '_' {
             word.push(character);
         } else {
             flush(&mut word, &mut shape);
             shape.push(character);
         }
+        index += 1;
     }
     flush(&mut word, &mut shape);
     shape
@@ -265,38 +278,36 @@ pub fn get_generator_messages(
     if names.len() != order.len() || names.iter().zip(order).any(|(name, other)| *name != other) {
         return not_yet("SANY's generator analyzing the modules in another order");
     }
-    if let Some(message) = specification
+    let unproven = specification
         .messages
         .iter()
         .find(|message| !PROVEN_MESSAGES.contains(&get_message_shape(&message.text).as_str()))
-    {
-        return not_yet(format!(
-            "a message of SANY's generator that no recording shows: {}",
-            message.text.lines().next().unwrap_or_default()
-        ));
-    }
+        .map(|message| message.text.lines().next().unwrap_or_default().to_owned());
     let ends = ends.into_inner();
     let mut start = 0;
-    Ok(Generated::Messages(
-        ends.into_iter()
-            .map(|end| {
-                let messages = &specification.messages[start..end];
-                start = end;
-                ModuleMessages {
-                    warnings: messages
-                        .iter()
-                        .filter(|message| message.is_warning)
-                        .map(get_sany_error)
-                        .collect(),
-                    errors: messages
-                        .iter()
-                        .filter(|message| !message.is_warning)
-                        .map(get_sany_error)
-                        .collect(),
-                }
-            })
-            .collect(),
-    ))
+    let messages = ends
+        .into_iter()
+        .map(|end| {
+            let messages = &specification.messages[start..end];
+            start = end;
+            ModuleMessages {
+                warnings: messages
+                    .iter()
+                    .filter(|message| message.is_warning)
+                    .map(get_sany_error)
+                    .collect(),
+                errors: messages
+                    .iter()
+                    .filter(|message| !message.is_warning)
+                    .map(get_sany_error)
+                    .collect(),
+            }
+        })
+        .collect();
+    Ok(match unproven {
+        Some(message) => Generated::Unproven(messages, message),
+        None => Generated::Messages(messages),
+    })
 }
 
 #[cfg(test)]
@@ -349,6 +360,7 @@ mod tests {
             include_str!("../../../../../tests/conformance/sany-stdout/grid.json"),
             include_str!("../../../../../tests/conformance/sany-stdout/corpus.json"),
             include_str!("../../../../../tests/conformance/sany-stdout/report-cases.json"),
+            include_str!("../../../../../tests/conformance/sany-stdout/sany-cases.json"),
         ] {
             for output in get_outputs(recording) {
                 let lines: Vec<&str> = output.split('\n').collect();
@@ -374,7 +386,7 @@ mod tests {
         );
         assert_eq!(
             get_message_shape("Unknown operator: `def'."),
-            "X operator: `def'."
+            "X operator: `X'."
         );
     }
 }
