@@ -8,6 +8,7 @@
 pub mod check;
 pub mod hooks;
 pub mod outcome;
+pub mod prove;
 pub mod prover;
 pub mod sany;
 pub mod sources;
