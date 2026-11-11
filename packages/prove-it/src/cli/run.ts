@@ -68,7 +68,8 @@ const run = async (args: string[]) => {
   launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
   if (launch.mainClass === "tlc2.TLC") {
     return (
-      (await checkNatively(args, launch.args, launch.java)) ?? checkSpecs(launch.args, launch.java)
+      (await checkNatively(args, launch.args, launch.java)) ??
+      checkSpecs(launch.args, launch.java, launch.mainClass === "tlc2.TLC")
     );
   }
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {

@@ -73,6 +73,7 @@ import {
   getJavaPath,
   getStandardModulesUrl,
   getToolsJar,
+  GLOB_CHARACTERS,
   type JavaProperties,
   printError,
   printMissingFile,
@@ -984,8 +985,17 @@ const declineNatively = (reason: string) => {
   return NOT_NATIVE_EXIT_CODE;
 };
 
-export const checkSpecs = async (args: string[], java: JavaProperties) => {
+// With `isTlc` the command line is tlc2.TLC's, which names one module and globs nothing.
+export const checkSpecs = async (args: string[], java: JavaProperties, isTlc = false) => {
   const parsed = CHECK_COMMAND.parse(args);
+  // TLC takes Spec.cfg for a module of that name.
+  if (isTlc && parsed.positionals.some((path) => path.endsWith(".cfg"))) {
+    return declineNatively("a module named as a configuration file");
+  }
+  const isLiteral = (path: string) => existsSync(path) || existsSync(`${path}.tla`);
+  if (parsed.positionals.some((path) => GLOB_CHARACTERS.test(path) && (isTlc || isLiteral(path)))) {
+    return declineNatively("globs");
+  }
   const isConfigured = parsed.has("-config");
   const specPaths = getSpecPaths(parsed);
   if (specPaths.length === 0) {

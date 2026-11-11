@@ -14,7 +14,7 @@ import {
 } from "../tlc/messages";
 import type { TlcVersion } from "../tlc/version";
 
-const GLOB_CHARACTERS = /[*?[{]/;
+export const GLOB_CHARACTERS = /[*?[{]/;
 
 interface InputPath {
   path: string;
