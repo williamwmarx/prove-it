@@ -292,8 +292,10 @@ own substitutions, as TLC enters it through its own `SubstInNode`. A declaration
 has, through EXTENDS, isn't unbound there: TLC's lookup falls back to the value the configuration
 gives it, and the configuration's override of a definition, or the value it assigns one, holds for
 the INSTANCE's copy too, since both are the one node. Where the sets read such a declaration or
-copy, the front end doesn't follow TLC's lookup and unrolls the \A with the substitutions bound,
-as main did; elsewhere it evaluates the sets
+copy, a substitute two INSTANCEs put in (as an INSTANCE in the instantiated module does with
+`K <- C`), or a copy an operator argument names, which TLC enters through its own `SubstInNode`,
+the front end doesn't follow TLC's lookup and unrolls the \A with the substitutions bound, as main
+did; elsewhere it evaluates the sets
 so, with the substitutions of the INSTANCEs whose copies it expanded through left unbound, and
 declines a \A taken whole whose body fails, where TLC wraps the failure in
 `EC.TLC_LIVE_CANNOT_HANDLE_FORMULA`. A grid of 112 small specs
