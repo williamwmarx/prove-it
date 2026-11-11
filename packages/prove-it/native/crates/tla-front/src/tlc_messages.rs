@@ -302,6 +302,7 @@ impl FrontError {
                     exit_code: GENERAL_ERROR,
                 });
             }
+            FrontError::Warned(_, error) => return error.get_coded(is_tool),
             _ => return None,
         };
         if let Some(literal) = get_rejected_literal(self) {

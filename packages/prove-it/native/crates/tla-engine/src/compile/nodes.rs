@@ -27,7 +27,25 @@ pub(crate) struct Binder {
     pub tuple: bool,
 }
 
+/// Binds a bound's names to an element as TLC's `ContextEnumerator` and set filter do: a tuple
+/// pattern only to a `TupleValue`, which a tuple TLC built as a function isn't.
 pub(crate) fn assign_bound(
+    machine: &mut Machine<'_>,
+    slots: &[u32],
+    tuple: bool,
+    element: Id,
+) -> Outcome<()> {
+    if tuple && machine.store.is_built_as_function(element) {
+        return Err(Bail(
+            "unsupported: a tuple pattern bound to a tuple TLC may hold as a function",
+        ));
+    }
+    assign_converted(machine, slots, tuple, element)
+}
+
+/// Binds a bound's names to an element as TLC's CHOOSE, a set filter's membership and a
+/// function's application do, which take a function over 1..n as a tuple (`toTuple`).
+pub(crate) fn assign_converted(
     machine: &mut Machine<'_>,
     slots: &[u32],
     tuple: bool,
@@ -728,7 +746,7 @@ impl Compiler<'_> {
                     let id = evaluate_set(machine, &set, "CHOOSE from a non-set")?;
                     for index in 0..machine.store.size_of(id) {
                         let element = machine.store.element_at(id, index);
-                        assign_bound(machine, &slots, tuple, element)?;
+                        assign_converted(machine, &slots, tuple, element)?;
                         if body(machine)? == TRUE {
                             return Ok(element);
                         }
@@ -923,7 +941,8 @@ impl Compiler<'_> {
                     }
                 }
                 let values = machine.stack.split_off(at);
-                Ok(machine.store.function_over_set(set, &values))
+                let function = machine.store.function_over_set(set, &values);
+                Ok(machine.store.mark_built_as_function(function))
             })
         } else {
             // A function of several arguments takes tuples, in TLC's order of the product.
@@ -1412,7 +1431,7 @@ fn test_element(machine: &mut Machine<'_>, filter: &Filter, element: Id) -> Outc
         .iter()
         .map(|&slot| machine.locals[slot as usize])
         .collect();
-    let kept = assign_bound(machine, &filter.slots, filter.tuple, element)
+    let kept = assign_converted(machine, &filter.slots, filter.tuple, element)
         .and_then(|()| (filter.predicate)(machine));
     for (&slot, &value) in filter.slots.iter().zip(&saved) {
         machine.locals[slot as usize] = value;

@@ -164,7 +164,12 @@ impl<'ir> Evaluator<'ir> {
         is_init: bool,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        self.guard_as(node, context, Demand::Applied { is_init }, then)
+        let outer = self
+            .walked_application
+            .replace((self.resolved(node), is_init));
+        let holds = self.boolean_as(node, context, Demand::Applied { is_init });
+        self.walked_application = outer;
+        if holds? { then(self) } else { Ok(true) }
     }
 
     /// Whether TLC computes a definition as it starts (`processConstantDefns`), which it does to

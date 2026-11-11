@@ -88,6 +88,9 @@ const IS_INT_RUN: u8 = 2;
 // Whether a set, tuple or function holds, at any depth, a function TLC keeps lazy, which TLC
 // builds to compare: the store's equal ids say nothing of it.
 const HOLDS_LAZY: u8 = 4;
+// A tuple that TLC built somewhere as a function (`FcnRcdValue` or `FcnLambdaValue`) and not as a
+// `TupleValue`. Equal ids don't tell TLC's classes apart, so the mark stays once made.
+const BUILT_AS_FUNCTION: u8 = 8;
 
 /// What the store keeps of each id: one 16-byte read finds its kind, size and payload.
 #[derive(Clone, Copy)]
@@ -197,6 +200,11 @@ pub struct Store {
     patch_indexes: Vec<u32>,
     patch_values: Vec<u32>,
     shapes: shapes::Shapes,
+    // The values marked built as a function after they were interned, in order: in a store of its
+    // own, for the overlays laid on it to copy; in an overlay, the base's, for the base to take.
+    marked: Vec<Id>,
+    // How many of the base's marks the overlay has copied.
+    marks_copied: usize,
 }
 
 impl Default for Store {
@@ -238,6 +246,8 @@ impl Store {
             patch_indexes: vec![0; 16],
             patch_values: vec![0; 16],
             shapes: shapes::Shapes::default(),
+            marked: Vec::new(),
+            marks_copied: 0,
         }
     }
 
@@ -262,6 +272,12 @@ impl Store {
         self.meta.truncate(values);
         self.shapes.forget_from(values as Id);
         self.meta.extend_from_slice(&base.meta[values..]);
+        let marks_copied = if values == 0 { 0 } else { self.marks_copied };
+        for &id in &base.marked[marks_copied..] {
+            self.meta[id as usize].flags |= BUILT_AS_FUNCTION;
+        }
+        self.marks_copied = base.marked.len();
+        self.marked.clear();
         self.heap.truncate(words);
         self.heap.extend_from_slice(&base.heap[words..]);
         self.texts.truncate(texts);
@@ -283,6 +299,33 @@ impl Store {
         self.string_ids.clear();
         self.model_ids.clear();
         self.base = Some(base);
+    }
+
+    /// Marks a value TLC builds as a function (`FcnRcdValue` or `FcnLambdaValue`), which over
+    /// 1..n is a tuple here but not TLC's `TupleValue`, and gives it back.
+    pub fn mark_built_as_function(&mut self, id: Id) -> Id {
+        let meta = &mut self.meta[id as usize];
+        if meta.kind == KIND_TUPLE && meta.size > 0 && meta.flags & BUILT_AS_FUNCTION == 0 {
+            meta.flags |= BUILT_AS_FUNCTION;
+            // An overlay's own values carry the mark as they are imported.
+            if self.base.is_none() || id < self.id_base {
+                self.marked.push(id);
+            }
+        }
+        id
+    }
+
+    /// Whether TLC may hold a tuple as a function rather than as a `TupleValue`, which a tuple of
+    /// names doesn't bind to (`ContextEnumerator`).
+    pub fn is_built_as_function(&self, id: Id) -> bool {
+        self.meta(id).flags & BUILT_AS_FUNCTION != 0
+    }
+
+    /// Takes the marks an overlay laid on this store made of this store's values.
+    pub fn take_marks(&mut self, overlay: &Store) {
+        for &id in &overlay.marked {
+            self.mark_built_as_function(id);
+        }
     }
 
     /// Lets go of the store under an overlay, keeping the overlay's own values to import.
@@ -318,6 +361,9 @@ impl Store {
             }
             kind => unreachable!("an overlay holds a value of no kind the store makes: {kind}"),
         };
+        if meta.flags & BUILT_AS_FUNCTION != 0 {
+            self.mark_built_as_function(value);
+        }
         if imported.len() <= index {
             imported.resize(overlay.meta.len() - overlay.id_base as usize, EMPTY_SLOT);
         }
@@ -342,6 +388,8 @@ impl Store {
             self.order.rank(text);
         }
         self.meta.clear();
+        self.marked.clear();
+        self.marks_copied = 0;
         self.heap.clear();
         self.table.fill([0, EMPTY_SLOT]);
         self.texts.clear();
@@ -1880,7 +1928,7 @@ impl Store {
                 && other.size == meta.size
                 && self.is_patched(other.payload as usize, offset, length, count)
         });
-        match found {
+        let id = match found {
             Ok(id) => id,
             Err(slot) => {
                 let start = self.heap.len();
@@ -1891,7 +1939,12 @@ impl Store {
                 }
                 self.allocate(meta.kind, start as i32, meta.size, hash, slot)
             }
+        };
+        // TLC's EXCEPT keeps the function's class.
+        if meta.flags & BUILT_AS_FUNCTION != 0 {
+            self.mark_built_as_function(id);
         }
+        id
     }
 
     // Whether the block at other is the block at offset with the patches applied.
@@ -2196,6 +2249,40 @@ mod tests {
         assert_eq!(overlay.int(10_000).unwrap(), held[0]);
         assert_eq!(overlay.int(70_000).unwrap(), own);
         assert_eq!(overlay.table.len(), INITIAL_CAPACITY * 2);
+    }
+
+    // A tuple marked built as a function, in an overlay or by EXCEPT, stays marked in the store
+    // the overlay is laid on and in the other overlays laid on it again.
+    #[test]
+    fn keeps_a_tuple_built_as_a_function_marked_across_overlays() {
+        let mut base = Store::new();
+        let (one, two, three) = (
+            base.int(1).unwrap(),
+            base.int(2).unwrap(),
+            base.int(3).unwrap(),
+        );
+        let held = base.tuple_of(&[one, two]);
+        let base = Arc::new(base);
+        let (mut first, mut second) = (Store::overlay(base.clone()), Store::overlay(base.clone()));
+        first.mark_built_as_function(held);
+        let built = first.function_of_sorted(&[one, two], &[three, three]);
+        first.mark_built_as_function(built);
+        let excepted = first.except(built, one, two).unwrap();
+        assert!(first.is_built_as_function(excepted));
+        assert!(!second.is_built_as_function(held));
+        first.detach();
+        second.detach();
+        let mut base = Arc::into_inner(base).expect("the store");
+        let mut imported = Vec::new();
+        let built = base.import(&first, built, &mut imported);
+        assert!(base.is_built_as_function(built));
+        base.take_marks(&first);
+        assert!(base.is_built_as_function(held));
+        let other = base.tuple_of(&[two, one]);
+        assert!(!base.is_built_as_function(other));
+        second.attach(Arc::new(base));
+        assert!(second.is_built_as_function(held));
+        assert!(second.is_built_as_function(built));
     }
 
     #[test]

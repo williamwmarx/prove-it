@@ -266,14 +266,32 @@ fn lower_ranked(
                 Vec::new(),
             )?
         } else {
-            lowering.write_model(
-                &config,
-                &specification,
-                &properties,
-                options.is_warning_enabled,
-                version_text,
-                tlc_order,
-            )?
+            lowering
+                .write_model(
+                    &config,
+                    &specification,
+                    &properties,
+                    options.is_warning_enabled,
+                    version_text,
+                    tlc_order,
+                )
+                // TLC warns about the invariants and the properties as it processes the spec,
+                // before it starts the liveness checker.
+                .map_err(|error| match error {
+                    FrontError::Warned(warnings, error) if options.is_warning_enabled => {
+                        FrontError::Warned(
+                            get_search_warnings(
+                                constant_invariants.as_deref().unwrap_or_default(),
+                                &properties.state_level,
+                            )
+                            .into_iter()
+                            .chain(warnings)
+                            .collect(),
+                            error,
+                        )
+                    }
+                    error => error,
+                })?
         };
         let branches = lowering.branches;
         let (ir, startup) = lowering.finish_indexing(model)?;
@@ -411,16 +429,7 @@ fn get_startup_messages(
     if version == TlcVersion::V1_7_4 {
         return Err("what TLC 1.7.4 prints as it starts".to_owned());
     }
-    let warning = |code: u32, text: String| StartupMessage {
-        code,
-        is_warning: true,
-        text,
-    };
-    let mut messages: Vec<StartupMessage> = constant_invariants
-        .iter()
-        .map(|name| warning(2149, format!("The invariant {name} is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.")))
-        .chain(state_level_properties.iter().map(|name| warning(2255, format!("The formula {name} is a state-level formula, but it was used as a PROPERTY (or PROPERTIES), where a temporal formula is typically expected. State-level formulas used as PROPERTY or PROPERTIES are only checked in the initial state. To verify that the formula {name} holds in all states of every behavior, use INVARIANT {name} instead. Alternatively, applying the \"always\" temporal operator ([]) to the state-level formula {name} changes it into a temporal formula, asserting that {name} holds in all states of every behavior. See https://explain.tlapl.us/invariants-and-properties for additional details."))))
-        .collect();
+    let mut messages = get_search_warnings(constant_invariants, state_level_properties);
     // TLC warns about a symmetry set too small as it computes the symmetry, which the engine does
     // between the constant definitions and these warnings' place in TLC's order: unchecked yet.
     if config.symmetry.is_some() && !messages.is_empty() {
@@ -428,7 +437,7 @@ fn get_startup_messages(
     }
     if let Some(branches) = branches {
         if config.symmetry.is_some() && is_warning_enabled {
-            messages.push(warning(2279, "Declaring symmetry during liveness checking is dangerous. It might cause TLC to miss violations of the stated liveness properties. Please check liveness without symmetry defined.".to_owned()));
+            messages.push(get_liveness_symmetry_warning());
         }
         messages.push(StartupMessage {
             code: 2212,
@@ -439,6 +448,33 @@ fn get_startup_messages(
         });
     }
     Ok(messages)
+}
+
+// `createSearch`'s warnings about the invariants and the properties.
+fn get_search_warnings(
+    constant_invariants: &[Rc<str>],
+    state_level_properties: &[Rc<str>],
+) -> Vec<StartupMessage> {
+    let warning = |code: u32, text: String| StartupMessage {
+        code,
+        is_warning: true,
+        text,
+    };
+    constant_invariants
+        .iter()
+        .map(|name| warning(2149, format!("The invariant {name} is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.")))
+        .chain(state_level_properties.iter().map(|name| warning(2255, format!("The formula {name} is a state-level formula, but it was used as a PROPERTY (or PROPERTIES), where a temporal formula is typically expected. State-level formulas used as PROPERTY or PROPERTIES are only checked in the initial state. To verify that the formula {name} holds in all states of every behavior, use INVARIANT {name} instead. Alternatively, applying the \"always\" temporal operator ([]) to the state-level formula {name} changes it into a temporal formula, asserting that {name} holds in all states of every behavior. See https://explain.tlapl.us/invariants-and-properties for additional details."))))
+        .collect()
+}
+
+/// The warning TLC prints as it starts the liveness checker of a model with a symmetry
+/// (`createLivenessChecker`).
+pub fn get_liveness_symmetry_warning() -> StartupMessage {
+    StartupMessage {
+        code: 2279,
+        is_warning: true,
+        text: "Declaring symmetry during liveness checking is dangerous. It might cause TLC to miss violations of the stated liveness properties. Please check liveness without symmetry defined.".to_owned(),
+    }
 }
 
 // Whether an expression of the IR applies TLC's TLCGet to "spec".

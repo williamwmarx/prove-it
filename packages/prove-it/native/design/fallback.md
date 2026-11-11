@@ -266,6 +266,16 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
 - uncounted branches;
 - every decline of atoms that read or set TLC's registers.
 
+#### Declines to win back
+
+A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
+it from one that printed something else. Each is outside the corpus and the tests:
+- a function constructor that binds a tuple pattern over a set of functions TLC built as
+  functions, applied at once (`[<<a, b>> \in {[k \in 1..2 |-> k]} |-> a][<<1, 2>>]`). TLC applies
+  the function without building it, so it never binds the pattern; the engine builds it and
+  declines the binding, since `ContextEnumerator` binds a tuple pattern only to a `TupleValue`
+  (#245).
+
 #### Every reason
 
 | Runs | Reason | Tests |
