@@ -557,8 +557,9 @@ impl Loader<'_> {
 }
 
 /// The modules of `lib/CommunityModules.jar`, which TLC's jar bundles and finds after the spec's
-/// directory and the library path.
+/// directory and the library path, and `_CBORTrace`, a module of TLC's that extends one of them.
 const COMMUNITY_MODULES: &[&str] = &[
+    "_CBORTrace",
     "BagsExt",
     "Bitwise",
     "CBOR",
