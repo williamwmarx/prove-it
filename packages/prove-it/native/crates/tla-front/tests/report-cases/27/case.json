@@ -1,5 +1,5 @@
 {
- "root": "Hidden",
- "version": "master",
- "test": "locates a HIDE fact SANY fails to resolve at its null node in the builtins"
+  "root": "Hidden",
+  "version": "master",
+  "test": "locates a HIDE fact SANY fails to resolve at its null node in the builtins"
 }
