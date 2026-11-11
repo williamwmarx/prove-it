@@ -40,6 +40,88 @@ fn gives_ls4s_verdict_on_each_formula() {
     }
 }
 
+/// The inputs the encoder prints for the obligations of tests/unit/ptl.test.ts, with the verdict and
+/// the steps the TypeScript decider gave on each before it was deleted.
+#[test]
+fn decides_the_encoders_inputs_as_recorded() {
+    for (text, verdict, steps) in [
+        (
+            "not (((always (h8828a -> h2f89a)) & (always ((h2f89a & (hfc35e | h18388)) -> (next h2f89a))) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always h2f89a))))",
+            Verdict::Unsat,
+            6,
+        ),
+        (
+            "not (((always ((h2f89a & (hfc35e | h18388)) -> (next h2f89a))) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always h2f89a))))",
+            Verdict::Sat,
+            3,
+        ),
+        (
+            "not (((always (h94a4d -> (always (h4ca64 -> (sometime h7fe4a))))) & (always (h94a4d -> (always (h7fe4a -> (sometime hda924))))) & (always (cc | ~ cc)) -> (h94a4d -> (always (h4ca64 -> (sometime hda924))))))",
+            Verdict::Unsat,
+            14,
+        ),
+        (
+            "not (((always (h94a4d -> (always (h4ca64 -> (sometime h7fe4a))))) & (always (cc | ~ cc)) -> (h94a4d -> (always (h4ca64 -> (sometime hda924))))))",
+            Verdict::Sat,
+            7,
+        ),
+        (
+            "not (((always (always hc5714)) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
+            Verdict::Unsat,
+            16,
+        ),
+        (
+            "not (((always (always (sometime hc5714))) & (always (cc | ~ cc)) -> (((h8828a & (always (hfc35e | h18388))) & ((sometime (always hc5714)) -> (always (sometime (hfc35e & (~ h18388)))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
+            Verdict::Sat,
+            36,
+        ),
+        (
+            "not (((always (always (sometime hc5714))) & (always (cc | ~ cc)) -> (((always (sometime hc5714)) -> (always (sometime (hfc35e & (~ h18388))))) -> (always (sometime (hfc35e & (~ h18388)))))))",
+            Verdict::Unsat,
+            31,
+        ),
+        (
+            "not ((h7fe4a & (always (cc | ~ cc)) -> h7fe4a))",
+            Verdict::Unsat,
+            1,
+        ),
+        (
+            "not ((h7fe4a & (always (cc | ~ cc)) -> h344d6))",
+            Verdict::Sat,
+            2,
+        ),
+        (
+            "not (((always h38dda) & (always (cc | ~ cc)) -> (always h38dda)))",
+            Verdict::Unsat,
+            2,
+        ),
+        (
+            "not ((h7fe4a & (always (cc | ~ cc)) -> (always h7fe4a)))",
+            Verdict::Sat,
+            3,
+        ),
+        (
+            "not (((hbe322 -> haf23d) & ((~ hbe322) -> haf23d) & (always (cc | ~ cc)) -> haf23d))",
+            Verdict::Unsat,
+            1,
+        ),
+        (
+            "not (((always ((always hbe322) -> haf23d)) & (always ((always (~ hbe322)) -> haf23d)) & (always (cc | ~ cc)) -> haf23d))",
+            Verdict::Sat,
+            6,
+        ),
+    ] {
+        assert_eq!(
+            decide(text, None),
+            Ok(prove_decide::Decision {
+                verdict,
+                statistics: vec![("steps", Statistic::Count(steps))],
+            }),
+            "{text}"
+        );
+    }
+}
+
 #[test]
 fn counts_its_steps_and_gives_up_past_its_step_limit() {
     let text = "not (((always (p <-> q)) -> ((always p) <-> (always q))))";
