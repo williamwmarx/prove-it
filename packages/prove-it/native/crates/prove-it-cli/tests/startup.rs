@@ -1,11 +1,18 @@
 //! Runs the binary on the cells `startup-texts.txt` records TLC's output for: models whose
 //! constant definitions TLC computes as it starts, one a CHOOSE over every function of a set of
 //! nodes that makes no string, as tlaplus/Examples' EWD998ChanID ranks its nodes, beside ones
-//! that make strings TLC orders by when it made them. Each cell must print what TLC printed, byte
-//! for byte, with TLC's exit code, at -workers 1 and 4.
+//! that make strings TLC orders by when it made them, and one whose invariant fails a few steps
+//! in, whose trace the rebuild reads the ring for: it takes the element the search chose, so the
+//! trace comes in a moment rather than as long as the evaluator's search of every function.
+//! Another's trace reads a CHOOSE whose predicate enumerates more permutations than the trace
+//! evaluator builds, which it would decline: it takes the element the search chose there too.
+//! Each cell must print what TLC printed, byte for byte, with TLC's exit code, at -workers 1
+//! and 4.
 //!
 //! TLC's output is recorded by `scripts/record-startup-texts.ts` from TLC at the commit the
-//! recordings pin; to check it, run that script with TLA2TOOLS_JAR set and diff the file.
+//! recordings pin. To record it again, run from `packages/prove-it`
+//! `TLA2TOOLS_JAR=<tla2tools.jar or a classpath> bun scripts/record-startup-texts.ts`, which
+//! rewrites `startup-texts.txt`; to check it, diff the file.
 
 use std::process::Command;
 
@@ -73,7 +80,7 @@ fn parse(recorded: &str) -> Vec<Cell<'_>> {
 #[test]
 fn startup_texts() {
     let cells = parse(RECORDED);
-    assert_eq!(cells.len(), 2, "the recorded cells");
+    assert_eq!(cells.len(), 4, "the recorded cells");
     for (index, cell) in cells.iter().enumerate() {
         let directory =
             std::env::temp_dir().join(format!("prove-it-startup-{}-{index}", std::process::id()));

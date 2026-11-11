@@ -416,6 +416,7 @@ fn evaluate(
                 &violation.startup,
                 violation.startup_random,
             )?;
+            rebuilder.set_chosen(&violation.store, &violation.chosen);
             if let Some(group) = &violation.symmetry {
                 rebuilder.set_symmetry(group);
             }

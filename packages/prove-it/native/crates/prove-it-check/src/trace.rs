@@ -69,6 +69,7 @@ pub struct PrintedState {
 struct Recorded<'v> {
     store: &'v Store,
     startup: &'v [Id],
+    chosen: &'v [(u32, Id)],
     startup_random: u64,
     random: Option<u64>,
     symmetry: Option<&'v NamedGroup>,
@@ -80,6 +81,7 @@ impl<'v> From<&'v Violation> for Recorded<'v> {
         Recorded {
             store: &violation.store,
             startup: &violation.startup,
+            chosen: &violation.chosen,
             startup_random: violation.startup_random,
             random: violation.random,
             symmetry: violation.symmetry.as_ref(),
@@ -148,6 +150,7 @@ pub fn rebuild_continued(
     let recorded = Recorded {
         store: trace.store,
         startup: trace.startup,
+        chosen: trace.chosen,
         startup_random: trace.startup_random,
         random: trace.random,
         symmetry: None,
@@ -228,6 +231,7 @@ fn rebuild(
         // TLC prints each state through the ALIAS, when there is one.
         let rebuilt = Rebuilder::new(ir).and_then(|mut rebuilder| {
             rebuilder.set_startup(recorded.store, recorded.startup, recorded.startup_random)?;
+            rebuilder.set_chosen(recorded.store, recorded.chosen);
             if let Some(random) = recorded.random {
                 rebuilder.set_violation_random(random);
             }
