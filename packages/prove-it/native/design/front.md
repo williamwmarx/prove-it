@@ -746,8 +746,9 @@ prover, the obligations or the public API imports it. Its parts:
 
 - The report itself (`report`, `generator`, `levels`, `linter`, `selectors`, `nodes`, `snapshot`):
   tla-front writes it byte-identically for TLC master, except where it declines.
-- `xml` and the `generator`, `nodes`, `selectors`, `builtins` and `levels` it needs: SANY's
-  XMLExporter, which tla-front doesn't write.
+- `xml`, SANY's XMLExporter: deleted once tla-front wrote it ("SANY's XMLExporter as built",
+  below). The `generator`, `nodes`, `selectors`, `builtins` and `levels` it read stay with the
+  report.
 - What the TypeScript front end, and so the interpreter, reads besides: `parse-error` and `lexer`
   (its syntax errors and the configuration's), `modules` (the standard modules' texts, from which
   `scripts/front-modules.ts` writes tla-front's), and `source` (the readings `src/tlc/order.ts`
@@ -760,7 +761,8 @@ side:
    the CLI calls (`src/cli/sany-text.ts`), keeping the TypeScript report where it declines.
    `scripts/sany-corpus.ts --recorded` holds the binary and the CLI to TLC's recorded output on
    SANY's corpus and on `tests/recursive-shapes`.
-2. SANY's XMLExporter in tla-front, held to recordings of TLC's.
+2. SANY's XMLExporter in tla-front, held to recordings of TLC's (done: `src/sany/xml.ts` is
+   deleted, and the CLI exports through the engine).
 3. `src/sany` deleted, with what the interpreter reads moved beside the TypeScript front end.
    `PROVE_IT_ENGINE=0` then needs the addon or the WebAssembly engine for SANY's report
    (fallback.md).
@@ -836,13 +838,10 @@ E4294_Module), and a context whose HashMap would make a bucket a tree (9 UIDs in
 whose order neither port follows. `prove-it-check`'s `xml_exporter.rs` takes XMLExporter's
 arguments and usage, and names a root module that no file holds as SimpleFilenameToStream does.
 
-Gates, run by Verification's Front End job:
+Gates, run by Verification's Front End job (until the TypeScript exporter was deleted,
+`front-differential.ts sany-xml` also held the two exporters to each other on every module of the
+corpora: 2,362 of 2,367 matched and none differed):
 
-- `front-differential.ts sany-xml`: the TypeScript and Rust exporters on every module of the
-  corpora and fixtures, with `-o` and each of `-r`, `-u`, `-t` and `-tru`: the error stream, the
-  XML's hash and the exit code (`--xml` compares the XML itself). 2,362 of 2,367 modules match and
-  none differ; of the 5 left, 4 are RECURSIVE declarations the front end declines and 1 is the
-  DEFINE step XMLExporter prints Java's stack traces for.
 - `sany-corpus.ts --recorded` on `tests/conformance/sany-stdout/xml-*.json`, the real exporter at
   d8fb231: with each of the five flag sets, 150 of SANY's 153 corpus specs print what it printed
   and 3 decline (AssumeProveTest and LetInTest, which the front end declines, and E4294_Module);
@@ -859,8 +858,9 @@ sets grow after the copy, which no gate has shown.
 
 `prove-it-host`'s `sanyXml(root, source, fileName, flags, known)` runs `export_xml` on the
 `Sources` convention (`module:<name>`, as `sanyText`), through the addon and the WebAssembly
-engine (ABI 14), and the JavaScript CLI's XMLExporter calls it first, keeping the TypeScript
-exporter where it declines (or where no engine loads). With the addon, `sany-corpus.ts --recorded
---cli` on `xml-o.json` prints what the real exporter printed on 150 of 153 specs, up from 142; the
-3 others are those the native exporter declines, where the TypeScript one differs, so `--cli`
-joins the gate once the TypeScript exporter is deleted.
+engine (ABI 14). The JavaScript CLI's XMLExporter is native only: `src/sany/xml.ts` and TLC
+1.7.4's exporter are deleted, and where tla-front declines, the CLI prints `prove-it: not native
+yet: <reason>` and exits 1, as the binary does, and without an engine it fails as the CLI does
+elsewhere. TLC 1.7.4's XMLExporter (`-cp` its jar, or `-Dtla-ts.tlc=1.7.4`) declines. The rest
+of `src/sany` stays while the TypeScript report uses it (the CLI's fallback where tla-front
+declines SANY's report, TLC 1.7.4's report); the front end's session retires it.
