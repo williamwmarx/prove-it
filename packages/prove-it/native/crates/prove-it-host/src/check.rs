@@ -15,10 +15,12 @@
 //! the tla2tools.jar on a Java launch's class path, and `class:<name>`, the Java override for a
 //! module, both as a Uint8Array. `machine` gives what TLC's banner and dates describe, and what the
 //! check may use of it:
-//! `[system, release, arch, cores, memoryMegabytes, pid, now, zone, variables, isFileSystem]`, with
+//! `[system, release, arch, cores, memoryMegabytes, pid, now, zone, variables, isLibrary]`, with
 //! `now` in milliseconds since the epoch, `zone` a POSIX TZ rule, `variables` the environment's
-//! `[name, value]` pairs the check reads, and `isFileSystem` whether the Json module's operators
-//! may read and write the machine's files, which the library, answering for files itself, denies.
+//! `[name, value]` pairs the check reads, and `isLibrary` whether the library's check runs it: the
+//! library answers for files itself, so the Json module's operators don't touch the machine's, and
+//! it reads each printed state's plain data, which the CLI doesn't, so only it has the check write
+//! them.
 
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -44,7 +46,7 @@ struct SourcesHost {
     started: Instant,
     zone: Zone,
     variables: Vec<(String, String)>,
-    is_file_system: bool,
+    is_library: bool,
 }
 
 impl SourcesHost {
@@ -109,7 +111,11 @@ impl Host for SourcesHost {
     }
 
     fn is_file_system(&self) -> bool {
-        self.is_file_system
+        !self.is_library
+    }
+
+    fn is_plain(&self) -> bool {
+        self.is_library
     }
 
     fn is_complete(&self) -> bool {
@@ -178,13 +184,13 @@ fn check(arguments: &[HostValue]) -> HookResult {
         now,
         zone,
         variables,
-        is_file_system,
+        is_library,
     ] = machine.as_slice()
     else {
-        return Err("the machine must be [system, release, arch, cores, memoryMegabytes, pid, now, zone, variables, isFileSystem]".into());
+        return Err("the machine must be [system, release, arch, cores, memoryMegabytes, pid, now, zone, variables, isLibrary]".into());
     };
-    let HostValue::Bool(is_file_system) = *is_file_system else {
-        return Err("isFileSystem must be a boolean".into());
+    let HostValue::Bool(is_library) = *is_library else {
+        return Err("isLibrary must be a boolean".into());
     };
     let HostValue::Array(variables) = variables else {
         return Err("the variables must be an array of [name, value] pairs".into());
@@ -210,7 +216,7 @@ fn check(arguments: &[HostValue]) -> HookResult {
         started: Instant::now(),
         zone: parse_rule(&get_text(zone, "the zone")?).map_or(Zone::UTC, Zone::from_rule),
         variables,
-        is_file_system,
+        is_library,
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let mut output = Output {
@@ -321,7 +327,7 @@ mod tests {
             started: Instant::now(),
             zone: Zone::UTC,
             variables: Vec::new(),
-            is_file_system: true,
+            is_library: false,
         };
         let first = host.now();
         std::thread::sleep(Duration::from_millis(5));

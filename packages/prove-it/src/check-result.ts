@@ -85,17 +85,35 @@ export type CheckProgress =
   | Exclude<SearchProgress, { kind: "violation" }>
   | { kind: "violation"; status: CheckStatus; violation: Violation };
 
+// The most elements, of sets, functions and sequences at any depth, that a variable's plain data
+// holds; past it the value is null, while its text stays TLC's. It is TLC's own bound on the
+// elements of a set it builds (TLCGlobals.setBound, 1000000 by default), so data the bound cuts
+// off is of a value TLC itself would refuse to enumerate, such as an interval it prints as 1..n.
+const MAXIMUM_PLAIN_ELEMENTS = 1_000_000;
+
+interface Budget {
+  remaining: number;
+}
+
+// Takes `count` elements from the budget, if it has them.
+const isWithin = (budget: Budget, count: number) => {
+  if (count > budget.remaining) return false;
+  budget.remaining -= count;
+  return true;
+};
+
 const isPlain = (value: PlainValue | null): value is PlainValue => value !== null;
 
 // The values as plain data, or null where one can't be.
-const toPlainValues = (values: Value[]) => {
-  const plain = values.map(toPlainValue);
+const toPlainValues = (values: Value[], budget: Budget) => {
+  if (!isWithin(budget, values.length)) return null;
+  const plain = values.map((value) => toPlain(value, budget));
   return plain.every(isPlain) ? plain : null;
 };
 
-const toPlainFunction = (domain: Value[], range: Value[]): PlainValue | null => {
-  const keys = toPlainValues(domain);
-  const values = toPlainValues(range);
+const toPlainFunction = (domain: Value[], range: Value[], budget: Budget): PlainValue | null => {
+  const keys = toPlainValues(domain, budget);
+  const values = keys && toPlainValues(range, budget);
   if (keys === null || values === null) return null;
   const isSequence = domain.every((key, index) => key === index + 1);
   const isRecord =
@@ -106,32 +124,38 @@ const toPlainFunction = (domain: Value[], range: Value[]): PlainValue | null => 
 };
 
 // A value as plain data, as prove-it-check's plain.rs writes the native one: null where TLC can't
-// print the value, as a set it can't normalize, or where its text wouldn't be TLC's.
-const toPlainValue = (value: Value): PlainValue | null => {
+// print the value, as a set it can't normalize, where its text wouldn't be TLC's, and past the
+// budget.
+const toPlain = (value: Value, budget: Budget): PlainValue | null => {
   if (typeof value !== "object") return value;
   if (value.kind === "ModelValue") return { "@model": value.name };
   if (value.kind === "MixedSet") return null;
   if (value.kind === "Set") {
-    const elements = toPlainValues(value.elements);
+    const elements = toPlainValues(value.elements, budget);
     return elements && { "@set": elements };
   }
   if (value.kind === "Interval") {
-    return {
-      "@set": Array.from(
-        { length: Math.max(0, value.high - value.low + 1) },
-        (_, index) => value.low + index,
-      ),
-    };
+    const size = Math.max(0, value.high - value.low + 1);
+    return isWithin(budget, size)
+      ? { "@set": Array.from({ length: size }, (_, index) => value.low + index) }
+      : null;
   }
-  if (value.kind === "Function") return toPlainFunction(value.domain, value.range);
-  // A function TLC keeps lazy over a set it enumerates is the function it converts to.
-  if (
-    value.kind === "LazyFunction" &&
-    typeof value.domain === "object" &&
-    (value.domain.kind === "Set" || value.domain.kind === "Interval")
-  ) {
-    const enumerated = toFiniteFunction(value);
-    return toPlainFunction(enumerated.domain, enumerated.range);
+  if (value.kind === "Function") return toPlainFunction(value.domain, value.range, budget);
+  // A function TLC keeps lazy over a set it enumerates is the function it converts to, unless its
+  // domain is past the budget.
+  if (value.kind === "LazyFunction" && typeof value.domain === "object") {
+    const domain = value.domain;
+    const size =
+      domain.kind === "Set"
+        ? domain.elements.length
+        : domain.kind === "Interval"
+          ? Math.max(0, domain.high - domain.low + 1)
+          : undefined;
+    if (size !== undefined && size > budget.remaining) return null;
+    if (size !== undefined) {
+      const enumerated = toFiniteFunction(value);
+      return toPlainFunction(enumerated.domain, enumerated.range, budget);
+    }
   }
   // The interpreter writes a lazy function or set filter it has no source for as no TLC text.
   if ((value.kind === "LazyFunction" || value.kind === "FilteredSet") && !value.source) {
@@ -139,6 +163,8 @@ const toPlainValue = (value: Value): PlainValue | null => {
   }
   return { "@lazy": formatValue(value) };
 };
+
+const toPlainValue = (value: Value) => toPlain(value, { remaining: MAXIMUM_PLAIN_ELEMENTS });
 
 const toTraceStep = (step: SearchStep): TraceStep => ({
   label: step.label ?? step.action ?? "Initial predicate",

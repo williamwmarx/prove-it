@@ -137,7 +137,7 @@ const checkInProcess = (directory: string, args: string[]) => {
       Date.now(),
       "UTC0",
       [],
-      true,
+      false,
     ],
     (key) => readKey(directory, args, key),
   );
@@ -172,7 +172,7 @@ describe("checkSources", () => {
       const result = checkAllSources(
         getAddon(),
         ["-noGenerateSpecTE", getSpecPath(directory, test.args)],
-        ["", "", "", 1, 0, 0, 0, "UTC0", [], false],
+        ["", "", "", 1, 0, 0, 0, "UTC0", [], true],
         (key) => readKey(directory, test.args, key),
       );
       rmSync(directory, { recursive: true, force: true });

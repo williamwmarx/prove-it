@@ -103,7 +103,7 @@ pub fn print_failure(
     if stop.site == Site::Next && stop.reason == "a successor that isn't complete" {
         return print_incomplete(printer, ir, stop, start);
     }
-    let report = evaluate(ir, stop, printer.is_tool)?;
+    let report = evaluate(ir, stop, printer.is_tool, printer.host.is_plain())?;
     let failure = &report.failure;
     if stop.replayed.is_some() && failure.fingerprint.is_some() {
         return Err("a state TLC fails to fingerprint with an ALIAS or a POSTCONDITION".into());
@@ -388,7 +388,12 @@ pub fn print_assumption_failure(
 }
 
 // Evaluates the failure again and rebuilds the trace.
-fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, String> {
+fn evaluate(
+    ir: &Ir,
+    stop: &ErrorStop<'_>,
+    is_tool: bool,
+    is_plain: bool,
+) -> Result<Report, String> {
     evaluate_on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
         rebuilder.set_fingerprints(stop.fingerprints);
@@ -475,7 +480,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
             .transpose()?;
         Ok(Report {
             failure,
-            states: labelled(ir, &trace, aliases.as_deref())?,
+            states: labelled(ir, &trace, aliases.as_deref(), is_plain)?,
             after,
             postconditions,
         })
@@ -495,6 +500,7 @@ fn labelled(
     ir: &Ir,
     trace: &Trace,
     aliases: Option<&[Alias]>,
+    is_plain: bool,
 ) -> Result<Vec<PrintedStep>, Unsupported> {
     let mut states = Vec::with_capacity(trace.states.len());
     for (position, state) in trace.states.iter().enumerate() {
@@ -517,8 +523,9 @@ fn labelled(
                     fields
                         .iter()
                         .map(|(name, value)| (name.as_str(), Some(value))),
+                    is_plain,
                 ),
-                _ => get_state_variables(ir, &state.values),
+                _ => get_state_variables(ir, &state.values, is_plain),
             },
             output: state
                 .printed
@@ -552,6 +559,7 @@ fn print_incomplete(
     if stop.replayed.is_some() {
         return Err("an incomplete successor with an ALIAS or a POSTCONDITION".into());
     }
+    let is_plain = printer.host.is_plain();
     let (states, incomplete) = evaluate_on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
         let trace = rebuilder.rebuild(stop.store, &stop.states, &stop.actions, Ending::Kept)?;
@@ -565,11 +573,11 @@ fn print_incomplete(
         let incomplete = rebuilder.incomplete_successor(&trace)?;
         let partial: Vec<_> = incomplete.partial.iter().map(Option::as_ref).collect();
         Ok((
-            labelled(ir, &trace, None)?,
+            labelled(ir, &trace, None, is_plain)?,
             (
                 incomplete.action,
                 incomplete.missing,
-                get_partial_variables(ir, &partial),
+                get_partial_variables(ir, &partial, is_plain),
             ),
         ))
     })?;

@@ -81,6 +81,11 @@ pub trait Host {
     fn is_file_system(&self) -> bool {
         true
     }
+    /// Whether the check writes each printed state's variables as plain data too, which only the
+    /// library's check reads (`Outcome`).
+    fn is_plain(&self) -> bool {
+        false
+    }
 }
 
 /// The file system and the process the binary runs in, and the advice the binary gives the system

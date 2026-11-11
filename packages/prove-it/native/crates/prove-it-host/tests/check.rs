@@ -33,7 +33,7 @@ fn machine() -> HostValue {
         HostValue::Number(1_794_312_000_000.0),
         HostValue::text("UTC0"),
         HostValue::Array(Vec::new()),
-        HostValue::Bool(true),
+        HostValue::Bool(false),
     ])
 }
 

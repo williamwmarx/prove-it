@@ -135,9 +135,9 @@ export const checkAllSources = (
 };
 
 // What the check prints of the machine it runs on and of the time: `now` in milliseconds since the
-// epoch, `zone` a POSIX TZ rule, and the environment variables it reads; and whether the Json
-// module's operators may read and write its files, which the library, answering for the files
-// itself, denies. A tuple, since neither binding reads an object.
+// epoch, `zone` a POSIX TZ rule, and the environment variables it reads; and whether the library's
+// check runs it, which answers for files itself and reads each printed state's plain data. A tuple,
+// since neither binding reads an object.
 export type NativeMachine = [
   system: string,
   release: string,
@@ -148,7 +148,7 @@ export type NativeMachine = [
   now: number,
   zone: string,
   variables: [string, string][],
-  isFileSystem: boolean,
+  isLibrary: boolean,
 ];
 
 // A prover backend's answer, malformed input, or why the Rust backend doesn't decide the input

@@ -149,6 +149,23 @@ describe("check's result", () => {
     expect(variables.nested.value).toEqual([{ "@lazy": "Nat" }, 1]);
   });
 
+  it("keeps TLC's text but no data for a value past the bound on plain data", async () => {
+    const run = await runBoth(
+      [
+        "VARIABLE x",
+        "Init == x = 0",
+        "Next == x' = x + 1",
+        "Inv == x < 1",
+        "Alias == [x |-> x, big |-> 1..1000000000]",
+      ].join("\n"),
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+    );
+    expect(run.result.violations[0].states.map((state) => state.variables.big)).toEqual([
+      { text: "1..1000000000", value: null },
+      { text: "1..1000000000", value: null },
+    ]);
+  });
+
   it("reports where a lasso's cycle starts", async () => {
     const run = await runBoth(
       [

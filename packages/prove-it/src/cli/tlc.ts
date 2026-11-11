@@ -927,7 +927,7 @@ export const checkNatively = async (
       Date.now(),
       getZoneRule(),
       getEngineVariables(),
-      true,
+      false,
     ],
     readKey,
   );

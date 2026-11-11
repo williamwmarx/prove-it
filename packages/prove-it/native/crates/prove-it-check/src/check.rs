@@ -340,6 +340,8 @@ struct Relay<'ir> {
     dumped: Option<Result<(), &'static str>>,
     ir: &'ir tla_ir::Ir,
     is_tool: bool,
+    /// Whether a trace's states carry plain data (`Host::is_plain`).
+    is_plain: bool,
     workers: usize,
     /// What TLC prints itself at `startup_done`, as tla-front writes it.
     startup_messages: Vec<StartupMessage>,
@@ -437,7 +439,7 @@ impl Reporter for Relay<'_> {
         };
         let is_initial = matches!(kind, ViolationKind::InitialInvariant(_));
         let report = headline.map_err(String::from).and_then(|headline| {
-            let trace = rebuild_continued(ir, &continued, &kind, self.is_tool)?;
+            let trace = rebuild_continued(ir, &continued, &kind, self.is_tool, self.is_plain)?;
             let labels = trace_labels(ir, &trace)?
                 .into_iter()
                 .map(String::from)
@@ -977,6 +979,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let threads = settings.threads;
     let (sender, receiver) = mpsc::channel();
     let is_tool = printer.is_tool;
+    let is_plain = printer.host.is_plain();
     // How many initial states TLC generated, which TLCGet("stats") reports.
     let mut initial_generated = 0;
     // When the check of the temporal properties part way through the search that found a
@@ -1001,6 +1004,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 dumped: None,
                 ir,
                 is_tool,
+                is_plain,
                 workers,
                 startup_messages: front.startup_messages,
                 startup_worded: Some(Vec::new()),
@@ -1582,7 +1586,13 @@ fn print_violation(
     // TLC prints a trace once it has rebuilt all of it, and a state that the evaluator can't
     // rebuild as TLC built it keeps the run not native.
     let checked = postconditions.filter(|_| !ir.model.postconditions.is_empty());
-    let trace = match rebuild_trace(ir, violation, checked, printer.is_tool) {
+    let trace = match rebuild_trace(
+        ir,
+        violation,
+        checked,
+        printer.is_tool,
+        printer.host.is_plain(),
+    ) {
         Ok(trace) => trace,
         Err(reason) => return Ok(report_not_native(printer, &reason)),
     };
@@ -1595,7 +1605,13 @@ fn print_violation(
             if checked.is_some() {
                 return Err("a postcondition after a deadlock that violates a temporal property");
             }
-            match rebuild_accepted(ir, violation, accepted, printer.is_tool) {
+            match rebuild_accepted(
+                ir,
+                violation,
+                accepted,
+                printer.is_tool,
+                printer.host.is_plain(),
+            ) {
                 Ok(trace) => Some((trace, properties_headline(ir, &accepted.violated))),
                 Err(reason) => return Ok(report_not_native(printer, &reason)),
             }

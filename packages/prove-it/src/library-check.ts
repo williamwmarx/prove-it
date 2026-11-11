@@ -99,7 +99,7 @@ const checkWithEngine = (options: CheckOptions) => {
       Date.now(),
       "UTC0",
       getEngineVariables(),
-      false,
+      true,
     ],
     read,
   );

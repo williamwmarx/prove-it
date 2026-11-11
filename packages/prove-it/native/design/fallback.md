@@ -639,7 +639,10 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
 - `check` runs `checkSources` as the CLI does, with the spec and its configuration as the files
   `<Module>.tla` and `<Module>.cfg`, its modules through `loadModule`, and `-seed`, `-workers`,
   `-lncheck`, `-tool`, `-nowarning` and `-continue` from its options. The Json module's operators
-  decline there, since the library answers for files through `readFile` and `writeFile`.
+  decline there, since the library answers for files through `readFile` and `writeFile`. The
+  machine's `isLibrary` says so, and only then does the check write each printed state's plain
+  data, at most 1,000,000 elements of it a variable, TLC's own bound on a set it builds; past
+  that the value is `null`. The binary and the CLI's `checkSources` write none.
 - The check records what it found as it prints (`prove-it-check`'s `outcome.rs`), and
   `checkSources` returns it as `outcome` (ABI 16): the status, the counts of TLC's statistics, what
   the spec printed, and each violation or error TLC reports, as its message's code and text with
