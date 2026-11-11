@@ -512,6 +512,8 @@ const TLC_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCEval.
 
 const TLC_GET_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
+const PICK_SUCCESSOR: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+
 const RANDOM_SUBSET: &str = "public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
 // `reportAsJavaFailure`: a failure with TLC's message, reported as the failure of the Java method
@@ -5008,6 +5010,27 @@ impl<'ir> Evaluator<'ir> {
                 self.reads += 1;
                 self.set_register(key, value)?;
                 Value::Bool(true)
+            }
+            // `TLCExt.pickSuccessor`, which fingerprints the successor first: where the state isn't
+            // complete, as in an invariant, TLCStateMut.fingerPrint dereferences a variable's
+            // missing value. Where it is, TLC asks whether it has seen the state, which the
+            // evaluator doesn't know. Under a VIEW or symmetry TLC fingerprints otherwise.
+            "PickSuccessor" => {
+                arity(1)?;
+                let model = &self.ir.model;
+                if self.next.iter().all(Option::is_some)
+                    || model.view.is_some()
+                    || model.startup.symmetry.is_some()
+                {
+                    return fail("PickSuccessor of a successor TLC fingerprints");
+                }
+                return as_java_failure(
+                    PICK_SUCCESSOR,
+                    fail_runtime(
+                        "PickSuccessor of a successor TLC fingerprints incomplete",
+                        "Cannot invoke \"tlc2.value.IValue.fingerPrint(long)\" because \"minVals[i]\" is null".into(),
+                    ),
+                );
             }
             // `TLCExt.tlcGetOrDefault`: the register's value, or the default where the key names
             // none or none is set. TLCGetAndSet, TLA+ in TLCExt, then sets the register to

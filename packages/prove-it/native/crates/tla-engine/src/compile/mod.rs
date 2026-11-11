@@ -802,6 +802,8 @@ pub struct Compiler<'a> {
     pub is_lambda_built: bool,
     /// Whether TLCCache caches anything compiled whose value depends on what TLC evaluates first.
     pub is_cached: bool,
+    /// Whether anything compiled applies PickSuccessor, which reads the states TLC has seen.
+    pub is_picking: bool,
     /// Whether anything compiled applies TLCCache, whose cache is the machine's own, where TLC
     /// keeps one for every worker.
     pub is_tlc_cache_used: bool,
@@ -886,6 +888,7 @@ impl<'a> Compiler<'a> {
             workers: 1,
             is_lambda_built: false,
             is_cached: false,
+            is_picking: false,
             is_tlc_cache_used: false,
             scope_contexts: HashMap::new(),
         }

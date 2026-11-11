@@ -337,6 +337,9 @@ impl Compiler<'_> {
         if self.is_native && matches!(name, "TLCGetOrDefault" | "TLCGetAndSet") {
             return self.compile_get_or_default(operands, context, name == "TLCGetAndSet");
         }
+        if self.is_native && name == "PickSuccessor" {
+            return self.compile_pick_successor(operands);
+        }
         if self.is_native && name == "TLCFP" {
             return self.compile_tlc_fp(operands);
         }
@@ -1118,6 +1121,57 @@ impl Compiler<'_> {
             }),
             footprint,
         ))
+    }
+
+    // PickSuccessor(exp) as TLC's model checker evaluates it (`TLCExt.pickSuccessor`): TRUE of a
+    // successor TLC has seen, then exp where it holds; where it doesn't, TLC asks its user to pick.
+    // TLC fingerprints the successor first, which fails where it isn't complete, as in an
+    // invariant, so that stops the search, for the trace evaluator to word. The search tells
+    // whether TLC has seen the successor only as it checks the action constraints.
+    fn compile_pick_successor(&mut self, operands: &[Operand]) -> Compiling<Compiled> {
+        let model = &self.ir.model;
+        if model.view.is_some() || model.startup.symmetry.is_some() {
+            return unsupported("PickSuccessor under a VIEW or SYMMETRY");
+        }
+        // TLC takes PickSuccessor for an action (its minLevel), which the properties' levels
+        // here don't follow.
+        if !model.property_invariants.is_empty()
+            || !model.action_properties.is_empty()
+            || !model.atoms.is_empty()
+            || !model.live_formula.is_empty()
+        {
+            return unsupported("PickSuccessor with temporal properties");
+        }
+        let [operand] = operands else {
+            return unsupported("an operator applied to the wrong number of arguments");
+        };
+        self.is_picking = true;
+        let guard = self.operand(&Operand {
+            context: operand.context.without_print(),
+            ..operand.clone()
+        })?;
+        let footprint = (0..self.ir.variables.len() as u32)
+            .fold(guard.footprint, |footprint, variable| {
+                footprint.merge(&Footprint::prime(variable))
+            });
+        let guard = guard.eval;
+        Ok(Compiled {
+            is_boolean: true,
+            ..leaf(
+                eval(move |machine| match machine.is_successor_seen {
+                    None => Err(Bail(
+                        "PickSuccessor of a successor TLC fingerprints incomplete",
+                    )),
+                    Some(true) => Ok(TRUE),
+                    Some(false) => match guard(machine)? {
+                        TRUE => Ok(TRUE),
+                        FALSE => Err(Bail("unsupported: PickSuccessor, which asks TLC's user")),
+                        _ => Err(Bail("a PickSuccessor condition that isn't a boolean")),
+                    },
+                }),
+                footprint,
+            )
+        })
     }
 
     // TLCFP(v), TLC's fingerprint of v as a number: the low 32 bits of the fingerprint of a state
