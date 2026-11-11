@@ -1,4 +1,5 @@
 {
   "root": "Spec",
-  "version": "master"
+  "version": "master",
+  "declines": "a module SANY's parser accepts"
 }
