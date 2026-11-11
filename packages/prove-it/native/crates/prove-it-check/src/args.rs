@@ -67,9 +67,18 @@ pub fn get_java_launch(args: &[String]) -> Option<Launch> {
                 args: rest(index + 2),
                 java,
             });
-        } else if let Some(libraries) = arg.strip_prefix("-DTLA-Library=") {
-            java.libraries
-                .extend(libraries.split(PATH_DELIMITER).map(String::from));
+        } else if let Some(libraries) = arg
+            .strip_prefix("-DTLA-Library=")
+            .or((arg == "-DTLA-Library").then_some(""))
+        {
+            // The JVM keeps a property's last value, which TLC splits as Java's String.split
+            // does, dropping the empty paths at the end (`SimpleFilenameToStream.parsePaths`).
+            let mut paths: Vec<String> =
+                libraries.split(PATH_DELIMITER).map(String::from).collect();
+            while libraries.contains(PATH_DELIMITER) && paths.last().is_some_and(String::is_empty) {
+                paths.pop();
+            }
+            java.libraries = paths;
         } else if let Some(directory) = arg.strip_prefix("-Djava.io.tmpdir=") {
             java.temporary_directory = Some(directory.into());
         } else if let Some(version) = arg.strip_prefix("-Dtla-ts.tlc=") {

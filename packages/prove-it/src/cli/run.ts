@@ -33,8 +33,12 @@ const getJavaLaunch = (args: string[]) => {
     } else if (arg === "-jar") {
       java.classPath = args[index + 1];
       return { mainClass: "tlc2.TLC", args: args.slice(index + 2), java };
-    } else if (arg.startsWith(TLA_LIBRARY_PROPERTY)) {
-      java.libraries.push(...arg.slice(TLA_LIBRARY_PROPERTY.length).split(delimiter));
+    } else if (arg.startsWith(TLA_LIBRARY_PROPERTY) || arg === "-DTLA-Library") {
+      // The JVM keeps a property's last value, which TLC splits as Java's String.split does,
+      // dropping the empty paths at the end (SimpleFilenameToStream.parsePaths).
+      const paths = arg.slice(TLA_LIBRARY_PROPERTY.length).split(delimiter);
+      java.libraries =
+        paths.length === 1 ? paths : paths.slice(0, paths.findLastIndex((path) => path !== "") + 1);
     } else if (arg.startsWith(TEMPORARY_DIRECTORY_PROPERTY)) {
       java.temporaryDirectory = arg.slice(TEMPORARY_DIRECTORY_PROPERTY.length);
     } else if (arg.startsWith(TLC_VERSION_PROPERTY)) {
@@ -60,7 +64,8 @@ const run = async (args: string[]) => {
   launch.java.tlcVersion ??= await getTlcVersion(getToolsJar(launch.java));
   if (launch.mainClass === "tlc2.TLC") {
     return (
-      (await checkNatively(args, launch.args, launch.java)) ?? checkSpecs(launch.args, launch.java)
+      (await checkNatively(args, launch.args, launch.java)) ??
+      reportErrors(() => checkSpecs(launch.args, launch.java, true))
     );
   }
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {

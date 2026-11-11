@@ -2,6 +2,7 @@
 //! IR and what TLC prints before the search, SANY's report and the messages TLC prints as it
 //! starts, or where TLC stops before it searches.
 
+use std::cell::Cell;
 use std::path::Path;
 
 use tla_front::TlcVersion;
@@ -61,84 +62,99 @@ pub fn read_front(
     is_tool: bool,
     seed: i64,
 ) -> Result<Read, String> {
-    let spec = Path::new(spec_path);
-    let directory = spec.parent().unwrap_or(Path::new("."));
-    let directories: Vec<&Path> = files.directories.iter().map(Path::new).collect();
-    let load_module = |name: &str| host.load_module(&directories, name);
-    let load_class = |name: &str| host.load_class(directory, name);
-    let source = host.read_text(spec);
-    let sources = source.as_deref().map(|source| ModelSources {
-        source,
-        directory,
-        load_module: &load_module,
-        load_class: &load_class,
-    });
-    // The tests check engine IRs of models whose sources they don't hold: PROVE_IT_TEST_IR names
-    // the IR to check in place of the one tla-front lowers, with nothing printed before the search
-    // but what the engine's startup prints.
-    if let Some(path) = host.get_variable("PROVE_IT_TEST_IR") {
-        let ir = std::fs::read(&path)
-            .map_err(|error| format!("the IR PROVE_IT_TEST_IR names: {error}"))?;
-        return Ok(Read::Model(Front {
-            ir,
-            defined_names: Vec::new(),
-            sany: None,
-            override_messages: Vec::new(),
-            startup_messages: Vec::new(),
-            initial_label: None,
-        }));
-    }
-    let describe = host.get_file_describer(files);
-    let sany = native_sany(
-        spec_path,
-        sources.as_ref(),
-        &*describe,
-        files.root_extendees,
-    )
-    .map_err(|error| match error {
-        FrontError::NotYet(reason) => format!("SANY's report of {reason}"),
-        _ => "SANY's report, which tla-front doesn't write".to_owned(),
-    })?;
-    if sany.is_failed {
-        return Ok(Read::Failed(Failure {
-            sany: sany.text,
-            warnings: Vec::new(),
-            error: None,
-            exception: sany.exception,
-        }));
-    }
-    // TLC's seed as the generator's 64 bits.
-    let (warnings, error) = match lower(
-        sources.as_ref(),
-        config_text,
-        is_warning_enabled,
-        files.directories,
-        seed as u64,
-        files.root_extendees,
-    ) {
-        Ok(lowered) => {
+    // SANY prints that it can't read a module's file it finds, and goes on as if it found none.
+    let unreadable = Cell::new(false);
+    let read = (|| {
+        let spec = Path::new(spec_path);
+        let directories: Vec<&Path> = files.directories.iter().map(Path::new).collect();
+        let load_module = |name: &str| {
+            host.load_module(&directories, name).unwrap_or_else(|_| {
+                unreadable.set(true);
+                None
+            })
+        };
+        let load_class = |name: &str| host.load_class(&directories, name);
+        let source = host.read_text(spec);
+        let sources = source.as_deref().map(|source| ModelSources {
+            source,
+            load_module: &load_module,
+            load_class: &load_class,
+        });
+        // The tests check engine IRs of models whose sources they don't hold: PROVE_IT_TEST_IR names
+        // the IR to check in place of the one tla-front lowers, with nothing printed before the search
+        // but what the engine's startup prints.
+        if let Some(path) = host.get_variable("PROVE_IT_TEST_IR") {
+            let ir = std::fs::read(&path)
+                .map_err(|error| format!("the IR PROVE_IT_TEST_IR names: {error}"))?;
             return Ok(Read::Model(Front {
-                ir: lowered.ir,
-                defined_names: lowered.defined_names,
-                sany: Some(sany.text),
-                startup_messages: lowered.startup_messages?,
-                override_messages: lowered.override_messages,
-                initial_label: lowered.initial_label,
+                ir,
+                defined_names: Vec::new(),
+                sany: None,
+                override_messages: Vec::new(),
+                startup_messages: Vec::new(),
+                initial_label: None,
             }));
         }
-        Err(FrontError::NotYet(reason)) => return Err(reason),
-        Err(FrontError::Warned(warnings, error)) => (warnings, *error),
-        Err(error) => (Vec::new(), error),
-    };
-    let coded = error
-        .get_coded(is_tool)
-        .ok_or("an error tla-front raises that TLC reports without a code")?;
-    Ok(Read::Failed(Failure {
-        sany: sany.text,
-        warnings,
-        error: Some(coded),
-        exception: None,
-    }))
+        let describe = host.get_file_describer(files);
+        let sany = native_sany(
+            spec_path,
+            files.main_file,
+            sources.as_ref(),
+            &*describe,
+            files.root_extendees,
+        )
+        .map_err(|error| match error {
+            FrontError::NotYet(reason) => format!("SANY's report of {reason}"),
+            _ => "SANY's report, which tla-front doesn't write".to_owned(),
+        })?;
+        if sany.is_failed {
+            return Ok(Read::Failed(Failure {
+                sany: sany.text,
+                warnings: Vec::new(),
+                error: None,
+                exception: sany.exception,
+            }));
+        }
+        // TLC's seed as the generator's 64 bits.
+        let (warnings, error) = match lower(
+            sources.as_ref(),
+            config_text,
+            is_warning_enabled,
+            files.directories,
+            seed as u64,
+            files.root_extendees,
+        ) {
+            Ok(lowered) => {
+                return Ok(Read::Model(Front {
+                    ir: lowered.ir,
+                    defined_names: lowered.defined_names,
+                    sany: Some(sany.text),
+                    startup_messages: lowered.startup_messages?,
+                    override_messages: lowered.override_messages,
+                    initial_label: lowered.initial_label,
+                }));
+            }
+            Err(FrontError::NotYet(reason)) => return Err(reason),
+            Err(FrontError::Warned(warnings, error)) => (warnings, *error),
+            Err(error) => (Vec::new(), error),
+        };
+        let coded = error
+            .get_coded(is_tool)
+            .ok_or("an error tla-front raises that TLC reports without a code")?;
+        Ok(Read::Failed(Failure {
+            sany: sany.text,
+            warnings,
+            error: Some(coded),
+            exception: None,
+        }))
+    })();
+    if unreadable.get() {
+        return Err(
+            "a module's file the front end can't read, such as a directory or text not in UTF-8"
+                .to_owned(),
+        );
+    }
+    read
 }
 
 // The model as tla-front lowers it.
@@ -169,16 +185,17 @@ fn lower(
 
 fn native_sany(
     spec_path: &str,
+    main_file: &str,
     sources: Option<&ModelSources>,
     describe_file: &dyn Fn(&str, ModuleOrigin) -> String,
     root_extendees: &[&str],
 ) -> Result<SanyText, FrontError> {
     let spec = Path::new(spec_path);
     // TLC gives SANY the spec as the command line names it, without .tla, unless it's absolute.
-    let file_name = if spec.is_absolute() {
+    let file_name = if Path::new(main_file).is_absolute() {
         spec.file_stem().and_then(|stem| stem.to_str())
     } else {
-        Some(spec_path.strip_suffix(".tla").unwrap_or(spec_path))
+        Some(main_file)
     };
     let root = spec
         .file_stem()

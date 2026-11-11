@@ -307,6 +307,23 @@ Outside the counts, SANY's report differs on an INSTANCE of a module with semant
 `*** Errors: 2` for module Spec, while the binary prints `*** Errors: 3`, adding `Substitution error,
 probably due to error in module being instantiated.` at the INSTANCE (exit 150 in both).
 
+The binary declines a module file it finds but can't read, such as a directory or text not in
+UTF-8 (`a module's file the front end can't read`), where SANY prints `***Internal error: Unable to
+create NamedInputStream in toIStream method`. Where the TypeScript check finds the files, TLC's
+`SimpleFilenameToStream` still differs from it on:
+
+- `-config _CBORTrace.tla`, which TLC finds among its jar's standard modules and the CLI reports
+  missing (the other standard modules decline);
+- `-config` naming a resource at the root of TLC's class path, such as `pcal/PlusCal.tla`, after
+  which TLC prints a `FileNotFoundException`'s stack trace;
+- a `.class` file that isn't one (empty, truncated, `/dev/null` or a socket), which TLC rejects
+  with `Found a Java class for module M, but unable to read it`, and a user's `Naturals.class` or
+  `TLC.class`, which TLC tries to load;
+- under `PROVE_IT_ENGINE=0` alone: the configuration of a spec on the library path, read beside
+  the spec rather than where TLC's resolver finds it first; a relative `-config` with an absolute
+  spec, which TLC resolves against the spec's directory; a missing configuration named by its
+  path rather than its name; and options TLC doesn't know, which it rejects.
+
 #### Every reason
 
 Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so the counts follow
