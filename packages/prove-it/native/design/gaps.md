@@ -1065,25 +1065,26 @@ progress line: TLC prints the statistics, with the states left on the queue, and
 exits 10 (TLC_ASSUMPTION_FALSE). A value that is no boolean, or a failure, ends the run with an
 error.
 
+- **When TLC evaluates it:** 3 s after its workers start, unless the search ends first, and then
+  at each progress report (`AbstractChecker.runTLC`: `wait(3000)`, then `doPeriodicWork` before
+  each `runTLCContinueDoing`). Whether TLC evaluates it at all, and with what counts, depends on
+  TLC's speed. The engine's search can run 20 to 35 times as fast as TLC's, so no time of the
+  binary's bounds TLC's first evaluation (as it does `-coverage`'s, whose pass is slower than TLC).
 - **What the binary does:** the IR carries the definition (`Model::periodic`, last in the model's
-  section, IR version 16), and the relay evaluates it with the trace evaluator at each progress point the engine
-  reports (`Rebuilder::periodic`), after the startup's definitions, TLCGet reading the counts that
-  progress reports. What it prints comes before the Progress line. FALSE cancels the search, and
-  the binary prints TLC's statistics with those counts, then exits 10.
-- **The counts:** TLC's workers run on between the evaluation and the Progress line, so its two
-  sets of counts can differ by a few states. The binary reports one set, which TLC prints where
-  the workers don't move on.
-- **What still declines:** an expression that fails to evaluate or is no boolean, which TLC reports
-  as an error; one that sets or reads TLC's registers, TLCGet("all"), TLCGet("duration") or
-  CounterExample, which the evaluator doesn't hold as TLC's main thread does; one after the
-  configuration's predicates; and -dump of a search it stops. A function definition, which TLC
-  fails comparing with FALSE, and a name the configuration assigns a value, a module's builtin or
-  one of TLC's constant values (TRUE, BOOLEAN, ...), which TLC fails on as it starts, decline as
-  the binary starts; an operator of the core language, or a synonym (`<=`), TLC reports as not
-  defined. At the first progress point, where TLC evaluates the
-  expression, the search declines a configuration with an assignment or substitution qualified by
-  a module, which the evaluator doesn't follow, and temporal properties, whose check of the
-  current state space TLC prints before the expression's.
+  section, IR version 16). As it starts, the binary evaluates the expression with the trace
+  evaluator, with TLC's empty state and none of the run's counts (`Rebuilder::is_periodic_inert`):
+  only where it is TRUE and prints nothing, reading nothing of the run, does the binary check the
+  spec, without evaluating the expression again (`cli.md`, _PERIODIC). Anything else declines
+  before the search: an expression that prints or is FALSE (`a _PERIODIC that prints or is FALSE,
+  which TLC evaluates at a time of its own`), one that reads the run (a count, a register, the
+  state, CounterExample) or fails or isn't a boolean, one in a spec that reads JavaTime or draws at
+  random, one after the configuration's predicates, a configuration with an assignment or
+  substitution qualified by a module, which the evaluator doesn't follow, and temporal
+  properties, whose check TLC runs as it evaluates the expression.
+- **As TLC starts:** a function definition, which TLC fails comparing with FALSE, and a name the
+  configuration assigns a value, a module's builtin or one of TLC's constant values (TRUE,
+  BOOLEAN, ...), which TLC fails on as it starts, decline; an operator of the core language, or a
+  synonym (`<=`), TLC reports as not defined, as the binary does.
 
 ## TLC's order of strings
 

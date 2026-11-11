@@ -213,9 +213,6 @@ Still to do:
   `liveness-started` and `liveness-finished`.
 - PROVE_IT_TEST_LIVE_CHECK_AT sets the number of expanded states after which the first check comes,
   as for the TypeScript CLI, so a test can reach one on a small model.
-- PROVE_IT_TEST_PROGRESS_EVERY sets the number of expanded states between the binary's progress
-  reports, the first after that many, in place of its clock, so a test can reach progress points,
-  and the `_PERIODIC` expression TLC evaluates there, on a small model.
 - A counterexample a check part way through finds stays not native: the interpreter prints it with
   the counts so far.
 
@@ -497,6 +494,30 @@ platform's separators and `user.dir`, and fails as unsupported on another of the
 
 `prove-it <Spec>...` without `tlc2.TLC` stays Prove It's own
 form (DESIGN 13.1): several specs, `Spec.cfg`, and its usage where none is named.
+
+## _PERIODIC
+
+TLC evaluates the configuration's `_PERIODIC` expression 3 s after its workers start, unless its
+search ends first, and then before each progress report (`AbstractChecker.runTLC`: `wait(3000)`,
+then `ModelChecker.doPeriodicWork` before each `runTLCContinueDoing`). FALSE stops the search, and
+what the expression prints TLC prints there. When TLC evaluates it, and whether it does at all,
+depends on TLC's speed; the engine's search can run 20 to 35 times as fast as TLC's, so, unlike
+`-coverage`'s cut, no time of the binary's bounds TLC's first evaluation.
+
+The rule: the binary checks a spec with a `_PERIODIC` expression only where the expression has
+one value whenever TLC evaluates it, and that value changes nothing TLC prints. As it starts, it
+evaluates the expression with the trace evaluator, as TLC does, with TLC's empty state of the
+initial level and none of the run's counts: anything that reads the run (a TLCGet count, a
+register, the state, CounterExample) fails to evaluate there, and a spec that reads JavaTime or
+draws at random declines whole. Where the expression is TRUE and prints nothing, the binary
+checks the spec without evaluating it again: it reads only constants, TLCGet("level"), which is 1
+for TLC's empty state, and TLCGet("config"), which are the same whenever TLC evaluates it. It
+declines, before the search, every other expression: one that prints or is FALSE, one that reads
+the run whatever it evaluates to (`TLCGet("distinct") # 5000` is TRUE as the run starts and far
+along, and FALSE between), one that fails or isn't a boolean, a configuration with an assignment
+qualified by a module, and temporal properties (see `gaps.md`, _PERIODIC). A run of TLC's that
+ends before 3 s prints such an expression's output not at all, but the binary can't tell a short
+run of TLC's from a long one.
 
 ## -dump
 

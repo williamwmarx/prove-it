@@ -295,12 +295,6 @@ pub(crate) enum Event {
     /// TLC warns that the sets the symmetry permutes, by these names, hold fewer than two
     /// elements.
     SymmetrySetsTooSmall(Vec<String>),
-    /// The `_PERIODIC` expression TLC evaluates as it prints its progress is FALSE, which stops
-    /// the search with these counts.
-    PeriodicFalse(Statistics),
-    /// The trace evaluator doesn't follow the `_PERIODIC` expression, for this reason: the search
-    /// ends as not native.
-    PeriodicDeclined(String),
     /// TLC would print a coverage report now, as it prints its progress, at a point that depends
     /// on how fast it runs: the search ends as not native.
     CoverageReported,
@@ -332,11 +326,6 @@ pub(crate) struct Relay<'ir> {
     sender: mpsc::Sender<Event>,
     /// Whether something printed has a text TLC's isn't known to be, which ends the search.
     is_misprinted: bool,
-    /// The trace evaluator of the `_PERIODIC` expression the configuration names, which TLC
-    /// evaluates as it prints its progress, with the counts so far.
-    periodic: Option<Result<Rebuilder<'ir>, Unsupported>>,
-    /// Whether the `_PERIODIC` expression stopped the search, or the evaluator didn't follow it.
-    is_periodic_stopped: bool,
     /// How many initial states TLC generated, and when it started, which TLCGet("stats") reports.
     initial_generated: u64,
     start: Instant,
@@ -391,8 +380,6 @@ impl<'ir> Relay<'ir> {
         Relay {
             sender,
             is_misprinted: false,
-            periodic: None,
-            is_periodic_stopped: false,
             initial_generated: 0,
             start: Instant::now(),
             coverage_countdown: None,
@@ -466,10 +453,7 @@ impl<'ir> Relay<'ir> {
 
 impl Reporter for Relay<'_> {
     fn is_cancelled(&self) -> bool {
-        self.is_misprinted
-            || self.is_periodic_stopped
-            || self.is_coverage_reached
-            || self.is_declined
+        self.is_misprinted || self.is_coverage_reached || self.is_declined
     }
 
     // TLC prints each violation with its trace as it finds it under -continue (`printTrace`).
@@ -544,35 +528,6 @@ impl Reporter for Relay<'_> {
             queued,
             depth,
         };
-        if let Some(rebuilder) = &mut self.periodic {
-            let run = postcondition_run(
-                self.ir,
-                None,
-                &statistics,
-                self.initial_generated,
-                self.start,
-            );
-            let periodic = rebuilder
-                .as_mut()
-                .map_err(|unsupported| unsupported.clone())
-                .and_then(|rebuilder| rebuilder.periodic(&run.stats));
-            let periodic = match periodic {
-                Ok(periodic) => periodic,
-                Err(Unsupported(reason)) => {
-                    self.is_periodic_stopped = true;
-                    let _ = self.sender.send(Event::PeriodicDeclined(reason));
-                    return;
-                }
-            };
-            for print in &periodic.printed {
-                self.send_print(Some(format_print(print)));
-            }
-            if !periodic.holds {
-                self.is_periodic_stopped = true;
-                let _ = self.sender.send(Event::PeriodicFalse(statistics));
-                return;
-            }
-        }
         // TLC prints a coverage report after the progress where `count` is 0, which it counts
         // down from -coverage's minutes once per progress report (ModelChecker.runTLCContinueDoing).
         if let Some(countdown) = &mut self.coverage_countdown {
@@ -1276,11 +1231,6 @@ fn check_spec(
             .host
             .get_variable("PROVE_IT_TEST_EVALUATIONS")
             .and_then(|evaluations| evaluations.parse().ok()),
-        test_progress_every: printer
-            .host
-            .get_variable("PROVE_IT_TEST_PROGRESS_EVERY")
-            .and_then(|every| every.parse().ok())
-            .filter(|&every| every > 0),
         is_dumped,
         is_continued,
         is_step_dumped: dot.is_some(),
@@ -1300,21 +1250,62 @@ fn check_spec(
     let mut is_misprinted = false;
     let mut is_continued_past = false;
     let mut is_coverage_reached = false;
-    // Where the `_PERIODIC` expression stopped the search: FALSE with the counts so far, or why
-    // the evaluator didn't follow it.
-    let mut periodic_stop = None;
     let mut is_dump_unwritten = false;
     let mut declined = None;
     let mut is_snapshot_begun = false;
     let ir_ref = &ir;
-    let is_module_assigned = config
-        .constants
-        .iter()
-        .any(|constant| constant.module.is_some())
-        || config
-            .substitutions
+    // TLC evaluates the `_PERIODIC` expression 3 s after its workers start and at each progress
+    // report after (`AbstractChecker.runTLC`, `doPeriodicWork`): when, and so whether before its
+    // search ends, depends on TLC's speed, which no time of the binary's bounds. The binary follows
+    // only an expression that can't change what TLC prints whenever it evaluates it.
+    if ir.model.periodic.is_some() {
+        let is_module_assigned = config
+            .constants
             .iter()
-            .any(|substitution| substitution.module.is_some());
+            .any(|constant| constant.module.is_some())
+            || config
+                .substitutions
+                .iter()
+                .any(|substitution| substitution.module.is_some());
+        // The engine and the trace evaluator don't follow an assignment or a substitution
+        // qualified by a module, which the expression may read; TLC checks the temporal properties
+        // of the state space as it evaluates the expression; and the time and TLC's random
+        // choices differ at each evaluation.
+        let is_varying = ir.builtins.iter().any(|builtin| {
+            [
+                "JavaTime",
+                "RandomElement",
+                "RandomSubset",
+                "RandomSetOfSubsets",
+                "RandomSubsetSet",
+            ]
+            .contains(&&*ir.texts[builtin.name as usize])
+        });
+        let inert = if is_module_assigned {
+            Err("a _PERIODIC with a module's assignment in the configuration".to_string())
+        } else if !ir.model.live_formula.is_empty() {
+            Err("a _PERIODIC with temporal properties".to_string())
+        } else if is_varying {
+            Err("a _PERIODIC in a spec that reads the time or draws at random".to_string())
+        } else {
+            Rebuilder::new(&ir)
+                .and_then(|mut rebuilder| {
+                    rebuilder.set_workers(workers);
+                    rebuilder.is_periodic_inert()
+                })
+                .map_err(|Unsupported(reason)| reason)
+        };
+        match inert {
+            Ok(true) => {}
+            Ok(false) => {
+                return report_not_native(
+                    printer,
+                    "a _PERIODIC that prints or is FALSE, which TLC evaluates at a time of its own",
+                );
+            }
+            Err(reason) => return report_not_native(printer, &reason),
+        }
+    }
     let (outcome, assumed_printed, dumped) = alongside(
         move || {
             let ir = ir_ref;
@@ -1326,26 +1317,6 @@ fn check_spec(
                 workers,
                 front.startup_messages,
             );
-            // Each of these the search declines at its first progress, where TLC evaluates the
-            // expression, so a run that ends first prints what TLC prints.
-            relay.periodic = ir.model.periodic.as_ref().map(|_| {
-                // The engine and the trace evaluator don't follow an assignment or a
-                // substitution qualified by a module, which the expression may read.
-                if is_module_assigned {
-                    return Err(Unsupported(
-                        "a _PERIODIC with a module's assignment in the configuration".into(),
-                    ));
-                }
-                // TLC checks the temporal properties of the current state space before it
-                // evaluates the expression, where the binary's order of the lines differs.
-                if !ir.model.live_formula.is_empty() {
-                    return Err(Unsupported("a _PERIODIC with temporal properties".into()));
-                }
-                Rebuilder::new(ir).map(|mut rebuilder| {
-                    rebuilder.set_workers(workers);
-                    rebuilder
-                })
-            });
             relay.start = start;
             relay.coverage_countdown = coverage::get_countdown(args);
             relay.is_dumped = is_dumped;
@@ -1403,14 +1374,6 @@ fn check_spec(
                         is_misprinted = true;
                         break;
                     }
-                    Event::PeriodicFalse(statistics) => {
-                        periodic_stop = Some(Ok(statistics));
-                        break;
-                    }
-                    Event::PeriodicDeclined(reason) => {
-                        periodic_stop = Some(Err(reason));
-                        break;
-                    }
                     Event::CoverageReported => {
                         is_coverage_reached = true;
                         break;
@@ -1451,23 +1414,6 @@ fn check_spec(
     }
     if is_dump_unwritten {
         return report_not_native(printer, "-dump into a file it can't write");
-    }
-    match periodic_stop {
-        Some(Err(reason)) => return report_not_native(printer, &reason),
-        Some(Ok(_)) if is_dumped => {
-            return report_not_native(printer, "-dump of a search _PERIODIC stops");
-        }
-        Some(Ok(_)) if args.has("-coverage") => {
-            return report_not_native(printer, "coverage of a search _PERIODIC stops");
-        }
-        // TLC stops where the workers are, with no error and no progress, and checks nothing
-        // more (`doPeriodicWork`, TLC_ASSUMPTION_FALSE).
-        Some(Ok(statistics)) => {
-            print_statistics(printer, &statistics, start);
-            print_finished(printer, start);
-            return ASSUMPTION_VIOLATION;
-        }
-        None => {}
     }
     if is_coverage_reached {
         return report_not_native(

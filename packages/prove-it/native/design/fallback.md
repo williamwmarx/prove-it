@@ -549,6 +549,15 @@ the branch `trace-alias-wip`, with each round's findings in its tests.
   whole, so a FALSE conjunct inside one leaves no initial state rather than a trivially false spec.
   Main labels the substituted, LET and instanced ones by the definition it follows to.
 
+- **A _PERIODIC expression that prints, is FALSE or reads the run.** Main checked such a spec
+  natively where the engine's search ended before its first progress report, printing nothing of
+  the expression, which matched TLC where TLC's run also ended before its first evaluation, 3 s
+  after its workers start. That is TLC's speed, which no time of the binary's bounds, so the
+  binary now declines them before the search (`cli.md`, _PERIODIC). Winning them back takes a
+  bound on TLC's run from the binary's, or an argument, for each class of expression, that its
+  value is the same whenever TLC evaluates it (such as `TLCGet("distinct") < N` with N above the
+  run's last count), with a test at the boundary.
+
 ### After the FingerprintException burn-down (measured 2026-11-11)
 
 Measured at #272 (main 924d7cd merged) with `bun scripts/run.ts check-log`:
