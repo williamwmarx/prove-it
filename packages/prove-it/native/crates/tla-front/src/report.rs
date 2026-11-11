@@ -281,7 +281,8 @@ impl Loader<'_> {
                     .or_insert_with(|| name.clone());
                 dependencies
                     .extendees
-                    .insert(module.extends.len() + offset, extendee);
+                    .insert(module.extends.len() + offset, extendee.clone());
+                dependencies.scope.extendees.push(extendee);
             }
         }
         let dependencies = Rc::new(dependencies);
