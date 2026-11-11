@@ -52,8 +52,8 @@ fn get_untimed_lines(text: &str) -> String {
 // numeral's image or else by its location (`EC.TLC_EXPECTED_VALUE`), beside contradictions and
 // constant parts that are booleans, some through an INSTANCE of `LiveInstanced`, where TLC names
 // the declaration the INSTANCE substitutes, some naming its definitions before the INSTANCE,
-// which SANY rejects, and some whose \A TLC takes whole or unrolls as it evaluates the sets
-// without the substitutions it went through. Each run prints what TLC built at d8fb231 prints
+// which SANY rejects, and some whose \A TLC unrolls as it evaluates the sets without the
+// substitutions it went through, which the front end declines where it would report an error. Each run prints what TLC built at d8fb231 prints
 // (`live-startup-grid/*.out`, and `*.tool.out` with -tool, with -fp 0 -seed 0 -nowarning), on one
 // thread and with every level shared between four, checking the properties periodically and at
 // the end, or declines.
