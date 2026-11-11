@@ -500,9 +500,8 @@ const getAnswer = (decision: Promise<Decision>) =>
   );
 
 // Whether the Rust driver reads a text as the TypeScript does: its strings hold only well-formed
-// UTF-16, so neither a lone surrogate nor an escape of one, as a pragma's string may hold.
-const isNativeText = (text: string) =>
-  text.isWellFormed() && !/\\u[dD][89a-fA-F][0-9a-fA-F]{2}/.test(text);
+// UTF-16.
+const isNativeText = (text: string) => text.isWellFormed();
 
 // prove with the Rust driver, which proves in rounds: each asks for the modules and the decisions
 // it needs, which this answers, deciding as the TypeScript driver does, in the pool when there is

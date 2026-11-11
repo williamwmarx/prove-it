@@ -425,25 +425,38 @@ describe("the Rust driver", () => {
     await expectSame({ options: { source: getModule(body, "TLAPS") }, decide: byProver({}) });
   });
 
-  // A pragma's string is read as JSON.parse reads it, and one it can't read is tlapm's bug.
+  // A pragma's string is what tlapm's lexer keeps, each escape as it is written (design/prover.md,
+  // "TypeScript deviations"): a tactic reaches Isabelle so, and a prover is named so.
   it.each([
-    ["an escape JSON lacks", 'THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\q") }*)'],
+    ["an escape tlapm lacks", 'THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\q") }*)', "by \\q"],
     [
       "an escape of a lone surrogate",
-      'F(x) == x (*{ by (prover:"smt"; timeout:"\\ud800") }*)\nTHEOREM 1 = 1 BY F(1)',
+      'F == TRUE (*{ by (prover:"isabelle"; tactic:"\\ud800") }*)\nTHEOREM 1 = 1 BY F',
+      "by \\ud800",
     ],
-    [
-      "a tactic with an escape of a lone surrogate",
-      'THEOREM 1 = 1\nOBVIOUS (*{ by (isabelle "\\ud800") }*)',
-    ],
-  ])("reads a pragma's string with %s as the TypeScript driver does", async (_name, body) => {
-    await expectSame({
-      options: { source: getModule(body, "Naturals, TLAPS") },
-      decide: async (_prover, text) => ({
-        verdict: text.includes("\uFFFD") ? "unsat" : "unknown",
-        timeUsedMs: 1,
-        statistics: {},
-      }),
+  ])("reads a pragma's string with %s as tlapm does", async (_name, body, tactic) => {
+    const texts: string[] = [];
+    const run = await proveWithDriver("rust", {
+      options: { source: getModule(body) },
+      decide: async (_prover, text) => {
+        texts.push(text);
+        return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
+      },
+    });
+    expect(run.result?.obligations[0]).toMatchObject({ status: "proved", prover: "isabelle" });
+    expect(texts.flatMap((text) => text.split("\n")).map((line) => line.trim())).toContain(tactic);
+  });
+
+  it("names a prover by a pragma's string as tlapm reads it", async () => {
+    const run = await proveWithDriver("rust", {
+      options: {
+        source: getModule('F == TRUE (*{ by (prover:"\\uD800") }*)\nTHEOREM 1 = 1 BY F'),
+      },
+      decide: byProver({}),
+    });
+    expect(run.result?.obligations[0]).toMatchObject({
+      status: "failed",
+      reason: "Unknown prover: \\uD800",
     });
   });
 

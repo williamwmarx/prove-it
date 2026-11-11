@@ -1228,8 +1228,8 @@ is next.
     decision (keyed by obligation, method, prover, limit and text), and proves again with the
     answers. A run's obligations, Prep and encodings stay on a long-lived thread, which takes
     tcp_proof from over two hours to 57 s.
-  - **Fallback:** a source or module that isn't well-formed UTF-16, or escapes a lone surrogate,
-    goes to the TypeScript driver, since a Rust string can't hold it.
+  - **Fallback:** a source or module that isn't well-formed UTF-16 goes to the TypeScript driver,
+    since a Rust string can't hold it.
   - **Checks:** `scripts/prover-driver-differential.ts` gives 304 of 304 corpus modules the same
     under both drivers with decisions replayed from the record; `tests/unit/prove-driver.test.ts`
     holds the cases seven break-it rounds found.
@@ -1240,9 +1240,21 @@ is next.
     - numerals large enough to reach a string length limit in the Zenon and Isabelle encodings
       (`String.prototype.repeat`);
     - proof-step levels past 2^53, or 2^32 in WebAssembly, where the Rust reads a `usize`.
-  - **Known TypeScript deviation:** an INSTANCE of a module inside its own instantiation
-    overflows the TypeScript's stack (a RangeError), where tlapm and the Rust report tlapm's bug
-    "Stack overflow" (#308).
+  - **Known TypeScript deviations**, where the Rust does what tlapm does:
+    - an INSTANCE of a module inside its own instantiation overflows the TypeScript's stack (a
+      RangeError), where tlapm and the Rust report tlapm's bug "Stack overflow" (#308);
+    - a method pragma's string (`(*{ by (prover:"…") }*)`, and the old `(*{ by (isabelle "…")
+      }*)`) is read with `JSON.parse` by `obligations/pragma.ts`, which decodes `\n` or `\uD800`
+      and throws a SyntaxError, tlapm's bug, on an escape JSON lacks such as `\q`. tlapm's lexer
+      keeps a string's contents as written (`alexer.mll` 173-197, then `E_parser.string_val`'s
+      `Bstring`), so `"\uD800"` is the six characters `\uD800`, a prover so named is unknown
+      ("Unknown prover: \uD800") and a tactic reaches Isabelle's theory as written. The Rust
+      `pragma::read_string` does that.
+  - **Open:** a TAB or a carriage return in a pragma's string still fails with the TypeScript's
+    "SyntaxError: JSON Parse error: Unterminated string", where tlapm's lexer fails the module
+    (a TAB anywhere fails it before any pragma is read). A backslash before U+2028 or U+2029
+    still ends the pragma's match, as the TypeScript's regular expression does, where tlapm reads
+    on.
 
 ### Deviations from Z3
 
