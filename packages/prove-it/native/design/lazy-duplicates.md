@@ -30,6 +30,7 @@ Paths are under `tlatools/org.lamport.tlatools/src/tlc2/`.
     `1120`, `1131`). So is a LET in an expression (`Tool.java:1849-1859`). A LET in an action or
     the initial predicate binds none and evaluates again (`Tool.java:482-487`, `937-941`).
   - A partial state binds the assigned object as it is (`Tool.java:766-772`, `1365-1368`), and
+    the element `v \in S` enumerates as it is (`Tool.java:836-841`, `1455-1460`), and
     fingerprinting, which normalizes, comes once the state is complete.
   - `ValueVec.sort` compares only the elements from index 1 on as receivers
     (`value/impl/ValueVec.java:172-200`), so a set enumeration's first element, the only one of a
@@ -52,22 +53,46 @@ differs from the normalized set's elements in order, by a duplicate or by order 
   `e \notin S` or the set a `\A`, `\E` or CHOOSE binds over (`Tool.contexts` enumerates it with
   `toSetEnum`, which doesn't cache), where any use in the run may normalize the one object TLC
   keeps for it:
-  `Compiler::kept_definition` and `Compiler::is_normalized_definition` (`compile/mod.rs`) make its
-  reference a `Lazy::Kept`. One the spec only streams or tests streams as TLC builds it.
-- **A variable assigned a lazy set**, then streamed by `x \in` before its state is fingerprinted,
-  and a name `\E` binds to the first element of a set enumeration: `Machine::held`
-  (`machine.rs`) and the walker's `compile_streamed` (`compile/walker.rs`). A conjunct
+  `Compiler::kept_definition` and `Compiler::normalized_definitions` (`compile/mod.rs`) make its
+  reference a `Lazy::Kept`. One the spec only streams or tests streams as TLC builds it. So does
+  one the spec names elsewhere only as `v = C` in the initial predicate, until that predicate
+  completes a state (`Machine::is_before_initial_state`): TLC binds the object as built and
+  fingerprints it only with the state (`ModelChecker.java:1203`). Each such assignment must be
+  walked once on a path, outside a binder or an operator's argument or body, with no other name
+  of v in the initial predicate, so that no test compares the object as the receiver
+  (`Compiler::initial_assignments`). The walk streams it anew until then, and caches it only
+  after.
+- **A variable assigned a lazy set**, or bound by `s \in S` (`s' \in S`) to the first element of
+  a set enumeration S, which TLC leaves as built, then streamed by `x \in` before its state is
+  fingerprinted, and a name `\E` binds to that first element: `Machine::held` (`machine.rs`), the
+  walker's `compile_streamed` and `walk_membership` (`compile/walker.rs`). A conjunct
   `Cardinality(v) op e` before the stream sizes v, so v streams normalized, as TLC's does.
 - **A constant definition read through a variable** declines on the same path.
 
 The rule is static where TLC's is not: it declines where a use that may normalize the object
-comes only after the stream, as in `Init == s = C /\ x \in C`, and where the stream's order
-decides nothing printed.
+comes only after the stream, as in `Init == x \in C /\ Cardinality(C) > 0`, and where the
+stream's difference decides nothing printed: where an invariant stops the search before the
+stream first differs from the normalized set, or where the first initial state to violate one,
+whose report prints no count, is the same in either order.
 
-`prove-it-cli/tests/lazy_duplicates.rs` checks 280 specs (10 sources, 14 routes, Init and Next)
-against TLC's output, and 260 more (13 sources, three of them out of order without duplicates,
-through the routes above, under an invariant the order decides), at one thread and at four: each
-prints what TLC prints or declines.
+These printed other counts than TLC and now decline:
+- a constant definition normalized elsewhere, then streamed: `C == UNION {1..2, 2..3}`,
+  `Init == s = C /\ x = 0`, `Next == s' = s /\ x' \in C` generates 13 states in TLC, 17
+  natively;
+- stream order alone, no duplicates: `(SUBSET {2}) \cup {{1}}` streams `{1}` first in TLC,
+  through a variable, a constant via a variable or a `\E` name, so with `Init == s = 0 /\ x = {3}`
+  and `Next == s' = (SUBSET {2}) \cup {{1}} /\ x' \in s'`, a violation of `x # {1} /\ x # {2}`
+  prints 2 states generated in TLC and 3 natively; a LET used twice prints 3 in TLC and 2
+  natively;
+- a variable bound by `\in` to a set enumeration's lazy first element, then streamed:
+  `Next == s' \in {UNION {1..2, 2..3}} /\ y' \in s'` generates 17 states in TLC, 13 natively,
+  and `Init == s \in {UNION {1..2, 2..3}} /\ y \in s` 7 in TLC, 6 natively.
+
+`prove-it-cli/tests/lazy_duplicates.rs` checks 340 specs (10 sources, 17 routes, Init and Next)
+against TLC's output, 260 more (13 sources, three of them out of order without duplicates,
+through the routes above, under an invariant the order decides), and 6 that assign a constant
+definition in the initial predicate, at one thread and at four: each prints what TLC prints or
+declines.
 
 ## Still wrong on main
 
