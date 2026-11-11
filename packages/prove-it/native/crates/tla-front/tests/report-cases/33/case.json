@@ -1,5 +1,5 @@
 {
- "root": "Quote",
- "version": "master",
- "test": "rejects a specification whose algorithm it cannot uncomment"
+  "root": "Quote",
+  "version": "master",
+  "test": "rejects a specification whose algorithm it cannot uncomment"
 }

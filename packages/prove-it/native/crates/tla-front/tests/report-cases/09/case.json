@@ -1,5 +1,5 @@
 {
- "root": "M",
- "version": "master",
- "test": "reports an operator where \"F(a) == a\\nx == F(^#)\" needs an expression"
+  "root": "M",
+  "version": "master",
+  "test": "reports an operator where \"F(a) == a\\nx == F(^#)\" needs an expression"
 }

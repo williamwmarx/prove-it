@@ -1,5 +1,5 @@
 {
- "root": "Facts",
- "version": "master",
- "test": "reports a module in a fact that isn't extended or instantiated, and leaves it out"
+  "root": "Facts",
+  "version": "master",
+  "test": "reports a module in a fact that isn't extended or instantiated, and leaves it out"
 }

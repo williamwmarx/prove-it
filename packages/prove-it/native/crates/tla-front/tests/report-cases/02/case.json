@@ -1,5 +1,5 @@
 {
- "root": "Sel",
- "version": "master",
- "test": "names an operand selector past the last operand after the argument it selects"
+  "root": "Sel",
+  "version": "master",
+  "test": "names an operand selector past the last operand after the argument it selects"
 }
