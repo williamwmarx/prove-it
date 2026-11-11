@@ -7,9 +7,9 @@
 // nlsat_simplify and the bounds of eliminated variables, which only inline_vars makes, are not
 // ported. Neither are what nra never uses: Boolean variables beyond true, transcendental
 // constraints, check(assumptions), check_limit, retract, and set_max_var, without which
-// select_witness never picks the maximal value. The search counts its steps against the resource
-// limit, but not the memory, which Z3 also bounds by max_memory.
-import { SmtCanceledError } from "../../../../errors";
+// select_witness never picks the maximal value. The search and the polynomial and algebraic number
+// managers count their steps against the resource limit, but not the memory, which Z3 also bounds
+// by max_memory.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { type Dependency, linearize, mkJoin, mkLeaf } from "../lp/dependency";
 import { RandomGen } from "../random-gen";
@@ -20,6 +20,7 @@ import { AtomTable, FALSE_LITERAL, ScopedLiterals, TRUE_LITERAL } from "./atoms"
 import { Evaluator } from "./evaluator";
 import { Explain } from "./explain";
 import type { IntervalSet } from "./interval-set";
+import { NlsatLimit } from "./limit";
 import { NULL_VAR, type Polynomial, PolynomialCache, PolynomialManager } from "./polynomial";
 import { type Clause, type IneqAtom, type IneqKind, isIneqAtom } from "./types";
 
@@ -106,22 +107,19 @@ export class NlsatSolver {
     irrationalAssignments: 0,
   };
 
-  // m_rlimit: the steps of the search count against the limit, and against the budget of this
-  // solver, which Z3 sets with a scoped_rlimit on a child limit.
-  steps = 0;
+  // m_rlimit, which the managers share.
+  readonly limit: NlsatLimit;
 
-  constructor(
-    private limit: ResourceLimit | null = null,
-    private budget = Infinity,
-  ) {
+  constructor(limit: ResourceLimit | null = null, budget = Infinity) {
+    this.limit = new NlsatLimit(limit, budget);
+    this.pm.setLimit(this.limit);
+    this.am.setLimit(this.limit);
     // mk_true_bvar: the clause [true], whose literal the first Boolean stage assigns.
     this.mkClause([TRUE_LITERAL], false, null);
   }
 
-  private checkpoint() {
-    this.steps++;
-    if ((this.limit !== null && !this.limit.inc()) || this.steps > this.budget)
-      throw new SmtCanceledError();
+  get steps() {
+    return this.limit.steps;
   }
 
   mkVar(isInt: boolean) {
@@ -371,7 +369,7 @@ export class NlsatSolver {
     let selectedSet: IntervalSet | null = null;
     const xkSet = this.infeasible[this.xk];
     for (const [index, literal] of clause.literals.entries()) {
-      this.checkpoint();
+      this.limit.checkpoint();
       if (this.value(literal) === L_FALSE) continue;
       if (this.value(literal) === L_TRUE) return true;
       const atom = this.atoms.getAtom(literal)!;
@@ -455,7 +453,7 @@ export class NlsatSolver {
       } else this.newStage();
       if (this.bk === NULL_BOOL_VAR && this.xk >= this.isInt.length) return L_TRUE;
       while (true) {
-        this.checkpoint();
+        this.limit.checkpoint();
         const conflict = this.processClauses(
           this.xk === NULL_VAR ? this.bwatches[this.bk] : this.watches[this.xk],
         );
@@ -647,10 +645,10 @@ export class NlsatSolver {
   // Conflict resolution.
 
   private processAntecedent(antecedent: number) {
-    this.checkpoint();
+    this.limit.checkpoint();
     const boolVar = antecedent >> 1;
     if (this.getAssignedValue(antecedent) === L_UNDEF) {
-      this.checkpoint();
+      this.limit.checkpoint();
       if (!this.marks[boolVar]) {
         this.marks[boolVar] = true;
         this.lemma.push(antecedent);
@@ -680,7 +678,7 @@ export class NlsatSolver {
     this.lazyClause.reset();
     this.explain.computeConflictExplanation(literals, this.lazyClause);
     for (const literal of literals) this.lazyClause.push(literal ^ 1);
-    this.checkpoint();
+    this.limit.checkpoint();
     this.resolveLiterals(boolVar, this.lazyClause.literals);
     for (const clause of clauses)
       this.lemmaAssumptions = mkJoin(clause.assumptions, this.lemmaAssumptions);
@@ -725,7 +723,7 @@ export class NlsatSolver {
     let isDecision = false;
     while (true) {
       while (this.markCount > 0) {
-        this.checkpoint();
+        this.limit.checkpoint();
         const entry = this.trail[top - 1];
         if (entry.kind === "assignment" && this.marks[entry.boolVar]) {
           const boolVar = entry.boolVar;

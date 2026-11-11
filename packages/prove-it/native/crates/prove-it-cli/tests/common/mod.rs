@@ -1,4 +1,6 @@
-//! Helpers the binary's integration tests share.
+//! What the binary's test files share: running it on a spec of the test's own, and reading what
+//! it printed.
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -11,6 +13,27 @@ pub fn run(directory: &PathBuf, args: &[&str]) -> Output {
         .expect("the binary runs")
 }
 
+// Runs the binary on a spec of the test's own, written as Stop.tla with its configuration.
+pub fn run_spec(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
+    run_spec_with(test, spec, config, &[])
+}
+
+pub fn run_spec_with(test: &str, spec: &str, config: &str, args: &[&str]) -> (Output, PathBuf) {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
+    std::fs::write(directory.join("Stop.cfg"), config).expect("a configuration");
+    (
+        run(&directory, &[args, &["-noTE", "Stop"]].concat()),
+        directory,
+    )
+}
+
 pub fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+pub fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
 }
