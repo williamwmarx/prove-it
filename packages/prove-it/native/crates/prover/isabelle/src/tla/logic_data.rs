@@ -1,12 +1,11 @@
-//! The Isabelle/TLA+ object logic that tlapm ships, as `src/prover/isabelle/tla/logic-data.ts`
-//! holds it: its constants, the theorems its theories prove, and the order of the simpset and the
-//! classical rule nets. The theorems come from tlapm's Isabelle/TLA+ theories, BSD licensed, see
-//! LICENSE-tlapm.
+//! The Isabelle/TLA+ object logic that tlapm ships: its constants, the theorems its theories
+//! prove, and the order of the simpset and the classical rule nets. The theorems come from tlapm's
+//! Isabelle/TLA+ theories, BSD licensed, see LICENSE-tlapm.
 //!
-//! `scripts/isabelle-logic.ts` writes it to `data/logic.bin` in a compact binary form of the same
-//! JSON (its `encodeLogic` says how), beside the digest of the JSON that the test below checks, so
-//! the two cannot drift. Regenerate both with `bun scripts/run.ts isabelle-logic --binary`. Types,
-//! terms and theorems refer to each other, and to `strings`, by their index (`u32`).
+//! `data/logic.bin` holds it in a compact binary form of the JSON the TypeScript Isabelle read,
+//! beside the digest of that JSON, which the test below checks. Both are frozen: the script that
+//! exported them from tlapm's heap read the TypeScript Isabelle, and went with it. Types, terms and
+//! theorems refer to each other, and to `strings`, by their index (`u32`).
 
 use std::sync::OnceLock;
 
@@ -630,7 +629,7 @@ mod tests {
         json.0
     }
 
-    /// FNV-1a, 64 bits, in hexadecimal, as the script computes it.
+    /// FNV-1a, 64 bits, in hexadecimal, as the script computed it.
     fn digest(text: &str) -> String {
         let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
@@ -639,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn the_binary_is_the_json_of_logic_data_ts() {
+    fn the_binary_is_the_json_it_was_exported_from() {
         assert_eq!(
             digest(&to_json(logic_data())),
             include_str!("../../data/logic.digest").trim()

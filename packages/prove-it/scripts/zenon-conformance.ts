@@ -2,9 +2,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { getNativeAddon } from "../src/engine/native";
 import type { PrintedObligation } from "../src/obligations";
 import { encodeForBackend } from "../src/prover/prove";
-import { runZenon } from "../src/prover/zenon/decide";
 import { CORPORA_DIRECTORY, getOption } from "./corpora";
 import {
   getInputDigest,
@@ -23,6 +23,9 @@ const shard = (getOption("--shard") ?? "1/1").split("/").map(Number);
 // With ZENON set to tlapm's Zenon binary, it runs on the same files, to compare verdicts, node
 // counts and times.
 const zenonPath = process.env.ZENON;
+
+const addon = getNativeAddon();
+if (typeof addon === "string") throw new Error(`no native engine: ${addon}`);
 
 const getMedian = (values: number[]) => {
   const sorted = values.toSorted((left, right) => left - right);
@@ -104,9 +107,17 @@ const results = runs.map((run) => {
   if (!existsSync(path)) return { encoderOutcome };
   const isFound = run.record.verdict === "unsat";
   const start = performance.now();
-  const zenon = runZenon(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS });
+  const decision = addon.decide(
+    "zenon",
+    readFileSync(path, "utf8"),
+    TIME_LIMIT_MS,
+    undefined,
+    undefined,
+  );
   const elapsed = performance.now() - start;
-  const isProved = zenon.isar !== undefined;
+  const statistics = decision.kind === "decided" ? decision.statistics : {};
+  const zenon = { failure: statistics.stop, nodesSearched: statistics.nodesSearched };
+  const isProved = decision.kind === "decided" && decision.verdict === "unsat";
   if (isFound !== isProved) console.log(`prover  ${isFound ? "miss" : "surplus"}      ${name}`);
   const reference = runReference(path);
   if (reference !== undefined && reference.isProved !== isProved)

@@ -50,6 +50,8 @@ fn get_expression_image(expression: &Expression) -> String {
 pub struct RankedTexts<'a> {
     pub texts: &'a [Rc<str>],
     pub ranks: FastMap<Rc<str>, u32>,
+    /// The units of each ranked text with a lone surrogate, by the name it ranks by.
+    pub wide: &'a FastMap<Rc<str>, Box<[u16]>>,
 }
 
 /// `isStartupDefinition`: a constant definition without parameters the configuration doesn't
@@ -560,11 +562,29 @@ impl<'a> Lowering<'a> {
                 NodeKind::Identifier(self.write_bound_name(&name, false, is_local)?)
             }
             ExpressionKind::Apply { args, .. } => {
-                let name = expression.reference().unwrap_or_default();
-                let name = self.write_bound_name(&name, true, is_local)?;
-                NodeKind::Apply {
-                    name,
-                    args: self.write_nodes(args)?,
+                let reference = expression.reference().unwrap_or_default();
+                let name = self.write_bound_name(&reference, true, is_local)?;
+                let target = self
+                    .environment
+                    .substitutions
+                    .get(&reference)
+                    .unwrap_or(&reference);
+                match self.environment.operator_constants.get(target) {
+                    // `Tool.evalAppl` gives an operator the configuration assigns a value that
+                    // value, without evaluating its arguments.
+                    Some(value) if matches!(name.resolution, Resolution::Builtin(_)) => {
+                        let (target, value) = (target.clone(), value.clone());
+                        NodeKind::Identifier(IrName {
+                            resolution: Resolution::Constant(
+                                self.get_constant_index(&target, &value)?,
+                            ),
+                            ..name
+                        })
+                    }
+                    _ => NodeKind::Apply {
+                        name,
+                        args: self.write_nodes(args)?,
+                    },
                 }
             }
             ExpressionKind::OperatorReference { .. } => {
@@ -1151,9 +1171,15 @@ impl<'a> Lowering<'a> {
             .map(|definition| self.get_definition_index(definition))
             .collect();
         let mut predicates = Vec::new();
-        for (form, kind, name, definition) in
-            crate::spec::get_constant_predicates(config, environment, &self.facts)
-        {
+        for (form, kind, name, definition) in crate::spec::get_constant_predicates(
+            config,
+            environment,
+            &self.facts,
+            &self
+                .evaluator
+                .map(crate::eval::Evaluator::deferred_conjuncts)
+                .unwrap_or_default(),
+        ) {
             predicates.push(tla_ir::StartupPredicate {
                 form,
                 kind: self.get_text(kind),
@@ -1223,10 +1249,24 @@ impl<'a> Lowering<'a> {
                 .any(|substitution| substitution.name == name)
         };
         // TLC takes the arguments of the body's node, whatever operator SANY made of it, and
-        // fails on a body that is no application, such as a LET (`Tool.getSymmetryPerms`).
+        // fails on a body that is no application, such as a LET (`Tool.getSymmetryPerms`). It
+        // evaluates the body first, and fails on a number's or a string's value, which isn't a set,
+        // and on a set of them, whose elements aren't functions, before it looks at the node.
+        let is_literal = |expression: &Expr| {
+            matches!(
+                expression.kind,
+                ExpressionKind::Number { .. } | ExpressionKind::String { .. }
+            )
+        };
         let permuted = match &definition.body.kind {
             ExpressionKind::Apply { args, .. } => args.clone(),
             ExpressionKind::Identifier { .. } => Vec::new(),
+            _ if is_literal(&definition.body) => Vec::new(),
+            ExpressionKind::SetEnumeration(elements)
+                if !elements.is_empty() && elements.iter().all(is_literal) =>
+            {
+                elements.clone()
+            }
             _ => {
                 return Err(FrontError::NotYet(
                     "a SYMMETRY definition that isn't an operator applied to its sets".to_owned(),
@@ -1575,7 +1615,16 @@ impl<'a> Lowering<'a> {
         let ir = Ir {
             ranked_count: self.ranked.texts.len() as u32,
             texts,
-            wide_texts: std::collections::BTreeMap::new(),
+            wide_texts: self
+                .ranked
+                .texts
+                .iter()
+                .enumerate()
+                .filter_map(|(id, text)| {
+                    let units = self.ranked.wide.get(text)?;
+                    Some((id as TextId, units.clone()))
+                })
+                .collect(),
             variables,
             tlc_order: self.tlc_order,
             builtins: self.builtins,

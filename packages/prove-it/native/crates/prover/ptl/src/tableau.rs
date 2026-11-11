@@ -1,8 +1,7 @@
 //! Decides satisfiability of propositional linear temporal logic over infinite traces, the logic LS4
-//! decides: `ptl/tableau.ts`. A tableau node is the set of formulas that must hold now. A SAT call
-//! per step picks the atoms and the formulas the next node must hold, and the formula is
-//! satisfiable when a reachable strongly connected component can fulfill every eventuality it
-//! postpones.
+//! decides. A tableau node is the set of formulas that must hold now. A SAT call per step picks the
+//! atoms and the formulas the next node must hold, and the formula is satisfiable when a reachable
+//! strongly connected component can fulfill every eventuality it postpones.
 
 use std::collections::HashMap;
 

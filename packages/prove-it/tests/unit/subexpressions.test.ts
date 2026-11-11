@@ -26,8 +26,8 @@ describe("subexpression references match TLC", () => {
   it("reports violations of labeled subexpressions", async () => {
     const result = await checkSubexpressions(SOURCE, "Violation.cfg");
     expect(result.status).toBe("invariant-violation");
-    expect(result.violation?.name).toBe("Broken");
-    expect(result.violation?.trace).toHaveLength(4);
+    expect(result.violations[0]?.headline).toBe("Invariant Broken is violated.");
+    expect(result.violations[0]?.states).toHaveLength(4);
   });
 
   it("selects a subexpression in a function's bounds", async () => {

@@ -1,6 +1,6 @@
 // The inputs prove sends its backends on the recorded modules, which prover-inputs.ts writes, and
-// what the TypeScript backends answered on each, which prover-differential.ts compares other ports
-// with.
+// what the backends answered on each, first the TypeScript ones and now their Rust ports, which
+// prover-differential.ts compares the backends with.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,6 +23,9 @@ export interface InputRecord {
 export const PROVER_INPUTS_PATH = join(CONFORMANCE_DIRECTORY, "prover-inputs.json");
 
 export const PROVER_INPUTS_DIRECTORY = join(CONFORMANCE_DIRECTORY, ".prover-inputs");
+
+// The time limits in seconds, null for none, that prove sent each input with, by key.
+export const TIME_LIMITS_PATH = join(PROVER_INPUTS_DIRECTORY, "time-limits.json");
 
 const EXTENSIONS: Record<string, string> = {
   smt: "smt",
@@ -77,6 +80,13 @@ export const getUpdatedRecords = (
     }),
   );
 
+// The time limits after a run over some modules: the run's limits for the inputs it wrote, the
+// earlier file's for the rest, so that a run with --filter or --skip keeps the other modules' limits.
+export const getMergedTimeLimits = (
+  earlier: Record<string, (number | null)[]>,
+  written: Record<string, (number | null)[]>,
+): Record<string, (number | null)[]> => ({ ...earlier, ...written });
+
 // One input to a line, by key, so that a new recording's diff shows what changed.
 export const writeInputRecords = (records: Record<string, InputRecord>) =>
   writeFileSync(
@@ -86,12 +96,3 @@ export const writeInputRecords = (records: Record<string, InputRecord>) =>
       .map((key) => `${JSON.stringify(key)}: ${JSON.stringify(records[key])}`)
       .join(",\n")}\n}\n`,
   );
-
-// Makes prove's decide use the TypeScript backends whatever the environment says, as the record is
-// theirs.
-export const useTypeScriptBackends = () => {
-  Object.keys(process.env)
-    .filter((name) => name.startsWith("PROVE_IT_PROVER"))
-    .forEach((name) => delete process.env[name]);
-  process.env.PROVE_IT_PROVER = "ts";
-};

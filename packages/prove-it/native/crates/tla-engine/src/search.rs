@@ -9,7 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use crate::clock::Instant;
@@ -20,7 +21,7 @@ use tla_values::fingerprint::{
     Dense, Entries, Fingerprints, Overlaid, Parent, Polynomial, SharedFingerprints,
 };
 use tla_values::random::JavaRandom;
-use tla_values::store::{KIND_SET, Outcome, ShapeJoin, TRUE};
+use tla_values::store::{FALSE, KIND_SET, Outcome, ShapeJoin, TRUE};
 use tla_values::transfer::{EncodedStates, SharedEncoder, SharedStates, StateEncoder};
 use tla_values::{Bail, Id, NESTING_STACK_BYTES, Store};
 
@@ -30,7 +31,10 @@ use crate::context::{
     holds_all, holds_all_changed,
 };
 use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atoms};
-use crate::machine::{Eval, Machine, Printed, Prints, Registers, Step, UNASSIGNED};
+use crate::machine::{
+    EVALUATIONS_SPENT, Eval, Machine, Printed, Prints, Program, Registers, Step, UNASSIGNED,
+};
+use crate::memo::{EMPTY, MAXIMUM_ENTRIES};
 use crate::symmetry::{
     Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
 };
@@ -77,6 +81,15 @@ pub struct Settings {
     /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
     /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
     pub test_live_check_at: Option<usize>,
+    /// PROVE_IT_TEST_MEMO_ENTRIES, for tests: the room the memo tables of the search's machines
+    /// share, rather than MAXIMUM_ENTRIES, so that a small model fills them.
+    pub test_memo_entries: Option<usize>,
+    /// PROVE_IT_TEST_EVALUATIONS, for tests: how many bodies of recursive definitions the search's
+    /// machines may evaluate between them before it stops with EVALUATIONS_SPENT.
+    pub test_evaluations: Option<u64>,
+    /// PROVE_IT_TEST_PROGRESS_AT, for tests: the state whose claim by a thread of a shared level
+    /// has the search report its progress then, as it does on TLC's schedule.
+    pub test_progress_at: Option<usize>,
     /// Whether the search hands every state it found to [`Reporter::dumped`] as it ends, for
     /// `-dump`.
     pub is_dumped: bool,
@@ -87,6 +100,9 @@ pub struct Settings {
     /// and not yet touched, its address and length in bytes: the state table, from 32 MB, whose
     /// probes land anywhere in it. The CLI asks Linux to back it with huge pages.
     pub large_region_advice: Option<Advice>,
+    /// Whether the Json module's operators may read and write the machine's files, which a host
+    /// that answers for the files itself, as the library does, doesn't let them.
+    pub is_file_system: bool,
 }
 
 /// See [`Settings::large_region_advice`].
@@ -119,9 +135,13 @@ impl Default for Settings {
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
+            test_memo_entries: None,
+            test_evaluations: None,
+            test_progress_at: None,
             is_dumped: false,
             is_continued: false,
             large_region_advice: None,
+            is_file_system: true,
         }
     }
 }
@@ -146,6 +166,9 @@ pub trait Reporter {
     }
     /// The check part way through the search found the properties hold so far.
     fn liveness_finished(&mut self) {}
+    /// A simulation's progress, every minute (`Simulator.ProgressReport`): the states checked,
+    /// the traces started, and TLC's packed mean and squared deviations of their lengths.
+    fn simulation_progress(&mut self, _generated: u64, _traces: u64, _lengths: i64) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
     fn print(&mut self, store: &Store, prints: &Prints);
     /// What Print or PrintT printed while TLC started: as the substitutes and constant
@@ -156,6 +179,10 @@ pub trait Reporter {
     /// about once it has evaluated the symmetry (2300, `TLC_SYMMETRY_SET_TOO_SMALL`). The
     /// interpreter warned already where it handed the search over.
     fn symmetry_sets_too_small(&mut self, _names: &[String]) {}
+    /// Whether each of the IR's startup predicates TLC accepted evaluated to TRUE, which TLC warns
+    /// about for an invariant (2149, `TLC_INVARIANT_CONSTANT_LEVEL`): all of them, or those before
+    /// the one whose value it rejects, before [`SearchOutcome::ConfigError`].
+    fn startup_predicates(&mut self, _holding: &[bool]) {}
     /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
     /// what it prints itself before it checks the assumptions.
     fn startup_done(&mut self) {}
@@ -189,6 +216,7 @@ pub struct ContinuedTrace<'s> {
     pub states: Vec<Vec<Id>>,
     pub store: &'s Store,
     pub startup: &'s [Id],
+    pub chosen: &'s [(u32, Id)],
     pub startup_random: u64,
     /// The state of the generator TLC's worker goes on drawing from as it finds the last state
     /// again; none for an initial state.
@@ -212,7 +240,8 @@ pub const DELEGATED_ASSUMPTION: &str = "unsupported: AssertError";
 
 /// What the caller found of an assumption the engine left to it.
 pub struct Delegated {
-    pub holds: bool,
+    /// Whether it holds, or `None` where it fails to evaluate.
+    pub holds: Option<bool>,
     /// The state it leaves TLC's generator in.
     pub random: u64,
 }
@@ -304,6 +333,10 @@ pub enum SearchOutcome {
     /// A constant definition the configuration names has a value TLC rejects, with TLC's
     /// configuration error, after the startup reported what the constant definitions printed.
     ConfigError { message: String },
+    /// TLC's startup threw a RuntimeException with this message, which TLC reports as an
+    /// exception it didn't expect, after the startup reported what the constant definitions
+    /// printed.
+    StartupException { message: String },
     /// The assumption at this position of the IR's assumptions failed to evaluate (2105), after
     /// the startup reported what it printed, the assumptions before it included. Only where
     /// `Settings::is_violation_reported`; elsewhere the engine declines.
@@ -365,6 +398,9 @@ pub struct Violation {
     /// The value TLC computed at startup of each of the model's startup definitions, ids of
     /// `store`.
     pub startup: Vec<Id>,
+    /// The value the search computed of each constant definition whose body is a CHOOSE over a
+    /// set, by its position in the IR's definitions, ids of `store`, but those it fails to.
+    pub chosen: Vec<(u32, Id)>,
     /// The state of the generator the startup left (`JavaRandom::state`).
     pub startup_random: u64,
     /// The state of the generator where an invariant of the last state stopped the search, which
@@ -464,6 +500,12 @@ pub enum ErrorSite {
     /// `replayed` is the atom that may fail as it adds the first of them that has one, the
     /// violation's second state.
     InitialAtom { atom: u32, replayed: Option<u32> },
+    /// Computing the successors of the trace's last state, after which TLC adds the state with
+    /// the successors it had to the behavior graphs and fails evaluating the atom at this
+    /// position of the IR's `model.atoms`, on the state or, `is_extra`, on the violation's state
+    /// after it, as for `Atom`: TLC reports Next's failure and the trace, then the atom's call
+    /// stack.
+    NextAtom { atom: u32, is_extra: bool },
 }
 
 // The stops that are the engine's own limits, not a failure TLC reports: what it doesn't
@@ -473,7 +515,10 @@ const SUCCESSOR_CHECK_FAILED: &str =
     "a constraint, a VIEW or an action property that fails on a successor";
 const INITIAL_VIEW_FAILED: &str = "a VIEW that fails on an initial state";
 
-fn is_engine_limit(reason: &str) -> bool {
+// A successor the next-state relation leaves a variable of unassigned in, which TLC reports.
+const INCOMPLETE_SUCCESSOR: &str = "a successor that isn't complete";
+
+pub(crate) fn is_engine_limit(reason: &str) -> bool {
     !TLC_FAILURES.contains(&reason)
 }
 
@@ -491,6 +536,7 @@ const TLC_FAILURES: &[&str] = &[
     "EXCEPT on a non-function",
     "Head of an empty sequence",
     "IsFiniteSet of a non-set",
+    "PickSuccessor of a successor TLC fingerprints incomplete",
     "RandomElement of the empty set",
     "SortSeq of a non-sequence",
     "SubBag of a non-bag",
@@ -522,7 +568,7 @@ const TLC_FAILURES: &[&str] = &[
     "a product of a non-set",
     "a record set of a non-set",
     "a set with too many elements for TLC 1.7.4",
-    "a successor that isn't complete",
+    INCOMPLETE_SUCCESSOR,
     "a symmetry function of values that aren't model values",
     "a symmetry that isn't a set of functions",
     "a symmetry value that isn't a function",
@@ -641,6 +687,9 @@ struct Graph {
     /// The search's depth once it expanded each state, TLC's diameter as it adds the state to the
     /// behavior graphs.
     diameters: Vec<u32>,
+    /// The last state the graph expands where Next failed on it: its steps are those Next took
+    /// before it failed.
+    partial: Option<usize>,
 }
 
 /// The fingerprints found, each with the index of its state: open addressing with linear probing,
@@ -1005,8 +1054,10 @@ struct Search<'r, T, E = Dense> {
     is_distinct_read: bool,
     // `-continue`: report each invariant violated and go on.
     is_continued: bool,
-    // Under `-continue`, the values the startup definitions computed, once a trace needs them.
+    // Under `-continue`, the values the startup definitions computed, once a trace needs them,
+    // and then those the constant CHOOSEs computed.
     startup: Option<Vec<Id>>,
+    chosen: Vec<(u32, Id)>,
     generated: u64,
     initial_generated: u64,
     depth: u64,
@@ -1037,6 +1088,9 @@ struct Search<'r, T, E = Dense> {
     // Whether the spec may build a function TLC keeps lazy, which no state may hold: TLC can't
     // fingerprint one.
     is_lambda_built: bool,
+    // Whether PickSuccessor reads whether TLC has seen a successor as its action constraints are
+    // checked.
+    is_picking: bool,
     // The violation the search stops at, when it knows what TLC reports for it.
     violation: Option<Found>,
     // The successor waiting to be checked, its fingerprint, and the bits of the pieces the walk
@@ -1069,6 +1123,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             is_distinct_read,
             is_continued: false,
             startup: None,
+            chosen: Vec::new(),
             generated: 0,
             initial_generated: 0,
             depth: 0,
@@ -1090,6 +1145,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             checked: None,
             is_pipelined,
             is_lambda_built: false,
+            is_picking: false,
             pending: Vec::with_capacity(width),
             violation: None,
             pending_fingerprint: None,
@@ -1342,7 +1398,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         }
         // The search checks the successor waiting to be checked before it stops.
         if machine.next().contains(&UNASSIGNED) {
-            return Err(Bail("a successor that isn't complete"));
+            return Err(Bail(INCOMPLETE_SUCCESSOR));
         }
         let fingerprint = self.fingerprints.get_child(
             &machine.store,
@@ -1387,12 +1443,14 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     ) -> Outcome<()> {
         if self.startup.is_none() {
             self.startup = Some(startup_values(machine, context)?);
+            self.chosen = chosen_values(machine, context);
         }
         self.reporter.continued(ContinuedTrace {
             kind,
             states,
             store: &machine.store,
             startup: self.startup.as_deref().unwrap_or_default(),
+            chosen: &self.chosen,
             startup_random: machine.startup_random,
             random,
             registers: &machine.registers,
@@ -1434,7 +1492,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         known: Option<u64>,
     ) -> Outcome<()> {
         if machine.next().contains(&UNASSIGNED) {
-            return Err(Bail("a successor that isn't complete"));
+            return Err(Bail(INCOMPLETE_SUCCESSOR));
         }
         // TLC reports a constraint, a VIEW or an action property that fails to evaluate with the
         // successor in its trace (Worker.addElement), which no site here stands for: the failure
@@ -1453,7 +1511,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         &mut self,
         machine: &mut Machine<'_>,
         context: &EngineContext,
-        known: Option<u64>,
+        mut known: Option<u64>,
     ) -> Outcome<()> {
         self.check_exit_followed(machine)?;
         if let Some(checked) = &self.checked
@@ -1481,7 +1539,26 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             Ok(is_state_in_model)
         });
         self.swap_successor(machine, self.expansion_epoch, self.level_id);
-        let is_in_model = is_state_in_model? && holds_all(machine, &context.action_constraints)?;
+        let is_in_model = is_state_in_model? && {
+            // PickSuccessor asks whether TLC has seen the successor (`theFPSet.contains`), with
+            // no VIEW or symmetry, so its fingerprint is the state's.
+            if self.is_picking {
+                self.swap_successor(machine, successor_epoch, self.next_level_id);
+                let fingerprint =
+                    known.map_or_else(|| self.compute_key(machine, context, true), Ok);
+                self.swap_successor(machine, self.expansion_epoch, self.level_id);
+                let fingerprint = fingerprint?;
+                known = Some(fingerprint);
+                let key = self
+                    .states
+                    .key_width()
+                    .map_or(&self.successor, |_| &self.key);
+                machine.is_successor_seen = Some(self.states.find(key, fingerprint).is_ok());
+            }
+            let holds = holds_all(machine, &context.action_constraints);
+            machine.is_successor_seen = None;
+            holds?
+        };
         // TLC fingerprints a successor, which evaluates the VIEW, only where it is in the model
         // (Worker.addElement).
         let fingerprint = match known {
@@ -1932,8 +2009,10 @@ struct Worker<'p> {
 }
 
 impl Worker<'_> {
-    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints) {
+    // Lays the worker's overlay on the store, with the values the store's machine computed once.
+    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints, onces: &[Id]) {
         self.machine.forget_from(self.bound);
+        self.machine.adopt_onces(onces);
         self.fingerprints
             .attach(fingerprints, store.value_count() as Id);
         if let Some(canonicalizer) = &mut self.canonicalizer {
@@ -1988,6 +2067,65 @@ struct Level {
     is_graph_bounded: bool,
     // PROVE_IT_STOP_AT: where the search stops, as if it failed there.
     stop_at: Option<usize>,
+    // PROVE_IT_TEST_PROGRESS_AT: the state whose claim has the search report its progress.
+    test_progress_at: Option<usize>,
+}
+
+// What a thread did of a level so far, which the search's thread reads to report its progress.
+#[derive(Default)]
+struct ThreadCounts {
+    generated: AtomicU64,
+    // The states it found that were new to it.
+    found: AtomicUsize,
+    expanded: AtomicUsize,
+}
+
+// How the threads of a level wake the search's thread, which waits for them to finish and
+// reports the progress meanwhile.
+#[derive(Default)]
+struct Signal {
+    state: Mutex<Signaled>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct Signaled {
+    finished: usize,
+    is_test_claimed: bool,
+    is_test_reported: bool,
+}
+
+impl Signal {
+    // A thread that panicked holds no lock, so what the lock guards is whole.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Signaled> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    // Holds the thread that claimed PROVE_IT_TEST_PROGRESS_AT's state until the search's thread
+    // reported, so that the report falls inside the level.
+    fn hold_for_report(&self) {
+        let mut state = self.lock();
+        state.is_test_claimed = true;
+        self.wake.notify_all();
+        while !state.is_test_reported {
+            state = self
+                .wake
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+}
+
+// Counts a thread finished when it returns or panics, so the search's thread stops waiting.
+struct Finishing<'s>(&'s Signal);
+
+impl Drop for Finishing<'_> {
+    fn drop(&mut self) {
+        self.0.lock().finished += 1;
+        self.0.wake.notify_all();
+    }
 }
 
 // A value on cache lines of its own, so that writing it doesn't move what threads read beside it.
@@ -2024,7 +2162,12 @@ struct Recording {
 
 // Expands runs of a level's states on a thread, until none are left before the first state not to
 // expand, recording where it stops if it stops.
-fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
+fn expand_claimed(
+    worker: &mut Worker<'_>,
+    shared: &Shared<'_>,
+    counts: &ThreadCounts,
+    signal: &Signal,
+) -> Expanded {
     let (before, level) = (shared.before, shared.level);
     let candidates = Candidates {
         before,
@@ -2056,10 +2199,17 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     search.canonicalizer = worker.canonicalizer.take();
     let (mut claimed, mut successors) = (Vec::new(), Vec::new());
     let width = before.width;
+    let mut generated = 0;
     'claiming: loop {
         let start = level.cursor.fetch_add(level.chunk, Ordering::Relaxed);
         if start >= level.end || start >= level.stop.load(Ordering::Relaxed) {
             break;
+        }
+        if level
+            .test_progress_at
+            .is_some_and(|at| (start..start + level.chunk).contains(&at))
+        {
+            signal.hold_for_report();
         }
         claimed.push(Claimed {
             start,
@@ -2091,6 +2241,12 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
                     if let Some(graph) = &mut search.graph {
                         graph.edge_offsets.push(graph.edges.len() as u32);
                     }
+                    generated += search.successors;
+                    counts.generated.store(generated, Ordering::Relaxed);
+                    counts
+                        .found
+                        .store(search.states.parents.len(), Ordering::Relaxed);
+                    counts.expanded.store(successors.len(), Ordering::Relaxed);
                 }
                 Err(_) => {
                     level.stop.fetch_min(expanding, Ordering::Relaxed);
@@ -2123,6 +2279,7 @@ impl Search<'_, States> {
     // store's in the order of the step that first reached each, by parent and then by step, which
     // is the order TLC's one worker finds them in. Where a thread stops, the search stops at the
     // first state whose expansion stopped, with the states and counts found before it.
+    #[allow(clippy::too_many_arguments)]
     fn expand_level(
         &mut self,
         machine: &mut Machine<'_>,
@@ -2131,6 +2288,7 @@ impl Search<'_, States> {
         level: &Level,
         actions: Option<&[Step]>,
         out_degrees: &mut [u64; OUT_DEGREE_BUCKETS],
+        progress_at: Option<&mut Instant>,
     ) -> Outcome<()> {
         let shared = Shared {
             context,
@@ -2145,20 +2303,94 @@ impl Search<'_, States> {
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
         let fingerprints = self.fingerprints.share();
+        let onces = &machine.onces;
+        let counts: Vec<Padded<ThreadCounts>> = workers
+            .iter()
+            .map(|_| Padded(ThreadCounts::default()))
+            .collect();
+        let signal = Signal::default();
+        let reporter = &mut *self.reporter;
+        let (generated, depth) = (self.generated, self.depth);
+        // TLC's progress as it reports it while its workers run on (`printProgresStats`): the
+        // states each thread found new to it count once, the most any thread found, so that the
+        // count never passes what the merge finds.
+        let report = |reporter: &mut dyn Reporter| {
+            let found = counts
+                .iter()
+                .map(|counts| counts.found.load(Ordering::Relaxed))
+                .max()
+                .unwrap_or(0);
+            let distinct = (level.end + found) as u64;
+            let expanded: usize = counts
+                .iter()
+                .map(|counts| counts.expanded.load(Ordering::Relaxed))
+                .sum();
+            reporter.progress(
+                generated
+                    + counts
+                        .iter()
+                        .map(|counts| counts.generated.load(Ordering::Relaxed))
+                        .sum::<u64>(),
+                distinct,
+                distinct - (level.start + expanded) as u64,
+                if found > 0 {
+                    depth.max(level.number + 1)
+                } else {
+                    depth
+                }
+                .max(1),
+            );
+        };
         let expanded: Vec<Expanded> = std::thread::scope(|scope| {
             let threads: Vec<_> = workers
                 .iter_mut()
-                .map(|worker| {
-                    let (shared, store, fingerprints) = (&shared, &store, &fingerprints);
+                .zip(&counts)
+                .map(|(worker, counts)| {
+                    let (shared, store, fingerprints, signal) =
+                        (&shared, &store, &fingerprints, &signal);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
-                            worker.attach(store, fingerprints);
-                            expand_claimed(worker, shared)
+                            let _finishing = Finishing(signal);
+                            worker.attach(store, fingerprints, onces);
+                            expand_claimed(worker, shared, counts, signal)
                         })
                         .expect("a thread for the search")
                 })
                 .collect();
+            // TLC reports its progress on a timer while its workers run, whatever their depth
+            // (AbstractChecker.runTLC, ModelChecker.runTLCContinueDoing). The timer only wakes
+            // this thread to report.
+            let mut progress_at = progress_at;
+            let mut state = signal.lock();
+            while state.finished < threads.len() {
+                if state.is_test_claimed && !state.is_test_reported {
+                    report(reporter);
+                    state.is_test_reported = true;
+                    signal.wake.notify_all();
+                    continue;
+                }
+                let now = Instant::now();
+                state = match progress_at.as_deref_mut() {
+                    Some(at) if now >= *at => {
+                        *at = now + PROGRESS_INTERVAL;
+                        report(reporter);
+                        state
+                    }
+                    Some(at) => {
+                        signal
+                            .wake
+                            .wait_timeout(state, *at - now)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .0
+                    }
+                    None => signal
+                        .wake
+                        .wait(state)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                };
+            }
+            drop(state);
             threads
                 .into_iter()
                 .map(|thread| {
@@ -2405,6 +2637,20 @@ impl Search<'_, States> {
                 }
             }
         }
+        // The values the threads computed once that the store's machine has none of, for every
+        // thread to read from the next level on. Such a value reads no state and nothing the
+        // threads differ in, so each thread that computed one computed the same value, and which
+        // thread's is imported shows nowhere.
+        for worker in workers.iter_mut() {
+            let overlay = &worker.machine.store;
+            for (own, &computed) in machine.onces.iter_mut().zip(&worker.machine.onces) {
+                if *own == EMPTY && computed != EMPTY {
+                    *own = machine
+                        .store
+                        .import(overlay, computed, &mut worker.imported);
+                }
+            }
+        }
         self.expanding = stop;
         // The fingerprints each thread computed, of the store's values and of the values it made
         // that are now the store's, for every thread to read at the next level.
@@ -2432,7 +2678,7 @@ fn holds_all_changed_none(machine: &mut Machine<'_>, context: &EngineContext) ->
     Ok(true)
 }
 
-fn describe(error: CompileError) -> String {
+pub(crate) fn describe(error: CompileError) -> String {
     match error {
         CompileError::Bail(reason) | CompileError::Decline(reason) => reason,
     }
@@ -2445,6 +2691,8 @@ struct Started {
     printed: Vec<Prints>,
     /// The sets the symmetry permutes that TLC warns hold fewer than two elements, by name.
     small_sets: Vec<String>,
+    /// Whether each startup predicate evaluated to TRUE, up to the one whose value TLC rejects.
+    holding: Vec<bool>,
     group: Option<Group>,
     assumed: Vec<Prints>,
     violated: Option<String>,
@@ -2452,6 +2700,8 @@ struct Started {
     failed: Option<(u32, Bail)>,
     /// The configuration error a constant definition's value gave, which ends the startup.
     config_error: Option<String>,
+    /// The message of the RuntimeException the symmetry threw, which ends the startup.
+    exception: Option<&'static str>,
     /// The assumption the engine left to its caller, by its position.
     // The assumption left to the caller, and why the engine didn't evaluate it.
     delegated: Option<(u32, Bail)>,
@@ -2493,11 +2743,22 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         }
     }
     // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
+    let mut holding = Vec::with_capacity(startup.predicates.len());
     for (evaluate, form, kind, name) in &startup.predicates {
         let value = match evaluate(machine) {
             Ok(value) => value,
             Err(bail) if is_engine_limit(bail.0) => return Err(bail),
-            Err(_) => continue,
+            // TLC takes a conjunct of the specification it fails to compute as part of the
+            // initial predicate.
+            Err(_) if *form == PredicateForm::Conjunct => {
+                return Err(Bail(
+                    "unsupported: a constant conjunct of the specification that fails at startup",
+                ));
+            }
+            Err(_) => {
+                holding.push(false);
+                continue;
+            }
         };
         // The store forgets how TLC built some values, whose text then depends on it.
         let format = |machine: &Machine<'_>| {
@@ -2510,7 +2771,17 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
             }
         };
         let message = match form {
-            PredicateForm::Predicate if value == TRUE => continue,
+            PredicateForm::Predicate | PredicateForm::Conjunct if value == TRUE => {
+                holding.push(true);
+                continue;
+            }
+            PredicateForm::Conjunct if value == FALSE => {
+                format!("The spec is trivially false because {name} is false.")
+            }
+            PredicateForm::Conjunct => format!(
+                "The operator {name}, which equals {},\ncannot be used as a {kind}",
+                format(machine)?
+            ),
             PredicateForm::Predicate => {
                 format!("The {kind} of {name} is equal to {}", format(machine)?)
             }
@@ -2522,11 +2793,30 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         return Ok(Started {
             printed: take(machine),
             small_sets: Vec::new(),
+            holding,
             group: None,
             assumed: Vec::new(),
             violated: None,
             failed: None,
             config_error: Some(message),
+            exception: None,
+            delegated: None,
+        });
+    }
+    if let Some(symmetry) = &startup.symmetry
+        && let Some(failure) = symmetry.failure
+    {
+        (symmetry.definition)(machine)?;
+        return Ok(Started {
+            printed: take(machine),
+            small_sets: Vec::new(),
+            holding,
+            group: None,
+            assumed: Vec::new(),
+            violated: None,
+            failed: None,
+            config_error: None,
+            exception: Some(failure),
             delegated: None,
         });
     }
@@ -2539,11 +2829,13 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
     Ok(Started {
         printed,
         small_sets,
+        holding,
         group,
         assumed: take(machine),
         violated: assumed.violated,
         failed: assumed.failed,
         config_error: None,
+        exception: None,
         delegated: assumed.delegated,
     })
 }
@@ -2640,12 +2932,25 @@ fn symmetry_group(
 }
 
 // The values the startup definitions computed, which reading them again gives without effects.
-fn startup_values(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<Vec<Id>> {
+pub(crate) fn startup_values(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+) -> Outcome<Vec<Id>> {
     context
         .startup
         .definitions
         .iter()
         .map(|evaluate| evaluate(machine))
+        .collect()
+}
+
+// The values the constant CHOOSEs computed, but those that fail, which reading them again
+// gives without effects.
+pub(crate) fn chosen_values(machine: &mut Machine<'_>, context: &EngineContext) -> Vec<(u32, Id)> {
+    context
+        .choices
+        .iter()
+        .filter_map(|(index, evaluate)| Some((*index, evaluate(machine).ok()?)))
         .collect()
 }
 
@@ -2655,6 +2960,129 @@ fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<
     let mut encoder = SharedEncoder::new(&machine.store);
     encoder.encode(&machine.store, &values)?;
     Ok(encoder.finish())
+}
+
+/// TLC's startup, as the search and the simulation run it: the substitutes, the constant
+/// definitions and the symmetry, then the assumptions, reported as TLC prints them. Returns the
+/// symmetry's group, or the outcome TLC stops with before it computes the initial states.
+pub(crate) fn start(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    settings: &Settings,
+    reporter: &mut dyn Reporter,
+) -> Result<Option<Group>, Box<SearchOutcome>> {
+    // TLCGet("level") is 0 while TLC starts.
+    let startup = machine.store.int(0).and_then(|zero| {
+        machine.set_slot(LEVEL_SLOT, zero);
+        run_startup(machine, &context.startup, settings.is_violation_reported)
+    });
+    let group = match startup {
+        Err(Bail(reason)) => return Err(Box::new(SearchOutcome::Declined(reason.into()))),
+        Ok(Started {
+            failed: Some((_, Bail(reason))),
+            ..
+        }) if !settings.is_violation_reported => {
+            return Err(Box::new(SearchOutcome::Declined(reason.into())));
+        }
+        Ok(started) => {
+            let report = |reporter: &mut dyn Reporter, printed: &[Prints]| {
+                printed
+                    .iter()
+                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            };
+            report(reporter, &started.printed);
+            reporter.startup_predicates(&started.holding);
+            if let Some(message) = started.config_error {
+                return Err(Box::new(SearchOutcome::ConfigError { message }));
+            }
+            if let Some(message) = started.exception {
+                return Err(Box::new(SearchOutcome::StartupException {
+                    message: message.to_owned(),
+                }));
+            }
+            if !started.small_sets.is_empty() {
+                reporter.symmetry_sets_too_small(&started.small_sets);
+            }
+            reporter.startup_done();
+            report(reporter, &started.assumed);
+            let mut assumed = Assumed {
+                violated: started.violated,
+                failed: started.failed,
+                delegated: started.delegated,
+            };
+            // The caller checks each assumption the engine leaves to it, and the engine goes on
+            // from the generator's state it leaves.
+            while let Some((position, bail)) = assumed.delegated {
+                let delegated = match reporter.check_assumption(position) {
+                    Ok(delegated) => delegated,
+                    Err(reason) if bail.0 == DELEGATED_ASSUMPTION => {
+                        return Err(Box::new(SearchOutcome::Declined(reason)));
+                    }
+                    // Where the caller can't check one the engine stopped at a limit of, TLC may
+                    // fail there, which the caller reports as it does any that fails.
+                    Err(_) => {
+                        assumed = Assumed {
+                            violated: None,
+                            failed: Some((position, bail)),
+                            delegated: None,
+                        };
+                        break;
+                    }
+                };
+                match delegated.holds {
+                    Some(true) => {}
+                    Some(false) => {
+                        let name = context.startup.assumptions[position as usize].1.clone();
+                        return Err(Box::new(SearchOutcome::AssumptionViolated { name }));
+                    }
+                    None => return Err(Box::new(SearchOutcome::AssumptionFailed { position })),
+                }
+                machine.random = JavaRandom::from_state(delegated.random);
+                assumed = match check_assumptions(
+                    machine,
+                    &context.startup,
+                    position as usize + 1,
+                    settings.is_violation_reported,
+                ) {
+                    Ok(assumed) => assumed,
+                    Err(Bail(reason)) => {
+                        return Err(Box::new(SearchOutcome::Declined(reason.into())));
+                    }
+                };
+                let printed = std::mem::take(&mut machine.output)
+                    .into_iter()
+                    .filter_map(|printed| match printed {
+                        Printed::Values(values) => Some(values),
+                        Printed::InitialStates(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                printed
+                    .iter()
+                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            }
+            if let Some(name) = assumed.violated {
+                return Err(Box::new(SearchOutcome::AssumptionViolated { name }));
+            }
+            if let Some((position, _)) = assumed.failed {
+                return Err(Box::new(SearchOutcome::AssumptionFailed { position }));
+            }
+            if context.is_diameter_searched || context.is_view_search_read {
+                return Err(Box::new(SearchOutcome::Stopped {
+                    reason: if context.is_diameter_searched {
+                        crate::context::DIAMETER_SEARCHED
+                    } else {
+                        crate::context::VIEW_SEARCH_READ
+                    }
+                    .into(),
+                    checkpoint: None,
+                    collisions: 0,
+                    violation: None,
+                }));
+            }
+            started.group
+        }
+    };
+    Ok(group)
 }
 
 /// Searches the model the IR describes. It runs compiled closures, which recurse with the
@@ -2670,6 +3098,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     compiler.workers = settings.workers;
     compiler.is_native = settings.is_violation_reported;
+    compiler.is_file_system = settings.is_file_system;
     let context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
@@ -2689,6 +3118,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
     // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
     let is_lambda_built = compiler.is_lambda_built;
+    let is_picking = compiler.is_picking;
     let is_pipelined = !is_printing
         && !is_lambda_built
         && !compiler.is_cached
@@ -2707,6 +3137,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // ToString ranks the strings it makes as it evaluates, which threads would do in no order.
     let is_shared = thread_count > 1
         && !compiler.is_ranking
+        && !is_picking
         && !compiler.is_printing
         && !is_lambda_built
         && !compiler.is_cached
@@ -2736,108 +3167,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     } else {
         thread_count
     };
-    let program = compiler.finish();
+    let program = Program {
+        evaluation_budget: settings.test_evaluations,
+        ..compiler.finish()
+    };
     let mut machine = Machine::new(&program, store);
-    // TLCGet("level") is 0 while TLC starts.
-    let startup = machine.store.int(0).and_then(|zero| {
-        machine.set_slot(LEVEL_SLOT, zero);
-        run_startup(
-            &mut machine,
-            &context.startup,
-            settings.is_violation_reported,
-        )
-    });
-    let group = match startup {
-        Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
-        Ok(Started {
-            failed: Some((_, Bail(reason))),
-            ..
-        }) if !settings.is_violation_reported => return SearchOutcome::Declined(reason.into()),
-        Ok(started) => {
-            let report = |reporter: &mut dyn Reporter, printed: &[Prints]| {
-                printed
-                    .iter()
-                    .for_each(|values| reporter.startup_print(&machine.store, values));
-            };
-            report(reporter, &started.printed);
-            if let Some(message) = started.config_error {
-                return SearchOutcome::ConfigError { message };
-            }
-            if !started.small_sets.is_empty() {
-                reporter.symmetry_sets_too_small(&started.small_sets);
-            }
-            reporter.startup_done();
-            report(reporter, &started.assumed);
-            let mut assumed = Assumed {
-                violated: started.violated,
-                failed: started.failed,
-                delegated: started.delegated,
-            };
-            // The caller checks each assumption the engine leaves to it, and the engine goes on
-            // from the generator's state it leaves.
-            while let Some((position, bail)) = assumed.delegated {
-                let delegated = match reporter.check_assumption(position) {
-                    Ok(delegated) => delegated,
-                    Err(reason) if bail.0 == DELEGATED_ASSUMPTION => {
-                        return SearchOutcome::Declined(reason);
-                    }
-                    // Where the caller can't check one the engine stopped at a limit of, TLC may
-                    // fail there, which the caller reports as it does any that fails.
-                    Err(_) => {
-                        assumed = Assumed {
-                            violated: None,
-                            failed: Some((position, bail)),
-                            delegated: None,
-                        };
-                        break;
-                    }
-                };
-                if !delegated.holds {
-                    let name = context.startup.assumptions[position as usize].1.clone();
-                    return SearchOutcome::AssumptionViolated { name };
-                }
-                machine.random = JavaRandom::from_state(delegated.random);
-                assumed = match check_assumptions(
-                    &mut machine,
-                    &context.startup,
-                    position as usize + 1,
-                    settings.is_violation_reported,
-                ) {
-                    Ok(assumed) => assumed,
-                    Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
-                };
-                let printed = std::mem::take(&mut machine.output)
-                    .into_iter()
-                    .filter_map(|printed| match printed {
-                        Printed::Values(values) => Some(values),
-                        Printed::InitialStates(_) => None,
-                    })
-                    .collect::<Vec<_>>();
-                printed
-                    .iter()
-                    .for_each(|values| reporter.startup_print(&machine.store, values));
-            }
-            if let Some(name) = assumed.violated {
-                return SearchOutcome::AssumptionViolated { name };
-            }
-            if let Some((position, _)) = assumed.failed {
-                return SearchOutcome::AssumptionFailed { position };
-            }
-            if context.is_diameter_searched || context.is_view_search_read {
-                return SearchOutcome::Stopped {
-                    reason: if context.is_diameter_searched {
-                        crate::context::DIAMETER_SEARCHED
-                    } else {
-                        crate::context::VIEW_SEARCH_READ
-                    }
-                    .into(),
-                    checkpoint: None,
-                    collisions: 0,
-                    violation: None,
-                };
-            }
-            started.group
-        }
+    let memo_entries = settings.test_memo_entries.unwrap_or(MAXIMUM_ENTRIES);
+    machine.limit_memo(memo_entries);
+    let group = match start(&mut machine, &context, settings, reporter) {
+        Ok(group) => group,
+        Err(outcome) => return *outcome,
     };
     // The initial states draw on from where the startup left the generator.
     let startup_random = machine.random.state();
@@ -2888,6 +3227,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
     search.is_lambda_built = is_lambda_built;
+    search.is_picking = is_picking;
     search.held = (model.is_recording_graph && is_printing).then(Vec::new);
     search.graph = model.is_recording_graph.then(|| Graph {
         edge_offsets: vec![0],
@@ -2967,8 +3307,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         // Where no walk took the shortcut or enumerated an empty set for an assignment, no
         // comparison of an assigned value can fail, and no string was ranked since (which may take
         // a string out of its class), TLC's predicate evaluation of the next-state relation holds
-        // of every step the walks took.
+        // of every step the walks took. A state whose next states failed TLC checks each step of
+        // anew.
         let is_next_taken = is_enabled_exact
+            && graph.partial.is_none()
             && !machine.is_membership_unsafe
             && !machine.store.has_unordered_strings()
             && machine
@@ -2994,6 +3336,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: reals.labels.as_deref(),
                 is_enabled_exact,
                 is_next_taken,
+                partial: None,
                 pieces: None,
                 levels: None,
             },
@@ -3007,6 +3350,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 labels: graph.labels.as_ref().map(|labels| &labels[..edge_count]),
                 is_enabled_exact,
                 is_next_taken,
+                partial: graph.partial,
                 pieces: graph.pieces.as_ref().map(|pieces| &pieces[..edge_count]),
                 levels: levels.as_deref(),
             },
@@ -3071,9 +3415,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         }) {
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
         }
+        machine.is_before_initial_state = true;
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
+            machine.is_before_initial_state = false;
             search.visit_initial(machine, &context)
         })?;
+        machine.is_before_initial_state = false;
         search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
         // TLC stops before it expands a state, at a time of its threads' choosing.
@@ -3283,12 +3630,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     if workers.is_empty() {
                         // The memo tables of the search's machine and its workers' share one
                         // machine's room, so that memory doesn't grow with the threads.
-                        machine.share_memo(thread_count);
+                        machine.limit_memo(memo_entries / thread_count);
                         workers = (0..thread_count)
                             .map(|_| Worker {
                                 machine: {
                                     let mut worker = Machine::new(&program, Store::new());
-                                    worker.share_memo(thread_count);
+                                    worker.limit_memo(memo_entries / thread_count);
                                     worker.assigned_shapes =
                                         machine.assigned_shapes.as_ref().map(|joins| {
                                             joins.iter().map(|_| ShapeJoin::default()).collect()
@@ -3321,7 +3668,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         check_deadlock: model.check_deadlock,
                         is_graph_bounded: is_graph_bounded.get(),
                         stop_at: settings.stop_at,
+                        test_progress_at: settings.test_progress_at,
                     };
+                    // A check of the temporal properties, which TLC makes as it reports its
+                    // progress, waits for the level's end.
                     let expanded = search.expand_level(
                         &mut machine,
                         &mut workers[..threads],
@@ -3329,10 +3679,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         &level,
                         actions.map(Vec::as_slice),
                         &mut out_degrees,
+                        (!is_periodic).then_some(&mut progress_at),
                     );
                     checkpoint_count = search.states.count();
                     checkpoint_generated = search.generated;
                     expanded?;
+                    // A thread that spent the budget stopped the level, which this thread would
+                    // end without the evaluations the thread made.
+                    if program.is_evaluation_budget_spent() {
+                        return Err(Bail(EVALUATIONS_SPENT));
+                    }
                     if search.reporter.is_cancelled() {
                         return Err(Bail(CANCELLED));
                     }
@@ -4056,6 +4412,21 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // its violation where TLC wouldn't, and a deadlock with the path to the node the
             // deadlocked state reaches, as on TLC's Github710d.
             let found = match found {
+                // TLC adds a state whose next states failed to the behavior graphs, with what its
+                // atoms set, which the engine doesn't follow, and, in a model with temporal
+                // properties, an incomplete successor is reported otherwise (`Worker#addElement`),
+                // which isn't followed here.
+                Some(Found {
+                    kind:
+                        ViolationKind::Error {
+                            site: ErrorSite::Next,
+                        },
+                    ..
+                }) if online.is_some()
+                    || (bail.0 == INCOMPLETE_SUCCESSOR && search.graph.is_some()) =>
+                {
+                    None
+                }
                 // TLC adds a deadlocked state to the behavior graphs once it has reported the
                 // deadlock, with what its atoms set, which the engine doesn't follow.
                 Some(found) if online.is_some() => {
@@ -4073,27 +4444,44 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 }
                 Some(mut found) if search.graph.is_some() => {
                     let mut expanded = search.expanding;
+                    let mut count = count;
                     let is_deadlock = matches!(found.kind, ViolationKind::Deadlock { .. });
-                    if is_deadlock {
+                    // TLC's worker adds a state whose next states failed to the behavior graphs
+                    // too, with the successors Next gave before it failed and the stuttering step
+                    // (`Worker#doNextCheckLiveness`), and prints the call stack of the first check
+                    // that fails there in place of Next's.
+                    let is_next_failure = matches!(
+                        found.kind,
+                        ViolationKind::Error {
+                            site: ErrorSite::Next
+                        }
+                    );
+                    if is_deadlock || is_next_failure {
                         let graph = search.graph.as_mut().expect("a graph");
                         graph.edge_offsets.push(graph.edges.len() as u32);
                         expanded += 1;
+                        if is_next_failure {
+                            graph.partial = Some(search.expanding);
+                            count = search.states.count();
+                        }
                     }
                     let tables =
                         graph_tables(&mut machine, &search, expanded, count, None, None).ok();
+                    let is_followed = search.states.key_width.is_none()
+                        && !is_symmetric
+                        && !context.diameter_atoms.contains(&true)
+                        && search
+                            .held
+                            .as_ref()
+                            .is_none_or(|held| held.iter().all(|printed| printed.is_empty()))
+                        && tables.as_ref().is_some_and(|tables| {
+                            tables.iter().all(|table| table.prints.is_empty())
+                        });
                     // TLC had added the initial states and each state before the one it was
                     // expanding, and stopped at the first whose atom failed to evaluate.
                     let unanswered = tables
                         .as_ref()
-                        .filter(|tables| {
-                            search.states.key_width.is_none()
-                                && !is_symmetric
-                                && !context.diameter_atoms.contains(&true)
-                                && search.held.as_ref().is_none_or(|held| {
-                                    held.iter().all(|printed| printed.is_empty())
-                                })
-                                && tables.iter().all(|table| table.prints.is_empty())
-                        })
+                        .filter(|_| is_followed)
                         .and_then(|tables| {
                             unanswered_at(
                                 model,
@@ -4108,16 +4496,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             )
                         })
                         .filter(|unanswered| {
-                            unanswered.is_initial || (unanswered.state as usize) < search.expanding
+                            unanswered.is_initial
+                                || (unanswered.state as usize)
+                                    < search.expanding + usize::from(is_next_failure)
                         });
                     // The tables leave unanswered what the checker asks of no finished search,
                     // such as ENABLED of a state not yet expanded, as well as what fails: TLC
-                    // stopped at the atom only where evaluating it fails as TLC fails.
+                    // stopped at the atom only where evaluating it fails as TLC fails. After a
+                    // failure in Next, an atom that holds may come before one that fails.
                     let unanswered = unanswered.and_then(|unanswered| {
                         let failure = atom_failure(&mut machine, &context, &search, unanswered);
                         machine.output.clear();
                         match failure {
-                            Some(Ok(_)) => None,
+                            Some(Ok(_)) if !is_next_failure => None,
                             Some(Err(bail)) if !is_engine_limit(bail.0) => Some(Some(unanswered)),
                             _ => Some(None),
                         }
@@ -4126,8 +4517,26 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         accepted_at(model, &context, &search, &tables, expanded, count)
                     });
                     match verdict {
+                        _ if is_next_failure && !is_followed => None,
                         _ if unanswered.is_some() => unanswered.flatten().and_then(|unanswered| {
-                            to_atom_failure(&context, &search, initial_states, unanswered)
+                            if !is_next_failure || unanswered.state as usize != search.expanding {
+                                return to_atom_failure(
+                                    &context,
+                                    &search,
+                                    initial_states,
+                                    unanswered,
+                                );
+                            }
+                            let extra = atom_extra(&context, &search, unanswered)?;
+                            found.kind = ViolationKind::Error {
+                                site: ErrorSite::NextAtom {
+                                    atom: unanswered.atom,
+                                    is_extra: extra.is_some(),
+                                },
+                            };
+                            found.last =
+                                extra.map(|extra| search.states.state(extra as u32).to_vec());
+                            Some(found)
                         }),
                         Some(None) => Some(found),
                         // TLC stops at the first state whose tableau node accepts every
@@ -4527,6 +4936,7 @@ fn to_violation(
         .map_or(unlabelled, |labels| labels.into_iter().skip(1).collect())
     };
     let startup = startup_values(machine, context).ok()?;
+    let chosen = chosen_values(machine, context);
     let symmetry = search
         .canonicalizer
         .as_ref()
@@ -4560,6 +4970,7 @@ fn to_violation(
             counts: found.counts,
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
+            chosen,
             startup_random: machine.startup_random,
             random: found.random,
             symmetry,
@@ -4818,6 +5229,39 @@ fn replayed_unanswered(
     )
 }
 
+// The state besides the one TLC adds to the behavior graphs that an atom it evaluates then reads:
+// a successor's state predicate, or the next state of one of the added state's steps. `None`
+// where the search doesn't follow the atom there.
+fn atom_extra(
+    context: &EngineContext,
+    search: &Search<'_, States>,
+    unanswered: tla_live::Unanswered,
+) -> Option<Option<usize>> {
+    let graph = search.graph.as_ref()?;
+    let state = unanswered.state as usize;
+    let slot = unanswered.slot as usize;
+    // TLC fails adding an initial state before it reports the initial states, where the search
+    // looks for it.
+    if unanswered.is_initial {
+        return None;
+    }
+    match context.atoms.get(unanswered.atom as usize)? {
+        Atom::State(_) => Some((slot != state).then_some(slot)),
+        Atom::Enabled { .. } => (slot == state).then_some(None),
+        Atom::Action { .. } => {
+            let edges = graph.edges.len();
+            if slot >= edges {
+                return (slot - edges == state).then_some(Some(state));
+            }
+            let range = graph.edge_offsets[state] as usize..graph.edge_offsets[state + 1] as usize;
+            range
+                .contains(&slot)
+                .then(|| Some(graph.edges[slot] as usize))
+        }
+        Atom::LevelState(_) | Atom::LevelAction { .. } | Atom::Unknown(_) => None,
+    }
+}
+
 // Where TLC evaluates an atom the engine didn't answer as it adds a state to the behavior graphs,
 // the failure the caller evaluates again, with the counts of TLC's search then: what it generated
 // and found up to that state, and the out-degrees of the states it expanded.
@@ -4829,40 +5273,7 @@ fn to_atom_failure(
 ) -> Option<Found> {
     let graph = search.graph.as_ref()?;
     let state = unanswered.state as usize;
-    let slot = unanswered.slot as usize;
-    // TLC fails adding an initial state before it reports the initial states, where the search
-    // looks for it.
-    if unanswered.is_initial {
-        return None;
-    }
-    // The state the atom reads besides the one TLC adds: a successor's state predicate, or the
-    // next state of one of the added state's steps.
-    let extra = match context.atoms.get(unanswered.atom as usize)? {
-        Atom::State(_) => (slot != state).then_some(slot),
-        Atom::Enabled { .. } => {
-            if slot != state {
-                return None;
-            }
-            None
-        }
-        Atom::Action { .. } => {
-            let edges = graph.edges.len();
-            let next = if slot < edges {
-                let range =
-                    graph.edge_offsets[state] as usize..graph.edge_offsets[state + 1] as usize;
-                if !range.contains(&slot) {
-                    return None;
-                }
-                graph.edges[slot] as usize
-            } else if slot - edges == state {
-                state
-            } else {
-                return None;
-            };
-            Some(next)
-        }
-        Atom::LevelState(_) | Atom::LevelAction { .. } | Atom::Unknown(_) => return None,
-    };
+    let extra = atom_extra(context, search, unanswered)?;
     let sum = |counts: &[u32]| {
         counts[..=state]
             .iter()
@@ -4914,6 +5325,7 @@ fn to_accepted(
     }
     labels.remove(0);
     let startup = startup_values(machine, context).ok()?;
+    let chosen = chosen_values(machine, context);
     let graph = search.graph.as_ref()?;
     let state = state as usize;
     let sum = |counts: &[u32]| {
@@ -4940,6 +5352,7 @@ fn to_accepted(
         counts,
         store: std::mem::replace(&mut machine.store, Store::new()),
         startup,
+        chosen,
         startup_random: machine.startup_random,
         random: None,
         symmetry: None,
@@ -4979,6 +5392,7 @@ fn to_lasso(
         _ => (vec![None; path.len().saturating_sub(1)], None),
     };
     let startup = startup_values(machine, context).ok()?;
+    let chosen = chosen_values(machine, context);
     let symmetry = search
         .canonicalizer
         .as_ref()
@@ -5005,6 +5419,7 @@ fn to_lasso(
             },
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
+            chosen,
             startup_random: machine.startup_random,
             random: None,
             symmetry,
@@ -5041,7 +5456,7 @@ fn label_lasso(
     Ok(labels)
 }
 
-fn report_printed(reporter: &mut dyn Reporter, store: &Store, printed: &Printed) {
+pub(crate) fn report_printed(reporter: &mut dyn Reporter, store: &Store, printed: &Printed) {
     match printed {
         Printed::Values(values) => reporter.print(store, values),
         Printed::InitialStates(count) => reporter.initial_states_progress(*count),
@@ -5239,7 +5654,7 @@ fn expand_reals(
             machine.reset_assigned();
             walk(machine, &mut |machine: &mut Machine<'_>| {
                 if machine.next().contains(&UNASSIGNED) {
-                    return Err(Bail("a successor that isn't complete"));
+                    return Err(Bail(INCOMPLETE_SUCCESSOR));
                 }
                 successors.push((machine.next().to_vec(), label as u32));
                 Ok(())

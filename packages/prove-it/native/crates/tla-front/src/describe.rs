@@ -16,7 +16,7 @@ use crate::spec::{
     lookup_scope,
 };
 
-const UNNAMED_ACTION: &str = "UnnamedAction";
+pub const UNNAMED_ACTION: &str = "UnnamedAction";
 
 /// A part of the specification: the name TLC gives it, and where it is written.
 pub struct Part {

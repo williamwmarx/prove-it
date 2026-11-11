@@ -41,13 +41,16 @@ const READ_MASK: u32 = NONCONSTANT | READS_IMPURE;
 const BUILTIN_STATE_LEVEL: u32 = 1;
 const BUILTIN_LEVEL_CONSTANT: u32 = 2;
 
-const IMPURE_BUILTINS: [&str; 7] = [
+const IMPURE_BUILTINS: [&str; 10] = [
     "Print",
     "PrintT",
     "Assert",
+    "AssertEq",
     "JavaTime",
     "RandomElement",
     "TLCGet",
+    "TLCGetOrDefault",
+    "TLCGetAndSet",
     "TLCSet",
 ];
 
@@ -59,6 +62,8 @@ const TEMPORAL_OPERATORS: [&str; 2] = ["~>", "-+->"];
 /// The facts of every definition of the environment, by the definition's address.
 pub struct DefinitionFacts {
     ids: FastMap<usize, usize>,
+    // The definitions `ids` keys, kept so their addresses aren't reused.
+    _definitions: Vec<Rc<Definition>>,
     rows: Vec<u32>,
     words: usize,
 }
@@ -411,7 +416,12 @@ pub fn create_definition_facts(environment: &Environment) -> DefinitionFacts {
             }
         })
         .collect();
-    DefinitionFacts { ids, rows, words }
+    DefinitionFacts {
+        ids,
+        _definitions: definitions,
+        rows,
+        words,
+    }
 }
 
 impl DefinitionFacts {

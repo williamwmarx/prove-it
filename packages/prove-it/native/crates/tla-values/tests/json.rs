@@ -20,15 +20,20 @@ fn to_json(store: &Store, id: u32) -> String {
     String::from_utf16(&text).expect("text")
 }
 
+// TLC reads a number with Integer.parseInt, so 32-bit integers only.
 #[test]
-fn reads_numbers_as_gson_truncates_them() {
+fn reads_numbers_as_integer_parse_int_reads_them() {
     let mut store = Store::new();
-    let numbers = read_json(&mut store, &read_fixture("Numbers.json")).expect("a value");
-    let expected: Vec<u32> = [1, -2, 1, -1, 1000, -1294967296, -350287150, 0, 0]
+    let numbers = read_json(&mut store, &read_fixture("Integers.json")).expect("a value");
+    let expected: Vec<u32> = [1, -2, 0, 0, 2147483647, -2147483648]
         .iter()
         .map(|&number| store.int(number).expect("an integer"))
         .collect();
     assert_eq!(store.tuple_elements(numbers), expected);
+    assert!(read_json(&mut store, &read_fixture("Numbers.json")).is_err());
+    for text in ["1e3", "1.0", "2147483648", "-2147483649"] {
+        assert!(read_json(&mut store, &units(text)).is_err(), "{text}");
+    }
 }
 
 #[test]

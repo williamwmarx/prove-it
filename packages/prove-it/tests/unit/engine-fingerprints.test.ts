@@ -6,7 +6,6 @@
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import { check } from "../../src";
 import { fromValue } from "../../src/engine/convert";
 import {
   getStateFingerprints,
@@ -15,12 +14,14 @@ import {
 } from "../../src/engine/fingerprint";
 import { nativeStore } from "../../src/engine/native-store";
 import { resetStore } from "../../src/engine/store";
+import { checkParsed } from "../../src/parallel";
 import { getTlcFingerprint } from "../../src/tlc/fingerprint";
 import {
   createModelValue,
   createRecord,
   createSet,
   createTuple,
+  setStringOrder,
   type Value,
 } from "../../src/values";
 
@@ -57,7 +58,8 @@ const STORES: [string, typeof localStore][] = [
 describe.each(STORES)("the fingerprints of %s's states", (_, store) => {
   it("match TLC's whichever parent each state names", () => {
     // A search resets the store before it interns values, as this test does, and the fingerprints
-    // of values along with it, whose ids they are by.
+    // of values along with it, whose ids they are by. The spec's strings TLC interned as it started.
+    setStringOrder(["a", "ack", "b", "long string ".repeat(30), "n", "req", "type"]);
     store.resetStore();
     store.resetFingerprints();
     // Several values share a length, so that many changes from a parent keep the lengths.
@@ -161,9 +163,9 @@ describe("the fingerprints of the engine's states", () => {
     ].join("\n");
     const config = "INIT Init\nNEXT Next";
     delete process.env.PROVE_IT_ENGINE;
-    const result = await check({ source, config, onPrint: () => {} });
+    const result = await checkParsed({ source, config, onPrint: () => {} });
     process.env.PROVE_IT_ENGINE = "0";
-    const reference = await check({ source, config, onPrint: () => {} });
+    const reference = await checkParsed({ source, config, onPrint: () => {} });
     expect(result.fingerprintDistance).toBeDefined();
     expect(result).toEqual(reference);
   });
@@ -217,7 +219,7 @@ describe("the fingerprints of the engine's states", () => {
       if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
     });
     try {
-      const result = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
+      const result = await checkParsed({ source: `---- MODULE M ----\n${body}\n====`, config });
       expect(result.status).toBe("success");
       expect(result.fingerprintDistance).toBeDefined();
       expect(lines.some((line) => line.startsWith("[engine] checked"))).toBe(true);

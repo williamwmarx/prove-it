@@ -22,7 +22,7 @@ describe("TLCExt matches TLC", () => {
   it("checks TLC's TLCExtTrace model with an alias", async () => {
     const result = await checkFixture("TLCExtTrace", "TLCExtTraceAlias");
     expect(result.status).toBe("invariant-violation");
-    expect(result.violation?.trace).toHaveLength(7);
+    expect(result.violations[0]?.states).toHaveLength(7);
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([7, 7, 7]);
   });
 

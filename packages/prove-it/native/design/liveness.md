@@ -112,11 +112,11 @@ before it got there. A property `[]P` of a
 state predicate P isn't an atom: TLC checks it as an invariant, which the replay checks again on
 the states it found, the failing one first.
 
-## A failure of the next-state relation in a model with temporal properties (planned)
+## A failure of the next-state relation in a model with temporal properties (as built)
 
-The binary declines it (the `tlc-replay` test's two runs and one of `check`'s). It has to print
-what TLC prints, and TLC goes on after the failure. Read from `Worker.run` and
-`Worker#doNextCheckLiveness` at d8fb231, and checked against TLC built there:
+The binary declined it (the `tlc-replay` test's two runs and one of `check`'s). TLC goes on after
+the failure. Read from `Worker.run` and `Worker#doNextCheckLiveness` at d8fb231, and checked
+against TLC built there:
 
 1. `getNextStates` throws at state s. `ModelChecker#doNextFailed` sets the error state and prints
    the error and the trace to s.
@@ -138,10 +138,32 @@ every liveness check on s holds, and the first failing check's stack when one fa
 stack Spec, the fairness condition, Next, the action. A model whose fairness names an action that
 doesn't fail (`WF_x(B)` while A fails) prints the plain Next failure.
 
-The fix belongs where the engine orders the failure, not in the gate that declines it: at a Next
-failure in a model with temporal properties, the engine evaluates TLC's liveness checks on s with
-the partial successors and the stuttering step, in TLC's order. It reports the first that fails as
-the error site, or Next's failure when none does.
+The engine orders the failure. At a Next failure in a model with temporal properties it adds s to
+the graph as an expanded state whose steps are those Next took before it failed (`Graph::partial`;
+the steps the search records are the in-model successors, as TLC's `SetOfStates` holds them), so
+the tables answer the atoms on those steps, the stuttering step and the successors, and ENABLED
+on s is evaluated rather than read from the partial steps. `find_unanswered` then adds the states
+up to s in TLC's order, the solutions' action checks on the steps in fingerprint order, then the
+state checks, then the tableau's consistency:
+- an atom that fails on a state before s is TLC's stop, as before (`ErrorSite::Atom`);
+- an atom that fails on s or one of its steps is `ErrorSite::NextAtom`, with the state past s it
+  reads, if any. `tla-trace` evaluates Next's failure for the message, the trace and the code, and
+  the atom's for the call stack, which the binary prints in place of Next's. TLC exits by the
+  error's code, as no replay runs: a failure that isn't an EvalException exits 255, not 75. Where
+  the atom's rerun has no call stack (a subscript's comparison), TLC replays Next and prints its
+  call stack, and so does the binary;
+- where every check on s holds, the search reports Next's failure, which the binary prints as it
+  does without temporal properties.
+
+The search reports neither where it can't tell: where an atom the tables leave unanswered holds
+when evaluated (one after it may fail), where the search or an atom prints (TLC evaluates the
+atoms twice where one fails, and its replay of Next prints again), under SYMMETRY or a VIEW, where
+an atom reads TLC's registers or the diameter, where a tableau node of s accepts every behavior,
+and for a successor that isn't complete, which TLC reports otherwise. The `tlc-replay` runs are
+native. `check`'s still declines, now where `tla-trace` evaluates Next again ("SUBSET of a
+non-set"): TLC's Next doesn't fail there, as its `\E` over `{1} \cup SUBSET 3` stops at 1, which
+the engine's eager enumeration doesn't; it is the ENABLED of the fairness that fails, and its
+rerun with the call stack fails to fingerprint, so TLC replays Next for its call stack.
 
 ## Temporal formulas inside a predicate (as built)
 

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getNativeAddon } from "../../src/engine/native";
 import { TlaProverError } from "../../src/errors";
 import { decide } from "../../src/prover/deciders";
+import type { Decision } from "../../src/prover/verdict";
 
 const TESTS_DIRECTORY = join(import.meta.dirname, "..");
 
@@ -17,6 +18,36 @@ const INPUTS = [
   ["isabelle", read("fixtures/isabelle/AllocatorImplementation_proof-33.thy")],
   ["ls4", read("conformance/ptl/equivalence-of-boxes.ls4")],
 ] as const;
+
+// What the TypeScript SMT decider answered on the SMT input with no limits, as smt and as z3, before
+// it was deleted, as crates/prover/smt/tests/tables/decide.txt records it too.
+const SMT_RECORDED: Decision = {
+  verdict: "unsat",
+  timeUsedMs: 0,
+  statistics: { instances: 14, steps: 4626 },
+};
+
+// What the TypeScript deciders answered on their inputs with no limits, before they were deleted,
+// as tests/fixtures/zenon/decisions.txt and prove-isabelle's testdata/decide.txt record Zenon's and
+// Isabelle's too.
+const RECORDED: Record<string, Decision> = {
+  smt: SMT_RECORDED,
+  z3: SMT_RECORDED,
+  isabelle: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 840 } },
+  ls4: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 5 } },
+  zenon: {
+    verdict: "unsat",
+    timeUsedMs: 0,
+    statistics: {
+      steps: 1932,
+      nodesSearched: 2246,
+      maxBranchFormulas: 319,
+      proofNodes: 183,
+      formulasCreated: 13905,
+      proof: "25254:004ede84",
+    },
+  },
+};
 
 const OPTIONS = { timeLimitMs: Infinity };
 
@@ -65,8 +96,7 @@ describe("a malformed input", () => {
   });
 });
 
-// Until a backend's port lands, the native engine declines its inputs and TypeScript decides them.
-// Where it decides, it must answer as TypeScript does.
+// Each backend's TypeScript is deleted, and its Rust port decides as the TypeScript did.
 describe("the Rust ports", () => {
   const getAddon = () => {
     const addon = getNativeAddon();
@@ -74,39 +104,24 @@ describe("the Rust ports", () => {
     return addon;
   };
 
-  // Runs a decision with PROVE_IT_PROVER set to the port given.
-  const useProver = <Value>(setting: string, getValue: () => Value) => {
-    const previous = process.env.PROVE_IT_PROVER;
-    process.env.PROVE_IT_PROVER = setting;
-    try {
-      return getValue();
-    } finally {
-      if (previous === undefined) delete process.env.PROVE_IT_PROVER;
-      else process.env.PROVE_IT_PROVER = previous;
-    }
-  };
+  // Z3 is sent the SMT input.
+  it.each([...INPUTS, ["z3", INPUTS[0][1]] as const])(
+    "%s decides as its TypeScript did",
+    (prover, text) => {
+      expect(decide(prover, text, OPTIONS)).toMatchObject({
+        verdict: RECORDED[prover].verdict,
+        statistics: RECORDED[prover].statistics,
+      });
+    },
+  );
 
-  it.each(INPUTS)("%s declines, or decides as TypeScript does", (prover, text) => {
-    const native = getAddon().decide(prover, text, Infinity, undefined, undefined);
-    if (native.kind === "declined") return;
-    const typescript = useProver("ts", () => decide(prover, text, OPTIONS));
-    expect(native).toEqual({
-      kind: "decided",
-      verdict: typescript.verdict,
-      statistics: typescript.statistics,
-    });
-  });
-
-  it("decides PTL", () => {
-    expect(getAddon().decide("ls4", INPUTS[3][1], Infinity, undefined, undefined).kind).toBe(
-      "decided",
-    );
-  });
-
-  it("decides Zenon", () => {
-    expect(getAddon().decide("zenon", INPUTS[1][1], Infinity, undefined, undefined).kind).toBe(
-      "decided",
-    );
+  // tlapm counts a Zenon, an Isabelle or an LS4 that stops on its input as a failure.
+  it.each([
+    ["zenon", "$sig a"],
+    ["isabelle", "theory \u{e9}"],
+    ["ls4", "not ((always h00000) ->"],
+  ])("fails on a malformed %s input", (prover, text) => {
+    expect(() => decide(prover, text, OPTIONS)).toThrow(TlaProverError);
   });
 
   it("declines a prover without a backend", () => {
@@ -116,15 +131,13 @@ describe("the Rust ports", () => {
     });
   });
 
-  it.each(INPUTS)("%s falls back to TypeScript where its port declines", (prover, text) => {
-    expect(useProver("rust", () => decide(prover, text, OPTIONS))).toMatchObject({
-      verdict: "unsat",
-    });
+  it("fails on a prover the engine declines", () => {
+    expect(() => decide("cvc4", "", OPTIONS)).toThrow(TlaProverError);
   });
 
   // The native backends don't see the signal, so an aborted one keeps an input from them.
   it.each(INPUTS)("%s is unknown once its signal has aborted", (prover, text) => {
     const options = { timeLimitMs: Infinity, signal: AbortSignal.abort() };
-    expect(useProver("rust", () => decide(prover, text, options)).verdict).toBe("unknown");
+    expect(decide(prover, text, options).verdict).toBe("unknown");
   });
 });

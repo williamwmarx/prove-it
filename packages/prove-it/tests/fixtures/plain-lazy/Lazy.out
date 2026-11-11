@@ -1,0 +1,30 @@
+State 1: <Initial predicate>
+/\ x = 0
+/\ nat = Nat
+/\ ints = Int
+/\ strings = STRING
+/\ seq = Seq({1})
+/\ subset = SUBSET (1..30)
+/\ functions = [Nat -> {1}]
+/\ records = [a: Nat]
+/\ product = (Nat \X {1})
+/\ filter = {n \in Nat : <expression line 9, col 59 to line 9, col 63 of module Lazy> }
+/\ lambda = [n \in Nat |-> <expression line 10, col 37 to line 10, col 37 of module Lazy>]
+/\ cup = ({-1}) \cup Nat
+/\ nested = <<Nat, 1>>
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module Lazy>
+/\ x = 1
+/\ nat = Nat
+/\ ints = Int
+/\ strings = STRING
+/\ seq = Seq({1})
+/\ subset = SUBSET (1..30)
+/\ functions = [Nat -> {1}]
+/\ records = [a: Nat]
+/\ product = (Nat \X {1})
+/\ filter = {n \in Nat : <expression line 9, col 59 to line 9, col 63 of module Lazy> }
+/\ lambda = [n \in Nat |-> <expression line 10, col 37 to line 10, col 37 of module Lazy>]
+/\ cup = ({-1}) \cup Nat
+/\ nested = <<Nat, 1>>
+

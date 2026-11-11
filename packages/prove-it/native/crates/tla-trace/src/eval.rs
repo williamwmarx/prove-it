@@ -4,6 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -23,14 +24,15 @@ use crate::pretty::pretty_print;
 use crate::print::{format_pretty, format_printed, format_value};
 use crate::random::{random_element, random_subset};
 use crate::sets::{
-    as_tuple, cardinality, difference, intersection, is_member, is_member_filtered, is_reducible,
-    union,
+    as_tuple, cardinality, difference, failing_operation, intersection, is_member,
+    is_member_filtered, is_reducible, union,
 };
 use crate::value::{
-    Class, EvalError, Evaluated, Function, Lazy, Search, Text, TlcMessage, Value, compare,
-    elements, equals, fail, fail_coded, fail_runtime, fail_with, find_key, from_store,
-    is_enumerable, lambda_as_function, mark_unnormalized, note_sorted, set_of, sorted_function,
-    unnormalized, unsorted_failure, written_function,
+    Class, EvalError, Evaluated, Function, Lazy, RECORD_VALUE_FIELDS, Search, Text, TlcMessage,
+    Value, compare, elements, equals, fail, fail_coded, fail_runtime, fail_with,
+    failing_comparisons, find_key, from_store, is_enumerable, lambda_as_function,
+    mark_unnormalized, note_sorted, set_of, sorted_function, take_is_record_built, unnormalized,
+    unsorted_failure, written_function,
 };
 
 /// The bindings an expression sees, innermost first.
@@ -41,6 +43,8 @@ pub struct Frame {
     name: TextId,
     binding: Binding,
     parent: Env,
+    /// Whether a thunk's value has been evaluated once.
+    is_evaluated: Cell<bool>,
 }
 
 #[derive(Clone)]
@@ -173,6 +177,7 @@ impl Context {
             name,
             binding,
             parent: self.env.clone(),
+            is_evaluated: Cell::new(false),
         }))))
     }
 
@@ -246,8 +251,9 @@ pub struct CallStack {
     pub frames: Vec<StackFrame>,
     pub is_frozen: bool,
     /// The values the replay built that TLC's `CallStackTool` gives a source, by their address,
-    /// each with the node that built it.
-    sourced: HashMap<usize, NodeId>,
+    /// each with the node that built it. Each is kept, so that no other value takes its address
+    /// while the replay runs.
+    sourced: HashMap<usize, (NodeId, Value)>,
     /// The value each node of the replay last evaluated to.
     values: HashMap<NodeId, Value>,
     /// Whether the failure was in a method of a value with a source, which TLC reports as a
@@ -260,6 +266,10 @@ pub struct CallStack {
     /// the failure is fingerprinted: the last frames of the call stack TLC's replay prints with
     /// the FingerprintException.
     pub fingerprinted_sources: Vec<NodeId>,
+    /// Whether the fingerprinted failure froze the call stack before a function TLC was building
+    /// with a source threw it on as a FingerprintException, which then adds no frames to the
+    /// stack TLC prints (`CallStack.freeze` of a frozen stack).
+    pub is_frozen_before_fingerprint: bool,
     /// Why the replay can't follow TLC to the failure, where it can't: through an assignment
     /// `x' \in S` whose set TLC streams in an order of its own.
     pub unfollowed: Option<&'static str>,
@@ -281,7 +291,16 @@ pub struct CallStack {
 impl CallStack {
     /// The node that built a value with a source.
     pub(crate) fn source(&self, value: &Value) -> Option<NodeId> {
-        self.sourced.get(&address(value)?).copied()
+        self.sourced.get(&address(value)?).map(|&(node, _)| node)
+    }
+
+    // Gives a value the replay built the node that built it as its source, unless it has one.
+    fn give_source(&mut self, value: &Value, node: NodeId) {
+        if let Some(address) = address(value) {
+            self.sourced
+                .entry(address)
+                .or_insert_with(|| (node, value.clone()));
+        }
     }
 }
 
@@ -292,8 +311,18 @@ fn address(value: &Value) -> Option<usize> {
         Value::Set(set) => Some(Rc::as_ptr(set) as usize),
         Value::Function(function) => Some(Rc::as_ptr(function) as usize),
         Value::Lazy(lazy) => Some(Rc::as_ptr(lazy) as *const u8 as usize),
+        Value::Unsorted(values) => Some(Rc::as_ptr(values) as usize),
         _ => None,
     }
+}
+
+/// What the method of a value that failed was given: the element a membership tests, the value an
+/// equality compares with, or neither.
+#[derive(Clone, Copy)]
+enum Given<'v> {
+    Element(&'v Value),
+    Equated(&'v Value),
+    Nothing,
 }
 
 /// A node TLC's call stack holds: a node of the IR, or the prefix of an infix chain of junctions,
@@ -345,6 +374,15 @@ const APPLIED_NON_BOOLEAN: &str = "a function's value the walk tests that isn't 
 /// The reason for a primed variable a state doesn't assign, before the variable's name.
 pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
 
+/// The states the builtin Trace holds at a position of a trace: the first `length` of the
+/// trace's records. The records are shared between positions, and the tuple is built only when an
+/// ALIAS reads Trace, so an ALIAS that doesn't costs nothing per state.
+#[derive(Clone)]
+pub struct TracePrefix {
+    pub records: std::rc::Rc<[Value]>,
+    pub length: usize,
+}
+
 pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
@@ -359,6 +397,9 @@ pub struct Evaluator<'ir> {
     constants: Vec<Option<Value>>,
     /// Zero-arity definitions that read nothing of the state, evaluated once, as TLC does.
     cache: HashMap<(NodeId, bool), Value>,
+    /// The value the search computed of each constant definition whose body is a CHOOSE over a
+    /// set, and whose evaluation has no effect but its value, by its node (`set_chosen`).
+    chosen: HashMap<NodeId, Value>,
     /// The current state's values, and the next state's: `None` until assigned.
     pub current: Vec<Option<Value>>,
     pub next: Vec<Option<Value>>,
@@ -402,14 +443,24 @@ pub struct Evaluator<'ir> {
     /// holds the code's markers, which AssertError compares with. `None` where the caller doesn't
     /// say, and AssertError isn't followed.
     pub is_tool: Option<bool>,
+    /// The builtin Trace as TLC binds it while it evaluates the ALIAS as it prints a trace
+    /// (`Tool.evalAlias`): a record of each state it holds, in TLC's order of the variables.
+    /// `None` elsewhere, where TLC evaluates the Java method, which isn't followed.
+    pub trace: Option<TracePrefix>,
     /// How many workers TLC runs, which TLCGet("config") reads. `None` where the caller doesn't
     /// say, and TLCGet("config") isn't followed.
     pub workers: Option<usize>,
     /// How many AssertError expressions the evaluator is inside, which compare a failure's
     /// message alone, without where TLC reports it.
     asserting: u32,
+    /// How many function applications the evaluator is evaluating the function of, which TLC
+    /// evaluates keeping a function constructor in it lazy (`EvalControl.KeepLazy`).
+    keeping_lazy: u32,
     /// The function constructors a LET names once, found when first asked for.
     once_named: Option<HashSet<NodeId>>,
+    /// Where the evaluator made a value TLC shares with another, or shared one TLC made again,
+    /// which a dumped trace, writing each object once, would show.
+    pub(crate) unshared: Option<&'static str>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -464,6 +515,26 @@ const MAXIMUM_DEPTH: u32 = 10_000;
 /// leaves room for the frames between one nesting and the next.
 const MAXIMUM_STACK_BYTES: usize = 128 * 1024 * 1024;
 
+thread_local! {
+    static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    // Where the outermost nesting's frame is, which the stack grows from.
+    static BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The depth and base outside a nesting, which it restores however it ends, as where a reused
+/// thread catches a panic.
+struct Nesting {
+    depth: u32,
+    base: usize,
+}
+
+impl Drop for Nesting {
+    fn drop(&mut self) {
+        DEPTH.set(self.depth);
+        BASE.set(self.base);
+    }
+}
+
 /// `EC.TLC_MODULE_TLCGET_UNDEFINED`, `EC.TLC_MODULE_ARGUMENT_ERROR` and
 /// `EC.TLC_MODULE_ONE_ARGUMENT_ERROR`.
 const TLCGET_UNDEFINED: u32 = 2145;
@@ -501,16 +572,20 @@ fn undefined_register<T>(key: &Value) -> Evaluated<T> {
 
 /// The reasons the replay can't follow TLC's frames to a failure, which change no message: TLC
 /// prints no frames where an assumption fails to evaluate.
-pub(crate) const UNFOLLOWED_FRAMES: [&str; 3] = [LAZY_DOMAIN, BUILT_FUNCTION, LAZY_MEMBER];
+pub(crate) const UNFOLLOWED_FRAMES: [&str; 4] =
+    [LAZY_DOMAIN, BUILT_FUNCTION, LAZY_MEMBER, LAZY_BODY];
 const LAZY_MEMBER: &str = "the membership of a filter TLC keeps lazy";
 const LAZY_DOMAIN: &str = "the domain of a function TLC keeps lazy";
 const BUILT_FUNCTION: &str = "building a function a definition defines";
+const LAZY_BODY: &str = "the body of a function TLC keeps lazy";
 /// `EC.TLC_MODULE_VALUE_JAVA_METHOD_OVERRIDE`.
 const JAVA_METHOD_FAILED: u32 = 2154;
 
 const TLC_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
 const TLC_GET_EVAL: &str = "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
+
+const PICK_SUCCESSOR: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.pickSuccessor(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 
 const RANDOM_SUBSET: &str = "public static tlc2.value.impl.Value tlc2.module.Randomization.RandomSubset(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
@@ -545,6 +620,7 @@ fn as_java_runtime_failure<T>(signature: &str, result: Evaluated<T>) -> Evaluate
     }
 }
 
+const ASSERT_ERROR: &str = "public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
 const SELECT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.Sequences.SelectSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 const SORT_SEQ: &str = "public static tlc2.value.impl.Value tlc2.module.TLC.SortSeq(tlc2.value.impl.Value,tlc2.value.impl.Value)";
 
@@ -662,6 +738,7 @@ impl<'ir> Evaluator<'ir> {
             startup_ranked: None,
             constants: vec![None; ir.values.list.len()],
             cache: HashMap::new(),
+            chosen: HashMap::new(),
             current: vec![None; width],
             next: vec![None; width],
             reads: 0,
@@ -680,9 +757,12 @@ impl<'ir> Evaluator<'ir> {
             register_writes: 0,
             register_reads: 0,
             is_tool: None,
+            trace: None,
             workers: None,
             asserting: 0,
+            keeping_lazy: 0,
             once_named: None,
+            unshared: None,
         }
     }
 
@@ -698,16 +778,41 @@ impl<'ir> Evaluator<'ir> {
         text
     }
 
-    /// A text a string operator makes, which TLC interns: ranked as it is made while the startup
+    /// A text a string operator makes, which TLC interns: ranked as it is made while the evaluator
     /// ranks texts (`rankString`, for the strings TLC makes as it starts).
     fn made_text(&mut self, units: Box<[u16]>) -> Rc<Text> {
-        if let Some(ranked) = &mut self.startup_ranked
-            && !self.ranks.contains_key(&units)
-        {
-            self.ranks.insert(units.clone(), self.ranks.len() as i32);
-            ranked.push(units.clone());
-        }
+        self.rank_record_fields();
+        self.rank_made(&units);
         self.text_of(units)
+    }
+
+    fn rank_made(&mut self, units: &[u16]) {
+        if let Some(ranked) = &mut self.startup_ranked
+            && !self.ranks.contains_key(units)
+        {
+            self.ranks.insert(units.into(), self.ranks.len() as i32);
+            ranked.push(units.into());
+        }
+    }
+
+    // RecordValue's field names, which TLC interns as it builds its first record, where the
+    // evaluator has built one since it last looked.
+    fn rank_record_fields(&mut self) {
+        if self.startup_ranked.is_some() && take_is_record_built() {
+            for field in RECORD_VALUE_FIELDS {
+                self.rank_made(&field.encode_utf16().collect::<Vec<u16>>());
+            }
+        }
+    }
+
+    /// Ranks what the evaluator makes from now on, as TLC interns it.
+    pub(crate) fn start_ranking(&mut self) {
+        take_is_record_built();
+        self.startup_ranked = Some(Vec::new());
+    }
+
+    pub(crate) fn stop_ranking(&mut self) {
+        self.startup_ranked = None;
     }
 
     /// A field name of the records TLC builds of its counterexample (`RecordValue`'s statics):
@@ -718,17 +823,6 @@ impl<'ir> Evaluator<'ir> {
     /// ranks; `action` they write as a string, which TLC interns as it runs.
     pub(crate) fn counterexample_field(&self, name: &str, is_dumped: bool) -> Rc<Text> {
         const PARSED: [&str; 3] = ["state", "vars", "counterexample"];
-        const FIELDS: [&str; 9] = [
-            "beginLine",
-            "beginColumn",
-            "endLine",
-            "endColumn",
-            "module",
-            "name",
-            "location",
-            "context",
-            "parameters",
-        ];
         let units: Box<[u16]> = name.encode_utf16().collect();
         if let Some(&rank) = self.ranks.get(&units) {
             return Rc::new(Text { units, rank });
@@ -748,7 +842,7 @@ impl<'ir> Evaluator<'ir> {
         let fields = if is_dumped { &PARSED[..] } else { &[] };
         let position = fields
             .iter()
-            .chain(&FIELDS)
+            .chain(&RECORD_VALUE_FIELDS)
             .position(|field| *field == name);
         let rank = position.map_or(-1, |position| last + 1 + position as i32);
         Rc::new(Text { units, rank })
@@ -1133,8 +1227,11 @@ impl<'ir> Evaluator<'ir> {
         });
         let is_sourced = self.is_sourced(node);
         if let (Some(stack), Ok(value)) = (&mut self.call_stack, &result) {
-            if is_sourced && let Some(address) = address(value) {
-                stack.sourced.entry(address).or_insert(node);
+            // `CallStackTool.eval` returns a copy of a `SetPredValue`, which has no source.
+            let is_copied =
+                matches!(value, Value::Lazy(lazy) if matches!(**lazy, Lazy::Filter(..)));
+            if is_sourced && !is_copied {
+                stack.give_source(value, node);
             }
             stack.values.insert(node, value.clone());
         }
@@ -1215,12 +1312,27 @@ impl<'ir> Evaluator<'ir> {
             .or(chosen)
             .map(|receiver| self.resolved(receiver));
         // The element a membership tests, whose failure passes through the sets nested in the
-        // receiver that test their own members.
-        let element = match self.kind(node) {
+        // receiver that test their own members, or the value an equality compares with.
+        let given = match self.kind(node) {
+            NodeKind::Apply { name, args } if !name.is_local && args.len() == 2 => {
+                match self.name(name.text) {
+                    "\\in" | "\\notin" => Some((true, self.resolved(args[0]))),
+                    "=" | "#" => Some((false, self.resolved(args[1]))),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        // The operands of a union, an intersection or a difference.
+        let operands = match self.kind(node) {
             NodeKind::Apply { name, args }
-                if !name.is_local && matches!(self.name(name.text), "\\in" | "\\notin") =>
+                if !name.is_local && matches!(self.name(name.text), "\\cup" | "\\cap" | "\\") =>
             {
-                Some(self.resolved(args[0]))
+                Some((
+                    self.name(name.text) == "\\cup",
+                    self.resolved(args[0]),
+                    self.resolved(args[1]),
+                ))
             }
             _ => None,
         };
@@ -1230,40 +1342,101 @@ impl<'ir> Evaluator<'ir> {
         let Some(received) = receiver.and_then(|receiver| stack.values.get(&receiver)) else {
             return;
         };
-        let element = element
-            .and_then(|element| stack.values.get(&element))
-            .cloned();
+        // `Tool`'s `evalAppl` fails itself where it applies a value that isn't a function, before
+        // it calls a method of the value.
+        if matches!(self.kind(node), NodeKind::FunctionApplication { .. })
+            && !matches!(received, Value::Function(_) | Value::Lambda(_))
+        {
+            return;
+        }
         let received = received.clone();
-        self.mark_failing_member(&received, element.as_ref());
+        if let Some((is_union, left, right)) = operands {
+            let other = if receiver == Some(left) { right } else { left };
+            if let Some(other) = stack.values.get(&other).cloned()
+                && let Some((set, element)) = failing_operation(&received, &other, is_union)
+            {
+                let outer = stack.source(&received);
+                let given = element.as_ref().map_or(Given::Nothing, Given::Element);
+                self.mark_failing_member(outer, &set, given, false);
+                return;
+            }
+        }
+        let given = given.and_then(|(is_membership, node)| {
+            Some((is_membership, stack.values.get(&node)?.clone()))
+        });
+        let given = match &given {
+            Some((true, element)) => Given::Element(element),
+            Some((false, other)) => Given::Equated(other),
+            None => Given::Nothing,
+        };
+        self.mark_failing_member(None, &received, given, true);
     }
 
-    // Marks a failure in a method of a set with a source as TLC's FingerprintException, through
-    // the sets nested in it that test the element's parts, where an element was tested, or in the
-    // compareTo of a tested element with a source and of its parts.
-    fn mark_failing_member(&mut self, received: &Value, element: Option<&Value>) {
+    // Marks a failure in a method of a value with a source as TLC's FingerprintException, after
+    // the source of the set whose method asked it, if any, through the sets nested in it that test
+    // the element's parts, where an element was tested, and the values with a source whose
+    // methods its search, comparison or normalization fails in.
+    fn mark_failing_member(
+        &mut self,
+        outer: Option<NodeId>,
+        received: &Value,
+        given: Given,
+        is_membership: bool,
+    ) {
         let Some(stack) = &mut self.call_stack else {
             return;
         };
         if stack.is_fingerprinted {
             return;
         }
-        let nested = element.and_then(|element| crate::sets::failing_sets(element, received));
-        // The search of a sorted set fails in the element's `compareTo`, and in those of its parts
-        // it compares, which have sources where the evaluation gave them: the set's, which a
-        // definition TLC computed as it started has none of, is outside them. Where the failure
-        // passes through nested sets, the search is the innermost set's.
-        let (searched, searched_set) = match (&nested, element) {
-            (Some((_, inner_element, inner_set)), _) => (Some(inner_element), inner_set),
-            (None, element) => (element, received),
+        // `SetPredValue.member` asks its base set first, whose FingerprintException passes through
+        // a filter `CallStackTool` copied without its source, as though the base were asked.
+        if let (Given::Element(element), Value::Lazy(lazy)) = (&given, received)
+            && let Lazy::Filter(base, _) = &**lazy
+            && stack.source(received).is_none()
+            && is_member(element, base).is_err()
+        {
+            let base = base.clone();
+            self.mark_failing_member(outer, &base, given, is_membership);
+            return;
+        }
+        let nested = match given {
+            Given::Element(element) => crate::sets::failing_sets(element, received),
+            _ => None,
         };
-        let compared: Vec<NodeId> = searched
-            .map(|searched| crate::sets::failing_search(searched, searched_set))
-            .unwrap_or_default()
+        // The search of a set fails in the methods of the values it compares, and an equality in
+        // those of the parts it compares (`equals`), which have sources where the evaluation gave
+        // them: the set's, which a definition TLC computed as it started has none of, is outside
+        // them. A set TLC holds unnormalized normalizes itself in its other methods
+        // (`SetEnumValue.normalize`), which fails in the `compareTo` of the element it sorts in.
+        // Where a membership's failure passes through nested sets, the search is the innermost set's.
+        let compared = match (given, received) {
+            (Given::Element(element), _) => match &nested {
+                Some((_, inner_element, inner_set)) => {
+                    crate::sets::failing_search(inner_element, inner_set)
+                }
+                None => crate::sets::failing_search(element, received),
+            },
+            (Given::Equated(other), _)
+                if !matches!(received, Value::Lazy(_)) && !matches!(other, Value::Lazy(_)) =>
+            {
+                failing_comparisons(|| equals(received, other))
+                    .err()
+                    .unwrap_or_default()
+            }
+            (_, Value::Unsorted(values)) => {
+                failing_comparisons(|| crate::value::normalize_failure(values).map_or(Ok(()), Err))
+                    .err()
+                    .unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
+        let compared: Vec<NodeId> = compared
             .iter()
             .filter_map(|value| stack.source(value))
             .collect();
         let source = stack.source(received);
-        if source.is_none() && compared.is_empty() {
+        if outer.is_none() && source.is_none() && compared.is_empty() {
             return;
         }
         let nested = nested.map(|(sets, _, _)| sets);
@@ -1278,9 +1451,14 @@ impl<'ir> Evaluator<'ir> {
             })
         });
         let sources = nested.iter().flatten().filter_map(|set| stack.source(set));
-        let sources: Vec<NodeId> = source.into_iter().chain(sources).chain(compared).collect();
+        let sources: Vec<NodeId> = outer
+            .into_iter()
+            .chain(source)
+            .chain(sources)
+            .chain(compared)
+            .collect();
         stack.is_fingerprinted = true;
-        stack.is_member_followed = is_followed;
+        stack.is_member_followed = is_membership && is_followed;
         stack.fingerprinted_sources = sources;
     }
 
@@ -1359,6 +1537,19 @@ impl<'ir> Evaluator<'ir> {
 
     // `f[x]` with TLC's message where `x` isn't in the domain of `f`.
     pub(crate) fn apply_checked(&self, function: &Value, key: &Value) -> Evaluated<Value> {
+        // `TupleValue.apply` and `RecordValue.apply` fail on a key of another kind before they
+        // look it up.
+        if let Value::Function(inner) = function
+            && !self.is_174()
+            && match inner.class.get() {
+                Class::Tuple => !matches!(key, Value::Int(_)),
+                Class::Record => !matches!(key, Value::Str(_)),
+                _ => false,
+            }
+            && let Some(text) = describe_missing(function, inner.class.get(), key)
+        {
+            return fail_runtime("applied a function outside its domain", text);
+        }
         let result = apply_value(function, key);
         match (&result, function) {
             (Err(error), Value::Function(inner))
@@ -1839,7 +2030,14 @@ impl<'ir> Evaluator<'ir> {
                 };
             }
             Resolution::Definition(index) => {
-                return self.definition_value(self.ir.definitions[index as usize], context);
+                let node = self.ir.definitions[index as usize];
+                // TLC evaluates the definition the configuration substitutes for a constant each
+                // time it reads the constant (`SpecProcessor.processConstantDefns`).
+                if self.definition(node).name != name.text {
+                    self.unshared
+                        .get_or_insert("of a value a configuration's substitute made again");
+                }
+                return self.definition_value(node, context);
             }
             Resolution::Builtin(index) if self.ir.builtins[index as usize].arity == 0 => {
                 return self.builtin(index, &[], context);
@@ -1873,6 +2071,11 @@ impl<'ir> Evaluator<'ir> {
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
                 }
+                // TLC keeps the value it computes for a next state, as one object.
+                if frame.is_evaluated.replace(true) && !is_scalar(&value) {
+                    self.unshared
+                        .get_or_insert("of a value an argument or a LET definition made again");
+                }
                 Ok(value)
             }
             Binding::Function {
@@ -1901,11 +2104,19 @@ impl<'ir> Evaluator<'ir> {
     }
 
     /// The texts TLC interns as it computes the startup definitions, the substitutes and then
-    /// `definitions` (`processConstantDefns`), past those the IR ranks, in order: those Tail,
-    /// SubSeq, `\o` and ToString make, as `rankString` ranks them.
-    pub(crate) fn get_startup_texts(ir: &Ir, definitions: &[Index]) -> Vec<Box<[u16]>> {
+    /// `definitions` (`processConstantDefns`), past the first `interned` texts the IR ranks, in
+    /// order: those Tail, SubSeq, `\o` and ToString make, as `rankString` ranks them, and
+    /// RecordValue's field names where it builds its first record.
+    pub(crate) fn get_startup_texts(
+        ir: &Ir,
+        definitions: &[Index],
+        interned: usize,
+    ) -> Vec<Box<[u16]>> {
         let mut evaluator = Evaluator::new(ir);
-        evaluator.startup_ranked = Some(Vec::new());
+        evaluator
+            .ranks
+            .retain(|_, rank| (*rank as usize) < interned);
+        evaluator.start_ranking();
         evaluator.random = Some(JavaRandom::seeded(ir.model.random_seed));
         let substitutes = ir.model.startup.substitutes.iter().map(|&(_, index)| index);
         for index in substitutes.chain(definitions.iter().copied()) {
@@ -1919,13 +2130,15 @@ impl<'ir> Evaluator<'ir> {
             evaluator
                 .evaluate(evaluator.definition(node).body, &Context::default())
                 .ok();
+            evaluator.rank_record_fields();
         }
         evaluator.startup_ranked.unwrap_or_default()
     }
 
-    /// Whether evaluating a definition may make a text `made_text` ranks, or draw from the
-    /// generator or set a register that a later startup definition reads: whether it reaches, as
-    /// written or through the definitions it names, an operator that does. Tail, SubSeq and `\o`
+    /// Whether evaluating a definition may make a text `made_text` ranks, build a record, or draw
+    /// from the generator or set a register that a later startup definition reads: whether it
+    /// reaches, as written or through the definitions it names, an operator that does. TLCGet
+    /// builds a record for "config", "spec" and "stats". Tail, SubSeq and `\o`
     /// of a tuple written in place make a tuple.
     fn may_rank_texts(&self, definition: NodeId) -> bool {
         let get_operator = |name: &Name| match name.resolution {
@@ -1950,14 +2163,17 @@ impl<'ir> Evaluator<'ir> {
                     };
                     (!is_tuple_made).then_some(name)
                 }
-                // A subexpression names what the walk doesn't follow.
-                NodeKind::Subexpression(_) => return true,
+                // A subexpression names what the walk doesn't follow, and TLC interns
+                // RecordValue's names as it builds its first record.
+                NodeKind::Subexpression(_) | NodeKind::Record(_) | NodeKind::RecordSet(_) => {
+                    return true;
+                }
                 _ => None,
             };
             if let Some(name) = name {
                 if let Some(
                     "Tail" | "\\o" | "SubSeq" | "ToString" | "RandomElement" | "RandomSubset"
-                    | "TLCSet",
+                    | "TLCSet" | "TLCGet",
                 ) = get_operator(name)
                 {
                     return true;
@@ -2061,7 +2277,52 @@ impl<'ir> Evaluator<'ir> {
         Ok(())
     }
 
-    fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
+    /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
+    /// over a set (`Violation::chosen`), ids of `store` by position in the IR's definitions, for
+    /// those whose evaluation has no effect but its value: neither reading the state or TLC's
+    /// search, nor printing, drawing or reading or writing a file. Each is the element of the
+    /// set TLC computed as it started (`processConstantDefns`), which the rebuild finds without
+    /// testing the elements before it.
+    pub fn set_chosen(&mut self, store: &Store, values: &[(u32, Id)]) {
+        for &(index, id) in values {
+            let node = self.ir.definitions[index as usize];
+            if self.may_reach(node, EFFECTS) {
+                continue;
+            }
+            if let Ok(value) = from_store(store, id) {
+                self.chosen.insert(node, value);
+            }
+        }
+    }
+
+    // A definition's body, or, for a CHOOSE whose value the search computed, the element of its
+    // set that is that value, which is the first that satisfies the predicate. TLC evaluates the
+    // set, and the predicate of each element up to that one, which only gives its value. An
+    // element the walk can't tell from that value, or one that holds a part the predicate may
+    // change as TLC evaluates it, leaves the body evaluated as written.
+    fn evaluate_definition(
+        &mut self,
+        node: NodeId,
+        body: NodeId,
+        context: &Context,
+    ) -> Evaluated<Value> {
+        if let NodeKind::Choose { set: Some(set), .. } = self.kind(body)
+            && let Some(chosen) = self.chosen.get(&node).cloned()
+            && let Ok(set) = self.evaluate(*set, context)
+            && let Ok(elements) = elements(&set)
+        {
+            for element in elements.iter() {
+                match is_chosen(element, &chosen) {
+                    Some(true) => return Ok(element.clone()),
+                    Some(false) => {}
+                    None => break,
+                }
+            }
+        }
+        self.evaluate(body, context)
+    }
+
+    pub(crate) fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let definition = self.definition(node);
         let key = (node, context.is_primed);
         if let Some(value) = self.cache.get(&key) {
@@ -2089,7 +2350,7 @@ impl<'ir> Evaluator<'ir> {
             && self.is_precomputed(node)
         {
             let call_stack = self.call_stack.take();
-            let computed = self.evaluate(definition.body, &context.global());
+            let computed = self.evaluate_definition(node, definition.body, &context.global());
             self.call_stack = call_stack;
             if let Ok(value) = computed
                 && self.reads == reads
@@ -2104,11 +2365,17 @@ impl<'ir> Evaluator<'ir> {
             self.printed.truncate(printed);
         }
         let value = match &definition.form {
+            // TLC evaluates the function constructor SANY makes of the definition, which has the
+            // definition's range.
             DefinitionForm::Function(bounds) => {
-                self.defined_function(bounds, definition.body, &context.global())?
+                self.in_frame(StackFrame::Node(node), &mut |evaluator| {
+                    evaluator.nested(|evaluator| {
+                        evaluator.construct_function(bounds, definition.body, &context.global())
+                    })
+                })?
             }
             DefinitionForm::Operator(params) if params.is_empty() => {
-                self.evaluate(definition.body, &context.global())?
+                self.evaluate_definition(node, definition.body, &context.global())?
             }
             DefinitionForm::Operator(_) => return fail("an operator used as a value"),
         };
@@ -2749,26 +3016,22 @@ impl<'ir> Evaluator<'ir> {
     }
 
     fn nested<T>(&mut self, work: impl FnOnce(&mut Self) -> Evaluated<T>) -> Evaluated<T> {
-        thread_local! {
-            static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-            // Where the outermost nesting's frame is, which the stack grows from.
-            static BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-        }
-        let depth = DEPTH.get();
+        let outer = Nesting {
+            depth: DEPTH.get(),
+            base: BASE.get(),
+        };
         // How deep the frames are depends on the build, so the stack the nesting uses is bounded
         // too, by its distance from the outermost frame.
         let frame = 0u8;
         let here = std::ptr::addr_of!(frame) as usize;
-        if depth == 0 {
+        if outer.depth == 0 {
             BASE.set(here);
         }
-        if depth > MAXIMUM_DEPTH || BASE.get().abs_diff(here) > MAXIMUM_STACK_BYTES {
+        if outer.depth > MAXIMUM_DEPTH || BASE.get().abs_diff(here) > MAXIMUM_STACK_BYTES {
             return fail("recursion too deep");
         }
-        DEPTH.set(depth + 1);
-        let result = work(self);
-        DEPTH.set(depth);
-        result
+        DEPTH.set(outer.depth + 1);
+        work(self)
     }
 
     // --- bound names ---
@@ -2951,12 +3214,12 @@ impl<'ir> Evaluator<'ir> {
                     text,
                 })));
             }
+            let is_built = self.is_built(std::slice::from_ref(&set));
             if let Value::Interval(low, high) = set {
                 let mut values = Vec::new();
                 for key in low..=high {
-                    values.push(
-                        self.function_body(body, &context.bind_value(name, Value::Int(key)))?,
-                    );
+                    let context = context.bind_value(name, Value::Int(key));
+                    values.push(self.function_body(body, &context, is_built)?);
                 }
                 return Ok(Value::over_interval(low, values, Class::Lambda));
             }
@@ -2964,7 +3227,8 @@ impl<'ir> Evaluator<'ir> {
             let mut values = Vec::new();
             for element in elements(&set)?.iter() {
                 keys.push(element.clone());
-                values.push(self.function_body(body, &context.bind_value(name, element.clone()))?);
+                let context = context.bind_value(name, element.clone());
+                values.push(self.function_body(body, &context, is_built)?);
             }
             let function = sorted_function(keys, values, Class::Lambda)?;
             // Applied while TLC keeps it lazy, the function asks its bound's set for the
@@ -2990,6 +3254,7 @@ impl<'ir> Evaluator<'ir> {
         {
             return fail("a function of several bounds or a tuple pattern TLC keeps lazy");
         }
+        let is_built = self.is_built(&sets);
         let mut keys = Vec::new();
         let mut values = Vec::new();
         self.for_each_keyed(
@@ -3002,7 +3267,7 @@ impl<'ir> Evaluator<'ir> {
                     [element] => element.clone(),
                     _ => Value::tuple(bound.to_vec()),
                 });
-                values.push(evaluator.function_body(body, inner)?);
+                values.push(evaluator.function_body(body, inner, is_built)?);
                 Ok(())
             },
         )?;
@@ -3030,15 +3295,40 @@ impl<'ir> Evaluator<'ir> {
             && self.cache.contains_key(&(definition, false))
     }
 
-    // A function's value at one key. TLC builds the function in a method of the FcnLambdaValue
-    // that `CallStackTool` gives a source, so a failure there is a FingerprintException, as
-    // `headFingerprint` in `evaluate.ts` marks it.
-    fn function_body(&mut self, body: NodeId, context: &Context) -> Evaluated<Value> {
+    // Whether `Tool`'s OPCODE_fc builds a function of these domains as it constructs it
+    // (`FcnLambdaValue.toFcnRcd`): where each is reducible, a set enumeration or an interval, and
+    // TLC doesn't keep the function lazy.
+    fn is_built(&self, domains: &[Value]) -> bool {
+        self.keeping_lazy == 0
+            && domains.iter().all(|domain| {
+                matches!(
+                    domain,
+                    Value::Set(_) | Value::Interval(..) | Value::Unsorted(_)
+                )
+            })
+    }
+
+    // A function's value at one key as the evaluator builds the function. TLC builds one it
+    // `is_built` in `toFcnRcd` of the FcnLambdaValue that `CallStackTool` gives a source, which
+    // throws a failure there on as a FingerprintException (`FingerprintException.getNewHead`).
+    // TLC evaluates the body of any other where it applies or fingerprints the function, in
+    // frames the replay doesn't record.
+    fn function_body(
+        &mut self,
+        body: NodeId,
+        context: &Context,
+        is_built: bool,
+    ) -> Evaluated<Value> {
         let result = self.evaluate(body, context);
         if result.is_err()
             && let Some(stack) = &mut self.call_stack
         {
-            stack.is_fingerprinted = true;
+            if !is_built {
+                stack.unfollowed.get_or_insert(LAZY_BODY);
+            } else if !stack.is_fingerprinted {
+                stack.is_fingerprinted = true;
+                stack.is_frozen_before_fingerprint = stack.is_frozen;
+            }
         }
         result
     }
@@ -3104,7 +3394,17 @@ impl<'ir> Evaluator<'ir> {
         }
         // `evalAppl` checks that it applies a function before it evaluates the argument.
         let function_node = function;
-        let function = self.evaluate(function, context)?;
+        // `getInitStates` evaluates the function of the application it walks with
+        // `EvalControl.Init`, which builds a function constructor in it.
+        let is_init_walked = matches!(
+            self.walked_application,
+            Some((walked, true)) if walked == self.resolved(node)
+        );
+        let keeps_lazy = u32::from(!is_init_walked);
+        self.keeping_lazy += keeps_lazy;
+        let function = self.evaluate(function, context);
+        self.keeping_lazy -= keeps_lazy;
+        let function = function?;
         if let Some(kind) = non_function_kind(&function) {
             let computing = match self.walked_application {
                 Some((walked, is_init)) if walked == self.resolved(node) => {
@@ -3237,7 +3537,7 @@ impl<'ir> Evaluator<'ir> {
 
     // `FcnLambdaValue.apply`: the value of the last EXCEPT at the key, or else the body on a key
     // in the domain, in the states the function was built in.
-    fn apply_lambda(&mut self, lambda: &Lambda, key: &Value) -> Evaluated<Value> {
+    pub(crate) fn apply_lambda(&mut self, lambda: &Lambda, key: &Value) -> Evaluated<Value> {
         for (except, value) in lambda.excepts.iter().rev() {
             if equals(except, key)? {
                 return Ok(value.clone());
@@ -3261,7 +3561,7 @@ impl<'ir> Evaluator<'ir> {
         let current = std::mem::replace(&mut self.current, lambda.current.clone());
         let next = std::mem::replace(&mut self.next, lambda.next.clone());
         let level = std::mem::replace(&mut self.level, lambda.level);
-        let result = self.function_body(lambda.body, &context);
+        let result = self.evaluate(lambda.body, &context);
         self.current = current;
         self.next = next;
         self.level = level;
@@ -3614,6 +3914,31 @@ impl<'ir> Evaluator<'ir> {
         result
     }
 
+    // `SetPredValue.member`: the base's membership, then the predicate. TLC turns an
+    // EvalException of either into a message of its own ("Cannot decide if element"), which the
+    // evaluator doesn't word yet.
+    fn filter_member(
+        &mut self,
+        element: &Value,
+        base: &Value,
+        predicate: &Predicate,
+    ) -> Evaluated<bool> {
+        let tested = self
+            .member(element, base)
+            .and_then(|is_in| Ok(is_in && self.filters(element, base, predicate)?));
+        match tested {
+            Err(error)
+                if error
+                    .message
+                    .as_ref()
+                    .is_some_and(|message| message.is_eval_exception) =>
+            {
+                fail("an EvalException that a filter's membership rewords")
+            }
+            tested => tested,
+        }
+    }
+
     /// Membership as TLC's lazy sets test it, the predicate of a lazy filter evaluated
     /// (`SetPredValue.member`), through the sets it is combined in.
     pub(crate) fn member(&mut self, element: &Value, set: &Value) -> Evaluated<bool> {
@@ -3621,12 +3946,7 @@ impl<'ir> Evaluator<'ir> {
             return is_member(element, set);
         };
         match &**lazy {
-            Lazy::Filter(base, predicate) => {
-                if !self.member(element, base)? {
-                    return Ok(false);
-                }
-                self.filters(element, base, predicate)
-            }
+            Lazy::Filter(base, predicate) => self.filter_member(element, base, predicate),
             Lazy::Cap(left, right) => {
                 Ok(self.member(element, left)? && self.member(element, right)?)
             }
@@ -3670,16 +3990,16 @@ impl<'ir> Evaluator<'ir> {
             );
         }
         for element in elements(&left)?.iter() {
-            // `isSubsetEq` tests each element in T's own `member`, so a failure there is in a
-            // method of T, which TLC reports as a FingerprintException where T has a source.
+            // `isSubsetEq` of S tests each element in T's own `member`, so a failure there is in
+            // a method of T within one of S, which TLC reports as a FingerprintException where
+            // either has a source.
             let is_member = self.member(element, &right);
             if is_member.is_err()
-                && self
-                    .call_stack
-                    .as_ref()
-                    .is_some_and(|stack| !stack.is_frozen)
+                && let Some(stack) = &self.call_stack
+                && !stack.is_frozen
             {
-                self.mark_failing_member(&right, Some(element));
+                let outer = stack.source(&left);
+                self.mark_failing_member(outer, &right, Given::Element(element), true);
             }
             if !is_member? {
                 return Ok(Value::Bool(false));
@@ -4035,7 +4355,7 @@ impl<'ir> Evaluator<'ir> {
         Ok(pretty_print(&text.encode_utf16().collect::<Vec<_>>()))
     }
 
-    fn builtin(
+    pub(crate) fn builtin(
         &mut self,
         index: Index,
         operands: &[Operand],
@@ -4203,6 +4523,20 @@ impl<'ir> Evaluator<'ir> {
                     Value::Lambda(lambda) => lambda.domain.clone(),
                     Value::Function(function) => match function.interval {
                         Some((low, high)) => Value::Interval(low, high),
+                        // `RecordValue.getDomain` makes a string of each field's name.
+                        None if function.class.get() == Class::Record => Value::Set(Rc::new(
+                            function
+                                .domain
+                                .iter()
+                                .map(|key| match key {
+                                    Value::Str(name) => Value::Str(Rc::new(Text {
+                                        units: name.units.clone(),
+                                        rank: name.rank,
+                                    })),
+                                    _ => key.clone(),
+                                })
+                                .collect(),
+                        )),
                         None => Value::Set(Rc::new(function.domain.clone())),
                     },
                     // `Tool`'s OPCODE_domain, whose message the application ends with where it is.
@@ -4342,21 +4676,33 @@ impl<'ir> Evaluator<'ir> {
             // `TLCExt.assertError`: whether evaluating the expression fails with this message.
             "AssertError" => {
                 arity(2)?;
+                // TLC takes only a string written as the message, and says where any other is
+                // written as SANY's `toString` gives it.
+                match &operands[0] {
+                    Operand::Node(node, _) if matches!(self.kind(*node), NodeKind::String(_)) => {}
+                    Operand::Node(node, _) => {
+                        let written = (self.ir.nodes.arena[self.resolved(*node) as usize].range)
+                            .and_then(|_| self.describe_node(*node));
+                        let Some(written) = written else {
+                            return fail("AssertError of a message that isn't a string");
+                        };
+                        return as_java_failure(
+                            ASSERT_ERROR,
+                            fail_runtime(
+                                "AssertError of a message that isn't a string",
+                                format!(
+                                    "In computing AssertError, a non-string expression ({written}) was used as the err of an AssertError(err, exp)."
+                                ),
+                            ),
+                        );
+                    }
+                    Operand::Value(_) => {
+                        return fail("AssertError of a message that isn't a string");
+                    }
+                }
                 let Some(is_tool) = self.is_tool else {
                     return fail("AssertError, whose messages depend on -tool");
                 };
-                let is_literal = match &operands[0] {
-                    Operand::Node(node, _) => {
-                        matches!(
-                            self.ir.nodes.arena[*node as usize].kind,
-                            NodeKind::String(_)
-                        )
-                    }
-                    Operand::Value(_) => false,
-                };
-                if !is_literal {
-                    return fail("AssertError of a message that isn't a string");
-                }
                 self.asserting += 1;
                 let asserted = self.operand(&operands[1]);
                 self.asserting -= 1;
@@ -4489,8 +4835,16 @@ impl<'ir> Evaluator<'ir> {
                         .collect();
                     return Ok(Value::Str(self.made_text(units)));
                 }
-                let mut elements = sequence_of(&left)?.to_vec();
-                elements.extend(sequence_of(&right)?.iter().cloned());
+                let (left_elements, right_elements) = (sequence_of(&left)?, sequence_of(&right)?);
+                // `Sequences.Concat` gives one sequence back where the other is empty.
+                if left_elements.is_empty() && right.is_tuple_class() {
+                    return Ok(right);
+                }
+                if right_elements.is_empty() && left.is_tuple_class() {
+                    return Ok(left);
+                }
+                let mut elements = left_elements.to_vec();
+                elements.extend(right_elements.iter().cloned());
                 Value::tuple(elements)
             }
             // `Sequences.SubSeq` tests the sequence, then each bound is an integer, then each is in
@@ -4544,6 +4898,7 @@ impl<'ir> Evaluator<'ir> {
                 };
                 match &sequence {
                     Value::Str(text) => Value::Str(self.made_text(text.units[range].into())),
+                    _ if from > to => Value::empty_tuple(),
                     _ => Value::tuple(sequence_of(&sequence)?[range].to_vec()),
                 }
             }
@@ -4551,6 +4906,9 @@ impl<'ir> Evaluator<'ir> {
                 arity(2)?;
                 let sequence = self.operand(&operands[0])?;
                 let test = self.operand_operator(&operands[1])?;
+                if sequence_argument("SelectSeq", "sequence", &sequence)?.is_empty() {
+                    return Ok(Value::empty_tuple());
+                }
                 let mut kept = Vec::new();
                 for element in sequence_argument("SelectSeq", "sequence", &sequence)? {
                     let tested = self.call_with_values(&test, std::slice::from_ref(element));
@@ -4702,6 +5060,28 @@ impl<'ir> Evaluator<'ir> {
                     Value::Bool(true)
                 }
             }
+            // TLCExt's AssertEq, whose TLA+ definition TLC evaluates: where the arguments differ,
+            // PrintT("Assertion failed") /\ PrintT(a) /\ PrintT(b) /\ a = b. TLC reports a failure
+            // at the positions of that definition, which the IR doesn't hold.
+            "AssertEq" => {
+                arity(2)?;
+                let unfollowed = |_| EvalError {
+                    reason: "a failure within TLCExt's AssertEq".into(),
+                    message: None,
+                };
+                let left = self.operand(&operands[0]).map_err(unfollowed)?;
+                let right = self.operand(&operands[1]).map_err(unfollowed)?;
+                if equals(&left, &right).map_err(unfollowed)? {
+                    return Ok(Value::Bool(true));
+                }
+                let message = Value::Str(self.text_of("Assertion failed".encode_utf16().collect()));
+                for value in [message, left, right] {
+                    let value = self.settle(&value).map_err(unfollowed)?;
+                    check_unchecked(&value).map_err(unfollowed)?;
+                    self.printed.push(vec![format_printed(&value)]);
+                }
+                Value::Bool(false)
+            }
             "RandomElement" | "RandomSubset" => {
                 let values = operands
                     .iter()
@@ -4743,6 +5123,12 @@ impl<'ir> Evaluator<'ir> {
                     .possible_counts
                     .clone()
             }
+            "Trace" if self.trace.is_some() => {
+                arity(0)?;
+                self.reads += 1;
+                let prefix = self.trace.as_ref().expect("the trace");
+                Value::tuple(prefix.records[..prefix.length].to_vec())
+            }
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;
                 self.reads += 1;
@@ -4763,6 +5149,16 @@ impl<'ir> Evaluator<'ir> {
                         Some(position) => record.range[position].clone(),
                         None => return fail("ToTrace of a record without states"),
                     },
+                    value @ (Value::Int(_) | Value::Bool(_) | Value::Str(_) | Value::Model(_)) => {
+                        return fail_coded(
+                            "ToTrace of a value that isn't a CounterExample",
+                            ONE_ARGUMENT_ERROR,
+                            format!(
+                                "The argument of ToTrace should be a CounterExample, but instead it is:\n{}",
+                                format_pretty(value)
+                            ),
+                        );
+                    }
                     _ => return fail("ToTrace of a value that isn't a CounterExample"),
                 };
                 let states = elements(&states)?;
@@ -4821,8 +5217,9 @@ impl<'ir> Evaluator<'ir> {
                 let units: Box<[u16]> = format_value(&value).encode_utf16().collect();
                 Value::Str(self.made_text(units))
             }
-            // TLC's empty bag is the empty function (`Bags.EmptyBag`).
-            "EmptyBag" => {
+            // TLC's empty bag is the empty function (`Bags.EmptyBag`), of a user's module named
+            // Bags too.
+            "EmptyBag" | "EmptyBag@Bags" => {
                 arity(0)?;
                 Value::function(Vec::new(), Vec::new(), Class::Plain)
             }
@@ -4977,6 +5374,77 @@ impl<'ir> Evaluator<'ir> {
                 self.set_register(key, value)?;
                 Value::Bool(true)
             }
+            // `TLCExt.pickSuccessor`, which fingerprints the successor first: where the state isn't
+            // complete, as in an invariant, TLCStateMut.fingerPrint dereferences a variable's
+            // missing value. Where it is, TLC asks whether it has seen the state, which the
+            // evaluator doesn't know. Under a VIEW or symmetry TLC fingerprints otherwise.
+            "PickSuccessor" => {
+                arity(1)?;
+                let model = &self.ir.model;
+                if self.next.iter().all(Option::is_some)
+                    || model.view.is_some()
+                    || model.startup.symmetry.is_some()
+                {
+                    return fail("PickSuccessor of a successor TLC fingerprints");
+                }
+                return as_java_failure(
+                    PICK_SUCCESSOR,
+                    fail_runtime(
+                        "PickSuccessor of a successor TLC fingerprints incomplete",
+                        "Cannot invoke \"tlc2.value.IValue.fingerPrint(long)\" because \"minVals[i]\" is null".into(),
+                    ),
+                );
+            }
+            // `TLCExt.tlcGetOrDefault`: the register's value, or the default where the key names
+            // none or none is set. TLCGetAndSet, TLA+ in TLCExt, then sets the register to
+            // Op(oldVal, val) and is oldVal. TLC reports a failure within TLCGetAndSet at the
+            // positions of its definition, which the IR doesn't hold.
+            "TLCGetOrDefault" | "TLCGetAndSet" => {
+                let is_set = name == "TLCGetAndSet";
+                arity(if is_set { 4 } else { 2 })?;
+                let unfollowed = |error| {
+                    if is_set {
+                        EvalError {
+                            reason: "a failure within TLCExt's TLCGetAndSet".into(),
+                            message: None,
+                        }
+                    } else {
+                        error
+                    }
+                };
+                let key = self.operand(&operands[0]).map_err(unfollowed)?;
+                let default = self
+                    .operand(&operands[operands.len() - 1])
+                    .map_err(unfollowed)?;
+                self.reads += 1;
+                self.register_reads += 1;
+                let old = match &key {
+                    Value::Int(index) if *index >= 0 => self
+                        .registers
+                        .numbered
+                        .get(*index as usize)
+                        .cloned()
+                        .flatten(),
+                    Value::Int(_) => return fail("TLCGetOrDefault of a negative number"),
+                    key if is_register_name(key) => self.get_named_register(key)?,
+                    _ => None,
+                }
+                .unwrap_or(default);
+                // Whether TLC's call stack gives the value a source, which words a failure that
+                // compares it, isn't followed.
+                if self.call_stack.is_some() && address(&old).is_some() {
+                    return fail("a value of TLCGetOrDefault a failure may name the source of");
+                }
+                if is_set {
+                    let operator = self.operand_operator(&operands[1]).map_err(unfollowed)?;
+                    let value = self.operand(&operands[2]).map_err(unfollowed)?;
+                    let new = self
+                        .call_with_values(&operator, &[old.clone(), value])
+                        .map_err(unfollowed)?;
+                    self.set_register(key, new).map_err(unfollowed)?;
+                }
+                old
+            }
             // `TLCExt.tlcFingerprint`: TLC's fingerprint of the value, as an int.
             "TLCFP" => {
                 arity(1)?;
@@ -5062,9 +5530,7 @@ fn permute(
 fn filter_test<'a, 'ir>(
     evaluator: &'a mut Evaluator<'ir>,
 ) -> impl FnMut(&Value, &Value, &Predicate) -> Evaluated<bool> + 'a {
-    move |element, base, predicate| {
-        Ok(evaluator.member(element, base)? && evaluator.filters(element, base, predicate)?)
-    }
+    move |element, base, predicate| evaluator.filter_member(element, base, predicate)
 }
 
 enum Combined {
@@ -5102,7 +5568,7 @@ impl Combined {
 
 /// An argument of a builtin: an expression as written, or a value an operator argument is
 /// applied to.
-enum Operand {
+pub(crate) enum Operand {
     Node(NodeId, Context),
     Value(Value),
 }
@@ -5406,6 +5872,14 @@ fn empty_sequence<T>(name: &str) -> Evaluated<T> {
     )
 }
 
+// A value a dumped trace writes as it is, without an object of its own to refer back to.
+fn is_scalar(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Bool(_) | Value::Int(_) | Value::Model(_) | Value::Interval(..)
+    )
+}
+
 fn sequence_of(value: &Value) -> Evaluated<&[Value]> {
     match as_tuple(value) {
         Some(elements) => Ok(elements),
@@ -5680,6 +6154,65 @@ fn sub_bags(bounds: &[(Value, i32)]) -> Evaluated<Value> {
     set_of(values)
 }
 
+/// The builtins whose evaluation has an effect besides its value, or reads what TLC's search
+/// sets: a constant definition that may reach one takes no value from the search's.
+const EFFECTS: &[&str] = &[
+    "TLCGet",
+    "TLCSet",
+    "CounterExample",
+    "_Counts",
+    "Print",
+    "PrintT",
+    "RandomElement",
+    "RandomSubset",
+    "JavaTime",
+    "JsonSerialize",
+    "ndJsonSerialize",
+    "JsonDeserialize",
+    "ndJsonDeserialize",
+    "Serialize",
+    "Deserialize",
+    "IOExec",
+    "IOEnvExec",
+    "IOExecTemplate",
+    "IOEnvExecTemplate",
+    "IOEnv",
+];
+
+// Whether an element of a set is the value the search chose, by a walk that changes neither:
+// `None` where the walk can't tell, or where the element is that value but holds a part that
+// evaluating the predicate may change, such as a function's written order or a function TLC
+// keeps lazy, which TLC's normalizing of what it computes at startup leaves as it is. A
+// function's domain and a set are in TLC's order in both.
+fn is_chosen(element: &Value, chosen: &Value) -> Option<bool> {
+    let are_chosen = |elements: &[Value], chosen: &[Value]| {
+        if elements.len() != chosen.len() {
+            return Some(false);
+        }
+        for (element, chosen) in elements.iter().zip(chosen) {
+            if !is_chosen(element, chosen)? {
+                return Some(false);
+            }
+        }
+        Some(true)
+    };
+    match (element, chosen) {
+        (Value::Bool(element), Value::Bool(chosen)) => Some(element == chosen),
+        (Value::Int(element), Value::Int(chosen)) => Some(element == chosen),
+        (Value::Str(element), Value::Str(chosen))
+        | (Value::Model(element), Value::Model(chosen)) => Some(element.units == chosen.units),
+        (Value::Set(element), Value::Set(chosen)) => are_chosen(element, chosen),
+        (Value::Function(element), Value::Function(chosen)) => {
+            let is_same = are_chosen(&element.domain, &chosen.domain)?
+                && are_chosen(&element.range, &chosen.range)?;
+            let is_settled =
+                element.written.borrow().is_none() && element.class.get() != Class::Lambda;
+            (!is_same || is_settled).then_some(is_same)
+        }
+        _ => None,
+    }
+}
+
 // Whether a value holds a set TLC can't normalize.
 fn holds_unsorted(value: &Value) -> bool {
     match value {
@@ -5697,6 +6230,26 @@ fn holds_unsorted(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A value the replay gave a source and then dropped keeps its address, so the next value the
+    // allocator makes can't take its source, whichever allocator it is.
+    #[test]
+    fn keeps_the_values_it_gives_a_source() {
+        let mut stack = CallStack::default();
+        let elements = Rc::new(vec![Value::Int(1)]);
+        let kept = Rc::downgrade(&elements);
+        stack.give_source(&Value::Set(elements), 7);
+        assert!(
+            kept.upgrade().is_some(),
+            "the call stack keeps the value it gave a source"
+        );
+        let other = Value::Set(Rc::new(vec![Value::Int(2)]));
+        assert_eq!(stack.source(&other), None);
+        assert_eq!(
+            stack.source(&Value::Set(kept.upgrade().expect("kept"))),
+            Some(7)
+        );
+    }
 
     fn lazy(lazy: Lazy) -> Value {
         Value::Lazy(Rc::new(lazy))
@@ -5717,5 +6270,24 @@ mod tests {
         assert!(is_finite(&lazy(Lazy::Product(vec![nat(), empty()]))).expect("finite"));
         assert!(is_finite(&lazy(Lazy::Seq(empty()))).expect("finite"));
         assert!(!is_finite(&lazy(Lazy::Seq(one()))).expect("infinite"));
+    }
+
+    #[test]
+    fn restores_the_nesting_after_a_caught_panic() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/suite/etest14.ir"
+        ))
+        .expect("a golden IR");
+        let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+        let mut evaluator = Evaluator::new(&ir);
+        let outside = (DEPTH.get(), BASE.get());
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            evaluator.nested(|evaluator| {
+                evaluator.nested(|_| -> Evaluated<()> { panic!("a panic in a nesting") })
+            })
+        }));
+        assert!(caught.is_err());
+        assert_eq!((DEPTH.get(), BASE.get()), outside);
     }
 }

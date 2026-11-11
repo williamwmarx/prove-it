@@ -379,14 +379,26 @@ TLC evaluates a parameterless substitute for a declared constant at startup and 
 when that fails and the level bound `createLevelAnalyzer` computes is above constant, with TLCGet,
 Trace and CounterExample read as variables. `create_environment` runs the same analyzer from
 `levels.rs`, and evaluates such a substitute with the constant evaluator before TLC starts
-(`is_started: false`, with no string ranks). Two failures are TLC's:
+(`is_started: false`, with no string ranks). These failures are TLC's:
 
 - a variable, which no state assigns: TLC's "is either undefined or not an operator";
-- TLCGet of a key TLC's model checker holds (diameter, generated, distinct, queue, stats, config),
-  which `TLCGetSet.TLCGetEval` reports as its own failure on master.
+- TLCGet of a key TLC's model checker holds (diameter, generated, distinct, queue, stats, config)
+  or of a register, which `TLCGetSet.TLCGetEval` reports as its own failure on master, where
+  TLCGet("level") is 1, the level of `TLCState.Empty`;
+- a CHOOSE no element satisfies, `=` of values of two kinds, a membership in a value that isn't a
+  set, and a quantifier bound that isn't one, worded as TLC's classes word them where the
+  evaluator knows how TLC prints the values;
+- a division by zero, an EvalException.
 
-Either becomes TLC's configuration error "substitutes constant C with non-constant D -
-specifically: …". Anything else the evaluator can't compute is still `NotYet`.
+Each becomes TLC's configuration error "substitutes constant C with non-constant D", with
+" - specifically: …" and the failure's message unless it is an EvalException
+(`processConstantDefns`). Anything else the evaluator can't compute is still `NotYet`.
+
+`tlc_messages::is_eval_exception` tells the failures TLC throws as EvalExceptions by their
+messages' codes. `processConfigProps` lets one escape from a property's `\A` as an exception TLC
+didn't expect, and leaves the `\A` to the liveness checker for any other, whose `astToLive` takes
+a quantifier whose sets or body fail for a formula it can't handle, under `\A` with the message of
+a failure that isn't an EvalException.
 
 ## Constant parts of the liveness formula
 
@@ -601,8 +613,7 @@ brought:
 - The parser: a named `<*>` or `<+>` step, a semantic error of the TLC-mode parse, and SANY's
   `WF_B(A)(Act)`, whose subscript is `B(A)`.
 - `report.rs` declines a module the front end's parser rejects where SANY's parser
-  (`sany_parse_error`) accepts it, rather than print the front end's message: a labeled
-  ASSUME/PROVE among the assumptions (AssumeProveTest) is one.
+  (`sany_parse_error`) accepts it, rather than print the front end's message.
 - `get_coded` reports a decimal or an integer TLC can't hold as SpecProcessor does: 2244 or 2265,
   the literal on its own line, exit 151 or 255. The TypeScript CLI still prints the front end's
   error (code 1000, exit 75).
@@ -679,14 +690,12 @@ E4351, E4355) are now written, from `Generator.java` and `SymbolTable.java` at d
 
 Declines left, each for a reason:
 
-- AssumeProveTest's labeled ASSUME/PROVE among an ASSUME's assumptions (`innerAP1 :: ASSUME ...`),
-  which the front end's parser rejects. Following it takes a label on a nested ASSUME/PROVE in the
-  AST, the parser and the selection of its parts (`ap4!innerAP1`), in both front ends, as the
-  TypeScript one rejects it too and `front-differential.ts` holds the two to each other.
-- The RECURSIVE declarations outside the shapes `recursive.rs` lists: the grid's 126 declining
-  cells. Most are SANY errors no spec is written for; the valid ones (a LET with RECURSIVE
-  declarations within another or beside an INSTANCE, a RECURSIVE declaration in a nested module)
-  turn on SANY's counts across levels and modules, which the front end doesn't follow.
+- The RECURSIVE grid's 7 specs that decline in the check stage's linking (`resolve.rs`):
+  RLetInnerRecursive, RLetInstanceAfter, RLetInstanceBefore, RModuleInstanceUnnamed,
+  RModuleModuleDeclares, RNestedInnerRecursive and RNestedInstanceAfter. SANY's report of each is
+  written: where linking declines, `sany/messages.rs` takes SANY's messages from the ported
+  generator, and declines any message whose shape no recording in `grid.json` or `corpus.json`
+  shows.
 
 The binary names the check it declines (`SANY's report of <reason>`).
 
@@ -703,7 +712,6 @@ six accepted specs above. `front-differential.ts sany-text` stays at 2,367 of 2,
   `src/sany`; the generator's errors the corpus doesn't reach are the next to port.
 - A RECURSIVE operator that applies another of its section (mutual recursion): SANY's first pass
   reads the section's operators with action-level arguments, which `levels.rs` declines.
-- Labeled ASSUME/PROVE (AssumeProveTest), which the native front declines.
 - The TypeScript front end's differences from TLC, below.
 
 ### Where the TypeScript front end differs from TLC
@@ -794,15 +802,12 @@ and FairnessTest and NumbersTest, whose model the TypeScript front end rejects a
 report. The other 6 decline in both.
 
 Against TLC's output on d8fb231, recorded in `tests/conformance/sany-stdout`, the binary prints
-what TLC prints on 152 of the corpus's 153 specs and declines AssumeProveTest, and on 57 of the
-grid's 183, declining the other 126; none differ. Verification's Front End task holds it to that.
-The CLI, with the addon, differs on 9 of the corpus's specs and 5 of the grid's, none of them in a
-report tla-front writes: E4294_Module and the 5 grid specs are the generator's exception, which the
-CLI leaves to the TypeScript report; FairnessTest, NumbersTest and ProofsTest are specs tla-front
-accepts and the TypeScript front end rejects after the report, and AssumeProveTest one the binary
-declines and the TypeScript parser rejects; AssumeTest, BasicTest, InnerModuleTest and Semantics
-are an assumption the TypeScript checker words otherwise than TLC. So
-`--cli` stays out of the gate until stage 3 retires those.
+what TLC prints on all 153 of the corpus's specs, and on 183 of the grid's 190, declining 7 in the
+check stage's linking; none differ. Verification's Front End task holds it to that.
+The CLI, with the addon, prints what TLC prints on the same 153 and 183, and declines the same 7
+(`--cli`, measured at train-three 8695192d with `PROVE_IT_ENGINE_ADDON` naming the addon). Without
+an engine it prints the TypeScript report, which differs on 17 of the corpus's specs and 7 of the
+grid's. An npm install loads the platform package's addon or the WebAssembly engine `dist` ships.
 
 The addon writes the report on a 64 MiB thread, as the binary's run does: a formula nested a few
 hundred parentheses deep overflows the stack of the thread JavaScript calls on.
@@ -843,8 +848,8 @@ Gates, run by Verification's Front End job (until the TypeScript exporter was de
 corpora: 2,362 of 2,367 matched and none differed):
 
 - `sany-corpus.ts --recorded` on `tests/conformance/sany-stdout/xml-*.json`, the real exporter at
-  d8fb231: with each of the five flag sets, 150 of SANY's 153 corpus specs print what it printed
-  and 3 decline (AssumeProveTest and LetInTest, which the front end declines, and E4294_Module);
+  d8fb231: with each of the five flag sets, 151 of SANY's 153 corpus specs print what it printed
+  and 2 decline (LetInTest, which the front end declines, and E4294_Module);
   8 of the 9 XML fixtures (DefineStep declines), and both `-I` fixtures. None differ. The
   TypeScript exporter printed what it printed on 142. Porting it found that the parser gave the
   subscript `B(A)` of `WF_B(A)(Act)` no range (FairnessTest), which SANY locates over its

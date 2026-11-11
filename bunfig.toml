@@ -21,6 +21,8 @@ ignorePatterns = [
   "packages/prove-it/tests/conformance/",
   # The counterexamples TLC dumps, which tla-trace's tests compare byte for byte.
   "packages/prove-it/native/crates/tla-trace/tests/dump/",
+  # What TLC prints and writes with -dumpTrace, which the binary's tests compare byte for byte.
+  "packages/prove-it/native/crates/prove-it-cli/tests/dump-trace/",
 ]
 
 # `bun lint`: every rule the repository runs is named here, as an error, so a Bun upgrade that
@@ -91,9 +93,7 @@ ignorePatterns = [
 "no-unsafe-negation" = "error"
 "no-unsafe-optional-chaining" = "error"
 "no-unused-labels" = "error"
-# Off: it counts only reads through `this`, so it flags the fields that union-find code reads on
-# another node (src/prover/smt/solver/auf-solver.ts).
-"no-unused-private-class-members" = "off"
+"no-unused-private-class-members" = "error"
 "no-useless-assignment" = "error"
 "no-useless-backreference" = "error"
 "no-useless-catch" = "error"

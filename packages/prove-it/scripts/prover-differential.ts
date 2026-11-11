@@ -1,12 +1,10 @@
-// Decides each input prover-inputs.ts wrote again, with its recorded step limit and no time limit,
-// and compares the verdict and the statistics with the TypeScript backends' recorded ones. The
+// Decides each input prover-inputs.ts wrote again with the native backends, with its recorded step
+// limit and no time limit, and compares the verdict and the statistics with the recorded ones. The
 // answers must be the same, statistics included, which shows the same search was made.
-//   --side ts (the default) decides with the TypeScript backends, which checks that the recording
-//     reproduces; --side rust with the native ones.
 //   --prover smt|z3|zenon|isabelle|ls4 and --filter text keep the inputs of one backend, or whose
 //     key, prover/digest, contains the text. --jobs n runs n workers. --verbose lists every difference.
-//   --update, with --side ts only, writes the answer of each input that differs into the record,
-//     keeping its step limit, for a TypeScript change that moves the search on the recorded limits.
+//   --update writes the answer of each input that differs into the record, keeping its step limit,
+//     for a change to a backend that moves the search on the recorded limits.
 // "declined" counts the inputs the native backend doesn't decide yet, and isn't a failure.
 // An answer is "unstable" when the recording or the new decision stopped for a reason that is a
 // property of the runtime rather than of the search, a full heap or stack, and isn't compared.
@@ -16,8 +14,6 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { getNativeAddon } from "../src/engine/native";
-import { TlaProverError } from "../src/errors";
-import { decide } from "../src/prover/deciders";
 import { CONFORMANCE_DIRECTORY, getOption, writeResults } from "./corpora";
 import { runModuleWorkers } from "./module-workers";
 import { printResults } from "./proof-records";
@@ -27,7 +23,6 @@ import {
   type InputAnswer,
   type InputRecord,
   readInputRecords,
-  useTypeScriptBackends,
   writeInputRecords,
 } from "./prover-records";
 
@@ -54,15 +49,9 @@ const BATCH_SIZE = 25;
 
 const RUNTIME_STOPS = new Set(["heap", "stack"]);
 
-const side = getOption("--side") ?? "ts";
 const prover = getOption("--prover");
 const filter = getOption("--filter");
 const isUpdating = process.argv.includes("--update");
-if (isUpdating && side !== "ts")
-  throw new Error("--update writes the TypeScript backends' answers, so it takes --side ts");
-
-useTypeScriptBackends();
-
 // The native backend's answer, which reads the input with no fallback, or why it declined.
 const decideNatively = (record: InputRecord, text: string): InputAnswer | string => {
   const addon = getNativeAddon();
@@ -72,18 +61,6 @@ const decideNatively = (record: InputRecord, text: string): InputAnswer | string
   if (decision.kind === "error")
     return { verdict: "unknown", statistics: {}, error: decision.message };
   return { verdict: decision.verdict, statistics: decision.statistics };
-};
-
-const decideOnSide = (record: InputRecord, text: string): InputAnswer | string => {
-  if (side === "rust") return decideNatively(record, text);
-  if (side !== "ts") throw new Error(`no ${side} side`);
-  try {
-    const decision = decide(record.prover, text, { timeLimitMs: Infinity }, record.stepLimit);
-    return { verdict: decision.verdict, statistics: decision.statistics };
-  } catch (error) {
-    if (!(error instanceof TlaProverError)) throw error;
-    return { verdict: "unknown", statistics: {}, error: error.message };
-  }
 };
 
 const isRuntimeStop = (answer: InputAnswer) => RUNTIME_STOPS.has(String(answer.statistics.stop));
@@ -97,7 +74,7 @@ const getResult = (key: string, record: InputRecord): Result => {
   const base = { prover: record.prover, key, expected };
   const actual = (() => {
     try {
-      return decideOnSide(record, readFileSync(getInputPath(key), "utf8"));
+      return decideNatively(record, readFileSync(getInputPath(key), "utf8"));
     } catch (error) {
       return { crash: String(error instanceof Error ? (error.stack ?? error.message) : error) };
     }
@@ -134,7 +111,7 @@ const results = [...byBatch.values()].flat();
 writeResults(RESULTS_PATH, results);
 const missing = keys.length - results.length;
 console.log(
-  `${side} on ${results.length} of ${keys.length} inputs${missing > 0 ? `, ${missing} lost with their worker` : ""}`,
+  `decided ${results.length} of ${keys.length} inputs${missing > 0 ? `, ${missing} lost with their worker` : ""}`,
 );
 printResults(
   results,

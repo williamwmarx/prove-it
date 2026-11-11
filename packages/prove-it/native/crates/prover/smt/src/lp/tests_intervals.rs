@@ -1,4 +1,5 @@
-// tests/unit/smt-intervals.test.ts: dep_intervals, nex_creator and cross_nested.
+// Ported from the deleted tests/unit/smt-intervals.test.ts: dep_intervals, nex_creator and
+// cross_nested.
 use std::collections::HashSet;
 
 use prove_decide::Limits;

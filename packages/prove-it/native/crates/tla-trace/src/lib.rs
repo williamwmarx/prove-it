@@ -10,6 +10,7 @@
 
 mod action;
 mod alias;
+mod coverage;
 mod dump;
 mod eval;
 mod failure;
@@ -24,12 +25,17 @@ mod split;
 mod value;
 
 pub use alias::Alias;
+pub use coverage::{CoverageMessage, CoverageReport};
 pub use dump::TraceDump;
 
 /// The texts TLC interns as it computes the model's constant definitions, `definitions` by index
-/// in TLC's order, past those the IR ranks, in the order it interns them.
-pub fn get_startup_texts(ir: &tla_ir::Ir, definitions: &[tla_ir::Index]) -> Vec<Box<[u16]>> {
-    eval::Evaluator::get_startup_texts(ir, definitions)
+/// in TLC's order, past the first `interned` texts the IR ranks, in the order it interns them.
+pub fn get_startup_texts(
+    ir: &tla_ir::Ir,
+    definitions: &[tla_ir::Index],
+    interned: usize,
+) -> Vec<Box<[u16]>> {
+    eval::Evaluator::get_startup_texts(ir, definitions, interned)
 }
 pub use eval::Registers;
 pub use failure::{
@@ -40,7 +46,8 @@ pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};
 pub use rebuild::Rebuilder;
 pub use split::{Described, SpecDescription, add_actions, add_spec};
-pub use value::Value;
+pub use value::RECORD_VALUE_FIELDS;
+pub use value::{Class, Text, Value};
 
 /// Where the evaluator can't follow TLC yet: the caller reports `not native yet: <reason>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +74,10 @@ pub struct Trace {
     /// What TLC prints after the trace, as it rebuilds a violation's trace once more
     /// (`traceOutput`); for a trace of one state, what the initial predicate printed.
     pub trace_output: Vec<Vec<String>>,
+    /// Whether TLC failed to find the violating successor of the initial state again, where the
+    /// caller let it (`Rebuilder::keep_lost_successor`): the trace then holds the initial state,
+    /// and TLC fails with a NullPointerException as it prints the successor (`printTrace`).
+    pub is_successor_lost: bool,
 }
 
 pub struct TraceState {

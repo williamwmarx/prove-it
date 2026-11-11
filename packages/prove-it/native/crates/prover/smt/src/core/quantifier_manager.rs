@@ -308,11 +308,8 @@ impl Context {
 mod tests {
     //! Quantified EUF problems that E-matching refutes without MBQI, internalized from hand-built
     //! expressions and searched. The expected results, conflicts, steps and instances are those
-    //! `scripts/smt-ematching-reference.ts` prints for the TypeScript kernel on the same
-    //! expressions, made in the same order, with MBQI off. The TypeScript theory's `init` makes
-    //! four numerals and their enodes, which the stubbed theory does not, so the ids here are
-    //! those of the TypeScript less four; the counts do not depend on it. The script's `sat`
-    //! problem is not ported: a candidate model goes to the model generator, still a stub.
+    //! `scripts/smt-ematching-reference.ts` printed for the TypeScript kernel on the same
+    //! expressions, made in the same order, with MBQI off.
 
     use prove_decide::Limits;
 
@@ -320,13 +317,6 @@ mod tests {
     use crate::core::context::{Context, SmtParams};
     use crate::util::lbool::LBool;
     use crate::util::rlimit::ResourceLimit;
-
-    /// The steps the TypeScript takes in what is still stubbed here, which the script prints for
-    /// each problem: the empty arithmetic theory (two in its first propagation, two in each of its
-    /// final checks).
-    struct Stubbed {
-        theory: u64,
-    }
 
     struct Problem {
         context: Context,
@@ -412,13 +402,13 @@ mod tests {
             self.context.internalize_assertion(expr, 0).unwrap();
         }
 
-        /// The result, the conflicts, the steps with those of the stubs added, and the instances.
-        fn search(&mut self, stubbed: Stubbed) -> (LBool, u32, u64, u32) {
+        /// The result, the conflicts, the steps and the instances.
+        fn search(&mut self) -> (LBool, u32, u64, u32) {
             let result = self.context.search().unwrap();
             (
                 result,
                 self.context.get_num_conflicts(),
-                self.context.m.limit.count() + stubbed.theory,
+                self.context.m.limit.count(),
                 self.context.qmanager.get_num_instances(),
             )
         }
@@ -446,8 +436,7 @@ mod tests {
         let eq = problem.eq(a, b);
         let not = problem.not(eq);
         problem.assert(not);
-        let stubbed = Stubbed { theory: 2 };
-        assert_eq!(problem.search(stubbed), (LBool::False, 1, 41, 2));
+        assert_eq!(problem.search(), (LBool::False, 1, 41, 2));
     }
 
     #[test]
@@ -479,8 +468,7 @@ mod tests {
         let rad = problem.app(r, &[a, d], SORT_BOOL);
         let not = problem.not(rad);
         problem.assert(not);
-        let stubbed = Stubbed { theory: 2 };
-        assert_eq!(problem.search(stubbed), (LBool::False, 1, 91, 3));
+        assert_eq!(problem.search(), (LBool::False, 1, 91, 3));
     }
 
     #[test]
@@ -510,8 +498,7 @@ mod tests {
         let eq = problem.eq(fc, b);
         let not = problem.not(eq);
         problem.assert(not);
-        let stubbed = Stubbed { theory: 2 };
-        assert_eq!(problem.search(stubbed), (LBool::False, 1, 42, 1));
+        assert_eq!(problem.search(), (LBool::False, 1, 42, 1));
     }
 
     #[test]
@@ -538,8 +525,7 @@ mod tests {
         let psssa = problem.app(p, &[sssa], SORT_BOOL);
         let not = problem.not(psssa);
         problem.assert(not);
-        let stubbed = Stubbed { theory: 2 };
-        assert_eq!(problem.search(stubbed), (LBool::False, 1, 82, 3));
+        assert_eq!(problem.search(), (LBool::False, 1, 82, 3));
     }
 
     #[test]
@@ -567,8 +553,7 @@ mod tests {
             let not = problem.not(atom);
             problem.assert(not);
         }
-        let stubbed = Stubbed { theory: 2 };
-        assert_eq!(problem.search(stubbed), (LBool::False, 2, 64, 2));
+        assert_eq!(problem.search(), (LBool::False, 2, 64, 2));
     }
 
     #[test]
@@ -599,8 +584,7 @@ mod tests {
         let eq = problem.eq(a, b);
         let not = problem.not(eq);
         problem.assert(not);
-        let stubbed = Stubbed { theory: 4 };
-        assert_eq!(problem.search(stubbed), (LBool::False, 1, 47, 1));
+        assert_eq!(problem.search(), (LBool::False, 1, 47, 1));
     }
 
     #[test]
@@ -624,7 +608,27 @@ mod tests {
         problem.assert(not);
         let eq = problem.eq(a, b);
         problem.assert(eq);
-        let stubbed = Stubbed { theory: 0 };
-        assert_eq!(problem.search(stubbed), (LBool::False, 1, 7, 0));
+        assert_eq!(problem.search(), (LBool::False, 1, 7, 0));
+    }
+
+    #[test]
+    fn gives_up_on_a_satisfiable_problem_without_mbqi() {
+        // ∀x {h(x)}. h(x) = x, f(a) ≠ b. Without MBQI the kernel gives up with unknown.
+        let mut problem = Problem::new();
+        let u = problem.sort;
+        let h = problem.func("h", &[u], u);
+        let f = problem.func("f", &[u], u);
+        let x = problem.var(0);
+        let hx = problem.app(h, &[x], u);
+        let body = problem.eq(hx, x);
+        let q = problem.forall(1, body, &[&[hx]], 0);
+        let a = problem.constant("a");
+        let b = problem.constant("b");
+        problem.assert(q);
+        let fa = problem.app(f, &[a], u);
+        let eq = problem.eq(fa, b);
+        let not = problem.not(eq);
+        problem.assert(not);
+        assert_eq!(problem.search(), (LBool::Undef, 0, 18, 0));
     }
 }

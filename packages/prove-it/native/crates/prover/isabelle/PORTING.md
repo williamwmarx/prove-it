@@ -1,5 +1,8 @@
 # Porting `src/prover/isabelle` to `prove-isabelle`
 
+The port is done and the TypeScript it ports is deleted; this file stays as the record of how its
+idioms became Rust.
+
 The working rules for the port of the Isabelle back end (design/prover.md, P4a and P4b). Read
 `AGENTS.md` at the repository root, and `packages/prove-it/native/design/prover.md` §3.3, §3.6
 and §4a, first. This file says how the TypeScript's idioms become Rust in this crate, so that
@@ -78,8 +81,9 @@ modules ported separately fit together.
 
 ## Test expectations
 
-The tests compare with what the TypeScript gives, recorded in `testdata/`; in `packages/prove-it`,
-`bun scripts/isabelle-expectations.ts [group...]` regenerates them.
+The tests compare with what the TypeScript gave, recorded in `testdata/`. The TypeScript is
+deleted, and the script that recorded them with it, so nothing rewrites them now: a change to a
+line is a change to the port's search.
 
 ## Checks
 

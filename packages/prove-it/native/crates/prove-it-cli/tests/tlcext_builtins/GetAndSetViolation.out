@@ -1,0 +1,31 @@
+exit 12
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module GetAndSetViolation
+Linting of module TLCExt
+Linting of module GetAndSetViolation
+Computing initial states...
+0
+100
+101
+103
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 79 of module GetAndSetViolation>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 79 of module GetAndSetViolation>
+x = 2
+
+State 4: <Next line 5, col 9 to line 5, col 79 of module GetAndSetViolation>
+x = 3
+
+4 states generated, 4 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 4.

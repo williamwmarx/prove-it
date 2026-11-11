@@ -1,6 +1,6 @@
 # Third-party notices
 
-Prove It is distributed under the MIT license in `LICENSE`, except five files ported from OCaml, which keep OCaml's license (see OCaml below). It is derived from [tla-ts](https://github.com/aidenybai/tla-ts) by Aiden Bai, whose copyright notice `LICENSE` carries, and it includes or is ported from the projects below. Each project's notice and license follow.
+Prove It is distributed under the MIT license in `LICENSE`, except seven files ported from OCaml, which keep OCaml's license (see OCaml below). It is derived from [tla-ts](https://github.com/aidenybai/tla-ts) by Aiden Bai, whose copyright notice `LICENSE` carries, and it includes or is ported from the projects below. Each project's notice and license follow.
 
 ## TLA+ tools (TLC, SANY and the PlusCal translator)
 
@@ -73,7 +73,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 <https://github.com/zenon-prover/zenon>
 
-`src/prover/zenon/` and its Rust port `native/crates/prover/zenon/` are ported from Zenon, as shipped in tlapm, including its TLA+ extension. The crate keeps this licence in its `LICENSE`.
+`native/crates/prover/zenon/` is ported from Zenon, as shipped in tlapm, including its TLA+ extension, and keeps this licence in its `LICENSE`.
 
 ```
 Copyright (c) 1997-2006, Institut National de Recherche en
@@ -114,12 +114,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 <https://github.com/ocaml/ocaml>
 
-Eight files are ported from the OCaml Core System and remain under its license, the GNU Lesser General Public License version 2.1 with OCaml's linking exception, rather than MIT:
+Seven files are ported from the OCaml Core System and remain under its license, the GNU Lesser General Public License version 2.1 with OCaml's linking exception, rather than MIT:
 
 - `src/prover/tlapm/ocaml-marshal.ts`, ported from `runtime/intern.c` and `runtime/extern.c`
 - `native/crates/prover/obligations/src/marshal.rs`, the Rust port of `src/prover/tlapm/ocaml-marshal.ts`
-- `src/prover/zenon/ocaml.ts`, ported from `Hashtbl.hash` (`runtime/hash.c`) and `List.sort` and `List.stable_sort` (`stdlib/list.ml`)
-- `native/crates/prover/zenon/src/ocaml.rs`, the Rust port of `src/prover/zenon/ocaml.ts`
+- `native/crates/prover/zenon/src/ocaml.rs`, ported from `Hashtbl.hash` (`runtime/hash.c`) and `List.sort` and `List.stable_sort` (`stdlib/list.ml`)
 - `src/obligations/format.ts`, ported from the `Format` module (`stdlib/format.ml`)
 - `src/obligations/action.ts`, whose `getHash` is ported from `runtime/hash.c`
 - `native/crates/prover/obligations/src/format.rs`, the Rust port of `src/obligations/format.ts`
@@ -337,7 +336,7 @@ That's all there is to it!
 
 <https://github.com/Z3Prover/z3>
 
-The SMT solver in `src/prover/smt/`, including its linear arithmetic (`lp/`) and nonlinear (`nlsat/`) components, is ported from Z3, and so is its Rust port in `native/crates/prover/smt/` (so far `src/util/` and the linear arithmetic, `src/lp/`).
+The SMT solver in `native/crates/prover/smt/`, including its linear arithmetic (`src/lp/`) and nonlinear (`src/nlsat/`) components, is ported from Z3, and keeps this licence in its `z3-license.txt`. The integers and rationals of `native/crates/prover/num/` follow Z3's.
 
 ```
 Z3
@@ -356,7 +355,7 @@ THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 <https://isabelle.in.tum.de>
 
-`src/prover/isabelle/` ports the parts of Isabelle that TLAPS proofs use: Pure, Isar, the blast prover and Isabelle/TLA+.
+`native/crates/prover/isabelle/` ports the parts of Isabelle that TLAPS proofs use: Pure, Isar, the blast prover and Isabelle/TLA+, and keeps this licence in its `LICENSE`, and tlapm's, for the Isabelle/TLA+ theories its logic data comes from, in its `LICENSE-tlapm`.
 
 ```
 ISABELLE COPYRIGHT NOTICE, LICENCE AND DISCLAIMER.

@@ -395,8 +395,8 @@ impl Search<'_> {
     }
 }
 
-/// The proof of the hypotheses' inconsistency, or why the search gave up. `Err` is a
-/// `TlaZenonError` that stops Zenon mid-search.
+/// The proof of the hypotheses' inconsistency, or why the search gave up. `Err` is an error
+/// that stops Zenon mid-search.
 pub fn search(
     context: &mut SearchContext,
     definitions: &[Rc<Definition>],

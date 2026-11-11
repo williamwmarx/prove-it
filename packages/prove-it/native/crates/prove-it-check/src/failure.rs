@@ -21,9 +21,10 @@ use crate::summary::out_degree_summary;
 // expect (`EC.ExitStatus`).
 pub(crate) const FAILURE_SPEC_EVAL: i32 = 75;
 pub(crate) const ERROR: i32 = 255;
+use crate::plain::Variable;
 use crate::trace::{
-    PostconditionRun, Postconditions, check, format_fields, format_partial_state, format_print,
-    format_state, format_texts,
+    PostconditionRun, Postconditions, check, format_print, format_texts, get_field_variables,
+    get_partial_variables, get_state_variables,
 };
 
 /// Where the search stopped on an error: the path to the state it was expanding, as ids of
@@ -63,7 +64,7 @@ struct Report {
 
 struct PrintedStep {
     label: String,
-    text: String,
+    variables: Vec<Variable>,
     output: Vec<String>,
 }
 
@@ -93,16 +94,20 @@ pub fn print_failure(
     // An invariant that fails to evaluate stops TLC's worker before it adds the state it was
     // expanding to the behavior graphs, and TLC's replay of the expansion adds nothing to them
     // (`ModelChecker.doNext`), so the temporal properties show only in what their atoms print as
-    // TLC adds the states before it.
-    let is_followed =
-        is_atom || is_initial || matches!(stop.site, Site::Invariant(_)) && !atoms_print(ir);
+    // TLC adds the states before it. The search reports a failure of the next-state relation in
+    // such a model only where it followed TLC's checks of the state as TLC adds it after.
+    let is_next = matches!(stop.site, Site::Next | Site::NextAtom { .. });
+    let is_followed = is_atom
+        || is_initial
+        || is_next
+        || matches!(stop.site, Site::Invariant(_)) && !atoms_print(ir);
     if !ir.model.live_properties.is_empty() && !is_followed {
         return Err("a failure in a model with temporal properties".into());
     }
     if stop.site == Site::Next && stop.reason == "a successor that isn't complete" {
         return print_incomplete(printer, ir, stop, start);
     }
-    let report = evaluate(ir, stop, printer.is_tool)?;
+    let report = evaluate(ir, stop, printer.is_tool, printer.host.is_plain())?;
     let failure = &report.failure;
     if stop.replayed.is_some() && failure.fingerprint.is_some() {
         return Err("a state TLC fails to fingerprint with an ALIAS or a POSTCONDITION".into());
@@ -129,16 +134,16 @@ pub fn print_failure(
         &failure.message
     };
     // TLC names the initial state it failed to fingerprint in the message.
+    printer.outcome.status = Some("error");
     match &failure.state {
-        Some(state) => printer.print(
+        Some(state) => printer.report(
             failure.code,
-            Level::Error,
             &format!(
                 "{message}\nWhile working on the initial state:\n{}",
                 format_texts(ir, state)
             ),
         ),
-        None => printer.print(failure.code, Level::Error, message),
+        None => printer.report(failure.code, message),
     }
     // TLC reports an exception it didn't expect without the call stack or statistics, but for one
     // adding a state to the behavior graphs, an initial one too, or one its replay of an
@@ -147,7 +152,7 @@ pub fn print_failure(
         && !is_atom
         && !is_initial_atom
         && !failure.replay.is_failed
-        && !matches!(stop.site, Site::Next)
+        && !is_next
     {
         print_finished(printer, start);
         return Ok(ERROR);
@@ -170,11 +175,7 @@ pub fn print_failure(
                     printer.line(line);
                 }
             }
-            printer.print(
-                code::STATE_PRINT_2,
-                Level::State,
-                &format!("{}: <{}>\n{}", position + 1, step.label, step.text),
-            );
+            printer.state(position + 1, &step.label, step.variables.clone());
         }
     }
     // A successor TLC can't fingerprint fails again as TLC prints it with the trace.
@@ -198,7 +199,11 @@ pub fn print_failure(
     );
     let progress = std::iter::successors(Some(2u64), |count| count.checked_mul(2))
         .take_while(|&count| is_progress_replayed && count < stop.statistics.generated);
-    if stop.statistics.generated > 2
+    if stop
+        .statistics
+        .generated
+        .max(failure.replay.initial_states.unwrap_or(0))
+        > 2
         && is_progress_replayed
         && (failure.fingerprint.is_some() || !report.after.is_empty())
     {
@@ -273,18 +278,23 @@ pub fn print_failure(
         None => print_call_stack(printer, ir, &failure.call_stack),
     }
     // TLC counts the state it failed to fingerprint as generated, which the search stopped before
-    // counting, and an initial state as at depth 1.
+    // counting, and an initial state as at depth 1: the initial state it reports failed to
+    // fingerprint, whether as a FingerprintException or not.
+    let is_unfingerprinted = stop.site == Site::Init && failure.state.is_some();
     let statistics = match (&failure.fingerprint, stop.site) {
         (Some(fingerprint), _) if fingerprint.is_replayed => stop.statistics,
-        (Some(_), site) => Statistics {
-            generated: stop.statistics.generated + 1,
+        (None, _) if !is_unfingerprinted => stop.statistics,
+        (_, site) => Statistics {
+            generated: failure
+                .replay
+                .initial_states
+                .unwrap_or(stop.statistics.generated + 1),
             depth: match site {
                 Site::Init => stop.statistics.depth.max(1),
                 _ => stop.statistics.depth,
             },
             ..stop.statistics
         },
-        (None, _) => stop.statistics,
     };
     // TLC's replay adds the successors it hadn't seen to its set, and to its queue those that
     // pass its checks.
@@ -305,7 +315,8 @@ pub fn print_failure(
 }
 
 // Whether an atom of the temporal properties may print as TLC evaluates it: one read in an
-// instance's scope, or one that reaches Print or PrintT, through the definitions it names.
+// instance's scope, or one that reaches Print, PrintT or AssertEq, through the definitions it
+// names.
 fn atoms_print(ir: &Ir) -> bool {
     let arena = &ir.nodes.arena;
     if ir.model.atoms.iter().any(|atom| atom.scope.is_some()) {
@@ -322,7 +333,10 @@ fn atoms_print(ir: &Ir) -> bool {
         | NodeKind::Apply { name, .. }
         | NodeKind::OperatorReference(name) = kind
         {
-            if matches!(&*ir.texts[name.text as usize], "Print" | "PrintT") {
+            if matches!(
+                &*ir.texts[name.text as usize],
+                "Print" | "PrintT" | "AssertEq"
+            ) {
                 return true;
             }
             if let tla_ir::Resolution::Definition(index) = name.resolution {
@@ -364,7 +378,7 @@ pub fn print_assumption_failure(
     let failure = evaluate_on_search_stack(|| {
         Rebuilder::new(ir).and_then(|mut rebuilder| {
             rebuilder.set_workers(workers);
-            rebuilder.evaluate_assumption(position)
+            rebuilder.evaluate_assumption(position, printer.is_tool)
         })
     })?;
     // What TLC prints of the assumptions before this one, which hold, and of this one.
@@ -377,20 +391,26 @@ pub fn print_assumption_failure(
         return Err("the assumptions printing other than TLC prints".into());
     }
     for text in &expected.split_off(printed.len()) {
-        printer.line(text);
+        printer.printed(text);
     }
     let message = if printer.is_tool {
         &failure.tool_message
     } else {
         &failure.message
     };
-    printer.print(failure.code, Level::Error, message);
+    printer.outcome.status = Some("assumption-violation");
+    printer.report(failure.code, message);
     print_finished(printer, start);
     Ok(failure.exit_code)
 }
 
 // Evaluates the failure again and rebuilds the trace.
-fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, String> {
+fn evaluate(
+    ir: &Ir,
+    stop: &ErrorStop<'_>,
+    is_tool: bool,
+    is_plain: bool,
+) -> Result<Report, String> {
     evaluate_on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
         rebuilder.set_fingerprints(stop.fingerprints);
@@ -400,6 +420,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
                 &violation.startup,
                 violation.startup_random,
             )?;
+            rebuilder.set_chosen(&violation.store, &violation.chosen);
             if let Some(group) = &violation.symmetry {
                 rebuilder.set_symmetry(group);
             }
@@ -427,11 +448,12 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
             Trace {
                 states: Vec::new(),
                 trace_output: Vec::new(),
+                is_successor_lost: false,
             }
         } else {
             // An atom's state past the path is no state of the trace.
             let (states, actions) = match stop.site {
-                Site::Atom { is_extra: true, .. } => {
+                Site::Atom { is_extra: true, .. } | Site::NextAtom { is_extra: true, .. } => {
                     let states = &stop.states[..stop.states.len().saturating_sub(1)];
                     (states, &stop.actions[..states.len().saturating_sub(1)])
                 }
@@ -446,7 +468,9 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
         // (`Worker.run`, `Worker.addElement`).
         let is_rebuilt_again = match stop.site {
             Site::Invariant(_) => false,
-            Site::Next => ir.model.check_deadlock && !failure.replay.is_successor_generated,
+            Site::Next | Site::NextAtom { .. } => {
+                ir.model.check_deadlock && !failure.replay.is_successor_generated
+            }
             _ => true,
         };
         let after = trace
@@ -459,7 +483,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
         // TLC prints a state it was expanding alone, an initial one, as it is, and every other
         // trace through the ALIAS (`TLCTrace.printTrace`).
         let aliases = if stop.is_aliased && trace.states.len() > 1 {
-            rebuilder.alias(&trace, None, is_tool)?
+            rebuilder.alias(&trace, None, None, is_tool)?
         } else {
             None
         };
@@ -477,7 +501,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
             .transpose()?;
         Ok(Report {
             failure,
-            states: labelled(ir, &trace, aliases.as_deref())?,
+            states: labelled(ir, &trace, aliases.as_deref(), is_plain)?,
             after,
             postconditions,
         })
@@ -497,6 +521,7 @@ fn labelled(
     ir: &Ir,
     trace: &Trace,
     aliases: Option<&[Alias]>,
+    is_plain: bool,
 ) -> Result<Vec<PrintedStep>, Unsupported> {
     let mut states = Vec::with_capacity(trace.states.len());
     for (position, state) in trace.states.iter().enumerate() {
@@ -514,13 +539,14 @@ fn labelled(
         };
         states.push(PrintedStep {
             label,
-            text: match aliases.map(|aliases| &aliases[position]) {
-                Some(Alias::Record(fields)) => format_fields(
+            variables: match aliases.map(|aliases| &aliases[position]) {
+                Some(Alias::Record(fields)) => get_field_variables(
                     fields
                         .iter()
                         .map(|(name, value)| (name.as_str(), Some(value))),
+                    is_plain,
                 ),
-                _ => format_state(ir, &state.values),
+                _ => get_state_variables(ir, &state.values, is_plain),
             },
             output: state
                 .printed
@@ -554,6 +580,7 @@ fn print_incomplete(
     if stop.replayed.is_some() {
         return Err("an incomplete successor with an ALIAS or a POSTCONDITION".into());
     }
+    let is_plain = printer.host.is_plain();
     let (states, incomplete) = evaluate_on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
         let trace = rebuilder.rebuild(stop.store, &stop.states, &stop.actions, Ending::Kept)?;
@@ -567,11 +594,11 @@ fn print_incomplete(
         let incomplete = rebuilder.incomplete_successor(&trace)?;
         let partial: Vec<_> = incomplete.partial.iter().map(Option::as_ref).collect();
         Ok((
-            labelled(ir, &trace, None)?,
+            labelled(ir, &trace, None, is_plain)?,
             (
                 incomplete.action,
                 incomplete.missing,
-                format_partial_state(ir, &partial),
+                get_partial_variables(ir, &partial, is_plain),
             ),
         ))
     })?;
@@ -595,9 +622,9 @@ fn print_incomplete(
     } else {
         ("variable", "is")
     };
-    printer.print(
+    printer.outcome.status = Some("error");
+    printer.report(
         code::INCOMPLETE_SUCCESSOR,
-        Level::Error,
         &format!(
             "Successor state is not completely specified by {subject}. The following {noun} {verb} not defined: {}.\n",
             names.join(", ")
@@ -610,15 +637,11 @@ fn print_incomplete(
     );
     let successor = PrintedStep {
         label: label.to_string(),
-        text: partial,
+        variables: partial,
         output: Vec::new(),
     };
-    for (position, step) in states.iter().chain([&successor]).enumerate() {
-        printer.print(
-            code::STATE_PRINT_2,
-            Level::State,
-            &format!("{}: <{}>\n{}", position + 1, step.label, step.text),
-        );
+    for (position, step) in states.into_iter().chain([successor]).enumerate() {
+        printer.state(position + 1, &step.label, step.variables);
     }
     // TLC counts the incomplete successor as generated, which the search stopped before counting.
     let statistics = Statistics {
