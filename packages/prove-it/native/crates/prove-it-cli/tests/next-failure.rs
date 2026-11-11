@@ -57,3 +57,32 @@ fn reports_a_failure_of_the_next_state_relation_in_a_model_with_temporal_propert
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
+
+#[test]
+fn reports_an_incomplete_successor_in_a_model_without_temporal_properties() {
+    // Without temporal properties, TLC reports a successor Next leaves a variable unassigned in
+    // with its trace, as TLC built at d8fb231 prints it (TLC's IncompleteNext).
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-next-failure-incomplete-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("M.tla"),
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nVARIABLE y\nInit == x = 0 /\\ y = 0\nNext == x' = x + 1\nSpec == Init /\\ [][Next]_<<x, y>>\n====\n",
+    )
+    .expect("a spec");
+    std::fs::write(directory.join("M.cfg"), "SPECIFICATION Spec\n").expect("a configuration");
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["-noTE", "M"])
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(75), "{text}");
+    assert!(
+        text.contains("Error: Successor state is not completely specified by the next-state action. The following variable is not defined: y.\n\nError: The behavior up to this point is:\nState 1: <Initial predicate>\n/\\ x = 0\n/\\ y = 0\n\nState 2: <Next line 6, col 9 to line 6, col 18 of module M>\n/\\ x = 1\n/\\ y = null\n\n2 states generated, 1 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 1.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}

@@ -4044,15 +4044,20 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // deadlocked state reaches, as on TLC's Github710d.
             let found = match found {
                 // TLC adds a state whose next states failed to the behavior graphs, with what its
-                // atoms set, which the engine doesn't follow, and an incomplete successor is
-                // reported otherwise (`Worker#addElement`), which isn't followed here.
+                // atoms set, which the engine doesn't follow, and, in a model with temporal
+                // properties, an incomplete successor is reported otherwise (`Worker#addElement`),
+                // which isn't followed here.
                 Some(Found {
                     kind:
                         ViolationKind::Error {
                             site: ErrorSite::Next,
                         },
                     ..
-                }) if online.is_some() || bail.0 == INCOMPLETE_SUCCESSOR => None,
+                }) if online.is_some()
+                    || (bail.0 == INCOMPLETE_SUCCESSOR && search.graph.is_some()) =>
+                {
+                    None
+                }
                 // TLC adds a deadlocked state to the behavior graphs once it has reported the
                 // deadlock, with what its atoms set, which the engine doesn't follow.
                 Some(found) if online.is_some() => {
