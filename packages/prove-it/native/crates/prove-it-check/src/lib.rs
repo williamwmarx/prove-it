@@ -14,6 +14,7 @@ mod jar;
 mod messages;
 mod stack;
 mod summary;
+mod te_spec;
 mod time;
 mod trace;
 mod xml_exporter;

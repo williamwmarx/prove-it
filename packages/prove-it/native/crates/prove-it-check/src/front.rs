@@ -36,6 +36,8 @@ pub struct Failure {
 /// it starts, comes from the engine's startup.
 pub struct Front {
     pub ir: Vec<u8>,
+    /// The names TLC's `Defns` holds, which the trace exploration spec reads.
+    pub defined_names: Vec<String>,
     /// None for the IR a test names, which has no source to report on.
     pub sany: Option<String>,
     /// What TLC prints of the Java overrides it loads, right after `Starting...`.
@@ -79,6 +81,7 @@ pub fn read_front(
             .map_err(|error| format!("the IR PROVE_IT_TEST_IR names: {error}"))?;
         return Ok(Read::Model(Front {
             ir,
+            defined_names: Vec::new(),
             sany: None,
             override_messages: Vec::new(),
             startup_messages: Vec::new(),
@@ -115,6 +118,7 @@ pub fn read_front(
         Ok(lowered) => {
             return Ok(Read::Model(Front {
                 ir: lowered.ir,
+                defined_names: lowered.defined_names,
                 sany: Some(sany.text),
                 startup_messages: lowered.startup_messages?,
                 override_messages: lowered.override_messages,

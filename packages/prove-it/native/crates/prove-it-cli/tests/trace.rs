@@ -95,8 +95,8 @@ fn checks_as_tlc_does_by_default_where_it_records_the_trace() {
 
 #[test]
 fn declines_a_counterexample_where_tlc_records_the_trace() {
-    // TLC writes the trace's file for any counterexample, and the trace exploration spec for one
-    // of two states or more, which the binary doesn't yet.
+    // TLC writes the trace's file for any counterexample, compressed with Java's Deflater, which
+    // the binary doesn't yet.
     let spec = "---- MODULE Viol ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x > 0\n====\n";
     let (output, directory) = run_spec(
         "trace-counterexample",
@@ -111,7 +111,7 @@ fn declines_a_counterexample_where_tlc_records_the_trace() {
     );
     assert!(
         text.contains(
-            "prove-it: not native yet: the trace exploration spec TLC writes for a counterexample"
+            "prove-it: not native yet: the trace file of the trace exploration spec, which TLC compresses with Java's Deflater"
         ),
         "{text}"
     );
@@ -190,7 +190,9 @@ fn checks_the_other_specs_after_declining_a_counterexample() {
     );
     assert_eq!(output.status.code(), Some(1), "{text}");
     assert!(
-        text.contains("not native yet: the trace exploration spec TLC writes for a counterexample"),
+        text.contains(
+            "not native yet: the trace file of the trace exploration spec, which TLC compresses with Java's Deflater"
+        ),
         "{text}"
     );
     assert!(text.contains("Checking Good.tla with Good.cfg\n"), "{text}");

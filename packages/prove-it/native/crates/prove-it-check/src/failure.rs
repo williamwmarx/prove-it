@@ -23,7 +23,7 @@ pub(crate) const FAILURE_SPEC_EVAL: i32 = 75;
 pub(crate) const ERROR: i32 = 255;
 use crate::trace::{
     PostconditionRun, Postconditions, check, format_fields, format_partial_state, format_print,
-    format_state, format_texts,
+    format_state, format_texts, state_values,
 };
 
 /// Where the search stopped on an error: the path to the state it was expanding, as ids of
@@ -64,6 +64,7 @@ struct Report {
 struct PrintedStep {
     label: String,
     text: String,
+    values: Vec<Option<String>>,
     output: Vec<String>,
 }
 
@@ -179,6 +180,9 @@ pub fn print_failure(
                 Level::State,
                 &format!("{}: <{}>\n{}", position + 1, step.label, step.text),
             );
+            printer
+                .recorded_trace
+                .record_state(position + 1, step.values.clone());
         }
     }
     // A successor TLC can't fingerprint fails again as TLC prints it with the trace.
@@ -528,6 +532,7 @@ fn labelled(
                 ),
                 _ => format_state(ir, &state.values),
             },
+            values: state_values(ir, &state.values.iter().map(Some).collect::<Vec<_>>()),
             output: state
                 .printed
                 .iter()
@@ -578,10 +583,11 @@ fn print_incomplete(
                 incomplete.action,
                 incomplete.missing,
                 format_partial_state(ir, &partial),
+                state_values(ir, &partial),
             ),
         ))
     })?;
-    let (action, missing, partial) = incomplete;
+    let (action, missing, partial, partial_values) = incomplete;
     let Some(action) = action.and_then(|action| actions.get(action as usize)) else {
         return Err("an incomplete successor of an action the IR lacks".into());
     };
@@ -617,6 +623,7 @@ fn print_incomplete(
     let successor = PrintedStep {
         label: label.to_string(),
         text: partial,
+        values: partial_values,
         output: Vec::new(),
     };
     for (position, step) in states.iter().chain([&successor]).enumerate() {
@@ -625,6 +632,9 @@ fn print_incomplete(
             Level::State,
             &format!("{}: <{}>\n{}", position + 1, step.label, step.text),
         );
+        printer
+            .recorded_trace
+            .record_state(position + 1, step.values.clone());
     }
     // TLC counts the incomplete successor as generated, which the search stopped before counting.
     let statistics = Statistics {

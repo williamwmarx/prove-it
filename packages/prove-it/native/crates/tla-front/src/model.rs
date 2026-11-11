@@ -74,6 +74,9 @@ pub struct LoweredModel {
     /// What TLC prints of the Java overrides it loads, right after `Starting...`, before it
     /// computes the constant definitions.
     pub override_messages: Vec<StartupMessage>,
+    /// The names TLC's `Defns` holds: the definitions, the standard modules' operators and the
+    /// declared constants.
+    pub defined_names: Vec<String>,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -371,6 +374,18 @@ fn lower_ranked(
                 override_messages,
                 ir: tla_ir::encode(&ir),
                 startup_messages,
+                defined_names: environment
+                    .definitions
+                    .keys()
+                    .chain(environment.builtins.keys())
+                    .chain(
+                        environment
+                            .root_constants
+                            .iter()
+                            .map(|constant| &constant.name),
+                    )
+                    .map(|name| name.to_string())
+                    .collect(),
             },
             startup,
         ))
