@@ -1957,11 +1957,14 @@ impl<'a> ModuleGenerator<'a> {
         }
         let name = self.get_operator_argument_name(argument);
         let Some(symbol) = self.resolve_symbol(&resolve_synonym(&name)) else {
-            self.add_error(
-                &location,
-                format!("Could not find declaration or definition of symbol '{name}'."),
-            );
-            return Ok(self.create_null_node());
+            if matches!(argument.kind, ExpressionKind::Lambda { .. }) {
+                self.add_error(
+                    &location,
+                    format!("Could not find declaration or definition of symbol '{name}'."),
+                );
+                return Ok(self.create_null_node());
+            }
+            return Ok(self.report_unknown_symbol(argument, &location));
         };
         let arity = get_symbol_arity(&self.spec.graph, symbol);
         if arity == expected_arity {
