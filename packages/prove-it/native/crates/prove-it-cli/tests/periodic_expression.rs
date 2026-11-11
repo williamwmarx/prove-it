@@ -26,11 +26,15 @@ const PERIODIC_COUNTER: &str = "x < 1000 /\\ x' = x + 1";
 
 // Runs the binary on a spec of the test's own, with its progress every 300 expanded states.
 fn run_spec_every_300(test: &str, spec: &str) -> (Output, PathBuf) {
+    run_config_every_300(test, spec, PERIODIC_CONFIG)
+}
+
+fn run_config_every_300(test: &str, spec: &str, config: &str) -> (Output, PathBuf) {
     let directory =
         std::env::temp_dir().join(format!("prove-it-cli-{test}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     std::fs::write(directory.join("Stop.tla"), spec).expect("a spec");
-    std::fs::write(directory.join("Stop.cfg"), PERIODIC_CONFIG).expect("a configuration");
+    std::fs::write(directory.join("Stop.cfg"), config).expect("a configuration");
     let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
         .args(["-noTE", "Stop"])
         .current_dir(&directory)
@@ -329,21 +333,40 @@ fn declines_a_periodic_the_configuration_assigns_a_value_to() {
 }
 
 // TLC reads a definition through an assignment qualified by a module, `Q = [Stop] FALSE`, which
-// the engine and the trace evaluator don't follow.
+// the engine and the trace evaluator don't follow, and checks the temporal properties of the
+// current state space before it evaluates the expression: the search declines at its first
+// progress, and a run that ends first prints what TLC prints.
 #[test]
-fn declines_a_periodic_with_a_modules_assignment() {
-    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 1000 /\\ x' = x + 1\nQ == TRUE\nPeriodic == Q\n====\n";
-    let (output, directory) = run_spec_with(
-        "periodic-module-assignment",
-        spec,
-        &format!("{PERIODIC_CONFIG}CONSTANT Q = [Stop] FALSE\n"),
-        &[],
-    );
-    let text = stdout(&output);
-    assert_eq!(output.status.code(), Some(1), "{text}");
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "prove-it: not native yet: a _PERIODIC with a module's assignment in the configuration\n"
-    );
-    std::fs::remove_dir_all(directory).expect("removed");
+fn declines_a_periodic_it_doesnt_follow_at_its_first_progress() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 1000 /\\ x' = x + 1\nQ == TRUE\nPeriodic == Q\nSpec == Init /\\ [][Next]_x\nLive == <>(x >= 0)\n====\n";
+    for (test, config, reason) in [
+        (
+            "periodic-module-assignment",
+            format!("{PERIODIC_CONFIG}CONSTANT Q = [Stop] FALSE\n"),
+            "a _PERIODIC with a module's assignment in the configuration",
+        ),
+        (
+            "periodic-temporal",
+            "SPECIFICATION Spec\nPROPERTY Live\n_PERIODIC Periodic\nCHECK_DEADLOCK FALSE\n"
+                .to_string(),
+            "a _PERIODIC with temporal properties",
+        ),
+    ] {
+        let (output, directory) = run_config_every_300(test, spec, &config);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(1), "{text}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("prove-it: not native yet: {reason}\n")
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+        let (output, directory) = run_spec_with(&format!("{test}-short"), spec, &config, &[]);
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(0), "{text}");
+        assert!(
+            text.contains("Model checking completed. No error has been found.\n"),
+            "{text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
 }

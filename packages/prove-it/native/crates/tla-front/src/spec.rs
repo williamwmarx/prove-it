@@ -1263,21 +1263,6 @@ pub fn check_search_config(
         {
             return Err(not_yet("a _PERIODIC the configuration assigns a value to"));
         }
-        // The engine and the trace evaluator don't follow an assignment or a substitution
-        // qualified by a module, which the expression may read.
-        if config
-            .constants
-            .iter()
-            .any(|constant| constant.module.is_some())
-            || config
-                .substitutions
-                .iter()
-                .any(|substitution| substitution.module.is_some())
-        {
-            return Err(not_yet(
-                "a _PERIODIC with a module's assignment in the configuration",
-            ));
-        }
     }
     for (index, name) in config.possible.iter().enumerate() {
         if config.possible[..index].contains(name) {

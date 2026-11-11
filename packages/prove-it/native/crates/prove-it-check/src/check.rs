@@ -1296,6 +1296,14 @@ fn check_spec(
     let mut declined = None;
     let mut is_snapshot_begun = false;
     let ir_ref = &ir;
+    let is_module_assigned = config
+        .constants
+        .iter()
+        .any(|constant| constant.module.is_some())
+        || config
+            .substitutions
+            .iter()
+            .any(|substitution| substitution.module.is_some());
     let (outcome, assumed_printed, dumped) = alongside(
         move || {
             let ir = ir_ref;
@@ -1307,7 +1315,21 @@ fn check_spec(
                 workers,
                 front.startup_messages,
             );
+            // Each of these the search declines at its first progress, where TLC evaluates the
+            // expression, so a run that ends first prints what TLC prints.
             relay.periodic = ir.model.periodic.as_ref().map(|_| {
+                // The engine and the trace evaluator don't follow an assignment or a
+                // substitution qualified by a module, which the expression may read.
+                if is_module_assigned {
+                    return Err(Unsupported(
+                        "a _PERIODIC with a module's assignment in the configuration".into(),
+                    ));
+                }
+                // TLC checks the temporal properties of the current state space before it
+                // evaluates the expression, where the binary's order of the lines differs.
+                if !ir.model.live_formula.is_empty() {
+                    return Err(Unsupported("a _PERIODIC with temporal properties".into()));
+                }
                 Rebuilder::new(ir).map(|mut rebuilder| {
                     rebuilder.set_workers(workers);
                     rebuilder
