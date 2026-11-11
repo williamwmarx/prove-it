@@ -137,7 +137,8 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
     let mut is_misprinted = false;
     let (outcome, assumed_printed) = alongside(
         move || {
-            let mut relay = Relay::new(sender, ir, is_tool, workers, false, false, startup_messages);
+            let mut relay =
+                Relay::new(sender, ir, is_tool, workers, false, false, startup_messages);
             relay.undelegated =
                 is_reading.then_some("an assumption of a simulation that reads TLCGet");
             let outcome = simulate(ir, &settings, &simulation, &mut relay);
