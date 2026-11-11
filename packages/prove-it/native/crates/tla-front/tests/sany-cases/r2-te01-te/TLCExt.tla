@@ -1,0 +1,3 @@
+---- MODULE TLCExt ----
+Foo == Undef
+====
