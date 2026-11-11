@@ -559,13 +559,18 @@ const RESETS: [(&str, &str); 20] = [
 
 // The port answers what Z3 answers to the first check-sat. Where Z3 prints an error before it,
 // which tlapm counts as a failure, the port fails with DecideError::Prover. Push, pop,
-// reset-assertions and check-sat-assuming are outside the subset the port supports.
+// reset-assertions, check-sat-assuming and check-sat-using are outside the subset the port supports.
 fn assert_answers_as_z3(scripts: &[(&str, &str)]) {
     for (script, z3) in scripts {
         let decision = decide_with(script, None);
-        if ["(push", "(reset-assertions", "(check-sat-assuming"]
-            .iter()
-            .any(|command| script.contains(command))
+        if [
+            "(push",
+            "(reset-assertions",
+            "(check-sat-assuming",
+            "(check-sat-using",
+        ]
+        .iter()
+        .any(|command| script.contains(command))
         {
             let text = decision.map(|decision| get_decision_text(&decision));
             assert!(
@@ -601,7 +606,21 @@ fn resets_as_z3_does() {
 
 /// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
 /// 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 19] = [
+const COMMAND_ERRORS: [(&str, &str); 23] = [
+    (
+        "(assert true)(check-sat-using smt)(get-model)(check-sat)",
+        "sat\n(\n)\nsat",
+    ),
+    (
+        "(declare-const x Int)(assert (> x 0))(check-sat-using smt)(get-value (x))(check-sat)",
+        "sat\n((x 1))\nsat",
+    ),
+    (
+        "(set-option :produce-unsat-cores true)(assert (! false :named a))(check-sat-using smt)\
+         (get-unsat-core)(check-sat)",
+        "unsat\n(a)\nunsat",
+    ),
+    ("(assert true)(check-sat-using smt)", "sat"),
     (
         "(check-sat-assuming (false))(assert true)(check-sat)",
         "unsat\nsat",

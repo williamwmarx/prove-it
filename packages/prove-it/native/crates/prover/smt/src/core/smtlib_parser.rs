@@ -990,7 +990,7 @@ pub fn parse_smtlib(
             // Z3 reads no further.
             "exit" => break,
             "push" | "pop" | "define-fun" | "define-sort" | "reset-assertions"
-            | "check-sat-assuming" => {
+            | "check-sat-assuming" | "check-sat-using" => {
                 return Err(SmtError::Unsupported(format!(
                     "the command {name} is not supported"
                 )));
