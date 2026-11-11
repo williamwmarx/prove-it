@@ -40,6 +40,7 @@ export const getSteadyLines = (output: string) =>
 //   module comes from, the path on the library path that led to a library module, or the module a
 //   copy in the metadata directory was made from;
 // - the directory of the class file an operator override was loaded from, or failed to match;
+// - the directory of the trace exploration spec TLC wrote, and the second in its name;
 // - in a stack trace, where Prove It's built files are, the hash in a chunk's name, and the line
 //   and column in it, which change with every build;
 // - the Progress lines, with -tool their message 2200 whole, whose presence depends on how long the
@@ -61,6 +62,7 @@ export const normalizeOutput = (output: string) =>
           /^(Running (?:breadth-first search|Random Simulation) .* on )\d+ cores? with \d+MB heap and \d+MB offheap memory \[pid: \d+\] \(.*\)\.$/,
           "$1_ cores with _MB heap and _MB offheap memory [pid: _] (_).",
         )
+        .replace(/^(Trace exploration spec path: )\S*\/(\S+)_TTrace_\d+\.tla$/, "$1$2_TTrace__.tla")
         .replace(/^(Parsing file \S+) \(\S+\)$/, "$1")
         .replace(/^(Parsing file )\S*\/tlc-\d+\//, "$1/tmp/tlc-_/")
         .replace(/^(Parsing file )(?!\/tmp\/tlc-_\/)\S*\/(\S+)$/, "$1$2")
@@ -75,13 +77,30 @@ export const normalizeOutput = (output: string) =>
     )
     .join("\n");
 
-// A run's exit code, stdout and stderr as one normalised text, which two runs of a model share when
-// they print the same. Prove It's notes on what its engine did, on stderr, aren't output.
-export const getTranscript = (exitCode: string, stdout: string, stderr: string) => {
+// The epoch in a trace exploration file's name, the second the run started, and the date the
+// .tla says it was generated on.
+const normalizeTraceText = (text: string) =>
+  text
+    .replace(/_TTrace_\d+/g, "_TTrace__")
+    .replace(/^\\\* Generated on .*$/m, "\\* Generated on _");
+
+// A run's exit code, stdout and stderr, and the trace exploration files it wrote, as one
+// normalised text, which two runs of a model share when they print and write the same. Prove It's
+// notes on what its engine did, on stderr, aren't output.
+export const getTranscript = (
+  exitCode: string,
+  stdout: string,
+  stderr: string,
+  files: Record<string, string> = {},
+) => {
   const errorOutput = stderr.replace(/^\[engine\] .*\n/gm, "");
   return [
     `exit ${exitCode}`,
     normalizeOutput(stdout),
     ...(errorOutput === "" ? [] : ["--- stderr", normalizeOutput(errorOutput)]),
+    ...Object.entries(files).flatMap(([name, text]) => [
+      `--- ${normalizeTraceText(name)}`,
+      normalizeTraceText(text),
+    ]),
   ].join("\n");
 };
