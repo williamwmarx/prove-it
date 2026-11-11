@@ -1,0 +1,1740 @@
+breakC/c_ac_num
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: a const
+breakC/c_alias_big
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_bin
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_empty
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_esc
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_hex
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_in_init
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_in_inv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_max
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_neg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_num
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_num_action
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_num_deadlock
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_oct
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_ok_lit_noviol
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_paren
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_pparen
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_ref_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_set
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_str_cfgget
+  main:   w1:DIFF(10/10) w1-tool:DIFF(10/10) w4:DIFF(10/10) w4-tool:DIFF(10/10)    14c14    <   see
+  branch: w1:DIFF(10/10) w1-tool:DIFF(10/10) w4:DIFF(10/10) w4-tool:DIFF(10/10)    14c14    <   see
+breakC/c_alias_str_letin
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_str_live
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28c28,29    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_str_tool
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_true
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_unicode
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_alias_zero
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_bad_big
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    2a3,7    > @
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    2a3,7    > @
+breakC/c_asg_bad_bool
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_bad_mixed
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+breakC/c_asg_bad_mixed2
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_bad_mvset
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_bad_neg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_bad_nested
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_bad_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_bad_tup
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_ok_big
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    2a3,7    > @
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    2a3,7    > @
+breakC/c_asg_ok_bool
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_ok_mixed
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+  branch: w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+breakC/c_asg_ok_mixed2
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_ok_mvset
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_ok_neg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_ok_nested
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_ok_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_ok_tup
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_asg_unused_ok
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC/c_assign_and_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_assign_def
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_assign_mv
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_assign_set
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_assign_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_assign_sub_deadlock
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_assign_sub_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_assign_sub_mv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_assign_sub_noviol
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_big_unused_alias_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_chain
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_cons_num
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: a predi
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: a predi
+breakC/c_cons_true
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_decl_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_decl_sub_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_hex_big
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_hex_max
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_inner_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_inner_lit_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_inv_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_inv_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_lit_rhs_of_decl
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_lit_self_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_modasg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_modsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_nt_assign_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_nt_mixed
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_nt_mixed3
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_nt_mixed_used
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_nt_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_pc_assign
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    35a36,42    > @!
+  branch: w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    35a36,42    > @!
+breakC/c_pc_assign_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_pc_big
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_pc_empty
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    36,41d35    < @!
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC/c_pc_hex
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    36,41d35    < @!
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC/c_pc_lit_inv
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    31,36d30    < @!
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC/c_pc_lit_sub_rhs
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_pc_num
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    36,41d35    < @!
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC/c_pc_str
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    36,41d35    < @!
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC/c_pc_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_pc_sub_true
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_pc_true
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_pc_two
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    36,41d35    < @!
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC/c_pc_zero
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    36,41d35    < @!
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC/c_prop_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_prop_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_ref_alias_c
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_ref_c
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_spec_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_args
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_both_args
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_const
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < y 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_err
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC/c_sub_from_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_lit2lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_self
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_state
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_then_assign
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_tlcget
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_sub_to_assigned
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+breakC/c_sub_to_declconst
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC/c_sym_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_view_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC/c_view_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/alias_javatime
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+breakC2/alias_nat
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+breakC2/alias_sub_q_xsub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/alias_sub_q_xsub_rec
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < y 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_action_prop
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_alias_and_x
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_alias_xsub_lit
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC2/asg_big
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_block
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_bool
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_cfgget
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    8c8    < "/home/
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    8c8    < "/home/
+breakC2/asg_deadlock
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_decl
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/asg_decl_noviol
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/asg_decl_used
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/asg_empty
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_ext_def
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_func
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_inner_decl
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_inner_decl_noroot
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_len1
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    11,12c11    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_live
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    16c16    < Check
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_modsub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_mv
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_mv_order
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_mv_order2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_mv_self
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_mv_sym
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_mvset
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_mvset_tool
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_mvset_used
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_neg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_nested_set
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_noviol
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_op_args
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/asg_print_assume
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19,20c19    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_runtime_err
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_runtime_err2
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    24,25c24    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_set_interval
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_spec
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_str_order
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_str_order2
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_str_used_init
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_str_used_view
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_sub_rev
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_sub_same_line
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_tuple
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_twice
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_used_assume
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_used_init
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_used_inv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_view_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/asg_view_too
+  main:   w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,38   
+  branch: w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,41   
+breakC2/const_ref
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/const_ref_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/ext_alias_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/ext_alias_sub_q
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/ext_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/ext_q_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/inst_c_sub3
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/inst_param_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/lbl_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/lbl_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/lit_runtime_err
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    24c24,25    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/modasg_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/modsub_q_constrec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/modsub_q_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/modsub_q_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_asg_ext_def
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_asg_ext_def_rec
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC2/n_asg_inner_decl
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_asg_inner_decl_noroot
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/n_asg_modsub_inst
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_asg_modsub_n
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    27,28c27    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_asg_uinst_decl
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/n_ext_alias_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_ext_alias_sub_q
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < y 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_ext_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_ext_num
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_ext_q_lit_sub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_ext_q_sub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < a 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_inst_c_sub3
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_inst_noparam_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_inst_param_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_modasg_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_pc_uinst_param_c
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_pc_uinst_param_lit
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+  branch: w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+breakC2/n_pc_uinst_param_true
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_alias_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_def_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_implicit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_local
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_noparam_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_param_alias_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_param_c
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_param_c_alias_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_param_c_deadlock
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_param_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+breakC2/n_uinst_param_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_two_params
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_uinst_var_param
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_xmodsub_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_xmodsub_inst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_xsub_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_xsub_ext_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_xsub_ext_both
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_xsub_pc_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_xsub_uinst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/n_xsub_uinst_param
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/pc_lbl_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/pc_lbl_true
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/pc_num_nd
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC2/pc_uinst_param_c
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/pc_uinst_param_true
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/pc_x_sub_true
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/pc_xsub_lit_viol
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/s_pc_uinst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/s_uinst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/sub_emptybag
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/sub_int
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/sub_javatime
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/sub_lit_q_used
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/sub_nat
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC2/sub_q_modasg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/sub_q_modasg_const
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < y 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/sub_q_rec_const
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < y 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/sub_q_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/sub_self_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/sub_self_num_asg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_assume
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_assume_print
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19,20c19    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_init
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_inv
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_lit_alias_used_inv
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_lit_alias_xsub_used
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_lit_str_xsub_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_mv_order
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_mv_order2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_mvset
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_mvset_next
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    43c43    < 13 states generated
+breakC2/u_mvset_next_noalias
+  main:   w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    23c23    < x = {m2}    ---    
+  branch: w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    39c39    < 13 states generated
+breakC2/u_mvset_sym
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_rt_err
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    24,25c24    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_rt_err_inv
+  main:   w1:DIFF(76/76) w1-tool:DIFF(76/76) w4:DIFF(76/76) w4-tool:DIFF(76/76)    20,21c20    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_str_init
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_tlcget_cfg
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19,20c19    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_view_y
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,20c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/u_xsub_three_states_tool
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/uinst_alias_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/uinst_noparam_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/uinst_param_alias_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/uinst_param_c
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/uinst_param_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/view_asg_only
+  main:   w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,38   
+  branch: w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,38   
+breakC2/xmodsub_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xmodsub_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_alias_mutual
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_alias_nonlit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_args
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_assume
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_decl_num
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_def_before
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_ext_alias_root_x
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_ext_both
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_inner_modsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_label_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_len1
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_live
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_noviol
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_num_deadlock
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_num_statex
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_pc_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_pc_num_nd
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_pc_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_pc_str_nd
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_postcond_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_root_alias_ext_x
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_tool_cfg2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_two
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_uinst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_uinst_param
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC2/xsub_view
+  main:   w1:DIFF(151/0) w1-tool:DIFF(151/0) w4:DIFF(151/0) w4-tool:DIFF(151/0)    8,10c8,25    < @
+  branch: w1:DIFF(151/0) w1-tool:DIFF(151/0) w4:DIFF(151/0) w4-tool:DIFF(151/0)    8,10c8,25    < @
+breakC2/xsub_x_used
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/action_constraint_uinst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/action_prop_lit
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/asg_modsub_m
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/assert_lit
+  main:   w1:DIFF(14/14) w1-tool:DIFF(14/14) w4:DIFF(14/14) w4-tool:DIFF(14/14)    19c19,20    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/assert_uinst_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/decl_and_def_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/dh_asg
+  main:   w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    37c37    < 84 states generated
+  branch: w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    37c37    < 84 states generated
+breakC3/dh_plain
+  main:   w1:SAME w1-tool:SAME w4:DIFF(0/0) w4-tool:DIFF(0/0)    22c22    < The depth of the comple
+  branch: w1:SAME w1-tool:SAME w4:DIFF(0/0) w4-tool:SAME    6c6    < The depth of the complete stat
+breakC3/dh_sub
+  main:   w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    61c61    < 84 states generated
+  branch: w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    61c61    < 84 states generated
+breakC3/dh_viol
+  main:   w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    61c61    < 84 states generated
+  branch: w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    23,30c23,24    < 2: <FillS lin
+breakC3/ext_chain_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_declc_from_ext
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_declc_sub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_declc_sub_used
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_inst_param_lit_alias
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_inst_param_lit_xsub_root
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC3/ext_inst_param_xsub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+breakC3/ext_n_uinst_n2_alias
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_n_uinst_n2_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_nmodsub_both_in_n
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_pc_xsub_ok
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_pc_xsub_str_ok
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_uinst_chain
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_xsub_deadlock
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/ext_xsub_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/inner_uinst_alias
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/inner_uinst_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/inst_param_named_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/inst_with_alias
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/lit_sub_target_local_in_n
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/live_lit
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28c28,29    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/live_uinst_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/local_alias
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/local_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/luinst_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/modsub_lhs_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,33    <
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,30    <
+breakC3/modsub_lhs_lit_both
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,33    <
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,30    <
+breakC3/mv_named_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/mv_named_alias_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/mx_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:DIFF(0/0) w4-tool:SAME    7c7    < The average outdegree of the c
+breakC3/mx_inst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/mx_live
+  main:   w1:SAME w1-tool:SAME w4:DIFF(13/13) w4-tool:DIFF(13/13)    16c16    < Checking 3 branches
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/mx_plain
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/mx_sym
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:DIFF(0/0)    24c24    < The average outdegree of the
+  branch: w1:SAME w1-tool:SAME w4:DIFF(0/0) w4-tool:SAME    7c7    < The average outdegree of the c
+breakC3/mx_tlcget
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/mx_uinst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/rec_alias
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/rec_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/root_lit_used_in_n_inst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/sim_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_alias_nmodsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_alias_sub_q
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_asg_lit
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_asg_rec
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC3/uinst_asg_str
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_both_pc_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_deadlock_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_declc_sub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_implicit_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_modsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_n_alias_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_nested
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_param_n_alias_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_pc_ok_modsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_pc_ok_nmodsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_pc_ok_nosub
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC3/uinst_pc_ok_num
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_pc_ok_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_pc_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_pc_xsub_noviol
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_q_lit_alias_sub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_xsub_other
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_xsub_root_lit_alias
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_xsub_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_xsub_two_targets
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_xsub_used
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC3/uinst_xsub_x_in_n
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/alias_decimal
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/alias_eq_ik_noparam
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/alias_eq_ik_param
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/alias_eq_ik_param_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/alias_ijk
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/alias_name_is_inst_const
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/alias_name_is_inst_const_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/alias_param_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/alias_param_lit_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_and_view
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,20c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_bound_named
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_ext_used
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_field_named
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    28,30c28    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_inst_bodyname
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_inst_const_same
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_inst_const_sum
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_let_named
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_mv_and_set
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,20c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_mv_self
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_mvself_used
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_param_named
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_used_in_n
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_alias_used_init
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/asg_inner_mod
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC4/asg_inst_only
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC4/asg_local_ext
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC4/asg_var
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC4/csub_root_prefix
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/fn_alias_big
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/fn_alias_csub
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_decimal
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/fn_alias_ext
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_nat
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_num
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_num_deadlock
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_rec_record_like
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_sim_spec
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_str
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_two_bounds
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_uinst
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_used_inv
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_alias_xsub
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC4/fn_pc_num
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+breakC4/fn_pc_str
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+breakC4/lit_alias_bound_only
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/lit_alias_csub_used
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/lit_alias_var_inst
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/lit_alias_xsub_in_bound
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/lit_alias_xsub_local
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/lit_alias_xsub_rec0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/lit_alias_xsub_uinst_noparam
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/lit_alias_xsub_uinst_param
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/pc_num_csub
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC4/pc_str_csub
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC4/rec_ext_alias
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/rec_ext_xsub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/same_name_xmodsub_noparam
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/same_name_xmodsub_param
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/sub_alias_lit_and_csub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/sub_alias_lit_and_ysub
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC4/xsub_root_prefix
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asg_args
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC5/asg_constraint_too
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asg_inv_too
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asg_sim
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asg_undefined
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC5/asgsub_used_assume
+  main:   w1:DIFF(10/12) w1-tool:DIFF(10/12) w4:DIFF(10/12) w4-tool:DIFF(10/12)    8,14c8,38    < @
+  branch: w1:DIFF(10/12) w1-tool:DIFF(10/12) w4:DIFF(10/12) w4-tool:DIFF(10/12)    8,14c8,38    < @
+breakC5/asgsub_used_deadlock
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asgsub_used_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asgsub_used_init
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asgsub_used_inv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asgsub_used_inv_qlit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asgsub_used_next
+  main:   w1:DIFF(75/12) w1-tool:DIFF(75/12) w4:DIFF(75/12) w4-tool:DIFF(75/12)    10,21c10,12    <
+  branch: w1:DIFF(75/12) w1-tool:DIFF(75/12) w4:DIFF(75/12) w4-tool:DIFF(75/12)    10,21c10,12    <
+breakC5/asgsub_used_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/asgsub_used_unreached
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/assume_alias
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/assume_lit_alias
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/axiom_alias
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/decl_asgsub_unused_crec
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < y 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/decl_asgsub_used
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/decl_asgsub_used_crec
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < y 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/decl_sub_used
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/ext_ext_set
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/inst_const_named_alias_asg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/lemma_alias
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/lit_alias_pc_same
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC5/lit_alias_view_same
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/lit_assert
+  main:   w1:DIFF(14/14) w1-tool:DIFF(14/14) w4:DIFF(14/14) w4-tool:DIFF(14/14)    19c19,20    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/lit_init_viol
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    11c11,12    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/lit_lead0
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/lit_modasg
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/lit_modasg_ext
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/lit_next_err
+  main:   w1:SAME w1-tool:SAME w4:DIFF(75/75) w4-tool:DIFF(75/75)    40c40    < 3 states generated,
+  branch: w1:SAME w1-tool:SAME w4:DIFF(75/75) w4-tool:DIFF(75/75)    40c40    < 3 states generated,
+breakC5/lit_quote
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/lit_recursive
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/lit_unused_noviol
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/luinst_set
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/modasg_inst_other
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/modasg_inst_other_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/modasg_used
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/modasg_used_ext
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/modasg_used_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/modsub_inst_other
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/modsub_used_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,33    <
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,30    <
+breakC5/pc_lit_and_good
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC5/pc_lit_modasg
+  main:   w1:DIFF(0/255) w1-tool:DIFF(0/255) w4:DIFF(0/255) w4-tool:DIFF(0/255)    10,15c10,18    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC5/pc_str_sim
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a postcondition that isn't 
+breakC5/pc_thm
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+breakC5/pc_thm_str
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+breakC5/pc_two_mixed
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,16c10,18 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/pc_two_mixed_rev
+  main:   w1:DIFF(255/255) w1-tool:DIFF(255/255) w4:DIFF(255/255) w4-tool:DIFF(255/255)    16c16   
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/prop_alias
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/rec_rhs_of_decl
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < a 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < a 
+breakC5/strlit_modasg
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/subasg_used_inv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/subasg_used_next
+  main:   w1:DIFF(75/12) w1-tool:DIFF(75/12) w4:DIFF(75/12) w4-tool:DIFF(75/12)    10,21c10,12    <
+  branch: w1:DIFF(75/12) w1-tool:DIFF(75/12) w4:DIFF(75/12) w4-tool:DIFF(75/12)    10,21c10,12    <
+breakC5/thm_alias
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_alias_and_lit_q
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_alias_deadlock
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_alias_ext
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_alias_num_view
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_alias_rec
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_alias_str
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_alias_sub
+  main:   w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,38   
+  branch: w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,38   
+breakC5/thm_alias_uinst
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_alias_xlevel
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+breakC5/thm_cfg_asg
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_decl_sub
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_pc_lit_and_ok
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: a POSTCONDITION TLC may com
+breakC5/thm_proof_alias
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_sub_rhs
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_sub_rhs_lit
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_uinst_param
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC5/thm_x_sub
+  main:   w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,41   
+  branch: w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,38   
+breakC5/thm_xsub_lhs
+  main:   w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,38   
+  branch: w1:DIFF(151/12) w1-tool:DIFF(151/12) w4:DIFF(151/12) w4-tool:DIFF(151/12)    8,10c8,38   
+breakC5/uinst_ext_set
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/uinst_param_set
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/uinst_pc_set
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC5/uinst_set
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/act_prop_sub
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/asg_alias_ext_and_inst
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/asg_local_root
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/block_mixed
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/cyc_asg
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/cyc_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/cyc_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/dup_alias_asg_then_sub_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/dup_alias_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/dup_alias_sub_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/dup_sub_first
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/dup_sub_last
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+breakC6/ext_modsub_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/ext_modsub_alias_constalias
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < z 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < z 
+breakC6/ext_modsub_alias_constq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/ext_modsub_alias_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,33    <
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,30    <
+breakC6/ext_modsub_alias_litq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/ext_modsub_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/ext_uinst_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+breakC6/ext_uinst_var_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+breakC6/inner_uinst_asg
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    27,28c27    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/inner_uinst_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/inst_named_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/inst_named_alias_asg
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC6/inst_named_alias_p
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC6/inst_named_alias_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_2var
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19a20    > /\ _A
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_2var_dead
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    19a20    > /\ _A
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_alias_pc_asg_other
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_base
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_base_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_ext_and_inst
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_ext_and_inst_sub
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_local_root
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_sym
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/lit_target_of_trace_lhs
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/live_asg
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28,29c28    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/live_lit_target_decl
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28c28,29    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/live_sub_lit
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28c28,29    < x 
+  branch: w1:SAME w1-tool:SAME w4:DIFF(13/13) w4-tool:DIFF(13/13)    16c16    < Checking temporal p
+breakC6/ninst_modsub_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/ninst_modsub_lit_used
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/ninst_modsub_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/ninst_np_modsub_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/pc_modsub_lhs
+  main:   w1:DIFF(0/255) w1-tool:DIFF(0/255) w4:DIFF(0/255) w4-tool:DIFF(0/255)    10,15c10,18    <
+  branch: w1:DIFF(0/255) w1-tool:DIFF(0/255) w4:DIFF(0/255) w4-tool:DIFF(0/255)    10,15c10,18    <
+breakC6/pc_modsub_lhs_ext
+  main:   w1:DIFF(0/255) w1-tool:DIFF(0/255) w4:DIFF(0/255) w4-tool:DIFF(0/255)    10,15c10,18    <
+  branch: w1:DIFF(0/255) w1-tool:DIFF(0/255) w4:DIFF(0/255) w4-tool:DIFF(0/255)    10,15c10,18    <
+breakC6/rterr_asg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/sub_cex
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC6/sub_lit_ext_inst
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+breakC6/sub_local_root_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/sub_rhs_boolean
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC6/sub_rhs_string
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC6/sub_rhs_var
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC6/sub_trace
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+breakC6/te_asg
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/te_asg_mv
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/te_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/two_alias_lines
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/two_alias_lines_rev
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/uinst_implicit_var_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+breakC6/uinst_implicit_var_pc
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+  branch: w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18 
+breakC6/uinst_modsub_alias
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18    < z = 0
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18    < z = 0
+breakC6/uinst_modsub_alias_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,33    <
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,22c16,30    <
+breakC6/uinst_modsub_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME 
+breakC6/uinst_var_param_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+breakC6/uinst_var_param_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x 

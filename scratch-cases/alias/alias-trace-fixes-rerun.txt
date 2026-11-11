@@ -1,0 +1,1395 @@
+break1/al_cap
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break1/al_card
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_cup_empty_l
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_cup_empty_r
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_cup_ivl
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_cup_ivlempty
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_cup_nat
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_cup_nested
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_cup_one
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_cup_self
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_cup_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_cup_subset
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_cup_true
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_cup_tup
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: equality of values TLC can't co
+break1/al_diff
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_eqconst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_except
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_filter
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_fnset
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_g_concat
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_g_domain_card
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_g_seqlen
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_h_app2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_h_eq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_h_except_app
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_in
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_ivl_cup
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_map
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_nat_cup
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_neq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_recset
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/al_setmem
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_tupeq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/al_union
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/alias_cup_init_sets
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/alias_cup_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/alias_cup_x
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break1/alias_cup_x_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/alias_fcn_strs
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break1/alias_fcn_strs2
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break1/alias_lit_neg_tool
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/alias_nonrec_fn
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/alias_nonrec_fn_fail
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/alias_rec_empty_dom
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/alias_seq_empty
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/alias_tuple_lit
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break1/ap2_g0
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    16,24c16,28    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break1/ap3_g0
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    19c19,20    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/asg_arity
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS that names a constant
+break1/asg_def_dead
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/asg_def_live
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28,29c28    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/asg_mv_def
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/asg_noviol
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/asg_str_def
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/asg_used_inv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/cap_seq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/cap_subnat
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/cap_subnat_nv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/constassign
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS that names a constant
+break1/constassign_set
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS that names a constant
+break1/constassign_str
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS that names a constant
+break1/constdep
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/constdeprec
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/constmv
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS that names a constant
+break1/constmvdef
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/constsubst
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: a configuration value TLC doesn't rank
+break1/dead2_g
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    19c19,20    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/dead2_g1
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    22,30c22,28    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break1/dead3_g0
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    19c19,20    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/defsubst
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/defsubstlit
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/defsubstq
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/diff_subnat
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/fcnstrings
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19,34    < /\
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break1/fcnstrings_ok
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break1/filter_nat
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/fn_nat_dom
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    22,28c22,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break1/format
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS record with a _for
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS record with a _format field
+break1/h_1b_inv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/h_2b_app
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: rebuilding a trace: recursi
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: recursion too deep
+break1/h_2b_inv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/h_deep
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/h_fib
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/h_mutual
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/h_tup_ok
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/hang_1b_2arg
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/hang_assert
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/hang_inv_err
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/hang_inv_err2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/hang_let2b
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: rebuilding a trace: recursi
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: recursion too deep
+break1/hang_next_err
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/hang_postcond
+  main:   w1:DIFF(255/134) w1-tool:DIFF(255/134) w4:DIFF(255/134) w4-tool:DIFF(255/134)    1,27c1,3
+  branch: w1:DIFF(255/134) w1-tool:DIFF(255/134) w4:DIFF(255/134) w4-tool:DIFF(255/134) 1,27c1,3 < @!@!@ENDMSG 2262 @!@!
+break1/hang_print
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/hang_tupapp
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inner_mod
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inner_mod_alias_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inner_mod_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv2_g0
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,24c16,28    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break1/inv2_g1
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    22,30c22,28    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break1/inv3_g0
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19,20    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv_cap
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/inv_cup_empty_r
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/inv_cup_ivl
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/inv_cup_one
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/inv_cup_str
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/inv_cup_true
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/inv_cup_tup
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/inv_diff
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/inv_eqconst
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv_g_seqlen
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv_h_app2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv_h_eq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv_h_except_app
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv_heq_bool
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv_in
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv_ivl_cup
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/inv_nat_cup
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: an enum
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: an enumerated infinite set
+break1/inv_rec_extra_var
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    20c20    < /\ z
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/inv_rec_novar
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS TLC may compute as it starts
+break1/inv_tupeq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/level
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/level_lit
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit3
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit3_dead
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit3_init
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_actprop
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_alias_eq_var
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_bin
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_emptystr
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_hex
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_live
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28c28,29    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_minint
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_noviol
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_postcond
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: a postcondition that isn't a boolean
+break1/lit_strq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_sym
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_used
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_via_def
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_view
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/lit_zero
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litbig
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litexpr
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litlet
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litmax
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litneg
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litparen
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litrec
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litset
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litstr
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litstr_live
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28c28,29    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litstr_tool
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/littrue
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/litwide
+  main:   ?
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/live_g
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    29c29,30    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/mem_cap
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/mem_cup_empty_r
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/mem_cup_ivl
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/mem_cup_one
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/mem_cup_str
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/mem_cup_true
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/mem_cup_tup
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/mem_diff
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/mem_ivl_cup
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break1/mem_nat_cup
+  main:   w1:DIFF(76/12) w1-tool:DIFF(76/12) w4:DIFF(76/12) w4-tool:DIFF(76/12)    10,14c10,12    <
+  branch: w1:DIFF(76/12) w1-tool:DIFF(76/12) w4:DIFF(76/12) w4-tool:DIFF(76/12) 10,14c10,12 < @!@!@STARTMSG 2111:1 @!@!@
+break1/mixed_state_var
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/next_err_h
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cap
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break1/pl_card
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_empty_l
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_empty_r
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_ivl
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_ivlempty
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_nat
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_nested
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_one
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_self
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_subset
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_true
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_cup_tup
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: equality of values TLC can't co
+break1/pl_diff
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 18,19c18 < /\ x = 0 < /\ _ALIASEvalError
+break1/pl_filter
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_fnset
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_ivl_cup
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_map
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_nat_cup
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_recset
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/pl_union
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 18,19c18 < /\ x = 0 < /\ _ALIASEvalError
+break1/postcond_false
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/postcond_lit_false
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: a postcondition that isn't a boolean
+break1/postcond_str
+  main:   w1:DIFF(10/255) w1-tool:DIFF(10/255) w4:DIFF(10/255) w4-tool:DIFF(10/255)    10,15c10,18
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: a postcondition that isn't a boolean
+break1/rec_dup_order
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18d17    < /\ y
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break1/rec_err_somestates
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rec_fn_unsorted
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/rec_mv_int
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rec_mv_int_v
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rec_nested_unsorted
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/rec_op
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rec_set_ok_nested
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rec_set_tup_int
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/rec_strdomain_mixed
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,23c16,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS with a set TLC can't normalize as it print
+break1/rf_alias_2b
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ v = [i \in 1..2, j \in 1..1 |
+break1/rf_alias_2b_ok
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: recursion too deep
+break1/rf_alias_apply
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_applyfail
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_domain
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_empty
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_eq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_fn
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_fn_all
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS TLC may compute as it starts
+break1/rf_alias_let
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_let_ok
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_nat
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_nat_app
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_nonrec_fail
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_oob
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: rebuilding a trace: applied
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: applied a function outside its 
+break1/rf_alias_plain
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS TLC may compute as
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS TLC may compute as it starts
+break1/rf_alias_print
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine declined: unsupp
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine declined: unsupported: a value TLC compu
+break1/rf_alias_printok
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine declined: unsupp
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine declined: unsupported: a value TLC compu
+break1/rf_alias_seq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_set
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_subset
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_subsetfail
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_tup
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ v = [<<i, j>> \in {<<1, 1>>, 
+break1/rf_alias_tuple
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break1/rf_alias_var
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_alias_varfail
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_init_fail
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_inv_fail
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_inv_fail1
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_inv_ok
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_next_fail
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/rf_tool_fp
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/subst_asgq
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS that names a constant
+break1/subst_constq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/subst_litq_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/subst_recq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/subst_tupq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break1/sym_g
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19,34    < /\
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break1/trace_full
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/trace_len
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/view_g
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19,20    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break1/view_g_y
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19,34    < /\
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 22,30c22,33 < @!@!@STARTMSG 1000:1 @!@!@
+break1/view_nat
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_app
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_append
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_card
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_choose
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_colon
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_combine_l
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_combine_r
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_domain
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_eqint
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_except1
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_except2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_except_app
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_exists
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_fcnset
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_field
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_forall
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_head
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_image
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_mem_setfn
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_rebuild
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_rec_in
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_selectseq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_seqmem
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_set1
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_set2
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    16,24c16,33    <
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 16,24c16,33 < @!@!@STARTMSG 1000:1 @!@!@
+break2/a_subseq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_tlceval
+  main:   w1:SAME w1-tool:DIFF(12/12) w4:SAME w4-tool:DIFF(12/12)    19c19    < /\ _ALIASEvalError
+  branch: w1:SAME w1-tool:DIFF(12/12) w4:SAME w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "@!@!@STARTMSG 2154:0 @!@
+break2/a_tostring
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_tuple
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/a_tupmem
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/alias_combine_rec
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break2/alias_combine_rec_var
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break2/alias_extra_nat
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/ap2_nat1
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    21,27c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/ap3_nat0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/ap3_nat1
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    21,27c21,35    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/asg_alias_mv
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/asg_alias_set
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/asg_alias_str
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/asg_dead
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    18,19c18    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/asg_live
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28,29c28    < /\
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/asg_other_mv_named_alias
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/asg_other_name
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/cup_int_fin
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/cup_nat
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,31c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/dead1_nat0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/dead4_nat0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/dead4_nat1
+  main:   w1:DIFF(11/11) w1-tool:DIFF(11/11) w4:DIFF(11/11) w4-tool:DIFF(11/11)    21,27c21,35    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/e_bool_eq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break2/e_choose_eq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_copies
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_eq_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_except_at
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_except_at2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_except_print2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_g_in_int
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break2/e_int_eq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break2/e_int_in
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_isfcnset_domain
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_issubbag
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_nat
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "@!@!@START
+break2/e_neq_tuple
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_rec_eq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_recset
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_set_eq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break2/e_str_eq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break2/e_subseteq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/e_tup_eq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/err_aprop_s2_nat0
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: a constraint, a VIEW or an acti
+break2/err_constr_s2_nat0
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: a constraint, a VIEW or an acti
+break2/err_inv_s2_g0
+  main:   w1:DIFF(76/76) w1-tool:DIFF(76/76) w4:DIFF(76/76) w4-tool:DIFF(76/76)    19,27c19,29    <
+  branch: w1:DIFF(76/76) w1-tool:DIFF(76/76) w4:DIFF(76/76) w4-tool:DIFF(76/76) 19,27c19,28 < @!@!@STARTMSG 1000:1 @!@!@
+break2/err_inv_s2_nat0
+  main:   w1:DIFF(76/76) w1-tool:DIFF(76/76) w4:DIFF(76/76) w4-tool:DIFF(76/76)    19,25c19,28    <
+  branch: w1:DIFF(76/76) w1-tool:DIFF(76/76) w4:DIFF(76/76) w4-tool:DIFF(76/76) 19,25c19,28 < @!@!@STARTMSG 1000:1 @!@!@
+break2/err_inv_s2_nat1
+  main:   w1:DIFF(76/76) w1-tool:DIFF(76/76) w4:DIFF(76/76) w4-tool:DIFF(76/76)    24,30c24,28    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: an ALIAS whos
+break2/err_inv_s3_nat0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/err_inv_s3_nat1
+  main:   w1:DIFF(76/76) w1-tool:DIFF(76/76) w4:DIFF(76/76) w4-tool:DIFF(76/76)    24,30c24,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: an ALIAS whos
+break2/err_next_s2_nat0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/err_next_s3_nat0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/err_next_s3_nat1
+  main:   w1:DIFF(255/255) w1-tool:DIFF(255/255) w4:DIFF(255/255) w4-tool:DIFF(255/255)    21,27c21
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: an ALIAS whos
+break2/f_assert
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine declined: unsupp
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine declined: unsupported: a value TLC compu
+break2/f_bagtoset
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_choose
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_concat
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_emptydom
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_emptyivl
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_let_in_body
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_loop
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: rebuilding a trace: recursi
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: recursion too deep
+break2/f_loop_app
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_nested_rec
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_nested_rec_app
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_oob
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: rebuilding a trace: applied
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: applied a function outside its 
+break2/f_oob_app
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_param_op
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_param_op_app
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_param_op_ok
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_permut
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_rec_of_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_setdom
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_sortseq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_state
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    31c31    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_state_inv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_strdom
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_strdom_field
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_strdom_ok
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_tlceval_app
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_tlceval_ok
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_tlceval_rec
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_tlceval_set
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/f_type
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: rebuilding a trace: expecte
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: expected an integer, not a stri
+break2/filter_nat
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,29c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/funset_nat
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,29c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/inv1_nat0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/inv4_nat0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/inv4_nat2
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    26,32c26,35    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/k_init_eq
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    14,16c14,17    <
+  branch: w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75) 14,16c14,17 < @!@!@STARTMSG 2103:1 @!@!@
+break2/k_inv_eq_s2
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/k_next_eq
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    21,23c21,24
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75) 21,23c21,24 < @!@!@STARTMSG 2103:1 @
+break2/k_next_eq_s2
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    26,28c26,29
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75) 26,28c26,29 < @!@!@STARTMSG 2103:1 @
+break2/k_next_field
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    21,23c21,24
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75) 21,23c21,24 < @!@!@STARTMSG 2103:1 @
+break2/k_next_int_in
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    28,29c28,32    <
+  branch: w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75) 28,29c28,32 < 3. Line 5, column 18 to li
+break2/k_next_len
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    21,23c21,24
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75) 21,23c21,24 < @!@!@STARTMSG 2103:1 @
+break2/k_next_tupmem
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    21,23c21,24
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75) 21,23c21,24 < @!@!@STARTMSG 2103:1 @
+break2/lazy_fcn_nat
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,27c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/lit_ap
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/lit_err_next
+  main:   w1:DIFF(255/255) w1-tool:DIFF(255/255) w4:DIFF(255/255) w4-tool:DIFF(255/255)    18c18,19
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/lit_live
+  main:   w1:DIFF(13/13) w1-tool:DIFF(13/13) w4:DIFF(13/13) w4-tool:DIFF(13/13)    28c28,29    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/lit_rec_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/lit_set_empty
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/lit_string_def_used
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/lit_true
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/lit_tuple_const
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/live_nat0
+  main:   w1:DIFF(13/13) w1-tool:SAME w4:SAME w4-tool:SAME    2c2    < Checking temporal properties
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/live_nat1
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:DIFF(13/13)    16c16    < Checking temporal properti
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/live_stutter_nat0
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_cap
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break2/m_card
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_choose_eq
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ _A
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 19c19 < /\ _ALIASEvalError = "Attempted 
+break2/m_cup
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_g_in_g_tup
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_g_in_tup
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_in_inv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_in_inv_noalias
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/m_in_inv_noalias2
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/m_in_next_noalias
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    28,29c28,32    <
+  branch: w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75) 28,29c28,32 < 3. Line 5, column 18 to li
+break2/m_int_in_g2
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_minus
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_notin
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_rec_in_g
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_set_eq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_set_in_g
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_str_in_g
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_subset
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_tup_in_g
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/m_union
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_cup_heavy
+  main:   w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12)    34c34    < 14 states generated
+  branch: w1:SAME w1-tool:SAME w4:DIFF(12/12) w4-tool:DIFF(12/12) 34c34 < 14 states generated, 6 distinct states found, 
+break2/n_cup_mixed_inv
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break2/n_cup_mixed_inv2
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: values
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: values TLC can't compare: evalu
+break2/n_cup_mixed_state
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    32c32    < 2. Li
+  branch: w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75) 32c32 < 2. Line 7, column 14 to line 7, 
+break2/n_cup_state_set
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_cup_tuple_state
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_cup_unsorted_left_empty_right
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_fact
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_fact_ivl
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_fact_state
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: equalit
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: equality of values TLC can't co
+break2/n_fib_seq
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_inv_g_app
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_inv_g_combine
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/n_inv_g_domain
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_inv_g_eq
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/n_inv_g_len
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/n_inv_g_print
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/n_inv_g_tlceval
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/n_inv_g_tostring
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/n_next_g_except
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/n_next_g_except_state
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    21,23c21,24
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75) 21,23c21,24 < @!@!@STARTMSG 2103:1 @
+break2/n_rec_reads_x
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_rec_reads_x_err
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/n_rec_reads_x_err2
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: divisio
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: division by zero: evaluating th
+break2/n_state_g
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    21,34c21,29
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75) 21,34c21,29 < @!@!@STARTMSG 1000:1 @
+break2/n_state_g_init
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    14,16c14,17    <
+  branch: w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75) 14,16c14,17 < @!@!@STARTMSG 2103:1 @!@!@
+break2/n_state_g_s2
+  main:   w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75)    26,39c26,35
+  branch: w1:DIFF(255/75) w1-tool:DIFF(255/75) w4:DIFF(255/75) w4-tool:DIFF(255/75) 26,39c26,35 < @!@!@STARTMSG 1000:1 @
+break2/n_state_rec_g
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    21,29d20    < @!
+  branch: w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75) 21,29d20 < @!@!@STARTMSG 1000:1 @!@!@ < 
+break2/n_state_set_g
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    21,29d20    < @!
+  branch: w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75) 21,29d20 < @!@!@STARTMSG 1000:1 @!@!@ < 
+break2/n_state_tup_g
+  main:   w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75)    21,29d20    < @!
+  branch: w1:DIFF(75/75) w1-tool:DIFF(75/75) w4:DIFF(75/75) w4-tool:DIFF(75/75) 21,29d20 < @!@!@STARTMSG 1000:1 @!@!@ < 
+break2/nrf_alias_strdom
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break2/prod_nat
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,29c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/r_domain_then_draw
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: a random draw where the evaluat
+break2/r_draw_only
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: a random draw where the evaluat
+break2/r_eq_then_draw
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: a random draw where the evaluat
+break2/r_lazy_text
+  main:   ?
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: rebuilding a trace: a random draw where the evaluat
+break2/recset_nat
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,29c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/rf_alias_ivl
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break2/rf_alias_strdom
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break2/rf_alias_strdom_except
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break2/rf_alias_strdom_fail
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/rf_alias_strdom_let
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS function that isn'
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS function that isn't a record
+break2/s_boolean
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS that names a constant
+break2/s_constdecl_q
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_inst_lit_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_inst_param
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_inst_param_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_inst_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_inst_rec_g
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18,19c18,19    <
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_inst_subst_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_lit_to_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_nat
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS that names a constant
+break2/s_q_g
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    19c19    < /\ v
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_q_rec
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_rec_to_constrec
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_rec_to_lit
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_rec_to_neg
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    18c18,19    < x
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/s_string
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: an ALIAS that names a const
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS that names a constant
+break2/seq_fin
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,27c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/strings
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,27c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/subset_big
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,30c21,30    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/sym_alias_mv
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/two_vars_missing
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/two_vars_one_bad
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    22,28c22,33    <
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: an ALIAS whose state TLC fails to fingerprint as it
+break2/unspec_s2_nat0
+  main:   w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE    yet: the engine stopped: a succe
+  branch: w1:DECLINE w1-tool:DECLINE w4:DECLINE w4-tool:DECLINE yet: the engine stopped: a successor that isn't complete
+break2/view_alias_str
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+break2/view_alias_str_s2
+  main:   w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12)    21,32c21,30    <
+  branch: w1:DIFF(12/12) w1-tool:DIFF(12/12) w4:DIFF(12/12) w4-tool:DIFF(12/12) 21,32c21,30 < @!@!@STARTMSG 1000:1 @!@!@
+break2/view_y_alias_nat_x
+  main:   w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
+  branch: w1:SAME w1-tool:SAME w4:SAME w4-tool:SAME
