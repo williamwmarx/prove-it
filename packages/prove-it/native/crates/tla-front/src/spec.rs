@@ -753,7 +753,10 @@ fn format_config_value(
 
 /// `isConstantTrue`, for a conjunct that is a constant name: TLC drops one that is TRUE, and
 /// rejects the spec for any other value. The engine's startup checks a conjunct of the
-/// specification the evaluator can't compute, which a definition of the root module names.
+/// specification the evaluator can't compute, which a definition of the root module names, and
+/// one whose computation fails: TLC keeps the definition of a constant it fails to compute as it
+/// starts (`processConstantDefns`), and checks its body with the initial predicate
+/// (`processConfigSpec`).
 fn is_constant_true(
     name: &str,
     item: &Expanded,
@@ -763,7 +766,7 @@ fn is_constant_true(
 ) -> Result<bool> {
     let evaluator = evaluator.ok_or_else(|| not_yet("a constant conjunct of the specification"))?;
     let value = match evaluator.evaluate(&item.expression, item.scope.as_ref()) {
-        Err(FrontError::NotYet(_))
+        Err(FrontError::NotYet(_) | FrontError::Evaluation(_))
             if usage == "spec"
                 && item.scope.is_none()
                 && !item.expression.is_locally_resolved()

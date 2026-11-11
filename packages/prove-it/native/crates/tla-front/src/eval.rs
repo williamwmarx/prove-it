@@ -7,6 +7,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::TlcVersion;
@@ -15,7 +16,7 @@ use crate::config::ConfigValue;
 use crate::environment::Environment;
 use crate::errors::{FrontError, describe_range};
 use crate::resolve::Result;
-use crate::spec::{Binding, Scope, bind_definitions, get_definition, lookup_scope};
+use crate::spec::{Binding, Scope, ScopeOf, bind_definitions, get_definition, lookup_scope};
 use crate::tlc_data::SANY_OPERATOR_SYNONYMS;
 use crate::values::{ValueOrder, get_model_value_type};
 
@@ -118,6 +119,10 @@ pub struct Evaluator<'a> {
     /// The constant conjuncts of the specification, by name, whose values it left to the
     /// engine's startup.
     deferred_conjuncts: RefCell<Vec<Name>>,
+    /// The value of each thunk it computed, by the node that binds it, which it keeps alive: TLC
+    /// computes an operator's argument where the body first uses it, and keeps the value
+    /// (`LazyValue`).
+    thunks: RefCell<HashMap<usize, (Rc<Scope>, ConfigValue)>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -135,6 +140,7 @@ impl<'a> Evaluator<'a> {
             depth: Cell::new(0),
             is_deferring: Cell::new(false),
             deferred_conjuncts: RefCell::new(Vec::new()),
+            thunks: RefCell::new(HashMap::new()),
         }
     }
 
@@ -722,7 +728,15 @@ impl Evaluator<'_> {
                     return match lookup_scope(scope, &name) {
                         Some((_, Binding::Value(value))) => Ok(value.clone()),
                         Some((node, Binding::Thunk { expression, scope })) => {
-                            self.evaluate(expression, scope.resolve(node).as_ref())
+                            let key = Rc::as_ptr(node) as usize;
+                            if let Some((_, value)) = self.thunks.borrow().get(&key) {
+                                return Ok(value.clone());
+                            }
+                            let value = self.evaluate(expression, scope.resolve(node).as_ref())?;
+                            self.thunks
+                                .borrow_mut()
+                                .insert(key, (node.clone(), value.clone()));
+                            Ok(value)
                         }
                         _ => Err(not_yet("an operator as a value")),
                     };
@@ -777,7 +791,10 @@ impl Evaluator<'_> {
                     }
                     bound = Some(Rc::new(Scope {
                         name: param.name.clone(),
-                        binding: Binding::Value(self.evaluate(argument, scope)?),
+                        binding: Binding::Thunk {
+                            expression: argument.clone(),
+                            scope: ScopeOf::Other(scope.cloned()),
+                        },
                         parent: bound,
                     }));
                 }

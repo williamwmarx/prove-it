@@ -1,0 +1,23 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: The second argument of \div is 0.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 16, column 9 to line 16, column 18 in M
+1. Line 16, column 9 to line 16, column 13 in M
+2. Line 16, column 18 to line 16, column 18 in M
+3. Line 15, column 6 to line 15, column 20 in M
+4. Line 7, column 13 to line 7, column 21 in M
+5. Line 7, column 13 to line 7, column 17 in M
+6. Line 7, column 13 to line 7, column 13 in M
+7. Line 15, column 12 to line 15, column 19 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
