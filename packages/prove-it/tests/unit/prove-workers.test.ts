@@ -84,7 +84,11 @@ describe("prove with workers and no engine", () => {
     ].join("\n");
     const run = spawnSync("bun", ["-e", script], {
       encoding: "utf8",
-      env: { ...process.env, PROVE_IT_ENGINE_ADDON: join(DIRECTORY, "missing.node") },
+      env: {
+        ...process.env,
+        PROVE_IT_ENGINE_ADDON: join(DIRECTORY, "missing.node"),
+        PROVE_IT_ENGINE_WASM: undefined,
+      },
     });
     expect(run.stdout.trim()).toBe("rejected");
   });
