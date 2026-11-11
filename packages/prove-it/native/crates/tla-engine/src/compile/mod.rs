@@ -22,6 +22,7 @@ pub(crate) mod lazy_function;
 
 pub(crate) use lazy_function::Lambda;
 mod nodes;
+mod pieces;
 mod predicate;
 pub(crate) mod random;
 mod sets;
@@ -735,6 +736,9 @@ pub struct Compiler<'a> {
     /// The walks whose first step is a guard `f[k] = c`, by the address of their step, each kept
     /// alive so no other step takes its address (`walker::Leading`).
     leading_guards: HashMap<usize, (Step, walker::Leading)>,
+    /// The nodes of Next's walk that make up an action atom, each with the bit a walk through it
+    /// sets on the step it takes (`pieces.rs`).
+    pub(crate) pieces: Vec<(NodeId, u8)>,
     // The fused predicate of each walk whose first step is a guard, by the walk's address.
     first_guards: HashMap<usize, (Step, predicate::Predicate)>,
     /// The bodies of recursive functions an action applies, each walked once for what the walk
@@ -842,6 +846,7 @@ impl<'a> Compiler<'a> {
             depth: 0,
             reads: None,
             leading_guards: HashMap::new(),
+            pieces: Vec::new(),
             first_guards: HashMap::new(),
             walked_functions: Vec::new(),
             walked_operators: Vec::new(),
