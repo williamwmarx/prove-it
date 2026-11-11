@@ -425,11 +425,17 @@ impl ModuleGenerator<'_> {
             .as_ref()
             .map(|set| self.generate_expression(set))
             .transpose()?;
-        let name_index = self.find_name_or_keyword(span.start, &symbol.name);
+        // The declaration begins at an infix or postfix operator's first `_`.
+        let declaration_start = match &symbol.name_range {
+            Some(range) => get_range_span(&self.file, range).start,
+            None => self.find_name_or_keyword(span.start, &symbol.name),
+        };
         let (decl_kind, level) = get_new_symbol_kind(symbol.level);
         let declaration_uid = self.spec.get_uid();
-        let location =
-            get_span_location(&self.file, self.get_operator_span(name_index, symbol.arity));
+        let location = get_span_location(
+            &self.file,
+            self.get_operator_span(declaration_start, symbol.arity),
+        );
         let declaration = self.spec.graph.add(
             declaration_uid,
             NodeKind::OpDecl(OpDecl {

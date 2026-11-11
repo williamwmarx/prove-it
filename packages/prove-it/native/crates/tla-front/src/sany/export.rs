@@ -7,7 +7,6 @@ use crate::parser::extract_module;
 use crate::report::{ReportOptions, get_sany_text_of};
 use crate::sany::generator::{GenerationOptions, generate_sany_specification};
 use crate::sany::levels::{LevelCheck, check_module_levels};
-use crate::sany::nodes::NodeKind;
 use crate::sany::xml::{XML_EXPORT_SPEC_PARSING_FAILURE, XmlExportOptions, export_sany_xml};
 use crate::sany::{Result, not_yet};
 use crate::{TlcVersion, get_standard_module};
@@ -88,14 +87,6 @@ pub fn export_xml(
         .any(|message| !message.is_warning)
     {
         return not_yet("an error of SANY's generator that its report doesn't print");
-    }
-    if specification
-        .graph
-        .nodes
-        .iter()
-        .any(|node| matches!(&node.kind, NodeKind::Label(label) if label.is_assume_prove))
-    {
-        return not_yet("XMLExporter's export of a labeled ASSUME/PROVE");
     }
     Ok(match export_sany_xml(&specification, options)? {
         Ok(xml) => ExportOutput {
