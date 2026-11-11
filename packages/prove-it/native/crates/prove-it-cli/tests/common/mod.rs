@@ -1,4 +1,5 @@
 //! Helpers the binary's integration tests share.
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
