@@ -1,0 +1,8 @@
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Error: Evaluating assumption line 4, col 8 to line 4, col 77 of module M failed.
+The second argument of \div is 0.

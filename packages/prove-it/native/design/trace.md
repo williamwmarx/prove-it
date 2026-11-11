@@ -399,16 +399,7 @@ generator as the search left it, still seeded for the state (`TLCTrace.printTrac
 TLC fails, and the rebuild is `Unsupported`. A model that draws walks each step
 through all of TLC's actions in order, as one that prints does. An operator's argument or a LET
 definition that drew keeps its value for the uses that follow, as TLC's `LazyValue` keeps it, so
-`T` in `Same(RandomSubset(1, S))` is one subset. An operator's argument, and a LET definition in an
-expression, keeps its value too where evaluating it read no state and printed nothing, as
-`LazyValue` keeps it for the states it evaluated it in; where it built a lazy function or filter,
-which holds the states to evaluate later, only while the evaluator holds the same states, and
-what uses such a kept value holds the states too. For the same reason a zero-arity definition
-that TLC doesn't compute at startup and that builds such a value isn't cached, so `D == [i \in Nat
-|-> x']` is applied in each successor's states (`getOpContext` binds every argument cachable, and `Tool.java:1856` a LET's
-definitions); a LET of an action or the initial predicate keeps none, as TLC binds no `LazyValue`
-there. Evaluating an argument again at each use made TransitiveClosure's first assumption take
-154 s where TLC takes 1.4 s. A negative count of a set enumeration or an
+`T` in `Same(RandomSubset(1, S))` is one subset. A negative count of a set enumeration or an
 interval fails as the Java method does making room for the subset. `Unsupported` covers:
 - draws under a VIEW or SYMMETRY, whose key the seed is the fingerprint of;
 - draws in the checks after the last step;
@@ -493,6 +484,34 @@ with TLCSet in the spec each walk runs to its end, as with Print. The binary pri
 prints the state, part way through its lazy first rebuild, so an ALIAS that uses the registers
 where a rebuild set one isn't native ("an ALIAS that uses registers the rebuild of the trace
 sets").
+
+## Arguments TLC keeps
+
+TLC binds each operator argument, and each definition of a LET in an expression, to a
+`LazyValue` (`getOpContext` binds every argument cachable at each call site in `Tool`, and
+`Tool.java:1856` a LET's definitions) that keeps its value once evaluated, for the states and
+control it evaluated it in (`LazyValue.getValue`). A LET of an action or the initial predicate
+binds none and is evaluated at each use (`Tool.java:482-487`, `937-941`), as is an instance's
+substitution here.
+
+The trace evaluator keeps such a binding's value (`Binding::Thunk`'s `kept`) and reuses it only
+while all of these hold:
+
+- evaluating it read no state, register or generator (`reads`): a value that read one is evaluated
+  again, and one that drew is kept apart, as before (`drawn`);
+- the evaluation is primed as it was;
+- where it built a lazy function or filter, or used a kept value holding one (`captures`), the
+  evaluator holds the same current and next states and level as it did then, compared by identity
+  (`is_same_state`): a lazy value holds the states to evaluate later in them, as the walk tries
+  each successor in turn;
+- what printed is kept as well, so it prints once, as TLC prints it.
+
+A zero-arity definition TLC doesn't compute at startup is cached only where it read no state and
+built no lazy value holding the states, so `D == [i \in Nat |-> x']` is applied in each
+successor's states. `prove-it-cli/tests/trace-kept/` holds a spec for each clause, and for an
+argument passed through operators, a recursive operator, a LAMBDA, a filter and a CHOOSE, with
+TLC's output. Evaluating an argument again at each use made TransitiveClosure's first assumption
+take 154 s where TLC takes 1.4 s, and printed twice what TLC prints once.
 
 ## Sets TLC holds unnormalized
 

@@ -69,10 +69,10 @@ enum Binding {
 }
 
 /// The value of an argument or an expression's LET definition once evaluated, primed or not, which
-/// TLC keeps for the states it evaluated it in (`LazyValue`'s cache): here where evaluating it read
-/// no state, drew nothing and printed nothing, and, where it built a lazy value that holds the
-/// states, only for those states. A LET of an action or the initial predicate binds none
-/// (`Tool#getNextStates`).
+/// TLC keeps for the states it evaluated it in (`LazyValue`'s cache), so that what it printed it
+/// prints once: here where evaluating it read no state, register or generator, and, where it built
+/// a lazy value that holds the states, only for those states. A LET of an action or the initial
+/// predicate binds none (`Tool#getNextStates`).
 type Kept = Rc<std::cell::RefCell<Option<KeptValue>>>;
 
 /// A kept value, whether primed, and the states a lazy value in it holds, which it is kept for.
@@ -82,8 +82,13 @@ struct KeptValue {
     value: Value,
 }
 
-/// The current state's values and the next state's.
-type States = (Vec<Option<Value>>, Vec<Option<Value>>);
+/// What a lazy function or filter holds to evaluate later in: the current state's values, the next
+/// state's, and the current state's level.
+struct States {
+    current: Vec<Option<Value>>,
+    next: Vec<Option<Value>>,
+    level: i32,
+}
 
 // Whether two states hold the same values: the same scalars and the same shared values, as a
 // state's values are cloned from it. Any other pair counts as different, so the value is evaluated
@@ -2117,8 +2122,10 @@ impl<'ir> Evaluator<'ir> {
                 if let Some(kept) = kept
                     && let Some(kept) = &*kept.borrow()
                     && kept.is_primed == is_primed
-                    && kept.states.as_ref().is_none_or(|(current, next)| {
-                        is_same_state(current, &self.current) && is_same_state(next, &self.next)
+                    && kept.states.as_ref().is_none_or(|states| {
+                        states.level == self.level
+                            && is_same_state(&states.current, &self.current)
+                            && is_same_state(&states.next, &self.next)
                     })
                 {
                     // A value that holds the states holds them for what uses it too.
@@ -2129,18 +2136,20 @@ impl<'ir> Evaluator<'ir> {
                 }
                 let inner = own_context(bound, frame, *is_self).primed(is_primed);
                 let state = self.random.as_ref().map(JavaRandom::state);
-                let (reads, captures, printed) = (self.reads, self.captures, self.printed.len());
+                let (reads, captures) = (self.reads, self.captures);
                 let value = self.evaluate(*node, &inner)?;
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
                 } else if let Some(kept) = kept
                     && self.reads == reads
-                    && self.printed.len() == printed
                 {
                     *kept.borrow_mut() = Some(KeptValue {
                         is_primed,
-                        states: (self.captures != captures)
-                            .then(|| (self.current.clone(), self.next.clone())),
+                        states: (self.captures != captures).then(|| States {
+                            current: self.current.clone(),
+                            next: self.next.clone(),
+                            level: self.level,
+                        }),
                         value: value.clone(),
                     });
                 }
