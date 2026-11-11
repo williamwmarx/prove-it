@@ -204,9 +204,11 @@ unanswered on s that fails as TLC fails becomes `ViolationKind::Deadlock::atom` 
 `DeadlockAtom`, `is_extra` for the stuttering step); one that holds when evaluated declines, as
 one after it may fail. The binary evaluates it again with `tla-trace` (`Site::DeadlockAtom`) for
 the call stack alone, which it prints after the postconditions' report; where `tla-trace` finds
-the rerun throws a FingerprintException it prints none. It declines where the atom prints, and,
-as before, where the search or an atom prints or the search doesn't follow TLC's checks (SYMMETRY,
-a VIEW, the diameter, TLC's registers). A grid of 59 specs (ENABLED of WF and SF, state
+the rerun throws a FingerprintException it prints none. It declines where the atom prints, and
+where the search past the initial states or an atom prints. What the initial predicate prints
+comes before the search, so it follows the atom there too. Where the search doesn't follow TLC's
+checks (SYMMETRY, a VIEW, the diameter, TLC's registers), it declines a deadlock with an atom left
+unanswered, where it had printed the plain deadlock. A grid of 59 specs (ENABLED of WF and SF, state
 predicates, the stuttering step's subscript, several fairness conditions and properties,
 invariants, an ALIAS, a postcondition, a constraint, deadlocks at an initial state and later),
 each in plain, `-tool`, `-lncheck final` and both, on one thread and four, matched TLC on 424 of

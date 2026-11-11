@@ -4478,21 +4478,33 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     }
                     let tables =
                         graph_tables(&mut machine, &search, expanded, count, None, None).ok();
-                    let is_followed = search.states.key_width.is_none()
+                    let is_keyed = search.states.key_width.is_none()
                         && !is_symmetric
-                        && !context.diameter_atoms.contains(&true)
+                        && !context.diameter_atoms.contains(&true);
+                    let is_unprinted = tables
+                        .as_ref()
+                        .is_some_and(|tables| tables.iter().all(|table| table.prints.is_empty()));
+                    let is_followed = is_keyed
+                        && is_unprinted
                         && search
                             .held
                             .as_ref()
-                            .is_none_or(|held| held.iter().all(|printed| printed.is_empty()))
-                        && tables.as_ref().is_some_and(|tables| {
-                            tables.iter().all(|table| table.prints.is_empty())
+                            .is_none_or(|held| held.iter().all(|printed| printed.is_empty()));
+                    // What the initial predicate printed comes before the search, so it moves
+                    // nothing TLC prints of an atom that fails on a deadlocked state.
+                    let is_deadlock_followed = is_deadlock
+                        && is_keyed
+                        && is_unprinted
+                        && search.held.as_ref().is_none_or(|held| {
+                            held.iter().skip(1).all(|printed| printed.is_empty())
                         });
                     // TLC had added the initial states and each state before the one it was
-                    // expanding, and stopped at the first whose atom failed to evaluate.
+                    // expanding, and stopped at the first whose atom failed to evaluate. Where the
+                    // engine doesn't follow that, a deadlock is reported only where no atom is
+                    // left unanswered.
                     let unanswered = tables
                         .as_ref()
-                        .filter(|_| is_followed)
+                        .filter(|_| is_followed || is_deadlock)
                         .and_then(|tables| {
                             unanswered_at(
                                 model,
@@ -4536,6 +4548,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         _ if is_next_failure && !is_followed => None,
                         _ if unanswered.is_some() => unanswered.flatten().and_then(|unanswered| {
                             let is_stopped = unanswered.state as usize == search.expanding;
+                            if !is_followed
+                                && !(is_deadlock_followed && is_stopped && !unanswered.is_initial)
+                            {
+                                return None;
+                            }
                             // TLC reported the deadlock and its trace before it added the state,
                             // and the check that fails there has no error state left to set: TLC
                             // prints its call stack and exits as for the deadlock

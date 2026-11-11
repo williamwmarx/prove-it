@@ -179,3 +179,41 @@ fn reports_the_call_stack_with_tool() {
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn declines_an_atom_that_fails_on_a_deadlocked_state_under_a_view() {
+    // TLC prints the deadlock, the trace and the call stack of the action atom that fails on the
+    // stuttering step of x = 3. The engine doesn't follow the behavior graphs under a VIEW, so it
+    // declines where an atom is left unanswered rather than print the plain deadlock.
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-deadlock-live-view-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("M.tla"),
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == <>[][10 \\div (3 - x) > 0]_x\nV == x\n====\n",
+    )
+    .expect("a spec");
+    std::fs::write(
+        directory.join("M.cfg"),
+        "SPECIFICATION Spec\nVIEW V\nPROPERTY Prop\n",
+    )
+    .expect("a configuration");
+    for threads in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noTE", "M"])
+            .current_dir(&directory)
+            .env("PROVE_IT_WORKERS", threads)
+            .env("PROVE_IT_SHARED_LEVEL", "1")
+            .output()
+            .expect("the binary runs");
+        let errors = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{threads}: {errors}");
+        assert!(
+            errors.contains("prove-it: not native yet: the engine stopped: deadlock"),
+            "{threads}: {errors}"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}

@@ -154,6 +154,20 @@ fn prints_as_tlc_does_at_a_stop_in_a_model_with_temporal_properties() {
             76,
             "\"pi2\"\nError: Evaluating invariant Inv failed.\nThe second argument of \\div is 0.\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\nThe average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).\n",
         ),
+        // only the initial predicate prints, and an atom fails on the deadlocked state: its call stack after the rebuild for the postconditions
+        (
+            "Init == PrintT(\"i\") /\\ x = 0\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == <>[][x' > x \\/ 1 \\div (2 - x) = 0]_x",
+            "SPECIFICATION Spec\nPROPERTY Prop\n",
+            11,
+            "Error: Deadlock reached.\n\"i\"\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n\"i\"\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 7, column 13 to line 7, column 44 in M\n1. Line 7, column 14 to line 7, column 41 in M\n2. Line 7, column 24 to line 7, column 41 in M\n3. Line 7, column 24 to line 7, column 37 in M\n\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n",
+        ),
+        // and two initial states print
+        (
+            "Init == x \\in {0, 1} /\\ PrintT(x)\nNext == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == <>[][x' > x \\/ 1 \\div (2 - x) = 0]_x",
+            "SPECIFICATION Spec\nPROPERTY Prop\n",
+            11,
+            "Error: Deadlock reached.\n0\n1\nError: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 1\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n0\n1\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 7, column 13 to line 7, column 44 in M\n1. Line 7, column 14 to line 7, column 41 in M\n2. Line 7, column 24 to line 7, column 41 in M\n3. Line 7, column 24 to line 7, column 37 in M\n\n\n4 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\n",
+        ),
     ];
     for (index, (definitions, config, code, expected)) in cases.iter().enumerate() {
         for threads in ["1", "4"] {
