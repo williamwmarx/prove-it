@@ -61,6 +61,9 @@ pub struct Environment {
     pub builtins: OrderedMap<Name, Builtin>,
     /// The configuration's substitutions, by the key of what it substitutes for.
     pub substitutions: OrderedMap<Name, Name>,
+    /// The names of the definitions the configuration substitutes for anything but a declared
+    /// constant of the root module, as written, so in any module.
+    pub substitutes_for_definitions: Vec<Name>,
     /// The values the configuration assigns, by key.
     pub constants: OrderedMap<Name, ConfigValue>,
     /// The values the configuration assigns operators with parameters, by key, which TLC gives
@@ -2416,6 +2419,15 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         definitions,
         builtins,
         substitutions,
+        substitutes_for_definitions: config
+            .substitutions
+            .iter()
+            .filter(|substitution| {
+                substitution.module.is_some()
+                    || !(declared_constants.iter()).any(|constant| **constant == *substitution.name)
+            })
+            .map(|substitution| Rc::from(substitution.target.as_str()))
+            .collect(),
         constants,
         operator_constants,
         variables,

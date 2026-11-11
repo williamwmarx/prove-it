@@ -3,10 +3,10 @@
 //! fail in the initial or next states, which TLC reports with the FingerprintException of its
 //! replay, initial states that hold values TLC fails to fingerprint, temporal properties whose atoms
 //! fail on the initial state, function definitions that fail as TLC builds them, memberships whose
-//! comparison fails in a set nested in the one tested, and constant definitions TLC can't normalize
-//! at startup. Each cell must print what TLC printed, byte for
-//! byte, with TLC's exit code, at -workers 1 and 4, or be one the binary declines and that
-//! `DECLINED` lists.
+//! comparison fails in a set nested in the one tested, constant definitions TLC can't normalize at
+//! startup, and ALIASes TLC holds as values. Each cell must print what TLC printed, byte for byte,
+//! with TLC's exit code, at -workers 1 and 4, or be one the binary declines and that `DECLINED`
+//! lists.
 //!
 //! TLC's output is recorded by `scripts/record-fingerprint-exceptions.ts` from TLC at the commit
 //! the recordings pin; to check it, run that script with TLA2TOOLS_JAR set and diff the file.
@@ -28,6 +28,19 @@ const DECLINED: &[&str] = &[
     "Init == x = [a |-> 1]: x = {}",
     "Init == x = \"a\" :> 1: x = {}",
     "Init == x = \"a b\" :> 1: x = {}",
+    // An ALIAS the configuration assigns a value where the spec defines none.
+    "no ALIAS definition, CONSTANT Alias = 3",
+    "no ALIAS definition, CONSTANT Alias = 3, deadlock",
+    "CONSTANT Alias, CONSTANT Alias = 3",
+    "CONSTANT Alias, CONSTANT Alias = 3, deadlock",
+    // An ALIAS function definition, which TLC computes as it starts and the binary can't tell
+    // whether it does.
+    "Alias[i \\in {1}] == 3, a function",
+    "Alias[i \\in {1, 2}] == \"s\", a function",
+    // A theorem's name as the ALIAS, which TLC doesn't hold as a definition.
+    "THEOREM Alias == 3",
+    "THEOREM Alias == \"a\"",
+    "THEOREM Alias == 3, CONSTANT Alias = 4",
 ];
 
 // The lines that differ from run to run or between TLC and the binary, as the script drops them.
@@ -103,7 +116,7 @@ fn directory(index: usize, cell: &Cell) -> PathBuf {
 #[test]
 fn fingerprint_exceptions() {
     let cells = parse(RECORDED);
-    assert_eq!(cells.len(), 134, "the recorded cells");
+    assert_eq!(cells.len(), 200, "the recorded cells");
     for (index, cell) in cells.iter().enumerate() {
         let directory = directory(index, cell);
         for (workers, exit, expected) in &cell.expected {

@@ -64,7 +64,19 @@ impl Rebuilder<'_> {
         let defined = alias
             .definition
             .map(|index| (index, evaluator.definition(ir.definitions[index as usize])));
+        // TLC holds a name the configuration assigns as its value (`SpecProcessor.processConstants`),
+        // unless the configuration also substitutes a definition for it, which TLC applies after.
+        let is_substituted = |definition: &Definition| ir.texts[definition.name as usize] != *name;
+        let is_assigned = (ir.constants.iter())
+            .any(|constant| ir.texts[constant.name as usize] == *name)
+            && !defined
+                .as_ref()
+                .is_some_and(|(_, definition)| is_substituted(definition));
         let body = match defined {
+            _ if is_assigned => Err(rejected(
+                format!("The alias {name} cannot be a constant."),
+                MUST_NOT_BE_CONSTANT,
+            )),
             None => Err(rejected(
                 format!(
                     "The alias {name} specified in the configuration file\nis not defined in the specification."
@@ -82,7 +94,11 @@ impl Rebuilder<'_> {
                 REQUIRES_NO_ARGUMENT,
             )),
             Some((index, definition)) => {
-                if Rebuilder::new(ir)?.is_computed_at_startup(index)? {
+                // TLC holds the definition a name the configuration substitutes for names, which
+                // it computed as it started in its own name only (`SpecProcessor.processSpec`).
+                if !is_substituted(definition)
+                    && Rebuilder::new(ir)?.is_computed_at_startup(index)?
+                {
                     Err(rejected(
                         format!("The alias {name} cannot be a constant."),
                         MUST_NOT_BE_CONSTANT,

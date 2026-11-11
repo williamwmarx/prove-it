@@ -5,7 +5,7 @@
 //! state it keeps, so every state but the last prints sorted. The last state of a violation is
 //! one the search didn't keep, and TLC fingerprinted it only if it satisfies the constraints.
 
-use tla_ir::{AtomKind, Definition, DefinitionForm, Ir, NodeId};
+use tla_ir::{AtomKind, Definition, DefinitionForm, Ir, NodeId, NodeKind};
 use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
@@ -72,7 +72,8 @@ impl<'ir> Rebuilder<'ir> {
     /// computed as it started (`processConstantDefns`), which it rejects where the configuration
     /// names it as the ALIAS or a POSTCONDITION (`Spec.getAliasSpec`, `getPostConditionSpecs`):
     /// a 0-ary definition of constant level, as the front end marks it, whose evaluation then
-    /// succeeds. `Unsupported` where the evaluator can't tell.
+    /// succeeds, but for one TLC holds as the value it gave its literal body
+    /// (`Definition::LITERAL`). `Unsupported` where the evaluator can't tell.
     pub fn is_computed_at_startup(&mut self, definition: u32) -> Result<bool, Unsupported> {
         if !self.is_precomputed(definition) {
             return Ok(false);
@@ -80,6 +81,14 @@ impl<'ir> Rebuilder<'ir> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
         let defined = evaluator.definition(ir.definitions[definition as usize]);
+        if let NodeKind::WideNumber(_) = ir.nodes.arena[defined.body as usize].kind {
+            return Err(Unsupported(
+                "a definition of a numeral TLC can't hold".into(),
+            ));
+        }
+        if defined.flags & Definition::LITERAL != 0 {
+            return Ok(false);
+        }
         let is_marked = defined.flags & Definition::NORMALIZED != 0
             && matches!(&defined.form, DefinitionForm::Operator(params) if params.is_empty())
             && !ir.model.startup.definitions.contains(&definition);
