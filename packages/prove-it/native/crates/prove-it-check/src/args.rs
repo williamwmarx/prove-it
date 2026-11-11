@@ -110,8 +110,7 @@ pub enum Stop {
 }
 
 /// The options TLC reads that the binary doesn't model. TLC reads the last three in any case.
-const UNMODELLED: [&str; 25] = [
-    "-simulate",
+const UNMODELLED: [&str; 22] = [
     "-generate",
     "-difftrace",
     "-cleanup",
@@ -128,8 +127,6 @@ const UNMODELLED: [&str; 25] = [
     "-help",
     "-h",
     "-checkpoint",
-    "-depth",
-    "-aril",
     "-maxSetSize",
     "-recover",
     "-userFile",
@@ -256,6 +253,65 @@ impl Parsed {
                         ));
                     }
                     vec![seed]
+                }
+                // TLC takes the next argument as the simulation's settings when it names one:
+                // `num=`, `file=`, `stats=` or `sched`, separated by commas. It ignores any other.
+                "-simulate" => {
+                    let Some(settings) = args.get(index).filter(|next| {
+                        ["stats=", "file=", "num=", "sched"]
+                            .iter()
+                            .any(|setting| next.contains(setting))
+                    }) else {
+                        parsed.options.push((arg.into(), Vec::new()));
+                        continue;
+                    };
+                    index += 1;
+                    let mut values = Vec::new();
+                    for setting in settings.split(',') {
+                        if let Some(number) = setting.strip_prefix("num=") {
+                            // `Long.parseLong` of the setting without each `num=` in it, which
+                            // throws past TLC's checks where it isn't a number.
+                            let number = number.replace("num=", "");
+                            if number.parse::<i64>().is_err() {
+                                return Err(Stop::NotNative(format!("-simulate {setting}")));
+                            }
+                            values = vec![number];
+                        } else if setting.starts_with("file=")
+                            || ["stats=basic", "stats=full", "sched=rl", "sched=rlaction"]
+                                .contains(&setting)
+                        {
+                            return Err(Stop::NotNative(format!("-simulate {setting}")));
+                        }
+                    }
+                    values
+                }
+                "-depth" => {
+                    let depth = take(args, &mut index, "trace length required.", is_tool)?;
+                    if !depth.is_ascii() {
+                        return Err(Stop::NotNative(format!("the trace length {depth:?}")));
+                    }
+                    if depth.parse::<i32>().is_err() {
+                        return Err(error(
+                            format!(
+                                "Error: An integer for trace length required. But encountered {depth}"
+                            ),
+                            is_tool,
+                        ));
+                    }
+                    vec![depth]
+                }
+                "-aril" => {
+                    let aril = take(args, &mut index, "aril required.", is_tool)?;
+                    if !aril.is_ascii() {
+                        return Err(Stop::NotNative(format!("the aril {aril:?}")));
+                    }
+                    if aril.parse::<i64>().is_err() {
+                        return Err(error(
+                            format!("Error: An integer for aril required. But encountered {aril}"),
+                            is_tool,
+                        ));
+                    }
+                    vec![aril]
                 }
                 "-workers" => {
                     let workers = take(
@@ -579,6 +635,16 @@ mod tests {
             ),
             (&["-fp"], "expect an integer for -fp option."),
             (&["-seed"], "seed required."),
+            (&["-depth"], "trace length required."),
+            (
+                &["-depth", "x", "Spec"],
+                "An integer for trace length required. But encountered x",
+            ),
+            (&["-aril"], "aril required."),
+            (
+                &["-aril", "1.5", "Spec"],
+                "An integer for aril required. But encountered 1.5",
+            ),
             (
                 &["-seed", "x", "Spec"],
                 "An integer for seed required. But encountered x",
@@ -641,7 +707,10 @@ mod tests {
     fn declines_what_it_does_not_model() {
         for args in [
             &["-difftrace", "Spec"][..],
-            &["-simulate", "Spec"],
+            &["-generate", "Spec"],
+            &["-simulate", "num=3,file=trace", "Spec"],
+            &["-simulate", "stats=basic", "Spec"],
+            &["-simulate", "num=x", "Spec"],
             &["-maxSetSize", "10", "Spec"],
             &["-dfid", "3", "Spec"],
             &["-DUMPTRACE", "dot", "out.dot", "Spec"],
@@ -676,6 +745,28 @@ mod tests {
             ]
         );
         assert!(!parsed.has("-tool"));
+    }
+
+    #[test]
+    fn reads_the_simulation_settings() {
+        let parsed = parse(&[
+            "-simulate",
+            "num=4,sched",
+            "-depth",
+            "-1",
+            "-aril",
+            "2",
+            "Spec",
+        ])
+        .expect("options");
+        assert_eq!(parsed.get("-simulate"), Some(strings(&["4"]).as_slice()));
+        assert_eq!(parsed.first("-depth"), Some("-1"));
+        assert_eq!(parsed.first("-aril"), Some("2"));
+        assert_eq!(parsed.positionals, strings(&["Spec"]));
+        // TLC takes the next argument as settings only where it names one.
+        let bare = parse(&["-simulate", "Spec"]).expect("options");
+        assert_eq!(bare.get("-simulate"), Some(&[][..]));
+        assert_eq!(bare.positionals, strings(&["Spec"]));
     }
 
     #[test]

@@ -4,7 +4,7 @@
 
 // The lines in which TLC reports its version and runtime, and the files SANY parses.
 export const STARTUP_LINE =
-  /^(TLC2 Version |Running breadth-first search |Parsing file |Semantic processing of module |Linting of module )/;
+  /^(TLC2 Version |Running breadth-first search |Running Random Simulation |Parsing file |Semantic processing of module |Linting of module )/;
 
 // The lines in which TLC reports when it started, finished or reached a point, the only ones with
 // a time or date of the run. A spec's states and what it prints keep theirs.
@@ -32,8 +32,9 @@ export const getSteadyLines = (output: string) =>
 
 // The whole output, with what depends on the run rewritten:
 // - the version of TLC, or of Prove It;
-// - the machine and process in `Running breadth-first search ...`: the cores, the memory, the pid,
-//   the operating system, the runtime and the kinds of fingerprint set and queue;
+// - the machine and process in `Running breadth-first search ...` and `Running Random Simulation
+//   ...`: the cores, the memory, the pid, the operating system, the runtime and the kinds of
+//   fingerprint set and queue;
 // - the directory of each file SANY parses, and where TLC found it: the temporary directory a
 //   standard module is copied to, /tmp on Linux and under /var/folders on macOS; the jar a standard
 //   module comes from, the path on the library path that led to a library module, or the module a
@@ -57,7 +58,7 @@ export const normalizeOutput = (output: string) =>
       line
         .replace(/^TLC2 Version .*$/, "TLC2 Version _")
         .replace(
-          /^(Running breadth-first search .* on )\d+ cores? with \d+MB heap and \d+MB offheap memory \[pid: \d+\] \(.*\)\.$/,
+          /^(Running (?:breadth-first search|Random Simulation) .* on )\d+ cores? with \d+MB heap and \d+MB offheap memory \[pid: \d+\] \(.*\)\.$/,
           "$1_ cores with _MB heap and _MB offheap memory [pid: _] (_).",
         )
         .replace(/^(Parsing file \S+) \(\S+\)$/, "$1")

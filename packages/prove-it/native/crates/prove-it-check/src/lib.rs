@@ -13,6 +13,7 @@ mod host;
 mod inflate;
 mod jar;
 mod messages;
+mod simulation;
 mod stack;
 mod summary;
 mod time;

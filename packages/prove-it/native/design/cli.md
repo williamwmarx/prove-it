@@ -445,8 +445,9 @@ compared with a TLC built from the clone at d8fb231.
 It models `-config` (with or without `.cfg`, as TLC), `-continue`, `-coverage`, `-deadlock`,
 `-dump`, `-dumpTrace tlc` and `-dumpTrace json` (below), `-fp`, `-lncheck`, `-metadir`, `-modelcheck`, `-nowarning`, `-seed`, `-tool`, `-workers` and the
 trace-spec switches (`-generateSpecTE [nomonolith]`, `-noGenerateSpecTE`/`-noTE`,
-`-noGenerateSpecTEBin`/`-noTEBin`). Every other option TLC reads (`-simulate`, `-difftrace`,
-`-maxSetSize`, `-dfid`, ...) is not native, as are the shapes where TLC
+`-noGenerateSpecTEBin`/`-noTEBin`), and `-simulate`, `-depth` and `-aril` (below). Every other
+option TLC reads (`-generate`, `-difftrace`, `-maxSetSize`, `-dfid`, ...) is not native, as are the
+shapes where TLC
 throws (`-dump` last, an empty argument), an argument that isn't ASCII, and `Spec.cfg` named as
 the module on the `tlc2.TLC` form. `-lncheck off` is not native either: TLC then checks no temporal property (`LiveCheck.java:238`).
 `-fp N` picks `FP64.Polys[N]`, one of TLC's 131 irreducible polynomials, which every fingerprint
@@ -597,6 +598,70 @@ filter), MCMultiNode (an operator taking an operator), Detlefs and FastPaxos (SY
 cf1s_folklore and SpanTreeRandom (temporal properties). The pass, a tree-walking replay, runs at
 about a quarter of TLC's speed. The approved follow-up counts the cost model in the engine's own
 search, which would retire the replay.
+
+## -simulate
+
+`-simulate [num=N]` runs TLC's random simulation (`Simulator`, `SimulationWorker`) in the engine
+(`tla-engine/src/simulate.rs`), on one worker, drawing what TLC draws in its order, so a run with
+the same `-seed` and `-aril` takes TLC's traces and prints TLC's output:
+
+- `TLC.process` seeds a `RandomGenerator` with `-seed` (0 without one, where TLC draws a seed),
+  skips `-aril` draws of `nextDouble` (only with `-seed`), and draws the worker's seed with
+  `nextLong`; the worker seeds its own generator with it.
+- A trace starts at an initial state drawn by `floor(nextDouble() * n)` among the initial states
+  in the model, in the initial predicate's order, duplicates kept.
+- Each step draws an action index the same way, then `nextPrime()` (a `nextDouble` index into the
+  1341 primes from 1277011), and walks TLC's actions from that index, striding by the prime modulo
+  their number, until one has successors in the model. The successor is drawn by
+  `floor(nextDouble() * n)` among them in the walk's order.
+- Every successor the walk completes counts as checked and is checked against the invariants,
+  then the action properties; it is kept where the constraints and action constraints hold. A
+  state with no successor kept is a deadlock unless `-deadlock` (or `CHECK_DEADLOCK FALSE`).
+- A trace ends after `-depth` steps (100 by default; `-depth -1` has no bound) and adds
+  `min(depth, level)` to TLC's integer Welford mean and squared deviations, packed in one long as
+  TLC keeps them, which the progress line prints.
+- RandomElement and RandomSubset draw, past the startup and the initial states, from a generator
+  of the worker's thread seeded with `-seed` and never reseeded (`RandomEnumerableValues`).
+- TLCGet("level") counts the trace's steps, stuttering ones too; TLCGet("config") is the
+  simulation's record (`Simulator.createConfig`). Any other key of the run declines, and so does an
+  assumption left to the trace evaluator in a spec that reads TLCGet, which it answers as the
+  model checker.
+
+The report: the banner `Running Random Simulation with seed ...`, `Computed N initial states...`,
+`Finished computing initial states: K distinct state generated` (no plural), then for a violation
+its headline and the trace without its finite stuttering (`getTrace`), each state labelled with
+its action, the first with the last of TLC's initial predicates (`initial_label`, which
+tla-front finds as `initPredVec`); with `-depth -1` the error state alone. Then the summary
+(`The number of states generated`, the seed and aril) and the final progress line, in TLC's order.
+`getTrace` drops a state equal to the one before it, from the last state back, comparing the
+values in TLC's order of the variables up to the first that differs, which fails where TLC can't
+compare them (TLC's Github743). A trace's states print from the store where no value's text depends
+on how TLC built it, and else as the trace evaluator rebuilds them along the actions taken, unless
+a state holds a record of several fields: the evaluator sorts its fields as TLC's fingerprints do,
+and the simulation fingerprints no state, sorting a record only where it happens to compare it.
+
+Declined, each with its reason:
+
+- several workers; `-generate`; `file=`, `stats=` and `sched=`;
+- `-coverage`, whose report TLC's simulator prints too (`Simulator.reportCoverage`), where the
+  coverage pass replays the model checker's search;
+- `-dumpTrace`, a postcondition TLC's simulator checks as it checks the model's;
+- temporal properties (TLC's `LiveCheck1` per trace), POSTCONDITION, `_POSSIBLE`, SYMMETRY,
+  `_PERIODIC` (evaluated with each progress report), a model without a next-state relation or
+  whose relation the engine doesn't split into TLC's actions;
+- a violation before the last trace, or without `num=`: TLC's worker goes on generating traces
+  as the main thread prints the trace, and is stopped at no particular one, so the counts race.
+  In one run of an MCConsensus model on the jar, the summary said 23 states generated where the
+  progress line, printed after it, said 24. The sweep declines 60
+  runs for this; the tests pin `num=1`, where the violation is in the last trace;
+- a failure evaluating the model, an incomplete state, an action property violated, an initial
+  state outside a constraint or none;
+- a violation under `-continue`, after which TLC's simulator goes on generating traces
+  (`TLCGlobals.continuation`) and exits with 0;
+- a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS, or
+  that holds a record of several fields where the store can't print it;
+- a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),
+  which the simulation builds only as it checks a trace.
 
 ## Handoff
 

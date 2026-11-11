@@ -178,10 +178,14 @@ fn reads_the_command_line_as_tlc() {
     assert_eq!(configured.status.code(), Some(0), "{}", stdout(&configured));
     for (args, what) in [
         (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
-        (&["-simulate", "TCommit"], "the TLC option -simulate"),
+        (&["-generate", "TCommit"], "the TLC option -generate"),
         (
             &["-maxSetSize", "10", "TCommit"],
             "the TLC option -maxSetSize",
+        ),
+        (
+            &["-simulate", "-coverage", "1", "TCommit"],
+            "coverage of a simulation",
         ),
         (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
