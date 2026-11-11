@@ -401,8 +401,15 @@ fn write_trace_file(spec: &str) -> Vec<u8> {
 fn writes_the_trace_file_tlc_reads_back() {
     // An ALIAS, which TLC's worker dumps a step's states through but not an initial state's
     // violation; an ALIAS that fails, whose message TLC adds to the state's record; and a value a
-    // configuration's substitute made again, which TLC shares where the binary writes it twice.
-    for spec in ["AliasInit", "AliasStep", "AliasFails", "Shared"] {
+    // configuration's substitute made again, which TLC shares where the binary writes it twice;
+    // and an ALIAS that is a string, which TLC evaluates as written, giving each state itself.
+    for spec in [
+        "AliasInit",
+        "AliasStep",
+        "AliasFails",
+        "AliasLiteral",
+        "Shared",
+    ] {
         let expected =
             std::fs::read(te_bin_fixture(&format!("{spec}.bin"))).expect("TLC's trace file");
         if let Err(difference) = compare_values(&expected, &write_trace_file(spec)) {
