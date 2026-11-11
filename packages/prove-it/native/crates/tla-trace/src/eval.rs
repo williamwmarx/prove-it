@@ -345,6 +345,15 @@ const APPLIED_NON_BOOLEAN: &str = "a function's value the walk tests that isn't 
 /// The reason for a primed variable a state doesn't assign, before the variable's name.
 pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
 
+/// The states the builtin Trace holds at a position of a trace: the first `length` of the
+/// trace's records. The records are shared between positions, and the tuple is built only when an
+/// ALIAS reads Trace, so an ALIAS that doesn't costs nothing per state.
+#[derive(Clone)]
+pub struct TracePrefix {
+    pub records: std::rc::Rc<[Value]>,
+    pub length: usize,
+}
+
 pub struct Evaluator<'ir> {
     pub ir: &'ir Ir,
     /// Builtins that `can_read` counts as reading the state, as `is_precomputed` asks.
@@ -405,7 +414,7 @@ pub struct Evaluator<'ir> {
     /// The builtin Trace as TLC binds it while it evaluates the ALIAS as it prints a trace
     /// (`Tool.evalAlias`): a record of each state it holds, in TLC's order of the variables.
     /// `None` elsewhere, where TLC evaluates the Java method, which isn't followed.
-    pub trace: Option<Value>,
+    pub trace: Option<TracePrefix>,
     /// How many workers TLC runs, which TLCGet("config") reads. `None` where the caller doesn't
     /// say, and TLCGet("config") isn't followed.
     pub workers: Option<usize>,
@@ -4764,7 +4773,8 @@ impl<'ir> Evaluator<'ir> {
             "Trace" if self.trace.is_some() => {
                 arity(0)?;
                 self.reads += 1;
-                self.trace.clone().expect("the trace")
+                let prefix = self.trace.as_ref().expect("the trace");
+                Value::tuple(prefix.records[..prefix.length].to_vec())
             }
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;

@@ -2,6 +2,7 @@
 //! alias evaluated at each state, with the state after it as the next state, and printed as the
 //! record it gives (`RecordValue.toState`).
 
+use crate::eval::TracePrefix;
 use crate::failure::nested;
 use crate::print::{print_order, text_string};
 use crate::rebuild::{Rebuilder, run};
@@ -111,6 +112,7 @@ impl Rebuilder<'_> {
                 .collect();
             records.push(run(Value::record(fields))?);
         }
+        let records: std::rc::Rc<[Value]> = records.into();
         let mut aliases = Vec::with_capacity(states.len());
         // TLC evaluates the alias of each state as it prints it, between its rebuilds of the
         // states, so an alias that uses the registers those rebuilds set reads them part way.
@@ -127,8 +129,10 @@ impl Rebuilder<'_> {
             // last state's, which is the state itself or the one its cycle starts at.
             evaluator.next_level = Some(next as i32 + 1);
             evaluator.printed.clear();
-            evaluator.trace =
-                prefixes.map(|prefixes| Value::tuple(records[..prefixes[position]].to_vec()));
+            evaluator.trace = prefixes.map(|prefixes| TracePrefix {
+                records: records.clone(),
+                length: prefixes[position],
+            });
             // TLC prints an alias that fails with its message as a field of the state
             // (`_ALIASEvalError`, `Tool.evalAlias`).
             let result = match &body {
