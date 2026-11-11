@@ -177,3 +177,19 @@ it("names a file reached through .. by its real path alone as TLC 1.7.4", () =>
     expect(run.stdout).toContain(`Parsing file ${join(directory, "sub", "Spec.tla")}\n`);
     expect(run.stdout).not.toContain("(file:");
   }));
+
+// TLC names an absolute spec by Java's File.getName, which drops the separators the path ends with.
+it.each(["debug", "0"])(
+  "names an absolute spec that ends in a separator by its last part, with PROVE_IT_ENGINE=%s",
+  (setting) =>
+    useDirectory("prove-it-trailing-", (directory) => {
+      const run = spawnSync(
+        "bun",
+        [CLI, "tlc2.TLC", "-noGenerateSpecTE", `${join(directory, "Nope")}/`],
+        { cwd: directory, encoding: "utf8", env: { ...process.env, PROVE_IT_ENGINE: setting } },
+      );
+      expect(run.stdout).toContain(
+        "Error: TLC encountered the following error when trying to read the configuration file Nope.cfg:",
+      );
+    }),
+);

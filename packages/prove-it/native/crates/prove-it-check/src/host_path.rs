@@ -50,11 +50,12 @@ impl Platform {
         path.rfind(|character| self.is_separator(character))
     }
 
-    /// The last part of `path`, after its last separator (`path.basename` of a path that doesn't
-    /// end in one).
+    /// The last part of `path`, as Java's `File.getName` names it: after its last separator once
+    /// the separators it ends with are dropped, so `a/Spec/` is `Spec`, and `a/.` is `.`.
     pub fn file_name(self, path: &str) -> &str {
-        self.last_separator(path)
-            .map_or(path, |end| &path[end + 1..])
+        let trimmed = path.trim_end_matches(|character| self.is_separator(character));
+        self.last_separator(trimmed)
+            .map_or(trimmed, |end| &trimmed[end + 1..])
     }
 
     /// `path.isAbsolute`: on Windows, a path that starts with a separator or a drive and one, such
@@ -238,6 +239,12 @@ mod tests {
     #[test]
     fn names_the_last_part_after_either_separator_on_windows() {
         assert_eq!(Windows.file_name("C:\\a/b\\Spec"), "Spec");
+        // As Java's File.getName: the separators at the end dropped, `.` and `..` kept.
+        assert_eq!(Unix.file_name("/a/Spec/"), "Spec");
+        assert_eq!(Unix.file_name("/a/Spec//"), "Spec");
+        assert_eq!(Unix.file_name("/a/Spec/."), ".");
+        assert_eq!(Unix.file_name("/a/Spec/.."), "..");
+        assert_eq!(Windows.file_name("C:\\a\\Spec\\"), "Spec");
         assert_eq!(Unix.file_name("a\\b/Spec"), "Spec");
         assert_eq!(Unix.file_name("a\\Spec"), "a\\Spec");
         assert_eq!(Windows.last_separator("a\\b"), Some(1));
@@ -329,9 +336,11 @@ mod tests {
                 );
                 let name = platform.file_name(&path);
                 assert!(!platform.has_separator(name), "{path:?}");
-                if let Some(end) = platform.last_separator(&path) {
+                let trimmed = path.trim_end_matches(|character| platform.is_separator(character));
+                assert!(trimmed.ends_with(name), "{path:?}");
+                if let Some(end) = platform.last_separator(trimmed) {
                     assert!(platform.is_separator(char::from(path.as_bytes()[end])));
-                    assert_eq!(&path[end + 1..], name);
+                    assert_eq!(&trimmed[end + 1..], name);
                 }
                 assert_eq!(platform.join("d", &resolved), resolved);
                 assert_eq!(platform.join("", &path), path);
