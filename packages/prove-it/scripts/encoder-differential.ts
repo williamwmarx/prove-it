@@ -6,7 +6,9 @@
 // errors across the result's obligations in order.
 // With tests/conformance/prover-inputs.json, every text the Rust writes must be recorded there,
 // unless the TypeScript writes the same text, which is then a record gap: prove sends a backend
-// only the methods it tries. Without --filter or --skip, every recorded input must be written too.
+// only the methods it tries. Without --filter or --skip, it lists the recorded inputs no text here
+// matches, without failing: the SMT encoder numbers the CASE errors it standardizes across the
+// encodings of a run, and prove encodes only the methods it tries, so its numbers can be lower.
 // With --reset-caches, the Rust starts each module from empty caches.
 // Usage: bun scripts/encoder-differential.ts [--filter text] [--skip text] [--rust <dump>]
 //   [--reset-caches]
@@ -175,7 +177,6 @@ counts.forEach((count, prover) =>
   count.absent.forEach((absent, id) => console.log(`absent: ${prover} in ${id}: ${absent}`)),
 );
 const absentCount = [...counts.values()].reduce((total, count) => total + count.absent.size, 0);
-// Every recorded input is a text prove sent, so a run over every module writes it too.
 const unwritten =
   inputs && getOption("--filter") === undefined && getOption("--skip") === undefined
     ? Object.keys(inputs).filter((key) => !writtenKeys.has(key))
@@ -188,4 +189,4 @@ unwritten.forEach((key) => console.log(`unwritten: ${key}`));
 console.log(
   `encodings: ${records.length - differences.length} of ${records.length} modules match in ${Math.round((performance.now() - startedAt) / 1000)}s`,
 );
-process.exit(differences.length === 0 && absentCount === 0 && unwritten.length === 0 ? 0 : 1);
+process.exit(differences.length === 0 && absentCount === 0 ? 0 : 1);
