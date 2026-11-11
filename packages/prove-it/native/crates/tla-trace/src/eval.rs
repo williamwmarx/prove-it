@@ -485,6 +485,26 @@ const MAXIMUM_DEPTH: u32 = 10_000;
 /// leaves room for the frames between one nesting and the next.
 const MAXIMUM_STACK_BYTES: usize = 128 * 1024 * 1024;
 
+thread_local! {
+    static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    // Where the outermost nesting's frame is, which the stack grows from.
+    static BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The depth and base outside a nesting, which it restores however it ends, as where a reused
+/// thread catches a panic.
+struct Nesting {
+    depth: u32,
+    base: usize,
+}
+
+impl Drop for Nesting {
+    fn drop(&mut self) {
+        DEPTH.set(self.depth);
+        BASE.set(self.base);
+    }
+}
+
 /// `EC.TLC_MODULE_TLCGET_UNDEFINED`, `EC.TLC_MODULE_ARGUMENT_ERROR` and
 /// `EC.TLC_MODULE_ONE_ARGUMENT_ERROR`.
 const TLCGET_UNDEFINED: u32 = 2145;
@@ -2928,26 +2948,22 @@ impl<'ir> Evaluator<'ir> {
     }
 
     fn nested<T>(&mut self, work: impl FnOnce(&mut Self) -> Evaluated<T>) -> Evaluated<T> {
-        thread_local! {
-            static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-            // Where the outermost nesting's frame is, which the stack grows from.
-            static BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-        }
-        let depth = DEPTH.get();
+        let outer = Nesting {
+            depth: DEPTH.get(),
+            base: BASE.get(),
+        };
         // How deep the frames are depends on the build, so the stack the nesting uses is bounded
         // too, by its distance from the outermost frame.
         let frame = 0u8;
         let here = std::ptr::addr_of!(frame) as usize;
-        if depth == 0 {
+        if outer.depth == 0 {
             BASE.set(here);
         }
-        if depth > MAXIMUM_DEPTH || BASE.get().abs_diff(here) > MAXIMUM_STACK_BYTES {
+        if outer.depth > MAXIMUM_DEPTH || BASE.get().abs_diff(here) > MAXIMUM_STACK_BYTES {
             return fail("recursion too deep");
         }
-        DEPTH.set(depth + 1);
-        let result = work(self);
-        DEPTH.set(depth);
-        result
+        DEPTH.set(outer.depth + 1);
+        work(self)
     }
 
     // --- bound names ---
@@ -6010,5 +6026,24 @@ mod tests {
         assert!(is_finite(&lazy(Lazy::Product(vec![nat(), empty()]))).expect("finite"));
         assert!(is_finite(&lazy(Lazy::Seq(empty()))).expect("finite"));
         assert!(!is_finite(&lazy(Lazy::Seq(one()))).expect("infinite"));
+    }
+
+    #[test]
+    fn restores_the_nesting_after_a_caught_panic() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/suite/etest14.ir"
+        ))
+        .expect("a golden IR");
+        let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+        let mut evaluator = Evaluator::new(&ir);
+        let outside = (DEPTH.get(), BASE.get());
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            evaluator.nested(|evaluator| {
+                evaluator.nested(|_| -> Evaluated<()> { panic!("a panic in a nesting") })
+            })
+        }));
+        assert!(caught.is_err());
+        assert_eq!((DEPTH.get(), BASE.get()), outside);
     }
 }
