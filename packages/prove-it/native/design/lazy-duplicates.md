@@ -39,29 +39,39 @@ Paths are under `tlatools/org.lamport.tlatools/src/tlc2/`.
 ## What the engine does
 
 The engine rebuilds a lazy set at each use and holds variables and set elements normalized, so
-where TLC shares an object it could print other counts. It declines there instead, with
-"unsupported: streaming a lazy set …":
+where TLC shares an object it could print other counts, or reach a state at another count: a set
+TLC streams as built yields its elements in the order it is built of, which a normalized set
+sorts. It declines there instead, with "unsupported: streaming a lazy set …", where the stream
+differs from the normalized set's elements in order, by a duplicate or by order alone
+(`Lazy::streams_unnormalized`, `compile/lazy.rs`):
 
 - **An operator argument or an expression's LET name** named more than once, with a use that may
   normalize it: `Compiled::is_kept` and `Compiled::kept()` (`compile/mod.rs`), whose reference is a
-  `Lazy::Kept` that declines when it streams a duplicate (`compile/lazy.rs`).
+  `Lazy::Kept` that declines when it streams other than its normalized set.
+- **A constant definition the spec names elsewhere** than as the set of `e \in S` or
+  `e \notin S` or the set a `\A`, `\E` or CHOOSE binds over (`Tool.contexts` enumerates it with
+  `toSetEnum`, which doesn't cache), where any use in the run may normalize the one object TLC
+  keeps for it:
+  `Compiler::kept_definition` and `Compiler::is_normalized_definition` (`compile/mod.rs`) make its
+  reference a `Lazy::Kept`. One the spec only streams or tests streams as TLC builds it.
 - **A variable assigned a lazy set**, then streamed by `x \in` before its state is fingerprinted,
   and a name `\E` binds to the first element of a set enumeration: `Machine::held`
   (`machine.rs`) and the walker's `compile_streamed` (`compile/walker.rs`). A conjunct
   `Cardinality(v) op e` before the stream sizes v, so v streams normalized, as TLC's does.
 - **A constant definition read through a variable** declines on the same path.
 
+The rule is static where TLC's is not: it declines where a use that may normalize the object
+comes only after the stream, as in `Init == s = C /\ x \in C`, and where the stream's order
+decides nothing printed.
+
 `prove-it-cli/tests/lazy_duplicates.rs` checks 280 specs (10 sources, 14 routes, Init and Next)
-against TLC's output, at one thread and at four: each prints what TLC prints or declines.
+against TLC's output, and 260 more (13 sources, three of them out of order without duplicates,
+through the routes above, under an invariant the order decides), at one thread and at four: each
+prints what TLC prints or declines.
 
 ## Still wrong on main
 
-Each prints a "states generated" other than TLC's today, and is the next to decline or fix:
+It prints a "states generated" other than TLC's today, and is the next to decline or fix:
 
 1. A held SUBSET or set of functions `\cup` a set that overlaps it:
    `Next == s' = SUBSET {1} /\ x' \in s' \cup {{1}}` generates 10 states in TLC, 7 natively.
-2. A constant definition normalized elsewhere, then streamed: `C == UNION {1..2, 2..3}`,
-   `Init == s = C /\ x = 0`, `Next == s' = s /\ x' \in C` generates 13 in TLC, 17 natively.
-3. Stream order alone, no duplicates: through a variable, a constant via a variable or a `\E` name,
-   `(SUBSET {2}) \cup {{1}}` streams `{1}` first in TLC, so a violation of `x # {1}` prints 2
-   states generated in TLC and 3 natively; a LET used twice prints 3 in TLC and 2 natively.

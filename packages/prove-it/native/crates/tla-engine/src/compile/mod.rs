@@ -31,7 +31,7 @@ pub(crate) use builtins::NON_SET_OPERAND;
 pub use walker::ActionOptions;
 pub(crate) use walker::INFINITE_BOUND;
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::rc::{Rc, Weak};
@@ -784,6 +784,9 @@ pub struct Compiler<'a> {
     pub is_tlc_cache_used: bool,
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
+    // The definitions the spec names where TLC may cache the value it keeps for a constant
+    // definition as its normalized set (`Compiler::is_normalized_definition`).
+    normalized_definitions: OnceCell<HashSet<NodeId>>,
 }
 
 fn add_read(reads: &mut Vec<Rc<FixedPoint>>, fixed_point: &Rc<FixedPoint>) {
@@ -864,6 +867,7 @@ impl<'a> Compiler<'a> {
             is_cached: false,
             is_tlc_cache_used: false,
             scope_contexts: HashMap::new(),
+            normalized_definitions: OnceCell::new(),
         }
     }
 
@@ -1644,9 +1648,76 @@ impl<'a> Compiler<'a> {
             let compiled = compiler.compile(body, &body_context)?;
             Ok(compiler.cached(Self::mark_costly(compiled)))
         });
-        let compiled = result?;
+        let compiled = self.kept_definition(node, result?);
         self.cache_definition(node, index, compiled.clone(), &read);
         Ok(compiled)
+    }
+
+    // A constant definition's value as TLC keeps it: one value for the whole run
+    // (`SpecProcessor.processConstantDefns`), which a use anywhere may cache as its normalized
+    // set, where the engine builds it anew at each use.
+    fn kept_definition(&self, node: NodeId, compiled: Compiled) -> Compiled {
+        let is_constant =
+            compiled.footprint.vars.is_empty() && compiled.footprint.primes.is_empty();
+        if is_constant && self.is_normalized_definition(node) {
+            Compiled::kept(compiled)
+        } else {
+            compiled
+        }
+    }
+
+    // Whether the spec names a definition other than as the set of `e \in S` or `e \notin S`, or
+    // the set a `\A`, `\E` or CHOOSE binds over, which TLC tests, streams or enumerates without
+    // caching it as its normalized set (`Tool.contexts`, `toSetEnum`): where it may size,
+    // compare or fingerprint it (`convertAndCache`), as a subexpression may any definition.
+    fn is_normalized_definition(&self, node: NodeId) -> bool {
+        self.normalized_definitions
+            .get_or_init(|| {
+                let arena = &self.ir.nodes.arena;
+                if arena
+                    .iter()
+                    .any(|named| matches!(named.kind, NodeKind::Subexpression(_)))
+                {
+                    return self.ir.definitions.iter().copied().collect();
+                }
+                let tested: HashSet<NodeId> = arena
+                    .iter()
+                    .flat_map(|tested| match &tested.kind {
+                        NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                            Resolution::Builtin(index)
+                                if matches!(self.builtin_name(index), "\\in" | "\\notin") =>
+                            {
+                                args.get(1).copied().into_iter().collect()
+                            }
+                            _ => Vec::new(),
+                        },
+                        NodeKind::Forall { bounds, .. } | NodeKind::Exists { bounds, .. } => {
+                            bounds.iter().map(|bound| bound.set).collect()
+                        }
+                        NodeKind::Choose { set, .. } => set.iter().copied().collect(),
+                        _ => Vec::new(),
+                    })
+                    .collect();
+                (0..arena.len() as NodeId)
+                    .filter(|named| !tested.contains(named))
+                    .filter_map(|named| match self.node(named).1 {
+                        NodeKind::Identifier(name) | NodeKind::OperatorReference(name)
+                            if !name.is_local =>
+                        {
+                            Some(name.resolution)
+                        }
+                        NodeKind::Apply { name, args } if !name.is_local && args.is_empty() => {
+                            Some(name.resolution)
+                        }
+                        _ => None,
+                    })
+                    .filter_map(|resolution| match resolution {
+                        Resolution::Definition(index) => Some(self.ir.definitions[index as usize]),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .contains(&node)
     }
 
     // A definition TLC evaluates once at startup: what it computes is its value from then on, so
@@ -1675,12 +1746,15 @@ impl<'a> Compiler<'a> {
         let compiled = self.compile(definition.body, &body_context)?;
         let once = self.allocate_once();
         let inner = compiled.eval.clone();
-        let compiled = Compiled {
-            is_costly: false,
-            is_constant: true,
-            footprint: Footprint::default(),
-            ..compiled.with_eval(eval(move |machine| machine.once(once, &inner)))
-        };
+        let compiled = self.kept_definition(
+            node,
+            Compiled {
+                is_costly: false,
+                is_constant: true,
+                footprint: Footprint::default(),
+                ..compiled.with_eval(eval(move |machine| machine.once(once, &inner)))
+            },
+        );
         self.startup_definitions
             .insert(node, Some(compiled.clone()));
         Ok(compiled)

@@ -37,7 +37,7 @@ const FOUND: &str = "ENABLED found a successor";
 pub(crate) const INFINITE_BOUND: &str = "enumerated a set TLC can't enumerate";
 
 /// What a walk stops with where it streams a set TLC holds as built, which may stream an element
-/// twice where the engine holds its normalized set.
+/// twice or out of order where the engine holds its normalized set.
 const HELD_STREAMED: &str =
     "unsupported: streaming a lazy set a variable or a bound name holds as TLC built it";
 
@@ -482,13 +482,18 @@ fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step
     })
 }
 
-// Whether streaming a set TLC holds as built may yield an element twice where the engine holds
-// its normalized set: the set itself where its stream does, or else, for a set built from it,
-// where it is of a kind that may, or where the engine has no reference of it.
-fn streams_twice(machine: &mut Machine<'_>, lazy: Option<&Lazy>, is_itself: bool) -> Outcome<bool> {
+// Whether streaming a set TLC holds as built may yield other than the engine's normalized set,
+// in its order: the set itself where its stream yields an element twice or out of order, or
+// else, for a set built from it, where it is of a kind that may, or where the engine has no
+// reference of it.
+fn streams_unlike(
+    machine: &mut Machine<'_>,
+    lazy: Option<&Lazy>,
+    is_itself: bool,
+) -> Outcome<bool> {
     match lazy {
         None => Ok(true),
-        Some(lazy) if is_itself => lazy.streams_duplicates(machine),
+        Some(lazy) if is_itself => lazy.streams_unnormalized(machine),
         Some(lazy) => Ok(lazy.may_stream_duplicates()),
     }
 }
@@ -1461,9 +1466,9 @@ impl<'a> Compiler<'a> {
     // elements in the interpreter's order, cached like any other value. Where the set streams a
     // variable the step assigned a set TLC keeps lazy, or a name bound to the first element of a
     // set enumeration, TLC streams that set as it built it (`Machine::held`,
-    // `Compiled::unsorted_first`), which the walk follows only where it streams no element twice:
-    // the variable or name itself where its set streams none, and a set built of it where its
-    // set is of a kind that streams none.
+    // `Compiled::unsorted_first`), which the walk follows only where that streams the normalized
+    // set: the variable or name itself where its set streams its elements once each and in
+    // order, and a set built of it where its set is of a kind that streams none twice.
     fn compile_streamed(&mut self, node: NodeId, context: &Context) -> Compiling<Ordered> {
         let set = self.compile(node, context)?;
         let is_init = context.is_init;
@@ -1532,7 +1537,7 @@ impl<'a> Compiler<'a> {
                     let Some((assigned, lazy)) = machine.held[variable as usize].clone() else {
                         continue;
                     };
-                    if assigned == value && streams_twice(machine, lazy.as_ref(), is_itself)? {
+                    if assigned == value && streams_unlike(machine, lazy.as_ref(), is_itself)? {
                         return Err(Bail(HELD_STREAMED));
                     }
                 }
@@ -1546,7 +1551,7 @@ impl<'a> Compiler<'a> {
                         Some(reference) => Some(reference(machine)?),
                         None => None,
                     };
-                    if streams_twice(machine, lazy.as_ref(), *is_itself)? {
+                    if streams_unlike(machine, lazy.as_ref(), *is_itself)? {
                         return Err(Bail(HELD_STREAMED));
                     }
                 }

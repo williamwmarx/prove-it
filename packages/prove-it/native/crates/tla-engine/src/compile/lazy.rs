@@ -24,9 +24,9 @@ pub(crate) const OVERFLOWING_SUBSET_BASE: usize = 31;
 pub(crate) const INFINITE_DOMAIN: &str = "enumerated [D -> R] with D infinite";
 pub(crate) const SUBSET_OVERFLOW: &str = "an overflow counting the elements of a power set";
 pub(crate) const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
-/// What streaming a [`Lazy::Kept`] that holds duplicates stops with.
+/// What streaming a [`Lazy::Kept`] other than as its normalized set stops with.
 const KEPT_STREAMED: &str =
-    "unsupported: streaming a lazy set with duplicates TLC may have normalized at an earlier use";
+    "unsupported: streaming a lazy set TLC may have normalized at an earlier use";
 
 /// What a set expression's value is, as the interpreter builds it.
 pub(crate) type Reference = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Lazy> + Send + Sync>;
@@ -61,10 +61,10 @@ pub(crate) enum Lazy {
     /// `UNION S`, with S's elements the sets the engine holds, each enumerated as its normalized
     /// set.
     Union(Box<Lazy>),
-    /// A set that may stream duplicates, as TLC keeps it for later uses (`LazyValue`): a use
-    /// that sizes, compares or fingerprints it caches it as its normalized set
+    /// A set that may stream duplicates, as TLC keeps it for later uses (`LazyValue`, a constant
+    /// definition): a use that sizes, compares or fingerprints it caches it as its normalized set
     /// (`convertAndCache`), which the engine doesn't follow, so streaming it stops where it
-    /// streams an element twice.
+    /// streams an element twice or out of the normalized set's order.
     Kept(Box<Lazy>),
 }
 
@@ -80,10 +80,11 @@ impl Lazy {
         )
     }
 
-    /// Whether streaming the set yields an element twice.
-    pub(crate) fn streams_duplicates(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
+    /// Whether streaming the set yields other than its normalized set's elements in order: an
+    /// element twice, or one out of order.
+    pub(crate) fn streams_unnormalized(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
         let streamed = self.stream(machine)?;
-        has_duplicates(machine, &streamed)
+        is_unnormalized(machine, &streamed)
     }
 
     /// The set as TLC keeps it for later uses.
@@ -324,7 +325,7 @@ impl Lazy {
                     return kept.enumerate(machine);
                 }
                 let streamed = kept.stream(machine)?;
-                if has_duplicates(machine, &streamed)? {
+                if is_unnormalized(machine, &streamed)? {
                     return Err(Bail(KEPT_STREAMED));
                 }
                 Ok(streamed)
@@ -600,9 +601,10 @@ impl Lazy {
     }
 }
 
-fn has_duplicates(machine: &mut Machine<'_>, elements: &[Id]) -> Outcome<bool> {
+// Whether elements streamed differ from their normalized set's, in order.
+fn is_unnormalized(machine: &mut Machine<'_>, elements: &[Id]) -> Outcome<bool> {
     let set = machine.store.set_of(elements)?;
-    Ok(machine.store.size_of(set) as usize != elements.len())
+    Ok(machine.store.set_elements(set) != elements)
 }
 
 // The next combination of `indices.len()` positions below `length`, in lexicographic order.
@@ -723,10 +725,10 @@ mod tests {
         assert!(infinite.enumerate(&mut machine).is_err());
     }
 
-    // A set kept for later uses streams only where it streams no element twice, and a set that
-    // streams none twice isn't kept.
+    // A set kept for later uses streams only where it streams its normalized set's elements in
+    // order, and a set that streams none twice isn't kept.
     #[test]
-    fn streams_a_kept_set_only_without_duplicates() {
+    fn streams_a_kept_set_only_as_its_normalized_set() {
         let program = Program::default();
         let mut store = Store::new();
         store.reset(std::iter::empty::<&[u16]>());
@@ -745,8 +747,10 @@ mod tests {
         };
         let overlapping = union(&[one, two], &[two, three]);
         let apart = union(&[one, two], &[three, four]);
+        let unsorted = union(&[three], &[one, two]);
         assert!(matches!(overlapping, Lazy::Kept(_)));
         assert!(overlapping.stream(&mut machine).is_err());
+        assert!(unsorted.stream(&mut machine).is_err());
         assert_eq!(
             overlapping.enumerate(&mut machine).ok(),
             Some(vec![one, two, three])
