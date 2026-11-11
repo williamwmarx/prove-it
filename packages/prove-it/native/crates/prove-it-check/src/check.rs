@@ -53,6 +53,16 @@ const NOT_NATIVE: i32 = 1;
 // How much of the -dump file's text the relay holds before it sends it to be written.
 const DUMP_PART_BYTES: usize = 1 << 20;
 
+/// The exit codes of a run that may stop at a counterexample: a deadlock, a violation of an
+/// invariant, an action property or a temporal property, or a failure evaluating a state.
+const COUNTEREXAMPLE_EXITS: [i32; 5] = [
+    DEADLOCK,
+    SAFETY_VIOLATION,
+    LIVENESS_VIOLATION,
+    crate::failure::FAILURE_SPEC_EVAL,
+    crate::failure::ERROR,
+];
+
 const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
 
 /// Runs the command line `args` as TLC (or SANY's XMLExporter) would, writing to `output`, and
@@ -191,7 +201,21 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             let stem = name.strip_suffix(".tla").unwrap_or(&name);
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
-        exit_codes.push(check_spec(path, &parsed, java, &mut printer));
+        let exit_code = check_spec(path, &parsed, java, &mut printer);
+        // Where TLC records the trace for its trace exploration spec, a counterexample makes it
+        // write the trace's file beside the spec (`_TLCTraceSilent`), and, for one of two or more
+        // states, the spec (`TraceExplorationSpec.generate`), which the binary doesn't yet. The
+        // other specs are checked as after any spec it declines.
+        exit_codes.push(
+            if printer.is_trace_recorded && COUNTEREXAMPLE_EXITS.contains(&exit_code) {
+                report_not_native(
+                    &mut printer,
+                    "the trace exploration spec TLC writes for a counterexample",
+                )
+            } else {
+                exit_code
+            },
+        );
     }
     exit_codes
         .into_iter()
@@ -266,7 +290,7 @@ enum Event {
     InitialStates(u64, u64),
     Progress(u64, u64, u64, u64),
     /// TLC checks the temporal properties part way through the search: of how many branches, on
-    /// the graph of how many states.
+    /// behavior graphs of how many states in all.
     LivenessStarted(u64, u64),
     LivenessFinished,
     /// What Print or PrintT printed, or nothing when TLC's text isn't known.
@@ -461,8 +485,8 @@ impl Reporter for Relay<'_> {
             .send(Event::Progress(generated, distinct, queued, depth));
     }
 
-    fn liveness_started(&mut self, branches: u64, expanded: u64, _counts: [u64; 3]) {
-        let _ = self.sender.send(Event::LivenessStarted(branches, expanded));
+    fn liveness_started(&mut self, branches: u64, _expanded: u64, states: u64, _counts: [u64; 3]) {
+        let _ = self.sender.send(Event::LivenessStarted(branches, states));
     }
 
     fn liveness_finished(&mut self) {
@@ -772,6 +796,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             metadir: args.first("-metadir"),
             jar: java.class_path.as_deref().and_then(get_tools_jar),
             is_174: false,
+            is_trace_recorded: is_trace_recorded(args),
         },
         printer.host,
         printer.is_tool,
@@ -834,13 +859,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
     }
     if let Some(sany) = &front.sany {
-        if is_trace_recorded(args) {
-            return report_not_native(
-                printer,
-                "SANY's report of the trace exploration spec TLC parses with the spec",
-            );
-        }
         print_sany(printer, sany);
+        printer.is_trace_recorded = is_trace_recorded(args);
     }
     // TLC loads the classes of the modules before it computes the constant definitions.
     for message in &front.override_messages {
@@ -999,9 +1019,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         print_progress(printer, &statistics, Some(start));
                         printer.flush();
                     }
-                    Event::LivenessStarted(branches, expanded) => {
-                        checking =
-                            Some(print_liveness_check(printer, branches, expanded, "current"));
+                    Event::LivenessStarted(branches, states) => {
+                        checking = Some(print_liveness_check(printer, branches, states, "current"));
                     }
                     Event::LivenessFinished => {
                         if let Some(checking) = checking.take() {
@@ -1431,11 +1450,18 @@ fn print_liveness_started(
 ) -> Instant {
     print_progress(printer, statistics, None);
     let branches = branches as u64;
-    print_liveness_check(printer, branches, statistics.distinct, "complete")
+    // Each branch's behavior graph has every state once the search is complete.
+    print_liveness_check(
+        printer,
+        branches,
+        branches * statistics.distinct,
+        "complete",
+    )
 }
 
-/// TLC checks the temporal properties of its branches on the graph of `states` states, of the
-/// complete or the current state space: returns when it started.
+/// TLC checks the temporal properties of its branches on behavior graphs of `states` states in
+/// all, summed over the branches, of the complete or the current state space: returns when it
+/// started.
 fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space: &str) -> Instant {
     let checking = Instant::now();
     let branch_text = if branches > 1 {
@@ -1447,8 +1473,7 @@ fn print_liveness_check(printer: &mut Printer, branches: u64, states: u64, space
         code::CHECKING_TEMPORAL,
         Level::None,
         &format!(
-            "Checking {branch_text}temporal properties for the {space} state space with {} total distinct states at ({})",
-            branches * states,
+            "Checking {branch_text}temporal properties for the {space} state space with {states} total distinct states at ({})",
             printer.date()
         ),
     );
@@ -2197,6 +2222,7 @@ mod tests {
             is_warning_enabled: true,
             is_spec_described: true,
             random_seed: 0,
+            is_trace_recorded: false,
         };
         let bytes =
             tla_front::model::lower_model(&spec, "SPECIFICATION Spec\nPROPERTY Prop\n", &options)

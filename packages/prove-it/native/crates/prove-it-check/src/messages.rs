@@ -76,6 +76,9 @@ pub struct Printer<'o> {
     out: BufWriter<&'o mut dyn Write>,
     err: &'o mut dyn Write,
     pub host: &'o dyn Host,
+    /// Whether the run records the trace TLC writes beside the spec for its trace exploration
+    /// spec: TLC's default, where tla-front read the spec.
+    pub is_trace_recorded: bool,
 }
 
 impl<'o> Printer<'o> {
@@ -87,6 +90,7 @@ impl<'o> Printer<'o> {
             out: BufWriter::new(&mut *output.out),
             err: &mut *output.err,
             host: output.host,
+            is_trace_recorded: false,
         }
     }
 

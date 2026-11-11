@@ -1102,6 +1102,24 @@ prints the stack at each intern gives the order before TLC checks the model, at 
   location as strings, which only a spec making the same text would see. The TypeScript
   interpreter ranks 3 after 4 and 5.
 
+## TLC's default, which records the trace
+
+TLC records the trace for its trace exploration spec unless `-tool`, `-continue`,
+`-noGenerateSpecTE` or `-noTE` is given. At startup it adds the postcondition
+`_TLCTrace!_TLCTraceSilent`, so SANY parses `_TLCTrace` and the modules it uses (TLC, TLCExt,
+Sequences, FiniteSets, Integers) after the spec's own, and TLC loads Integers' methods over
+Naturals' wherever Integers is loaded: `\div` floors and reports an overflow, and `>=` names itself
+as Integers does.
+
+- **What the binary does:** it splices `_TLCTrace` into the root module's extendees for the report
+  (`ReportOptions.root_extendees`) and for TLC's order (`TlcOrder::with_root_extendees`), and lowers
+  without the Naturals flags (`ModelOptions.is_trace_recorded`). A run that ends without a
+  counterexample prints TLC's output in full.
+- **What still declines:** a counterexample, for which TLC writes `<Spec>_TTrace_<epoch>.bin`, and
+  for a trace of two states or more `<Spec>_TTrace_<epoch>.tla` and its path after `Finished in`.
+- **The TypeScript interpreter** writes neither file, and in this mode it keeps Naturals' `>=`
+  wording (`getTraceSpecArithmetic`). It is retired with the interpreter (fallback.md, S4).
+
 ## Action properties and -continue
 
 A property `[][A]_v` is an implied action that TLC checks on every step, the step to a state it

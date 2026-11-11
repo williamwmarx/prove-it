@@ -76,6 +76,11 @@ modules ported separately fit together.
   `Rc<RefCell<…>>`; never hold a `RefCell` borrow across a call that may re-enter.
 - Optional fields are `Option`; TypeScript unions of object kinds are `enum`s.
 
+## Test expectations
+
+The tests compare with what the TypeScript gives, recorded in `testdata/`; in `packages/prove-it`,
+`bun scripts/isabelle-expectations.ts [group...]` regenerates them.
+
 ## Checks
 
 Before handing back: `cargo fmt -p prove-isabelle`, then in `packages/prove-it/native`

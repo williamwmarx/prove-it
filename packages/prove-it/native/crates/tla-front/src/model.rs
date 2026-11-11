@@ -22,6 +22,10 @@ use crate::spec::{
 use crate::values::ValueOrder;
 
 /// What the model is checked with besides its files.
+/// The module TLC adds to the root module's EXTENDS where it records the trace for its trace
+/// exploration spec, for the post condition that writes it.
+pub const TRACE_MODULE: &str = "_TLCTrace";
+
 pub struct ModelOptions<'a> {
     /// The directories of the modules a spec reads that aren't beside it, such as the community
     /// modules, in the order TLC searches them (`-DTLA-Library`).
@@ -36,6 +40,10 @@ pub struct ModelOptions<'a> {
     pub is_spec_described: bool,
     /// The seed TLC seeds its generator with, which `-seed` gives.
     pub random_seed: u64,
+    /// Whether TLC records the trace for its trace exploration spec, its default: SANY loads
+    /// `_TLCTrace` with the spec, which interns its strings first, and TLC loads Integers' Java
+    /// methods over Naturals' (`TLC.java`'s `TraceExplorationSpec`).
+    pub is_trace_recorded: bool,
 }
 
 /// A module's text from the spec's directory, or else the first library's that has it.
@@ -167,7 +175,7 @@ fn lower_ranked(
     let config =
         parse_config(config_text, version).map_err(|error| FrontError::Config(error.message))?;
     // SANY's errors come from linking, before TLC's orders parse the modules again.
-    let environment = create_environment(&EnvironmentOptions {
+    let mut environment = create_environment(&EnvironmentOptions {
         source,
         load_module: load,
         config: &config,
@@ -176,7 +184,18 @@ fn lower_ranked(
         is_level_checked: false,
         load_class: Some(load_class),
     })?;
-    let order = TlcOrder::new(source, load, version)?;
+    if options.is_trace_recorded {
+        for builtin in environment.builtins.values_mut() {
+            builtin.flags &=
+                !(tla_ir::Builtin::NATURALS_GEQ | tla_ir::Builtin::NATURALS_METHOD) as u32;
+        }
+    }
+    let root_extendees: &[&str] = if options.is_trace_recorded {
+        &[TRACE_MODULE]
+    } else {
+        &[]
+    };
+    let order = TlcOrder::new(source, load, version)?.with_root_extendees(root_extendees);
     // TLC computes the constant definitions after SANY and before it builds its checker.
     let sany = order.get_sany_string_order(&config)?;
     // A text with a lone surrogate, which a `str` can't hold, as `Tail("😀a")` makes, ranks by a

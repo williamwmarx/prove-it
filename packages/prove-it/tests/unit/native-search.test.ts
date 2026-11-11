@@ -875,6 +875,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
   it("checks the temporal properties part way through the search, as TLC does", async () => {
     // Without fairness x stutters at 0, which a check after two states finds with states left to
     // expand; with it, x returns to 0 forever, so the check finds nothing and the search goes on.
+    // TLC counts the states of the behavior graph: with Reaches' tableau, the state queued too.
     const body = [
       "EXTENDS Naturals",
       "VARIABLE x",
@@ -887,9 +888,9 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
     ];
     const directory = mkdtempSync(join(tmpdir(), "prove-it-native-periodic-"));
     const log = join(directory, "log.jsonl");
-    for (const [spec, property, status] of [
-      ["Unfair", "Reaches", "liveness-violation"],
-      ["Fair", "Returns", "success"],
+    for (const [spec, property, status, states] of [
+      ["Unfair", "Reaches", "liveness-violation", 3],
+      ["Fair", "Returns", "success", 2],
     ] as const) {
       const options = {
         source: toModule(body),
@@ -909,7 +910,7 @@ describe.if(ADDON !== undefined)("the native engine's search", () => {
       expect(native.result).toEqual(interpreter.result);
       expect(native.progress).toEqual(interpreter.progress);
       expect(native.progress).toContainEqual(
-        expect.stringMatching(/"isComplete":false,"states":2,/),
+        expect.stringContaining(`"isComplete":false,"states":${states},`),
       );
       // The log holds the states the search found when the check found the counterexample.
       const header = JSON.parse(readLogLines(log)[0]);
