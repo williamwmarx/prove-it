@@ -1026,21 +1026,27 @@ is next.
 - Phase 1: this document (#211).
 - P0, the harness (#218): the step counters and statistics of 2.3 and 4a; `prover-inputs.ts`,
   `prover-differential.ts` and the resumable journal; the `prover/` crates; the `decide` export
-  (ABI 13); `PROVE_IT_PROVER`. The record, `tests/conformance/prover-inputs.json`, holds 12,100
+  (ABI 13); `PROVE_IT_PROVER`. The record, `tests/conformance/prover-inputs.json`, holds 12,025
   inputs from all 304 modules, taken on the 4-core container under Node with tlapm's time limits
   for the step limits:
 
   | Prover | Inputs | unsat | sat | unknown at the step limit | other unknown |
   |---|---|---|---|---|---|
-  | `smt` | 10,320 | 9,986 | 13 | 319 | 2 |
-  | `z3` | 56 | 50 | 1 | 5 | — |
-  | `zenon` | 949 | 796 | — | 102 | 48 exhausted, 3 memory limit |
-  | `isabelle` | 478 | 371 | — | 44 (`Interrupt`) | 63 |
+  | `smt` | 10,320 | 10,051 | 13 | 256 | — |
+  | `z3` | 56 | 52 | 1 | 3 | — |
+  | `zenon` | 897 | 769 | — | 41 | 48 exhausted, 39 memory limit |
+  | `isabelle` | 455 | 366 | — | 30 (`Interrupt`) | 59 |
   | `ls4` | 297 | 296 | 1 | — | — |
 
-  None stopped for a runtime limit (`unstable`), and none threw. Decided again by the TypeScript
-  under the recorded step limits and no time limit (`prover-differential --side ts`), all 12,100
-  give the recorded verdict and statistics, so the record reproduces.
+  None stopped for a runtime limit (`unstable`), and none threw. Decided again by the Rust under
+  the recorded step limits and no time limit (`prover-differential --side rust`), all 12,025 give
+  the recorded verdict and statistics, so the record reproduces.
+  Recalibrated on the Rust decider (a692935, the 4-core container): the step limits were the
+  TypeScript's steps in tlapm's time, which is gone with it, and the four fixes below move the
+  search, so `prover-inputs --record` decided every module again on the native deciders. It was
+  12,100 inputs, `smt` 9,986 / 13 / 319 / 2 and `zenon` 949 with 102 at the step limit; Zenon and
+  Isabelle lose inputs that `smt` now proves first, and 36 Zenon inputs that stopped at the step
+  limit reach Zenon's memory limit first under the native decider's higher step limits.
   Porting Z3's limit checks in nlsat's polynomial managers (z3-5.3.3) moved 10 `smt` inputs:
   7 that were unsat now reach their recorded step limit, and 3 at the step limit changed their
   statistics; they were re-recorded with `prover-differential --side ts --update`, which keeps
@@ -1345,7 +1351,8 @@ b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
     line in Z3 that releases that model, which an instrumented Z3 would show. It is then made on
     both sides with `prover-differential --side ts --update`.
 
-The record holds what the TypeScript answers, so it cannot show where the TypeScript leaves Z3.
+The record holds what the decider answers (the TypeScript until a692935, the Rust since), so it
+cannot show where the decider leaves Z3.
 `scripts/z3-parity.ts` runs Z3 5.3.3, the version the solver ports, on every `smt` and `z3` input
 of the record as tlapm runs it: `z3 -smt2 -v:0 AUTO_CONFIG=false smt.MBQI=true`, under the time
 limit prove sent the input with (5 s for all but 24 inputs; 2 have an `rlimit` budget and no time
@@ -1354,20 +1361,23 @@ limit), which prover-inputs now writes to
 invocation. It fails unless the binary is Z3 5.3.3, records the binary's SHA-256 (`f6aa070c…6470`,
 the binary of the `z3-solver` 5.3.3.0 wheel), journals each run, and writes `.z3-parity.json`.
 
-On the record of `main` at b830769, and as it will be once the SMT part 3 re-record lands:
+On the TypeScript's record of `main` at b830769, and on the record recalibrated on the Rust decider
+with causes 1 to 4 below fixed (a692935):
 
-| | `smt` | `z3` | after part 3 (`smt`) |
-|---|---|---|---|
-| Same verdict | 10,246 | 54 | 10,245 |
-| The TypeScript proves, Z3 doesn't | 4 | — | 5 |
-| Z3 proves, the TypeScript doesn't | 70 | 2 | 70 |
-| A verdict that contradicts (`sat` against `unsat`) | 0 | 0 | 0 |
-| Z3 errors | 0 | 0 | 0 |
+| | `smt` at b830769 | `z3` | `smt` at a692935 | `z3` |
+|---|---|---|---|---|
+| Same verdict | 10,246 | 54 | 10,317 | 56 |
+| The decider proves, Z3 doesn't | 4 | — | 1 | — |
+| Z3 proves, the decider doesn't | 70 | 2 | 2 | — |
+| A verdict that contradicts (`sat` against `unsat`) | 0 | 0 | 0 | 0 |
+| Z3 errors | 0 | 0 | 0 | 0 |
 
 Where both prove, the search is mostly Z3's: on 9,996 of the 10,032 inputs both prove, the
 TypeScript makes as many quantifier instances as Z3. Its step count is not Z3's `rlimit-count`,
 though (equal on 1,464 inputs, a median of 0.92 of it): some of Z3's resource-limit charges are not
-counted.
+counted. At a692935, 10,099 of the 10,102 inputs both prove make Z3's number of instances; the
+other three (`3d0e1c6148767e0b`, `6c6369c50591f209`, `aa5d456f2b65d6eb`) made the same counts
+before the fixes.
 
 How the divergences were found: the instance streams. `smt.qi.profile_freq=1` makes Z3 print each
 instance's quantifier as it makes it, and the TypeScript's `QiQueue.instantiateEntry` gives the same
@@ -1509,22 +1519,26 @@ limit and a step limit of twice Z3's `rlimit-count`.
      `ee2307985b84e424`, `52c873767bacfb3b`, `024f5dc53f8b63a5`, `fa51a87ba4ebf399` and
      `8df9b72d29f8a626` keep Z3's streams.
 
-`0c812b0a8aa1347b` follows Z3 on `main` (above), with or without the first cause's condition.
-With part 3's fix the TypeScript proves it instead, so the fix leaves Z3's search on this input;
-compare its stream with Z3's before merging.
+**Status: causes 1 to 4 are fixed in Rust** (ab973e2, dbbcb78, 42f742f, b385778). The TypeScript
+is deleted; the SMT tables' lines the fixes move were printed by its scripts with the same fixes
+(`smt/tests/tables/README.md`). The record is recalibrated on the Rust decider (a692935, P0 above).
+Of the 13 inputs above, 12 follow Z3:
 
-**Fix order.** No decider changes with this audit. The fixes come first where a verdict changes,
-and the earliest divergence first within each group, since a single cause may explain several:
+- `cb7b13d3236da8ea`, `ee2307985b84e424`, `52c873767bacfb3b`, `024f5dc53f8b63a5`,
+  `d542f926ff5ed013`, `fa51a87ba4ebf399`, `beb7dd1741444a77` and `41a69bf765dd7c8b` are `unsat`
+  with Z3's number of instances (471, 1,257, 2,343, 1,045, 53,000, 8,000, 604,603 and 19,846).
+- `8df9b72d29f8a626`, `1319a2956705afce`, `fe8845daad4c648e` and `5e53b781a834c8ec` stop at their
+  step limits, as Z3 times out, and the Rust's whole stream there is Z3's: 118,840, 436,546, 28,303
+  and 86,967 instances, against Z3's streams on the text with the names written in, which on these
+  four are Z3's own.
+- `0c812b0a8aa1347b` stops at its step limit, as Z3 times out, but its stream is Z3's for 365,521
+  instances only: the 365,522nd is Z3's `k!52` and the Rust's `k!42`. Not traced yet; the hold on a
+  builtin declaration above, which the Rust still counts as the TypeScript did, is not ruled out.
 
-1. The reference-count condition of `flatten_clauses` (cause 1). It changes the verdict of
-   `cb7b13d3236da8ea` and `ee2307985b84e424` whatever the calibration, and makes `52c873767bacfb3b`,
-   `024f5dc53f8b63a5`, `d542f926ff5ed013`, `fa51a87ba4ebf399` and `beb7dd1741444a77` follow Z3.
-   It takes away the TypeScript's extra proofs of `fe8845daad4c648e` and `5e53b781a834c8ec`.
-2. The value of `false` in the model (cause 2), which takes away the extra proof of
-   `8df9b72d29f8a626`.
-3. The rewriter's last result released first (cause 3, `1319a2956705afce`) and the cached
-   `is_shared` of the root enode (cause 4, `41a69bf765dd7c8b`). Then `0c812b0a8aa1347b` once part 3
-   is in.
-4. The 64 step-limit cases need no decider fix. Recording step limits from Z3's `rlimit-count`
-   within tlapm's time would make the record match Z3's verdicts there. That needs the step count
-   to charge what Z3 charges first.
+The step-limit cases need no decider fix: at the recalibrated limits the Rust proves the 24 that the
+fixes had left at the TypeScript's limits, and `5c4b35bdc13bbc89`, each with Z3's number of
+instances. Two remain: `5390a15510ed57e1` and `c4f10dabeaca0a49` prove with Z3's 70,639 and 442,772
+instances given 2,570,874 and 10,358,109 steps, above their limits of 1,763,840 and 10,021,636. One
+input is new: `f0570424f250a4cc`, `unknown` at the TypeScript's limit, the Rust proves at its new
+one with 30,027 instances, leaving Z3 at the 12,937th (Z3's `k!43`, the Rust's `k!106`). Z3 times
+out at 5 s and 50 s, but proves the text with `smt.random_seed=1`, so the `unsat` holds.
