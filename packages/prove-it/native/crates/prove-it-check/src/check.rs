@@ -849,8 +849,25 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     }
     // TLC rejects a POSTCONDITION or an ALIAS it computed as it started (`Spec.getAlias`,
     // `getPostConditionSpecs`), which the binary doesn't report: it declines one that may be.
-    let configured = ir.model.postconditions.iter().chain(&ir.model.alias);
-    let definitions: Vec<u32> = configured.filter_map(|name| name.definition).collect();
+    // An ALIAS whose definition takes arguments TLC doesn't compute: the rebuild of the trace
+    // reports how TLC rejects it.
+    let takes_arguments = |definition: u32| {
+        matches!(
+            &ir.nodes.arena[ir.definitions[definition as usize] as usize].kind,
+            tla_ir::NodeKind::Definition(tla_ir::Definition {
+                form: tla_ir::DefinitionForm::Operator(params),
+                ..
+            }) if !params.is_empty()
+        )
+    };
+    let definitions: Vec<u32> = (ir.model.postconditions.iter())
+        .filter_map(|postcondition| postcondition.definition)
+        .chain(
+            (ir.model.alias.as_ref())
+                .and_then(|alias| alias.definition)
+                .filter(|&definition| !takes_arguments(definition)),
+        )
+        .collect();
     // TLC names a postcondition with where its definition's body is written.
     let is_postcondition_unplaced = ir.model.postconditions.iter().any(|postcondition| {
         postcondition.definition.is_none_or(|definition| {

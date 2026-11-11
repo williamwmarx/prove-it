@@ -7,6 +7,7 @@ use crate::print::{print_order, text_string};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, EvalError, TlcMessage, Value};
 use crate::{Trace, Unsupported};
+use tla_ir::{Definition, DefinitionForm};
 
 /// A state as TLC prints it through the ALIAS.
 #[derive(Clone, Debug)]
@@ -18,7 +19,9 @@ pub enum Alias {
     State,
 }
 
-// TLC's message of a configuration naming what the spec doesn't define (`EC.TLC_CONFIG_SPECIFIED_NOT_DEFINED`).
+// TLC's messages of a configuration naming a definition that takes arguments, and what the spec
+// doesn't define (`EC.TLC_CONFIG_ID_REQUIRES_NO_ARG`, `EC.TLC_CONFIG_SPECIFIED_NOT_DEFINED`).
+const REQUIRES_NO_ARGUMENT: u32 = 2228;
 const SPECIFIED_NOT_DEFINED: u32 = 2229;
 
 fn unsupported<T>(reason: &str) -> Result<T, Unsupported> {
@@ -43,9 +46,33 @@ impl Rebuilder<'_> {
         let Some(alias) = &ir.model.alias else {
             return Ok(None);
         };
-        let body = alias
+        let name = &ir.texts[alias.name as usize];
+        let rejected = |text: String, code: u32| TlcMessage {
+            text,
+            code: Some(code),
+            is_eval_exception: false,
+        };
+        // TLC finds the alias by its name as it evaluates it, and fails on a name it has no
+        // definition of and on a definition that takes arguments (`Spec.getAliasSpec`).
+        let body = match alias
             .definition
-            .map(|index| evaluator.definition(ir.definitions[index as usize]).body);
+            .map(|index| evaluator.definition(ir.definitions[index as usize]))
+        {
+            None => Err(rejected(
+                format!(
+                    "The alias {name} specified in the configuration file\nis not defined in the specification."
+                ),
+                SPECIFIED_NOT_DEFINED,
+            )),
+            Some(Definition {
+                form: DefinitionForm::Operator(params),
+                ..
+            }) if !params.is_empty() => Err(rejected(
+                format!("TLC requires alias not to take any argument, but one was given: {name}"),
+                REQUIRES_NO_ARGUMENT,
+            )),
+            Some(definition) => Ok(definition.body),
+        };
         let context = run(evaluator.scope_context(ir.model.scope))?;
         let states = &trace.states;
         let state = |position: usize| states[position].values.iter().cloned().map(Some).collect();
@@ -67,20 +94,11 @@ impl Rebuilder<'_> {
             evaluator.printed.clear();
             // TLC prints an alias that fails with its message as a field of the state
             // (`_ALIASEvalError`, `Tool.evalAlias`).
-            let result = match body {
-                Some(body) => evaluator.evaluate(body, &context),
-                // TLC finds the alias by its name as it evaluates it, and fails on a name it
-                // has no definition of (`Spec.getAliasSpec`).
-                None => Err(EvalError {
-                    reason: "an ALIAS without a definition".into(),
-                    message: Some(TlcMessage {
-                        text: format!(
-                            "The alias {} specified in the configuration file\nis not defined in the specification.",
-                            ir.texts[alias.name as usize]
-                        ),
-                        code: Some(SPECIFIED_NOT_DEFINED),
-                        is_eval_exception: false,
-                    }),
+            let result = match &body {
+                Ok(body) => evaluator.evaluate(*body, &context),
+                Err(message) => Err(EvalError {
+                    reason: "an ALIAS TLC rejects".into(),
+                    message: Some(message.clone()),
                 }),
             };
             evaluator.next_level = None;
