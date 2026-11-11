@@ -298,7 +298,7 @@ fn mistyped(value: &Value, set: &str) -> Evaluated<bool> {
         2158,
         format!(
             "Attempted to check if the value:\n{}\nis an element of {set}.",
-            format_value(value)
+            format_pretty(value)
         ),
     )
 }
