@@ -23,12 +23,13 @@ pub struct Machine {
     pub pid: u32,
 }
 
-/// What names the files of a spec's modules as TLC prints them: the spec, the libraries, the
-/// JVM's temporary directory and -metadir where the launch sets them, and the tla2tools.jar on the
-/// class path, which TLC copies the standard modules from.
+/// What names the files of a spec's modules as TLC prints them: the spec, the directories TLC
+/// finds its modules in, the JVM's temporary directory and -metadir where the launch sets them, and
+/// the tla2tools.jar on the class path, which TLC copies the standard modules from.
 pub struct Files<'a> {
     pub spec: &'a Path,
-    pub libraries: &'a [String],
+    /// The directories in TLC's order (`get_module_directories`), the working directory as "".
+    pub directories: &'a [String],
     pub temporary: Option<&'a str>,
     pub metadir: Option<&'a str>,
     pub jar: Option<&'a str>,

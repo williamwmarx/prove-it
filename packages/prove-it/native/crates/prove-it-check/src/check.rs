@@ -168,7 +168,8 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
     // was given, which names where TLC writes its trace exploration spec.
     let mut paths: Vec<(String, &str)> = Vec::new();
     for given in &spec_paths {
-        let found = if output.host.is_file(Path::new(given)) || Path::new(given).is_absolute() {
+        // TLC looks there only for a spec named without a directory (`SimpleFilenameToStream`).
+        let found = if output.host.is_file(Path::new(given)) || given.contains('/') {
             given.clone()
         } else {
             java.libraries
@@ -897,13 +898,14 @@ fn check_spec(
             format!("{directory}/{name}.bin")
         }),
     );
+    let directories = get_module_directories(main_file, &java.libraries);
     let front = match read_front(
         spec_path,
         config_text.as_deref().unwrap_or_default(),
         !args.has("-nowarning"),
         &Files {
             spec: Path::new(spec_path),
-            libraries: &java.libraries,
+            directories: &directories,
             temporary: java.temporary_directory.as_deref(),
             metadir: args.first("-metadir"),
             jar: java.class_path.as_deref().and_then(get_tools_jar),
@@ -1343,10 +1345,7 @@ fn check_spec(
         _ => {}
     }
     if args.has("-coverage") {
-        let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
-        let directories: Vec<&Path> = std::iter::once(directory)
-            .chain(java.libraries.iter().map(Path::new))
-            .collect();
+        let directories: Vec<&Path> = directories.iter().map(Path::new).collect();
         match coverage::compute(&ir, &outcome, printer.host, &directories, fingerprint_index) {
             Ok(messages) => printer.coverage = Some(messages),
             Err(why) => return report_not_native(printer, &why),
@@ -2617,6 +2616,25 @@ pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
         &format!("Finished in {duration} at ({})", printer.date()),
     );
     te_spec::write_after_finish(printer);
+}
+
+/// The directories TLC's resolver finds a spec's modules in, in its order, for the spec at
+/// `main_file`, the path TLC was given without `.tla` (`SimpleFilenameToStream`): an absolute
+/// spec's own directory, which TLC makes its user directory, then the library path; or the working
+/// directory, written "", then the directory the spec was named in, or, for a spec named without
+/// one, the library path.
+fn get_module_directories(main_file: &str, libraries: &[String]) -> Vec<String> {
+    match main_file.rfind('/') {
+        Some(end) if Path::new(main_file).is_absolute() => {
+            std::iter::once(main_file[..=end].to_string())
+                .chain(libraries.iter().cloned())
+                .collect()
+        }
+        Some(end) => vec![String::new(), main_file[..=end].to_string()],
+        None => std::iter::once(String::new())
+            .chain(libraries.iter().cloned())
+            .collect(),
+    }
 }
 
 pub(crate) fn report_not_native(printer: &mut Printer, what: &str) -> i32 {

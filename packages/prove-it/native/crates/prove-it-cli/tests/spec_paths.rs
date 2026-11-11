@@ -305,3 +305,227 @@ fn checks_each_spec_given_once_however_often_it_is_named() {
     );
     std::fs::remove_dir_all(&root).expect("removed");
 }
+
+// A spec that extends a module beside it and, where it says, one on the library path.
+fn set_up_extending(root: &Path, is_library_used: bool, is_shadowed: bool) {
+    for directory in ["specs", "other", "conf", "lib"] {
+        std::fs::create_dir_all(root.join(directory)).expect("a directory");
+    }
+    let extended = if is_library_used { "N, Lib" } else { "N" };
+    std::fs::write(
+        root.join("specs/M.tla"),
+        format!("---- MODULE M ----\nEXTENDS Naturals, TLC, {extended}\nVARIABLE x\nInit == x = K\nNext == UNCHANGED x\n====\n"),
+    )
+    .expect("the spec");
+    std::fs::write(root.join("specs/M.cfg"), CONFIG).expect("the configuration");
+    std::fs::write(root.join("conf/M.cfg"), CONFIG).expect("the configuration");
+    std::fs::write(
+        root.join("specs/N.tla"),
+        "---- MODULE N ----\nK == 0\n====\n",
+    )
+    .expect("N");
+    std::fs::write(
+        root.join("lib/Lib.tla"),
+        "---- MODULE Lib ----\nJ == 1\n====\n",
+    )
+    .expect("Lib");
+    if is_shadowed {
+        std::fs::write(root.join("N.tla"), "---- MODULE N ----\nK == 5\n====\n").expect("N");
+    }
+    std::os::unix::fs::symlink(root.join("specs"), root.join("link")).expect("the link");
+}
+
+struct Resolution {
+    name: &'static str,
+    directory: &'static str,
+    args: &'static [&'static str],
+    is_library_used: bool,
+    is_shadowed: bool,
+    exit: i32,
+    // The files of the spec's own modules, as TLC printed them.
+    parsed: &'static [&'static str],
+}
+
+const RESOLUTIONS: &[Resolution] = &[
+    Resolution {
+        name: "relative",
+        directory: ".",
+        args: &["specs/M"],
+        is_library_used: false,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &["{root}/specs/M.tla", "{root}/specs/N.tla"],
+    },
+    Resolution {
+        name: "dot",
+        directory: ".",
+        args: &["./specs/M"],
+        is_library_used: false,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &[
+            "{root}/specs/M.tla (file:{root}/./specs/M.tla)",
+            "{root}/specs/N.tla (file:{root}/./specs/N.tla)",
+        ],
+    },
+    Resolution {
+        name: "parent",
+        directory: "other",
+        args: &["../specs/M"],
+        is_library_used: false,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &[
+            "{root}/specs/M.tla (file:{root}/other/../specs/M.tla)",
+            "{root}/specs/N.tla (file:{root}/other/../specs/N.tla)",
+        ],
+    },
+    Resolution {
+        name: "parent-inside",
+        directory: ".",
+        args: &["specs/../specs/M"],
+        is_library_used: false,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &[
+            "{root}/specs/M.tla (file:{root}/specs/../specs/M.tla)",
+            "{root}/specs/N.tla (file:{root}/specs/../specs/N.tla)",
+        ],
+    },
+    Resolution {
+        name: "absolute-parent",
+        directory: ".",
+        args: &["{root}/other/../specs/M"],
+        is_library_used: false,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &[
+            "{root}/specs/M.tla (file:{root}/other/../specs/M.tla)",
+            "{root}/specs/N.tla (file:{root}/other/../specs/N.tla)",
+        ],
+    },
+    Resolution {
+        name: "symlink",
+        directory: ".",
+        args: &["link/M"],
+        is_library_used: false,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &[
+            "{root}/specs/M.tla (file:{root}/link/M.tla)",
+            "{root}/specs/N.tla (file:{root}/link/N.tla)",
+        ],
+    },
+    Resolution {
+        name: "symlink-absolute",
+        directory: ".",
+        args: &["{root}/link/M"],
+        is_library_used: false,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &[
+            "{root}/specs/M.tla (file:{root}/link/M.tla)",
+            "{root}/specs/N.tla (file:{root}/link/N.tla)",
+        ],
+    },
+    Resolution {
+        name: "library",
+        directory: "specs",
+        args: &["-DTLA-Library={root}/lib", "M"],
+        is_library_used: true,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &[
+            "{root}/specs/M.tla",
+            "{root}/specs/N.tla",
+            "{root}/lib/Lib.tla",
+        ],
+    },
+    Resolution {
+        name: "library-relative",
+        directory: "specs",
+        args: &["-DTLA-Library=../lib", "M"],
+        is_library_used: true,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &[
+            "{root}/specs/M.tla",
+            "{root}/specs/N.tla",
+            "{root}/lib/Lib.tla (file:{root}/specs/../lib/Lib.tla)",
+        ],
+    },
+    // TLC's resolver for a spec named with a directory searches only that directory, after the
+    // working one, so it doesn't find Lib.
+    Resolution {
+        name: "library-spec-directory",
+        directory: ".",
+        args: &["-DTLA-Library={root}/lib", "specs/M"],
+        is_library_used: true,
+        is_shadowed: false,
+        exit: 150,
+        parsed: &["{root}/specs/M.tla", "{root}/specs/N.tla"],
+    },
+    Resolution {
+        name: "library-absolute",
+        directory: ".",
+        args: &["-DTLA-Library={root}/lib", "{root}/specs/M"],
+        is_library_used: true,
+        is_shadowed: false,
+        exit: 0,
+        parsed: &[
+            "{root}/specs/M.tla",
+            "{root}/specs/N.tla",
+            "{root}/lib/Lib.tla",
+        ],
+    },
+    // The working directory comes before the spec's.
+    Resolution {
+        name: "shadowed",
+        directory: ".",
+        args: &["specs/M"],
+        is_library_used: false,
+        is_shadowed: true,
+        exit: 0,
+        parsed: &["{root}/specs/M.tla", "{root}/N.tla"],
+    },
+];
+
+#[test]
+fn finds_and_names_the_modules_as_tlc_however_the_spec_is_named() {
+    for resolution in RESOLUTIONS {
+        let created = std::env::temp_dir().join(format!(
+            "prove-it-spec-resolution-{}-{}",
+            resolution.name,
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&created).expect("a directory");
+        let root = std::fs::canonicalize(&created).expect("the root");
+        set_up_extending(&root, resolution.is_library_used, resolution.is_shadowed);
+        let root_text = root.to_string_lossy().into_owned();
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(get_command_line(resolution.args, &root_text))
+            .arg("-noTE")
+            .current_dir(root.join(resolution.directory))
+            .output()
+            .expect("the binary runs");
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            output.status.code(),
+            Some(resolution.exit),
+            "{}: {text}",
+            resolution.name
+        );
+        let parsed: Vec<&str> = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("Parsing file "))
+            .filter(|file| !file.contains("/tlc-"))
+            .collect();
+        let expected: Vec<String> = resolution
+            .parsed
+            .iter()
+            .map(|file| file.replace("{root}", &root_text))
+            .collect();
+        assert_eq!(parsed, expected, "{}", resolution.name);
+        std::fs::remove_dir_all(&root).expect("removed");
+    }
+}

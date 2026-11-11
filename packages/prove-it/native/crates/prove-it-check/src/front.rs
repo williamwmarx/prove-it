@@ -63,9 +63,7 @@ pub fn read_front(
 ) -> Result<Read, String> {
     let spec = Path::new(spec_path);
     let directory = spec.parent().unwrap_or(Path::new("."));
-    let directories: Vec<&Path> = std::iter::once(directory)
-        .chain(files.libraries.iter().map(Path::new))
-        .collect();
+    let directories: Vec<&Path> = files.directories.iter().map(Path::new).collect();
     let load_module = |name: &str| host.load_module(&directories, name);
     let load_class = |name: &str| host.load_class(directory, name);
     let source = host.read_text(spec);
@@ -114,7 +112,7 @@ pub fn read_front(
         sources.as_ref(),
         config_text,
         is_warning_enabled,
-        files.libraries,
+        files.directories,
         seed as u64,
         files.root_extendees,
     ) {
@@ -148,14 +146,14 @@ fn lower(
     sources: Option<&ModelSources>,
     config_text: &str,
     is_warning_enabled: bool,
-    libraries: &[String],
+    directories: &[String],
     random_seed: u64,
     root_extendees: &[&str],
 ) -> Result<LoweredModel, FrontError> {
     let sources = sources.ok_or_else(|| FrontError::Config("the spec can't be read".into()))?;
-    let libraries: Vec<&Path> = libraries.iter().map(Path::new).collect();
+    let directories: Vec<&Path> = directories.iter().map(Path::new).collect();
     let options = ModelOptions {
-        libraries: &libraries,
+        libraries: &directories,
         version: None,
         is_warning_enabled,
         is_spec_described: true,
