@@ -1,0 +1,58 @@
+Implied-temporal checking--satisfiability problem has 2 branches.
+Computing initial states...
+Error: Temporal property Never was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ c = <<0, 0, 0>>
+/\ pc = <<"a", "a", "a">>
+
+State 2: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<1, 0, 0>>
+/\ pc = <<"a", "a", "a">>
+
+State 3: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<1, 1, 0>>
+/\ pc = <<"a", "a", "a">>
+
+State 4: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<2, 1, 0>>
+/\ pc = <<"a", "a", "a">>
+
+State 5: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<2, 1, 0>>
+/\ pc = <<"Done", "a", "a">>
+
+State 6: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<2, 1, 1>>
+/\ pc = <<"Done", "a", "a">>
+
+State 7: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<2, 2, 1>>
+/\ pc = <<"Done", "a", "a">>
+
+State 8: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<2, 0, 1>>
+/\ pc = <<"Done", "a", "a">>
+
+State 9: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<2, 0, 2>>
+/\ pc = <<"Done", "a", "a">>
+
+State 10: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<2, 0, 0>>
+/\ pc = <<"Done", "a", "a">>
+
+State 11: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<2, 1, 0>>
+/\ pc = <<"Done", "a", "a">>
+
+State 12: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+/\ c = <<2, 1, 1>>
+/\ pc = <<"Done", "a", "a">>
+
+Back to state 7: <Next line 27, col 10 to line 27, col 59 of module PcalFallback>
+
+100 states generated, 36 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 8.

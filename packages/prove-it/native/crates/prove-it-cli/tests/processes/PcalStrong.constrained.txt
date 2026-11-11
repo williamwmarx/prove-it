@@ -1,0 +1,26 @@
+Implied-temporal checking--satisfiability problem has 2 branches.
+Computing initial states...
+Error: Temporal property Never was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ x = 0
+/\ pc = <<"a", "a">>
+
+State 2: <a(2) line 27, col 12 to line 32, col 20 of module PcalStrong>
+/\ x = 0
+/\ pc = <<"a", "b">>
+
+State 3: <a(1) line 27, col 12 to line 32, col 20 of module PcalStrong>
+/\ x = 0
+/\ pc = <<"Done", "b">>
+
+State 4: <b(2) line 34, col 12 to line 36, col 45 of module PcalStrong>
+/\ x = 1
+/\ pc = <<"Done", "b">>
+
+Back to state 3: <b(2) line 34, col 12 to line 36, col 45 of module PcalStrong>
+
+9 states generated, 6 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 4.

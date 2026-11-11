@@ -48,6 +48,7 @@ interface Exports {
   prove_it_abi_version: () => number;
   prove_it_check: Call;
   prove_it_decide: Call;
+  prove_it_prove: Call;
   prove_it_sany_text: Call;
   prove_it_sany_xml: Call;
   prove_it_check_sources: Call;
@@ -303,6 +304,8 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
       callCurrent("prove_it_decide", [prover, text, timeLimitMs, stepLimit]) as ReturnType<
         NativeAddon["decide"]
       >,
+    prove: (file, source, known) =>
+      callCurrent("prove_it_prove", [file, source, known]) as ReturnType<NativeAddon["prove"]>,
     sanyText: (root, source, fileName, known) =>
       callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
         NativeAddon["sanyText"]

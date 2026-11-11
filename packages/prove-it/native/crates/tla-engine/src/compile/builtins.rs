@@ -979,7 +979,9 @@ impl Compiler<'_> {
                 ),
                 ("deadlock", Field::Bool(model.check_deadlock)),
                 ("seed", Field::Text(simulation.seed.to_string())),
-                ("aril", Field::Text(simulation.aril.to_string())),
+                // TLC caches the record as it builds its simulator, before it reads the aril
+                // (`Simulator.createConfig`), so it keeps 0.
+                ("aril", Field::Text("0".into())),
                 ("worker", Field::Int(self.workers as i64)),
                 ("install", Field::Text("unknown".into())),
                 ("sched", Field::Text("random".into())),

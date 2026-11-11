@@ -62,6 +62,9 @@ pub struct EngineContext {
     pub view: Option<Eval>,
     /// The liveness checker's atoms, compiled, when the search records its graph.
     pub atoms: Vec<Atom>,
+    /// How many bytes of bits each step keeps for the action atoms made of pieces of Next, none
+    /// where no atom is.
+    pub piece_width: usize,
     /// Whether evaluating an atom may print.
     pub is_live_printing: bool,
     /// Whether an atom sets or reads TLC's registers, which the search then answers as TLC
@@ -124,9 +127,12 @@ pub enum Atom {
         /// Whether the action is the next-state relation itself, which holds of every step the
         /// search took where TLC's predicate evaluation of it can't fail.
         is_next: bool,
-        /// The bit the walk sets on a step it takes through the pieces of Next the action is made
-        /// of, which then answers it (`pieces.rs`).
-        piece: Option<u8>,
+        /// TLC's actions the action splits into, as the ENABLED of its fairness splits it, whose
+        /// steps then answer it where the search labels them.
+        split: Option<Split>,
+        /// The position of the bit the walk sets on a step it takes through the pieces of Next
+        /// the action is made of, which then answers it (`pieces.rs`).
+        piece: Option<u32>,
     },
     /// ENABLED, run, or answered from the steps the search took when the action is made of TLC's
     /// actions of the next-state relation.
@@ -135,6 +141,29 @@ pub enum Atom {
         steps: Option<EnabledSteps>,
     },
     Unknown(String),
+}
+
+/// TLC's actions an action splits into: all of them, or those at the positions marked.
+pub enum Split {
+    All,
+    Some(Vec<bool>),
+}
+
+impl Split {
+    fn of(actions: &EnabledActions) -> Option<Split> {
+        match actions {
+            EnabledActions::Unknown => None,
+            EnabledActions::All => Some(Split::All),
+            EnabledActions::Some(positions) => {
+                let length = positions.iter().max().map_or(0, |&last| last as usize + 1);
+                let mut taken = vec![false; length];
+                for &position in positions {
+                    taken[position as usize] = true;
+                }
+                Some(Split::Some(taken))
+            }
+        }
+    }
 }
 
 /// ENABLED <<A>>_v holds of a state the search ran TLC's actions from just when one of the steps A
@@ -691,8 +720,8 @@ impl EngineContext {
         }
         // The action atoms made of pieces of Next, each with a bit of its own, which the walk sets
         // on the steps it takes through them; the steps' answers are then the bits. Recorded only
-        // where the steps aren't labelled by TLC's actions.
-        let pieces: Vec<Option<u8>> = match model.next {
+        // where the steps aren't labelled by TLC's actions, which answer them otherwise.
+        let mut pieces: Vec<Option<u32>> = match model.next {
             Some(next) if model.is_recording_graph && !model.is_labelled => {
                 let mut count = 0;
                 model
@@ -700,19 +729,17 @@ impl EngineContext {
                     .iter()
                     .map(|atom| {
                         let is_candidate = matches!(atom.kind, AtomKind::Action { .. })
-                            && count < u8::BITS
-                            && atom.scope == model.scope
+                            && count < u64::BITS
                             && !is_next(compiler, ir, atom)
                             && compiler.is_walk_repeatable(atom.expression, &mut HashSet::new());
-                        let found = is_candidate
-                            .then(|| compiler.match_pieces(atom.expression, next))
+                        let values = is_candidate
+                            .then(|| get_bound_values(ir, atom.scope, model.scope))
                             .flatten()?;
-                        let bit = 1 << count;
+                        if !compiler.add_pieces(atom.expression, next, &values, count) {
+                            return None;
+                        }
                         count += 1;
-                        compiler
-                            .pieces
-                            .extend(found.into_iter().map(|piece| (piece, bit)));
-                        Some(bit)
+                        Some(count - 1)
                     })
                     .collect()
             }
@@ -733,6 +760,16 @@ impl EngineContext {
                 )
             })
             .transpose()?;
+        // An atom answers from its bit only where the walk of Next went through each of its
+        // pieces under the values it fixes.
+        for piece in &mut pieces {
+            *piece = piece.filter(|&bit| compiler.is_piece_walked(bit));
+        }
+        let piece_width = pieces
+            .iter()
+            .flatten()
+            .max()
+            .map_or(0, |&last| last as usize / 8 + 1);
         // Compiled whether or not the search walks them, since they also label a printed path.
         let actions = match Some(&model.actions).filter(|actions| !actions.is_empty()) {
             None => None,
@@ -801,6 +838,7 @@ impl EngineContext {
             ));
         }
         Ok(EngineContext {
+            piece_width,
             width,
             init,
             next,
@@ -929,11 +967,54 @@ fn is_next(compiler: &Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> bool {
         && compiler.is_walk_repeatable(next, &mut HashSet::new())
 }
 
+// The values an atom's scope binds its names to below the model's scope, as the liveness checker
+// expands a temporal `\A`, innermost first; none where it binds anything else.
+fn get_bound_values(
+    ir: &Ir,
+    scope: Option<Index>,
+    model_scope: Option<Index>,
+) -> Option<Vec<(tla_ir::TextId, u32)>> {
+    let mut values = Vec::new();
+    let mut bound = scope;
+    while bound != model_scope {
+        let entry = &ir.scopes[bound? as usize];
+        let ScopeBinding::Value(Some(value)) = entry.binding else {
+            return None;
+        };
+        values.push((entry.name, value));
+        bound = entry.parent;
+    }
+    Some(values)
+}
+
+// TLC's actions an action atom splits into, where the ENABLED of its fairness is of the same
+// action in the same scope and splits it.
+fn get_split(ir: &Ir, atom: &tla_ir::Atom, enabled: Option<Index>) -> Option<Split> {
+    let enabled = &ir.model.atoms[enabled? as usize];
+    let AtomKind::Enabled { actions } = &enabled.kind else {
+        return None;
+    };
+    let NodeKind::AngleAction { action, .. } = resolve(ir, enabled.expression) else {
+        return None;
+    };
+    (enabled.scope == atom.scope && resolve_id(ir, *action) == resolve_id(ir, atom.expression))
+        .then(|| Split::of(actions))
+        .flatten()
+}
+
+fn resolve_id(ir: &Ir, node: NodeId) -> NodeId {
+    let mut id = node;
+    while let NodeKind::Reference(target) = &ir.nodes.arena[id as usize].kind {
+        id = *target;
+    }
+    id
+}
+
 fn compile_atom(
     compiler: &mut Compiler<'_>,
     ir: &Ir,
     atom: &tla_ir::Atom,
-    piece: Option<u8>,
+    piece: Option<u32>,
 ) -> CompiledAtom {
     let scope = atom.scope;
     let mut is_printing = false;
@@ -970,9 +1051,13 @@ fn compile_atom(
                     subscript: subscript.map(|subscript| subscript.eval),
                 });
             }
+            let is_answered = !action.reads_search();
             Ok(Atom::Action {
-                is_next: !action.reads_search() && is_next(compiler, ir, atom),
-                piece: piece.filter(|_| !action.reads_search()),
+                is_next: is_answered && is_next(compiler, ir, atom),
+                split: get_split(ir, atom, *enabled).filter(|_| {
+                    is_answered && compiler.is_walk_repeatable(atom.expression, &mut HashSet::new())
+                }),
+                piece: piece.filter(|_| is_answered),
                 action: action.eval,
                 subscript: subscript.map(|subscript| subscript.eval),
                 enabled: enabled.map(|position| position as usize),
@@ -1002,16 +1087,8 @@ fn compile_atom(
                         .map(|compiled| EnabledSteps {
                             subscript: compiled.eval,
                             key: get_subscript_key(ir, *subscript, scope),
-                            actions: match actions {
-                                EnabledActions::Some(positions) => {
-                                    let length =
-                                        positions.iter().max().map_or(0, |&last| last as usize + 1);
-                                    let mut taken = vec![false; length];
-                                    for &position in positions {
-                                        taken[position as usize] = true;
-                                    }
-                                    Some(taken)
-                                }
+                            actions: match Split::of(actions) {
+                                Some(Split::Some(taken)) => Some(taken),
                                 _ => None,
                             },
                         })

@@ -1,8 +1,14 @@
-import { existsSync, globSync, readFileSync } from "node:fs";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { existsSync, globSync, readFileSync, statSync } from "node:fs";
+import { delimiter, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "../errors";
+import {
+  getErrorExitCode,
+  TlaConfigError,
+  TlaError,
+  TlaEvaluationError,
+  TlaUnsupportedError,
+} from "../errors";
 import { SANY_174_STANDARD_MODULES } from "../sany/modules";
 import {
   createMessagePrinter,
@@ -30,13 +36,29 @@ export const getInputPaths = (paths: string[]): InputPath[] =>
       : [{ path: arg, isGlobbed: false }],
   );
 
-// Like TLC, tla-ts finds a module in the directory of the spec, then in each library directory.
-export const findModuleFile = (directories: string[], name: string) =>
-  directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
+// TLC's resolver finds a module's file, or a Java class's that overrides it, in the first of the
+// directories that has it, by the path it makes there, which the system resolves: the working
+// directory written "", and .. after the link before it, as Java's Path.resolve does.
+export const findFile = (directories: string[], fileName: string) =>
+  directories
+    .map((directory) => (directory === "" ? fileName : `${directory}/${fileName}`))
+    .find(existsSync);
 
+// Whether a path the resolver found is one TLC can read: anything there but a directory, such as
+// /dev/null.
+export const isFile = (path: string) => existsSync(path) && !statSync(path).isDirectory();
+
+// SANY can't read a module's file it finds that isn't a file, such as a directory, which tla-ts
+// doesn't report as SANY does.
 export const createModuleLoader = (directories: string[]) => (name: string) => {
-  const path = findModuleFile(directories, name);
-  return path === undefined ? undefined : readFileSync(path, "utf8");
+  const path = findFile(directories, `${name}.tla`);
+  if (path === undefined) return undefined;
+  if (!isFile(path)) {
+    throw new TlaUnsupportedError(
+      `a module's file TLC finds but can't read, such as a directory: ${path}`,
+    );
+  }
+  return readFileSync(path, "utf8");
 };
 
 // SimpleFilenameToStream: SANY names the file of a module it can't find, and where it looked.

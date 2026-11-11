@@ -315,6 +315,20 @@ unsafe extern "C" fn decide(env: napi_env, info: napi_callback_info) -> napi_val
     }
 }
 
+// prove(file: string, source: string, known: [key, value][]), as prove-it-host's `prove`
+// describes it.
+unsafe extern "C" fn prove(env: napi_env, info: napi_callback_info) -> napi_value {
+    unsafe {
+        guard(env, || {
+            let arguments = store::get_arguments::<3>(env, info)?
+                .into_iter()
+                .map(|argument| store::get_host(env, argument))
+                .collect::<Result<Vec<_>, _>>()?;
+            store::create_result(env, prove_it_host::prove::prove(&arguments))
+        })
+    }
+}
+
 /// Node and Bun call this when they load the addon.
 ///
 /// # Safety
@@ -338,6 +352,7 @@ pub unsafe extern "C" fn napi_register_module_v1(env: napi_env, exports: napi_va
             export(env, exports, c"sanyText", sany_text)?;
             export(env, exports, c"sanyXml", sany_xml)?;
             export(env, exports, c"decide", decide)?;
+            export(env, exports, c"prove", prove)?;
             export(env, exports, c"checkSources", check_sources)?;
             store::export_hooks(env, exports)?;
             Ok(exports)

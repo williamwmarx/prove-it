@@ -12,19 +12,23 @@ fn run(test: &str, name: &str, args: &[&str]) -> Output {
 }
 
 fn run_with(test: &str, name: &str, args: &[&str], environment: &[(&str, &str)]) -> Output {
+    let options = [
+        "-workers",
+        "1",
+        "-coverage",
+        "1",
+        "-noGenerateSpecTE",
+        "-fp",
+        "0",
+    ];
+    run_options(test, name, &[&options[..], args].concat(), environment)
+}
+
+fn run_options(test: &str, name: &str, options: &[&str], environment: &[(&str, &str)]) -> Output {
     let directory = copy_fixtures(test);
     let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
         .envs(environment.iter().copied())
-        .args([
-            "-workers",
-            "1",
-            "-coverage",
-            "1",
-            "-noGenerateSpecTE",
-            "-fp",
-            "0",
-        ])
-        .args(args)
+        .args(options)
         .arg(name)
         .current_dir(&directory)
         .output()
@@ -176,14 +180,57 @@ fn declines_coverage_tlc_reports_part_way_through_the_search() {
 
 #[test]
 fn declines_coverage_of_a_run_past_the_cut() {
-    // TLC ends the report of a run past 5 minutes with 2777, which a native run past the cut,
-    // here 0 s, can't rule out.
+    // TLC reports part way through a run past its first progress report, and ends the report of
+    // a run past 5 minutes with 2777, which a native run past the cut, here 0 s, can't rule out.
     let output = run_with("cut", "Stuck", &[], &[("PROVE_IT_TEST_COVERAGE_CUT", "0")]);
     assert!(
         String::from_utf8_lossy(&output.stderr).contains(
-            "prove-it: not native yet: coverage of a run TLC may take more than 5 minutes over"
+            "prove-it: not native yet: coverage of a run TLC may report on part way or take more than 5 minutes over"
         ),
         "{}",
         String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn declines_coverage_of_a_run_continue_carries_past_a_violation() {
+    // TLC counts Init and Next again as it rebuilds each violation's trace, and reports coverage
+    // where an initial state is violated (TLC at d8fb231: `<Init ...>: 3:3`, `<Next ...>: 0:3`),
+    // which the binary printed no report for.
+    let output = run("Continued", "Continued", &["-continue"]);
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        errors.contains("not native yet: coverage of a run -continue carried past a violation"),
+        "{errors}"
+    );
+}
+
+#[test]
+fn declines_coverage_without_fp_whose_estimates_tlc_draws() {
+    // Without -fp TLC draws its polynomial at random: Counter's estimate of x's 2000 values
+    // (4276 with polynomial 0) changes from run to run, and Collide's two values of x, which
+    // polynomial 0 hashes to one register, are estimated as 1 by it and as 2 by the other 130.
+    let options = ["-workers", "1", "-coverage", "1", "-noGenerateSpecTE"];
+    for name in ["Counter", "Collide"] {
+        let output = run_options(&format!("drawn-{name}"), name, &options, &[]);
+        let errors = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            errors.contains("not native yet: coverage: without -fp, estimates that differ"),
+            "{name}: {errors}"
+        );
+    }
+}
+
+#[test]
+fn reports_coverage_without_fp_that_every_polynomial_estimates_alike() {
+    // Every polynomial TLC may draw estimates x's two values as 2 and y's one as 1 (TLC at
+    // d8fb231 without -fp).
+    let options = ["-workers", "1", "-coverage", "1", "-noGenerateSpecTE"];
+    let output = run_options("agreed", "Agreed", &options, &[]);
+    assert_eq!(
+        get_normalized(&String::from_utf8_lossy(&output.stdout)),
+        get_expected("Agreed.drawn.txt"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
