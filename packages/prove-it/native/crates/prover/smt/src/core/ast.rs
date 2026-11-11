@@ -547,6 +547,11 @@ impl AstManager {
         self.ref_counts[expr as usize]
     }
 
+    /// The expressions the manager has made: a deleted one keeps its place in the tables.
+    pub fn get_num_nodes(&self) -> usize {
+        self.kinds.len()
+    }
+
     /// get_num_asts: the live expressions, declarations and sorts, with Z3's own expressions.
     pub fn get_num_asts(&self) -> i64 {
         self.num_live + i64::from(FIRST_FREE_ID) - 2 + self.num_decls

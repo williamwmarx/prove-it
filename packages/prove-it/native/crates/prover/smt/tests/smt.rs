@@ -473,6 +473,22 @@ fn releases_a_builtin_declaration_of_a_model_as_the_typescript_does() {
     );
 }
 
+// A mutant of smt/706e2c3eb8dbf208 of the decider corpus: past a million steps one run of a
+// multi-pattern finds millions of new instances, which the search keeps as fingerprints and queued
+// entries, about 10 GB by two million steps. Z3 5.3.3 grows the same way (`-T:5`: timeout at
+// 175 MB; `-T:20`: 1.2 GB; `-T:60`: 6.7 GB). The size cap stops it with unknown and says why.
+#[test]
+fn stops_at_the_size_cap() {
+    let text = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/inputs/instance-growth.smt"),
+    )
+    .expect("the input");
+    let decision =
+        on_deep_stack(|| prove_smt::decide(&text, &Limits::new(f64::INFINITY, None, None)))
+            .map(|decision| get_decision_text(&decision));
+    assert_eq!(decision, Ok("unknown steps=1126729 stop=heap".into()));
+}
+
 /// Scripts with (reset), each with what Z3 5.3.3 prints on it, run as tlapm runs it: `z3 -smt2
 /// -v:0 AUTO_CONFIG=false smt.MBQI=true -T:5`.
 const RESETS: [(&str, &str); 20] = [

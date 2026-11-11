@@ -476,8 +476,17 @@ coordinator first, done by or with that crate's owner, and kept to that flag.
   host, as it imports `prove_it_report` today. The step budget of 2.3 is a second, optional
   limit. No new timeouts.
 - **Memory:** where V8's heap would fill, the TS SMT solver answers `unknown`. Rust has no such
-  ceiling in-process; it counts the AST manager's nodes and stops at a fixed cap, as Z3's
-  `max_memory` does, so an obligation cannot take the process down.
+  ceiling in-process; it counts what a search holds and stops at a fixed cap, as Z3's
+  `max_memory` does, so an obligation cannot take the process down. The SMT core's cap is
+  `MAX_SIZE` in `context.rs`: 2^24 of the AST manager's nodes, the e-graph's nodes and the
+  instances E-matching found (their fingerprints and queued entries), read where the context
+  reads its cancel flag, which is where Z3's `resource_limits_exceeded` reads its memory
+  watermark. Past it the decision is `unknown` with `stop=heap`. These are counts, not bytes,
+  so a run stops at the same step on every machine and in WebAssembly. The decider corpus holds
+  at most 7.3 million under its step limits (z3/d678a5ca2b5418a6, 1.3 GB); the instance growth
+  of `smt/tests/inputs/instance-growth.smt`, which took 10.5 GB by two million steps, stops at
+  1,126,729 steps and 1.3 GB. Z3 5.3.3 grows the same way on it (timeout at 175 MB with tlapm's
+  `-T:5`, 1.2 GB at 20 s, 6.7 GB at 60 s) and has no cap of its own by default.
 - **Stack:** recursion that overflows in JS answers `unknown`. Rust cannot catch an overflow, so
   each decision runs on a thread with a large stack (256 MB, like the engine's search thread), and
   the deep recursions the TS relies on catching (the rewriters, Isabelle's unifier and simplifier)

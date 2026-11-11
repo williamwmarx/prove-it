@@ -127,6 +127,11 @@ limit and deadline stay (`smtlib_parser.rs`, `ResourceLimit::restart`). Z3 also 
 and with none set runs another solver than UFNIA's; the port runs UFNIA's on every script, with a
 logic set or not, after a reset as before. Push and pop stay unsupported.
 
+**Size.** The core stops at `MAX_SIZE` (`context.rs`, prover.md 3.6) with `stop=heap`: a count of
+the expressions, e-graph nodes and instances found, so that a search that grows without taking
+steps, such as one E-matching run that finds millions of instances, stops at the same step on
+every machine. A structure that can grow that way without a step joins the count.
+
 **Recursion.** Where the TS recurses on terms and relies on catching a stack overflow
 (`isStackOverflow` → unknown), the Rust counts depth and returns `SmtError::Unsupported` past a
 fixed depth, before the native stack would overflow on the decision's 256 MB thread.
