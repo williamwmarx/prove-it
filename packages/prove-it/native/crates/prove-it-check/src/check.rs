@@ -1180,6 +1180,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let mut checking = None;
     let mut is_misprinted = false;
     let mut is_periodic_reached = false;
+    let mut is_continued_past = false;
     let mut is_coverage_reached = false;
     let mut is_dump_unwritten = false;
     let mut declined = None;
@@ -1267,7 +1268,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         break;
                     }
                     Event::SimulationProgress(..) => {}
-                    Event::Continued(report) => print_continued(printer, &report),
+                    Event::Continued(report) => {
+                        is_continued_past = true;
+                        print_continued(printer, &report)
+                    }
                     Event::Declined(reason) => {
                         declined = Some(reason);
                         break;
@@ -1346,6 +1350,14 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         _ => {}
     }
+    // TLC counts into its cost model as it rebuilds the trace of each violation -continue carries
+    // it past, which neither the engine nor the replay counts.
+    if coverage_sources.is_some() && is_continued_past {
+        return report_not_native(
+            printer,
+            "coverage of a run -continue carried past a violation",
+        );
+    }
     if let Some(sources) = &coverage_sources {
         let compared = printer
             .host
@@ -1358,7 +1370,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             fingerprint_index,
             counted,
             compared,
-            start.elapsed(),
+            coverage::is_late(start.elapsed(), args),
         ) {
             Ok(messages) => printer.coverage = Some(messages),
             Err(why) => return report_not_native(printer, &why),
@@ -1369,7 +1381,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .host
             .get_variable("PROVE_IT_TEST_COVERAGE_CUT")
             .and_then(|seconds| seconds.parse().ok())
-            .map_or(coverage::CUT, Duration::from_secs);
+            .map_or(coverage::CUT, Duration::from_secs)
+            .min(coverage::get_first_report(args));
         if printer
             .coverage
             .as_ref()
@@ -1378,7 +1391,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         {
             return report_not_native(
                 printer,
-                "coverage of a run TLC may take more than 5 minutes over, which ends its report otherwise",
+                "coverage of a run TLC may report on part way or take more than 5 minutes over",
             );
         }
     }

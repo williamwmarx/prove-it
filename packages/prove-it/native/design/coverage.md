@@ -86,7 +86,8 @@ TLC ends a report of a run past 5 minutes with 2777 (cli.md, "2777 rather than 2
 replay's cut of 60 s rests on the replay being slower than TLC. The engine's search took at least
 0.08 times as long as TLC on the perf suite (cli.md's table), and its counting variant longer, so
 the engine's report prints for a run of at most 10 s, which TLC took at most about 125 s over, and
-a longer run takes the replay and its cut as before. The ratio should be measured on Depot with the
+a longer run takes the replay and its cut as before. Both cuts also end before TLC's first report
+part way through, at 3 + 60·N s for `-coverage N`: the engine's report prints within 0.08 of it. The ratio should be measured on Depot with the
 counting variant before the cut is raised.
 
 ## Measured

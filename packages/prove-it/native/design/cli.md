@@ -588,6 +588,16 @@ report the engine counted prints only for a run of at most 10 s, scaled by the l
 engine's time to TLC's on the perf suite (0.08); a longer run takes the pass, and the 60 s cut, as
 before ([coverage.md](coverage.md), "The 5 minutes").
 
+The cut also bounds TLC by its first report part way through, which comes 3 s after its workers
+start for `-coverage 0` and 60 s apart after that, at 3 + 60·N s for `-coverage N`
+(`AbstractChecker.runTLC`'s `wait(3000)`, then each progress report): the pass's cut is the lesser
+of 60 s and that time, and the engine's the lesser of 10 s and 0.08 of it (`coverage::is_late`).
+Before, a `-coverage 0` run of a second natively, whose TLC run took 4 s, printed no report where
+TLC printed one part way through.
+
+Under `-continue`, a run carried past a violation declines: TLC counts Init and Next again as it
+rebuilds each violation's trace, which neither counter follows.
+
 ### Sweep and performance
 
 The corpus models TLC checks in 10 s or less, run by TLC's jar and the binary with `-workers 1

@@ -206,12 +206,12 @@ fn declines_coverage_tlc_reports_part_way_through_the_search() {
 
 #[test]
 fn declines_coverage_of_a_run_past_the_cut() {
-    // TLC ends the report of a run past 5 minutes with 2777, which a native run past the cut,
-    // here 0 s, can't rule out.
+    // TLC reports part way through a run past its first progress report, and ends the report of
+    // a run past 5 minutes with 2777, which a native run past the cut, here 0 s, can't rule out.
     let output = run_with("cut", "Stuck", &[], &[("PROVE_IT_TEST_COVERAGE_CUT", "0")]);
     assert!(
         String::from_utf8_lossy(&output.stderr).contains(
-            "prove-it: not native yet: coverage of a run TLC may take more than 5 minutes over"
+            "prove-it: not native yet: coverage of a run TLC may report on part way or take more than 5 minutes over"
         ),
         "{}",
         String::from_utf8_lossy(&output.stdout)
@@ -240,4 +240,17 @@ fn reports_coverage_of_a_let_operator_where_it_is_applied() {
     // TLC counts a LET operator's body under the application's wrapper, so P's body nests under
     // `P(x)` and prints nothing apart; the engine once counted it under the LET.
     assert_as_tlc("LetOp");
+}
+
+#[test]
+fn declines_coverage_of_a_run_continue_carries_past_a_violation() {
+    // TLC counts Init and Next again as it rebuilds each violation's trace (TLC at d8fb231:
+    // `<Init ...>: 2:2` and `<Next ...>: 3:6`, where the search alone counts 1:1 and 3:4), which
+    // neither the engine nor the replay counts.
+    let output = run("Continued", "Continued", &["-continue"]);
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        errors.contains("not native yet: coverage of a run -continue carried past a violation"),
+        "{errors}"
+    );
 }

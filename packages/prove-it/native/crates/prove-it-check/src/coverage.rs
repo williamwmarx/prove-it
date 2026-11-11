@@ -34,6 +34,23 @@ pub(crate) fn get_countdown(args: &Parsed) -> Option<i32> {
     Some(minutes.wrapping_mul(60 * 1000) / (60 * 1000))
 }
 
+/// How long into its search TLC prints its first coverage report part way through, at the
+/// progress report `get_countdown` names: the first comes 3 s after the workers start, the
+/// others every 60 s (`AbstractChecker.runTLC`). A countdown below zero never reaches it.
+pub(crate) fn get_first_report(args: &Parsed) -> Duration {
+    match get_countdown(args) {
+        Some(countdown) if countdown >= 0 => Duration::from_secs(3 + 60 * countdown as u64),
+        _ => Duration::MAX,
+    }
+}
+
+/// Whether the engine's counts came too late to print: its search took at least 0.08 times as
+/// long as TLC on the perf suite, so TLC's run took at most 12.5 times the engine's, which must
+/// end before TLC's first report part way through and before its 5 minutes (design/coverage.md).
+pub(crate) fn is_late(elapsed: Duration, args: &Parsed) -> bool {
+    elapsed > ENGINE_CUT.min(get_first_report(args).mul_f64(0.08))
+}
+
 /// The sources of the modules the IR places nodes in, which place the nodes SANY makes.
 pub(crate) struct Sources(HashMap<String, String>);
 
@@ -81,7 +98,7 @@ pub(crate) fn compute(
     polynomial: usize,
     counted: Option<Result<Counted, String>>,
     is_compared: bool,
-    elapsed: Duration,
+    is_late: bool,
 ) -> Result<Vec<CoverageMessage>, String> {
     let counts = match outcome {
         SearchOutcome::Complete { counts, .. } => (counts.generated, counts.distinct),
@@ -100,8 +117,8 @@ pub(crate) fn compute(
         _ => return Err("coverage of a run that ends other than at a violation or its end".into()),
     };
     let counted = match (outcome, counted) {
-        (_, Some(Ok(_))) if elapsed > ENGINE_CUT && !is_compared => {
-            Err("a run TLC may take more than 5 minutes over".to_string())
+        (_, Some(Ok(_))) if is_late && !is_compared => {
+            Err("a run TLC may report on part way or take more than 5 minutes over".to_string())
         }
         (SearchOutcome::Complete { .. }, Some(Ok(counted))) => Ok(counted),
         (_, Some(Err(why))) => Err(why),
@@ -225,5 +242,34 @@ mod tests {
         assert_eq!(get_countdown_of("71583"), Some(0));
         let args = Parsed::parse(&["Spec".to_string()], true).expect("options");
         assert_eq!(get_countdown(&args), None);
+    }
+
+    fn parse_minutes(minutes: &str) -> Parsed {
+        let args = ["-coverage", minutes, "Spec"].map(String::from);
+        Parsed::parse(&args, true).expect("options")
+    }
+
+    #[test]
+    fn bounds_tlc_by_its_first_report_part_way_through() {
+        // TLC reports 3 s after its workers start for -coverage 0, then every 60 s.
+        assert_eq!(
+            get_first_report(&parse_minutes("0")),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            get_first_report(&parse_minutes("1")),
+            Duration::from_secs(63)
+        );
+        assert_eq!(
+            get_first_report(&parse_minutes("71583")),
+            Duration::from_secs(3)
+        );
+        // The engine's report prints within 0.08 of TLC's first report, and within 10 s.
+        let late = |millis: u64, minutes: &str| {
+            is_late(Duration::from_millis(millis), &parse_minutes(minutes))
+        };
+        assert!(!late(240, "0") && late(241, "0"));
+        assert!(!late(5040, "1") && late(5041, "1"));
+        assert!(!late(10_000, "5") && late(10_001, "5"));
     }
 }
