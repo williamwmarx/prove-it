@@ -864,6 +864,10 @@ fn check_spec(
     }
     // TLC names the configuration file by -config or the spec's name, then finds it as it finds a
     // module (`ModelConfig`), and names it by that name when it finds none.
+    // TLC strips .tla once as written, and its configuration and SANY strip it again.
+    if file_name(main_file).ends_with(".tla") {
+        return report_not_native(printer, "a spec named with .tla twice");
+    }
     let config_name = match args.first("-config") {
         Some(path) => format!("{}.cfg", path.strip_suffix(".cfg").unwrap_or(path)),
         // TLC takes an absolute spec's directory for its user directory and the spec by its name.
@@ -885,8 +889,8 @@ fn check_spec(
         );
         return CONFIG_PARSE_ERROR;
     };
-    // TLC strips .tla only as written, where SANY strips it in any case and reads the file of the
-    // name that remains, and names the module of the spec `.tla` by the empty name.
+    // SANY strips .tla in any case, where TLC strips it only as written, and names the module of
+    // the spec `.tla` by the empty name.
     let main_name = file_name(main_file);
     if main_name.to_ascii_lowercase().ends_with(".tla") {
         return report_not_native(printer, "a spec named with .tla twice");

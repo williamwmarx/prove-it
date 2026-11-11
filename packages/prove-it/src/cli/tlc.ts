@@ -718,6 +718,9 @@ const checkSpec = async (
     printFinished();
     return getErrorExitCode(error);
   };
+  // TLC strips .tla once as written, and its configuration and SANY strip it again.
+  if (basename(specPath).endsWith(".tla.tla"))
+    return declineNatively("a spec named with .tla twice");
   // TLC reads the configuration file before it parses the spec, and prints how long it ran even
   // when it can't read it.
   const config = (() => {
@@ -739,8 +742,8 @@ const checkSpec = async (
     return EXIT_STATUS.error;
   }
   if (config instanceof TlaConfigError) return printFailure(config);
-  // TLC strips .tla only as written, where SANY strips it in any case and reads the file of the
-  // name that remains, and names the module of the spec .tla by the empty name.
+  // SANY strips .tla in any case, where TLC strips it only as written, and names the module of the
+  // spec .tla by the empty name.
   if (basename(specPath).toLowerCase().endsWith(".tla.tla")) {
     return declineNatively("a spec named with .tla twice");
   }
