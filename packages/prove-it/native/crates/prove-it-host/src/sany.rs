@@ -12,7 +12,9 @@
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::report::{ModuleOrigin, ReportOptions, get_missing_root_text, get_sany_text_of};
+use tla_front::report::{
+    ModuleOrigin, ReportOptions, get_missing_root_text, get_sany_text_of, get_standard_root_text,
+};
 use tla_front::sany::export::export_xml;
 use tla_front::sany::xml::XmlExportOptions;
 
@@ -148,8 +150,14 @@ fn write_sany_text(arguments: &[HostValue]) -> HookResult {
         is_xml_export: false,
     };
     let name = file_name.as_deref().unwrap_or(&root);
+    let standard = source
+        .is_none()
+        .then(|| get_standard_root_text(&root, &options))
+        .flatten();
     let result = match &source {
         Some(source) => get_sany_text_of(&root, source, &options),
+        // SANY reads a root module no file holds from its standard modules.
+        None if standard.is_some() => standard.expect("a standard root"),
         // The module SANY names may not be the file TLC names where the name has directories.
         None if version == TlcVersion::Master && name == root => {
             Ok(get_missing_root_text(name, &root))
