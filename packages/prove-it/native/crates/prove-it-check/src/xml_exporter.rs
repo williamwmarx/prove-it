@@ -209,7 +209,14 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
         },
     };
     let host = output.host;
-    let load_module = |module: &str| host.load_module(&directories, module);
+    let is_unreadable = std::cell::Cell::new(false);
+    let load_module = |module: &str| {
+        if host.is_module_unreadable(&directories, module) {
+            is_unreadable.set(true);
+            return None;
+        }
+        host.load_module(&directories, module)
+    };
     let options = XmlExportOptions {
         is_restricted: flags.iter().any(|flag| flag == "-r"),
         is_uncommented: flags.iter().any(|flag| flag == "-u"),
@@ -220,6 +227,9 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
             FrontError::NotYet(reason) => reason,
             other => format!("{other:?}"),
         })?;
+    if is_unreadable.get() {
+        return Err("a module whose file SANY finds but can't read".to_owned());
+    }
     let _ = write!(output.err, "{}", exported.stderr);
     let _ = write!(output.out, "{}", exported.stdout);
     Ok(exported.exit_code)

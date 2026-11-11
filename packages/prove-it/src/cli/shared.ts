@@ -1,4 +1,4 @@
-import { existsSync, globSync, readFileSync } from "node:fs";
+import { existsSync, globSync, lstatSync, readFileSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -41,15 +41,37 @@ export const findModuleFile = (directories: string[], name: string) =>
 export const getModuleDirectories = (specPath: string, libraries: string[]) => {
   const separator = specPath.lastIndexOf("/");
   const working = process.cwd();
-  if (separator === -1) return [working, ...libraries];
+  const locate = (directory: string) =>
+    toJavaPath(
+      isAbsolute(directory) ? directory : directory === "." ? working : `${working}/${directory}`,
+    );
+  if (separator === -1) return [working, ...libraries.map(locate)];
   const directory = specPath.slice(0, separator) || "/";
-  if (isAbsolute(specPath)) return [directory, ...libraries];
-  return [working, directory === "." ? working : `${working}/${directory}`];
+  if (isAbsolute(specPath)) return [directory, ...libraries].map(locate);
+  return [working, locate(directory)];
 };
 
+// Java's Path keeps `.` and `..` but writes each separator once.
+export const toJavaPath = (path: string) => path.replace(/\/{2,}/g, "/");
+
+// TLC's resolver takes the first directory with an entry of the module's file name, which SANY
+// may not read, such as a directory or a broken link.
+export class UnreadableModuleError extends Error {
+  constructor() {
+    super("a module whose file SANY finds but can't read");
+  }
+}
+
 export const createModuleLoader = (directories: string[]) => (name: string) => {
-  const path = findModuleFile(directories, name);
-  return path === undefined ? undefined : readFileSync(path, "utf8");
+  const entry = directories
+    .map((directory) => join(directory, `${name}.tla`))
+    .find((path) => lstatSync(path, { throwIfNoEntry: false }) !== undefined);
+  if (entry === undefined) return undefined;
+  try {
+    return readFileSync(entry, "utf8");
+  } catch {
+    throw new UnreadableModuleError();
+  }
 };
 
 // SimpleFilenameToStream: SANY names the file of a module it can't find, and where it looked.

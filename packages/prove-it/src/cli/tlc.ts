@@ -85,6 +85,7 @@ import {
   quoteUriPath,
   reportErrors,
   reportMissingModules174,
+  toJavaPath,
   toLibraryPath,
 } from "./shared";
 
@@ -540,7 +541,7 @@ export const createFileDescriber = (
   const temporaryDirectory = existsSync(temporary) ? realpathSync(temporary) : resolve(temporary);
   const libraryDirectory = join(temporaryDirectory, `tlc-${getTemporaryName(resolve(specPath))}`);
   const jar = getToolsJar(java);
-  const locatedSpec = isAbsolute(specPath) ? specPath : `${process.cwd()}/${specPath}`;
+  const locatedSpec = toJavaPath(isAbsolute(specPath) ? specPath : `${process.cwd()}/${specPath}`);
   const rootName = basename(specPath, ".tla");
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
@@ -551,8 +552,9 @@ export const createFileDescriber = (
       const located =
         (name === rootName
           ? undefined
-          : directories.map((directory) => `${directory}/${fileName}`).find(existsSync)) ??
-        locatedSpec;
+          : directories
+              .map((directory) => toJavaPath(`${directory}/${fileName}`))
+              .find(existsSync)) ?? locatedSpec;
       const real = realpathSync(located);
       return located === real ? real : `${real} (file:${quoteUriPath(located)})`;
     }
@@ -669,7 +671,11 @@ const checkSpec = async (
     return EXIT_STATUS.configParseError;
   }
   const fileName = basename(specPath, ".tla");
-  const timing: Timing = { startTime: Date.now(), livenessStartTime: undefined, isParsed: false };
+  const timing: Timing = {
+    startTime: Date.now(),
+    livenessStartTime: undefined,
+    isParsed: false,
+  };
   // Without -tool, TLC prints how long it ran for a person to read.
   const printFinished = () => {
     const runtime = Date.now() - timing.startTime;
@@ -969,6 +975,10 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   if (isConfigured && specPaths.length > 1) {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
+  }
+  // TLC strips one .tla where SANY reads the file of the name that remains.
+  if (specPaths.some((path) => path.endsWith(".tla.tla"))) {
+    return declineNatively("a spec named with .tla twice");
   }
   const paths = [...new Set(specPaths.map((path) => findSpec(path, java)))];
   // SANY's report needs the engine, which may be WebAssembly to compile first.

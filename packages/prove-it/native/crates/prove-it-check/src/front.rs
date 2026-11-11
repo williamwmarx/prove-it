@@ -62,7 +62,14 @@ pub fn read_front(
     let spec = Path::new(spec_path);
     let directory = spec.parent().unwrap_or(Path::new("."));
     let directories = files.get_module_directories();
-    let load_module = |name: &str| host.load_module(&directories, name);
+    let is_unreadable = std::cell::Cell::new(false);
+    let load_module = |name: &str| {
+        if host.is_module_unreadable(&directories, name) {
+            is_unreadable.set(true);
+            return None;
+        }
+        host.load_module(&directories, name)
+    };
     let load_class = |name: &str| host.load_class(directory, name);
     let source = host.read_text(spec);
     let sources = source.as_deref().map(|source| ModelSources {
@@ -96,6 +103,9 @@ pub fn read_front(
         FrontError::NotYet(reason) => format!("SANY's report of {reason}"),
         _ => "SANY's report, which tla-front doesn't write".to_owned(),
     })?;
+    if is_unreadable.get() {
+        return Err("a module whose file SANY finds but can't read".to_owned());
+    }
     if sany.is_failed {
         return Ok(Read::Failed(Failure {
             sany: sany.text,

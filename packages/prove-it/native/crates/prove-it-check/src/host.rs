@@ -49,15 +49,23 @@ impl Files<'_> {
 /// after the working directory; otherwise the spec's directory, which TLC makes the user
 /// directory of a spec named by an absolute path, and then TLA-Library's.
 pub fn get_module_directories<'p>(spec: &'p Path, libraries: &'p [String]) -> Vec<&'p Path> {
-    let directory = spec
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty());
+    let directory = get_java_parent(spec).filter(|parent| !parent.as_os_str().is_empty());
     match directory {
         Some(directory) if !spec.is_absolute() => vec![Path::new("."), directory],
         _ => std::iter::once(directory.unwrap_or(Path::new(".")))
             .chain(libraries.iter().map(Path::new))
             .collect(),
     }
+}
+
+/// `Path.getParent` in Java, which keeps a `.` that Rust's `Path::parent` drops.
+fn get_java_parent(path: &Path) -> Option<&Path> {
+    let Some(text) = path.to_str() else {
+        return path.parent();
+    };
+    let index = text.trim_end_matches('/').rfind('/')?;
+    let parent = text[..index].trim_end_matches('/');
+    Some(Path::new(if parent.is_empty() { "/" } else { parent }))
 }
 
 /// The path TLC prints for the file it parses a module from, by the module's name and origin.
@@ -70,6 +78,11 @@ pub trait Host {
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>>;
     /// A module's text: `<name>.tla` in the first of the directories that has it.
     fn load_module(&self, directories: &[&Path], name: &str) -> Option<String>;
+    /// Whether TLC's resolver finds `<name>.tla` in the first of the directories that has an
+    /// entry by that name, such as a directory or a broken link, that SANY can't read.
+    fn is_module_unreadable(&self, _directories: &[&Path], _name: &str) -> bool {
+        false
+    }
     /// The Java override TLC loads for a module: `<name>.class` in the directory.
     fn load_class(&self, directory: &Path, name: &str) -> Option<Vec<u8>>;
     fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h>;
@@ -157,8 +170,13 @@ impl Host for SystemHost {
         path.exists()
     }
 
+    // Java decodes a file's malformed UTF-8 to replacement characters.
     fn read_text(&self, path: &Path) -> Option<String> {
-        std::fs::read_to_string(path).ok()
+        let bytes = std::fs::read(path).ok()?;
+        Some(match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+        })
     }
 
     fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
@@ -180,6 +198,14 @@ impl Host for SystemHost {
         directories
             .iter()
             .find_map(|directory| self.read_text(&directory.join(format!("{name}.tla"))))
+    }
+
+    fn is_module_unreadable(&self, directories: &[&Path], name: &str) -> bool {
+        directories
+            .iter()
+            .map(|directory| directory.join(format!("{name}.tla")))
+            .find(|path| path.symlink_metadata().is_ok())
+            .is_some_and(|path| std::fs::read(path).is_err())
     }
 
     fn load_class(&self, directory: &Path, name: &str) -> Option<Vec<u8>> {
@@ -228,4 +254,23 @@ fn get_memory_megabytes() -> u64 {
             line.split_whitespace().nth(1)?.parse::<u64>().ok()
         })
         .map_or(0, |kilobytes| kilobytes / 1024)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_modules_where_java_names_the_spec_directory() {
+        let directories = |spec: &str| {
+            get_module_directories(Path::new(spec), &[])
+                .iter()
+                .map(|directory| directory.display().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(directories("sub/./Spec.tla"), [".", "sub/."]);
+        assert_eq!(directories("sub//Spec.tla"), [".", "sub"]);
+        assert_eq!(directories("/Spec.tla"), ["/"]);
+        assert_eq!(directories("Spec.tla"), ["."]);
+    }
 }

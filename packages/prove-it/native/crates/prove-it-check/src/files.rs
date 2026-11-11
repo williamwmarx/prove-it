@@ -30,11 +30,24 @@ impl FileDescriber {
     pub fn new(files: &Files) -> FileDescriber {
         let spec = resolve(files.spec);
         let working = std::env::current_dir().unwrap_or_default();
+        // Java's Path keeps `.` and `..` but writes each separator once.
         let locate = |path: &Path| {
-            if path == Path::new(".") {
+            let located = if path == Path::new(".") {
                 working.clone()
             } else {
                 working.join(path)
+            };
+            match located.to_str() {
+                Some(text) => {
+                    let mut collapsed = String::with_capacity(text.len());
+                    for character in text.chars() {
+                        if !(character == '/' && collapsed.ends_with('/')) {
+                            collapsed.push(character);
+                        }
+                    }
+                    PathBuf::from(collapsed)
+                }
+                None => located,
             }
         };
         let directories = files
