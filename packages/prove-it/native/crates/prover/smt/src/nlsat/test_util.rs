@@ -1,5 +1,5 @@
-//! What the ported tests of `tests/unit/smt-nlsat.test.ts` share: reading its fixtures, and its
-//! harness helpers.
+//! What the nlsat tests, ported from the deleted `tests/unit/smt-nlsat.test.ts`, share: reading
+//! their fixtures under `tests/fixtures/nlsat`, and their harness helpers.
 
 use std::fs;
 use std::path::PathBuf;

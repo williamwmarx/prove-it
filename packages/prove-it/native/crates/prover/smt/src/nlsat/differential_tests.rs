@@ -1,7 +1,19 @@
-//! The differential of `scripts/nlsat-differential.ts`: random small problems, each decided under
-//! a step budget and checked at random rational points by the TypeScript solver, the oracle. The
-//! port must make the same search: the same verdict, model, core, steps and statistics, and the
-//! same lemmas. The script's header describes the problems' text.
+//! The nlsat differential, `tests/fixtures/nlsat/differential.json`: random small problems, each
+//! decided under a step budget and checked at random rational points by the TypeScript solver, the
+//! oracle, which `scripts/nlsat-differential.ts` recorded before both were deleted. The fixture is
+//! frozen expected data. The port must make the same search: the same verdict, model, core, steps
+//! and statistics, and the same lemmas.
+//!
+//! A problem's text is one item per line:
+//!   vars n                      n variables
+//!   int f0 f1 ...               1 for an integer variable
+//!   budget steps                the step budget of check
+//!   conflicts n|none            maxConflicts
+//!   a KIND e|o poly | e|o poly  an atom, KIND EQ, LT or GT of the product of the factors, each
+//!                               even (e) or odd (o), a poly as `test_util::parse_polynomial` reads it
+//!   cl assumption ref ...       a clause, assumption -1 for none, ref a signed 1-based atom number
+//!   point v0 v1 ...             a point for check_assignment, each value n, n/d or _ for none,
+//!                               the values that are there first
 
 use super::algebraic::Anum;
 use super::polynomial::Var;

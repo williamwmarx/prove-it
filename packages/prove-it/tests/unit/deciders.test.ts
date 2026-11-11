@@ -19,10 +19,20 @@ const INPUTS = [
   ["ls4", read("conformance/ptl/equivalence-of-boxes.ls4")],
 ] as const;
 
-// What the TypeScript decider answered on the Zenon, Isabelle and PTL inputs with no limits, before
-// it was deleted, as tests/fixtures/zenon/decisions.txt and prove-isabelle's testdata/decide.txt
-// record Zenon's and Isabelle's too.
+// What the TypeScript SMT decider answered on the SMT input with no limits, as smt and as z3, before
+// it was deleted, as crates/prover/smt/tests/tables/decide.txt records it too.
+const SMT_RECORDED: Decision = {
+  verdict: "unsat",
+  timeUsedMs: 0,
+  statistics: { instances: 14, steps: 4626 },
+};
+
+// What the TypeScript deciders answered on their inputs with no limits, before they were deleted,
+// as tests/fixtures/zenon/decisions.txt and prove-isabelle's testdata/decide.txt record Zenon's and
+// Isabelle's too.
 const RECORDED: Record<string, Decision> = {
+  smt: SMT_RECORDED,
+  z3: SMT_RECORDED,
   isabelle: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 840 } },
   ls4: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 5 } },
   zenon: {
@@ -119,8 +129,9 @@ describe("the Rust ports", () => {
     });
   });
 
-  // Zenon's, Isabelle's and PTL's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
-  it.each([INPUTS[1], INPUTS[2], INPUTS[3]])(
+  // Every backend's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it. Z3 is sent the SMT
+  // input.
+  it.each([...INPUTS, ["z3", INPUTS[0][1]] as const])(
     "decides %s in Rust whatever PROVE_IT_PROVER says",
     (prover, text) => {
       expect(useProver("ts", () => decide(prover, text, OPTIONS))).toMatchObject({
