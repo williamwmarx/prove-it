@@ -9,7 +9,7 @@ use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
 use crate::errors::{FrontError, TAUTOLOGY, describe_range};
-use crate::eval::{Evaluator, Unrolled};
+use crate::eval::{Evaluator, Unbound, Unrolled};
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
@@ -240,16 +240,20 @@ impl Expansion<'_> {
     }
 
     // The INSTANCEs a definition reached through `unbound` is under too.
-    fn with_copy_instances(
-        &self,
-        unbound: &Rc<[usize]>,
-        definition: &Rc<Definition>,
-    ) -> Rc<[usize]> {
+    fn with_copy_instances(&self, unbound: &Unbound, definition: &Rc<Definition>) -> Unbound {
         let instances = self.environment.tables.get_copy_instances(definition);
         if instances.is_empty() {
             return unbound.clone();
         }
-        unbound.iter().chain(instances.iter()).copied().collect()
+        Unbound {
+            instances: unbound
+                .instances
+                .iter()
+                .chain(instances.iter())
+                .copied()
+                .collect(),
+            lexical: unbound.lexical.as_ref().map(|_| instances),
+        }
     }
 
     /// `expandTemporal`.
@@ -259,7 +263,7 @@ impl Expansion<'_> {
         scope: Option<&Rc<Scope>>,
         expanding: &[*const Definition],
         is_substituted: bool,
-        unbound: &Rc<[usize]>,
+        unbound: &Unbound,
         name: Option<Name>,
     ) -> Result<Vec<Expanded>> {
         match &expression.kind {
@@ -291,6 +295,11 @@ impl Expansion<'_> {
                 definitions, body, ..
             } => {
                 let bound = bind_definitions(definitions, scope)?;
+                if let Some(evaluator) = self.evaluator {
+                    for definition in definitions {
+                        evaluator.set_origin(&definition.body, &unbound.get_lexical());
+                    }
+                }
                 return self.expand(
                     body,
                     bound.as_ref(),
@@ -309,12 +318,21 @@ impl Expansion<'_> {
                 };
                 if let Some((node, Binding::Thunk { expression, scope })) = binding {
                     let scope = scope.resolve(node);
+                    // TLC walks an argument's `LazyValue` in the context of the code it's written
+                    // in, with the substitutions it collected still apart.
+                    let unbound = Unbound {
+                        instances: unbound.instances.clone(),
+                        lexical: self
+                            .evaluator
+                            .and_then(|evaluator| evaluator.get_origin(expression))
+                            .or_else(|| unbound.lexical.clone()),
+                    };
                     return self.expand(
                         expression,
                         scope.as_ref(),
                         expanding,
                         is_substituted,
-                        unbound,
+                        &unbound,
                         name,
                     );
                 }
@@ -379,6 +397,24 @@ impl Expansion<'_> {
                         scope,
                         self.environment,
                     )?;
+                    if let Some(evaluator) = self.evaluator {
+                        for (param, argument) in params.iter().zip(args) {
+                            let named = (param.arity > 0 && !argument.is_locally_resolved())
+                                .then(|| argument.reference())
+                                .flatten()
+                                .and_then(|name| get_definition(&name, self.environment));
+                            match (&argument.kind, named) {
+                                (_, Some(definition)) => evaluator.set_origin(
+                                    &definition.body,
+                                    &self.environment.tables.get_copy_instances(definition),
+                                ),
+                                (ExpressionKind::Lambda { body, .. }, None) => {
+                                    evaluator.set_origin(body, &unbound.get_lexical());
+                                }
+                                _ => evaluator.set_origin(argument, &unbound.get_lexical()),
+                            }
+                        }
+                    }
                     return self.expand(
                         &body,
                         bound.as_ref(),
@@ -999,7 +1035,14 @@ pub fn get_specification(
     let mut init_conjuncts = Vec::new();
     let mut next_actions = Vec::new();
     let mut temporals = Vec::new();
-    for item in expansion.expand(&definition.body, None, &[], false, &Rc::from([]), None)? {
+    for item in expansion.expand(
+        &definition.body,
+        None,
+        &[],
+        false,
+        &Unbound::default(),
+        None,
+    )? {
         let level = || {
             get_level(
                 &item.expression,
@@ -1211,15 +1254,21 @@ pub fn get_properties(
         }
         // TLC warns of a state-level property as it processes the properties, before it reports
         // a tautology, which the front end doesn't order.
-        let expanded =
-            match expansion.expand(&definition.body, None, &[], false, &Rc::from([]), None) {
-                Err(FrontError::Evaluation(message))
-                    if message == TAUTOLOGY && !properties.state_level.is_empty() =>
-                {
-                    return Err(not_yet("a tautology after a state-level property"));
-                }
-                expanded => expanded?,
-            };
+        let expanded = match expansion.expand(
+            &definition.body,
+            None,
+            &[],
+            false,
+            &Unbound::default(),
+            None,
+        ) {
+            Err(FrontError::Evaluation(message))
+                if message == TAUTOLOGY && !properties.state_level.is_empty() =>
+            {
+                return Err(not_yet("a tautology after a state-level property"));
+            }
+            expanded => expanded?,
+        };
         for item in expanded {
             let level = |expression: &Expr| {
                 get_level(expression, item.scope.as_ref(), environment, facts, &[])

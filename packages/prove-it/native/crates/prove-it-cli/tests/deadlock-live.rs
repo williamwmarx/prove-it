@@ -217,3 +217,47 @@ fn declines_an_atom_that_fails_on_a_deadlocked_state_under_a_view() {
     }
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn declines_an_atom_read_through_an_instance_that_fails_on_a_deadlocked_state() {
+    // TLC's call stack of the state predicate that fails on x = 1 holds the INSTANCE of the
+    // definition the property names, between the property's frame and the definition's:
+    // "1. Line 7, column 1 to line 7, column 15 in M". The engine's has no such frame.
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-cli-deadlock-live-instance-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("B.tla"),
+        "---- MODULE B ----\nEXTENDS Naturals\nVARIABLE x\nBad == 1 \\div (1 - x) = 0\n====\n",
+    )
+    .expect("a module");
+    std::fs::write(
+        directory.join("M.tla"),
+        format!(
+            "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\n{NEXT}Spec == Init /\\ [][Next]_x\nI == INSTANCE B\nP == []<>(I!Bad)\n====\n"
+        ),
+    )
+    .expect("a spec");
+    std::fs::write(directory.join("M.cfg"), "SPECIFICATION Spec\nPROPERTY P\n")
+        .expect("a configuration");
+    for threads in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noTE", "M"])
+            .current_dir(&directory)
+            .env("PROVE_IT_WORKERS", threads)
+            .env("PROVE_IT_SHARED_LEVEL", "1")
+            .output()
+            .expect("the binary runs");
+        let errors = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{threads}: {errors}");
+        assert!(
+            errors.contains(
+                "prove-it: not native yet: a deadlocked state's failing atom read through an INSTANCE"
+            ),
+            "{threads}: {errors}"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}

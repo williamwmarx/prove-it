@@ -202,3 +202,24 @@ fn declines_a_late_node_of_a_state_whose_next_states_fail() {
         "{errors}"
     );
 }
+
+#[test]
+fn declines_an_invariant_listed_twice_that_prints() {
+    // TLC checks Inv twice for each state, printing <<"inv", 1>> twice before the violation at
+    // x = 2. The search checks the second's conjuncts once past the initial states.
+    for threads in ["1", "4"] {
+        let (status, _, errors) = run(
+            "twice",
+            "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nP == <>(x = 3)\nInv == PrintT(<<\"inv\", x>>) /\\ x < 2",
+            "SPECIFICATION Spec\nPROPERTY P\nINVARIANT Inv\nINVARIANT Inv\n",
+            threads,
+        );
+        assert_eq!(status, Some(1), "{errors}");
+        assert!(
+            errors.contains(
+                "not native yet: the engine stopped: an invariant violated: an invariant listed twice that prints, at a stop"
+            ),
+            "{errors}"
+        );
+    }
+}

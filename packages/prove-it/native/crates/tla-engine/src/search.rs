@@ -5583,6 +5583,21 @@ fn place_held_prints(
     // What the expansion printed up to the stop.
     let stopped_output = std::mem::take(&mut machine.output);
     let is_complete = get_stop_completeness(context, search, found)?;
+    // TLC checks an invariant the configuration lists twice twice, and the search checks the
+    // second's conjuncts once.
+    if context.is_invariant_printing
+        && model
+            .invariants
+            .iter()
+            .enumerate()
+            .any(|(position, invariant)| {
+                model.invariants[..position]
+                    .iter()
+                    .any(|earlier| earlier.root.definition == invariant.root.definition)
+            })
+    {
+        return Err("an invariant listed twice that prints, at a stop");
+    }
     let Some(mut held) = search.held.take() else {
         return Err("prints the search didn't hold");
     };

@@ -253,11 +253,13 @@ place it (2), and five more of the evaluator's and the front end's gaps (1 each)
 
 A deadlock in a model with temporal properties prints TLC's output where a check fails as TLC adds
 the deadlocked state to the behavior graphs: the deadlock, the trace, then that check's call stack
-([liveness.md](liveness.md)). A spec that prints, stopped by a deadlock, a violated invariant or
+([liveness.md](liveness.md)). It declines a check that reads a definition an INSTANCE copies, whose
+call stack in TLC holds the INSTANCE as a frame. A spec that prints, stopped by a deadlock, a violated invariant or
 action property, or a failure of Next or an invariant, prints what TLC prints at the stop, in TLC's
 order, the prints of adding the stopped state after the trace included (liveness.md, "Print at a
-stop"). It declines a late node of a state whose next states fail, and one whose full Next takes
-other steps than the search took.
+stop"). It declines a late node of a state whose next states fail, one whose full Next takes
+other steps than the search took, and an invariant that prints which the configuration lists twice,
+which TLC checks twice.
 
 The corpus has no temporal decline: `differential --native-only` matches 1,460 of 1,466 runs, and
 the 6 known differences aren't about liveness.
@@ -282,8 +284,9 @@ operator it calls, a substitute a later INSTANCE or a renaming copies). TLC take
 label whole (`SpecProcessor.processConfigProps`). It unrolls a property's \A where it can evaluate
 the sets in the property's context, which leaves unbound the substitutions of the INSTANCEs it went
 through to the \A (each `SubstInNode`'s, which it collects apart), and takes the \A whole where
-reading one fails; operator arguments are read lazily, LET definitions as they are read, and an
-INSTANCE the sets reach themselves binds its own substitutions. A declaration the root module also
+reading one fails; operator arguments are read lazily, LET definitions as they are read, each in the context
+of the code it is written in, and an INSTANCE's definition the sets name from outside it binds its
+own substitutions, as TLC enters it through its own `SubstInNode`. A declaration the root module also
 has, through EXTENDS, isn't unbound there: TLC's lookup falls back to the value the configuration
 gives it, and the configuration's override of a definition, or the value it assigns one, holds for
 the INSTANCE's copy too, since both are the one node. Where the sets read such a declaration or

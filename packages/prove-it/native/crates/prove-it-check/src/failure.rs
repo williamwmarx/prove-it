@@ -333,11 +333,22 @@ pub fn print_failure(
 // Whether an atom of the temporal properties may print as TLC evaluates it: one read in an
 // instance's scope, or one that reaches Print or PrintT, through the definitions it names.
 fn atoms_print(ir: &Ir) -> bool {
+    ir.model.atoms.iter().any(|atom| atom.scope.is_some())
+        || reaches(
+            ir,
+            ir.model.atoms.iter().map(|atom| atom.expression).collect(),
+            |text, _| matches!(text, "Print" | "PrintT"),
+        )
+}
+
+// Whether the expressions at `pending` name what `is_target` picks, through the definitions they
+// name.
+fn reaches(
+    ir: &Ir,
+    mut pending: Vec<NodeId>,
+    is_target: impl Fn(&str, &tla_ir::Resolution) -> bool,
+) -> bool {
     let arena = &ir.nodes.arena;
-    if ir.model.atoms.iter().any(|atom| atom.scope.is_some()) {
-        return true;
-    }
-    let mut pending: Vec<NodeId> = ir.model.atoms.iter().map(|atom| atom.expression).collect();
     let mut seen = vec![false; arena.len()];
     while let Some(node) = pending.pop() {
         if std::mem::replace(&mut seen[node as usize], true) {
@@ -348,7 +359,7 @@ fn atoms_print(ir: &Ir) -> bool {
         | NodeKind::Apply { name, .. }
         | NodeKind::OperatorReference(name) = kind
         {
-            if matches!(&*ir.texts[name.text as usize], "Print" | "PrintT") {
+            if is_target(&ir.texts[name.text as usize], &name.resolution) {
                 return true;
             }
             if let tla_ir::Resolution::Definition(index) = name.resolution {
@@ -372,6 +383,18 @@ pub(crate) fn deadlock_atom_stack(
     violation: &Violation,
     atom: DeadlockAtom,
 ) -> Result<Vec<SourceRange>, String> {
+    // TLC's call stack holds the INSTANCE of a copied definition the atom reaches.
+    let model = &ir.model;
+    if model.atoms.get(atom.atom as usize).is_none_or(|read| {
+        read.scope.is_some()
+            || reaches(ir, vec![read.expression], |_, resolution| {
+                matches!(resolution, tla_ir::Resolution::Definition(index)
+                    if model.instance_names.iter().any(|&(named, _)| named == *index)
+                        || model.instance_actions.iter().any(|action| action.definition == *index))
+            })
+    }) {
+        return Err("a deadlocked state's failing atom read through an INSTANCE".into());
+    }
     let mut states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
     if atom.is_extra
         && let Some(&last) = states.last()

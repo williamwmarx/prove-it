@@ -32,8 +32,32 @@ const UNBOUND: &str = "a declaration whose substitution is unbound";
 /// A lazy argument: the depth its application evaluates it at where it isn't lazy, or its value.
 #[derive(Clone)]
 enum Lazy {
-    Pending(usize),
+    Pending(usize, Context),
     Computed(ConfigValue),
+}
+
+/// Where an expression read with substitutions unbound is written: the INSTANCEs whose copies
+/// hold it, and those of them its evaluation entered afresh, through a `SubstInNode` TLC binds.
+#[derive(Clone)]
+struct Context {
+    lexical: Rc<[usize]>,
+    fresh: Rc<[usize]>,
+}
+
+/// The INSTANCEs whose substitutions TLC's walk of a property collected apart, and those whose
+/// copies hold the code it walks where that's an argument written elsewhere.
+#[derive(Clone, Default)]
+pub struct Unbound {
+    pub instances: Rc<[usize]>,
+    pub lexical: Option<Rc<[usize]>>,
+}
+
+impl Unbound {
+    pub fn get_lexical(&self) -> Rc<[usize]> {
+        self.lexical
+            .clone()
+            .unwrap_or_else(|| self.instances.clone())
+    }
 }
 
 /// What evaluating a property's \A sets with substitutions unbound finds.
@@ -126,6 +150,10 @@ pub struct Evaluator<'a> {
     /// The lazy bindings where substitutions are unbound, by the scope node that holds each, kept
     /// alive so no other node takes its address: TLC's `LazyValue` computes once.
     lazy_values: RefCell<FastMap<usize, (Rc<Scope>, Lazy)>>,
+    /// Where the evaluation with substitutions unbound is.
+    context: RefCell<Context>,
+    /// The INSTANCEs whose copies hold each argument and LET definition the property's walk binds.
+    origins: RefCell<FastMap<usize, (Expr, Rc<[usize]>)>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -145,6 +173,11 @@ impl<'a> Evaluator<'a> {
             unbound: RefCell::new(Rc::from([])),
             is_uncertain: Cell::new(false),
             lazy_values: RefCell::default(),
+            context: RefCell::new(Context {
+                lexical: Rc::from([]),
+                fresh: Rc::from([]),
+            }),
+            origins: RefCell::default(),
         }
     }
 
@@ -321,7 +354,7 @@ impl Evaluator<'_> {
         if let Some(definition) = self.get_global_definition(name) {
             return match &definition.kind {
                 DefinitionKind::Operator { params, .. } if params.is_empty() => {
-                    self.evaluate(&definition.body, None)
+                    self.enter_definition(definition, || self.evaluate(&definition.body, None))
                 }
                 _ => Err(not_yet("an operator or a function definition as a value")),
             };
@@ -391,6 +424,51 @@ impl Evaluator<'_> {
         }
     }
 
+    /// Notes that the property's walk bound an argument or LET definition written in the copies
+    /// of `lexical`.
+    pub fn set_origin(&self, expression: &Expr, lexical: &Rc<[usize]>) {
+        self.origins.borrow_mut().insert(
+            Rc::as_ptr(expression) as usize,
+            (expression.clone(), lexical.clone()),
+        );
+    }
+
+    pub fn get_origin(&self, expression: &Expr) -> Option<Rc<[usize]>> {
+        self.origins
+            .borrow()
+            .get(&(Rc::as_ptr(expression) as usize))
+            .map(|(_, lexical)| lexical.clone())
+    }
+
+    fn with_context<T>(&self, context: Context, run: impl FnOnce() -> T) -> T {
+        let outer = self.context.replace(context);
+        let value = run();
+        *self.context.borrow_mut() = outer;
+        value
+    }
+
+    // TLC enters a definition an INSTANCE copied through its `SubstInNode`, which binds the
+    // substitutions, unless the code naming it is under that INSTANCE already.
+    fn enter_definition<T>(&self, definition: &Rc<Definition>, run: impl FnOnce() -> T) -> T {
+        if self.unbound.borrow().is_empty() {
+            return run();
+        }
+        let lexical = self.environment.tables.get_copy_instances(definition);
+        let context = self.context.borrow().clone();
+        let fresh = context
+            .fresh
+            .iter()
+            .copied()
+            .chain(
+                lexical
+                    .iter()
+                    .copied()
+                    .filter(|instance| !context.lexical.contains(instance)),
+            )
+            .collect();
+        self.with_context(Context { lexical, fresh }, run)
+    }
+
     /// The bindings of the bounds as `opDefEvaluator.contexts` makes them in
     /// `SpecProcessor.processConfigProps`, with the substitutions of the INSTANCEs `unbound` left
     /// unbound: `Whole` where reading one of them fails, as reading its declaration fails in TLC.
@@ -398,11 +476,15 @@ impl Evaluator<'_> {
         &self,
         bounds: &[Bound],
         scope: Option<&Rc<Scope>>,
-        unbound: &Rc<[usize]>,
+        unbound: &Unbound,
     ) -> Result<Unrolled> {
-        let outer = self.unbound.replace(unbound.clone());
+        let outer = self.unbound.replace(unbound.instances.clone());
         let was_uncertain = self.is_uncertain.replace(false);
-        let bindings = self.get_bindings(bounds, scope);
+        let context = Context {
+            lexical: unbound.get_lexical(),
+            fresh: Rc::from([]),
+        };
+        let bindings = self.with_context(context, || self.get_bindings(bounds, scope));
         *self.unbound.borrow_mut() = outer;
         self.lazy_values.borrow_mut().clear();
         if self.is_uncertain.replace(was_uncertain) {
@@ -657,7 +739,12 @@ impl Evaluator<'_> {
                         .iter()
                         .any(|constant| Rc::ptr_eq(constant, declaration))
                 });
-            if root.is_some() {
+            let instance = self
+                .environment
+                .tables
+                .get_substituting_instance(expression)
+                .expect("an instance");
+            if root.is_some() || self.context.borrow().fresh.contains(&instance) {
                 self.is_uncertain.set(true);
             }
             return Err(FrontError::NotYet(UNBOUND.to_owned()));
@@ -693,13 +780,24 @@ impl Evaluator<'_> {
                                 .borrow()
                                 .get(&key)
                                 .map(|(_, lazy)| lazy.clone());
-                            let depth = match lazy {
+                            let (depth, context) = match lazy {
                                 Some(Lazy::Computed(value)) => return Ok(value),
-                                Some(Lazy::Pending(depth)) => depth,
-                                None => self.depth.get(),
+                                Some(Lazy::Pending(depth, context)) => (depth, context),
+                                None => (
+                                    self.depth.get(),
+                                    self.get_origin(expression).map_or_else(
+                                        || self.context.borrow().clone(),
+                                        |lexical| Context {
+                                            lexical,
+                                            fresh: Rc::from([]),
+                                        },
+                                    ),
+                                ),
                             };
                             let outer = self.depth.replace(depth);
-                            let value = self.evaluate(expression, scope.resolve(node).as_ref());
+                            let value = self.with_context(context, || {
+                                self.evaluate(expression, scope.resolve(node).as_ref())
+                            });
                             self.depth.set(outer);
                             let value = value?;
                             self.lazy_values
@@ -731,20 +829,24 @@ impl Evaluator<'_> {
                                 scope: closure_scope,
                                 ..
                             },
-                        )) => Some((params.clone(), body.clone(), closure_scope.resolve(node))),
+                        )) => Some((
+                            params.clone(),
+                            body.clone(),
+                            closure_scope.resolve(node),
+                            None,
+                        )),
                         _ => return Err(not_yet("an operator a scope doesn't bind")),
                     }
                 } else {
-                    match self
-                        .get_global_definition(&name)
-                        .map(|definition| &definition.kind)
-                    {
+                    let definition = self.get_global_definition(&name);
+                    match definition.map(|definition| &definition.kind) {
                         Some(DefinitionKind::Operator { params, .. }) => Some((
                             params.clone(),
-                            self.get_global_definition(&name)
+                            definition
                                 .map(|definition| definition.body.clone())
                                 .expect("a definition"),
                             None,
+                            definition,
                         )),
                         Some(DefinitionKind::Function { .. }) => {
                             return Err(not_yet("a function definition applied"));
@@ -752,7 +854,7 @@ impl Evaluator<'_> {
                         None => None,
                     }
                 };
-                let Some((params, body, closure_scope)) = closure else {
+                let Some((params, body, closure_scope, definition)) = closure else {
                     return self.apply_operator(self.get_builtin_name(&name), args, scope);
                 };
                 let mut bound = closure_scope;
@@ -778,12 +880,29 @@ impl Evaluator<'_> {
                     if is_lazy {
                         self.lazy_values.borrow_mut().insert(
                             Rc::as_ptr(&node) as usize,
-                            (node.clone(), Lazy::Pending(self.depth.get())),
+                            (
+                                node.clone(),
+                                Lazy::Pending(self.depth.get(), self.context.borrow().clone()),
+                            ),
                         );
                     }
                     bound = Some(node);
                 }
-                self.evaluate(&body, bound.as_ref())
+                match definition {
+                    Some(definition) => {
+                        self.enter_definition(definition, || self.evaluate(&body, bound.as_ref()))
+                    }
+                    None => match self.get_origin(&body) {
+                        Some(lexical) if !self.unbound.borrow().is_empty() => {
+                            let context = Context {
+                                lexical,
+                                fresh: self.context.borrow().fresh.clone(),
+                            };
+                            self.with_context(context, || self.evaluate(&body, bound.as_ref()))
+                        }
+                        _ => self.evaluate(&body, bound.as_ref()),
+                    },
+                }
             }
             ExpressionKind::Junction {
                 is_and, operands, ..
