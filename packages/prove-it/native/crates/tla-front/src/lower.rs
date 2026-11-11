@@ -934,6 +934,16 @@ impl<'a> Lowering<'a> {
                 crate::TlcVersion::Master
             },
         )
+        // Where a property's \A was unrolled with substitutions TLC leaves unbound, its constant
+        // parts may differ from TLC's.
+        .map_err(|error| match error {
+            FrontError::Evaluation(message)
+                if properties.is_unrolled && message.starts_with("TLC expected a boolean value") =>
+            {
+                not_yet("a constant part of a temporal formula that isn't a boolean")
+            }
+            error => error,
+        })
         // `createLivenessChecker` runs inside `withUnexpectedException`.
         .map_err(crate::tlc_messages::with_unexpected_exception)
         // TLC computes the symmetry before it starts the liveness checker, which warns that the

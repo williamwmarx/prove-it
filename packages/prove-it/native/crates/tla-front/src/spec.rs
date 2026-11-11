@@ -8,8 +8,8 @@ use crate::ast::*;
 use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
-use crate::errors::{FrontError, TAUTOLOGY, describe_range};
-use crate::eval::{Evaluator, Unbound, Unrolled};
+use crate::errors::{FrontError, describe_range};
+use crate::eval::Evaluator;
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
@@ -228,6 +228,9 @@ pub struct Expansion<'a> {
     pub is_specification: bool,
     /// What computes the sets a property's \A ranges over, without which it is `NotYet`.
     pub evaluator: Option<&'a Evaluator<'a>>,
+    /// Whether it unrolled a property's \A, which it does with the substitutions of the INSTANCEs
+    /// it went through bound, where TLC leaves them unbound and may take the \A whole.
+    pub is_unrolled: std::cell::Cell<bool>,
 }
 
 impl Expansion<'_> {
@@ -239,23 +242,6 @@ impl Expansion<'_> {
         self.environment.is_substituted(definition)
     }
 
-    // The INSTANCEs a definition reached through `unbound` is under too.
-    fn with_copy_instances(&self, unbound: &Unbound, definition: &Rc<Definition>) -> Unbound {
-        let instances = self.environment.tables.get_copy_instances(definition);
-        if instances.is_empty() {
-            return unbound.clone();
-        }
-        Unbound {
-            instances: unbound
-                .instances
-                .iter()
-                .chain(instances.iter())
-                .copied()
-                .collect(),
-            lexical: unbound.lexical.as_ref().map(|_| instances),
-        }
-    }
-
     /// `expandTemporal`.
     pub fn expand(
         &self,
@@ -263,7 +249,6 @@ impl Expansion<'_> {
         scope: Option<&Rc<Scope>>,
         expanding: &[*const Definition],
         is_substituted: bool,
-        unbound: &Unbound,
         name: Option<Name>,
     ) -> Result<Vec<Expanded>> {
         match &expression.kind {
@@ -280,38 +265,19 @@ impl Expansion<'_> {
                         scope,
                         expanding,
                         is_substituted,
-                        unbound,
                         name,
                     )?);
                 }
                 return Ok(expanded);
             }
-            // TLC takes a property's label whole (`SpecProcessor.processConfigProps` has no case
-            // for a LabelNode).
-            ExpressionKind::Label { body, .. } if !self.is_property => {
-                return self.expand(body, scope, expanding, is_substituted, unbound, name);
+            ExpressionKind::Label { body, .. } => {
+                return self.expand(body, scope, expanding, is_substituted, name);
             }
             ExpressionKind::Let {
                 definitions, body, ..
             } => {
                 let bound = bind_definitions(definitions, scope)?;
-                if let Some(evaluator) = self.evaluator {
-                    for definition in definitions {
-                        evaluator.set_origin(
-                            &definition.body,
-                            &unbound.get_lexical(),
-                            Rc::from([]),
-                        );
-                    }
-                }
-                return self.expand(
-                    body,
-                    bound.as_ref(),
-                    expanding,
-                    is_substituted,
-                    unbound,
-                    name,
-                );
+                return self.expand(body, bound.as_ref(), expanding, is_substituted, name);
             }
             ExpressionKind::Identifier { name: written, .. } => {
                 let reference = expression.reference().unwrap_or_default();
@@ -322,22 +288,11 @@ impl Expansion<'_> {
                 };
                 if let Some((node, Binding::Thunk { expression, scope })) = binding {
                     let scope = scope.resolve(node);
-                    // TLC walks an argument's `LazyValue` in the context of the code it's written
-                    // in, with the substitutions it collected still apart.
-                    let unbound = Unbound {
-                        instances: unbound.instances.clone(),
-                        lexical: self
-                            .evaluator
-                            .and_then(|evaluator| evaluator.get_origin(expression))
-                            .map(|origin| origin.lexical)
-                            .or_else(|| unbound.lexical.clone()),
-                    };
                     return self.expand(
                         expression,
                         scope.as_ref(),
                         expanding,
                         is_substituted,
-                        &unbound,
                         name,
                     );
                 }
@@ -362,7 +317,6 @@ impl Expansion<'_> {
                         None,
                         &expanding,
                         is_substituted || self.is_substituted(definition),
-                        &self.with_copy_instances(unbound, definition),
                         // `opNode.getName()`: the name as written, `A!Safe` for an instance's.
                         Some(written.clone()),
                     )?;
@@ -402,59 +356,18 @@ impl Expansion<'_> {
                         scope,
                         self.environment,
                     )?;
-                    if let Some(evaluator) = self.evaluator {
-                        for (param, argument) in params.iter().zip(args) {
-                            let named = (param.arity > 0 && !argument.is_locally_resolved())
-                                .then(|| argument.reference())
-                                .flatten()
-                                .and_then(|name| get_definition(&name, self.environment));
-                            match (&argument.kind, named) {
-                                // TLC enters the copy through its INSTANCEs' `SubstInNode`s, which
-                                // bind their substitutions.
-                                (_, Some(definition)) => {
-                                    let copied =
-                                        self.environment.tables.get_copy_instances(definition);
-                                    let lexical = unbound.get_lexical();
-                                    let fresh = copied
-                                        .iter()
-                                        .copied()
-                                        .filter(|instance| !lexical.contains(instance))
-                                        .collect();
-                                    evaluator.set_origin(&definition.body, &copied, fresh);
-                                }
-                                (ExpressionKind::Lambda { body, .. }, None) => {
-                                    evaluator.set_origin(
-                                        body,
-                                        &unbound.get_lexical(),
-                                        Rc::from([]),
-                                    );
-                                }
-                                _ => evaluator.set_origin(
-                                    argument,
-                                    &unbound.get_lexical(),
-                                    Rc::from([]),
-                                ),
-                            }
-                        }
-                    }
                     return self.expand(
                         &body,
                         bound.as_ref(),
                         expanding,
                         is_substituted
                             || definition.is_some_and(|definition| self.is_substituted(definition)),
-                        &definition.map_or_else(
-                            || unbound.clone(),
-                            |definition| self.with_copy_instances(unbound, definition),
-                        ),
                         // An instance copy's application is named by its key.
                         Some(expression.reference().unwrap_or_else(|| operator.clone())),
                     );
                 }
             }
-            // TLC unrolls a property's \A over constant sets, and stops at a tautology. It
-            // evaluates the sets in a context without the substitutions of the INSTANCEs it went
-            // through, and takes the \A whole where reading one fails.
+            // TLC unrolls a property's \A over constant sets, and stops at a tautology.
             ExpressionKind::Quantified {
                 quantifier: Quantifier::Forall,
                 bounds,
@@ -467,36 +380,19 @@ impl Expansion<'_> {
                 let Some(evaluator) = self.evaluator else {
                     return Err(not_yet("a property's \\A that TLC unrolls"));
                 };
-                let (bindings, is_uncertain) =
-                    match evaluator.get_bindings_unbound(bounds, scope, unbound)? {
-                        Unrolled::Whole => {
-                            return Ok(vec![Expanded {
-                                expression: expression.clone(),
-                                scope: scope.cloned(),
-                                name,
-                            }]);
-                        }
-                        Unrolled::Bindings(bindings) => (bindings, false),
-                        // Where the front end can't follow TLC's lookup, it unrolls the \A with
-                        // the substitutions bound, as it did before it followed TLC's rule.
-                        Unrolled::Uncertain => (evaluator.get_bindings(bounds, scope)?, true),
-                    };
                 let mut expanded = Vec::new();
-                for binding in bindings {
+                for binding in evaluator.get_bindings(bounds, scope)? {
                     expanded.extend(self.expand(
                         body,
                         binding.as_ref(),
                         expanding,
                         is_substituted,
-                        unbound,
                         Some(Rc::from(describe_range(body))),
                     )?);
                 }
-                if expanded.is_empty() && is_uncertain {
-                    return Err(not_yet("a property TLC finds a tautology"));
-                }
+                self.is_unrolled.set(true);
                 if expanded.is_empty() {
-                    return Err(FrontError::Evaluation(TAUTOLOGY.to_owned()));
+                    return Err(not_yet("a property TLC finds a tautology"));
                 }
                 return Ok(expanded);
             }
@@ -1053,18 +949,12 @@ pub fn get_specification(
         is_property: false,
         is_specification: true,
         evaluator: None,
+        is_unrolled: std::cell::Cell::new(false),
     };
     let mut init_conjuncts = Vec::new();
     let mut next_actions = Vec::new();
     let mut temporals = Vec::new();
-    for item in expansion.expand(
-        &definition.body,
-        None,
-        &[],
-        false,
-        &Unbound::default(),
-        None,
-    )? {
+    for item in expansion.expand(&definition.body, None, &[], false, None)? {
         let level = || {
             get_level(
                 &item.expression,
@@ -1195,6 +1085,8 @@ pub struct Properties {
     pub invariants: Vec<Property>,
     pub action_properties: Vec<ActionProperty>,
     pub liveness: Vec<Property>,
+    /// Whether a property's \A was unrolled, as `Expansion::is_unrolled`.
+    pub is_unrolled: bool,
     /// The properties TLC warns are state formulas, which it checks only on the initial states.
     pub state_level: Vec<Name>,
 }
@@ -1263,6 +1155,7 @@ pub fn get_properties(
         is_property: version != TlcVersion::V1_7_4,
         is_specification: false,
         evaluator,
+        is_unrolled: std::cell::Cell::new(false),
     };
     for name in &config.properties {
         let Some(definition) =
@@ -1274,24 +1167,7 @@ pub fn get_properties(
         if get_level(&definition.body, None, environment, facts, &[]) == Level::Variable {
             properties.state_level.push(name.clone());
         }
-        // TLC warns of a state-level property as it processes the properties, before it reports
-        // a tautology, which the front end doesn't order.
-        let expanded = match expansion.expand(
-            &definition.body,
-            None,
-            &[],
-            false,
-            &Unbound::default(),
-            None,
-        ) {
-            Err(FrontError::Evaluation(message))
-                if message == TAUTOLOGY && !properties.state_level.is_empty() =>
-            {
-                return Err(not_yet("a tautology after a state-level property"));
-            }
-            expanded => expanded?,
-        };
-        for item in expanded {
+        for item in expansion.expand(&definition.body, None, &[], false, None)? {
             let level = |expression: &Expr| {
                 get_level(expression, item.scope.as_ref(), environment, facts, &[])
             };
@@ -1362,6 +1238,7 @@ pub fn get_properties(
             }
         }
     }
+    properties.is_unrolled = expansion.is_unrolled.get();
     Ok(properties)
 }
 

@@ -1361,11 +1361,6 @@ impl Linker<'_> {
             Instantiation {
                 params,
                 substitutions,
-                constants: linked
-                    .constants
-                    .iter()
-                    .map(|constant| (constant.name.clone(), constant.clone()))
-                    .collect(),
                 variables: linked.variables.iter().cloned().collect(),
                 get_definition: Box::new(|key| self.definitions.borrow().get(key).cloned()),
                 is_parameterized: Box::new(|key| {

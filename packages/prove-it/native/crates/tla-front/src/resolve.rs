@@ -136,9 +136,6 @@ pub struct InstancedModule {
 pub type GetInstance<'a> = Rc<dyn Fn(&Rc<Instance>) -> Result<InstancedModule> + 'a>;
 pub type GetKey = Rc<dyn Fn(&Definition) -> Name>;
 
-/// A copy of a definition, kept so no other takes its address, and the INSTANCEs it is under.
-type InstanceCopy = (Rc<Definition>, Rc<[usize]>, Rc<Definition>);
-
 /// A name that selects nothing, the arguments SANY analyzes before it, and the error it reports.
 type SelectionError = (Expr, Vec<Expr>, SanyError);
 
@@ -156,17 +153,7 @@ pub struct Tables {
     source_names: RefCell<FastMap<usize, (Rc<Definition>, Name)>>,
     errors: RefCell<FastMap<usize, SelectionError>>,
     renamed_arities: RefCell<FastMap<usize, (Expr, usize)>>,
-    /// The expressions INSTANCEs put in for declarations, each with the INSTANCE and whether it
-    /// applies an operator put in for an operator declaration.
-    substitutions: RefCell<FastMap<usize, (Expr, usize, bool)>>,
-    /// The expressions more than one INSTANCE puts in, as a bare name put in again by an
-    /// INSTANCE in the instantiated module.
-    shared_substitutions: RefCell<FastSet<usize>>,
-    instance_count: Cell<usize>,
-    /// The declaration each expression an INSTANCE puts in replaces.
-    substituted_declarations: RefCell<FastMap<usize, (Expr, Rc<Declaration>)>>,
-    /// The copies INSTANCEs make of definitions, each with the INSTANCEs it is under.
-    copies: RefCell<FastMap<usize, InstanceCopy>>,
+    substitutions: RefCell<FastMap<usize, Expr>>,
 }
 
 fn address(expression: &Expr) -> usize {
@@ -174,77 +161,19 @@ fn address(expression: &Expr) -> usize {
 }
 
 impl Tables {
-    /// A number for an INSTANCE that makes copies, unique among them.
-    pub fn new_instance(&self) -> usize {
-        let instance = self.instance_count.get();
-        self.instance_count.set(instance + 1);
-        instance
-    }
-
-    /// Notes an expression the INSTANCE `instance` puts in for a declaration of the module it
-    /// instantiates, or, `is_operator`, an application of the operator it puts in for one.
-    pub fn add_substitution(&self, expression: &Expr, instance: usize, is_operator: bool) {
-        if self
-            .substitutions
-            .borrow()
-            .get(&address(expression))
-            .is_some_and(|substituted| substituted.1 != instance)
-        {
-            self.shared_substitutions
-                .borrow_mut()
-                .insert(address(expression));
-        }
-        self.substitutions.borrow_mut().insert(
-            address(expression),
-            (expression.clone(), instance, is_operator),
-        );
+    /// Notes an expression an INSTANCE puts in for a declaration of the module it instantiates.
+    pub fn add_substitution(&self, expression: &Expr) {
+        self.substitutions
+            .borrow_mut()
+            .insert(address(expression), expression.clone());
     }
 
     /// Notes a copy of an expression an INSTANCE put in for a declaration as one too, as a later
     /// INSTANCE or a renaming makes it.
     pub fn carry_substitution(&self, source: &Expr, copy: &Expr) {
-        let carried = self
-            .substitutions
-            .borrow()
-            .get(&address(source))
-            .map(|substituted| (substituted.1, substituted.2));
-        if let Some((instance, is_operator)) = carried {
-            self.add_substitution(copy, instance, is_operator);
+        if self.is_substitution(source) {
+            self.add_substitution(copy);
         }
-        let declaration = self.get_substituted_declaration(source);
-        if let Some(declaration) = declaration {
-            self.add_substituted_declaration(copy, &declaration);
-        }
-    }
-
-    /// Notes the declaration an expression an INSTANCE puts in replaces.
-    pub fn add_substituted_declaration(&self, expression: &Expr, declaration: &Rc<Declaration>) {
-        self.substituted_declarations.borrow_mut().insert(
-            address(expression),
-            (expression.clone(), declaration.clone()),
-        );
-    }
-
-    /// Notes that an application of an operator an INSTANCE puts in replaces the declaration the
-    /// operator itself replaces.
-    pub fn carry_declaration(&self, replacement: &Expr, application: &Expr) {
-        if let Some(declaration) = self.get_substituted_declaration(replacement) {
-            self.add_substituted_declaration(application, &declaration);
-        }
-    }
-
-    /// The declaration an expression an INSTANCE put in replaces.
-    pub fn is_shared_substitution(&self, expression: &Expr) -> bool {
-        self.shared_substitutions
-            .borrow()
-            .contains(&address(expression))
-    }
-
-    pub fn get_substituted_declaration(&self, expression: &Expr) -> Option<Rc<Declaration>> {
-        self.substituted_declarations
-            .borrow()
-            .get(&address(expression))
-            .map(|(_, declaration)| declaration.clone())
     }
 
     /// Whether an INSTANCE puts this expression in for a declaration, where TLC's `SubstInNode`
@@ -252,54 +181,7 @@ impl Tables {
     pub fn is_substitution(&self, expression: &Expr) -> bool {
         self.substitutions
             .borrow()
-            .get(&address(expression))
-            .is_some_and(|substituted| !substituted.2)
-    }
-
-    /// The INSTANCE that put this expression in for a declaration, or an application of an
-    /// operator in for one.
-    pub fn get_substituting_instance(&self, expression: &Expr) -> Option<usize> {
-        self.substitutions
-            .borrow()
-            .get(&address(expression))
-            .map(|substituted| substituted.1)
-    }
-
-    /// Notes a copy of a definition an INSTANCE makes, with the INSTANCEs its source went
-    /// through: TLC's definition reached through them is the body under their `SubstInNode`s.
-    pub fn add_copy(&self, copy: &Rc<Definition>, source: &Rc<Definition>, instance: usize) {
-        let instances: Rc<[usize]> = std::iter::once(instance)
-            .chain(self.get_copy_instances(source).iter().copied())
-            .collect();
-        self.copies.borrow_mut().insert(
-            Rc::as_ptr(copy) as usize,
-            (copy.clone(), instances, source.clone()),
-        );
-    }
-
-    /// The INSTANCEs whose substitutions a copy of a definition is under.
-    pub fn get_copy_instances(&self, definition: &Rc<Definition>) -> Rc<[usize]> {
-        self.copies
-            .borrow()
-            .get(&(Rc::as_ptr(definition) as usize))
-            .map_or_else(|| Rc::from([]), |(_, instances, _)| instances.clone())
-    }
-
-    /// The definition a copy an INSTANCE made was copied from, through every INSTANCE it went
-    /// through, or the definition itself where no INSTANCE copied it.
-    pub fn get_original(&self, definition: &Rc<Definition>) -> Rc<Definition> {
-        let mut original = definition.clone();
-        loop {
-            let source = self
-                .copies
-                .borrow()
-                .get(&(Rc::as_ptr(&original) as usize))
-                .map(|(_, _, source)| source.clone());
-            match source {
-                Some(source) => original = source,
-                None => return original,
-            }
-        }
+            .contains_key(&address(expression))
     }
 
     /// `getSourceName`.

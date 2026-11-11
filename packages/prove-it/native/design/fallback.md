@@ -283,24 +283,13 @@ binds it to the expression's value (`Liveness.astToLive`), so TLC names the decl
 instantiated module writes it, which the front end doesn't keep: that declines wherever the part
 is, or is within, a substitute or what the front end makes of one (a LET or IF it folds, an
 operator it calls, a substitute a later INSTANCE or a renaming copies). TLC takes a property's
-label whole (`SpecProcessor.processConfigProps`). It unrolls a property's \A where it can evaluate
-the sets in the property's context, which leaves unbound the substitutions of the INSTANCEs it went
-through to the \A (each `SubstInNode`'s, which it collects apart), and takes the \A whole where
-reading one fails; operator arguments are read lazily, LET definitions as they are read, each in the context
-of the code it is written in, and an INSTANCE's definition the sets name from outside it binds its
-own substitutions, as TLC enters it through its own `SubstInNode`. A declaration the root module also
-has, through EXTENDS, isn't unbound there: TLC's lookup falls back to the value the configuration
-gives it, and the configuration's override of a definition, or the value it assigns one, holds for
-the INSTANCE's copy too, since both are the one node. Where the sets read such a declaration or
-copy, a substitute two INSTANCEs put in (as an INSTANCE in the instantiated module does with
-`K <- C`), or a copy an operator argument names, which TLC enters through its own `SubstInNode`,
-the front end doesn't follow TLC's lookup and unrolls the \A with the substitutions bound, as main
-did; elsewhere it evaluates the sets
-so, with the substitutions of the INSTANCEs whose copies it expanded through left unbound, and
-declines a \A taken whole whose body fails, where TLC wraps the failure in
-`EC.TLC_LIVE_CANNOT_HANDLE_FORMULA`. A grid of 112 small specs
-(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 720 of its 896 runs; the others
-decline, for the constant evaluator's gaps, a substituted declaration, such a \A, or a tautology
+label whole, and unrolls a property's \A with the substitutions of the INSTANCEs it went through
+left unbound, taking the \A whole where reading one fails (`SpecProcessor.processConfigProps`).
+The front end unrolls a \A as main does, with the substitutions bound, so it declines, as main
+does, a tautology or a constant part that isn't a boolean in a property where it unrolled a \A
+(see "Declines to win back"). A grid of 112 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 608 of its 896 runs; the others
+decline, for the constant evaluator's gaps, a substituted declaration, an unrolled \A, or a tautology
 after a state-level property, which TLC warns of first. Four name an
 INSTANCE's definition before the INSTANCE, which SANY doesn't know there.
 
@@ -327,6 +316,14 @@ it from one that printed something else. Each is outside the corpus:
   `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
   `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
   first position where the stream differs from the normalized set, not where the stream starts.
+
+A property's \A that TLC unrolls, or takes whole, with the substitutions of the INSTANCEs it went
+through left unbound declines where it is a tautology or has a constant part that isn't a boolean,
+as on main. Branch `live-stops-full` follows TLC's lookup there: lazy operator arguments, LET
+definitions and closures read in the context they are written in, a definition named from outside
+its INSTANCE entered through its own `SubstInNode`, and root constants and configuration overrides
+read past an INSTANCE. Eight adversarial rounds kept finding edges in it (nested INSTANCEs that
+substitute a bare name, operator arguments naming an INSTANCE's copy), so it waits there.
 
 #### Known wrong outputs
 
