@@ -654,6 +654,11 @@ const COMMUNITY_MODULES: &[&str] = &[
     "VectorClocks",
 ];
 
+/// The stack a thread needs to write SANY's report: the front end recurses as deep as TLC's
+/// translation of a formula does, up to the nesting it declines, which a thread's default stack
+/// doesn't hold.
+pub const REPORT_STACK_BYTES: usize = 64 * 1024 * 1024;
+
 /// What SANY prints for the spec at `spec_path` while TLC runs it: when SANY accepts the spec
 /// without a message, or stops at a fatal error other than a parse error. `NotYet` for SANY's
 /// other messages, PlusCal and what SANY's linter could warn about.

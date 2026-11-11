@@ -37,12 +37,6 @@ fn declined(reason: &str) -> HostValue {
     ])
 }
 
-/// The stack of the thread the report is written on: the front end recurses as deep as TLC's
-/// translation of a formula does, which the stack of the thread JavaScript calls on doesn't hold,
-/// as `prove-it-cli`'s run thread doesn't.
-#[cfg(not(target_arch = "wasm32"))]
-const REPORT_STACK_BYTES: usize = 64 * 1024 * 1024;
-
 /// Runs `write` on this thread: wasm's stack is the one it links.
 #[cfg(target_arch = "wasm32")]
 fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
@@ -54,7 +48,7 @@ fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
 fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
-            .stack_size(REPORT_STACK_BYTES)
+            .stack_size(tla_front::report::REPORT_STACK_BYTES)
             .spawn_scoped(scope, write)
             .expect("a thread for SANY's report")
             .join()

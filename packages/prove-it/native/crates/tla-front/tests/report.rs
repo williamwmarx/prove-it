@@ -6,7 +6,7 @@ use std::path::Path;
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text};
+use tla_front::report::{ModuleOrigin, REPORT_STACK_BYTES, ReportOptions, SanyText, get_sany_text};
 
 /// What SANY prints for the root module `source`, named Main, with no other files.
 fn get_text(name: &str, source: &str) -> String {
@@ -137,6 +137,17 @@ fn reports_each_adversarial_case_as_sany_does_or_declines() {
 /// `<cases>/<case>`: the same text, or, where `case.json` gives the reason the front end declines
 /// it for (`declines`), that decline.
 fn check_recorded_cases(cases: &str, recordings: &BTreeMap<String, String>) {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(REPORT_STACK_BYTES)
+            .spawn_scoped(scope, || check_recorded_cases_here(cases, recordings))
+            .expect("a thread for the reports")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    });
+}
+
+fn check_recorded_cases_here(cases: &str, recordings: &BTreeMap<String, String>) {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join(cases);
