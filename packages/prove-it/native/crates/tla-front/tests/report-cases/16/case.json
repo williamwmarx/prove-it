@@ -1,0 +1,5 @@
+{
+ "root": "Prefix",
+ "version": "master",
+ "test": "reads a definition of the built-in prefix operator <> and rejects it"
+}

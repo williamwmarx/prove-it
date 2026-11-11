@@ -9,7 +9,7 @@ use crate::ast::{
     ExpressionKind, Instance, Location, Name, OperatorParam, Position, Quantifier, SourceRange,
 };
 use crate::lexer::TokenKind;
-use crate::sany::nodes::{Decimal, Label, LetIn, NodeId, NodeKind, SanyLocation};
+use crate::sany::nodes::{Decimal, DefKind, Label, LetIn, NodeId, NodeKind, SanyLocation};
 use crate::sany::source::{
     TokenSpan, find_name_tokens, find_token, get_expression_span, get_matching_index,
     get_parenthesized_span, get_span_location, get_token_index, get_token_location,
@@ -896,6 +896,21 @@ impl ModuleGenerator<'_> {
                     return Ok(function_node);
                 }
                 self.check_recursion(function_node);
+                // A user-defined function applied to two or more arguments takes as many as its
+                // definition binds; a tuple of bound symbols is one.
+                if let Some((name, parameters)) = self.get_function_parameters(function_node)
+                    && args.len() >= 2
+                    && parameters != args.len()
+                {
+                    self.add_error(
+                        &location,
+                        format!(
+                            "Function '{name}' is defined with {parameters} parameters, but is applied to {} arguments.",
+                            args.len()
+                        ),
+                    );
+                    return Ok(self.create_null_node());
+                }
                 let argument = if let [argument] = args.as_slice() {
                     self.generate_expression(argument)?
                 } else {
@@ -999,6 +1014,46 @@ impl ModuleGenerator<'_> {
     }
 
     /// `generateLabel` (generator.ts 1713–1782). `expression` is a `Label`.
+    /// The name of the function `node` applies and how many parameters its definition binds,
+    /// where it applies a user-defined function (`$NonRecursiveFcnSpec` or `$RecursiveFcnSpec`).
+    fn get_function_parameters(&self, node: NodeId) -> Option<(Name, usize)> {
+        let graph = &self.spec.graph;
+        let NodeKind::OpAppl(application) = graph.kind(node) else {
+            return None;
+        };
+        let definition = graph.op_def(application.operator)?;
+        if definition.def_kind != DefKind::UserDefined {
+            return None;
+        }
+        let NodeKind::OpAppl(body) = graph.kind(definition.body?) else {
+            return None;
+        };
+        let is_function = graph.op_def(body.operator).is_some_and(|operator| {
+            matches!(
+                &*operator.name,
+                "$NonRecursiveFcnSpec" | "$RecursiveFcnSpec"
+            )
+        });
+        if !is_function {
+            return None;
+        }
+        let tuples = body.tuple_ors.as_deref().unwrap_or_default();
+        let parameters = body
+            .bounded
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .map(|(index, symbols)| {
+                if tuples.get(index).copied().unwrap_or(false) {
+                    1
+                } else {
+                    symbols.len()
+                }
+            });
+        Some((definition.name.clone(), parameters.sum()))
+    }
+
     pub(super) fn generate_label(&mut self, expression: &Expr) -> Result<NodeId> {
         let ExpressionKind::Label {
             name, params, body, ..

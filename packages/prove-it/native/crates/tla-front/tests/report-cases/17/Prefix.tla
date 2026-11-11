@@ -1,0 +1,3 @@
+---- MODULE Prefix ----
+~ a == a
+====
