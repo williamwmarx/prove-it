@@ -4,6 +4,6 @@ Semantic processing of module FiniteSets
 Semantic processing of module TLC
 Semantic processing of module M
 Linting of module M
-Error: Evaluating assumption line 6, col 8 to line 6, col 57 of module M failed.
-Attempted to compare string "a" with non-string:
-2
+Error: Evaluating assumption line 9, col 8 to line 9, col 26 of module M failed.
+Attempted to check equality of integer 20 with non-integer:
+"a"

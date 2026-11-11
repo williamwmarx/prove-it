@@ -4,7 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -69,13 +69,13 @@ enum Binding {
 }
 
 /// The value of an argument or an expression's LET definition once evaluated, while the evaluator
-/// checks an assumption: TLC keeps it (`LazyValue`'s cache) for the states and control it evaluated
+/// checks an assumption, as a copy for each use (`Snapshot`): TLC keeps it (`LazyValue`'s cache) for the states and control it evaluated
 /// it in, which in an assumption are the empty states and plain control throughout
 /// (`Tool.isValidAssumption`), so it reuses it at every later use there. Elsewhere TLC's cache
 /// depends on the states and control each of its `eval` calls passes, which the trace evaluator
 /// doesn't follow, so it evaluates the argument again at each use, as before. A LET of an action
 /// or the initial predicate binds none (`Tool#getNextStates`).
-type Kept = Rc<std::cell::RefCell<Option<KeptValue>>>;
+type Kept = Rc<RefCell<Option<KeptValue>>>;
 
 struct KeptValue {
     /// Whether evaluating it read the state, a register or the generator, and whether it built a
@@ -83,7 +83,7 @@ struct KeptValue {
     /// would.
     is_read: bool,
     is_captured: bool,
-    value: Value,
+    value: Snapshot,
 }
 
 pub struct Operator {
@@ -2099,7 +2099,7 @@ impl<'ir> Evaluator<'ir> {
                 {
                     self.reads += u64::from(kept.is_read);
                     self.captures += u64::from(kept.is_captured);
-                    return Ok(kept.value.clone());
+                    return Ok(kept.value.value());
                 }
                 let inner = own_context(bound, frame, *is_self).primed(is_primed);
                 let state = self.random.as_ref().map(JavaRandom::state);
@@ -2107,11 +2107,13 @@ impl<'ir> Evaluator<'ir> {
                 let value = self.evaluate(*node, &inner)?;
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
-                } else if let Some(kept) = kept {
+                } else if let Some(kept) = kept
+                    && let Some(snapshot) = Snapshot::of(&value)
+                {
                     *kept.borrow_mut() = Some(KeptValue {
                         is_read: self.reads != reads,
                         is_captured: self.captures != captures,
-                        value: value.clone(),
+                        value: snapshot,
                     });
                 }
                 // TLC keeps the value it computes for a next state, as one object.
@@ -6161,6 +6163,83 @@ fn is_chosen(element: &Value, chosen: &Value) -> Option<bool> {
 }
 
 // Whether a value holds a set TLC can't normalize.
+// A kept value as evaluating it made it: each set and function with the order TLC built it in,
+// where TLC holds it so still, taken as it was kept. A later use normalizes the object it is given,
+// as one TLC holds as built is normalized only by the uses TLC normalizes it in; so each use gets
+// a copy of its own (`Snapshot::value`), as evaluating the argument again gives, while the work of
+// evaluating it is done once.
+enum Snapshot {
+    Value(Value),
+    Set {
+        elements: Vec<Snapshot>,
+        written: Option<Vec<Snapshot>>,
+    },
+    Function {
+        domain: Vec<Snapshot>,
+        range: Vec<Snapshot>,
+        class: Class,
+        written: Option<Vec<u32>>,
+        search: Search,
+        interval: Option<(i32, i32)>,
+    },
+}
+
+impl Snapshot {
+    // The value as it is now, or `None` for a lazy value, whose sets aren't the evaluator's to
+    // copy.
+    fn of(value: &Value) -> Option<Snapshot> {
+        let all = |values: &[Value]| values.iter().map(Snapshot::of).collect::<Option<Vec<_>>>();
+        Some(match value {
+            Value::Set(elements) => Snapshot::Set {
+                elements: all(elements)?,
+                written: match unnormalized(value) {
+                    Some(written) => Some(all(&written)?),
+                    None => None,
+                },
+            },
+            Value::Function(function) => Snapshot::Function {
+                domain: all(&function.domain)?,
+                range: all(&function.range)?,
+                class: function.class.get(),
+                written: function.written.borrow().clone(),
+                search: function.search.get(),
+                interval: function.interval,
+            },
+            Value::Lazy(_) | Value::Lambda(_) => return None,
+            other => Snapshot::Value(other.clone()),
+        })
+    }
+
+    fn value(&self) -> Value {
+        let all = |snapshots: &[Snapshot]| snapshots.iter().map(Snapshot::value).collect();
+        match self {
+            Snapshot::Value(value) => value.clone(),
+            Snapshot::Set { elements, written } => {
+                let set = Value::Set(Rc::new(all(elements)));
+                if let Some(written) = written {
+                    mark_unnormalized(&set, all(written));
+                }
+                set
+            }
+            Snapshot::Function {
+                domain,
+                range,
+                class,
+                written,
+                search,
+                interval,
+            } => Value::Function(Rc::new(Function {
+                domain: all(domain),
+                range: all(range),
+                class: Cell::new(*class),
+                written: RefCell::new(written.clone()),
+                search: Cell::new(*search),
+                interval: *interval,
+            })),
+        }
+    }
+}
+
 fn holds_unsorted(value: &Value) -> bool {
     match value {
         Value::Unsorted(_) => true,

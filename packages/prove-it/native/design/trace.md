@@ -495,7 +495,12 @@ states assigned holds an equal value still and the control is the same. A LET of
 the initial predicate binds none (`Tool.java:482-487`, `937-941`).
 
 The trace evaluator keeps such a value only while it checks an assumption (`Kept`,
-`Rebuilder::assuming`). TLC checks an assumption with empty states and plain control throughout
+`Rebuilder::assuming`), and gives each later use a copy of it as evaluating the argument made it
+(`Snapshot`): each set and function TLC held as built then is a new object, unnormalized as it
+was. TLC shares the one object, which the uses it normalizes in normalize; the trace evaluator
+normalizes a set in some uses TLC doesn't, such as applying a function over it and UNION, so a
+shared object would carry that to later uses, where a copy can't. A lazy value isn't kept, as its
+sets aren't the evaluator's to copy. TLC checks an assumption with empty states and plain control throughout
 (`Tool.isValidAssumption`, `Tool.java:3627`), and an assumption is of constant level, so TLC's
 cache holds and is found at every later use there; the trace evaluator does the same, so what an
 argument prints there it prints once, and an argument used twice in a recursion is evaluated
