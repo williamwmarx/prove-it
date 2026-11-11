@@ -552,7 +552,8 @@ Not native, where TLC writes what the binary doesn't model:
   as it reports the failure;
 - `-dump dot` labelling an action of a parameterised INSTANCE with parameters: TLC keys an action's
   parameters by name (`Action.getParameters`), so an instance's parameter and its operator's of
-  one name are one;
+  one name are one; and labelling an action whose operator takes an operator, which TLC writes as
+  `<Operator P>` where the label holds none;
 - `-dump dot,constrained`: TLC writes a step to each successor a constraint excludes and to each
   that an action's guard excludes (`addUnsatisfiedState`), with the predicate;
 - `-dump dot` with an ALIAS, which labels the states; with `colorize` or `actionlabels` where the

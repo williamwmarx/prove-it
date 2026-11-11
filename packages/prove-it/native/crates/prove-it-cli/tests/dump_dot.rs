@@ -167,9 +167,9 @@ fn declines_a_dump_after_a_dump_dot() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
-// TLC writes the steps of the state an action fails on again as it reports the failure, and keys
-// an action's parameters by name, so an instance's parameter and its operator's of one name are
-// one: both decline.
+// TLC writes the steps of the state an action fails on again as it reports the failure, keys an
+// action's parameters by name, so an instance's parameter and its operator's of one name are one,
+// and labels an operator an action takes as an argument (`<Operator P1>`): each declines.
 #[test]
 fn declines_a_dump_dot_it_doesnt_follow() {
     for (test, spec, reason) in [
@@ -182,6 +182,11 @@ fn declines_a_dump_dot_it_doesnt_follow() {
             "dot-instance-parameters",
             "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x\nI(k) == INSTANCE Other\nInit == x = 0\nNext == I(1)!A \\/ I(2)!B(7) \\/ (x = 7 /\\ x' = 8)\n====\n",
             "-dump dot of an instance's action with parameters",
+        ),
+        (
+            "dot-operator-argument",
+            "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nInc(F(_)) == x < 3 /\\ x' = F(x)\nP1(a) == a + 1\nP2(a) == a + 2\nNext == Inc(P1) \\/ Inc(P2)\n====\n",
+            "-dump dot of an action that takes an operator",
         ),
     ] {
         let directory =

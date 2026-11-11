@@ -292,6 +292,19 @@ fn get_signature(ir: &Ir, action: &tla_ir::Action) -> Result<String, &'static st
     if name.contains('!') && label[name.len()..].starts_with('(') {
         return Err("-dump dot of an instance's action with parameters");
     }
+    // TLC writes an operator its action takes as an argument (`<Operator P1>`), which the label
+    // leaves out.
+    let definition = action
+        .definition
+        .map(|index| &ir.nodes.arena[ir.definitions[index as usize] as usize].kind);
+    if let Some(tla_ir::NodeKind::Definition(tla_ir::Definition {
+        form: tla_ir::DefinitionForm::Operator(params),
+        ..
+    })) = definition
+        && params.iter().any(|param| param.arity > 0)
+    {
+        return Err("-dump dot of an action that takes an operator");
+    }
     let parameters = label
         .strip_prefix(name)
         .and_then(|rest| {
