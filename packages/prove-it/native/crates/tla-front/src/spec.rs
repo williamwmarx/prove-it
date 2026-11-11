@@ -652,6 +652,19 @@ fn get_config_operator<'a>(
     Ok(definition)
 }
 
+/// `NotYet` for the value of a name the configuration substitutes a definition for, but TRUE,
+/// which TLC checks as the operator it holds the name as: it computed the definition under the
+/// definition's own name, and checks the name where the front end would check its value
+/// (`SpecProcessor.processSpec`).
+fn check_unsubstituted(name: &str, value: &ConfigValue, environment: &Environment) -> Result<()> {
+    if environment.substitutions.contains_key(name) && *value != ConfigValue::Boolean(true) {
+        return Err(not_yet(
+            "a name the configuration substitutes a definition for whose value isn't TRUE",
+        ));
+    }
+    Ok(())
+}
+
 /// `getConstantValue`: the value TLC computed at startup for a constant definition, or none for
 /// a literal, which stays an operator, or a definition that fails to evaluate.
 fn get_constant_value(
@@ -673,12 +686,17 @@ fn get_constant_value(
         return Err(not_yet("a constant definition the configuration names"));
     };
     match evaluator.evaluate(&create_identifier(name), None) {
-        Ok(value) => Ok(Some(value)),
+        Ok(value) => {
+            check_unsubstituted(name, &value, environment)?;
+            Ok(Some(value))
+        }
         Err(FrontError::Evaluation(_)) => Ok(None),
         // The engine's startup checks what the evaluator can't compute (`Startup::predicates`).
         // TLC rejects any value of a definition that isn't a predicate, which the front end then
         // can't tell from one that fails to evaluate.
-        Err(FrontError::NotYet(_)) if is_deferrable => {
+        Err(FrontError::NotYet(_))
+            if is_deferrable && !environment.substitutions.contains_key(name) =>
+        {
             evaluator.defer();
             Ok(None)
         }
@@ -768,6 +786,7 @@ fn is_constant_true(
     let value = match evaluator.evaluate(&item.expression, item.scope.as_ref()) {
         Err(FrontError::NotYet(_) | FrontError::Evaluation(_))
             if usage == "spec"
+                && !environment.substitutions.contains_key(name)
                 && item.scope.is_none()
                 && !item.expression.is_locally_resolved()
                 && get_definition(name, environment).is_some_and(|definition| {
@@ -777,8 +796,14 @@ fn is_constant_true(
             evaluator.defer_conjunct(Rc::from(name));
             return Ok(true);
         }
+        Err(FrontError::Evaluation(_)) if environment.substitutions.contains_key(name) => {
+            return Err(not_yet(
+                "a conjunct the configuration substitutes a definition that fails for",
+            ));
+        }
         value => value?,
     };
+    check_unsubstituted(name, &value, environment)?;
     match value {
         ConfigValue::Boolean(true) => Ok(true),
         ConfigValue::Boolean(false) => Err(FrontError::Config(format!(
@@ -1199,6 +1224,15 @@ fn get_config_predicate<'a>(
     };
     match value {
         None => Ok(definition),
+        // TLC warns of a constant invariant it holds the value of, but not of one it holds as
+        // the definition the configuration substitutes for it.
+        Some(ConfigValue::Boolean(true))
+            if kind == "invariant" && environment.substitutions.contains_key(name) =>
+        {
+            Err(not_yet(
+                "an invariant the configuration substitutes a TRUE definition for",
+            ))
+        }
         Some(ConfigValue::Boolean(true)) => Ok(None),
         Some(value) => Err(FrontError::Config(format!(
             "The {kind} of {name} is equal to {}",

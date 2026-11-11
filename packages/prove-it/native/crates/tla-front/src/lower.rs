@@ -1147,6 +1147,22 @@ impl<'a> Lowering<'a> {
                      {name} <- {target}"
                 )));
             }
+            // TLC computes the substitute for a definition it replaces where that definition is,
+            // as well as where its own is, unless the first computed it (`processConstantDefns`).
+            if !is_constant
+                && environment.definitions.contains_key(name)
+                && reaches_shown_effect(definition, environment, None)
+                && environment
+                    .create_level_analyzer(&["TLCGet", "Trace", "CounterExample"])
+                    .analyze_definition(definition, &crate::levels::Scope::default())?
+                    .data
+                    .level
+                    == 0
+            {
+                return Err(FrontError::NotYet(format!(
+                    "a configuration substitute with effects for a definition: {name} <- {target}"
+                )));
+            }
             let is_checked = is_constant
                 && matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
                 && !self.facts.is_constant_level(definition, environment);
