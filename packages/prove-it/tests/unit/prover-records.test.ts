@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
   getInputKey,
   getInputPath,
+  getMergedTimeLimits,
   getUpdatedRecords,
   type InputAnswer,
 } from "../../scripts/prover-records";
@@ -57,6 +58,18 @@ describe("the recorded inputs", () => {
       },
       "smt/0000000000000002": records["smt/0000000000000002"],
       "z3/0000000000000003": { prover: "z3", verdict: "unsat", statistics: { steps: 7 } },
+    });
+  });
+});
+
+describe("the time limits of the inputs", () => {
+  it("keep the earlier limits of inputs a run over some modules didn't write", () => {
+    const earlier = { "smt/0000000000000001": [5], "z3/0000000000000002": [null] };
+    const written = { "smt/0000000000000001": [10], "smt/0000000000000003": [5] };
+    expect(getMergedTimeLimits(earlier, written)).toEqual({
+      "smt/0000000000000001": [10],
+      "z3/0000000000000002": [null],
+      "smt/0000000000000003": [5],
     });
   });
 });
