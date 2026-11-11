@@ -17,7 +17,9 @@ use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
 use crate::recursive::check_recursive;
 use crate::sany::GENERATOR_EXCEPTION;
 use crate::sany::UNLINTED_MODULES;
-use crate::sany::generator::{ModuleDependencies, get_dependencies, get_proof_instances};
+use crate::sany::generator::{
+    DependencyScope, ModuleDependencies, get_dependencies, get_proof_instances,
+};
 use crate::sany::messages::{Generated, get_generator_messages};
 use crate::sany::source::get_unboxed_source;
 use crate::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
@@ -467,28 +469,48 @@ impl Loader<'_> {
             return None;
         }
         let dependencies = self.get_dependencies(name);
+        self.find_unresolved_in(
+            name,
+            &dependencies.scope,
+            is_extension,
+            visited,
+            resolutions,
+        )
+    }
+
+    /// `findNextUnresolvedExtentionBody` and `findNextUnresolvedInstantiationBody` for a module of
+    /// the file of `name` or one of its inner modules: the module's own unresolved names first,
+    /// then those of the modules it extends and instantiates, then its inner modules'.
+    fn find_unresolved_in(
+        &self,
+        name: &Rc<str>,
+        scope: &DependencyScope,
+        is_extension: bool,
+        visited: &mut FastSet<Rc<str>>,
+        resolutions: &FastSet<(Rc<str>, Rc<str>)>,
+    ) -> Option<(Rc<str>, Rc<str>, Rc<str>)> {
         let is_resolved =
             |dependency: &Rc<str>| resolutions.contains(&(name.clone(), dependency.clone()));
         let names = if is_extension {
-            &dependencies.extendees
+            &scope.extendees
         } else {
-            &dependencies.instancees
+            &scope.instancees
         };
         if let Some(unresolved) = names.iter().find(|dependency| !is_resolved(dependency)) {
-            let naming_module = dependencies
-                .importers
-                .get(unresolved)
-                .cloned()
-                .unwrap_or_else(|| name.clone());
-            return Some((unresolved.clone(), name.clone(), naming_module));
+            return Some((unresolved.clone(), name.clone(), scope.name.clone()));
         }
-        dependencies
+        scope
             .extendees
             .iter()
-            .chain(&dependencies.instancees)
+            .chain(&scope.instancees)
             .filter(|dependency| is_resolved(dependency))
             .find_map(|dependency| {
                 self.find_unresolved(dependency, is_extension, visited, resolutions)
+            })
+            .or_else(|| {
+                scope.inners.iter().find_map(|inner| {
+                    self.find_unresolved_in(name, inner, is_extension, visited, resolutions)
+                })
             })
     }
 
