@@ -459,7 +459,8 @@ impl Loader<'_> {
         Ok(())
     }
 
-    /// Whether a module the file of `extender` extends, through others, nests a module `name`.
+    /// Whether a module the file of `extender` extends, through others, has an inner module
+    /// `name` at its top level.
     fn is_nested_in_extendee(
         &self,
         extender: &Rc<str>,
@@ -467,10 +468,7 @@ impl Loader<'_> {
         visited: &mut FastSet<Rc<str>>,
     ) -> bool {
         fn nests(module: &Module, name: &str) -> bool {
-            module
-                .modules
-                .iter()
-                .any(|inner| &*inner.name == name || nests(inner, name))
+            module.modules.iter().any(|inner| &*inner.name == name)
         }
         if !visited.insert(extender.clone()) || !self.modules.contains_key(extender) {
             return false;
