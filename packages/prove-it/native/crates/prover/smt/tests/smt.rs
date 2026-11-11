@@ -630,7 +630,7 @@ fn resets_as_z3_does() {
 
 /// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
 /// 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 53] = [
+const COMMAND_ERRORS: [(&str, &str); 54] = [
     ("(assert false)(exit)(check-sat) )", ""),
     ("(assert false)(exit)(assert |x", ""),
     (
@@ -741,6 +741,12 @@ const COMMAND_ERRORS: [(&str, &str); 53] = [
     (
         "(set-logic UFNIA)(reset)(set-logic UFNIA)(assert false)(check-sat)",
         "unsat",
+    ),
+    // Z3 4.8.9 lists the logics it sets, and UFFS is not one (5.3.3 sets every name with UF in it,
+    // and prints "the logic has already been set", then sat).
+    (
+        "(set-logic UFFS)(set-logic UFNIA)(check-sat)",
+        "unsupported\nsat",
     ),
     (
         "(set-logic FOO)(set-logic UFNIA)(check-sat)",

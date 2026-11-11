@@ -937,26 +937,74 @@ impl<'a> SmtlibParser<'a> {
     }
 }
 
-// smt_logics::supported_logic: a logic Z3 sets, where it ignores any other.
+// smt_logics::supported_logic of Z3 4.8.9: a logic Z3 sets, where it ignores any other. 5.3.3
+// matches names by their parts instead.
+const SUPPORTED_LOGICS: [&str; 61] = [
+    "QF_UF",
+    "UF",
+    "QF_DT",
+    "SMTFD",
+    "ALL",
+    "CSP",
+    "QF_FD",
+    "QF_LRA",
+    "QF_LIA",
+    "QF_RDL",
+    "QF_IDL",
+    "QF_AUFLIA",
+    "QF_ALIA",
+    "QF_AUFLIRA",
+    "QF_AUFNIA",
+    "QF_AUFNIRA",
+    "QF_ANIA",
+    "QF_LIRA",
+    "QF_UFLIA",
+    "QF_UFLRA",
+    "QF_UFIDL",
+    "QF_UFRDL",
+    "QF_NIA",
+    "QF_NRA",
+    "QF_NIRA",
+    "QF_UFNRA",
+    "QF_UFNIA",
+    "QF_UFNIRA",
+    "QF_BVRE",
+    "ALIA",
+    "AUFLIA",
+    "AUFLIRA",
+    "AUFNIA",
+    "AUFNIRA",
+    "UFLIA",
+    "UFLRA",
+    "UFNRA",
+    "UFNIRA",
+    "NIA",
+    "NRA",
+    "UFNIA",
+    "LIA",
+    "LRA",
+    "UFIDL",
+    "QF_FP",
+    "FP",
+    "QF_FPBV",
+    "QF_BVFP",
+    "QF_S",
+    "QF_SLIA",
+    "HORN",
+    "QF_FPLRA",
+    "UFBV",
+    "AUFBV",
+    "ABV",
+    "BV",
+    "QF_BV",
+    "QF_UFBV",
+    "QF_ABV",
+    "QF_AUFBV",
+    "QF_AX",
+];
+
 fn is_supported_logic(name: &str) -> bool {
-    name == "ALL"
-        || name == "HO_ALL"
-        || name == "QF_FD"
-        || name == "SMTFD"
-        || name == "HORN"
-        || name == "FP"
-        || name == "QF_BVRE"
-        || name == "QF_S"
-        || name.starts_with('A')
-        || name.starts_with("QF_A")
-        || [
-            "UF", "LRA", "LIRA", "LIA", "NRA", "NTA", "NIRA", "NIA", "IDL", "RDL", "BV", "FP",
-            "DT", "FS",
-        ]
-        .iter()
-        .any(|part| name.contains(part))
-        || name == "QF_FF"
-        || name == "QF_FFA"
+    SUPPORTED_LOGICS.contains(&name)
 }
 
 fn get_builtin_sorts<'a>() -> HashMap<&'a str, Sort> {
