@@ -1,1 +1,1 @@
-rebuilding a trace: unsupported: a configuration substitute with effects for a definition, where the model reads it
+rebuilding a trace: unsupported: a definition TLC computes again with its effects, or with a Java method

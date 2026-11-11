@@ -1,1 +1,1 @@
-the engine stopped: unsupported: a configuration substitute with effects for a definition, where the model reads it
+the engine stopped: unsupported: a definition TLC computes again with its effects, or with a Java method

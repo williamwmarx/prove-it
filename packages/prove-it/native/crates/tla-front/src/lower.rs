@@ -1752,8 +1752,20 @@ impl<'a> Lowering<'a> {
             // checks a POSTCONDITION the configuration substitutes it for.
             if config.postconditions.contains(&name.to_string())
                 && self.facts.is_constant_level(definition, environment)
-                && reaches_effect(definition, environment, None, &["Print", "PrintT"], false)
-                && !reaches_effect(definition, environment, None, &["Print", "PrintT"], true)
+                && reaches_effect(
+                    definition,
+                    environment,
+                    None,
+                    &["Print", "PrintT", "AssertEq"],
+                    false,
+                )
+                && !reaches_effect(
+                    definition,
+                    environment,
+                    None,
+                    &["Print", "PrintT", "AssertEq"],
+                    true,
+                )
             {
                 return Err(FrontError::NotYet(format!(
                     "a POSTCONDITION the configuration substitutes a printing TLCEval for: \
