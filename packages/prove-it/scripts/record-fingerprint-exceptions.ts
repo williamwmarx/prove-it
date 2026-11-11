@@ -304,22 +304,27 @@ const functionDefinitions: Cell[] = [
 
 // ALIAS values TLC normalizes as it prints a trace's states, where a set it can't normalize stops
 // the trace with its unexpected-exception report.
-const aliases: Cell[] = ["{1, TRUE}", "SUBSET {1, TRUE}", "{1, 2}", "SUBSET {1, 2}"].map(
-  (value) => ({
-    name: `Alias == [x |-> x, v |-> ${value}]`,
-    spec: [
-      "---- MODULE M ----",
-      "EXTENDS Naturals",
-      "VARIABLE x",
-      "Init == x = 0",
-      "Next == x' = x + 1",
-      "Inv == x < 1",
-      `Alias == [x |-> x, v |-> ${value}]`,
-      "====",
-    ].join("\n"),
-    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
-  }),
-);
+const aliases: Cell[] = [
+  "{1, TRUE}",
+  "SUBSET {1, TRUE}",
+  "{1, 2}",
+  "SUBSET {1, 2}",
+  "{1, TRUE} \\cup {2}",
+  "{2} \\cup {1, TRUE}",
+].map((value) => ({
+  name: `Alias == [x |-> x, v |-> ${value}]`,
+  spec: [
+    "---- MODULE M ----",
+    "EXTENDS Naturals",
+    "VARIABLE x",
+    "Init == x = 0",
+    "Next == x' = x + 1",
+    "Inv == x < 1",
+    `Alias == [x |-> x, v |-> ${value}]`,
+    "====",
+  ].join("\n"),
+  config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+}));
 
 const record = (cell: Cell, workers: number) => {
   const directory = mkdtempSync(join(tmpdir(), "prove-it-fingerprint-"));
