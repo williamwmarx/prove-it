@@ -179,6 +179,11 @@ impl Loader<'_> {
                 parse_error: None,
             });
         };
+        if get_nesting_depth(&text) > MAX_NESTING_DEPTH {
+            return Err(not_yet(
+                "brackets nested more deeply than SANY's parser can on Java's default stack",
+            ));
+        }
         // SANY's parser takes []ASSUME and []PROVE, which the front end's reads unboxed.
         let parsed = get_unboxed_source(&text)
             .and_then(|unboxed| parse_sany_module(&unboxed, None, self.options.version));
@@ -221,11 +226,6 @@ impl Loader<'_> {
         let Ok(module) = parsed else {
             return Err(not_yet("SANY's parse errors"));
         };
-        if get_nesting_depth(&text) > MAX_NESTING_DEPTH {
-            return Err(not_yet(
-                "brackets nested more deeply than SANY's parser can on Java's default stack",
-            ));
-        }
         if module.name != *name {
             self.push_progress(parsing_line);
             return Err(Stop::Fatal {
