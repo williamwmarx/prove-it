@@ -231,12 +231,13 @@ unsafe fn export(
     unsafe { set_property(env, exports, name, function) }
 }
 
-// sanyText(root: string, source: string, fileName: string | undefined, known: [string,
-// string | undefined][]): { kind, ... }, as prove-it-host's `sany` describes it.
+// sanyText(root: string, source: string, fileName: string | undefined, version: string,
+// rootExtendees: string[], known: [string, string | undefined][]): { kind, ... }, as
+// prove-it-host's `sany` describes it.
 unsafe extern "C" fn sany_text(env: napi_env, info: napi_callback_info) -> napi_value {
     unsafe {
         guard(env, || {
-            let arguments = store::get_arguments::<4>(env, info)?
+            let arguments = store::get_arguments::<6>(env, info)?
                 .into_iter()
                 .map(|argument| store::get_host(env, argument))
                 .collect::<Result<Vec<_>, _>>()?;
