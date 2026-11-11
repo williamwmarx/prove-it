@@ -455,9 +455,9 @@ fn decides_every_fixture_as_the_typescript_does() {
 
 // smt/c0119d516427b279 of the decider corpus, reduced: MBQI's models interpret div0 and mod0,
 // builtin declarations without a reference count in the TypeScript, so each model that releases
-// one deletes it and frees its small id. That changes the number of expressions, which seeds
-// `get_some_value`, and so the models and the search. decideSmt gives this under the same step
-// limit.
+// one deletes it and frees its small id, which moves the small ids later declarations get, and so
+// the models and the search. decideSmt gives this under the same step limit (with nlsat's steps
+// counted, #262).
 #[test]
 fn releases_a_builtin_declaration_of_a_model_as_the_typescript_does() {
     let text = fs::read_to_string(
@@ -469,6 +469,6 @@ fn releases_a_builtin_declaration_of_a_model_as_the_typescript_does() {
             .map(|decision| get_decision_text(&decision));
     assert_eq!(
         decision,
-        Ok("unknown instances=11 steps=20011 stop=steps".into())
+        Ok("unknown instances=11 steps=20007 stop=steps".into())
     );
 }
