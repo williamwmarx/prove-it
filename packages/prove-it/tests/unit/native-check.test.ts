@@ -29,4 +29,22 @@ describe("checkNatively", () => {
     expect(console.error).toBe(report);
     expect(process.env.PROVE_IT_ENGINE).toBe(setting);
   });
+
+  it("reports a spec the engine rejects and the TypeScript path checks as declined", async () => {
+    // The engine reads the module first and gets one SANY rejects; the TypeScript path then reads
+    // a valid one.
+    let reads = 0;
+    const { result, declined } = await checkNatively({
+      source: getSource("INSTANCE Inner\nInit == x = Value\nNext == x' = x"),
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Inner"
+          ? (reads += 1) === 1
+            ? "---- MODULE Inner ----\nValue ==\n===="
+            : "---- MODULE Inner ----\nValue == 1\n===="
+          : undefined,
+    });
+    expect(declined).toBe("the engine stopped before it searched (exit 150)");
+    expect(result.status).toBe("success");
+  });
 });
