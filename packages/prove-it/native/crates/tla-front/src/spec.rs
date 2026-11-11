@@ -840,6 +840,17 @@ fn get_config_definition(
 ) -> Result<()> {
     let definition = get_config_operator(kind, name, environment)?;
     if get_constant_value(name, definition, environment, facts, evaluator, true)?.is_some() {
+        // TLC computes the constant definitions, and shows what they print, before it rejects
+        // the name (`processConstantDefns`).
+        let is_impure = environment.definitions.values().any(|definition| {
+            matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                && facts.is_impure_definition(definition, environment)
+        });
+        if is_impure {
+            return Err(not_yet(
+                "a constant INIT or NEXT after a definition TLC computes with its effects",
+            ));
+        }
         return Err(FrontError::Config(format!(
             "The {kind} {name} cannot be a constant."
         )));
