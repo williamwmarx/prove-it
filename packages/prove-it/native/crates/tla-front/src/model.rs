@@ -1,7 +1,7 @@
 //! A model's IR from its spec and configuration, as the native binary reads it in place of the
 //! TypeScript front end's.
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 
 use crate::TlcVersion;
@@ -110,14 +110,17 @@ pub fn lower_front(
     })
 }
 
+/// The Java override TLC loads for a module, by the module's name: the path TLC's resolver makes
+/// for its class file, and the file's bytes.
+pub type ClassLoader<'a> = dyn Fn(&str) -> Option<(PathBuf, Vec<u8>)> + 'a;
+
 /// What a model is lowered from: the root module's text, the text of each other module by its
-/// name, and the Java override TLC loads for a module, by its name (`loadClass`), from the spec's
-/// directory, which TLC names the override by.
+/// name, and the Java override TLC loads for a module, by its name (`loadClass`), with the path
+/// TLC's resolver makes for its file, which TLC names the override by.
 pub struct ModelSources<'a> {
     pub source: &'a str,
-    pub directory: &'a Path,
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
-    pub load_class: &'a dyn Fn(&str) -> Option<Vec<u8>>,
+    pub load_class: &'a ClassLoader<'a>,
 }
 
 /// The model's sources from the file system: the spec's file, the modules beside it or in the
@@ -132,9 +135,11 @@ fn with_files<T>(
     let directory = spec_path.parent().unwrap_or(Path::new("."));
     lower(&ModelSources {
         source: &source,
-        directory,
         load_module: &|name| load_module(spec_path, options.libraries, name),
-        load_class: &|name| std::fs::read(directory.join(format!("{name}.class"))).ok(),
+        load_class: &|name| {
+            let path = directory.join(format!("{name}.class"));
+            std::fs::read(&path).ok().map(|bytes| (path, bytes))
+        },
     })
 }
 
@@ -184,7 +189,7 @@ fn lower_ranked(
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = sources.source;
     let load = sources.load_module;
-    let load_class = sources.load_class;
+    let load_class = |name: &str| (sources.load_class)(name).map(|(_, bytes)| bytes);
     let config = parse_config(config_text, version).map_err(|error| match error.unworded {
         Some(reason) => FrontError::NotYet(reason.to_owned()),
         None => FrontError::Config(error.message),
@@ -197,7 +202,7 @@ fn lower_ranked(
         is_unconfigured: false,
         version,
         is_level_checked: false,
-        load_class: Some(load_class),
+        load_class: Some(&load_class),
     })?;
     // TLC loads Integers' methods over Naturals' once Integers is anywhere in the parsed closure.
     // Every module a root extendee can be today (`_TLCTrace` and the -dumpTrace modules) reaches
@@ -451,7 +456,7 @@ fn lower_ranked(
             version,
             options.is_warning_enabled,
         );
-        let override_messages = get_override_messages(&environment, sources.directory)
+        let override_messages = get_override_messages(&environment, sources.load_class)
             .map(|messages| {
                 // -nowarning drops a method that matches no operator.
                 messages
@@ -514,25 +519,41 @@ fn lower_ranked(
 }
 
 // `printCheckProgress`'s report of each method of a Java class that overrides a module, which
-// names the class file by its URL (`Class#getResource`).
+// names the class file by its URL (`Class#getResource`): the path TLC's resolver made for it, with
+// `.` and `..` resolved by name, as a URL resolves them.
 fn get_override_messages(
     environment: &crate::environment::Environment,
-    directory: &Path,
+    load_class: &ClassLoader<'_>,
 ) -> Result<Vec<StartupMessage>, String> {
     environment
         .java_overrides
         .iter()
         .map(|java_override| {
-            let class = directory.join(format!("{}.class", java_override.module));
+            let class = load_class(&java_override.module).map_or_else(
+                || PathBuf::from(format!("{}.class", java_override.module)),
+                |(path, _)| path,
+            );
             // WebAssembly has no working directory, and `is_absolute` is false there for any path,
             // so a path from the root stays as it is.
             let is_absolute =
                 class.is_absolute() || cfg!(target_arch = "wasm32") && class.has_root();
-            let path = if is_absolute {
+            let absolute = if is_absolute {
                 class
             } else {
                 std::path::absolute(class).map_err(|error| error.to_string())?
             };
+            let path = absolute
+                .components()
+                .fold(PathBuf::new(), |mut path, component| {
+                    match component {
+                        Component::CurDir => {}
+                        Component::ParentDir => {
+                            path.pop();
+                        }
+                        _ => path.push(component),
+                    }
+                    path
+                });
             let path = path.to_str().unwrap_or_default();
             // `pathToFileURL` escapes what a URL can't hold, which the front end doesn't follow.
             let is_plain = !path.is_empty()

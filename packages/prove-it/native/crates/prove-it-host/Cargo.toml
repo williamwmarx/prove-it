@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 prove-it-prover = { path = "../prover/prover" }
+prove-obligations = { path = "../prover/obligations" }
 prove-it-check = { path = "../prove-it-check" }
 tla-engine = { path = "../tla-engine" }
 tla-front = { path = "../tla-front" }

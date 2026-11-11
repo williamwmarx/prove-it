@@ -5,6 +5,7 @@
 
 import type { CheckProgress, CheckStatus } from "../check";
 import { EngineInvariantError } from "../errors";
+import type { ProofObligation } from "../prover/prove";
 import type { Statistics, Verdict } from "../prover/verdict";
 import type { LiveEnabled, LiveExpression } from "../tableau";
 import {
@@ -158,6 +159,39 @@ export type NativeDecision =
   | { kind: "error"; message: string }
   | { kind: "declined"; reason: string };
 
+// What the Rust prover driver asks JavaScript to decide, by the key it answers under
+// (prove-it-host's prove.rs).
+export interface NativeDecideRequest {
+  key: string;
+  prover: string;
+  text: string;
+  timeLimitMs: number;
+  priority: number;
+}
+
+// The obligations proved so far, and the modules and decisions the driver needs, or why it failed.
+export type NativeProve =
+  | {
+      kind: "needed";
+      keys: string[];
+      requests: NativeDecideRequest[];
+      reports: ProofObligation[];
+    }
+  | {
+      kind: "proved";
+      reports: ProofObligation[];
+      missingProofCount: number;
+      omittedProofCount: number;
+    }
+  | {
+      kind: "error";
+      name: string;
+      message: string;
+      failure?: string;
+      exception?: string;
+      reports?: ProofObligation[];
+    };
+
 export interface NativeAddon extends NativeStoreHooks {
   abiVersion: () => number;
   decide: (
@@ -167,6 +201,7 @@ export interface NativeAddon extends NativeStoreHooks {
     stepLimit: number | undefined,
     cancel: Int32Array | undefined,
   ) => NativeDecision;
+  prove: (file: string, source: string, known: [string, string | undefined][]) => NativeProve;
   checkSources: (
     args: string[],
     known: [string, string | Uint8Array | undefined][],
@@ -355,7 +390,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 17;
+const ABI_VERSION = 18;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

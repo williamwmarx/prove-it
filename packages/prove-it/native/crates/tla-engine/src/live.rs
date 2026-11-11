@@ -13,7 +13,7 @@ use tla_values::store::{FALSE, Outcome, TRUE};
 use tla_values::{Id, NESTING_STACK_BYTES};
 
 use crate::compile::{DIAMETER_SLOT, LEVEL_SLOT, NEXT_LEVEL_SLOT};
-use crate::context::{Atom, EnabledSteps, SubscriptKey};
+use crate::context::{Atom, EnabledSteps, Split, SubscriptKey};
 use crate::machine::{Eval, Machine, Printed, UNASSIGNED};
 
 pub const UNKNOWN: u8 = 2;
@@ -50,31 +50,49 @@ pub struct LiveGraph<'g> {
     /// relation took before it failed: ENABLED is evaluated on it, not answered from them.
     pub partial: Option<usize>,
     /// Each step's bits of the action atoms made of pieces of Next whose pieces the walks that took
-    /// it passed through, where the search recorded them.
-    pub pieces: Option<&'g [u8]>,
+    /// it passed through, where the search recorded them, and how many bytes a step's are.
+    pub pieces: Option<(&'g [u8], usize)>,
     /// The level TLC gives each state, where an atom reads TLCGet("level"): 1 for an initial
     /// state, else one past its parent's.
     pub levels: Option<&'g [u32]>,
 }
 
 /// What the steps the search took answer of an action atom on each step whose subscript changed:
-/// true of every step where the action is Next, or of the steps a walk through its pieces took.
+/// true of every step where the action is Next or all of TLC's actions, or of the steps the
+/// actions it splits into took, or a walk through its pieces took.
 enum Taken {
     All,
     Steps(Vec<bool>),
 }
 
 impl Taken {
-    fn of(graph: &LiveGraph<'_>, is_next: bool, piece: Option<u8>) -> Option<Taken> {
+    fn of(
+        graph: &LiveGraph<'_>,
+        is_next: bool,
+        split: Option<&Split>,
+        piece: Option<u32>,
+    ) -> Option<Taken> {
         if !graph.is_next_taken {
             return None;
         }
-        if is_next {
+        if is_next || matches!(split, Some(Split::All)) {
             return Some(Taken::All);
         }
-        let (bit, pieces) = (piece?, graph.pieces?);
-        // TLC evaluates the action once for each successor: it holds where any walk that took
-        // the step to that successor passed through a piece.
+        if let (Some(Split::Some(actions)), Some(labels)) = (split, graph.labels) {
+            return Some(Self::of_steps(graph, |edge| {
+                actions.get(labels[edge] as usize).copied().unwrap_or(false)
+            }));
+        }
+        let (bit, (pieces, width)) = (piece?, graph.pieces?);
+        let (byte, mask) = (bit as usize / 8, 1 << (bit % 8));
+        Some(Self::of_steps(graph, |edge| {
+            pieces[edge * width + byte] & mask != 0
+        }))
+    }
+
+    // TLC evaluates the action once for each successor: it holds where any step to that successor
+    // is marked.
+    fn of_steps(graph: &LiveGraph<'_>, is_marked: impl Fn(usize) -> bool) -> Taken {
         let mut answers = vec![false; graph.edges.len()];
         let mut marked = Vec::new();
         for index in 0..graph.expanded {
@@ -83,7 +101,7 @@ impl Taken {
             marked.extend(
                 steps
                     .clone()
-                    .filter(|&edge| pieces[edge] & bit != 0)
+                    .filter(|&edge| is_marked(edge))
                     .map(|edge| graph.edges[edge]),
             );
             if marked.is_empty() {
@@ -94,7 +112,7 @@ impl Taken {
                 answers[edge] = marked.binary_search(&graph.edges[edge]).is_ok();
             }
         }
-        Some(Taken::Steps(answers))
+        Taken::Steps(answers)
     }
 
     fn at(&self, edge: usize) -> bool {
@@ -676,9 +694,10 @@ pub fn answer_atoms(
                     subscript,
                     enabled,
                     is_next,
+                    split,
                     piece,
                 } if is_shared => {
-                    let taken = Taken::of(graph, *is_next, *piece);
+                    let taken = Taken::of(graph, *is_next, split.as_ref(), *piece);
                     let disabled = enabled
                         .and_then(|position| tables.get(position))
                         .filter(|table: &&Table| table.answers.len() == graph.count)
@@ -734,9 +753,10 @@ pub fn answer_atoms(
                     subscript,
                     enabled,
                     is_next,
+                    split,
                     piece,
                 } => {
-                    let taken = Taken::of(graph, *is_next, *piece);
+                    let taken = Taken::of(graph, *is_next, split.as_ref(), *piece);
                     // The checker asks about no step from a state where the ENABLED of the action's
                     // fairness is false, and the interpreter answers any it does; where the atom
                     // prints, it evaluates the action on every step TLC does.

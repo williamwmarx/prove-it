@@ -785,8 +785,11 @@ pub struct Compiler<'a> {
     /// alive so no other step takes its address (`walker::Leading`).
     leading_guards: HashMap<usize, (Step, walker::Leading)>,
     /// The nodes of Next's walk that make up an action atom, each with the bit a walk through it
-    /// sets on the step it takes (`pieces.rs`).
-    pub(crate) pieces: Vec<(NodeId, u8)>,
+    /// sets on the step it takes and the values it fixes (`pieces.rs`).
+    pub(crate) pieces: Vec<pieces::Piece>,
+    /// The `\E`s of Next the walk being compiled is inside: each one's node, the position of a
+    /// bound and the slot its name takes.
+    pub(crate) binders: Vec<(NodeId, usize, u32)>,
     // The fused predicate of each walk whose first step is a guard, by the walk's address.
     first_guards: HashMap<usize, (Step, predicate::Predicate)>,
     /// The bodies of recursive functions an action applies, each walked once for what the walk
@@ -905,6 +908,7 @@ impl<'a> Compiler<'a> {
             reads: None,
             leading_guards: HashMap::new(),
             pieces: Vec::new(),
+            binders: Vec::new(),
             first_guards: HashMap::new(),
             walked_functions: Vec::new(),
             walked_operators: Vec::new(),

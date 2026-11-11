@@ -2,7 +2,7 @@
 //! binary reads them from the file system and its process (`SystemHost`); a host that runs the
 //! check in-process answers them itself.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use tla_engine::search::Advice;
@@ -28,6 +28,8 @@ pub struct Machine {
 /// the tla2tools.jar on the class path, which TLC copies the standard modules from.
 pub struct Files<'a> {
     pub spec: &'a Path,
+    /// The spec as TLC was given it, without `.tla`, which SANY names it by.
+    pub main_file: &'a str,
     /// The directories in TLC's order (`get_module_directories`), the working directory as "".
     pub directories: &'a [String],
     pub temporary: Option<&'a str>,
@@ -47,10 +49,13 @@ pub trait Host {
     fn read_text(&self, path: &Path) -> Option<String>;
     /// The bytes of a file, such as a tla2tools.jar.
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>>;
-    /// A module's text: `<name>.tla` in the first of the directories that has it.
-    fn load_module(&self, directories: &[&Path], name: &str) -> Option<String>;
-    /// The Java override TLC loads for a module: `<name>.class` in the directory.
-    fn load_class(&self, directory: &Path, name: &str) -> Option<Vec<u8>>;
+    /// A module's text: `<name>.tla` in the first of the directories that has it, or that path
+    /// where TLC finds it there but can't read it, as a directory (`FileUtil.toIStream`).
+    fn load_module(&self, directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf>;
+    /// The Java override TLC loads for a module: `<name>.class` in the first of the directories
+    /// that has it, by the path TLC's resolver makes for it, and its bytes; none where TLC can't
+    /// read that file.
+    fn load_class(&self, directories: &[&Path], name: &str) -> Option<(PathBuf, Vec<u8>)>;
     fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h>;
     /// An environment variable.
     fn get_variable(&self, name: &str) -> Option<String>;
@@ -155,14 +160,24 @@ impl Host for SystemHost {
         std::fs::read(path).ok()
     }
 
-    fn load_module(&self, directories: &[&Path], name: &str) -> Option<String> {
-        directories
+    fn load_module(&self, directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf> {
+        let Some(path) = directories
             .iter()
-            .find_map(|directory| self.read_text(&directory.join(format!("{name}.tla"))))
+            .map(|directory| directory.join(format!("{name}.tla")))
+            .find(|path| path.exists())
+        else {
+            return Ok(None);
+        };
+        std::fs::read_to_string(&path).map(Some).map_err(|_| path)
     }
 
-    fn load_class(&self, directory: &Path, name: &str) -> Option<Vec<u8>> {
-        std::fs::read(directory.join(format!("{name}.class"))).ok()
+    // TLCClass loads no override from a class file it finds but can't read.
+    fn load_class(&self, directories: &[&Path], name: &str) -> Option<(PathBuf, Vec<u8>)> {
+        let path = directories
+            .iter()
+            .map(|directory| directory.join(format!("{name}.class")))
+            .find(|path| path.exists())?;
+        std::fs::read(&path).ok().map(|bytes| (path, bytes))
     }
 
     fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h> {

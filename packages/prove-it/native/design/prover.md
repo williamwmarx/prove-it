@@ -1222,6 +1222,28 @@ is next.
       bytes as the TypeScript re-saves them;
     - every encoded result, re-encoded at its stored date and version.
   - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
+- P6a, the driver (#315): `prove-it-prover::driver` and the host export `prove`, selected with
+  `PROVE_IT_PROVER_DRIVER=rust`; the TypeScript driver stays the default.
+  - **Rounds:** the driver asks JavaScript for each module read (`module:<name>#<n>`) and each
+    decision (keyed by obligation, method, prover, limit and text), and proves again with the
+    answers. A run's obligations, Prep and encodings stay on a long-lived thread, which takes
+    tcp_proof from over two hours to 57 s.
+  - **Fallback:** a source or module that isn't well-formed UTF-16, or escapes a lone surrogate,
+    goes to the TypeScript driver, since a Rust string can't hold it.
+  - **Checks:** `scripts/prover-driver-differential.ts` gives 304 of 304 corpus modules the same
+    under both drivers with decisions replayed from the record; `tests/unit/prove-driver.test.ts`
+    holds the cases seven break-it rounds found.
+  - **Open:** three inputs where the Rust encoders emulate a JavaScript engine's exception, and
+    the TypeScript throws it, where both should do what tlapm does. They differ between the
+    drivers until the next PR makes the Rust follow tlapm:
+    - `\h`, `\o` and `\b` numerals in an SMT obligation (`BigInt` in `smt/rewrite.ts`);
+    - numerals large enough to reach a string length limit in the Zenon and Isabelle encodings
+      (`String.prototype.repeat`);
+    - proof-step levels past 2^53, or 2^32 in WebAssembly, where the Rust reads a `usize`.
+  - **Known TypeScript deviation:** an INSTANCE of a module inside its own instantiation
+    overflows the TypeScript's stack (a RangeError), where tlapm and the Rust report tlapm's bug
+    "Stack overflow" (#308).
+
 ### Deviations from Z3
 
 Where a back end does what the tool it ports does not. The Rust mirrored the TypeScript, so that

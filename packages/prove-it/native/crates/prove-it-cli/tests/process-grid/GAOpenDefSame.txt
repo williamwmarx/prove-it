@@ -1,0 +1,50 @@
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: Temporal property Live was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ c = <<0, 0, 0, 0>>
+/\ pc = <<"a", "a", "a", "a">>
+
+State 2: <a(3) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+/\ c = <<0, 0, 1, 0>>
+/\ pc = <<"a", "a", "a", "a">>
+
+State 3: <a(1) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+/\ c = <<1, 0, 1, 0>>
+/\ pc = <<"a", "a", "a", "a">>
+
+State 4: <a(1) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+/\ c = <<2, 0, 1, 0>>
+/\ pc = <<"a", "a", "a", "a">>
+
+State 5: <a(1) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+/\ c = <<2, 0, 1, 0>>
+/\ pc = <<"b", "a", "a", "a">>
+
+State 6: <a(3) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+/\ c = <<2, 0, 2, 0>>
+/\ pc = <<"b", "a", "a", "a">>
+
+State 7: <a(2) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+/\ c = <<2, 1, 2, 0>>
+/\ pc = <<"b", "a", "a", "a">>
+
+State 8: <a(2) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+/\ c = <<2, 2, 2, 0>>
+/\ pc = <<"b", "a", "a", "a">>
+
+State 9: <a(2) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+/\ c = <<2, 0, 2, 0>>
+/\ pc = <<"b", "a", "a", "a">>
+
+State 10: <a(3) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+/\ c = <<2, 0, 0, 0>>
+/\ pc = <<"b", "a", "a", "a">>
+
+Back to state 5: <a(3) line 9, col 12 to line 14, col 31 of module GAOpenDefSame>
+
+127 states generated, 45 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 9.

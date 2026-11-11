@@ -81,6 +81,9 @@ struct Recorded<'v> {
     random: Option<u64>,
     symmetry: Option<&'v NamedGroup>,
     registers: &'v EngineRegisters,
+    /// Whether a simulation took the trace: TLC's simulation prints each of its states through
+    /// the ALIAS, a deadlocked initial state included (`SimulationWorker`'s `evalAlias`).
+    is_simulated: bool,
 }
 
 impl<'v> From<&'v Violation> for Recorded<'v> {
@@ -93,6 +96,7 @@ impl<'v> From<&'v Violation> for Recorded<'v> {
             random: violation.random,
             symmetry: violation.symmetry.as_ref(),
             registers: &violation.registers,
+            is_simulated: false,
         }
     }
 }
@@ -116,6 +120,29 @@ pub fn rebuild_trace(
     rebuild(
         ir,
         &violation.into(),
+        &violation.kind,
+        &violation.states,
+        violation.labels.clone(),
+        Some(checks),
+        Writing { is_tool, is_plain },
+    )
+}
+
+/// A simulation's trace.
+pub fn rebuild_simulated(
+    ir: &Ir,
+    violation: &Violation,
+    checks: TraceChecks,
+    is_tool: bool,
+    is_plain: bool,
+) -> Result<PrintedTrace, String> {
+    let recorded = Recorded {
+        is_simulated: true,
+        ..violation.into()
+    };
+    rebuild(
+        ir,
+        &recorded,
         &violation.kind,
         &violation.states,
         violation.labels.clone(),
@@ -162,6 +189,7 @@ pub fn rebuild_continued(
         random: trace.random,
         symmetry: None,
         registers: trace.registers,
+        is_simulated: false,
     };
     let labels = vec![None; trace.states.len().saturating_sub(1)];
     rebuild(
@@ -272,9 +300,11 @@ fn rebuild(
                 Some(loop_start) => Some(name_violated(&mut rebuilder, ir, &trace, loop_start)?),
                 None => None,
             };
-            // TLC prints a deadlocked initial state as it is (`TLCTrace.printTrace`).
-            let is_alone =
-                matches!(kind, ViolationKind::Deadlock { .. }) && trace.states.len() == 1;
+            // TLC's model checker prints a deadlocked initial state as it is
+            // (`TLCTrace.printTrace`); its simulation prints it through the ALIAS.
+            let is_alone = !recorded.is_simulated
+                && matches!(kind, ViolationKind::Deadlock { .. })
+                && trace.states.len() == 1;
             // TLC binds the builtin Trace in the ALIAS to the states up to each it prints, that
             // one included (`TLCTrace.printTrace`), but to none for an initial state and the
             // successor that violates, and in a lasso to those before each state of the path to

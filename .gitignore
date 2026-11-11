@@ -48,3 +48,4 @@ packages/prove-it/tests/conformance/.prover-inputs
 packages/prove-it/tests/conformance/.prover-differential.json
 packages/prove-it/tests/conformance/.z3-parity.json
 packages/prove-it/tests/conformance/.z3-parity.jsonl
+packages/prove-it/tests/conformance/.prover-driver-differential.json
