@@ -3016,6 +3016,9 @@ pub struct ModuleContext<'a> {
     pub get_key: GetKey,
     /// The names each INSTANCE adds, by the INSTANCE's address.
     pub instanced: Rc<RefCell<FastMap<usize, Symbols>>>,
+    /// Where an INSTANCE of the module first made each name it adds visible, before which SANY
+    /// doesn't know the name.
+    pub imported_at: Rc<FastMap<Name, Position>>,
     /// The theorems and assumptions the extended and instantiated modules export.
     pub facts: Rc<RefCell<FastSet<Name>>>,
     pub reports: Rc<RefCell<Vec<ModuleReport>>>,
@@ -3042,13 +3045,19 @@ pub fn is_theorem_definition(module: &Module, definition: &Definition) -> bool {
         })
 }
 
-fn get_declared(module: &Module) -> Rc<FastMap<Name, Position>> {
+// Where the module declares each constant and variable, and where its INSTANCEs add names.
+fn get_declared(module: &Module, unit: &ModuleContext) -> Rc<FastMap<Name, Position>> {
     Rc::new(
         module
             .constants
             .iter()
             .chain(&module.variables)
             .map(|declaration| (declaration.name.clone(), declaration.location.position()))
+            .chain(
+                unit.imported_at
+                    .iter()
+                    .map(|(name, position)| (name.clone(), *position)),
+            )
             .collect(),
     )
 }
@@ -3278,7 +3287,7 @@ pub fn resolve_substitutions(
         &None,
         &Unit {
             imported: Rc::new(imported),
-            declared: get_declared(module),
+            declared: get_declared(module, unit),
             modules: Rc::default(),
             get_instance: unit.get_instance.clone(),
             definitions: unit.definitions.clone(),
@@ -3424,7 +3433,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
     let recursive: Rc<RefCell<Vec<Rc<Local>>>> = Rc::default();
     let declarations: Rc<RefCell<Vec<RecursiveDeclaration>>> = Rc::default();
     let let_recursive: LetRecursive = Rc::default();
-    let declared = get_declared(module);
+    let declared = get_declared(module, unit);
     let modules: Rc<FastMap<Name, Position>> = Rc::new(
         module
             .modules
