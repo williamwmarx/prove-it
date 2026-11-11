@@ -917,6 +917,21 @@ until the end-to-end differential (2.2, layer 5) is clean on all 304 modules wit
 threads: identical `ProofObligation`s less `timeUsedMs`, and identical `missingProofCount` and
 `omittedProofCount`.
 
+**Where the engine comes from.** Once the Rust driver is the only one, proving needs the engine
+wherever the package runs. Every entry that proves (`proveWith`, `proveObligations`, the prove
+worker) calls `loadWasmEngine` before `getNativeAddon`, and that covers each host:
+- Node or Bun with the platform's addon installed: the addon.
+- Node or Bun without it, as on a platform no package is built for: `loadAddonOrWasm` loads the
+  `dist/prove-it-engine.wasm` the npm package ships (`release.yml` checks the tarball holds it).
+- No `process.dlopen`, as in a browser: `loadWasmEngine` compiles that file, by a literal URL a
+  bundler copies. The WebAssembly job, which builds that file, runs `prove-workers.test.ts`'s
+  "without process.dlopen" case, so CI doesn't skip it, and `prove-driver.test.ts` with
+  `PROVE_IT_ENGINE_WASM`.
+- The executable `build-binary.ts` compiles: it embeds the addon when one is built for the
+  platform, or else the WebAssembly, and `loadAddonOrWasm` finds either beside the CLI. The
+  script's own checks then prove `Proofs.tla` with what it embedded.
+- `PROVE_IT_ENGINE=0` opts out of the engine, and `loadWasmEngine` leaves it unloaded.
+
 **Stages.**
 - P6a, the driver: `prove-it-prover::prove`, the host export, the loop in `prove.ts`, and the
   end-to-end differential.

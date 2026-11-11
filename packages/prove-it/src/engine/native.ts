@@ -397,8 +397,8 @@ const ABI_VERSION = 19;
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";
 
-// The executables build-binary.ts compiles define PROVE_IT_BINARY, and embed the addon beside the
-// CLI when their build had one.
+// The executables build-binary.ts compiles define PROVE_IT_BINARY, and embed beside the CLI the
+// addon when their build had one, or else the engine as WebAssembly when it had that.
 declare const PROVE_IT_BINARY: boolean | undefined;
 const isBinary = typeof PROVE_IT_BINARY === "boolean" && PROVE_IT_BINARY;
 
@@ -475,11 +475,11 @@ const loaded: { addon?: NativeAddon | string } = {};
 const isDlopen = () => typeof globalThis.process?.dlopen === "function";
 
 // The addon for this platform, or else the engine as WebAssembly the package ships beside its
-// modules, as on a platform no package is built for. An addon PROVE_IT_ENGINE_ADDON names, or one
-// an executable embeds, is the only one tried.
+// modules, as on a platform no package is built for; an executable embeds one or the other. An
+// addon PROVE_IT_ENGINE_ADDON names is the only one tried.
 const loadAddonOrWasm = () => {
   const addon = loadAddon();
-  if (typeof addon !== "string" || isBinary || getEngineAddon() !== undefined) return addon;
+  if (typeof addon !== "string" || getEngineAddon() !== undefined) return addon;
   const wasmPath = toPath(new URL(`./${WASM_FILE}`, import.meta.url));
   return process.getBuiltinModule("node:fs").existsSync(wasmPath) ? loadWasm(wasmPath) : addon;
 };
