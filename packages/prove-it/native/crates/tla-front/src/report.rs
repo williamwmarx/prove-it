@@ -47,6 +47,10 @@ fn not_yet(reason: &str) -> Stop {
     Stop::Front(FrontError::NotYet(reason.to_owned()))
 }
 
+/// Why the front end declines a name it couldn't bind as SANY does: one that names a file or a
+/// standard module and an inner module, or two inner modules.
+const UNBOUND_INNER_MODULE: &str = "an inner module named like another module";
+
 /// Where SANY reads a module from, as `SanyModuleOrigin`: a file of its own, the file of the root
 /// module, or the files of its standard modules.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +132,68 @@ struct Loader<'a> {
     /// Whether SANY's semantic analysis found errors.
     is_failed: bool,
     exception: Option<String>,
+    /// The names a module of a file names that SANY binds to an inner module of a file the module
+    /// extends, which SANY doesn't read a file for (`resolveNamesBetweenSpecAndExtention`).
+    inner_bindings: FastSet<(Rc<str>, Rc<str>)>,
+    /// The names the front end left unbound where it couldn't follow SANY's binding, for which it
+    /// declines unless SANY reports a circular dependency among the files without them.
+    unbound_names: Vec<Rc<str>>,
+}
+
+/// The inner modules of `module`, at any depth.
+fn get_inner_modules(module: &Module) -> Vec<Rc<Module>> {
+    module
+        .modules
+        .iter()
+        .flat_map(|inner| {
+            let mut modules = vec![inner.clone()];
+            modules.extend(get_inner_modules(inner));
+            modules
+        })
+        .collect()
+}
+
+/// The names of `names` that only the inner modules of `module`, at any depth, extending
+/// `extendee` directly or through one another name.
+fn get_inner_bindings(module: &Module, extendee: &str, names: &[Rc<str>]) -> Vec<Rc<str>> {
+    fn split(module: &Module, extended: &mut Vec<Rc<str>>, inner: &mut Vec<Rc<Module>>) -> Module {
+        let mut outer = module.clone();
+        outer.modules = Vec::new();
+        for nested in &module.modules {
+            if nested.extends.iter().any(|name| extended.contains(name)) {
+                extended.push(nested.name.clone());
+                inner.push(nested.clone());
+            } else {
+                outer.modules.push(Rc::new(split(nested, extended, inner)));
+            }
+        }
+        outer
+    }
+    let get_names = |module: &Rc<Module>| {
+        let dependencies = get_dependencies(module);
+        dependencies
+            .extendees
+            .iter()
+            .chain(&dependencies.instancees)
+            .filter(|name| names.contains(name))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let mut inner = Vec::new();
+    let outer = Rc::new(split(module, &mut vec![Rc::from(extendee)], &mut inner));
+    if inner.is_empty() {
+        return Vec::new();
+    }
+    let removed: Vec<&Rc<str>> = inner.iter().map(|module| &module.name).collect();
+    let outer_names: Vec<Rc<str>> = get_names(&outer)
+        .into_iter()
+        .filter(|name| !removed.contains(&name))
+        .collect();
+    inner
+        .iter()
+        .flat_map(get_names)
+        .filter(|name| !outer_names.contains(name))
+        .collect()
 }
 
 /// The modules a module and its inner modules extend, other than its inner modules.
@@ -463,10 +529,128 @@ impl Loader<'_> {
             .extendees
             .iter()
             .chain(&dependencies.instancees)
-            .filter(|dependency| is_resolved(dependency))
+            .filter(|dependency| {
+                is_resolved(dependency)
+                    && !self
+                        .inner_bindings
+                        .contains(&(name.clone(), (*dependency).clone()))
+            })
             .find_map(|dependency| {
                 self.find_unresolved(dependency, is_extension, visited, resolutions)
             })
+    }
+
+    /// `resolveNamesBetweenSpecAndExtention`: once SANY reads the file `extendee` that a module
+    /// of the file `extender` extends, it binds the as yet unbound names that module, its inner
+    /// modules and the modules extending it name to the inner modules of `extendee` of the same
+    /// names, which SANY reads no file for. Where an inner module extends it alone, SANY reads a
+    /// file for a name the file's other modules name.
+    fn bind_inner_modules(
+        &mut self,
+        extender: &Rc<str>,
+        extendee: &Rc<str>,
+        resolutions: &mut FastSet<(Rc<str>, Rc<str>)>,
+    ) -> Result<()> {
+        // A file that extends a module bound to an inner module that extends another: SANY's
+        // modules extending the extender may reach it through that inner module.
+        let is_inner_extender = |name: &Rc<str>| {
+            self.modules.values().any(|loaded| {
+                get_inner_modules(&loaded.module)
+                    .iter()
+                    .any(|inner| inner.name == *name && !inner.extends.is_empty())
+            })
+        };
+        if self.inner_bindings.iter().any(|binding| {
+            self.get_dependencies(&binding.0)
+                .extendees
+                .contains(&binding.1)
+                && is_inner_extender(&binding.1)
+        }) {
+            return Err(not_yet(
+                "a file extending an inner module that extends another",
+            ));
+        }
+        let inner_names: Vec<Rc<str>> = self.modules[extendee]
+            .module
+            .modules
+            .iter()
+            .map(|inner| inner.name.clone())
+            .collect();
+        let module = &self.modules[extender].module;
+        // Where only an inner module of the file extends `extendee`, SANY binds the names of that
+        // module and of the inner modules extending it, and no file extends that module.
+        if !module.extends.contains(extendee) {
+            let bindings = get_inner_bindings(module, extendee, &inner_names)
+                .into_iter()
+                .map(|bound| (extender.clone(), bound))
+                .collect();
+            return self.bind(bindings, resolutions);
+        }
+        let mut extenders = vec![extender.clone()];
+        let mut bindings = Vec::new();
+        let mut index = 0;
+        while let Some(current) = extenders.get(index).cloned() {
+            index += 1;
+            // `getModulesIndirectlyExtending`: SANY counts a module that extends `current` once it
+            // has resolved its EXTENDS of it.
+            for (name, loaded) in &self.modules {
+                if extenders.contains(name)
+                    || !resolutions.contains(&(name.clone(), current.clone()))
+                {
+                    continue;
+                }
+                if loaded.module.extends.contains(&current) {
+                    extenders.push(name.clone());
+                } else {
+                    bindings.extend(
+                        get_inner_bindings(&loaded.module, &current, &inner_names)
+                            .into_iter()
+                            .map(|bound| (name.clone(), bound)),
+                    );
+                }
+            }
+        }
+        for unit in &extenders {
+            let dependencies = self.get_dependencies(unit);
+            bindings.extend(
+                dependencies
+                    .extendees
+                    .iter()
+                    .chain(&dependencies.instancees)
+                    .filter(|name| inner_names.contains(name))
+                    .map(|name| (unit.clone(), name.clone())),
+            );
+        }
+        self.bind(bindings, resolutions)
+    }
+
+    /// Binds each name of a file to an inner module, as `bind_inner_modules` finds them.
+    fn bind(
+        &mut self,
+        bindings: Vec<(Rc<str>, Rc<str>)>,
+        resolutions: &mut FastSet<(Rc<str>, Rc<str>)>,
+    ) -> Result<()> {
+        // SANY keeps a name it bound before (`bindIfNotBound`). Where a file extends a name that
+        // names a file or a standard module too, or where the name names another inner module too,
+        // the front end's linking may not choose the module SANY binds.
+        let bindings: FastSet<(Rc<str>, Rc<str>)> = bindings.into_iter().collect();
+        for binding in bindings {
+            let is_extended_file = self
+                .get_dependencies(&binding.0)
+                .extendees
+                .contains(&binding.1)
+                && self.read(&binding.1).0.is_some();
+            if self.inner_bindings.contains(&binding)
+                || is_extended_file && !resolutions.contains(&binding)
+            {
+                self.unbound_names.push(binding.1);
+                continue;
+            }
+            if resolutions.insert(binding.clone()) {
+                self.inner_bindings.insert(binding);
+            }
+        }
+        Ok(())
     }
 
     /// `calculateDependencies`: SANY analyzes each module after the modules it extends and
@@ -502,6 +686,11 @@ impl Loader<'_> {
             .extendees
             .iter()
             .chain(&dependencies.instancees)
+            .filter(|dependency| {
+                !self
+                    .inner_bindings
+                    .contains(&(name.clone(), (*dependency).clone()))
+            })
         {
             self.get_analysis_order(dependency, path, visiting, order)?;
         }
@@ -587,6 +776,8 @@ pub fn get_sany_text_of(
         is_parse_reported: false,
         is_failed: false,
         exception: None,
+        inner_bindings: FastSet::default(),
+        unbound_names: Vec::new(),
     };
     let name = options.file_name.unwrap_or(&root);
     match write_sany_text(&mut loader, &root) {
@@ -756,19 +947,70 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     let mut resolutions: FastSet<(Rc<str>, Rc<str>)> = FastSet::default();
     loop {
         let next = [true, false].into_iter().find_map(|is_extension| {
-            loader.find_unresolved(&root, is_extension, &mut FastSet::default(), &resolutions)
+            loader
+                .find_unresolved(&root, is_extension, &mut FastSet::default(), &resolutions)
+                .map(|found| (found, is_extension))
         });
-        let Some((name, importer, naming_module)) = next else {
+        let Some(((name, importer, naming_module), is_extension)) = next else {
             break;
         };
         if !loader.modules.contains_key(&name) {
             let (text, origin) = loader.read(&name);
-            loader.load(&name, text, origin, &naming_module)?;
+            loader
+                .load(&name, text, origin, &naming_module)
+                .map_err(|stop| match stop {
+                    Stop::Fatal { .. } if !loader.unbound_names.is_empty() => {
+                        not_yet(UNBOUND_INNER_MODULE)
+                    }
+                    _ => stop,
+                })?;
         }
-        resolutions.insert((importer, name));
+        resolutions.insert((importer.clone(), name.clone()));
+        if is_extension {
+            loader.bind_inner_modules(&importer, &name, &mut resolutions)?;
+        }
     }
     let mut order = Vec::new();
-    loader.get_analysis_order(&root, &mut Vec::new(), &mut FastSet::default(), &mut order)?;
+    // SANY's circular dependency among the files stands where it doesn't run through a name the
+    // front end left unbound.
+    loader
+        .get_analysis_order(&root, &mut Vec::new(), &mut FastSet::default(), &mut order)
+        .map_err(|stop| match &stop {
+            Stop::Fatal { message, .. }
+                if loader
+                    .unbound_names
+                    .iter()
+                    .any(|name| message.contains(&format!(" {name}.tla"))) =>
+            {
+                not_yet(UNBOUND_INNER_MODULE)
+            }
+            _ => stop,
+        })?;
+    if !loader.unbound_names.is_empty() {
+        return Err(not_yet(UNBOUND_INNER_MODULE));
+    }
+    // SANY reports an inner module of an extended file other than the root's as multiply defined
+    // where it analyzed a module of the same name before the file and the file doesn't reach that
+    // module itself, through what it extends and instantiates. The front end declines where its
+    // linking doesn't report it too.
+    let mut shadowings: Vec<(Rc<str>, Rc<str>)> = Vec::new();
+    for (index, name) in order.iter().enumerate() {
+        let is_extended = order
+            .iter()
+            .any(|other| loader.get_dependencies(other).extendees.contains(name));
+        if *name == root || !is_extended {
+            continue;
+        }
+        let mut reached = Vec::new();
+        loader.get_analysis_order(name, &mut Vec::new(), &mut FastSet::default(), &mut reached)?;
+        for inner in get_inner_modules(&loader.modules[name].module) {
+            if order[..index].contains(&inner.name) && !reached.contains(&inner.name) {
+                shadowings.push((name.clone(), inner.name.clone()));
+            }
+        }
+    }
+    let shadowing_decline =
+        || not_yet("an inner module named like a module SANY analyzes before its file");
     // SANY analyzes the modules TLC adds for its post conditions with the spec's, but the front end
     // links only those the spec uses: one of the user's among them may fail SANY's analysis, which
     // the front end wouldn't report.
@@ -805,6 +1047,9 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         Err(_) if undecided.is_some() => None,
         Err(stop) => return Err(stop),
     } {
+        if !shadowings.is_empty() {
+            return Err(shadowing_decline());
+        }
         return push_generator_exception(loader, &order, &root, exception);
     }
     // SANY's messages come from linking, which reports what SANY's semantic analysis does.
@@ -847,6 +1092,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     let messages = match messages {
         Generated::Messages(messages) => messages,
         // SANY's generator throws on the root module, the last SANY analyzes.
+        Generated::Exception(_) if !shadowings.is_empty() => return Err(shadowing_decline()),
         Generated::Exception(index) if index + 1 == order.len() => {
             return push_generator_exception(loader, &order, &root, GENERATOR_EXCEPTION);
         }
@@ -891,6 +1137,17 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
                     .push(format!("{}\n\n\n", format_message(error)));
             }
         }
+    }
+    let is_reported = |(file, inner): &(Rc<str>, Rc<str>)| {
+        errors.iter().any(|error| {
+            error
+                .message
+                .starts_with(&format!("Multiply-defined module '{inner}'"))
+                && error.location.ends_with(&format!(" of module {file}"))
+        })
+    };
+    if !shadowings.iter().all(is_reported) {
+        return Err(shadowing_decline());
     }
     loader.is_failed = !errors.is_empty();
     // SANY.frontEndLinting: when SANY accepts the spec, it lints the modules. TLC 1.7.4's SANY

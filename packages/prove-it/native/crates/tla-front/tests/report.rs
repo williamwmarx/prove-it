@@ -14,6 +14,15 @@ fn get_text(name: &str, source: &str) -> String {
 }
 
 fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
+    get_report_with_files(name, source, &[])
+}
+
+/// What SANY prints for the root module `source`, named Main, with the modules `files`.
+fn get_report_with_files(
+    name: &str,
+    source: &str,
+    files: &[(&str, &str)],
+) -> Result<SanyText, FrontError> {
     let directory =
         std::env::temp_dir().join(format!("tla-front-report-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -24,7 +33,12 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
         &ReportOptions {
             version: TlcVersion::Master,
             file_name: None,
-            load_module: &|_| None,
+            load_module: &|name| {
+                files
+                    .iter()
+                    .find(|file| file.0 == name)
+                    .map(|file| file.1.to_owned())
+            },
             describe_file: &|name, origin| format!("{name} {origin:?}"),
             root_extendees: &[],
             is_xml_export: false,
@@ -367,6 +381,249 @@ fn reports_def_entries_that_name_no_defined_operator() {
 }
 
 // E4223: a nested module named like a module SANY has already read.
+// SpecObj.resolveNamesBetweenSpecAndExtention: SANY binds the name an extender instantiates to
+// the inner module of the same name of the file it extends, and reads no file for it, even where
+// one exists.
+#[test]
+fn binds_a_name_to_an_inner_module_of_an_extended_file() {
+    let holder = "---- MODULE Holder ----\n---- MODULE Held ----\nValue == 2\n====\n====\n";
+    let source =
+        "---- MODULE Main ----\nEXTENDS Mid\nJ == INSTANCE Held\nASSUME J!Value = 2\n====\n";
+    let mid = "---- MODULE Mid ----\nEXTENDS Holder\n====\n";
+    let expected = "Parsing file Main File\nParsing file Mid File\nParsing file Holder File\nSemantic processing of module Holder\nSemantic processing of module Mid\nSemantic processing of module Main\nLinting of module Holder\nLinting of module Mid\nLinting of module Main\n";
+    let text = |name, files: &[(&str, &str)]| {
+        get_report_with_files(name, source, files)
+            .expect("a text")
+            .text
+    };
+    assert_eq!(text("inner", &[("Mid", mid), ("Holder", holder)]), expected);
+    assert_eq!(
+        text(
+            "shadowed",
+            &[
+                ("Mid", mid),
+                ("Holder", holder),
+                ("Held", "---- MODULE Held ----\nValue == 5\n====\n")
+            ]
+        ),
+        expected
+    );
+}
+
+// Where an inner module extends the file, SANY binds the names of that module and of the inner
+// modules extending it alone, and reads a file for a name the file's other modules name.
+#[test]
+fn binds_a_name_to_an_inner_module_for_the_inner_modules_extending_its_file() {
+    let holder = "---- MODULE Holder ----\n---- MODULE Held ----\nValue == 2\n====\n====\n";
+    let held = "---- MODULE Held ----\nValue == 5\n====\n";
+    let extended = "---- MODULE Main ----\n---- MODULE I ----\nEXTENDS Holder\n====\n---- MODULE I2 ----\nEXTENDS I\nK == INSTANCE Held\n====\nINSTANCE I2\n====\n";
+    assert_eq!(
+        get_report_with_files(
+            "inner-only",
+            extended,
+            &[("Holder", holder), ("Held", held)]
+        )
+        .expect("a text")
+        .text,
+        "Parsing file Main File\nParsing file Holder File\nSemantic processing of module Holder\nSemantic processing of module Main\nLinting of module Holder\nLinting of module Main\n"
+    );
+    let named = "---- MODULE Main ----\n---- MODULE I ----\nEXTENDS Holder\nK == INSTANCE Held\n====\nJ == INSTANCE Held\n====\n";
+    assert_eq!(
+        get_report_with_files(
+            "inner-and-outer",
+            named,
+            &[("Holder", holder), ("Held", held)]
+        )
+        .expect("a text")
+        .text,
+        "Parsing file Main File\nParsing file Holder File\nParsing file Held File\nSemantic processing of module Holder\nSemantic processing of module Held\nSemantic processing of module Main\nLinting of module Holder\nLinting of module Held\nLinting of module Main\n"
+    );
+}
+
+// SpecObj.getModulesIndirectlyExtending counts a module that extends another once it has resolved
+// that EXTENDS: D, read before C, hasn't resolved its EXTENDS B when SANY reads C for B, so SANY
+// doesn't bind D's I to C's inner module, and reads no file for it.
+#[test]
+fn binds_no_name_for_a_module_that_extends_the_extender_later() {
+    let files = [
+        ("B", "---- MODULE B ----\nEXTENDS C\n====\n"),
+        (
+            "C",
+            "---- MODULE C ----\n---- MODULE I ----\nK == 1\n====\n====\n",
+        ),
+        (
+            "D",
+            "---- MODULE D ----\nEXTENDS B\nJ == INSTANCE I\n====\n",
+        ),
+    ];
+    let fatal = "In module D\n\nCannot find source file for module I imported in module D.";
+    assert_eq!(
+        get_report_with_files(
+            "later",
+            "---- MODULE Main ----\nEXTENDS B, D\n====\n",
+            &files
+        )
+        .expect("a text")
+        .text,
+        format!(
+            "Parsing file Main File\nParsing file B File\nParsing file D File\nParsing file C File\n\nFatal errors while parsing TLA+ spec in file Main\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n"
+        )
+    );
+}
+
+// SANY's modules extending an inner module reach the files that extend a name bound to it, which
+// the front end doesn't follow.
+#[test]
+fn declines_a_file_that_extends_an_inner_module_extending_another() {
+    let files = [
+        (
+            "F",
+            "---- MODULE F ----\n---- MODULE X ----\nEXTENDS C\n====\n====\n",
+        ),
+        (
+            "C",
+            "---- MODULE C ----\n---- MODULE I ----\nK == 1\n====\n====\n",
+        ),
+    ];
+    assert!(matches!(
+        get_report_with_files(
+            "through-inner",
+            "---- MODULE Main ----\nEXTENDS F, X\nJ == INSTANCE I\n====\n",
+            &files
+        ),
+        Err(FrontError::NotYet(_))
+    ));
+}
+
+// Where a file extends a name bound to an inner module that a file has too, or SANY analyzes a
+// module before a file whose inner module has its name, which SANY reports as multiply defined,
+// the front end's linking may not follow SANY.
+#[test]
+fn declines_an_inner_module_named_like_another_module() {
+    let inner = "---- MODULE A ----\n---- MODULE In ----\nQ == 1\n====\n====\n";
+    let file = "---- MODULE In ----\nQ == 2\n====\n";
+    let extended = get_report_with_files(
+        "extended-file",
+        "---- MODULE Main ----\nEXTENDS B\n====\n",
+        &[
+            ("B", "---- MODULE B ----\nEXTENDS A, In\n====\n"),
+            ("A", inner),
+            ("In", file),
+        ],
+    );
+    assert!(matches!(extended, Err(FrontError::NotYet(_))));
+    let analyzed_before = get_report_with_files(
+        "analyzed-before",
+        "---- MODULE Main ----\nEXTENDS B, A\n====\n",
+        &[
+            ("B", "---- MODULE B ----\nI == INSTANCE In\n====\n"),
+            ("A", inner),
+            ("In", file),
+        ],
+    );
+    assert!(matches!(analyzed_before, Err(FrontError::NotYet(_))));
+}
+
+// SANY keeps the file it bound a name to before, here the file whose inner module has the file's
+// name, and reports an inner module named like a module its file extends itself.
+#[test]
+fn keeps_a_file_bound_before_its_inner_module_of_the_same_name() {
+    let own_name = get_report_with_files(
+        "own-name",
+        "---- MODULE Main ----\nEXTENDS B\n====\n",
+        &[(
+            "B",
+            "---- MODULE B ----\n---- MODULE B ----\nQ == 2\n====\n====\n",
+        )],
+    );
+    assert_eq!(
+        own_name.expect("a text").text,
+        "Parsing file Main File\nParsing file B File\nSemantic processing of module B\nSemantic processing of module Main\nLinting of module B\nLinting of module Main\n"
+    );
+    let extended = get_report_with_files(
+        "extended-own",
+        "---- MODULE Main ----\nEXTENDS B\n====\n",
+        &[(
+            "B",
+            "---- MODULE B ----\nEXTENDS Naturals\n---- MODULE Naturals ----\nQ == 2\n====\n====\n",
+        )],
+    );
+    assert!(
+        extended
+            .expect("a text")
+            .text
+            .contains("Multiply-defined module 'Naturals'")
+    );
+}
+
+// Where only an inner module of a file extends the file holding the inner module, SANY binds the
+// names of that inner module alone, not those of the modules extending the file.
+#[test]
+fn binds_no_name_for_the_modules_extending_a_file_whose_inner_module_extends() {
+    let files = [
+        (
+            "B",
+            "---- MODULE B ----\n---- MODULE K ----\nEXTENDS Holder\n====\n====\n",
+        ),
+        (
+            "Holder",
+            "---- MODULE Holder ----\n---- MODULE Held ----\nQ == 2\n====\n====\n",
+        ),
+    ];
+    let fatal = "In module I\n\nCannot find source file for module Held imported in module I.";
+    assert_eq!(
+        get_report_with_files(
+            "inner-extender",
+            "---- MODULE Main ----\n---- MODULE I ----\nEXTENDS B\nJ == INSTANCE Held\n====\n====\n",
+            &files
+        )
+        .expect("a text")
+        .text,
+        format!(
+            "Parsing file Main File\nParsing file B File\nParsing file Holder File\n\nFatal errors while parsing TLA+ spec in file Main\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n"
+        )
+    );
+}
+
+// SANY's report stands where the front end's linking reports it too: an inner module named like a
+// module its file reaches through another, and a circular dependency beside a name the front end
+// leaves unbound.
+#[test]
+fn reports_what_sany_reports_beside_an_inner_module_named_like_another() {
+    let reached = get_report_with_files(
+        "reached",
+        "---- MODULE Main ----\nEXTENDS B\n====\n",
+        &[(
+            "B",
+            "---- MODULE B ----\nEXTENDS Sequences\n---- MODULE Naturals ----\nZ == 1\n====\n====\n",
+        )],
+    );
+    assert!(
+        reached
+            .expect("a text")
+            .text
+            .contains("Multiply-defined module 'Naturals'")
+    );
+    let cycle = get_report_with_files(
+        "cycle",
+        "---- MODULE Main ----\nJ == INSTANCE In\nI2 == INSTANCE C\n====\n",
+        &[
+            (
+                "B",
+                "---- MODULE B ----\nK == INSTANCE In\n---- MODULE C ----\nZ == 1\n====\n====\n",
+            ),
+            ("C", "---- MODULE C ----\nZ == 2\n====\n"),
+            ("In", "---- MODULE In ----\nEXTENDS B, C\n====\n"),
+        ],
+    );
+    assert!(
+        cycle
+            .expect("a text")
+            .text
+            .contains("Circular dependency among .tla files")
+    );
+}
+
 #[test]
 fn reports_a_nested_module_named_like_a_standard_module_it_extends() {
     assert_eq!(
