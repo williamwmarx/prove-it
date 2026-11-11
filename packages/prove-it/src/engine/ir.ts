@@ -63,7 +63,7 @@ import {
 } from "../values";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 14;
+export const IR_VERSION = 15;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -203,6 +203,7 @@ export interface IrProperties {
     action: Expression;
     subscript: Expression;
     scope: EvaluationScope | undefined;
+    name: string;
   }[];
   initialPredicates: { expression: Expression; scope: EvaluationScope | undefined; name: string }[];
 }
@@ -853,6 +854,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, writeRoot(property.action));
     push(model, writeRoot(property.subscript));
     push(model, getScopeIndex(property.scope));
+    push(model, getText(property.name));
   }
   push(model, input.properties.initialPredicates.length);
   for (const predicate of input.properties.initialPredicates) {

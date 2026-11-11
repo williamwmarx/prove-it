@@ -37,8 +37,8 @@ impl StopReason {
 }
 
 /// Holds a clone of the decision's `Limits`, which counts the same steps; nothing keeps it after
-/// `decide` returns. A clone is the same limit, its stop reason shared, as the arithmetic theory's
-/// lp solver keeps one in its cancel closure where the TypeScript's reads the context's manager.
+/// `decide` returns. Its clones share the stop reason too, so nlsat's managers, which keep one,
+/// count and stop as the limit itself.
 #[derive(Clone)]
 pub struct ResourceLimit {
     limits: Limits,
@@ -127,5 +127,21 @@ mod tests {
         assert!((1..256).all(|_| limit.inc()));
         assert!(!limit.inc());
         assert_eq!(limit.stop_reason(), Some(StopReason::Time));
+    }
+
+    #[test]
+    fn a_clone_counts_and_stops_with_the_limit() {
+        let limits = Limits::new(f64::INFINITY, Some(2), None);
+        let limit = ResourceLimit::new(&limits);
+        let clone = limit.clone();
+        assert!(clone.inc());
+        assert!(limit.inc());
+        assert!(!clone.inc());
+        assert_eq!(limit.stop_reason(), Some(StopReason::Steps));
+        assert!(!limit.inc());
+        assert_eq!(limit.count(), 4);
+        let other = ResourceLimit::new(&Limits::new(f64::INFINITY, None, None));
+        other.clone().stop(StopReason::Heap);
+        assert_eq!(other.stop_reason(), Some(StopReason::Heap));
     }
 }

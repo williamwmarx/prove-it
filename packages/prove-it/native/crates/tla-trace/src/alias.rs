@@ -59,10 +59,14 @@ impl Rebuilder<'_> {
             evaluator.current = state(position);
             evaluator.next = state(next);
             evaluator.level = position as i32 + 1;
+            // The next state is at its own position's level, one past the state's but for the
+            // last state's, which is the state itself or the one its cycle starts at.
+            evaluator.next_level = Some(next as i32 + 1);
             evaluator.printed.clear();
             // TLC prints an alias that fails with its message as a field of the state
             // (`_ALIASEvalError`, `Tool.evalAlias`).
             let result = evaluator.evaluate(body, &context);
+            evaluator.next_level = None;
             if !evaluator.printed.is_empty() {
                 return unsupported("that prints");
             }

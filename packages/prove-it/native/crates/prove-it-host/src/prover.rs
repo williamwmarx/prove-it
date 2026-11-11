@@ -12,38 +12,25 @@
 //! WebAssembly decision runs on the thread that would set it.
 
 pub use prove_it_prover::Cancel;
-use prove_it_prover::{DecideError, Limits, Statistic};
+use prove_it_prover::{DecideError, Decision, Limits, Statistic};
 
 use crate::hooks::HookResult;
 use crate::sources::get_text;
 use crate::value::HostValue;
 
-/// The stack of the thread a decision runs on: the backends recurse as deep as the terms they
-/// rewrite, which the stack of the thread JavaScript calls on doesn't hold.
-#[cfg(not(target_arch = "wasm32"))]
-const DECIDE_STACK_BYTES: usize = 256 * 1024 * 1024;
-
-/// `decide(prover, text, timeLimitMs, stepLimit)`, on this thread: wasm's stack is the one it
-/// links.
-#[cfg(target_arch = "wasm32")]
-pub fn decide(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
-    decide_here(arguments, cancel)
+/// What `decide` was asked, read from its arguments.
+struct Request {
+    prover: String,
+    text: String,
+    time_limit: f64,
+    step_limit: Option<u64>,
+    cancel: Option<Cancel>,
 }
 
-/// `decide(prover, text, timeLimitMs, stepLimit)`, on a thread with a deep stack.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn decide(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(DECIDE_STACK_BYTES)
-            .spawn_scoped(scope, || decide_here(arguments, cancel))
-            .expect("a thread for the decision")
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    })
-}
+type Answer = Result<Decision, DecideError>;
 
-fn decide_here(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
+/// `decide(prover, text, timeLimitMs, stepLimit)`.
+pub fn decide(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
     let [prover, text, time_limit, step_limit, ..] = arguments else {
         return Err("decide takes a prover, a text, a time limit and a step limit".into());
     };
@@ -57,8 +44,82 @@ fn decide_here(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
         HostValue::Number(steps) if steps >= 0.0 && steps.fract() == 0.0 => Some(steps as u64),
         _ => return Err("the step limit must be a whole number or undefined".into()),
     };
-    let limits = Limits::new(time_limit, step_limit, cancel);
-    Ok(match prove_it_prover::decide(&prover, &text, &limits) {
+    let request = Request {
+        prover,
+        text,
+        time_limit,
+        step_limit,
+        cancel,
+    };
+    Ok(get_result(decide_request(request)))
+}
+
+fn decide_here(request: Request) -> Answer {
+    let limits = Limits::new(request.time_limit, request.step_limit, request.cancel);
+    prove_it_prover::decide(&request.prover, &request.text, &limits)
+}
+
+/// On this thread: wasm's stack is the one it links.
+#[cfg(target_arch = "wasm32")]
+fn decide_request(request: Request) -> Answer {
+    decide_here(request)
+}
+
+/// On the calling thread's decide thread, which has a deep stack: the backends recurse as deep as
+/// the terms they rewrite, which the stack of the thread JavaScript calls on doesn't hold. Each
+/// calling thread keeps its own for as long as it lives, so that what a backend caches per thread,
+/// such as Isabelle's decoded logic, serves every decision the thread makes.
+#[cfg(not(target_arch = "wasm32"))]
+fn decide_request(request: Request) -> Answer {
+    use std::cell::RefCell;
+    use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+    use std::sync::mpsc::{Receiver, Sender, channel};
+    use std::thread::Result;
+
+    const DECIDE_STACK_BYTES: usize = 256 * 1024 * 1024;
+
+    struct DecideThread {
+        requests: Sender<Request>,
+        answers: Receiver<Result<Answer>>,
+    }
+
+    let spawn = || {
+        let (requests, received) = channel::<Request>();
+        let (answered, answers) = channel();
+        std::thread::Builder::new()
+            .name("prove-it decide".into())
+            .stack_size(DECIDE_STACK_BYTES)
+            .spawn(move || {
+                // It ends when its calling thread does, which drops the sender.
+                for request in received {
+                    let answer = catch_unwind(AssertUnwindSafe(|| decide_here(request)));
+                    if answered.send(answer).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("a thread for the decisions");
+        DecideThread { requests, answers }
+    };
+
+    thread_local! {
+        static DECIDE_THREAD: RefCell<Option<DecideThread>> = const { RefCell::new(None) };
+    }
+    let answer = DECIDE_THREAD.with_borrow_mut(|decide_thread| {
+        let thread = decide_thread.get_or_insert_with(spawn);
+        thread.requests.send(request).expect("the decide thread");
+        let answer = thread.answers.recv().expect("the decide thread's answer");
+        // A panic may leave the thread's caches half built, so the next decision gets a new one.
+        if answer.is_err() {
+            *decide_thread = None;
+        }
+        answer
+    });
+    answer.unwrap_or_else(|panic| resume_unwind(panic))
+}
+
+fn get_result(answer: Answer) -> HostValue {
+    match answer {
         Ok(decision) => HostValue::Object(vec![
             ("kind", HostValue::text("decided")),
             ("verdict", HostValue::text(decision.verdict.name())),
@@ -87,7 +148,7 @@ fn decide_here(arguments: &[HostValue], cancel: Option<Cancel>) -> HookResult {
             ("kind", HostValue::text("declined")),
             ("reason", HostValue::text(&reason)),
         ]),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -111,6 +172,21 @@ mod tests {
         ];
         let result = decide(&arguments, None).expect("a result");
         assert_eq!(get_kind(&result), HostValue::text("declined"));
+    }
+
+    // Each decision of a calling thread runs on the same decide thread, after the last.
+    #[test]
+    fn a_thread_decides_again() {
+        let arguments = [
+            HostValue::text("ls4"),
+            HostValue::text("p"),
+            HostValue::Number(f64::INFINITY),
+            HostValue::Undefined,
+        ];
+        for _ in 0..3 {
+            let result = decide(&arguments, None).expect("a result");
+            assert_eq!(get_kind(&result), HostValue::text("decided"));
+        }
     }
 
     #[test]

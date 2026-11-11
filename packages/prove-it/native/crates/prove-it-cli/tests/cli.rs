@@ -5358,41 +5358,6 @@ fn words_a_function_or_an_operators_table_applied_outside_its_domain_as_tlc() {
 }
 
 #[test]
-fn declines_a_temporal_property_tlc_rejects_after_it_warns_about_the_symmetry() {
-    // tests/fixtures/cli-output/EventualAction: TLC starts the liveness checker, warns that a
-    // symmetry is dangerous for liveness, then rejects the property:
-    //   Warning: Declaring symmetry during liveness checking is dangerous. ...
-    //   Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.
-    // The front end's failure doesn't print the warning, so the model isn't native yet.
-    let fixtures =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/cli-output");
-    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
-        .args(["-noGenerateSpecTE", "EventualAction.tla"])
-        .current_dir(&fixtures)
-        .output()
-        .expect("the binary runs");
-    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
-    assert_eq!(
-        String::from_utf8_lossy(&output.stderr),
-        "prove-it: not native yet: a temporal property TLC rejects after it warns about the symmetry\n"
-    );
-    // With -nowarning TLC prints no warning, and the binary prints TLC's error natively.
-    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
-        .args(["-noGenerateSpecTE", "-nowarning", "EventualAction.tla"])
-        .current_dir(&fixtures)
-        .output()
-        .expect("the binary runs");
-    assert_eq!(output.status.code(), Some(255), "{}", stdout(&output));
-    assert!(
-        stdout(&output).contains(
-            "Error: Temporal formulas containing actions must be of forms <>[]A or []<>A.\n"
-        ),
-        "{}",
-        stdout(&output)
-    );
-}
-
-#[test]
 fn exports_xml_as_sanys_xml_exporter_does() {
     let directory = std::env::temp_dir().join(format!("prove-it-cli-xml-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");

@@ -30,6 +30,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::rc::Rc;
 
+use super::limit::NlsatLimit;
 use super::upolynomial::{Upolynomial, UpolynomialManager};
 use super::upolynomial_factorization::{
     DEFAULT_FACTOR_PARAMS, UpolynomialFactors, factor_square_free, get_exact_square_root,
@@ -633,6 +634,8 @@ pub struct PolynomialManager {
     unit: Monomial,
     zero: Polynomial,
     one: Polynomial,
+    /// m_limit: the solver's, once set_limit shares it.
+    pub limit: NlsatLimit,
     um: UpolynomialManager,
     som: SomBuffer,
     som2: SomBuffer,
@@ -660,11 +663,17 @@ impl PolynomialManager {
             unit,
             zero,
             one,
-            um: UpolynomialManager::new(None),
+            limit: NlsatLimit::default(),
+            um: UpolynomialManager::new(None, NlsatLimit::default()),
             som: SomBuffer::default(),
             som2: SomBuffer::default(),
             cheap: CheapSomBuffer::default(),
         }
+    }
+
+    pub fn set_limit(&mut self, limit: &NlsatLimit) {
+        self.limit = limit.clone();
+        self.um.limit = limit.clone();
     }
 
     pub fn unit(&self) -> Monomial {
@@ -941,16 +950,17 @@ impl PolynomialManager {
         self.addmul(&Int::one(), first, &Int::from(-1), second)
     }
 
-    pub fn mul(&mut self, first: &Polynomial, second: &Polynomial) -> Polynomial {
+    pub fn mul(&mut self, first: &Polynomial, second: &Polynomial) -> Result<Polynomial, SmtError> {
         if first.size() == 0 || second.size() == 0 {
-            return self.zero();
+            return Ok(self.zero());
         }
         self.som.reset();
         let terms = first.terms();
         for (coeff, monomial) in terms.as_.iter().zip(&terms.ms) {
+            self.limit.checkpoint()?;
             self.som.addmul(&mut self.tables, coeff, *monomial, second);
         }
-        self.som.mk(&mut self.tables, false)
+        Ok(self.som.mk(&mut self.tables, false))
     }
 
     // mul(a, m, p): a*m*p.
@@ -983,15 +993,15 @@ impl PolynomialManager {
         self.cheap.mk(&mut self.tables)
     }
 
-    pub fn pw(&mut self, polynomial: &Polynomial, power: u32) -> Polynomial {
+    pub fn pw(&mut self, polynomial: &Polynomial, power: u32) -> Result<Polynomial, SmtError> {
         if power == 0 {
-            return self.one();
+            return Ok(self.one());
         }
         let mut result = polynomial.clone();
         for _ in 1..power {
-            result = self.mul(&result, polynomial);
+            result = self.mul(&result, polynomial)?;
         }
-        result
+        Ok(result)
     }
 
     // coeff: the coefficient of x^k, a polynomial in the other variables.
@@ -1173,7 +1183,7 @@ impl PolynomialManager {
             self.exact_div(&primitive, &g)?
         };
         let scaled = self.mul_const(&integer, &square_free_content);
-        Ok(self.mul(&scaled, &square_free_primitive))
+        self.mul(&scaled, &square_free_primitive)
     }
 
     // normalize: p divided by the gcd of its coefficients.
@@ -1226,6 +1236,7 @@ impl PolynomialManager {
         let divisor_monomial = divisor.monomial_at(max_pos);
         let divisor_coeff = divisor.coeff_at(max_pos);
         loop {
+            self.limit.checkpoint()?;
             let Some(remainder_pos) = self.som.get_graded_lex_max_pos(&self.tables) else {
                 self.som.reset();
                 return Ok(self.som2.mk(&mut self.tables, false));
@@ -1253,7 +1264,7 @@ impl PolynomialManager {
         divisor: &Polynomial,
         variable: Var,
         is_quotient: bool,
-    ) -> PseudoDivision {
+    ) -> Result<PseudoDivision, SmtError> {
         self.pseudo_division_core(polynomial, divisor, variable, true, is_quotient)
     }
 
@@ -1263,7 +1274,7 @@ impl PolynomialManager {
         polynomial: &Polynomial,
         divisor: &Polynomial,
         variable: Var,
-    ) -> PseudoDivision {
+    ) -> Result<PseudoDivision, SmtError> {
         self.pseudo_division_core(polynomial, divisor, variable, false, false)
     }
 
@@ -1274,24 +1285,24 @@ impl PolynomialManager {
         variable: Var,
         is_exact: bool,
         is_quotient: bool,
-    ) -> PseudoDivision {
+    ) -> Result<PseudoDivision, SmtError> {
         let deg_a = self.degree(polynomial, variable);
         let deg_b = self.degree(divisor, variable);
         if deg_b == 0 {
             let steps = if is_exact { deg_a + 1 } else { 1 };
             if !is_quotient || !is_exact || deg_a == 0 {
-                return PseudoDivision {
+                return Ok(PseudoDivision {
                     quotient: polynomial.clone(),
                     remainder: self.zero(),
                     steps,
-                };
+                });
             }
-            let power = self.pw(divisor, deg_a);
-            return PseudoDivision {
-                quotient: self.mul(polynomial, &power),
+            let power = self.pw(divisor, deg_a)?;
+            return Ok(PseudoDivision {
+                quotient: self.mul(polynomial, &power)?,
                 remainder: self.zero(),
                 steps,
-            };
+            });
         }
         let lc_b = self.coeff(divisor, variable, deg_b);
         let reduct_b = self.reduct(divisor, variable, deg_b);
@@ -1299,6 +1310,7 @@ impl PolynomialManager {
         let mut quotient = self.zero();
         let mut steps = 0u32;
         loop {
+            self.limit.checkpoint()?;
             let deg_r = self.degree(&remainder, variable);
             if deg_b > deg_r {
                 // exactSteps = degA - degB + 1; steps < exactSteps fails when it is not positive.
@@ -1306,23 +1318,27 @@ impl PolynomialManager {
                     && is_exact
                     && steps < exact_steps
                 {
-                    let power = self.pw(&lc_b, exact_steps - steps);
+                    let power = self.pw(&lc_b, exact_steps - steps)?;
                     if is_quotient {
-                        quotient = self.mul(&power, &quotient);
+                        quotient = self.mul(&power, &quotient)?;
                     }
-                    remainder = self.mul(&power, &remainder);
+                    remainder = self.mul(&power, &remainder)?;
                 }
-                return PseudoDivision {
+                return Ok(PseudoDivision {
                     quotient,
                     remainder,
                     steps,
-                };
+                });
             }
             self.som.reset();
             self.som2.reset();
             {
                 let terms = remainder.terms();
-                for (coeff, monomial) in terms.as_.iter().zip(&terms.ms) {
+                let size = terms.ms.len();
+                for (index, (coeff, monomial)) in terms.as_.iter().zip(&terms.ms).enumerate() {
+                    if size > 100 && index % 100 == 0 {
+                        self.limit.checkpoint()?;
+                    }
                     if self.tables.get(*monomial).degree_of(variable) == deg_r {
                         let shifted = self.tables.div_xk(*monomial, variable, deg_b);
                         if is_quotient {
@@ -1354,9 +1370,10 @@ impl PolynomialManager {
         polynomial: &Polynomial,
         divisor: &Polynomial,
         variable: Var,
-    ) -> Polynomial {
-        self.exact_pseudo_division(polynomial, divisor, variable, false)
-            .remainder
+    ) -> Result<Polynomial, SmtError> {
+        Ok(self
+            .exact_pseudo_division(polynomial, divisor, variable, false)?
+            .remainder)
     }
 
     // The reduct of coeff(p, x, k, reduct): p without its x^k monomials.
@@ -1456,13 +1473,14 @@ impl PolynomialManager {
         let mut g = self.one();
         let mut h = self.one();
         loop {
+            self.limit.checkpoint()?;
             let delta =
                 i64::from(self.degree(&pp_u, variable)) - i64::from(self.degree(&pp_v, variable));
-            let remainder = self.exact_pseudo_remainder(&pp_u, &pp_v, variable);
+            let remainder = self.exact_pseudo_remainder(&pp_u, &pp_v, variable)?;
             if remainder.size() == 0 {
                 let flipped = self.flip_sign_if_lm_neg(&pp_v);
                 let result = self.pp(&flipped, variable)?;
-                let product = self.mul(&content_gcd, &result);
+                let product = self.mul(&content_gcd, &result)?;
                 return Ok(self.mul_const(&integer_gcd, &product));
             }
             if self.is_const(&remainder) {
@@ -1476,7 +1494,7 @@ impl PolynomialManager {
             g = self.lc(&pp_u, variable);
             let mut new_h = self.one();
             for _ in 0..delta {
-                new_h = self.mul(&new_h, &g);
+                new_h = self.mul(&new_h, &g)?;
             }
             for _ in 1..delta {
                 new_h = self.exact_div(&new_h, &h)?;
@@ -1554,6 +1572,7 @@ impl PolynomialManager {
         let mut product = self.exact_div(&primitive, &square)?;
         let mut multiplicity = 1;
         while !self.is_const(&product) {
+            self.limit.checkpoint()?;
             let next = self.gcd(&product, &square)?;
             let factor = self.exact_div(&product, &next)?;
             if !self.is_const(&factor) {
@@ -1664,10 +1683,10 @@ impl PolynomialManager {
             b = self.neg(&b);
             c = self.neg(&c);
         }
-        let square = self.mul(&b, &b);
-        let product = self.mul(&a, &c);
+        let square = self.mul(&b, &b)?;
+        let product = self.mul(&a, &c)?;
         let discriminant = self.addmul(&Int::one(), &square, &Int::from(-4), &product);
-        let Some(root) = self.sqrt(&discriminant) else {
+        let Some(root) = self.sqrt(&discriminant)? else {
             Self::push_factor(result, polynomial, k);
             return Ok(());
         };
@@ -1703,14 +1722,20 @@ impl PolynomialManager {
     }
 
     // sqrt: the square root of p with a positive graded-lex leading coefficient, or None.
-    pub fn sqrt(&mut self, polynomial: &Polynomial) -> Option<Polynomial> {
+    pub fn sqrt(&mut self, polynomial: &Polynomial) -> Result<Option<Polynomial>, SmtError> {
         if polynomial.size() == 0 {
-            return Some(polynomial.clone());
+            return Ok(Some(polynomial.clone()));
         }
         let min_pos = self.get_graded_lex_min_pos(polynomial);
-        self.get_term_square_root(polynomial, min_pos)?;
-        let max_pos = polynomial.get_graded_lex_max_pos(&self.tables)?;
-        let a = self.get_term_square_root(polynomial, max_pos)?;
+        if self.get_term_square_root(polynomial, min_pos).is_none() {
+            return Ok(None);
+        }
+        let Some(max_pos) = polynomial.get_graded_lex_max_pos(&self.tables) else {
+            return Ok(None);
+        };
+        let Some(a) = self.get_term_square_root(polynomial, max_pos) else {
+            return Ok(None);
+        };
         let max_monomial = self.tables.get(polynomial.monomial_at(max_pos));
         let vars = max_monomial.vars.clone();
         let degrees: Vec<u32> = max_monomial
@@ -1733,9 +1758,10 @@ impl PolynomialManager {
             }
         }
         loop {
+            self.limit.checkpoint()?;
             let Some(rest_max) = self.som2.get_graded_lex_max_pos(&self.tables) else {
                 self.som2.reset();
-                return Some(self.som.mk(&mut self.tables, false));
+                return Ok(Some(self.som.mk(&mut self.tables, false)));
             };
             let monomial = self.tables.div_monomials(self.som2.ms[rest_max], m1);
             let monomial = match monomial {
@@ -1743,7 +1769,7 @@ impl PolynomialManager {
                 _ => {
                     self.som.reset();
                     self.som2.reset();
-                    return None;
+                    return Ok(None);
                 }
             };
             let coeff = floor_div(&self.som2.as_[rest_max], &two_a);
@@ -1822,10 +1848,15 @@ impl PolynomialManager {
     }
 
     // translate: p(x + v), by Horner on the coefficients of p in x.
-    pub fn translate(&mut self, polynomial: &Polynomial, variable: Var, value: &Int) -> Polynomial {
+    pub fn translate(
+        &mut self,
+        polynomial: &Polynomial,
+        variable: Var,
+        value: &Int,
+    ) -> Result<Polynomial, SmtError> {
         let degree = self.degree(polynomial, variable);
         if degree == 0 || value.is_zero() {
-            return polynomial.clone();
+            return Ok(polynomial.clone());
         }
         let mut coeffs: Vec<SomBuffer> = (0..=degree).map(|_| SomBuffer::default()).collect();
         {
@@ -1837,6 +1868,7 @@ impl PolynomialManager {
             }
         }
         for step in 1..=degree {
+            self.limit.checkpoint()?;
             for power in (degree - step)..degree {
                 let (lower, upper) = coeffs.split_at_mut(power as usize + 1);
                 lower[power as usize].addmul_buffer(&mut self.tables, value, self.unit, &upper[0]);
@@ -1848,7 +1880,7 @@ impl PolynomialManager {
             self.som
                 .addmul_buffer(&mut self.tables, &Int::one(), monomial, coeff);
         }
-        self.som.mk(&mut self.tables, false)
+        Ok(self.som.mk(&mut self.tables, false))
     }
 
     // substitute(p, x2v): p with the rational values of its assigned variables, each term scaled
@@ -1918,25 +1950,35 @@ impl PolynomialManager {
     }
 
     // muladd: p*q + a.
-    fn muladd(&mut self, first: &Polynomial, second: &Polynomial, constant: &Int) -> Polynomial {
+    fn muladd(
+        &mut self,
+        first: &Polynomial,
+        second: &Polynomial,
+        constant: &Int,
+    ) -> Result<Polynomial, SmtError> {
         if first.size() == 0 || second.size() == 0 {
-            return self.mk_const(constant);
+            return Ok(self.mk_const(constant));
         }
         self.som.reset();
         {
             let terms = first.terms();
             for (coeff, monomial) in terms.as_.iter().zip(&terms.ms) {
+                self.limit.checkpoint()?;
                 self.som.addmul(&mut self.tables, coeff, *monomial, second);
             }
         }
         self.som.add_term(constant.clone(), self.unit);
-        self.som.mk(&mut self.tables, false)
+        Ok(self.som.mk(&mut self.tables, false))
     }
 
     // compose: p(q) for a univariate p, by Horner.
-    fn compose(&mut self, polynomial: &Polynomial, inner: &Polynomial) -> Polynomial {
+    fn compose(
+        &mut self,
+        polynomial: &Polynomial,
+        inner: &Polynomial,
+    ) -> Result<Polynomial, SmtError> {
         if self.is_const(polynomial) {
-            return polynomial.clone();
+            return Ok(polynomial.clone());
         }
         let variable = self.max_var(polynomial);
         let degree = self.degree(polynomial, variable);
@@ -1949,16 +1991,20 @@ impl PolynomialManager {
         }
         let mut result = self.mk_const(&coeffs[degree as usize]);
         for power in (0..degree as usize).rev() {
-            result = self.muladd(inner, &result, &coeffs[power]);
+            result = self.muladd(inner, &result, &coeffs[power])?;
         }
-        result
+        Ok(result)
     }
 
     // compose_x_minus_y: p(x - y) for a univariate p in x.
-    pub fn compose_x_minus_y(&mut self, polynomial: &Polynomial, variable: Var) -> Polynomial {
+    pub fn compose_x_minus_y(
+        &mut self,
+        polynomial: &Polynomial,
+        variable: Var,
+    ) -> Result<Polynomial, SmtError> {
         let x = self.max_var(polynomial);
         if variable == x {
-            return self.coeff(polynomial, x, 0);
+            return Ok(self.coeff(polynomial, x, 0));
         }
         let linear = self.mk_linear(&[Int::one(), Int::from(-1)], &[x, variable], &Int::zero());
         self.compose(polynomial, &linear)
@@ -2004,21 +2050,21 @@ impl PolynomialManager {
                 return Ok(self.one());
             }
             let degree = self.degree(second, variable);
-            return Ok(self.pw(first, degree));
+            return self.pw(first, degree);
         }
         if self.is_const(second) {
             let degree = self.degree(first, variable);
-            return Ok(self.pw(second, degree));
+            return self.pw(second, degree);
         }
         let (integer_a, content_a, pp_a) = self.iccp(first, variable)?;
         let (integer_b, content_b, pp_b) = self.iccp(second, variable)?;
         let scaled_a = self.mul_const(&integer_a, &content_a);
         let degree_second = self.degree(second, variable);
-        let power_a = self.pw(&scaled_a, degree_second);
+        let power_a = self.pw(&scaled_a, degree_second)?;
         let scaled_b = self.mul_const(&integer_b, &content_b);
         let degree_first = self.degree(first, variable);
-        let power_b = self.pw(&scaled_b, degree_first);
-        let scale = self.mul(&power_a, &power_b);
+        let power_b = self.pw(&scaled_b, degree_first)?;
+        let scale = self.mul(&power_a, &power_b)?;
         let mut a = pp_a;
         let mut b = pp_b;
         let mut sign = 1;
@@ -2031,20 +2077,21 @@ impl PolynomialManager {
         let mut g = self.one();
         let mut h = self.one();
         loop {
+            self.limit.checkpoint()?;
             let degree_a = self.degree(&a, variable);
             let degree_b = self.degree(&b, variable);
             let delta = i64::from(degree_a) - i64::from(degree_b);
             if degree_a % 2 == 1 && degree_b % 2 == 1 {
                 sign = -sign;
             }
-            let remainder = self.exact_pseudo_remainder(&a, &b, variable);
+            let remainder = self.exact_pseudo_remainder(&a, &b, variable)?;
             a = b;
             b = self.exact_div(&remainder, &g)?;
             for _ in 0..delta {
                 b = self.exact_div(&b, &h)?;
             }
             g = self.lc(&a, variable);
-            let mut next_h = self.pw(&g, delta as u32);
+            let mut next_h = self.pw(&g, delta as u32)?;
             for _ in 1..delta {
                 next_h = self.exact_div(&next_h, &h)?;
             }
@@ -2052,11 +2099,11 @@ impl PolynomialManager {
             if self.degree(&b, variable) == 0 {
                 let degree = self.degree(&a, variable);
                 let lc_b = self.lc(&b, variable);
-                let mut last_h = self.pw(&lc_b, degree);
+                let mut last_h = self.pw(&lc_b, degree)?;
                 for _ in 1..degree {
                     last_h = self.exact_div(&last_h, &h)?;
                 }
-                let result = self.mul(&scale, &last_h);
+                let result = self.mul(&scale, &last_h)?;
                 return Ok(if sign < 0 { self.neg(&result) } else { result });
             }
         }
@@ -2114,6 +2161,7 @@ impl PolynomialManager {
                 if lift_var == main_var {
                     continue;
                 }
+                self.limit.checkpoint()?;
                 let eval_vars: Vec<Var> = all_vars
                     .iter()
                     .copied()
@@ -2121,6 +2169,7 @@ impl PolynomialManager {
                     .collect();
                 let max_combos: u64 = if eval_vars.is_empty() { 1 } else { 5 };
                 for combo in 0..max_combos {
+                    self.limit.checkpoint()?;
                     let bivariate = if eval_vars.is_empty() {
                         polynomial.clone()
                     } else {
@@ -2174,7 +2223,7 @@ impl PolynomialManager {
                         if factor_count <= 1 {
                             continue;
                         }
-                        let translated = self.translate(&bivariate, lift_var, &point);
+                        let translated = self.translate(&bivariate, lift_var, &point)?;
                         let lc_polynomial = self.coeff(&translated, main_var, deg_main);
                         let lc_at_zero = if self.is_const(&lc_polynomial) {
                             Some(if lc_polynomial.size() == 0 {
@@ -2196,13 +2245,14 @@ impl PolynomialManager {
                                 continue;
                             }
                             for split in 1..=factor_count / 2 {
+                                self.limit.checkpoint()?;
                                 let mut h1 = univariate_fs.factors[0].clone();
                                 for factor in &univariate_fs.factors[1..split] {
-                                    h1 = self.um.mul(&h1, factor);
+                                    h1 = self.um.mul(&h1, factor)?;
                                 }
                                 let mut h2 = univariate_fs.factors[split].clone();
                                 for factor in &univariate_fs.factors[split + 1..] {
-                                    h2 = self.um.mul(&h2, factor);
+                                    h2 = self.um.mul(&h2, factor)?;
                                 }
                                 let h1 = self.um.flip_sign_if_lm_neg(&h1);
                                 let h2 = self.um.flip_sign_if_lm_neg(&h2);
@@ -2223,7 +2273,7 @@ impl PolynomialManager {
                                 let candidates: Vec<Polynomial> = lifted
                                     .iter()
                                     .map(|factor| self.translate(factor, lift_var, &negated))
-                                    .collect();
+                                    .collect::<Result<_, _>>()?;
                                 if eval_vars.is_empty() {
                                     for candidate in &candidates {
                                         if self.is_const(candidate)
@@ -2242,11 +2292,11 @@ impl PolynomialManager {
                                     let max_var = self.max_var(candidate);
                                     let division = self.exact_pseudo_division(
                                         polynomial, candidate, max_var, true,
-                                    );
+                                    )?;
                                     if division.remainder.size() != 0 {
                                         continue;
                                     }
-                                    let product = self.mul(candidate, &division.quotient);
+                                    let product = self.mul(candidate, &division.quotient)?;
                                     if !self.eq(&product, polynomial) {
                                         continue;
                                     }
@@ -2315,7 +2365,7 @@ impl PolynomialManager {
         lc: &Int,
         prime: &Int,
     ) -> Result<Option<[Polynomial; 2]>, SmtError> {
-        let zp = UpolynomialManager::new(Some(prime.clone()));
+        let zp = UpolynomialManager::new(Some(prime.clone()), self.limit.clone());
         let f1 = zp.mk_monic(&zp.set(h1))?;
         let f2 = zp.mk_monic(&zp.set(h2))?;
         let ext = zp.ext_gcd(&f1, &f2)?;
@@ -2342,6 +2392,7 @@ impl PolynomialManager {
         f2_coeffs[0] = zp.mul_const(&f2, &zp.normalize_numeral(lc));
         let lc_inv = zp.inv(lc)?;
         for power in 1..size {
+            self.limit.checkpoint()?;
             let mut error = zp.set(&q_coeffs[power]);
             for (first, f1_coeff) in f1_coeffs.iter().enumerate().take(power + 1) {
                 let second = power - first;
@@ -2351,14 +2402,14 @@ impl PolynomialManager {
                 if f1_coeff.is_empty() || f2_coeffs[second].is_empty() {
                     continue;
                 }
-                let product = zp.mul(f1_coeff, &f2_coeffs[second]);
+                let product = zp.mul(f1_coeff, &f2_coeffs[second])?;
                 error = zp.sub(&error, &product);
             }
             if error.is_empty() {
                 continue;
             }
-            let a = zp.div_rem(&zp.mul(&error, &ext.v), &f1).remainder;
-            let b = zp.div_rem(&zp.mul(&error, &ext.u), &f2).remainder;
+            let a = zp.div_rem(&zp.mul(&error, &ext.v)?, &f1)?.remainder;
+            let b = zp.div_rem(&zp.mul(&error, &ext.u)?, &f2)?.remainder;
             f1_coeffs[power] = zp.mul_const(&a, &lc_inv);
             f2_coeffs[power] = zp.set(&b);
         }
@@ -2380,7 +2431,7 @@ impl PolynomialManager {
         };
         let first = to_polynomial(self, &f1_coeffs);
         let second = to_polynomial(self, &f2_coeffs);
-        let product = self.mul(&first, &second);
+        let product = self.mul(&first, &second)?;
         Ok(if self.eq(&product, q) {
             Some([first, second])
         } else {
@@ -2417,10 +2468,10 @@ impl PolynomialManager {
     ) -> Result<Vec<Polynomial>, SmtError> {
         let mut chain = Vec::new();
         let lc_q = self.lc(q, x);
-        let mut s = self.pw(&lc_q, self.degree(p, x) - self.degree(q, x));
+        let mut s = self.pw(&lc_q, self.degree(p, x) - self.degree(q, x))?;
         let mut a = q.clone();
         let negated = self.neg(q);
-        let mut b = self.exact_pseudo_remainder(p, &negated, x);
+        let mut b = self.exact_pseudo_remainder(p, &negated, x)?;
         while b.size() > 0 {
             let d = self.degree(&a, x);
             let e = self.degree(&b, x);
@@ -2465,15 +2516,15 @@ impl PolynomialManager {
         n -= a;
         while a != 1 {
             a /= 2;
-            let square = self.mul(&c, &c);
+            let square = self.mul(&c, &c)?;
             c = self.exact_div(&square, lc_sd)?;
             if n >= a {
-                let product = self.mul(&c, &lc_sd1);
+                let product = self.mul(&c, &lc_sd1)?;
                 c = self.exact_div(&product, lc_sd)?;
                 n -= a;
             }
         }
-        let product = self.mul(&c, sd1);
+        let product = self.mul(&c, sd1)?;
         self.exact_div(&product, lc_sd)
     }
 
@@ -2501,32 +2552,32 @@ impl PolynomialManager {
         let mut h: Vec<Polynomial> = Vec::new();
         for j in 0..e {
             let power = get_power(self, j);
-            h.push(self.mul(&lc_se, &power));
+            h.push(self.mul(&lc_se, &power)?);
         }
         let power = get_power(self, e);
-        let product = self.mul(&lc_se, &power);
+        let product = self.mul(&lc_se, &power)?;
         h.push(self.sub(&product, se));
         let x_polynomial = self.mk_var(x, 1);
         for j in (e + 1)..d {
-            let xh = self.mul(&x_polynomial, &h[j as usize - 1]);
+            let xh = self.mul(&x_polynomial, &h[j as usize - 1])?;
             let coeff = self.coeff(&xh, x, e);
-            let product = self.mul(&coeff, sd1);
+            let product = self.mul(&coeff, sd1)?;
             let quotient = self.exact_div(&product, &cd1)?;
             h.push(self.sub(&xh, &quotient));
         }
         let mut sum = self.zero();
         for j in 0..d {
             let coeff = self.coeff(a, x, j);
-            let product = self.mul(&coeff, &h[j as usize]);
+            let product = self.mul(&coeff, &h[j as usize])?;
             sum = self.add(&sum, &product);
         }
         let lc_a = self.lc(a, x);
         let d_polynomial = self.exact_div(&sum, &lc_a)?;
-        let xh = self.mul(&x_polynomial, &h[d as usize - 1]);
+        let xh = self.mul(&x_polynomial, &h[d as usize - 1])?;
         let added = self.add(&xh, &d_polynomial);
-        let left = self.mul(&cd1, &added);
+        let left = self.mul(&cd1, &added)?;
         let coeff = self.coeff(&xh, x, e);
-        let right = self.mul(&coeff, sd1);
+        let right = self.mul(&coeff, sd1)?;
         let difference = self.sub(&left, &right);
         let result = self.exact_div(&difference, s)?;
         Ok(if (d - e + 1) % 2 == 1 {
@@ -2600,6 +2651,7 @@ impl PolynomialManager {
         let mut result = ops.from_integer(&Int::zero());
         let mut index = start;
         while index < end {
+            self.limit.checkpoint()?;
             let degree = self.tables.get(polynomial.monomial_at(index)).degree_of(x);
             if degree == 0 {
                 let below = self.max_smaller_than(polynomial, index, end, x);

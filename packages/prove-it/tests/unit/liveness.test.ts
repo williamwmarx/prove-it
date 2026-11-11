@@ -60,6 +60,17 @@ describe("liveness matches TLC", () => {
     expect([result.status, result.violation?.properties]).toEqual(["liveness-violation", ["Live"]]);
   });
 
+  // TLC's LNAction of <<A>>_v compares v in the two states before it evaluates A, so A, whose
+  // division fails where x is unchanged, is never evaluated on a step that only toggles y.
+  it("checks the subscript of <<A>>_v before A", async () => {
+    const result = await check({
+      source:
+        "---- MODULE Angle ----\nEXTENDS Naturals\nVARIABLES x, y\nInc == x' = (x + 1) % 3 /\\ UNCHANGED y\nTog == y' = 1 - y /\\ UNCHANGED x\nSpec == x = 0 /\\ y = 0 /\\ [][Inc \\/ Tog]_<<x, y>>\nA == (x' - x) \\div (x' - x) # 0\nP == []<><<A>>_x\n====",
+      config: "SPECIFICATION Spec\nPROPERTY P",
+    });
+    expect([result.status, result.distinctStates]).toEqual(["liveness-violation", 6]);
+  });
+
   it("reports a lasso whose cycle returns to an earlier state", async () => {
     const result = await check({
       source: SOURCE,

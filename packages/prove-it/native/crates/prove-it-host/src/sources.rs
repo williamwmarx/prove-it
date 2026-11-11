@@ -10,7 +10,9 @@
 //!   `file`, `root file` and `standard`;
 //! - `text:<path>`, the text of a file the command line names, such as the spec or its
 //!   configuration (`checkSources`);
-//! - `class:<name>`, the Java override TLC loads for a module, as a Uint8Array (`checkSources`).
+//! - `class:<name>`, the Java override TLC loads for a module, as a Uint8Array (`checkSources`);
+//! - `bytes:<path>`, the bytes of a file the command line names, such as the tla2tools.jar on a
+//!   Java launch's class path, as a Uint8Array (`checkSources`).
 //!
 //! An export that reads something else names it by a key of a new kind, which this list gains.
 
