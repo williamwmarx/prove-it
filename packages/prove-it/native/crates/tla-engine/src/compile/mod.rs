@@ -22,6 +22,7 @@ pub(crate) mod lazy_function;
 
 pub(crate) use lazy_function::Lambda;
 mod nodes;
+mod pieces;
 mod predicate;
 pub(crate) mod random;
 mod sets;
@@ -200,9 +201,11 @@ pub struct Compiled {
     pub(crate) are_elements_enumerated: bool,
     /// For a set: whether TLC's value is known to stream its elements as its normalized set does,
     /// which a UNION or `\cup` TLC keeps lazy doesn't (`isStreamedApart`), and a value of unknown
-    /// provenance, such as a bound name's, may not; and whether each of its elements is.
+    /// provenance, such as a bound name's, may not; whether each of its elements is; and whether
+    /// each element of those is, which a UNION's elements are.
     pub(crate) is_in_order: bool,
     pub(crate) are_elements_in_order: bool,
+    pub(crate) are_elements_of_elements_in_order: bool,
     /// Whether the value is always TRUE or FALSE.
     pub(crate) is_boolean: bool,
     pub(crate) is_constant: bool,
@@ -236,6 +239,15 @@ pub struct Compiled {
     /// caches it as its normalized set, and leaves the first as built (`ValueVec.sort`), which a
     /// name bound to it streams.
     pub(crate) unsorted_first: Option<(Eval, Option<lazy::Reference>)>,
+    /// For a set enumeration some of whose elements TLC keeps lazy: each element's reference, in
+    /// the order written, which a UNION of the set streams (`Lazy::Enumeration`).
+    pub(crate) element_references: Option<Vec<lazy::Reference>>,
+    /// For a set TLC keeps lazy that may stream apart: whether its reference is TLC's value as
+    /// built, each set it is built of streaming in order or so referenced, where the reference of
+    /// a set the engine holds as an id, such as a variable's the initial predicate assigned, is
+    /// its normalized set, as is a variable's that `x' \in S` binds to an element S holds as
+    /// built, which only `Machine::held` follows.
+    pub(crate) is_reference_exact: bool,
     /// For `SUBSET S`: S, which `\subseteq` of two power sets compares in their place.
     pub(crate) subset_base: Option<Box<Compiled>>,
 }
@@ -285,7 +297,8 @@ impl Compiled {
         self.footprint.slots.contains(&PRINT_SLOT)
     }
 
-    /// The value as TLC keeps it for later uses.
+    /// The value as TLC keeps it for later uses, and so each element of a set enumeration of it,
+    /// which its sort leaves as built only where it is the first (`ValueVec.sort`).
     pub(crate) fn kept(compiled: Compiled) -> Compiled {
         Compiled::kept_from(compiled, false)
     }
@@ -297,7 +310,7 @@ impl Compiled {
         if compiled.is_kept {
             return compiled;
         }
-        let reference = compiled.reference.clone().map(|reference| {
+        let kept = |reference: lazy::Reference| {
             Arc::new(move |machine: &mut Machine<'_>| {
                 let built = reference(machine)?;
                 Ok(if is_assigned && machine.is_before_initial_state {
@@ -306,9 +319,13 @@ impl Compiled {
                     built.kept()
                 })
             }) as lazy::Reference
-        });
+        };
         Compiled {
-            reference,
+            reference: compiled.reference.clone().map(kept),
+            element_references: compiled
+                .element_references
+                .clone()
+                .map(|references| references.into_iter().map(kept).collect()),
             is_kept: true,
             ..compiled
         }
@@ -341,6 +358,7 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         are_elements_enumerated: false,
         is_in_order: false,
         are_elements_in_order: false,
+        are_elements_of_elements_in_order: false,
         is_boolean: false,
         is_constant: false,
         infinite: None,
@@ -355,6 +373,8 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         reference: None,
         is_kept: false,
         unsorted_first: None,
+        element_references: None,
+        is_reference_exact: false,
         subset_base: None,
     }
 }
@@ -748,6 +768,9 @@ pub struct Compiler<'a> {
     /// The walks whose first step is a guard `f[k] = c`, by the address of their step, each kept
     /// alive so no other step takes its address (`walker::Leading`).
     leading_guards: HashMap<usize, (Step, walker::Leading)>,
+    /// The nodes of Next's walk that make up an action atom, each with the bit a walk through it
+    /// sets on the step it takes (`pieces.rs`).
+    pub(crate) pieces: Vec<(NodeId, u8)>,
     // The fused predicate of each walk whose first step is a guard, by the walk's address.
     first_guards: HashMap<usize, (Step, predicate::Predicate)>,
     /// The bodies of recursive functions an action applies, each walked once for what the walk
@@ -858,6 +881,7 @@ impl<'a> Compiler<'a> {
             depth: 0,
             reads: None,
             leading_guards: HashMap::new(),
+            pieces: Vec::new(),
             first_guards: HashMap::new(),
             walked_functions: Vec::new(),
             walked_operators: Vec::new(),
@@ -1527,6 +1551,7 @@ impl<'a> Compiler<'a> {
             shape: Shape::Current(index),
             is_in_order: !context.is_init,
             are_elements_in_order: !context.is_init,
+            are_elements_of_elements_in_order: !context.is_init,
             ..leaf(
                 eval(move |machine| machine.read_current(index)),
                 Footprint::var(index),
@@ -1946,6 +1971,7 @@ impl<'a> Compiler<'a> {
                     Some(value) => Ok(Compiled {
                         is_in_order: true,
                         are_elements_in_order: true,
+                        are_elements_of_elements_in_order: true,
                         ..constant(self.intern_value(value)?)
                     }),
                     None => decline(format!(

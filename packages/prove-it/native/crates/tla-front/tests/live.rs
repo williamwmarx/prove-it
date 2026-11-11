@@ -41,6 +41,7 @@ fn try_lower_front(
         is_warning_enabled,
         is_spec_described: false,
         random_seed: 0,
+        is_trace_recorded: false,
     };
     let lowered = lower_front(&path, config, &options);
     std::fs::remove_dir_all(&directory).expect("removed");

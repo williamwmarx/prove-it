@@ -238,9 +238,17 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
           return;
         }
       },
-      prove_it_report: (kind: number, a: number, b: number, c: number, d: number, e: number) => {
+      prove_it_report: (
+        kind: number,
+        a: number,
+        b: number,
+        c: number,
+        d: number,
+        e: number,
+        f: number,
+      ) => {
         const check = running.check;
-        check?.events.push(() => check.report(kind, a, b, c, d, e));
+        check?.events.push(() => check.report(kind, a, b, c, d, e, f));
       },
       // The values are read now, while the memory holds them.
       prove_it_print: (pointer: number) => {

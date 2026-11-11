@@ -198,6 +198,7 @@ fn get_location(token: &Token) -> Position {
 
 /// The modules a module extends and instantiates, with its inner modules, as SANY's SpecObj
 /// walks them to decide which module to parse next.
+#[derive(Clone)]
 struct ModuleReferences {
     key: String,
     unit: Option<Name>,
@@ -438,6 +439,8 @@ pub struct TlcOrder<'a> {
     nested_modules: RefCell<FastMap<String, ParsedModule>>,
     texts: RefCell<FastMap<String, Rc<ModuleText>>>,
     contexts: RefCell<FastMap<String, Rc<RefCell<SymbolTable>>>>,
+    /// The modules TLC adds to the root module's EXTENDS for its post conditions.
+    root_extendees: &'a [&'a str],
 }
 
 fn missing_module_error(name: &str, importer: &str) -> FrontError {
@@ -470,9 +473,18 @@ impl<'a> TlcOrder<'a> {
             nested_modules: RefCell::default(),
             texts: RefCell::default(),
             contexts: RefCell::default(),
+            root_extendees: &[],
         };
         order.get_file(None)?;
         Ok(order)
+    }
+
+    /// The order where TLC adds these modules to the root module's EXTENDS for its post
+    /// conditions, as `_TLCTrace` where it records the trace for its trace exploration spec.
+    /// SANY parses and analyzes them as the root's other extendees, after its own.
+    pub fn with_root_extendees(mut self, root_extendees: &'a [&'a str]) -> TlcOrder<'a> {
+        self.root_extendees = root_extendees;
+        self
     }
 
     fn read_text(&self, text: Option<String>) -> Result<Rc<ModuleText>> {
@@ -515,6 +527,8 @@ impl<'a> TlcOrder<'a> {
                         .map(|module| module.1.to_owned())
                 })
                 .or_else(|| (self.load_module)(name))
+                // The post conditions' modules, as `_TLCTrace`, are SANY's own standard modules.
+                .or_else(|| crate::get_standard_module(name, self.version).map(str::to_owned))
                 .or_else(|| extract_module(self.source, name)),
         };
         let read = self.read_text(text)?;
@@ -595,7 +609,15 @@ impl<'a> TlcOrder<'a> {
                     return Ok(cached.clone());
                 }
                 let parsed = self.get_parsed(name.map(|name| &**name))?;
-                let references = get_module_references(parsed.tokens(), name, inner_modules);
+                let mut references = get_module_references(parsed.tokens(), name, inner_modules);
+                if name.is_none() && !self.root_extendees.is_empty() {
+                    let mut root = Rc::unwrap_or_clone(references);
+                    for &extendee in self.root_extendees {
+                        root.extends.push(extendee.to_owned());
+                        root.all_extends.borrow_mut().insert(extendee.to_owned());
+                    }
+                    references = Rc::new(root);
+                }
                 unit_references.insert(unit_key(name), references.clone());
                 Ok(references)
             };

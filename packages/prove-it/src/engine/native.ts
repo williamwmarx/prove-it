@@ -147,7 +147,15 @@ export interface NativeAddon extends NativeStoreHooks {
     ir: Uint8Array,
     settings: Int32Array,
     stateLog: string,
-    report: (kind: number, a: number, b: number, c: number, d: number, e: number) => void,
+    report: (
+      kind: number,
+      a: number,
+      b: number,
+      c: number,
+      d: number,
+      e: number,
+      f: number,
+    ) => void,
     print: (width: number, words: Int32Array, strings: string[]) => void,
   ) => NativeOutcome;
 }
@@ -305,7 +313,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 14;
+const ABI_VERSION = 15;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";
@@ -468,18 +476,19 @@ export const checkNatively = (
     lowered.ir,
     settings,
     globalThis.process?.env?.PROVE_IT_STATE_LOG ?? "",
-    (kind, a, b, c, d, e) => {
+    (kind, a, b, c, d, e, f) => {
       if (kind === 0) callbacks.onInitialStatesStarted();
       else if (kind === 1) callbacks.onProgress?.({ kind: "initial-states-progress", count: a });
       else if (kind === 2) callbacks.onInitialStates(a, b);
       // A check of the temporal properties part way through the search, of a branches on the
-      // graph of the first b states expanded, with c states generated, d found and depth e so far.
+      // graph of the first b states expanded, with c states generated, d found and depth e so far,
+      // whose behavior graphs have f states summed over the branches.
       else if (kind === 4) {
         callbacks.onProgress?.({
           kind: "liveness-started",
           branches: a,
           isComplete: false,
-          states: b,
+          states: f,
           statistics: { generatedStates: c, distinctStates: d, queuedStates: d - b, depth: e },
         });
       } else if (kind === 5) callbacks.onProgress?.({ kind: "liveness-finished" });

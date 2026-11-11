@@ -1,0 +1,2358 @@
+> iprover	thy:AllocatorImplementation_proof-127	2000
+results
+end
+steps 36
+> iprover	thy:AllocatorImplementation_proof-33	2000
+results
+end
+steps 63
+> iprover	thy:AtomicBakeryWithoutSMT-465	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	thy:AtomicBakeryWithoutSMT-6	2000
+results
+end
+steps 36
+> iprover	thy:FiniteSetTheorems_proofs-453	2000
+results
+end
+steps 36
+> iprover	thy:NaturalsInduction_proofs-1	2000
+results
+end
+steps 36
+> iprover	thy:Paxos-109	2000
+results
+end
+steps 180
+> iprover	thy:Sets-183	2000
+results
+end
+steps 217
+> iprover	thy:TLAPS-2	2000
+results
+end
+steps 108
+> iprover	thy:constantfcn_test-1	2000
+results
+end
+steps 36
+> iprover	thy:function_except_tuple_soundness_gh201_test-1	2000
+results
+end
+steps 36
+> iprover	fact:CaseExpressions.CaseArm_def	2000
+results
+end
+steps 36
+> iprover	fact:FixedPoints.gfpMono	2000
+results
+end
+steps 45
+> iprover	fact:FixedPoints.lfpGLB	2000
+results
+end
+steps 45
+> iprover	fact:FixedPoints.lfp_def	2000
+results
+end
+steps 36
+> iprover	fact:Functions.Surjections_def	2000
+results
+end
+steps 36
+> iprover	fact:Functions.applyExcept	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	fact:Functions.boolifyInjectiveOn	2000
+results
+end
+steps 36
+> iprover	fact:Functions.exceptInFuncSetSame	2000
+results
+end
+steps 36
+> iprover	fact:Functions.extend_def	2000
+results
+end
+steps 36
+> iprover	fact:Functions.fcnIsAFcn	2000
+results
+end
+steps 36
+> iprover	fact:Functions.funcSetValue	2000
+results
+end
+steps 36
+> iprover	fact:Functions.imageI	2000
+results
+end
+steps 36
+> iprover	fact:Functions.inFuncSet	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	fact:Functions.injectiveImageEqual	2000
+results
+end
+steps 36
+> iprover	fact:Functions.injectiveOnExcept	2000
+results
+end
+steps 108
+> iprover	fact:Functions.injectiveOnSetminus	2000
+results
+end
+steps 36
+> iprover	fact:Functions.inverseInjective	2000
+results
+end
+steps 36
+> iprover	fact:Functions.isBoolIsAFcn	2000
+results
+end
+steps 36
+> iprover	fact:Functions.oneArgDomain	2000
+results
+end
+steps 36
+> iprover	fact:Functions.surjectionsFuncSet	2000
+results
+end
+steps 36
+> iprover	fact:Functions.surjectiveIsBool	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.add_commute	2000
+results
+result 0
+maxidx 3
+prop #857:5debf136
+end
+steps 4
+> iprover	fact:IntegerArithmetic.add_is_0_nat	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.add_leq_left_mono	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.add_leq_less_mono	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.add_less_mono	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.add_pred_left	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.add_uminus_pred_left	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.addint_succ	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.diff_diff_left	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.eq_leq_bothE	2000
+results
+result 0
+maxidx 2
+prop #1531:9e1ea334
+result 1
+maxidx 2
+prop #1531:1adfc56
+stop
+steps 2
+> iprover	fact:IntegerArithmetic.int_add_left_cancel_leq	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_add_right_cancel_succ_less	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_leq_cases	2000
+results
+result 0
+maxidx 2
+prop #1817:785e3f14
+result 1
+maxidx 2
+prop #1817:7e9d0193
+stop
+steps 2
+> iprover	fact:IntegerArithmetic.int_leq_is_less_succ	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_leq_limit_2	2000
+results
+result 0
+maxidx 3
+prop #1257:d1a26c84
+result 1
+maxidx 4
+prop #2297:9c9521d2
+stop
+steps 8
+> iprover	fact:IntegerArithmetic.int_leq_pred_iff	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_leq_refl	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_leq_uminus_succ_iff	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_less_iff_succ_add	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_less_not_leq	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_less_uminus	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_pred_leqI	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_pred_less_pred	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.int_succ_leq_predE	2000
+results
+result 0
+maxidx 2
+prop #2000:4ab3fe03
+result 1
+maxidx 2
+prop #1540:c9d0f9fb
+stop
+steps 2
+> iprover	fact:IntegerArithmetic.int_succ_less_succI	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.intvlIsEmpty	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.leq_add_self2	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.leq_isBool	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.less_add_Succ2	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.less_isBool	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.nat_add_gt_0	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.nat_leq_zero	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.nat_neq0_conv	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.neq_leq_trans_sym	2000
+results
+result 0
+maxidx 4
+prop #693:33da9532
+result 1
+maxidx 5
+prop #1473:df2af81e
+stop
+steps 12
+> iprover	fact:IntegerArithmetic.one_is_add_nat	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.pr_addint_def	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.pred_add_eq_self1	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.succIntvl	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.times_0_left	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.times_is_1_iff	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.times_left_commute	2000
+results
+result 0
+maxidx 3
+prop #1312:c1e26ec9
+end
+steps 4
+> iprover	fact:IntegerArithmetic.times_leq_right_pos_cancel	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.times_less_right_neg_mono	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.times_pred_left	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.trans_leq_add_nat2	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.trans_less_diff_nat1	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.uminus_add	2000
+results
+end
+steps 36
+> iprover	fact:IntegerArithmetic.zerotoEmpty	2000
+results
+end
+steps 36
+> iprover	fact:IntegerDivision.div_exists	2000
+results
+end
+steps 36
+> iprover	fact:IntegerDivision.div_times_divisor4	2000
+results
+end
+steps 36
+> iprover	fact:IntegerDivision.dvd_0_right	2000
+results
+end
+steps 36
+> iprover	fact:IntegerDivision.dvd_mult_left	2000
+results
+end
+steps 36
+> iprover	fact:IntegerDivision.dvd_times_div_distrib	2000
+results
+end
+steps 36
+> iprover	fact:IntegerDivision.dvd_triv_right	2000
+results
+end
+steps 36
+> iprover	fact:IntegerDivision.mod_div_same	2000
+results
+end
+steps 36
+> iprover	fact:IntegerDivision.mod_times_divisor3	2000
+results
+end
+steps 36
+> iprover	fact:IntegerDivision.uminus_mod2	2000
+results
+end
+steps 90
+> iprover	fact:Integers.SuccInj	2000
+results
+result 0
+maxidx 3
+prop #1082:ec117d1c
+result 1
+maxidx 4
+prop #1862:ed85f9cd
+stop
+steps 8
+> iprover	fact:Integers.SuccIsAFcn	2000
+results
+end
+steps 36
+> iprover	fact:Integers.diffInduction	2000
+results
+end
+steps 1134
+> iprover	fact:Integers.four_def	2000
+results
+end
+steps 36
+> iprover	fact:Integers.intInductE	2000
+results
+result 0
+maxidx 2
+prop #3094:911d6d99
+result 1
+maxidx 2
+prop #2857:15efad29
+stop
+steps 56
+> iprover	fact:Integers.natInduct	2000
+results
+result 0
+maxidx 3
+prop #921:b3333323
+result 1
+maxidx 5
+prop #1249:44cdf283
+stop
+steps 166
+> iprover	fact:Integers.not0_implies_Suc	2000
+results
+result 0
+maxidx 4
+prop #979:18c48d63
+result 1
+maxidx 5
+prop #1789:99643f3d
+stop
+steps 12
+> iprover	fact:Integers.predInjIff	2000
+results
+end
+steps 36
+> iprover	fact:Integers.primrec_int	2000
+results
+end
+steps 140
+> iprover	fact:Integers.seven_def	2000
+results
+end
+steps 36
+> iprover	fact:Integers.succIsAFcn	2000
+results
+end
+steps 36
+> iprover	fact:Integers.succUminusSuccNat	2000
+results
+end
+steps 36
+> iprover	fact:Integers.ten_def	2000
+results
+end
+steps 36
+> iprover	fact:Integers.uminusInj	2000
+results
+result 0
+maxidx 3
+prop #968:564a4038
+result 1
+maxidx 4
+prop #1748:87525675
+stop
+steps 8
+> iprover	fact:Integers.uminusSucc	2000
+results
+end
+steps 36
+> iprover	fact:Integers.uptoInduct	2000
+results
+result 0
+maxidx 3
+prop #1806:ca9b6fe0
+result 1
+maxidx 5
+prop #2134:553434cc
+stop
+steps 166
+> iprover	fact:Integers.uptoSucc	2000
+results
+end
+steps 36
+> iprover	fact:Integers.zeroIsSucc	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.Ex_def	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.TruepropBoolify	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.atomize_all	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.atomize_imp	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.boolifyCond	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	fact:PredicateLogic.boolifyI	2000
+results
+result 0
+maxidx 3
+prop #289:6cc4f1a2
+result 1
+maxidx 4
+prop #453:b83504f2
+stop
+steps 6
+> iprover	fact:PredicateLogic.boolifyTrue	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.boolifyTrueFalse	2000
+results
+end
+steps 90
+> iprover	fact:PredicateLogic.cases_conj_eq	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.cases_implies_conj	2000
+results
+end
+steps 54
+> iprover	fact:PredicateLogic.chooseI2	2000
+results
+result 0
+maxidx 2
+tpair (?Q.0:fun(?'a.0,PredicateLogic.c) (PredicateLogic.Choice::fun(fun(?'a.0,PredicateLogic.c),?'a.0) (%x:?'a.0 (?P.0:fun(?'a.0,PredicateLogic.c) B0)))) =?= (?P.0:fun(?'a.0,PredicateLogic.c) ?a.0:?'a.0)
+prop #651:92915770
+result 1
+maxidx 3
+prop #651:155034e9
+stop
+steps 54
+> iprover	fact:PredicateLogic.classical	2000
+results
+result 0
+maxidx 2
+prop #414:6c6d639d
+result 1
+maxidx 3
+prop #684:ee0c4685
+stop
+steps 3
+> iprover	fact:PredicateLogic.condFullCong	2000
+results
+result 0
+maxidx 5
+prop #1443:cb00f737
+result 1
+maxidx 5
+prop #2087:c3e2116d
+stop
+steps 11
+> iprover	fact:PredicateLogic.condI	2000
+results
+result 0
+maxidx 2
+prop #715:569cebdd
+result 1
+maxidx 5
+tpair #221:383ffffb =?= #221:62b3f2b6
+prop #1569:f9068900
+stop
+steps 32
+> iprover	fact:PredicateLogic.cond_eqLE	2000
+results
+result 0
+maxidx 5
+prop #1698:6b96ae3d
+result 1
+maxidx 5
+prop #1698:6b96ae3d
+stop
+steps 9
+> iprover	fact:PredicateLogic.conjE	2000
+results
+result 0
+maxidx 3
+prop #643:93f0fe90
+result 1
+maxidx 3
+prop #643:71fe5762
+stop
+steps 4
+> iprover	fact:PredicateLogic.default_def	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.eqBoolean	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.eq_false_not	2000
+results
+result 0
+maxidx 3
+prop #408:eef8868e
+result 1
+maxidx 4
+prop #408:eef8868e
+stop
+steps 5
+> iprover	fact:PredicateLogic.equal_default	2000
+results
+result 0
+maxidx 4
+prop #953:d0dd8cc9
+result 1
+maxidx 5
+prop #953:d0dd8cc9
+stop
+steps 14
+> iprover	fact:PredicateLogic.excluded_middle	2000
+results
+result 0
+maxidx 1
+prop #244:213699d3
+end
+steps 1
+> iprover	fact:PredicateLogic.iffCE	2000
+results
+result 0
+maxidx 5
+prop #1394:8052f550
+result 1
+maxidx 5
+prop #1343:8882b0d9
+stop
+steps 9
+> iprover	fact:PredicateLogic.iffThenBoolifyEqual	2000
+results
+result 0
+maxidx 5
+prop #533:53e0af71
+result 1
+maxidx 6
+prop #723:c20fa243
+stop
+steps 13
+> iprover	fact:PredicateLogic.impE	2000
+results
+result 0
+maxidx 2
+prop #856:a18d5a14
+result 1
+maxidx 2
+prop #642:c84d4eac
+stop
+steps 2
+> iprover	fact:PredicateLogic.isBoolE	2000
+results
+result 0
+maxidx 2
+prop #1151:e1dd37b
+result 1
+maxidx 2
+prop #1007:54f77505
+stop
+steps 3
+> iprover	fact:PredicateLogic.mp	2000
+results
+result 0
+maxidx 2
+prop #412:1526ed02
+result 1
+maxidx 3
+prop #446:380c9904
+stop
+steps 3
+> iprover	fact:PredicateLogic.notBoolIsFalse	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.notIsBool	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.notnotI	2000
+results
+result 0
+maxidx 3
+prop #346:852684b2
+result 1
+maxidx 4
+prop #346:852684b2
+stop
+steps 5
+> iprover	fact:PredicateLogic.simp_implies_def	2000
+results
+end
+steps 36
+> iprover	fact:PredicateLogic.subst	2000
+results
+result 0
+maxidx 4
+tpair (?b.2:fun(PredicateLogic.c,PredicateLogic.c) ?b.0:PredicateLogic.c) =?= ?b.0:PredicateLogic.c
+prop #945:79a00862
+result 1
+maxidx 2
+tpair (?P.0:fun(PredicateLogic.c,PredicateLogic.c) ?a.0:PredicateLogic.c) =?= (?P.0:fun(PredicateLogic.c,PredicateLogic.c) ?b.0:PredicateLogic.c)
+prop #503:6c540414
+stop
+steps 68
+> iprover	fact:PredicateLogic.trueI	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.TRUE::PredicateLogic.c)
+end
+steps 1
+> iprover	fact:Pure.conjunctionD1	2000
+results
+result 0
+maxidx 2
+prop #279:d31aa8db
+result 1
+maxidx 3
+prop #459:cef8807
+stop
+steps 3
+> iprover	fact:Pure.equal_allI	2000
+results
+end
+steps 36
+> iprover	fact:Pure.meta_allE	2000
+results
+result 0
+maxidx 2
+prop #375:303c5e32
+result 1
+maxidx 2
+prop #409:5af9ac8a
+stop
+steps 3
+> iprover	fact:Pure.protectI	2000
+results
+end
+steps 468
+> iprover	fact:Pure.sort_constraint_eq	2000
+results
+end
+steps 36
+> iprover	fact:Pure.swap_prems_eq	2000
+results
+end
+steps 36
+> iprover	fact:Pure.transitive	2000
+results
+result 0
+maxidx 2
+prop #263:daa5d5f6
+result 1
+maxidx 2
+prop #263:2c8e4fa0
+stop
+steps 2
+> iprover	fact:SetTheory.INTER_def	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.SUBSET_UNION	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.UNIONI	2000
+results
+result 0
+maxidx 2
+prop #782:2ff3f3f8
+end
+steps 4
+> iprover	fact:SetTheory.UNION_mono	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.addEltCommute	2000
+results
+result 0
+maxidx 1
+prop #601:9b24903e
+end
+steps 4
+> iprover	fact:SetTheory.addEltEqual_iff	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.addEltUnion	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.bAllIsBool	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.bChooseI	2000
+results
+result 0
+maxidx 4
+tpair #372:c90e0e9e =?= ?A.0:PredicateLogic.c
+prop #2455:f3f3db9c
+result 1
+maxidx 2
+tpair (?P.0:fun(PredicateLogic.c,PredicateLogic.c) ?t.0:PredicateLogic.c) =?= #244:45e36be9
+prop #675:97d1b849
+stop
+steps 53
+> iprover	fact:SetTheory.bExCong	2000
+results
+result 0
+maxidx 3
+prop #1292:2c57a146
+result 1
+maxidx 5
+prop #2062:989b8849
+stop
+steps 7
+> iprover	fact:SetTheory.bExistsInter	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.bExistsUnion	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.condIn	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.emptySubset	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.equalAddElt_iff	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.inCondI	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.interAddEltRight	2000
+results
+end
+steps 90
+> iprover	fact:SetTheory.interAssoc	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.interI	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.interSetminusRight	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.nonEmptyE	2000
+results
+result 0
+maxidx 2
+prop #1119:a20a1c2
+result 1
+maxidx 2
+prop #787:b9cd5822
+stop
+steps 3
+> iprover	fact:SetTheory.psubset_def	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.setEqualD1	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	fact:SetTheory.setEqualI	2000
+results
+result 0
+maxidx 3
+prop #1111:71e03bfc
+result 1
+maxidx 4
+prop #1891:2605cb83
+stop
+steps 8
+> iprover	fact:SetTheory.setOfAllEqual	2000
+results
+result 0
+maxidx 3
+prop #1915:b9b55b21
+end
+steps 4
+> iprover	fact:SetTheory.setminusAddEltLeft	2000
+results
+end
+steps 90
+> iprover	fact:SetTheory.setminusINTERRight	2000
+results
+result 0
+maxidx 4
+prop #985:ed32b0d0
+result 1
+maxidx 5
+prop #1810:727a3c41
+stop
+steps 12
+> iprover	fact:SetTheory.setminusUnionRight	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.subsetCE	2000
+results
+result 0
+maxidx 2
+prop #1333:ef391d12
+result 1
+maxidx 2
+prop #1066:564eee4b
+stop
+steps 3
+> iprover	fact:SetTheory.subsetI	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.subsetIsBool	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.subsetOfE	2000
+results
+result 0
+maxidx 2
+prop #1519:a7e9e10b
+result 1
+maxidx 2
+prop #993:f29d273b
+stop
+steps 3
+> iprover	fact:SetTheory.subsetSetminus	2000
+results
+end
+steps 36
+> iprover	fact:SetTheory.subst_set_rev	2000
+results
+result 0
+maxidx 2
+prop #613:22f73e54
+result 1
+maxidx 3
+prop #1229:9ae362ce
+stop
+steps 5
+> iprover	fact:SetTheory.unionE	2000
+results
+result 0
+maxidx 2
+prop #1672:79d89989
+result 1
+maxidx 2
+prop #1105:445c150c
+stop
+steps 3
+> iprover	fact:SetTheory.unionLeftCommute	2000
+results
+result 0
+maxidx 1
+prop #597:3fb18ffe
+end
+steps 4
+> iprover	fact:SetTheory.union_def	2000
+results
+end
+steps 36
+> iprover	fact:Strings.Char_def	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.DomainSeqLen	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.IdI'	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	fact:Tuples.LenI	2000
+results
+result 0
+maxidx 3
+prop #1135:ff2be0e3
+result 1
+maxidx 4
+prop #2074:28a21ce9
+stop
+steps 8
+> iprover	fact:Tuples.Product_def	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.SeqIsAFcn	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.antisymmetricIsBool	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.appendExtend	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.boolifyEquivalence	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.boolifySymmetric	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.compEpair	2000
+results
+result 0
+maxidx 2
+prop #3105:9db5fb75
+result 1
+maxidx 2
+prop #2673:9535e469
+stop
+steps 2
+> iprover	fact:Tuples.converseSubset	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.converse_mono	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.domainEmptySeq	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.emptySeqIsAFcn	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.imageAppend	2000
+results
+end
+steps 90
+> iprover	fact:Tuples.imageEmptySeq	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.inProductI	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.in_ran_imp_in_B	2000
+results
+result 0
+maxidx 2
+prop #889:e592fa3d
+end
+steps 4
+> iprover	fact:Tuples.irreflexiveIsBool	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.isAppend	2000
+results
+result 0
+maxidx 3
+prop #3147:7207877a
+result 1
+maxidx 5
+prop #4225:caeb5edf
+stop
+steps 7
+> iprover	fact:Tuples.prodEmptyIff	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.prodEmptyIff'	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.reflI	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.reflexive_empty	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.rel_comp_empty2	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.rel_range	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.seqEqualIff	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.seqInduct	2000
+results
+result 0
+maxidx 2
+prop #1955:2b25f967
+result 1
+maxidx 3
+tpair (?S.2:fun(PredicateLogic.c,PredicateLogic.c) (Tuples.Seq::fun(PredicateLogic.c,PredicateLogic.c) ?S.0:PredicateLogic.c)) =?= ?S.0:PredicateLogic.c
+prop #2351:10ac8211
+stop
+steps 56
+> iprover	fact:Tuples.setOfPairs_cong	2000
+results
+result 0
+maxidx 3
+prop #2083:4e1a3c3
+result 1
+maxidx 5
+prop #3007:e2ff6137
+stop
+steps 7
+> iprover	fact:Tuples.symmetricE	2000
+results
+result 0
+maxidx 2
+prop #998:4e1c79a7
+end
+steps 4
+> iprover	fact:Tuples.symmetric_iff_converse_eq	2000
+results
+end
+steps 36
+> iprover	fact:Tuples.transitive_def	2000
+results
+end
+steps 36
+> iprover	fact:Zenon.zenon_all_in_0	2000
+results
+result 0
+maxidx 2
+prop #790:4fd382eb
+result 1
+maxidx 4
+tpair (?a.3:fun(PredicateLogic.c,PredicateLogic.c) ?a.0:PredicateLogic.c) =?= ?a.0:PredicateLogic.c
+prop #993:90c86d0f
+stop
+steps 160
+> iprover	fact:Zenon.zenon_and_1	2000
+results
+result 0
+maxidx 3
+prop #298:ca5d484e
+end
+steps 1
+> iprover	fact:Zenon.zenon_boolcase	2000
+results
+result 0
+maxidx 3
+prop #1762:8d5b1bc3
+result 1
+maxidx 3
+prop #1695:ddc040ac
+stop
+steps 71
+> iprover	fact:Zenon.zenon_boolcase_in	2000
+results
+result 0
+maxidx 2
+prop #1429:a10be3f1
+result 1
+maxidx 3
+prop #1429:a10be3f1
+stop
+steps 23
+> iprover	fact:Zenon.zenon_case5	2000
+results
+result 0
+maxidx 2
+prop #3247:796cc978
+result 1
+maxidx 3
+prop #3247:796cc978
+stop
+steps 23
+> iprover	fact:Zenon.zenon_case_oth_simpl	2000
+results
+end
+steps 36
+> iprover	fact:Zenon.zenon_caseother0	2000
+results
+result 0
+maxidx 2
+prop #488:9307e14e
+result 1
+maxidx 3
+prop #488:9307e14e
+stop
+steps 23
+> iprover	fact:Zenon.zenon_choose_diff_choose_0	2000
+results
+result 0
+maxidx 6
+prop #841:ec0fefbe
+result 1
+maxidx 7
+prop #841:ec0fefbe
+stop
+steps 91
+> iprover	fact:Zenon.zenon_domain_except	2000
+results
+result 0
+maxidx 2
+prop #488:9307e14e
+result 1
+maxidx 3
+prop #488:9307e14e
+stop
+steps 23
+> iprover	fact:Zenon.zenon_eq_true_x_0	2000
+results
+result 0
+maxidx 2
+prop #344:a4317d86
+result 1
+maxidx 3
+prop #524:c0a67b26
+stop
+steps 3
+> iprover	fact:Zenon.zenon_equiv	2000
+results
+result 0
+maxidx 4
+prop #1445:9149d807
+result 1
+maxidx 5
+prop #1445:9149d807
+stop
+steps 11
+> iprover	fact:Zenon.zenon_funequal	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	fact:Zenon.zenon_imply	2000
+results
+result 0
+maxidx 4
+prop #1059:361d358
+result 1
+maxidx 5
+prop #1059:361d358
+stop
+steps 13
+> iprover	fact:Zenon.zenon_in_SUBSET_0	2000
+results
+end
+steps 36
+> iprover	fact:Zenon.zenon_in_cap_0	2000
+results
+end
+steps 36
+> iprover	fact:Zenon.zenon_in_funcset_2	2000
+results
+end
+steps 63
+> iprover	fact:Zenon.zenon_in_recordset_field	2000
+results
+end
+steps 36
+> iprover	fact:Zenon.zenon_in_subsetof_0	2000
+results
+end
+steps 36
+> iprover	fact:Zenon.zenon_inrecordsetI5	2000
+results
+end
+steps 36
+> iprover	fact:Zenon.zenon_nnpp	2000
+results
+result 0
+maxidx 2
+prop #415:adb90776
+result 1
+maxidx 3
+prop #595:ab7a4e6a
+stop
+steps 3
+> iprover	fact:Zenon.zenon_notall	2000
+results
+result 0
+maxidx 4
+prop #740:ec6c53b5
+result 1
+maxidx 5
+prop #984:ff85a08d
+stop
+steps 9
+> iprover	fact:Zenon.zenon_noteq_true_x	2000
+results
+result 0
+maxidx 4
+prop #730:297c25e0
+result 1
+maxidx 5
+prop #1282:37166460
+stop
+steps 12
+> iprover	fact:Zenon.zenon_notex_0	2000
+results
+result 0
+maxidx 3
+prop #414:d04eecb1
+result 1
+maxidx 3
+prop #428:66e9e5cb
+stop
+steps 60
+> iprover	fact:Zenon.zenon_notin_SUBSET	2000
+results
+end
+steps 72
+> iprover	fact:Zenon.zenon_notin_cap	2000
+results
+end
+steps 72
+> iprover	fact:Zenon.zenon_notin_setofall	2000
+results
+end
+steps 72
+> iprover	fact:Zenon.zenon_notin_setofall_0	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	fact:Zenon.zenon_notisafcn_fcn	2000
+results
+end
+steps 72
+> iprover	fact:Zenon.zenon_notsetequal	2000
+results
+result 0
+maxidx 4
+prop #1058:abc46990
+result 1
+maxidx 5
+prop #1578:e1225e2a
+stop
+steps 12
+> iprover	fact:Zenon.zenon_p_eq_l	2000
+results
+result 0
+maxidx 2
+prop #1127:2755cbc6
+result 1
+maxidx 3
+prop #1127:2755cbc6
+stop
+steps 3
+> iprover	fact:Zenon.zenon_recfield_3	2000
+results
+result 0
+maxidx 6
+prop #1124:730fc0d1
+result 1
+maxidx 7
+prop #1644:2a4a67ad
+stop
+steps 18
+> iprover	fact:Zenon.zenon_sa_diff_1	2000
+results
+result 0
+maxidx 5
+prop #754:99d4d8ce
+result 1
+maxidx 6
+prop #1274:77b96388
+stop
+steps 14
+> iprover	fact:Zenon.zenon_sa_diff_2	2000
+results
+result 0
+maxidx 5
+prop #1148:208cca96
+end
+steps 10
+> iprover	fact:Zenon.zenon_seqify_empty	2000
+results
+end
+steps 36
+> iprover	fact:Zenon.zenon_setequalempty_0	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	fact:Zenon.zenon_stringdiffll	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	fact:Zenon.zenon_trueistrue	2000
+results
+result 0
+maxidx 2
+prop #619:c54c86f2
+result 1
+maxidx 2
+prop #603:7fa04e2b
+stop
+steps 31
+> iprover	fact:Zenon.zenon_zero_lt	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:0	2000
+results
+result 0
+maxidx 3
+prop #1423:5e514a46
+result 1
+maxidx 4
+prop #2359:d20280ac
+stop
+steps 8
+> iprover	rule:safeIs:3	2000
+results
+result 0
+maxidx 3
+prop #1459:b846a37c
+result 1
+maxidx 4
+prop #2413:b73055cf
+stop
+steps 8
+> iprover	rule:safeIs:6	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:9	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:12	2000
+results
+result 0
+maxidx 3
+prop #2275:790fcace
+result 1
+maxidx 4
+prop #3637:669a29be
+stop
+steps 8
+> iprover	rule:safeIs:15	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:18	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:21	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:24	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:27	2000
+results
+result 0
+maxidx 5
+prop #1409:a4446699
+result 1
+maxidx 13
+prop #2513:8f24c64a
+stop
+steps 19
+> iprover	rule:safeIs:30	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:33	2000
+results
+result 0
+maxidx 3
+prop #1447:e56bea36
+result 1
+maxidx 4
+prop #2395:eb3cf8b4
+stop
+steps 8
+> iprover	rule:safeIs:36	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:39	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:42	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:45	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:48	2000
+results
+result 0
+maxidx 3
+prop #1165:7b680b9a
+result 1
+maxidx 4
+prop #1972:1a06318d
+stop
+steps 8
+> iprover	rule:safeIs:51	2000
+results
+result 0
+maxidx 3
+prop #1165:7305e9aa
+result 1
+maxidx 4
+prop #1972:8f3c4e13
+stop
+steps 8
+> iprover	rule:safeIs:54	2000
+results
+result 0
+maxidx 3
+prop #1765:84f3d10e
+result 1
+maxidx 4
+prop #2872:31bceb87
+stop
+steps 8
+> iprover	rule:safeIs:57	2000
+results
+result 0
+maxidx 3
+prop #1771:f75b6246
+result 1
+maxidx 4
+prop #2881:97447014
+stop
+steps 8
+> iprover	rule:safeIs:60	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:63	2000
+results
+result 0
+maxidx 3
+prop #1765:fbceb82e
+result 1
+maxidx 4
+prop #2872:47113fad
+stop
+steps 8
+> iprover	rule:safeIs:66	2000
+results
+result 0
+maxidx 3
+prop #2412:17eb7b44
+result 1
+maxidx 4
+prop #3872:72182eec
+stop
+steps 8
+> iprover	rule:safeIs:69	2000
+results
+result 0
+maxidx 3
+prop #1606:6f9731b7
+result 1
+maxidx 5
+prop #2530:445f2c03
+stop
+steps 7
+> iprover	rule:safeIs:72	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	rule:safeIs:75	2000
+results
+result 0
+maxidx 3
+prop #1981:21879684
+result 1
+maxidx 5
+prop #3059:761e01b7
+stop
+steps 7
+> iprover	rule:safeIs:78	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:81	2000
+results
+result 0
+maxidx 3
+prop #1465:83501ffe
+result 1
+maxidx 4
+prop #2422:57082b6c
+stop
+steps 8
+> iprover	rule:safeIs:84	2000
+results
+result 0
+maxidx 3
+prop #776:414b993b
+end
+steps 8
+> iprover	rule:safeIs:87	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:90	2000
+results
+result 0
+maxidx 3
+prop #589:93b8e7a1
+result 1
+maxidx 4
+prop #1139:2e7cbee1
+stop
+steps 8
+> iprover	rule:safeIs:93	2000
+results
+result 0
+maxidx 3
+prop #2017:3613640a
+result 1
+maxidx 4
+prop #3250:4d71a04c
+stop
+steps 8
+> iprover	rule:safeIs:96	2000
+results
+result 0
+maxidx 3
+prop #2017:8d313ce2
+result 1
+maxidx 4
+prop #3250:765cdf24
+stop
+steps 8
+> iprover	rule:safeIs:99	2000
+results
+result 0
+maxidx 3
+prop #1735:4c5750f0
+result 1
+maxidx 4
+prop #2827:5c066061
+stop
+steps 8
+> iprover	rule:safeIs:102	2000
+results
+result 0
+maxidx 3
+prop #1735:1d6c7a96
+result 1
+maxidx 4
+prop #2827:cfc2b0d8
+stop
+steps 8
+> iprover	rule:safeIs:105	2000
+results
+result 0
+maxidx 3
+prop #1459:deb02ca6
+result 1
+maxidx 4
+prop #2413:b5cb2d3a
+stop
+steps 8
+> iprover	rule:safeIs:108	2000
+results
+result 0
+maxidx 3
+prop #1465:c88a98de
+result 1
+maxidx 4
+prop #2422:2f1609f9
+stop
+steps 8
+> iprover	rule:safeIs:111	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:114	2000
+results
+result 0
+maxidx 5
+prop #1107:494b6e0c
+result 1
+maxidx 13
+prop #2202:81421f3b
+stop
+steps 19
+> iprover	rule:safeIs:117	2000
+results
+result 0
+maxidx 5
+prop #1312:6ffc859c
+result 1
+maxidx 13
+prop #2530:cdf1f317
+stop
+steps 19
+> iprover	rule:safeIs:120	2000
+results
+result 0
+maxidx 5
+prop #1087:9567c7f7
+result 1
+maxidx 13
+prop #2170:e79c3f57
+stop
+steps 19
+> iprover	rule:safeIs:123	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:126	2000
+results
+result 0
+maxidx 4
+prop #683:efd06523
+result 1
+maxidx 5
+prop #1463:74d4b3ac
+stop
+steps 12
+> iprover	rule:safeIs:129	2000
+results
+result 0
+maxidx 4
+prop #953:d0dd8cc9
+result 1
+maxidx 5
+prop #953:d0dd8cc9
+stop
+steps 14
+> iprover	rule:safeIs:132	2000
+results
+result 0
+maxidx 5
+prop #997:335b5e93
+result 1
+maxidx 13
+prop #2026:de6ca3bf
+stop
+steps 19
+> iprover	rule:safeIs:135	2000
+results
+result 0
+maxidx 7
+prop #1117:5eea5bdf
+result 1
+maxidx 32
+prop #2218:d28e1743
+stop
+steps 39
+> iprover	rule:safeIs:138	2000
+results
+result 0
+maxidx 7
+prop #1122:9b3fc2c
+result 1
+maxidx 30
+prop #2226:c367f803
+stop
+steps 37
+> iprover	rule:safeIs:141	2000
+results
+result 0
+maxidx 6
+prop #1122:91bf8528
+result 1
+maxidx 16
+prop #2226:6d1db7c9
+stop
+steps 22
+> iprover	rule:safeIs:144	2000
+results
+result 0
+maxidx 5
+prop #1112:489e96a0
+result 1
+maxidx 13
+prop #2210:707e1b5b
+stop
+steps 19
+> iprover	rule:safeIs:147	2000
+results
+result 0
+maxidx 3
+prop #675:226a4ba7
+result 1
+maxidx 4
+prop #1506:eb41bc18
+stop
+steps 8
+> iprover	rule:safeIs:150	2000
+results
+result 0
+maxidx 5
+prop #842:6de027b0
+result 1
+maxidx 12
+prop #1817:2c8e8493
+stop
+steps 18
+> iprover	rule:safeIs:153	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:156	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:159	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:162	2000
+results
+end
+steps 36
+> iprover	rule:safeIs:165	2000
+results
+result 0
+maxidx 3
+prop #354:2534451f
+result 1
+maxidx 4
+prop #598:9de72f1b
+stop
+steps 5
+> iprover	rule:safeIs:168	2000
+results
+result 0
+maxidx 3
+prop #872:412d2116
+result 1
+maxidx 4
+prop #957:5acd0b82
+stop
+steps 7
+> iprover	rule:safeIs:171	2000
+results
+result 0
+maxidx 3
+prop #412:cccd868e
+result 1
+maxidx 4
+prop #446:5bad8eec
+stop
+steps 5
+> iprover	rule:safeIs:174	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.TRUE::PredicateLogic.c)
+end
+steps 1
+> iprover	rule:safeEs:1	2000
+results
+result 0
+maxidx 2
+prop #2964:fb399e76
+result 1
+maxidx 2
+prop #2962:e6723f90
+stop
+steps 2
+> iprover	rule:safeEs:4	2000
+results
+result 0
+maxidx 2
+prop #3106:362f311a
+result 1
+maxidx 2
+prop #2902:78495eb2
+stop
+steps 2
+> iprover	rule:safeEs:7	2000
+results
+result 0
+maxidx 2
+prop #1656:9fff11d
+result 1
+maxidx 2
+prop #1426:b15327cd
+stop
+steps 2
+> iprover	rule:safeEs:10	2000
+results
+result 0
+maxidx 2
+prop #2331:a83d153e
+result 1
+maxidx 2
+prop #1986:c25a5573
+stop
+steps 2
+> iprover	rule:safeEs:13	2000
+results
+end
+steps 36
+> iprover	rule:safeEs:16	2000
+results
+result 0
+maxidx 4
+prop #693:aca3f2ae
+result 1
+maxidx 5
+prop #1473:4b990def
+stop
+steps 12
+> iprover	rule:safeEs:19	2000
+results
+end
+steps 36
+> iprover	rule:safeEs:22	2000
+results
+result 0
+maxidx 3
+prop #1467:a8ab77d3
+result 1
+maxidx 4
+prop #2767:65bfc8a9
+stop
+steps 8
+> iprover	rule:safeEs:25	2000
+results
+result 0
+maxidx 2
+prop #1681:5a8f15ff
+result 1
+maxidx 2
+prop #1111:65e011e0
+stop
+steps 3
+> iprover	rule:safeEs:28	2000
+results
+result 0
+maxidx 2
+prop #422:2a6682e2
+result 1
+maxidx 2
+prop #322:7a94cdf7
+stop
+steps 3
+> iprover	rule:safeEs:31	2000
+results
+result 0
+maxidx 2
+prop #1658:61f9315d
+result 1
+maxidx 2
+prop #1132:7cf3b141
+stop
+steps 3
+> iprover	rule:safeEs:34	2000
+results
+result 0
+maxidx 2
+prop #1151:e1dd37b
+result 1
+maxidx 2
+prop #1007:54f77505
+stop
+steps 3
+> iprover	rule:safeEs:37	2000
+results
+result 0
+maxidx 5
+prop #1698:ae83e3f7
+result 1
+maxidx 5
+prop #1698:ae83e3f7
+stop
+steps 9
+> iprover	rule:safeEs:40	2000
+results
+result 0
+maxidx 5
+prop #1394:8052f550
+result 1
+maxidx 5
+prop #1343:8882b0d9
+stop
+steps 9
+> iprover	rule:safeEs:43	2000
+results
+result 0
+maxidx 3
+prop #758:1266eebd
+result 1
+maxidx 4
+prop #792:dbb368ee
+stop
+steps 7
+> iprover	rule:unsafeIs:1	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:4	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:7	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:10	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> iprover	rule:unsafeIs:13	2000
+results
+result 0
+maxidx 3
+prop #3147:7207877a
+result 1
+maxidx 5
+prop #4225:caeb5edf
+stop
+steps 7
+> iprover	rule:unsafeIs:16	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:19	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:22	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:25	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:28	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:31	2000
+results
+result 0
+maxidx 3
+prop #1783:cd75e4cc
+result 1
+maxidx 4
+prop #2899:5165dc47
+stop
+steps 8
+> iprover	rule:unsafeIs:34	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:37	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:40	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:43	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:46	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:49	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:52	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:55	2000
+results
+result 0
+maxidx 4
+prop #693:33da9532
+result 1
+maxidx 5
+prop #1473:df2af81e
+stop
+steps 12
+> iprover	rule:unsafeIs:58	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:61	2000
+results
+end
+steps 36
+> iprover	rule:unsafeIs:64	2000
+results
+end
+steps 54
+> iprover	rule:unsafeIs:67	2000
+results
+result 0
+maxidx 2
+prop #787:cccc0a8b
+result 1
+maxidx 3
+prop #567:c0c1fbf3
+stop
+steps 152
+> iprover	rule:unsafeIs:70	2000
+results
+result 0
+maxidx 3
+prop #411:3c402100
+result 1
+maxidx 4
+prop #575:5e6fff38
+stop
+steps 6
+> iprover	rule:unsafeIs:73	2000
+results
+result 0
+maxidx 2
+prop #360:43c78114
+result 1
+maxidx 3
+prop #292:5073abad
+stop
+steps 152
+> iprover	rule:unsafeEs:2	2000
+results
+result 0
+maxidx 3
+prop #1223:76259c05
+result 1
+maxidx 4
+prop #2003:691c945d
+stop
+steps 8
+> iprover	rule:unsafeEs:5	2000
+results
+result 0
+maxidx 2
+prop #1592:83c72bba
+result 1
+maxidx 2
+prop #1680:5a1f22ac
+stop
+steps 2
+> iprover	rule:unsafeEs:8	2000
+results
+result 0
+maxidx 2
+prop #1843:d9336a09
+result 1
+maxidx 2
+prop #1473:11ac11f9
+stop
+steps 3
+> iprover	rule:unsafeEs:11	2000
+results
+result 0
+maxidx 2
+prop #1495:345efdc9
+result 1
+maxidx 2
+prop #1415:54155eb9
+stop
+steps 3
+> iprover	rule:unsafeEs:14	2000
+results
+end
+steps 36
+> iprover	rule:unsafeEs:17	2000
+results
+result 0
+maxidx 2
+prop #1463:2acf5f22
+end
+steps 4
+> iprover	rule:unsafeEs:20	2000
+results
+result 0
+maxidx 3
+prop #1081:4b00a70a
+result 1
+maxidx 4
+prop #2121:b460a4cc
+stop
+steps 8
+> iprover	rule:unsafeEs:23	2000
+results
+result 0
+maxidx 2
+prop #2166:81f5f1b4
+result 1
+maxidx 2
+prop #1728:7e1cc04a
+stop
+steps 3
+> iprover	rule:unsafeEs:26	2000
+results
+result 0
+maxidx 2
+prop #1642:ca76dcad
+result 1
+maxidx 2
+prop #1418:345e219d
+stop
+steps 2
+> iprover	rule:unsafeEs:29	2000
+results
+result 0
+maxidx 2
+prop #1884:9790712c
+result 1
+maxidx 2
+prop #1587:a1096293
+stop
+steps 3
+> iprover	rule:unsafeEs:32	2000
+results
+result 0
+maxidx 2
+prop #1751:a1f4c06b
+result 1
+maxidx 2
+prop #1373:645c5d8d
+stop
+steps 3
+> iprover	rule:unsafeEs:35	2000
+results
+result 0
+maxidx 2
+prop #2059:1a77b5dc
+result 1
+maxidx 2
+prop #1477:74bd8eb2
+stop
+steps 3
+> iprover	rule:unsafeEs:38	2000
+results
+result 0
+maxidx 2
+prop #2736:f3b1998e
+result 1
+maxidx 2
+prop #2013:476f391
+stop
+steps 3
+> iprover	rule:unsafeEs:41	2000
+results
+result 0
+maxidx 2
+prop #2742:ae1cf3ba
+result 1
+maxidx 2
+prop #2016:3950a6b5
+stop
+steps 3
+> iprover	rule:unsafeEs:44	2000
+results
+result 0
+maxidx 2
+prop #2454:1bcb91d2
+result 1
+maxidx 2
+prop #1872:f04a4bac
+stop
+steps 3
+> iprover	rule:unsafeEs:47	2000
+results
+result 0
+maxidx 2
+prop #2454:5499ef74
+result 1
+maxidx 2
+prop #1872:24aad126
+stop
+steps 3
+> iprover	rule:unsafeEs:50	2000
+results
+result 0
+maxidx 2
+prop #2178:1f1a003e
+result 1
+maxidx 2
+prop #1734:25487659
+stop
+steps 3
+> iprover	rule:unsafeEs:53	2000
+results
+result 0
+maxidx 2
+prop #2184:2d1397e0
+result 1
+maxidx 2
+prop #1737:2797b897
+stop
+steps 3
+> iprover	rule:unsafeEs:56	2000
+results
+result 0
+maxidx 2
+prop #1920:eac366c4
+result 1
+maxidx 2
+prop #1605:9ea2c476
+stop
+steps 3
+> iprover	rule:unsafeEs:59	2000
+results
+result 0
+maxidx 2
+prop #612:95e3bafe
+end
+steps 4

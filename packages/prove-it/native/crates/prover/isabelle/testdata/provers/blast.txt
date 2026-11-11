@@ -1,0 +1,4757 @@
+> blast	thy:AllocatorImplementation_proof-127	2000
+results
+result 0
+maxidx 58
+prop #3562:5d842204
+end
+steps 765
+> blast	thy:AllocatorImplementation_proof-33	2000
+results
+result 0
+maxidx 1
+prop #3992:e483f5f1
+end
+steps 315
+> blast	thy:AtomicBakeryWithoutSMT-465	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	thy:AtomicBakeryWithoutSMT-6	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	thy:FiniteSetTheorems_proofs-453	2000
+results
+result 0
+maxidx 21
+prop #3285:ca5ba5de
+end
+steps 405
+> blast	thy:NaturalsInduction_proofs-1	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	thy:Paxos-109	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	thy:Sets-183	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	thy:TLAPS-2	2000
+results
+end
+steps 1344
+> blast	thy:constantfcn_test-1	2000
+results
+end
+steps 42
+> blast	thy:function_except_tuple_soundness_gh201_test-1	2000
+results
+end
+steps 63
+> blast	fact:CaseExpressions.CaseArm_def	2000
+results
+end
+steps 42
+> blast	fact:FixedPoints.gfpMono	2000
+results
+end
+steps 58
+> blast	fact:FixedPoints.lfpGLB	2000
+results
+end
+steps 75
+> blast	fact:FixedPoints.lfp_def	2000
+results
+end
+steps 0
+> blast	fact:Functions.DOMAIN	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:Functions.Surjections_def	2000
+results
+end
+steps 42
+> blast	fact:Functions.applyExcept	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:Functions.boolifyInjectiveOn	2000
+results
+result 0
+maxidx 3
+prop #466:2ff99d64
+end
+steps 9
+> blast	fact:Functions.exceptInFuncSetSame	2000
+results
+result 0
+maxidx 36
+prop #3320:a67ac76a
+result 1
+maxidx 36
+prop #3320:a67ac76a
+stop
+steps 1264
+> blast	fact:Functions.extend_def	2000
+results
+end
+steps 42
+> blast	fact:Functions.fcnIsAFcn	2000
+results
+result 0
+maxidx 1
+prop #280:757fe013
+end
+steps 3
+> blast	fact:Functions.funcSetValue	2000
+results
+result 0
+maxidx 4
+prop #849:e374e999
+end
+steps 6
+> blast	fact:Functions.imageI	2000
+results
+result 0
+maxidx 4
+prop #906:afc6735e
+end
+steps 5
+> blast	fact:Functions.inFuncSet	2000
+results
+result 0
+maxidx 2
+prop #1270:2946769b
+end
+steps 3
+> blast	fact:Functions.injectiveImageEqual	2000
+results
+result 0
+maxidx 7
+prop #1211:3d95f422
+end
+steps 11
+> blast	fact:Functions.injectiveOnExcept	2000
+results
+result 0
+maxidx 3
+prop #2494:a56c583e
+end
+steps 3
+> blast	fact:Functions.injectiveOnSetminus	2000
+results
+end
+steps 63
+> blast	fact:Functions.inverseInjective	2000
+results
+result 0
+maxidx 4
+prop #364:b1534d30
+end
+steps 7
+> blast	fact:Functions.isBoolIsAFcn	2000
+results
+result 0
+maxidx 1
+prop #198:da383584
+end
+steps 3
+> blast	fact:Functions.oneArgDomain	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:Functions.surjectionsFuncSet	2000
+results
+result 0
+maxidx 2
+prop #664:247deb53
+end
+steps 3
+> blast	fact:Functions.surjectiveIsBool	2000
+results
+result 0
+maxidx 1
+prop #248:762e4a9
+end
+steps 3
+> blast	fact:IntegerArithmetic.add_commute	2000
+results
+result 0
+maxidx 3
+prop #857:5debf136
+end
+steps 3
+> blast	fact:IntegerArithmetic.add_is_0_nat	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:IntegerArithmetic.add_leq_left_mono	2000
+results
+result 0
+maxidx 5
+prop #1656:f2960fc4
+end
+steps 27
+> blast	fact:IntegerArithmetic.add_leq_less_mono	2000
+results
+result 0
+maxidx 4
+prop #1763:52474434
+end
+steps 10
+> blast	fact:IntegerArithmetic.add_less_mono	2000
+results
+result 0
+maxidx 4
+prop #1764:d47dbbd7
+result 1
+maxidx 4
+prop #1764:4692d4d7
+stop
+steps 9
+> blast	fact:IntegerArithmetic.add_pred_left	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.add_uminus_pred_left	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.addint_succ	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.diff_diff_left	2000
+results
+end
+steps 105
+> blast	fact:IntegerArithmetic.eq_leq_bothE	2000
+results
+result 0
+maxidx 2
+prop #1531:9e1ea334
+result 1
+maxidx 2
+prop #1531:1adfc56
+stop
+steps 53
+> blast	fact:IntegerArithmetic.int_add_left_cancel_leq	2000
+results
+end
+steps 105
+> blast	fact:IntegerArithmetic.int_add_right_cancel_succ_less	2000
+results
+end
+steps 105
+> blast	fact:IntegerArithmetic.int_leq_cases	2000
+results
+result 0
+maxidx 2
+prop #1817:785e3f14
+result 1
+maxidx 2
+prop #1817:7e9d0193
+stop
+steps 64
+> blast	fact:IntegerArithmetic.int_leq_is_less_succ	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.int_leq_limit_2	2000
+results
+result 0
+maxidx 2
+prop #1557:f03702f6
+end
+steps 3
+> blast	fact:IntegerArithmetic.int_leq_pred_iff	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.int_leq_refl	2000
+results
+result 0
+maxidx 6
+prop #410:a8b33a00
+end
+steps 28
+> blast	fact:IntegerArithmetic.int_leq_uminus_succ_iff	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.int_less_iff_succ_add	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:IntegerArithmetic.int_less_not_leq	2000
+results
+result 0
+maxidx 5
+prop #984:8f820a30
+end
+steps 21
+> blast	fact:IntegerArithmetic.int_less_uminus	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.int_pred_leqI	2000
+results
+result 0
+maxidx 6
+prop #1320:73b1dc06
+end
+steps 20
+> blast	fact:IntegerArithmetic.int_pred_less_pred	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.int_succ_leq_predE	2000
+results
+result 0
+maxidx 2
+prop #2000:4ab3fe03
+result 1
+maxidx 2
+prop #1540:c9d0f9fb
+stop
+steps 48
+> blast	fact:IntegerArithmetic.int_succ_less_succI	2000
+results
+result 0
+maxidx 4
+prop #1092:c8100fbc
+end
+steps 7
+> blast	fact:IntegerArithmetic.intvlIsEmpty	2000
+results
+result 0
+maxidx 6
+prop #984:25d2dce1
+end
+steps 16
+> blast	fact:IntegerArithmetic.leq_add_self2	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.leq_isBool	2000
+results
+result 0
+maxidx 3
+prop #699:2e31a49f
+end
+steps 5
+> blast	fact:IntegerArithmetic.less_add_Succ2	2000
+results
+result 0
+maxidx 5
+prop #1504:43ad219
+end
+steps 18
+> blast	fact:IntegerArithmetic.less_isBool	2000
+results
+result 0
+maxidx 1
+prop #250:b7e0b4a5
+end
+steps 3
+> blast	fact:IntegerArithmetic.nat_add_gt_0	2000
+results
+result 0
+maxidx 14
+prop #2225:64d7e153
+end
+steps 67
+> blast	fact:IntegerArithmetic.nat_leq_zero	2000
+results
+result 0
+maxidx 6
+prop #917:34031ae
+end
+steps 13
+> blast	fact:IntegerArithmetic.nat_neq0_conv	2000
+results
+result 0
+maxidx 13
+prop #1501:2c773cea
+end
+steps 56
+> blast	fact:IntegerArithmetic.neq_leq_trans_sym	2000
+results
+result 0
+maxidx 4
+prop #918:53531fdf
+end
+steps 5
+> blast	fact:IntegerArithmetic.one_is_add_nat	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:IntegerArithmetic.pr_addint_def	2000
+results
+end
+steps 42
+> blast	fact:IntegerArithmetic.pred_add_eq_self1	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:IntegerArithmetic.succIntvl	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:IntegerArithmetic.times_0_left	2000
+results
+end
+steps 63
+> blast	fact:IntegerArithmetic.times_is_1_iff	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:IntegerArithmetic.times_left_commute	2000
+results
+result 0
+maxidx 3
+prop #1312:c1e26ec9
+end
+steps 3
+> blast	fact:IntegerArithmetic.times_leq_right_pos_cancel	2000
+results
+result 0
+maxidx 3
+prop #1580:9fb7d6b3
+end
+steps 7
+> blast	fact:IntegerArithmetic.times_less_right_neg_mono	2000
+results
+result 0
+maxidx 4
+prop #1551:387d8358
+result 1
+maxidx 4
+prop #1591:80eb4f11
+stop
+steps 5
+> blast	fact:IntegerArithmetic.times_pred_left	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.trans_leq_add_nat2	2000
+results
+result 0
+maxidx 5
+prop #1778:e8be6876
+result 1
+maxidx 5
+prop #1838:590230bf
+stop
+steps 25
+> blast	fact:IntegerArithmetic.trans_less_diff_nat1	2000
+results
+result 0
+maxidx 4
+prop #1493:9e2a3ae8
+end
+steps 5
+> blast	fact:IntegerArithmetic.uminus_add	2000
+results
+end
+steps 84
+> blast	fact:IntegerArithmetic.zerotoEmpty	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:IntegerDivision.div_exists	2000
+results
+result 0
+maxidx 4
+prop #1815:271df456
+end
+steps 7
+> blast	fact:IntegerDivision.div_times_divisor4	2000
+results
+result 0
+maxidx 3
+prop #1698:89207c76
+end
+steps 6
+> blast	fact:IntegerDivision.dvd_0_right	2000
+results
+result 0
+maxidx 6
+prop #668:6567328e
+end
+steps 15
+> blast	fact:IntegerDivision.dvd_mult_left	2000
+results
+result 0
+maxidx 6
+prop #1570:24c38b9b
+end
+steps 32
+> blast	fact:IntegerDivision.dvd_times_div_distrib	2000
+results
+result 0
+maxidx 3
+prop #1809:a9ec52b9
+end
+steps 7
+> blast	fact:IntegerDivision.dvd_triv_right	2000
+results
+result 0
+maxidx 6
+prop #747:a3eae8ff
+end
+steps 21
+> blast	fact:IntegerDivision.mod_div_same	2000
+results
+result 0
+maxidx 3
+prop #1133:93986bff
+end
+steps 6
+> blast	fact:IntegerDivision.mod_times_divisor3	2000
+results
+result 0
+maxidx 3
+prop #1585:5878edf8
+end
+steps 6
+> blast	fact:IntegerDivision.times_div_self2	2000
+results
+result 0
+maxidx 4
+prop #1129:28fb070a
+end
+steps 7
+> blast	fact:IntegerDivision.uminus_mod2	2000
+results
+result 0
+maxidx 5
+prop #1760:6cb911c1
+end
+steps 17
+> blast	fact:Integers.SuccInj	2000
+results
+result 0
+maxidx 2
+prop #1307:c1fafb1d
+end
+steps 3
+> blast	fact:Integers.SuccIsAFcn	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (Functions.isAFcn::fun(PredicateLogic.c,PredicateLogic.c) Integers.Succ::PredicateLogic.c))
+end
+steps 3
+> blast	fact:Integers.diffInduction	2000
+results
+end
+steps 0
+> blast	fact:Integers.four_def	2000
+results
+end
+steps 42
+> blast	fact:Integers.intInductE	2000
+results
+end
+steps 238
+> blast	fact:Integers.natInduct	2000
+results
+end
+steps 86
+> blast	fact:Integers.not0_implies_Suc	2000
+results
+result 0
+maxidx 4
+prop #1144:499a5db2
+end
+steps 6
+> blast	fact:Integers.predInjIff	2000
+results
+result 0
+maxidx 7
+prop #1073:68b4a12c
+end
+steps 39
+> blast	fact:Integers.primrec_int	2000
+results
+end
+steps 0
+> blast	fact:Integers.seven_def	2000
+results
+end
+steps 42
+> blast	fact:Integers.succIsAFcn	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (Functions.isAFcn::fun(PredicateLogic.c,PredicateLogic.c) Integers.succ::PredicateLogic.c))
+end
+steps 3
+> blast	fact:Integers.succUminusSuccNat	2000
+results
+end
+steps 63
+> blast	fact:Integers.ten_def	2000
+results
+end
+steps 42
+> blast	fact:Integers.uminusInj	2000
+results
+result 0
+maxidx 2
+prop #1193:f9fa2d13
+end
+steps 3
+> blast	fact:Integers.uminusSucc	2000
+results
+end
+steps 63
+> blast	fact:Integers.uptoInduct	2000
+results
+end
+steps 170
+> blast	fact:Integers.uptoSucc	2000
+results
+end
+steps 252
+> blast	fact:Integers.zeroIsSucc	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:PredicateLogic.Ex_def	2000
+results
+end
+steps 0
+> blast	fact:PredicateLogic.TruepropBoolify	2000
+results
+end
+steps 42
+> blast	fact:PredicateLogic.atomize_all	2000
+results
+end
+steps 0
+> blast	fact:PredicateLogic.atomize_imp	2000
+results
+end
+steps 42
+> blast	fact:PredicateLogic.boolifyCond	2000
+results
+result 0
+maxidx 9
+prop #2092:8b2f209c
+end
+steps 24
+> blast	fact:PredicateLogic.boolifyI	2000
+results
+result 0
+maxidx 3
+prop #255:54cb5178
+end
+steps 4
+> blast	fact:PredicateLogic.boolifyTrue	2000
+results
+result 0
+maxidx 1
+prop #278:64bdb968
+end
+steps 7
+> blast	fact:PredicateLogic.boolifyTrueFalse	2000
+results
+result 0
+maxidx 4
+prop #592:5463fbf5
+end
+steps 12
+> blast	fact:PredicateLogic.cases_conj_eq	2000
+results
+end
+steps 42
+> blast	fact:PredicateLogic.cases_implies_conj	2000
+results
+end
+steps 105
+> blast	fact:PredicateLogic.chooseI2	2000
+results
+end
+steps 38
+> blast	fact:PredicateLogic.classical	2000
+results
+result 0
+maxidx 3
+prop #879:eba498ec
+end
+steps 17
+> blast	fact:PredicateLogic.condFullCong	2000
+results
+result 0
+maxidx 3
+prop #1443:9a1c22cd
+end
+steps 44
+> blast	fact:PredicateLogic.condI	2000
+results
+end
+steps 37
+> blast	fact:PredicateLogic.cond_eqLE	2000
+results
+result 0
+maxidx 2
+prop #2193:23947234
+end
+steps 68
+> blast	fact:PredicateLogic.conjE	2000
+results
+result 0
+maxidx 2
+prop #859:424f0578
+end
+steps 31
+> blast	fact:PredicateLogic.default_def	2000
+results
+end
+steps 42
+> blast	fact:PredicateLogic.eqBoolean	2000
+results
+result 0
+maxidx 6
+prop #807:f4fa044a
+end
+steps 34
+> blast	fact:PredicateLogic.eq_false_not	2000
+results
+result 0
+maxidx 3
+prop #408:eef8868e
+end
+steps 5
+> blast	fact:PredicateLogic.equal_default	2000
+results
+end
+steps 0
+> blast	fact:PredicateLogic.excluded_middle	2000
+results
+result 0
+maxidx 1
+prop #244:213699d3
+end
+steps 4
+> blast	fact:PredicateLogic.iffCE	2000
+results
+result 0
+maxidx 2
+prop #1430:24366e9e
+end
+steps 56
+> blast	fact:PredicateLogic.iffThenBoolifyEqual	2000
+results
+result 0
+maxidx 3
+prop #533:53e0af71
+end
+steps 3
+> blast	fact:PredicateLogic.impE	2000
+results
+result 0
+maxidx 2
+prop #856:a18d5a14
+result 1
+maxidx 2
+prop #642:c84d4eac
+stop
+steps 25
+> blast	fact:PredicateLogic.isBoolE	2000
+results
+result 0
+maxidx 2
+prop #1151:e1dd37b
+end
+steps 40
+> blast	fact:PredicateLogic.mp	2000
+results
+result 0
+maxidx 2
+prop #412:1526ed02
+end
+steps 3
+> blast	fact:PredicateLogic.notBoolIsFalse	2000
+results
+result 0
+maxidx 7
+prop #595:892c532f
+end
+steps 12
+> blast	fact:PredicateLogic.notIsBool	2000
+results
+result 0
+maxidx 1
+prop #200:cd78658e
+end
+steps 3
+> blast	fact:PredicateLogic.notnotI	2000
+results
+result 0
+maxidx 3
+prop #346:852684b2
+end
+steps 5
+> blast	fact:PredicateLogic.simp_implies_def	2000
+results
+end
+steps 42
+> blast	fact:PredicateLogic.subst	2000
+results
+end
+steps 0
+> blast	fact:PredicateLogic.trueI	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.TRUE::PredicateLogic.c)
+end
+steps 3
+> blast	fact:Pure.conjunctionD1	2000
+results
+result 0
+maxidx 3
+prop #589:4d70a83b
+end
+steps 3
+> blast	fact:Pure.equal_allI	2000
+results
+end
+steps 12
+> blast	fact:Pure.meta_allE	2000
+results
+end
+steps 11
+> blast	fact:Pure.protectI	2000
+results
+end
+steps 63
+> blast	fact:Pure.sort_constraint_eq	2000
+results
+end
+steps 42
+> blast	fact:Pure.swap_prems_eq	2000
+results
+end
+steps 42
+> blast	fact:Pure.transitive	2000
+results
+result 0
+maxidx 2
+prop #263:daa5d5f6
+result 1
+maxidx 2
+prop #263:2c8e4fa0
+stop
+steps 13
+> blast	fact:SetTheory.INTER_def	2000
+results
+end
+steps 42
+> blast	fact:SetTheory.SUBSET_UNION	2000
+results
+result 0
+maxidx 1
+prop #327:6e1227a1
+end
+steps 3
+> blast	fact:SetTheory.UNIONI	2000
+results
+result 0
+maxidx 2
+prop #782:2ff3f3f8
+end
+steps 3
+> blast	fact:SetTheory.UNION_mono	2000
+results
+result 0
+maxidx 3
+prop #516:ebb27012
+end
+steps 3
+> blast	fact:SetTheory.addEltCommute	2000
+results
+result 0
+maxidx 1
+prop #601:9b24903e
+end
+steps 3
+> blast	fact:SetTheory.addEltEqual_iff	2000
+results
+result 0
+maxidx 20
+prop #1431:83d7914a
+end
+steps 51
+> blast	fact:SetTheory.addEltUnion	2000
+results
+result 0
+maxidx 69
+prop #956:c340019c
+result 1
+maxidx 69
+prop #956:45994a60
+stop
+steps 140
+> blast	fact:SetTheory.bAllIsBool	2000
+results
+end
+steps 0
+> blast	fact:SetTheory.bChooseI	2000
+results
+end
+steps 0
+> blast	fact:SetTheory.bExCong	2000
+results
+end
+steps 71
+> blast	fact:SetTheory.bExistsInter	2000
+results
+end
+steps 0
+> blast	fact:SetTheory.bExistsUnion	2000
+results
+end
+steps 0
+> blast	fact:SetTheory.condIn	2000
+results
+result 0
+maxidx 16
+prop #1119:d37a65ce
+end
+steps 92
+> blast	fact:SetTheory.emptySubset	2000
+results
+result 0
+maxidx 1
+prop #195:8f739ad2
+end
+steps 3
+> blast	fact:SetTheory.equalAddElt_iff	2000
+results
+result 0
+maxidx 20
+prop #1431:2c34ebac
+end
+steps 51
+> blast	fact:SetTheory.inCondI	2000
+results
+result 0
+maxidx 7
+prop #1386:2c584327
+end
+steps 54
+> blast	fact:SetTheory.interAddEltRight	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:SetTheory.interAssoc	2000
+results
+result 0
+maxidx 26
+prop #597:8e8bcb54
+end
+steps 298
+> blast	fact:SetTheory.interI	2000
+results
+result 0
+maxidx 3
+prop #712:a4b5bf14
+end
+steps 5
+> blast	fact:SetTheory.interSetminusRight	2000
+results
+result 0
+maxidx 21
+prop #693:831bdf00
+result 1
+maxidx 21
+prop #633:c893fafa
+stop
+steps 61
+> blast	fact:SetTheory.nonEmptyE	2000
+results
+result 0
+maxidx 2
+prop #1119:a20a1c2
+end
+steps 52
+> blast	fact:SetTheory.psubset_def	2000
+results
+end
+steps 42
+> blast	fact:SetTheory.setEqualD1	2000
+results
+result 0
+maxidx 3
+prop #431:c4af9b98
+end
+steps 3
+> blast	fact:SetTheory.setEqualI	2000
+results
+result 0
+maxidx 2
+prop #1336:35abad31
+end
+steps 107
+> blast	fact:SetTheory.setOfAllEqual	2000
+results
+end
+steps 158
+> blast	fact:SetTheory.setminusAddEltLeft	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:SetTheory.setminusINTERRight	2000
+results
+result 0
+maxidx 16
+prop #1131:fac8afac
+end
+steps 37
+> blast	fact:SetTheory.setminusUnionRight	2000
+results
+result 0
+maxidx 27
+prop #1172:1f2c0f90
+end
+steps 71
+> blast	fact:SetTheory.subsetCE	2000
+results
+result 0
+maxidx 2
+prop #1333:ef391d12
+end
+steps 44
+> blast	fact:SetTheory.subsetI	2000
+results
+result 0
+maxidx 3
+prop #675:798ebb90
+end
+steps 55
+> blast	fact:SetTheory.subsetIsBool	2000
+results
+result 0
+maxidx 1
+prop #244:96921c3b
+end
+steps 3
+> blast	fact:SetTheory.subsetOfE	2000
+results
+end
+steps 41
+> blast	fact:SetTheory.subsetSetminus	2000
+results
+result 0
+maxidx 3
+prop #892:c75efa80
+end
+steps 3
+> blast	fact:SetTheory.subst_set_rev	2000
+results
+result 0
+maxidx 2
+prop #613:22f73e54
+end
+steps 3
+> blast	fact:SetTheory.unionE	2000
+results
+result 0
+maxidx 2
+prop #1672:79d89989
+end
+steps 46
+> blast	fact:SetTheory.unionLeftCommute	2000
+results
+result 0
+maxidx 1
+prop #597:3fb18ffe
+end
+steps 3
+> blast	fact:SetTheory.union_def	2000
+results
+end
+steps 42
+> blast	fact:Strings.Char_def	2000
+results
+end
+steps 42
+> blast	fact:Tuples.DomainSeqLen	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:Tuples.IdI'	2000
+results
+result 0
+maxidx 4
+prop #911:d313e5a5
+end
+steps 5
+> blast	fact:Tuples.LenI	2000
+results
+result 0
+maxidx 2
+prop #1030:946d2d6d
+end
+steps 3
+> blast	fact:Tuples.Product_def	2000
+results
+end
+steps 42
+> blast	fact:Tuples.SeqIsAFcn	2000
+results
+result 0
+maxidx 2
+prop #329:1ed3d964
+end
+steps 3
+> blast	fact:Tuples.antisymmetricIsBool	2000
+results
+result 0
+maxidx 1
+prop #202:c6d63847
+end
+steps 3
+> blast	fact:Tuples.appendElt	2000
+results
+result 0
+maxidx 6
+prop #2006:b69ee6fa
+end
+steps 18
+> blast	fact:Tuples.appendExtend	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:Tuples.boolifyEquivalence	2000
+results
+result 0
+maxidx 3
+prop #460:c9e8a990
+end
+steps 9
+> blast	fact:Tuples.boolifySymmetric	2000
+results
+result 0
+maxidx 3
+prop #364:90a250bc
+end
+steps 9
+> blast	fact:Tuples.compEpair	2000
+results
+result 0
+maxidx 2
+prop #3105:9db5fb75
+result 1
+maxidx 2
+prop #2673:9535e469
+stop
+steps 130
+> blast	fact:Tuples.converseSubset	2000
+results
+result 0
+maxidx 12
+prop #688:f18503cd
+end
+steps 29
+> blast	fact:Tuples.converse_mono	2000
+results
+result 0
+maxidx 6
+prop #1747:9ee5a096
+result 1
+maxidx 6
+prop #1747:9ee5a096
+stop
+steps 12
+> blast	fact:Tuples.domainEmptySeq	2000
+results
+end
+steps 189
+> blast	fact:Tuples.emptySeqIsAFcn	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (Functions.isAFcn::fun(PredicateLogic.c,PredicateLogic.c) Tuples.emptySeq::PredicateLogic.c))
+end
+steps 3
+> blast	fact:Tuples.imageAppend	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	fact:Tuples.imageEmptySeq	2000
+results
+result 0
+maxidx 7
+prop #327:cb09e007
+end
+steps 16
+> blast	fact:Tuples.inProductI	2000
+results
+result 0
+maxidx 3
+prop #1727:d9241009
+end
+steps 7
+> blast	fact:Tuples.in_ran_imp_in_B	2000
+results
+result 0
+maxidx 2
+prop #889:e592fa3d
+end
+steps 3
+> blast	fact:Tuples.irreflexiveIsBool	2000
+results
+result 0
+maxidx 1
+prop #246:3d35c458
+end
+steps 3
+> blast	fact:Tuples.isAppend	2000
+results
+result 0
+maxidx 3
+prop #3147:7207877a
+end
+steps 3
+> blast	fact:Tuples.prodEmptyIff	2000
+results
+result 0
+maxidx 22
+prop #1128:67a7aec
+end
+steps 223
+> blast	fact:Tuples.prodEmptyIff'	2000
+results
+result 0
+maxidx 22
+prop #1128:79e9574a
+end
+steps 222
+> blast	fact:Tuples.reflI	2000
+results
+result 0
+maxidx 8
+prop #872:acbb8217
+end
+steps 89
+> blast	fact:Tuples.reflexive_empty	2000
+results
+result 0
+maxidx 4
+prop #210:7859a2aa
+end
+steps 10
+> blast	fact:Tuples.rel_comp_empty2	2000
+results
+result 0
+maxidx 11
+prop #330:5f62dcf4
+end
+steps 22
+> blast	fact:Tuples.rel_range	2000
+results
+result 0
+maxidx 3
+prop #677:4930947d
+end
+steps 3
+> blast	fact:Tuples.seqEqualIff	2000
+results
+result 0
+maxidx 10
+prop #1664:306eae4a
+end
+steps 17
+> blast	fact:Tuples.seqInduct	2000
+results
+end
+steps 143
+> blast	fact:Tuples.setOfPairs_cong	2000
+results
+end
+steps 131
+> blast	fact:Tuples.symmetricE	2000
+results
+result 0
+maxidx 2
+prop #998:4e1c79a7
+end
+steps 3
+> blast	fact:Tuples.symmetric_iff_converse_eq	2000
+results
+result 0
+maxidx 18
+prop #951:5f6d394e
+result 1
+maxidx 18
+prop #951:9b8ba79d
+stop
+steps 710
+> blast	fact:Tuples.transitive_def	2000
+results
+end
+steps 42
+> blast	fact:Zenon.zenon_all_in_0	2000
+results
+end
+steps 0
+> blast	fact:Zenon.zenon_and_1	2000
+results
+result 0
+maxidx 3
+prop #640:34243c1e
+end
+steps 3
+> blast	fact:Zenon.zenon_boolcase	2000
+results
+end
+steps 74
+> blast	fact:Zenon.zenon_boolcase_in	2000
+results
+end
+steps 71
+> blast	fact:Zenon.zenon_case5	2000
+results
+end
+steps 206
+> blast	fact:Zenon.zenon_case_oth_simpl	2000
+results
+result 0
+maxidx 78
+prop #15418:ef46b4f0
+result 1
+maxidx 64
+prop #8686:f8eb697e
+stop
+steps 474
+> blast	fact:Zenon.zenon_caseother0	2000
+results
+end
+steps 25
+> blast	fact:Zenon.zenon_choose_diff_choose_0	2000
+results
+end
+steps 0
+> blast	fact:Zenon.zenon_domain_except	2000
+results
+end
+steps 29
+> blast	fact:Zenon.zenon_eq_true_x_0	2000
+results
+result 0
+maxidx 3
+prop #654:1f8935d6
+end
+steps 3
+> blast	fact:Zenon.zenon_equiv	2000
+results
+result 0
+maxidx 4
+prop #1445:f23c50e9
+result 1
+maxidx 4
+prop #1445:9149d807
+stop
+steps 66
+> blast	fact:Zenon.zenon_funequal	2000
+results
+result 0
+maxidx 10
+prop #1608:bc10772e
+end
+steps 79
+> blast	fact:Zenon.zenon_imply	2000
+results
+result 0
+maxidx 4
+prop #1185:799daa54
+result 1
+maxidx 4
+prop #1239:7d430d38
+stop
+steps 46
+> blast	fact:Zenon.zenon_in_SUBSET_0	2000
+results
+result 0
+maxidx 3
+prop #485:97cb82cb
+end
+steps 3
+> blast	fact:Zenon.zenon_in_cap_0	2000
+results
+result 0
+maxidx 3
+prop #626:2f5296be
+end
+steps 3
+> blast	fact:Zenon.zenon_in_funcset_2	2000
+results
+result 0
+maxidx 6
+prop #908:2ef0acc2
+end
+steps 9
+> blast	fact:Zenon.zenon_in_recordset_field	2000
+results
+result 0
+maxidx 6
+prop #1104:98d4b25a
+end
+steps 27
+> blast	fact:Zenon.zenon_in_subsetof_0	2000
+results
+result 0
+maxidx 3
+prop #673:e9458d4b
+end
+steps 3
+> blast	fact:Zenon.zenon_inrecordsetI5	2000
+results
+result 0
+maxidx 31
+prop #4041:6ce2a619
+result 1
+maxidx 31
+prop #4041:4320422a
+stop
+steps 91
+> blast	fact:Zenon.zenon_nnpp	2000
+results
+result 0
+maxidx 3
+prop #725:c9daea6c
+end
+steps 17
+> blast	fact:Zenon.zenon_notall	2000
+results
+end
+steps 43
+> blast	fact:Zenon.zenon_noteq_true_x	2000
+results
+result 0
+maxidx 4
+prop #730:297c25e0
+end
+steps 27
+> blast	fact:Zenon.zenon_notex_0	2000
+results
+end
+steps 0
+> blast	fact:Zenon.zenon_notin_SUBSET	2000
+results
+result 0
+maxidx 5
+prop #871:383af0f5
+end
+steps 35
+> blast	fact:Zenon.zenon_notin_cap	2000
+results
+result 0
+maxidx 6
+prop #1539:2b3400bd
+end
+steps 57
+> blast	fact:Zenon.zenon_notin_setofall	2000
+results
+end
+steps 44
+> blast	fact:Zenon.zenon_notin_setofall_0	2000
+results
+end
+steps 0
+> blast	fact:Zenon.zenon_notisafcn_fcn	2000
+results
+result 0
+maxidx 4
+prop #473:5f35f8e6
+end
+steps 4
+> blast	fact:Zenon.zenon_notsetequal	2000
+results
+result 0
+maxidx 3
+prop #1208:8ab08d0
+end
+steps 42
+> blast	fact:Zenon.zenon_p_eq_l	2000
+results
+result 0
+maxidx 2
+prop #1127:2755cbc6
+end
+steps 43
+> blast	fact:Zenon.zenon_recfield_3	2000
+results
+result 0
+maxidx 4
+prop #1339:19d515c2
+end
+steps 9
+> blast	fact:Zenon.zenon_sa_diff_1	2000
+results
+result 0
+maxidx 4
+prop #904:dfb193d6
+end
+steps 8
+> blast	fact:Zenon.zenon_sa_diff_2	2000
+results
+result 0
+maxidx 5
+prop #1148:208cca96
+end
+steps 8
+> blast	fact:Zenon.zenon_seqify_empty	2000
+results
+end
+steps 882
+> blast	fact:Zenon.zenon_setequalempty_0	2000
+results
+result 0
+maxidx 5
+prop #589:e86c36d3
+end
+steps 8
+> blast	fact:Zenon.zenon_stringdiffll	2000
+results
+result 0
+maxidx 2
+prop #966:71c48de0
+end
+steps 3
+> blast	fact:Zenon.zenon_trueistrue	2000
+results
+end
+steps 22
+> blast	fact:Zenon.zenon_zero_lt	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> blast	rule:safeIs:0	2000
+results
+result 0
+maxidx 3
+prop #1423:5e514a46
+end
+steps 117
+> blast	rule:safeIs:3	2000
+results
+result 0
+maxidx 3
+prop #1459:b846a37c
+end
+steps 117
+> blast	rule:safeIs:6	2000
+results
+result 0
+maxidx 1
+prop #246:3d35c458
+end
+steps 3
+> blast	rule:safeIs:9	2000
+results
+result 0
+maxidx 1
+prop #198:41e161b7
+end
+steps 3
+> blast	rule:safeIs:12	2000
+results
+result 0
+maxidx 3
+prop #2275:790fcace
+end
+steps 127
+> blast	rule:safeIs:15	2000
+results
+result 0
+maxidx 3
+prop #1727:d9241009
+end
+steps 7
+> blast	rule:safeIs:18	2000
+results
+result 0
+maxidx 3
+prop #1965:8cd08ace
+end
+steps 7
+> blast	rule:safeIs:21	2000
+results
+result 0
+maxidx 1
+prop #241:82f41db7
+end
+steps 3
+> blast	rule:safeIs:24	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (Tuples.isASeq::fun(PredicateLogic.c,PredicateLogic.c) Tuples.emptySeq::PredicateLogic.c))
+end
+steps 3
+> blast	rule:safeIs:27	2000
+results
+result 0
+maxidx 3
+prop #1409:a4446699
+end
+steps 3
+> blast	rule:safeIs:30	2000
+results
+result 0
+maxidx 3
+prop #1090:a9b8efd5
+end
+steps 6
+> blast	rule:safeIs:33	2000
+results
+result 0
+maxidx 3
+prop #1447:e56bea36
+end
+steps 117
+> blast	rule:safeIs:36	2000
+results
+result 0
+maxidx -1
+prop #259:1126848
+end
+steps 3
+> blast	rule:safeIs:39	2000
+results
+result 0
+maxidx -1
+prop #259:1ce6b153
+end
+steps 3
+> blast	rule:safeIs:42	2000
+results
+result 0
+maxidx -1
+prop #259:3844a835
+end
+steps 3
+> blast	rule:safeIs:45	2000
+results
+result 0
+maxidx -1
+prop #195:64dc887e
+end
+steps 3
+> blast	rule:safeIs:48	2000
+results
+result 0
+maxidx 2
+prop #1345:5fd276ca
+end
+steps 107
+> blast	rule:safeIs:51	2000
+results
+result 0
+maxidx 3
+prop #1165:7305e9aa
+end
+steps 107
+> blast	rule:safeIs:54	2000
+results
+result 0
+maxidx 3
+prop #1765:84f3d10e
+end
+steps 127
+> blast	rule:safeIs:57	2000
+results
+result 0
+maxidx 3
+prop #1771:f75b6246
+end
+steps 127
+> blast	rule:safeIs:60	2000
+results
+result 0
+maxidx 1
+prop #200:ff15e5fb
+end
+steps 3
+> blast	rule:safeIs:63	2000
+results
+result 0
+maxidx 3
+prop #1765:fbceb82e
+end
+steps 127
+> blast	rule:safeIs:66	2000
+results
+result 0
+maxidx 3
+prop #2412:17eb7b44
+end
+steps 3
+> blast	rule:safeIs:69	2000
+results
+result 0
+maxidx 3
+prop #1606:6f9731b7
+end
+steps 3
+> blast	rule:safeIs:72	2000
+results
+result 0
+maxidx 2
+prop #1270:2946769b
+end
+steps 3
+> blast	rule:safeIs:75	2000
+results
+end
+steps 0
+> blast	rule:safeIs:78	2000
+results
+result 0
+maxidx 1
+prop #198:da383584
+end
+steps 3
+> blast	rule:safeIs:81	2000
+results
+result 0
+maxidx 3
+prop #1465:83501ffe
+end
+steps 117
+> blast	rule:safeIs:84	2000
+results
+result 0
+maxidx 3
+prop #776:3b03e201
+end
+steps 5
+> blast	rule:safeIs:87	2000
+results
+result 0
+maxidx 4
+prop #915:144daca7
+end
+steps 27
+> blast	rule:safeIs:90	2000
+results
+result 0
+maxidx 3
+prop #589:93b8e7a1
+end
+steps 3
+> blast	rule:safeIs:93	2000
+results
+result 0
+maxidx 3
+prop #2017:3613640a
+end
+steps 127
+> blast	rule:safeIs:96	2000
+results
+result 0
+maxidx 3
+prop #2017:8d313ce2
+end
+steps 127
+> blast	rule:safeIs:99	2000
+results
+result 0
+maxidx 3
+prop #1735:4c5750f0
+end
+steps 127
+> blast	rule:safeIs:102	2000
+results
+result 0
+maxidx 3
+prop #1735:1d6c7a96
+end
+steps 127
+> blast	rule:safeIs:105	2000
+results
+result 0
+maxidx 3
+prop #1459:deb02ca6
+end
+steps 117
+> blast	rule:safeIs:108	2000
+results
+result 0
+maxidx 3
+prop #1465:c88a98de
+end
+steps 117
+> blast	rule:safeIs:111	2000
+results
+result 0
+maxidx 1
+prop #210:f754645c
+end
+steps 3
+> blast	rule:safeIs:114	2000
+results
+result 0
+maxidx 3
+prop #1107:494b6e0c
+end
+steps 3
+> blast	rule:safeIs:117	2000
+results
+result 0
+maxidx 3
+prop #1312:6ffc859c
+end
+steps 3
+> blast	rule:safeIs:120	2000
+results
+result 0
+maxidx 3
+prop #1087:9567c7f7
+end
+steps 3
+> blast	rule:safeIs:123	2000
+results
+result 0
+maxidx 1
+prop #244:96921c3b
+end
+steps 3
+> blast	rule:safeIs:126	2000
+results
+result 0
+maxidx 3
+prop #683:dc1d4d64
+end
+steps 5
+> blast	rule:safeIs:129	2000
+results
+end
+steps 0
+> blast	rule:safeIs:132	2000
+results
+result 0
+maxidx 3
+prop #997:335b5e93
+end
+steps 3
+> blast	rule:safeIs:135	2000
+results
+result 0
+maxidx 3
+prop #1117:5eea5bdf
+end
+steps 3
+> blast	rule:safeIs:138	2000
+results
+result 0
+maxidx 3
+prop #1122:9b3fc2c
+end
+steps 3
+> blast	rule:safeIs:141	2000
+results
+result 0
+maxidx 3
+prop #1122:91bf8528
+end
+steps 3
+> blast	rule:safeIs:144	2000
+results
+result 0
+maxidx 3
+prop #1112:489e96a0
+end
+steps 3
+> blast	rule:safeIs:147	2000
+results
+result 0
+maxidx 3
+prop #675:226a4ba7
+end
+steps 20
+> blast	rule:safeIs:150	2000
+results
+result 0
+maxidx 3
+prop #842:6de027b0
+end
+steps 3
+> blast	rule:safeIs:153	2000
+results
+result 0
+maxidx 1
+prop #221:9d779b3
+end
+steps 3
+> blast	rule:safeIs:156	2000
+results
+result 0
+maxidx 1
+prop #247:97088bd9
+end
+steps 3
+> blast	rule:safeIs:159	2000
+results
+result 0
+maxidx 3
+prop #651:1af6055b
+end
+steps 5
+> blast	rule:safeIs:162	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.isBool::fun(PredicateLogic.c,PredicateLogic.c) PredicateLogic.FALSE::PredicateLogic.c))
+end
+steps 3
+> blast	rule:safeIs:165	2000
+results
+end
+steps 16
+> blast	rule:safeIs:168	2000
+results
+result 0
+maxidx 3
+prop #872:412d2116
+result 1
+maxidx 3
+prop #964:f7d4b882
+stop
+steps 33
+> blast	rule:safeIs:171	2000
+results
+result 0
+maxidx 2
+prop #412:cbb0bc7a
+end
+steps 14
+> blast	rule:safeIs:174	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.TRUE::PredicateLogic.c)
+end
+steps 3
+> blast	rule:safeEs:1	2000
+results
+result 0
+maxidx 2
+prop #2964:fb399e76
+result 1
+maxidx 2
+prop #2962:e6723f90
+stop
+steps 282
+> blast	rule:safeEs:4	2000
+results
+result 0
+maxidx 2
+prop #3106:362f311a
+result 1
+maxidx 2
+prop #2902:78495eb2
+stop
+steps 119
+> blast	rule:safeEs:7	2000
+results
+result 0
+maxidx 2
+prop #1656:9fff11d
+result 1
+maxidx 2
+prop #1426:b15327cd
+stop
+steps 44
+> blast	rule:safeEs:10	2000
+results
+result 0
+maxidx 2
+prop #2331:a83d153e
+result 1
+maxidx 2
+prop #1986:c25a5573
+stop
+steps 64
+> blast	rule:safeEs:13	2000
+results
+result 0
+maxidx 5
+prop #1160:319fa921
+end
+steps 20
+> blast	rule:safeEs:16	2000
+results
+result 0
+maxidx 4
+prop #918:18f2bf75
+end
+steps 6
+> blast	rule:safeEs:19	2000
+results
+result 0
+maxidx 32
+prop #3846:5ad4d6a4
+end
+steps 248
+> blast	rule:safeEs:22	2000
+results
+result 0
+maxidx 2
+prop #1777:cb2c2ab5
+end
+steps 3
+> blast	rule:safeEs:25	2000
+results
+result 0
+maxidx 2
+prop #1681:5a8f15ff
+end
+steps 46
+> blast	rule:safeEs:28	2000
+results
+result 0
+maxidx 2
+prop #422:2a6682e2
+end
+steps 3
+> blast	rule:safeEs:31	2000
+results
+end
+steps 89
+> blast	rule:safeEs:34	2000
+results
+result 0
+maxidx 2
+prop #1151:e1dd37b
+end
+steps 40
+> blast	rule:safeEs:37	2000
+results
+result 0
+maxidx 2
+prop #2193:2d0383ca
+end
+steps 68
+> blast	rule:safeEs:40	2000
+results
+result 0
+maxidx 2
+prop #1430:24366e9e
+end
+steps 56
+> blast	rule:safeEs:43	2000
+results
+result 0
+maxidx 2
+prop #1082:6de0ba43
+end
+steps 34
+> blast	rule:unsafeIs:1	2000
+results
+result 0
+maxidx 8
+prop #1590:80289c47
+end
+steps 238
+> blast	rule:unsafeIs:4	2000
+results
+result 0
+maxidx 13
+prop #1084:f1944c9c
+result 1
+maxidx 13
+prop #1084:8e03aef2
+stop
+steps 32
+> blast	rule:unsafeIs:7	2000
+results
+result 0
+maxidx 4
+prop #690:a201002d
+end
+steps 5
+> blast	rule:unsafeIs:10	2000
+results
+end
+steps 0
+> blast	rule:unsafeIs:13	2000
+results
+result 0
+maxidx 3
+prop #3147:7207877a
+end
+steps 3
+> blast	rule:unsafeIs:16	2000
+results
+result 0
+maxidx 6
+prop #505:58d60db8
+end
+steps 11
+> blast	rule:unsafeIs:19	2000
+results
+result 0
+maxidx 3
+prop #1308:bf1e7e88
+end
+steps 92
+> blast	rule:unsafeIs:22	2000
+results
+result 0
+maxidx 4
+prop #1009:3cab21b6
+end
+steps 7
+> blast	rule:unsafeIs:25	2000
+results
+result 0
+maxidx 6
+prop #747:8cedab37
+end
+steps 21
+> blast	rule:unsafeIs:28	2000
+results
+result 0
+maxidx 6
+prop #668:6567328e
+end
+steps 15
+> blast	rule:unsafeIs:31	2000
+results
+result 0
+maxidx 3
+prop #1783:cd75e4cc
+end
+steps 127
+> blast	rule:unsafeIs:34	2000
+results
+result 0
+maxidx 4
+prop #1465:a81d38b3
+end
+steps 9
+> blast	rule:unsafeIs:37	2000
+results
+result 0
+maxidx 4
+prop #1435:ec004521
+end
+steps 5
+> blast	rule:unsafeIs:40	2000
+results
+result 0
+maxidx 5
+prop #1388:d3f8a4de
+end
+steps 17
+> blast	rule:unsafeIs:43	2000
+results
+result 0
+maxidx 6
+prop #526:19abe5d4
+end
+steps 10
+> blast	rule:unsafeIs:46	2000
+results
+result 0
+maxidx 4
+prop #1092:c8100fbc
+end
+steps 7
+> blast	rule:unsafeIs:49	2000
+results
+result 0
+maxidx 6
+prop #1320:73b1dc06
+end
+steps 20
+> blast	rule:unsafeIs:52	2000
+results
+result 0
+maxidx 6
+prop #525:66fabfa2
+end
+steps 19
+> blast	rule:unsafeIs:55	2000
+results
+result 0
+maxidx 4
+prop #918:53531fdf
+end
+steps 5
+> blast	rule:unsafeIs:58	2000
+results
+result 0
+maxidx 6
+prop #749:4522022c
+end
+steps 16
+> blast	rule:unsafeIs:61	2000
+results
+result 0
+maxidx 4
+prop #364:b1534d30
+end
+steps 7
+> blast	rule:unsafeIs:64	2000
+results
+result 0
+maxidx 5
+prop #1045:74252cfb
+end
+steps 70
+> blast	rule:unsafeIs:67	2000
+results
+end
+steps 0
+> blast	rule:unsafeIs:70	2000
+results
+result 0
+maxidx 4
+prop #377:40dbe8a6
+end
+steps 6
+> blast	rule:unsafeIs:73	2000
+results
+end
+steps 0
+> blast	rule:unsafeEs:2	2000
+results
+result 0
+maxidx 2
+prop #1448:c5b1aee8
+end
+steps 3
+> blast	rule:unsafeEs:5	2000
+results
+result 0
+maxidx 2
+prop #1592:83c72bba
+result 1
+maxidx 2
+prop #1680:5a1f22ac
+stop
+steps 72
+> blast	rule:unsafeEs:8	2000
+results
+result 0
+maxidx 2
+prop #1843:d9336a09
+end
+steps 149
+> blast	rule:unsafeEs:11	2000
+results
+result 0
+maxidx 2
+prop #1495:345efdc9
+end
+steps 62
+> blast	rule:unsafeEs:14	2000
+results
+result 0
+maxidx 3
+prop #2098:d6d7be4b
+result 1
+maxidx 3
+prop #2038:bafced11
+stop
+steps 16
+> blast	rule:unsafeEs:17	2000
+results
+result 0
+maxidx 2
+prop #1463:2acf5f22
+end
+steps 3
+> blast	rule:unsafeEs:20	2000
+results
+result 0
+maxidx 2
+prop #1381:1b342e78
+end
+steps 3
+> blast	rule:unsafeEs:23	2000
+results
+result 0
+maxidx 2
+prop #2166:81f5f1b4
+end
+steps 78
+> blast	rule:unsafeEs:26	2000
+results
+result 0
+maxidx 2
+prop #1642:ca76dcad
+result 1
+maxidx 2
+prop #1418:345e219d
+stop
+steps 37
+> blast	rule:unsafeEs:29	2000
+results
+result 0
+maxidx 2
+prop #1884:9790712c
+end
+steps 72
+> blast	rule:unsafeEs:32	2000
+results
+result 0
+maxidx 2
+prop #1751:a1f4c06b
+end
+steps 130
+> blast	rule:unsafeEs:35	2000
+results
+result 0
+maxidx 2
+prop #2059:1a77b5dc
+end
+steps 92
+> blast	rule:unsafeEs:38	2000
+results
+result 0
+maxidx 2
+prop #2736:f3b1998e
+end
+steps 84
+> blast	rule:unsafeEs:41	2000
+results
+result 0
+maxidx 2
+prop #2742:ae1cf3ba
+end
+steps 84
+> blast	rule:unsafeEs:44	2000
+results
+result 0
+maxidx 2
+prop #2454:1bcb91d2
+end
+steps 84
+> blast	rule:unsafeEs:47	2000
+results
+result 0
+maxidx 2
+prop #2454:5499ef74
+end
+steps 84
+> blast	rule:unsafeEs:50	2000
+results
+result 0
+maxidx 2
+prop #2178:1f1a003e
+end
+steps 78
+> blast	rule:unsafeEs:53	2000
+results
+result 0
+maxidx 2
+prop #2184:2d1397e0
+end
+steps 78
+> blast	rule:unsafeEs:56	2000
+results
+result 0
+maxidx 2
+prop #1920:eac366c4
+end
+steps 72
+> blast	rule:unsafeEs:59	2000
+results
+result 0
+maxidx 2
+prop #612:95e3bafe
+end
+steps 3
+> depth	thy:AllocatorImplementation_proof-127	2000
+results
+end
+steps 449
+> depth	thy:AllocatorImplementation_proof-33	2000
+results
+result 0
+maxidx 1
+prop #3992:e483f5f1
+end
+steps 315
+> depth	thy:AtomicBakeryWithoutSMT-465	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> depth	thy:AtomicBakeryWithoutSMT-6	2000
+results
+end
+steps 188
+> depth	thy:FiniteSetTheorems_proofs-453	2000
+results
+end
+steps 276
+> depth	thy:NaturalsInduction_proofs-1	2000
+results
+end
+steps 99
+> depth	thy:Paxos-109	2000
+results
+end
+steps 147
+> depth	thy:Sets-183	2000
+results
+end
+steps 46
+> depth	thy:TLAPS-2	2000
+results
+end
+steps 16
+> depth	thy:constantfcn_test-1	2000
+results
+end
+steps 2
+> depth	thy:function_except_tuple_soundness_gh201_test-1	2000
+results
+end
+steps 3
+> depth	fact:CaseExpressions.CaseArm_def	2000
+results
+end
+steps 2
+> depth	fact:FixedPoints.gfpMono	2000
+results
+end
+steps 58
+> depth	fact:FixedPoints.lfpGLB	2000
+results
+end
+steps 75
+> depth	fact:FixedPoints.lfp_def	2000
+results
+end
+steps 0
+> depth	fact:Functions.DOMAIN	2000
+results
+end
+steps 499
+> depth	fact:Functions.Surjections_def	2000
+results
+end
+steps 2
+> depth	fact:Functions.applyExcept	2000
+results
+end
+steps 460
+> depth	fact:Functions.boolifyInjectiveOn	2000
+results
+result 0
+maxidx 3
+prop #466:2ff99d64
+end
+steps 9
+> depth	fact:Functions.exceptInFuncSetSame	2000
+results
+result 0
+maxidx 36
+prop #3320:a67ac76a
+result 1
+maxidx 36
+prop #3320:a67ac76a
+stop
+steps 1104
+> depth	fact:Functions.extend_def	2000
+results
+end
+steps 2
+> depth	fact:Functions.fcnIsAFcn	2000
+results
+result 0
+maxidx 1
+prop #280:757fe013
+end
+steps 3
+> depth	fact:Functions.funcSetValue	2000
+results
+result 0
+maxidx 3
+prop #875:442d1b17
+end
+steps 5
+> depth	fact:Functions.imageI	2000
+results
+result 0
+maxidx 4
+prop #906:afc6735e
+end
+steps 5
+> depth	fact:Functions.inFuncSet	2000
+results
+result 0
+maxidx 2
+prop #1270:2946769b
+end
+steps 3
+> depth	fact:Functions.injectiveImageEqual	2000
+results
+result 0
+maxidx 7
+prop #1211:3d95f422
+end
+steps 11
+> depth	fact:Functions.injectiveOnExcept	2000
+results
+result 0
+maxidx 3
+prop #2494:a56c583e
+end
+steps 3
+> depth	fact:Functions.injectiveOnSetminus	2000
+results
+end
+steps 3
+> depth	fact:Functions.inverseInjective	2000
+results
+result 0
+maxidx 4
+prop #364:b1534d30
+end
+steps 5
+> depth	fact:Functions.isBoolIsAFcn	2000
+results
+result 0
+maxidx 1
+prop #198:da383584
+end
+steps 3
+> depth	fact:Functions.oneArgDomain	2000
+results
+end
+steps 411
+> depth	fact:Functions.surjectionsFuncSet	2000
+results
+result 0
+maxidx 2
+prop #664:247deb53
+end
+steps 3
+> depth	fact:Functions.surjectiveIsBool	2000
+results
+result 0
+maxidx 1
+prop #248:762e4a9
+end
+steps 3
+> depth	fact:IntegerArithmetic.add_commute	2000
+results
+result 0
+maxidx 3
+prop #857:5debf136
+end
+steps 3
+> depth	fact:IntegerArithmetic.add_is_0_nat	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> depth	fact:IntegerArithmetic.add_leq_left_mono	2000
+results
+result 0
+maxidx 5
+prop #1656:f2960fc4
+end
+steps 14
+> depth	fact:IntegerArithmetic.add_leq_less_mono	2000
+results
+result 0
+maxidx 5
+prop #2108:7791ee15
+end
+steps 16
+> depth	fact:IntegerArithmetic.add_less_mono	2000
+results
+result 0
+maxidx 4
+prop #1764:d47dbbd7
+result 1
+maxidx 4
+prop #1764:4692d4d7
+stop
+steps 9
+> depth	fact:IntegerArithmetic.add_pred_left	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.add_uminus_pred_left	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.addint_succ	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.diff_diff_left	2000
+results
+end
+steps 5
+> depth	fact:IntegerArithmetic.eq_leq_bothE	2000
+results
+result 0
+maxidx 2
+prop #1531:9e1ea334
+result 1
+maxidx 2
+prop #1531:1adfc56
+stop
+steps 53
+> depth	fact:IntegerArithmetic.int_add_left_cancel_leq	2000
+results
+end
+steps 5
+> depth	fact:IntegerArithmetic.int_add_right_cancel_succ_less	2000
+results
+end
+steps 5
+> depth	fact:IntegerArithmetic.int_leq_cases	2000
+results
+result 0
+maxidx 2
+prop #1817:785e3f14
+result 1
+maxidx 2
+prop #1817:7e9d0193
+stop
+steps 64
+> depth	fact:IntegerArithmetic.int_leq_is_less_succ	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.int_leq_limit_2	2000
+results
+result 0
+maxidx 2
+prop #1557:f03702f6
+end
+steps 3
+> depth	fact:IntegerArithmetic.int_leq_pred_iff	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.int_leq_refl	2000
+results
+result 0
+maxidx 7
+prop #785:fae8493e
+end
+steps 15
+> depth	fact:IntegerArithmetic.int_leq_uminus_succ_iff	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.int_less_iff_succ_add	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> depth	fact:IntegerArithmetic.int_less_not_leq	2000
+results
+result 0
+maxidx 6
+prop #1329:116be037
+end
+steps 275
+> depth	fact:IntegerArithmetic.int_less_uminus	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.int_pred_leqI	2000
+results
+result 0
+maxidx 7
+prop #2070:51a2cd14
+end
+steps 22
+> depth	fact:IntegerArithmetic.int_pred_less_pred	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.int_succ_leq_predE	2000
+results
+result 0
+maxidx 2
+prop #2000:4ab3fe03
+result 1
+maxidx 2
+prop #1540:c9d0f9fb
+stop
+steps 48
+> depth	fact:IntegerArithmetic.int_succ_less_succI	2000
+results
+result 0
+maxidx 4
+prop #1092:c8100fbc
+end
+steps 7
+> depth	fact:IntegerArithmetic.intvlIsEmpty	2000
+results
+result 0
+maxidx 6
+prop #984:25d2dce1
+end
+steps 16
+> depth	fact:IntegerArithmetic.leq_add_self2	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.leq_isBool	2000
+results
+result 0
+maxidx 3
+prop #699:2e31a49f
+end
+steps 5
+> depth	fact:IntegerArithmetic.less_add_Succ2	2000
+results
+result 0
+maxidx 5
+prop #1504:43ad219
+end
+steps 13
+> depth	fact:IntegerArithmetic.less_isBool	2000
+results
+result 0
+maxidx 1
+prop #250:b7e0b4a5
+end
+steps 3
+> depth	fact:IntegerArithmetic.nat_add_gt_0	2000
+results
+result 0
+maxidx 14
+prop #2225:64d7e153
+end
+steps 52
+> depth	fact:IntegerArithmetic.nat_leq_zero	2000
+results
+result 0
+maxidx 6
+prop #917:34031ae
+end
+steps 13
+> depth	fact:IntegerArithmetic.nat_neq0_conv	2000
+results
+result 0
+maxidx 13
+prop #1501:2c773cea
+end
+steps 46
+> depth	fact:IntegerArithmetic.neq_leq_trans_sym	2000
+results
+result 0
+maxidx 4
+prop #918:53531fdf
+end
+steps 5
+> depth	fact:IntegerArithmetic.one_is_add_nat	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> depth	fact:IntegerArithmetic.pr_addint_def	2000
+results
+end
+steps 2
+> depth	fact:IntegerArithmetic.pred_add_eq_self1	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> depth	fact:IntegerArithmetic.succIntvl	2000
+results
+end
+steps 128
+> depth	fact:IntegerArithmetic.times_0_left	2000
+results
+end
+steps 3
+> depth	fact:IntegerArithmetic.times_is_1_iff	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> depth	fact:IntegerArithmetic.times_left_commute	2000
+results
+result 0
+maxidx 3
+prop #1312:c1e26ec9
+end
+steps 3
+> depth	fact:IntegerArithmetic.times_leq_right_pos_cancel	2000
+results
+result 0
+maxidx 3
+prop #1580:9fb7d6b3
+end
+steps 7
+> depth	fact:IntegerArithmetic.times_less_right_neg_mono	2000
+results
+result 0
+maxidx 4
+prop #1551:387d8358
+result 1
+maxidx 4
+prop #1591:80eb4f11
+stop
+steps 5
+> depth	fact:IntegerArithmetic.times_pred_left	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.trans_leq_add_nat2	2000
+results
+result 0
+maxidx 5
+prop #1778:e8be6876
+result 1
+maxidx 5
+prop #1838:590230bf
+stop
+steps 14
+> depth	fact:IntegerArithmetic.trans_less_diff_nat1	2000
+results
+result 0
+maxidx 4
+prop #1493:9e2a3ae8
+end
+steps 5
+> depth	fact:IntegerArithmetic.uminus_add	2000
+results
+end
+steps 4
+> depth	fact:IntegerArithmetic.zerotoEmpty	2000
+results
+end
+steps 55
+> depth	fact:IntegerDivision.div_exists	2000
+results
+result 0
+maxidx 4
+prop #1815:271df456
+end
+steps 7
+> depth	fact:IntegerDivision.div_times_divisor4	2000
+results
+result 0
+maxidx 3
+prop #1698:89207c76
+end
+steps 6
+> depth	fact:IntegerDivision.dvd_0_right	2000
+results
+result 0
+maxidx 6
+prop #668:6567328e
+end
+steps 8
+> depth	fact:IntegerDivision.dvd_mult_left	2000
+results
+result 0
+maxidx 6
+prop #1570:24c38b9b
+end
+steps 10
+> depth	fact:IntegerDivision.dvd_times_div_distrib	2000
+results
+result 0
+maxidx 3
+prop #1809:a9ec52b9
+end
+steps 7
+> depth	fact:IntegerDivision.dvd_triv_right	2000
+results
+result 0
+maxidx 6
+prop #747:a3eae8ff
+end
+steps 12
+> depth	fact:IntegerDivision.mod_div_same	2000
+results
+result 0
+maxidx 3
+prop #1133:93986bff
+end
+steps 6
+> depth	fact:IntegerDivision.mod_times_divisor3	2000
+results
+result 0
+maxidx 3
+prop #1585:5878edf8
+end
+steps 6
+> depth	fact:IntegerDivision.times_div_self2	2000
+results
+result 0
+maxidx 4
+prop #1129:28fb070a
+end
+steps 7
+> depth	fact:IntegerDivision.uminus_mod2	2000
+results
+result 0
+maxidx 5
+prop #1760:6cb911c1
+end
+steps 17
+> depth	fact:Integers.SuccInj	2000
+results
+result 0
+maxidx 2
+prop #1307:c1fafb1d
+end
+steps 3
+> depth	fact:Integers.SuccIsAFcn	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (Functions.isAFcn::fun(PredicateLogic.c,PredicateLogic.c) Integers.Succ::PredicateLogic.c))
+end
+steps 3
+> depth	fact:Integers.diffInduction	2000
+results
+end
+steps 0
+> depth	fact:Integers.four_def	2000
+results
+end
+steps 2
+> depth	fact:Integers.intInductE	2000
+results
+end
+steps 238
+> depth	fact:Integers.natInduct	2000
+results
+end
+steps 86
+> depth	fact:Integers.not0_implies_Suc	2000
+results
+result 0
+maxidx 4
+prop #1144:499a5db2
+end
+steps 6
+> depth	fact:Integers.predInjIff	2000
+results
+result 0
+maxidx 7
+prop #1073:68b4a12c
+end
+steps 63
+> depth	fact:Integers.primrec_int	2000
+results
+end
+steps 0
+> depth	fact:Integers.seven_def	2000
+results
+end
+steps 2
+> depth	fact:Integers.succIsAFcn	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (Functions.isAFcn::fun(PredicateLogic.c,PredicateLogic.c) Integers.succ::PredicateLogic.c))
+end
+steps 3
+> depth	fact:Integers.succUminusSuccNat	2000
+results
+end
+steps 3
+> depth	fact:Integers.ten_def	2000
+results
+end
+steps 2
+> depth	fact:Integers.uminusInj	2000
+results
+result 0
+maxidx 2
+prop #1193:f9fa2d13
+end
+steps 3
+> depth	fact:Integers.uminusSucc	2000
+results
+end
+steps 3
+> depth	fact:Integers.uptoInduct	2000
+results
+end
+steps 170
+> depth	fact:Integers.uptoSucc	2000
+results
+end
+steps 12
+> depth	fact:Integers.zeroIsSucc	2000
+results
+end
+steps 454
+> depth	fact:PredicateLogic.Ex_def	2000
+results
+end
+steps 0
+> depth	fact:PredicateLogic.TruepropBoolify	2000
+results
+end
+steps 2
+> depth	fact:PredicateLogic.atomize_all	2000
+results
+end
+steps 0
+> depth	fact:PredicateLogic.atomize_imp	2000
+results
+end
+steps 2
+> depth	fact:PredicateLogic.boolifyCond	2000
+results
+result 0
+maxidx 9
+prop #2092:8b2f209c
+end
+steps 24
+> depth	fact:PredicateLogic.boolifyI	2000
+results
+result 0
+maxidx 3
+prop #255:54cb5178
+end
+steps 4
+> depth	fact:PredicateLogic.boolifyTrue	2000
+results
+result 0
+maxidx 1
+prop #278:64bdb968
+end
+steps 7
+> depth	fact:PredicateLogic.boolifyTrueFalse	2000
+results
+result 0
+maxidx 4
+prop #592:5463fbf5
+end
+steps 12
+> depth	fact:PredicateLogic.cases_conj_eq	2000
+results
+end
+steps 2
+> depth	fact:PredicateLogic.cases_implies_conj	2000
+results
+end
+steps 5
+> depth	fact:PredicateLogic.chooseI2	2000
+results
+end
+steps 38
+> depth	fact:PredicateLogic.classical	2000
+results
+result 0
+maxidx 3
+prop #879:eba498ec
+end
+steps 17
+> depth	fact:PredicateLogic.condFullCong	2000
+results
+result 0
+maxidx 3
+prop #1443:9a1c22cd
+end
+steps 44
+> depth	fact:PredicateLogic.condI	2000
+results
+end
+steps 37
+> depth	fact:PredicateLogic.cond_eqLE	2000
+results
+result 0
+maxidx 2
+prop #2193:23947234
+end
+steps 68
+> depth	fact:PredicateLogic.conjE	2000
+results
+result 0
+maxidx 2
+prop #859:424f0578
+end
+steps 31
+> depth	fact:PredicateLogic.default_def	2000
+results
+end
+steps 2
+> depth	fact:PredicateLogic.eqBoolean	2000
+results
+result 0
+maxidx 12
+prop #2025:e68e8742
+end
+steps 48
+> depth	fact:PredicateLogic.eq_false_not	2000
+results
+result 0
+maxidx 3
+prop #408:eef8868e
+end
+steps 5
+> depth	fact:PredicateLogic.equal_default	2000
+results
+end
+steps 0
+> depth	fact:PredicateLogic.excluded_middle	2000
+results
+result 0
+maxidx 1
+prop #244:213699d3
+end
+steps 4
+> depth	fact:PredicateLogic.iffCE	2000
+results
+result 0
+maxidx 2
+prop #1430:24366e9e
+end
+steps 56
+> depth	fact:PredicateLogic.iffThenBoolifyEqual	2000
+results
+result 0
+maxidx 3
+prop #533:53e0af71
+end
+steps 3
+> depth	fact:PredicateLogic.impE	2000
+results
+result 0
+maxidx 2
+prop #856:a18d5a14
+result 1
+maxidx 2
+prop #642:c84d4eac
+stop
+steps 25
+> depth	fact:PredicateLogic.isBoolE	2000
+results
+result 0
+maxidx 2
+prop #1151:e1dd37b
+end
+steps 40
+> depth	fact:PredicateLogic.mp	2000
+results
+result 0
+maxidx 2
+prop #412:1526ed02
+end
+steps 3
+> depth	fact:PredicateLogic.notBoolIsFalse	2000
+results
+result 0
+maxidx 7
+prop #595:892c532f
+end
+steps 12
+> depth	fact:PredicateLogic.notIsBool	2000
+results
+result 0
+maxidx 1
+prop #200:cd78658e
+end
+steps 3
+> depth	fact:PredicateLogic.notnotI	2000
+results
+result 0
+maxidx 3
+prop #346:852684b2
+end
+steps 5
+> depth	fact:PredicateLogic.simp_implies_def	2000
+results
+end
+steps 2
+> depth	fact:PredicateLogic.subst	2000
+results
+end
+steps 0
+> depth	fact:PredicateLogic.trueI	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.TRUE::PredicateLogic.c)
+end
+steps 3
+> depth	fact:Pure.conjunctionD1	2000
+results
+result 0
+maxidx 3
+prop #589:4d70a83b
+end
+steps 3
+> depth	fact:Pure.equal_allI	2000
+results
+end
+steps 12
+> depth	fact:Pure.meta_allE	2000
+results
+end
+steps 11
+> depth	fact:Pure.protectI	2000
+results
+end
+steps 3
+> depth	fact:Pure.sort_constraint_eq	2000
+results
+end
+steps 2
+> depth	fact:Pure.swap_prems_eq	2000
+results
+end
+steps 2
+> depth	fact:Pure.transitive	2000
+results
+result 0
+maxidx 2
+prop #263:daa5d5f6
+result 1
+maxidx 2
+prop #263:2c8e4fa0
+stop
+steps 13
+> depth	fact:SetTheory.INTER_def	2000
+results
+end
+steps 2
+> depth	fact:SetTheory.SUBSET_UNION	2000
+results
+result 0
+maxidx 1
+prop #327:6e1227a1
+end
+steps 3
+> depth	fact:SetTheory.UNIONI	2000
+results
+result 0
+maxidx 2
+prop #782:2ff3f3f8
+end
+steps 3
+> depth	fact:SetTheory.UNION_mono	2000
+results
+result 0
+maxidx 3
+prop #516:ebb27012
+end
+steps 3
+> depth	fact:SetTheory.addEltCommute	2000
+results
+result 0
+maxidx 1
+prop #601:9b24903e
+end
+steps 3
+> depth	fact:SetTheory.addEltEqual_iff	2000
+results
+result 0
+maxidx 95
+prop #1317:d22ead48
+result 1
+maxidx 95
+prop #1317:d22ead48
+stop
+steps 228
+> depth	fact:SetTheory.addEltUnion	2000
+results
+result 0
+maxidx 129
+prop #1190:5f912318
+result 1
+maxidx 129
+prop #1194:2c73d964
+stop
+steps 238
+> depth	fact:SetTheory.bAllIsBool	2000
+results
+end
+steps 0
+> depth	fact:SetTheory.bChooseI	2000
+results
+end
+steps 0
+> depth	fact:SetTheory.bExCong	2000
+results
+end
+steps 71
+> depth	fact:SetTheory.bExistsInter	2000
+results
+end
+steps 0
+> depth	fact:SetTheory.bExistsUnion	2000
+results
+end
+steps 0
+> depth	fact:SetTheory.condIn	2000
+results
+result 0
+maxidx 16
+prop #1119:d37a65ce
+end
+steps 137
+> depth	fact:SetTheory.emptySubset	2000
+results
+result 0
+maxidx 1
+prop #195:8f739ad2
+end
+steps 3
+> depth	fact:SetTheory.equalAddElt_iff	2000
+results
+result 0
+maxidx 91
+prop #1317:1b9e2d32
+result 1
+maxidx 91
+prop #1317:1b9e2d32
+stop
+steps 226
+> depth	fact:SetTheory.inCondI	2000
+results
+result 0
+maxidx 7
+prop #1386:2c584327
+end
+steps 54
+> depth	fact:SetTheory.interAddEltRight	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> depth	fact:SetTheory.interAssoc	2000
+results
+result 0
+maxidx 808
+prop #5697:3d6c9502
+result 1
+maxidx 808
+prop #5697:229e98fe
+stop
+steps 1247
+> depth	fact:SetTheory.interI	2000
+results
+result 0
+maxidx 3
+prop #712:a4b5bf14
+end
+steps 5
+> depth	fact:SetTheory.interSetminusRight	2000
+results
+result 0
+maxidx 187
+prop #8927:69ed0ef4
+result 1
+maxidx 187
+prop #9537:5c692d70
+stop
+steps 316
+> depth	fact:SetTheory.nonEmptyE	2000
+results
+result 0
+maxidx 2
+prop #1119:a20a1c2
+end
+steps 52
+> depth	fact:SetTheory.psubset_def	2000
+results
+end
+steps 2
+> depth	fact:SetTheory.setEqualD1	2000
+results
+result 0
+maxidx 3
+prop #431:c4af9b98
+end
+steps 3
+> depth	fact:SetTheory.setEqualI	2000
+results
+result 0
+maxidx 2
+prop #1336:35abad31
+end
+steps 107
+> depth	fact:SetTheory.setOfAllEqual	2000
+results
+end
+steps 158
+> depth	fact:SetTheory.setminusAddEltLeft	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> depth	fact:SetTheory.setminusINTERRight	2000
+results
+result 0
+maxidx 16
+prop #1131:fac8afac
+end
+steps 37
+> depth	fact:SetTheory.setminusUnionRight	2000
+results
+result 0
+maxidx 275
+prop #4023:b0fdf099
+result 1
+maxidx 275
+prop #3968:ab0cc422
+stop
+steps 657
+> depth	fact:SetTheory.subsetCE	2000
+results
+result 0
+maxidx 2
+prop #1333:ef391d12
+end
+steps 44
+> depth	fact:SetTheory.subsetI	2000
+results
+result 0
+maxidx 3
+prop #675:798ebb90
+end
+steps 55
+> depth	fact:SetTheory.subsetIsBool	2000
+results
+result 0
+maxidx 1
+prop #244:96921c3b
+end
+steps 3
+> depth	fact:SetTheory.subsetOfE	2000
+results
+end
+steps 41
+> depth	fact:SetTheory.subsetSetminus	2000
+results
+result 0
+maxidx 3
+prop #892:c75efa80
+end
+steps 3
+> depth	fact:SetTheory.subst_set_rev	2000
+results
+result 0
+maxidx 2
+prop #613:22f73e54
+end
+steps 3
+> depth	fact:SetTheory.unionE	2000
+results
+result 0
+maxidx 2
+prop #1672:79d89989
+end
+steps 46
+> depth	fact:SetTheory.unionLeftCommute	2000
+results
+result 0
+maxidx 1
+prop #597:3fb18ffe
+end
+steps 3
+> depth	fact:SetTheory.union_def	2000
+results
+end
+steps 2
+> depth	fact:Strings.Char_def	2000
+results
+end
+steps 2
+> depth	fact:Tuples.DomainSeqLen	2000
+results
+end
+steps 36
+> depth	fact:Tuples.IdI'	2000
+results
+result 0
+maxidx 4
+prop #911:d313e5a5
+end
+steps 5
+> depth	fact:Tuples.LenI	2000
+results
+result 0
+maxidx 2
+prop #1030:946d2d6d
+end
+steps 3
+> depth	fact:Tuples.Product_def	2000
+results
+end
+steps 2
+> depth	fact:Tuples.SeqIsAFcn	2000
+results
+result 0
+maxidx 2
+prop #329:1ed3d964
+end
+steps 3
+> depth	fact:Tuples.antisymmetricIsBool	2000
+results
+result 0
+maxidx 1
+prop #202:c6d63847
+end
+steps 3
+> depth	fact:Tuples.appendElt	2000
+results
+result 0
+maxidx 6
+prop #2006:b69ee6fa
+end
+steps 83
+> depth	fact:Tuples.appendExtend	2000
+results
+end
+steps 84
+> depth	fact:Tuples.boolifyEquivalence	2000
+results
+result 0
+maxidx 3
+prop #460:c9e8a990
+end
+steps 9
+> depth	fact:Tuples.boolifySymmetric	2000
+results
+result 0
+maxidx 3
+prop #364:90a250bc
+end
+steps 9
+> depth	fact:Tuples.compEpair	2000
+results
+result 0
+maxidx 2
+prop #3105:9db5fb75
+result 1
+maxidx 2
+prop #2673:9535e469
+stop
+steps 130
+> depth	fact:Tuples.converseSubset	2000
+results
+result 0
+maxidx 12
+prop #688:f18503cd
+end
+steps 23
+> depth	fact:Tuples.converse_mono	2000
+results
+result 0
+maxidx 6
+prop #1747:9ee5a096
+result 1
+maxidx 6
+prop #1747:9ee5a096
+stop
+steps 12
+> depth	fact:Tuples.domainEmptySeq	2000
+results
+end
+steps 9
+> depth	fact:Tuples.emptySeqIsAFcn	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (Functions.isAFcn::fun(PredicateLogic.c,PredicateLogic.c) Tuples.emptySeq::PredicateLogic.c))
+end
+steps 3
+> depth	fact:Tuples.imageAppend	2000
+results
+end
+steps 210
+> depth	fact:Tuples.imageEmptySeq	2000
+results
+result 0
+maxidx 7
+prop #327:cb09e007
+end
+steps 16
+> depth	fact:Tuples.inProductI	2000
+results
+result 0
+maxidx 3
+prop #1727:d9241009
+end
+steps 7
+> depth	fact:Tuples.in_ran_imp_in_B	2000
+results
+result 0
+maxidx 2
+prop #889:e592fa3d
+end
+steps 3
+> depth	fact:Tuples.irreflexiveIsBool	2000
+results
+result 0
+maxidx 1
+prop #246:3d35c458
+end
+steps 3
+> depth	fact:Tuples.isAppend	2000
+results
+result 0
+maxidx 3
+prop #3147:7207877a
+end
+steps 3
+> depth	fact:Tuples.prodEmptyIff	2000
+results
+result 0
+maxidx 22
+prop #1128:67a7aec
+end
+steps 80
+> depth	fact:Tuples.prodEmptyIff'	2000
+results
+result 0
+maxidx 22
+prop #1128:79e9574a
+end
+steps 80
+> depth	fact:Tuples.reflI	2000
+results
+result 0
+maxidx 8
+prop #872:acbb8217
+end
+steps 86
+> depth	fact:Tuples.reflexive_empty	2000
+results
+result 0
+maxidx 4
+prop #210:7859a2aa
+end
+steps 8
+> depth	fact:Tuples.rel_comp_empty2	2000
+results
+result 0
+maxidx 11
+prop #330:5f62dcf4
+end
+steps 22
+> depth	fact:Tuples.rel_range	2000
+results
+result 0
+maxidx 3
+prop #677:4930947d
+end
+steps 3
+> depth	fact:Tuples.seqEqualIff	2000
+results
+result 0
+maxidx 10
+prop #1664:306eae4a
+end
+steps 17
+> depth	fact:Tuples.seqInduct	2000
+results
+end
+steps 143
+> depth	fact:Tuples.setOfPairs_cong	2000
+results
+end
+steps 131
+> depth	fact:Tuples.symmetricE	2000
+results
+result 0
+maxidx 2
+prop #998:4e1c79a7
+end
+steps 3
+> depth	fact:Tuples.symmetric_iff_converse_eq	2000
+results
+result 0
+maxidx 18
+prop #951:5f6d394e
+result 1
+maxidx 18
+prop #951:9b8ba79d
+stop
+steps 672
+> depth	fact:Tuples.transitive_def	2000
+results
+end
+steps 2
+> depth	fact:Zenon.zenon_all_in_0	2000
+results
+end
+steps 0
+> depth	fact:Zenon.zenon_and_1	2000
+results
+result 0
+maxidx 3
+prop #640:34243c1e
+end
+steps 3
+> depth	fact:Zenon.zenon_boolcase	2000
+results
+end
+steps 74
+> depth	fact:Zenon.zenon_boolcase_in	2000
+results
+end
+steps 71
+> depth	fact:Zenon.zenon_case5	2000
+results
+end
+steps 206
+> depth	fact:Zenon.zenon_case_oth_simpl	2000
+results
+error Interrupt: Interrupt
+steps 2001
+> depth	fact:Zenon.zenon_caseother0	2000
+results
+end
+steps 25
+> depth	fact:Zenon.zenon_choose_diff_choose_0	2000
+results
+end
+steps 0
+> depth	fact:Zenon.zenon_domain_except	2000
+results
+end
+steps 29
+> depth	fact:Zenon.zenon_eq_true_x_0	2000
+results
+result 0
+maxidx 3
+prop #654:1f8935d6
+end
+steps 3
+> depth	fact:Zenon.zenon_equiv	2000
+results
+result 0
+maxidx 4
+prop #1445:f23c50e9
+result 1
+maxidx 4
+prop #1445:9149d807
+stop
+steps 66
+> depth	fact:Zenon.zenon_funequal	2000
+results
+result 0
+maxidx 14
+prop #4344:13a94cee
+end
+steps 93
+> depth	fact:Zenon.zenon_imply	2000
+results
+result 0
+maxidx 4
+prop #1185:799daa54
+result 1
+maxidx 4
+prop #1239:7d430d38
+stop
+steps 46
+> depth	fact:Zenon.zenon_in_SUBSET_0	2000
+results
+result 0
+maxidx 3
+prop #485:97cb82cb
+end
+steps 3
+> depth	fact:Zenon.zenon_in_cap_0	2000
+results
+result 0
+maxidx 3
+prop #626:2f5296be
+end
+steps 3
+> depth	fact:Zenon.zenon_in_funcset_2	2000
+results
+result 0
+maxidx 5
+prop #934:32dc0fa4
+end
+steps 9
+> depth	fact:Zenon.zenon_in_recordset_field	2000
+results
+result 0
+maxidx 6
+prop #1104:98d4b25a
+end
+steps 23
+> depth	fact:Zenon.zenon_in_subsetof_0	2000
+results
+result 0
+maxidx 3
+prop #673:e9458d4b
+end
+steps 3
+> depth	fact:Zenon.zenon_inrecordsetI5	2000
+results
+result 0
+maxidx 31
+prop #4041:6ce2a619
+result 1
+maxidx 31
+prop #4041:4320422a
+stop
+steps 91
+> depth	fact:Zenon.zenon_nnpp	2000
+results
+result 0
+maxidx 3
+prop #725:c9daea6c
+end
+steps 17
+> depth	fact:Zenon.zenon_notall	2000
+results
+end
+steps 43
+> depth	fact:Zenon.zenon_noteq_true_x	2000
+results
+result 0
+maxidx 4
+prop #730:297c25e0
+end
+steps 27
+> depth	fact:Zenon.zenon_notex_0	2000
+results
+end
+steps 0
+> depth	fact:Zenon.zenon_notin_SUBSET	2000
+results
+result 0
+maxidx 5
+prop #871:383af0f5
+end
+steps 35
+> depth	fact:Zenon.zenon_notin_cap	2000
+results
+result 0
+maxidx 6
+prop #1539:2b3400bd
+end
+steps 57
+> depth	fact:Zenon.zenon_notin_setofall	2000
+results
+end
+steps 44
+> depth	fact:Zenon.zenon_notin_setofall_0	2000
+results
+end
+steps 0
+> depth	fact:Zenon.zenon_notisafcn_fcn	2000
+results
+result 0
+maxidx 4
+prop #473:5f35f8e6
+end
+steps 4
+> depth	fact:Zenon.zenon_notsetequal	2000
+results
+result 0
+maxidx 3
+prop #1208:8ab08d0
+end
+steps 42
+> depth	fact:Zenon.zenon_p_eq_l	2000
+results
+result 0
+maxidx 2
+prop #1127:2755cbc6
+end
+steps 43
+> depth	fact:Zenon.zenon_recfield_3	2000
+results
+result 0
+maxidx 4
+prop #1339:19d515c2
+end
+steps 9
+> depth	fact:Zenon.zenon_sa_diff_1	2000
+results
+result 0
+maxidx 4
+prop #904:dfb193d6
+end
+steps 8
+> depth	fact:Zenon.zenon_sa_diff_2	2000
+results
+result 0
+maxidx 5
+prop #1148:208cca96
+end
+steps 8
+> depth	fact:Zenon.zenon_seqify_empty	2000
+results
+end
+steps 10
+> depth	fact:Zenon.zenon_setequalempty_0	2000
+results
+result 0
+maxidx 5
+prop #589:e86c36d3
+end
+steps 8
+> depth	fact:Zenon.zenon_stringdiffll	2000
+results
+result 0
+maxidx 2
+prop #966:71c48de0
+end
+steps 3
+> depth	fact:Zenon.zenon_trueistrue	2000
+results
+end
+steps 22
+> depth	fact:Zenon.zenon_zero_lt	2000
+results
+end
+steps 157
+> depth	rule:safeIs:0	2000
+results
+result 0
+maxidx 3
+prop #1423:5e514a46
+end
+steps 117
+> depth	rule:safeIs:3	2000
+results
+result 0
+maxidx 3
+prop #1459:b846a37c
+end
+steps 117
+> depth	rule:safeIs:6	2000
+results
+result 0
+maxidx 1
+prop #246:3d35c458
+end
+steps 3
+> depth	rule:safeIs:9	2000
+results
+result 0
+maxidx 1
+prop #198:41e161b7
+end
+steps 3
+> depth	rule:safeIs:12	2000
+results
+result 0
+maxidx 3
+prop #2275:790fcace
+end
+steps 127
+> depth	rule:safeIs:15	2000
+results
+result 0
+maxidx 3
+prop #1727:d9241009
+end
+steps 7
+> depth	rule:safeIs:18	2000
+results
+result 0
+maxidx 3
+prop #1965:8cd08ace
+end
+steps 7
+> depth	rule:safeIs:21	2000
+results
+result 0
+maxidx 1
+prop #241:82f41db7
+end
+steps 3
+> depth	rule:safeIs:24	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (Tuples.isASeq::fun(PredicateLogic.c,PredicateLogic.c) Tuples.emptySeq::PredicateLogic.c))
+end
+steps 3
+> depth	rule:safeIs:27	2000
+results
+result 0
+maxidx 3
+prop #1409:a4446699
+end
+steps 3
+> depth	rule:safeIs:30	2000
+results
+result 0
+maxidx 3
+prop #1090:a9b8efd5
+end
+steps 6
+> depth	rule:safeIs:33	2000
+results
+result 0
+maxidx 3
+prop #1447:e56bea36
+end
+steps 117
+> depth	rule:safeIs:36	2000
+results
+result 0
+maxidx -1
+prop #259:1126848
+end
+steps 3
+> depth	rule:safeIs:39	2000
+results
+result 0
+maxidx -1
+prop #259:1ce6b153
+end
+steps 3
+> depth	rule:safeIs:42	2000
+results
+result 0
+maxidx -1
+prop #259:3844a835
+end
+steps 3
+> depth	rule:safeIs:45	2000
+results
+result 0
+maxidx -1
+prop #195:64dc887e
+end
+steps 3
+> depth	rule:safeIs:48	2000
+results
+result 0
+maxidx 2
+prop #1345:5fd276ca
+end
+steps 107
+> depth	rule:safeIs:51	2000
+results
+result 0
+maxidx 3
+prop #1165:7305e9aa
+end
+steps 107
+> depth	rule:safeIs:54	2000
+results
+result 0
+maxidx 3
+prop #1765:84f3d10e
+end
+steps 127
+> depth	rule:safeIs:57	2000
+results
+result 0
+maxidx 3
+prop #1771:f75b6246
+end
+steps 127
+> depth	rule:safeIs:60	2000
+results
+result 0
+maxidx 1
+prop #200:ff15e5fb
+end
+steps 3
+> depth	rule:safeIs:63	2000
+results
+result 0
+maxidx 3
+prop #1765:fbceb82e
+end
+steps 127
+> depth	rule:safeIs:66	2000
+results
+result 0
+maxidx 3
+prop #2412:17eb7b44
+end
+steps 3
+> depth	rule:safeIs:69	2000
+results
+result 0
+maxidx 3
+prop #1606:6f9731b7
+end
+steps 3
+> depth	rule:safeIs:72	2000
+results
+result 0
+maxidx 2
+prop #1270:2946769b
+end
+steps 3
+> depth	rule:safeIs:75	2000
+results
+end
+steps 0
+> depth	rule:safeIs:78	2000
+results
+result 0
+maxidx 1
+prop #198:da383584
+end
+steps 3
+> depth	rule:safeIs:81	2000
+results
+result 0
+maxidx 3
+prop #1465:83501ffe
+end
+steps 117
+> depth	rule:safeIs:84	2000
+results
+result 0
+maxidx 3
+prop #776:3b03e201
+end
+steps 5
+> depth	rule:safeIs:87	2000
+results
+result 0
+maxidx 4
+prop #915:144daca7
+end
+steps 27
+> depth	rule:safeIs:90	2000
+results
+result 0
+maxidx 3
+prop #589:93b8e7a1
+end
+steps 3
+> depth	rule:safeIs:93	2000
+results
+result 0
+maxidx 3
+prop #2017:3613640a
+end
+steps 127
+> depth	rule:safeIs:96	2000
+results
+result 0
+maxidx 3
+prop #2017:8d313ce2
+end
+steps 127
+> depth	rule:safeIs:99	2000
+results
+result 0
+maxidx 3
+prop #1735:4c5750f0
+end
+steps 127
+> depth	rule:safeIs:102	2000
+results
+result 0
+maxidx 3
+prop #1735:1d6c7a96
+end
+steps 127
+> depth	rule:safeIs:105	2000
+results
+result 0
+maxidx 3
+prop #1459:deb02ca6
+end
+steps 117
+> depth	rule:safeIs:108	2000
+results
+result 0
+maxidx 3
+prop #1465:c88a98de
+end
+steps 117
+> depth	rule:safeIs:111	2000
+results
+result 0
+maxidx 1
+prop #210:f754645c
+end
+steps 3
+> depth	rule:safeIs:114	2000
+results
+result 0
+maxidx 3
+prop #1107:494b6e0c
+end
+steps 3
+> depth	rule:safeIs:117	2000
+results
+result 0
+maxidx 3
+prop #1312:6ffc859c
+end
+steps 3
+> depth	rule:safeIs:120	2000
+results
+result 0
+maxidx 3
+prop #1087:9567c7f7
+end
+steps 3
+> depth	rule:safeIs:123	2000
+results
+result 0
+maxidx 1
+prop #244:96921c3b
+end
+steps 3
+> depth	rule:safeIs:126	2000
+results
+result 0
+maxidx 3
+prop #683:dc1d4d64
+end
+steps 5
+> depth	rule:safeIs:129	2000
+results
+end
+steps 0
+> depth	rule:safeIs:132	2000
+results
+result 0
+maxidx 3
+prop #997:335b5e93
+end
+steps 3
+> depth	rule:safeIs:135	2000
+results
+result 0
+maxidx 3
+prop #1117:5eea5bdf
+end
+steps 3
+> depth	rule:safeIs:138	2000
+results
+result 0
+maxidx 3
+prop #1122:9b3fc2c
+end
+steps 3
+> depth	rule:safeIs:141	2000
+results
+result 0
+maxidx 3
+prop #1122:91bf8528
+end
+steps 3
+> depth	rule:safeIs:144	2000
+results
+result 0
+maxidx 3
+prop #1112:489e96a0
+end
+steps 3
+> depth	rule:safeIs:147	2000
+results
+result 0
+maxidx 3
+prop #675:226a4ba7
+end
+steps 20
+> depth	rule:safeIs:150	2000
+results
+result 0
+maxidx 3
+prop #842:6de027b0
+end
+steps 3
+> depth	rule:safeIs:153	2000
+results
+result 0
+maxidx 1
+prop #221:9d779b3
+end
+steps 3
+> depth	rule:safeIs:156	2000
+results
+result 0
+maxidx 1
+prop #247:97088bd9
+end
+steps 3
+> depth	rule:safeIs:159	2000
+results
+result 0
+maxidx 3
+prop #651:1af6055b
+end
+steps 5
+> depth	rule:safeIs:162	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.isBool::fun(PredicateLogic.c,PredicateLogic.c) PredicateLogic.FALSE::PredicateLogic.c))
+end
+steps 3
+> depth	rule:safeIs:165	2000
+results
+end
+steps 16
+> depth	rule:safeIs:168	2000
+results
+result 0
+maxidx 3
+prop #872:412d2116
+result 1
+maxidx 3
+prop #964:f7d4b882
+stop
+steps 33
+> depth	rule:safeIs:171	2000
+results
+result 0
+maxidx 2
+prop #412:cbb0bc7a
+end
+steps 14
+> depth	rule:safeIs:174	2000
+results
+result 0
+maxidx -1
+prop (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.TRUE::PredicateLogic.c)
+end
+steps 3
+> depth	rule:safeEs:1	2000
+results
+result 0
+maxidx 2
+prop #2964:fb399e76
+result 1
+maxidx 2
+prop #2962:e6723f90
+stop
+steps 282
+> depth	rule:safeEs:4	2000
+results
+result 0
+maxidx 2
+prop #3106:362f311a
+result 1
+maxidx 2
+prop #2902:78495eb2
+stop
+steps 119
+> depth	rule:safeEs:7	2000
+results
+result 0
+maxidx 2
+prop #1656:9fff11d
+result 1
+maxidx 2
+prop #1426:b15327cd
+stop
+steps 44
+> depth	rule:safeEs:10	2000
+results
+result 0
+maxidx 2
+prop #2331:a83d153e
+result 1
+maxidx 2
+prop #1986:c25a5573
+stop
+steps 64
+> depth	rule:safeEs:13	2000
+results
+result 0
+maxidx 5
+prop #1160:319fa921
+end
+steps 11
+> depth	rule:safeEs:16	2000
+results
+result 0
+maxidx 5
+prop #1098:108297b9
+end
+steps 11
+> depth	rule:safeEs:19	2000
+results
+result 0
+maxidx 47
+prop #4958:28b0bdc
+result 1
+maxidx 47
+prop #4958:28b0bdc
+stop
+steps 1246
+> depth	rule:safeEs:22	2000
+results
+result 0
+maxidx 2
+prop #1777:cb2c2ab5
+end
+steps 3
+> depth	rule:safeEs:25	2000
+results
+result 0
+maxidx 2
+prop #1681:5a8f15ff
+end
+steps 46
+> depth	rule:safeEs:28	2000
+results
+result 0
+maxidx 2
+prop #422:2a6682e2
+end
+steps 3
+> depth	rule:safeEs:31	2000
+results
+end
+steps 89
+> depth	rule:safeEs:34	2000
+results
+result 0
+maxidx 2
+prop #1151:e1dd37b
+end
+steps 40
+> depth	rule:safeEs:37	2000
+results
+result 0
+maxidx 2
+prop #2193:2d0383ca
+end
+steps 68
+> depth	rule:safeEs:40	2000
+results
+result 0
+maxidx 2
+prop #1430:24366e9e
+end
+steps 56
+> depth	rule:safeEs:43	2000
+results
+result 0
+maxidx 2
+prop #1082:6de0ba43
+end
+steps 34
+> depth	rule:unsafeIs:1	2000
+results
+result 0
+maxidx 8
+prop #1590:80289c47
+end
+steps 235
+> depth	rule:unsafeIs:4	2000
+results
+result 0
+maxidx 13
+prop #1084:f1944c9c
+result 1
+maxidx 13
+prop #1084:8e03aef2
+stop
+steps 32
+> depth	rule:unsafeIs:7	2000
+results
+result 0
+maxidx 4
+prop #690:a201002d
+end
+steps 5
+> depth	rule:unsafeIs:10	2000
+results
+end
+steps 0
+> depth	rule:unsafeIs:13	2000
+results
+result 0
+maxidx 3
+prop #3147:7207877a
+end
+steps 3
+> depth	rule:unsafeIs:16	2000
+results
+result 0
+maxidx 6
+prop #505:58d60db8
+end
+steps 8
+> depth	rule:unsafeIs:19	2000
+results
+result 0
+maxidx 3
+prop #1308:bf1e7e88
+end
+steps 92
+> depth	rule:unsafeIs:22	2000
+results
+result 0
+maxidx 4
+prop #1009:3cab21b6
+end
+steps 7
+> depth	rule:unsafeIs:25	2000
+results
+result 0
+maxidx 6
+prop #747:8cedab37
+end
+steps 12
+> depth	rule:unsafeIs:28	2000
+results
+result 0
+maxidx 6
+prop #668:6567328e
+end
+steps 8
+> depth	rule:unsafeIs:31	2000
+results
+result 0
+maxidx 3
+prop #1783:cd75e4cc
+end
+steps 127
+> depth	rule:unsafeIs:34	2000
+results
+result 0
+maxidx 5
+prop #1780:e7455362
+end
+steps 11
+> depth	rule:unsafeIs:37	2000
+results
+result 0
+maxidx 4
+prop #1435:ec004521
+end
+steps 5
+> depth	rule:unsafeIs:40	2000
+results
+result 0
+maxidx 5
+prop #1388:d3f8a4de
+end
+steps 12
+> depth	rule:unsafeIs:43	2000
+results
+result 0
+maxidx 6
+prop #526:19abe5d4
+end
+steps 7
+> depth	rule:unsafeIs:46	2000
+results
+result 0
+maxidx 4
+prop #1092:c8100fbc
+end
+steps 7
+> depth	rule:unsafeIs:49	2000
+results
+result 0
+maxidx 7
+prop #2070:51a2cd14
+end
+steps 22
+> depth	rule:unsafeIs:52	2000
+results
+result 0
+maxidx 7
+prop #900:30ef9e8d
+end
+steps 14
+> depth	rule:unsafeIs:55	2000
+results
+result 0
+maxidx 4
+prop #918:53531fdf
+end
+steps 5
+> depth	rule:unsafeIs:58	2000
+results
+result 0
+maxidx 9
+prop #749:4522022c
+end
+steps 16
+> depth	rule:unsafeIs:61	2000
+results
+result 0
+maxidx 4
+prop #364:b1534d30
+end
+steps 5
+> depth	rule:unsafeIs:64	2000
+results
+result 0
+maxidx 5
+prop #1045:74252cfb
+end
+steps 70
+> depth	rule:unsafeIs:67	2000
+results
+end
+steps 0
+> depth	rule:unsafeIs:70	2000
+results
+result 0
+maxidx 4
+prop #377:40dbe8a6
+end
+steps 6
+> depth	rule:unsafeIs:73	2000
+results
+end
+steps 0
+> depth	rule:unsafeEs:2	2000
+results
+result 0
+maxidx 2
+prop #1448:c5b1aee8
+end
+steps 3
+> depth	rule:unsafeEs:5	2000
+results
+result 0
+maxidx 2
+prop #1592:83c72bba
+result 1
+maxidx 2
+prop #1680:5a1f22ac
+stop
+steps 72
+> depth	rule:unsafeEs:8	2000
+results
+result 0
+maxidx 2
+prop #1843:d9336a09
+end
+steps 149
+> depth	rule:unsafeEs:11	2000
+results
+result 0
+maxidx 2
+prop #1495:345efdc9
+end
+steps 62
+> depth	rule:unsafeEs:14	2000
+results
+result 0
+maxidx 3
+prop #2098:d6d7be4b
+result 1
+maxidx 3
+prop #2038:bafced11
+stop
+steps 9
+> depth	rule:unsafeEs:17	2000
+results
+result 0
+maxidx 2
+prop #1463:2acf5f22
+end
+steps 3
+> depth	rule:unsafeEs:20	2000
+results
+result 0
+maxidx 2
+prop #1381:1b342e78
+end
+steps 3
+> depth	rule:unsafeEs:23	2000
+results
+result 0
+maxidx 2
+prop #2166:81f5f1b4
+end
+steps 78
+> depth	rule:unsafeEs:26	2000
+results
+result 0
+maxidx 2
+prop #1642:ca76dcad
+result 1
+maxidx 2
+prop #1418:345e219d
+stop
+steps 37
+> depth	rule:unsafeEs:29	2000
+results
+result 0
+maxidx 2
+prop #1884:9790712c
+end
+steps 72
+> depth	rule:unsafeEs:32	2000
+results
+result 0
+maxidx 2
+prop #1751:a1f4c06b
+end
+steps 130
+> depth	rule:unsafeEs:35	2000
+results
+result 0
+maxidx 2
+prop #2059:1a77b5dc
+end
+steps 92
+> depth	rule:unsafeEs:38	2000
+results
+result 0
+maxidx 2
+prop #2736:f3b1998e
+end
+steps 84
+> depth	rule:unsafeEs:41	2000
+results
+result 0
+maxidx 2
+prop #2742:ae1cf3ba
+end
+steps 84
+> depth	rule:unsafeEs:44	2000
+results
+result 0
+maxidx 2
+prop #2454:1bcb91d2
+end
+steps 84
+> depth	rule:unsafeEs:47	2000
+results
+result 0
+maxidx 2
+prop #2454:5499ef74
+end
+steps 84
+> depth	rule:unsafeEs:50	2000
+results
+result 0
+maxidx 2
+prop #2178:1f1a003e
+end
+steps 78
+> depth	rule:unsafeEs:53	2000
+results
+result 0
+maxidx 2
+prop #2184:2d1397e0
+end
+steps 78
+> depth	rule:unsafeEs:56	2000
+results
+result 0
+maxidx 2
+prop #1920:eac366c4
+end
+steps 72
+> depth	rule:unsafeEs:59	2000
+results
+result 0
+maxidx 2
+prop #612:95e3bafe
+end
+steps 3

@@ -19,8 +19,8 @@ use crate::summary::out_degree_summary;
 
 // The status TLC exits with after a failure evaluating the spec, and after an exception it didn't
 // expect (`EC.ExitStatus`).
-const FAILURE_SPEC_EVAL: i32 = 75;
-const ERROR: i32 = 255;
+pub(crate) const FAILURE_SPEC_EVAL: i32 = 75;
+pub(crate) const ERROR: i32 = 255;
 use crate::trace::{
     PostconditionRun, Postconditions, check, format_fields, format_partial_state, format_print,
     format_state, format_texts,
