@@ -1032,7 +1032,7 @@ is next.
 
   | Prover | Inputs | unsat | sat | unknown at the step limit | other unknown |
   |---|---|---|---|---|---|
-  | `smt` | 10,320 | 9,993 | 13 | 312 | 2 |
+  | `smt` | 10,320 | 9,986 | 13 | 319 | 2 |
   | `z3` | 56 | 50 | 1 | 5 | — |
   | `zenon` | 949 | 796 | — | 102 | 48 exhausted, 3 memory limit |
   | `isabelle` | 478 | 371 | — | 44 (`Interrupt`) | 63 |
@@ -1041,6 +1041,10 @@ is next.
   None stopped for a runtime limit (`unstable`), and none threw. Decided again by the TypeScript
   under the recorded step limits and no time limit (`prover-differential --side ts`), all 12,100
   give the recorded verdict and statistics, so the record reproduces.
+  Porting Z3's limit checks in nlsat's polynomial managers (z3-5.3.3) moved 10 `smt` inputs:
+  7 that were unsat now reach their recorded step limit, and 3 at the step limit changed their
+  statistics; they were re-recorded with `prover-differential --side ts --update`, which keeps
+  each input's step limit.
 - P1, PTL (#231): `prove-ptl` gives the reference LS4's verdict on the 26 formulas of
   `tests/conformance/ptl`, and on the 297 LS4 inputs of the record the TypeScript's verdict and
   step count on every one (297 same, 0 differs, declined or crash). Rust decides PTL by default.
