@@ -14,6 +14,20 @@ its progress: every 256 states on one thread, and after each share of a level on
 search declines within that, and the check reports the model as not native, with the same output
 and exit code.
 
+What a decline leaves printed:
+
+- **The binary prints as it checks.** A decline found while it checks the initial states or a
+  definition prints none of TLC's report of the initial states. A decline found in the next-state
+  relation comes after that report. Either way the binary has printed only TLC's own lines, up to
+  and including that report. Then it writes `prove-it: not native yet: <reason>` to stderr and
+  exits 1.
+- **The library and the dist CLI print none of it.** `checkSources` returns `declined` without what
+  the check printed (`prove-it-host/src/check.rs`). The CLI's per-call fallback then checks the spec
+  in the interpreter, whose output stands alone (`src/cli/tlc.ts`).
+- **The tests hold the binary to this.** `prove-it-cli/tests/lazy_duplicates.rs` records which
+  cells decline after the initial states (`not native yet after the initial states`). A declining
+  cell prints nothing after that report, and only those cells print it.
+
 ## Print and PrintT (#66)
 
 - `Reporter::print` hands the CLI the printed values as ids of the search's store; the N-API relay

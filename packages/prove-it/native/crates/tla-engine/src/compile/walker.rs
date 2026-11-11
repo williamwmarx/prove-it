@@ -37,7 +37,7 @@ const FOUND: &str = "ENABLED found a successor";
 pub(crate) const INFINITE_BOUND: &str = "enumerated a set TLC can't enumerate";
 
 /// What a walk stops with where it streams a set TLC holds as built, which may stream an element
-/// twice where the engine holds its normalized set.
+/// twice or out of order where the engine holds its normalized set.
 const HELD_STREAMED: &str =
     "unsupported: streaming a lazy set a variable or a bound name holds as TLC built it";
 
@@ -68,6 +68,9 @@ pub struct ActionOptions {
 /// What a compile that may only be needed as the walk runs left: its value, or why it failed,
 /// which stops the walk only if the walk needs it.
 type Deferred = Result<Eval, Bail>;
+
+// The first element of a set enumeration TLC leaves as built, and its reference.
+type Unsorted = (Eval, Option<Reference>);
 
 // A compile error, as the reason a walk stops at run time. The reasons are few and kept for the
 // run, as the TypeScript engine throws them where it compiles lazily.
@@ -482,13 +485,18 @@ fn either_step(variable: u32, source: Source, rest: Rest, is_init: bool) -> Step
     })
 }
 
-// Whether streaming a set TLC holds as built may yield an element twice where the engine holds
-// its normalized set: the set itself where its stream does, or else, for a set built from it,
-// where it is of a kind that may, or where the engine has no reference of it.
-fn streams_twice(machine: &mut Machine<'_>, lazy: Option<&Lazy>, is_itself: bool) -> Outcome<bool> {
+// Whether streaming a set TLC holds as built may yield other than the engine's normalized set,
+// in its order: the set itself where its stream yields an element twice or out of order, or
+// else, for a set built from it, where it is of a kind that may, or where the engine has no
+// reference of it.
+fn streams_unlike(
+    machine: &mut Machine<'_>,
+    lazy: Option<&Lazy>,
+    is_itself: bool,
+) -> Outcome<bool> {
     match lazy {
         None => Ok(true),
-        Some(lazy) if is_itself => lazy.streams_duplicates(machine),
+        Some(lazy) if is_itself => lazy.streams_unnormalized(machine),
         Some(lazy) => Ok(lazy.may_stream_duplicates()),
     }
 }
@@ -1461,11 +1469,18 @@ impl<'a> Compiler<'a> {
     // elements in the interpreter's order, cached like any other value. Where the set streams a
     // variable the step assigned a set TLC keeps lazy, or a name bound to the first element of a
     // set enumeration, TLC streams that set as it built it (`Machine::held`,
-    // `Compiled::unsorted_first`), which the walk follows only where it streams no element twice:
-    // the variable or name itself where its set streams none, and a set built of it where its
-    // set is of a kind that streams none.
-    fn compile_streamed(&mut self, node: NodeId, context: &Context) -> Compiling<Ordered> {
+    // `Compiled::unsorted_first`), which the walk follows only where that streams the normalized
+    // set: the variable or name itself where its set streams its elements once each and in
+    // order, and a set built of it where its set is of a kind that streams none twice. With it,
+    // the first element of a set enumeration, which TLC leaves as built (`ValueVec.sort`) and
+    // `x \in S` may assign.
+    fn compile_streamed(
+        &mut self,
+        node: NodeId,
+        context: &Context,
+    ) -> Compiling<(Ordered, Option<Unsorted>)> {
         let set = self.compile(node, context)?;
+        let first = set.unsorted_first.clone();
         let is_init = context.is_init;
         let mut streamed = Vec::new();
         let is_followed = self.stream_names(node, true, context, &mut streamed);
@@ -1522,17 +1537,17 @@ impl<'a> Compiler<'a> {
         }
         let ordered = self.order(set, node, context, true)?;
         if held.is_empty() && unsorted.is_empty() {
-            return Ok(ordered);
+            return Ok((ordered, first));
         }
         let inner = ordered.eval;
-        Ok(Ordered {
+        let ordered = Ordered {
             eval: eval(move |machine| {
                 for &(variable, is_itself) in &held {
                     let value = target(machine, is_init)[variable as usize];
                     let Some((assigned, lazy)) = machine.held[variable as usize].clone() else {
                         continue;
                     };
-                    if assigned == value && streams_twice(machine, lazy.as_ref(), is_itself)? {
+                    if assigned == value && streams_unlike(machine, lazy.as_ref(), is_itself)? {
                         return Err(Bail(HELD_STREAMED));
                     }
                 }
@@ -1546,14 +1561,15 @@ impl<'a> Compiler<'a> {
                         Some(reference) => Some(reference(machine)?),
                         None => None,
                     };
-                    if streams_twice(machine, lazy.as_ref(), *is_itself)? {
+                    if streams_unlike(machine, lazy.as_ref(), *is_itself)? {
                         return Err(Bail(HELD_STREAMED));
                     }
                 }
                 inner(machine)
             }),
             ..ordered
-        })
+        };
+        Ok((ordered, first))
     }
 
     // The variable whose set a guard `Cardinality(v) < e`, or another comparison of it, sizes,
@@ -1739,8 +1755,28 @@ impl<'a> Compiler<'a> {
                 set.footprint,
             )
         };
+        // A constant definition TLC streams as built until the initial predicate completes a
+        // state (`Compiler::initial_assignments`) streams anew until then, and is cached only
+        // after.
+        let is_built_initially = is_streamed
+            && self
+                .normalized_definitions()
+                .values()
+                .any(|&is_assigned| is_assigned);
+        let uncached = ordered.eval.clone();
+        let cached = self.cached(ordered).eval;
         Ok(Ordered {
-            eval: self.cached(ordered).eval,
+            eval: if is_built_initially {
+                eval(move |machine| {
+                    if machine.is_before_initial_state {
+                        uncached(machine)
+                    } else {
+                        cached(machine)
+                    }
+                })
+            } else {
+                cached
+            },
             is_ordered: true,
         })
     }
@@ -2707,13 +2743,20 @@ impl<'a> Compiler<'a> {
         }
         // `x' \subseteq S` enumerates SUBSET S, which isn't empty where S is.
         let is_covered = !is_power_set && self.is_membership_covered(set, &mut HashSet::new());
-        let set = if is_power_set {
+        let (set, unsorted) = if is_power_set {
             let base = self.compile(set, context)?;
             let subsets = self.compile_subset(&base);
-            self.order(subsets, set, context, true)?
+            (self.order(subsets, set, context, true)?, None)
         } else {
             self.compile_streamed(set, context)?
         };
+        // The element of a set enumeration TLC leaves as built, which the variable holds as built
+        // where it is assigned it and a walk streams it (`Machine::held`). ENABLED's rewritten
+        // variables lie past the spec's, which no state holds.
+        let unsorted = unsorted.and_then(|unsorted| {
+            let is_streamed = self.held_streams.get(index)?;
+            Some((unsorted, Arc::clone(is_streamed)))
+        });
         let guard = (state == EITHER).then(|| deferred(self.compile(guard, context)));
         let mut shared = Shared::new(then);
         let assigned = shared.call(self, &known.with(variable, SET))?;
@@ -2737,12 +2780,32 @@ impl<'a> Compiler<'a> {
             if !is_init && (size == 0 || !is_covered) {
                 machine.note_unsafe_membership();
             }
+            let held = match &unsorted {
+                Some(((first, reference), is_streamed)) if is_streamed.load(Ordering::Relaxed) => {
+                    let lazy = match reference {
+                        Some(reference) => Some(reference(machine)?),
+                        None => None,
+                    };
+                    lazy.as_ref()
+                        .is_none_or(Lazy::may_stream_duplicates)
+                        .then_some((first(machine)?, lazy))
+                }
+                _ => None,
+            };
             machine.assigned += 1;
             for position in 0..size {
                 let element = machine.store.element_at(id, position);
                 target(machine, is_init)[index] = element;
                 machine.note_assigned(index, element);
-                run_rest(&assigned, machine, on_complete)?;
+                if let Some((first, lazy)) = &held {
+                    let is_first = element == *first || machine.store.equals(element, *first)?;
+                    machine.held[index] = is_first.then(|| (element, lazy.clone()));
+                }
+                let result = run_rest(&assigned, machine, on_complete);
+                if held.is_some() && (result.is_err() || position + 1 == size) {
+                    machine.held[index] = None;
+                }
+                result?;
             }
             target(machine, is_init)[index] = UNASSIGNED;
             machine.assigned -= 1;

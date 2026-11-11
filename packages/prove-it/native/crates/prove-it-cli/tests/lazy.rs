@@ -234,7 +234,7 @@ fn streams_a_union_of_sets_tlc_keeps_lazy_as_tlc_does() {
             Some(counts) => assert!(text.contains(counts), "{definition}: {text}"),
             None => assert_eq!(
                 String::from_utf8_lossy(&output.stderr),
-                "prove-it: not native yet: the engine stopped: unsupported: streaming a lazy set with duplicates TLC may have normalized at an earlier use\n",
+                "prove-it: not native yet: the engine stopped: unsupported: streaming a lazy set TLC may have normalized at an earlier use\n",
                 "{definition}: {text}"
             ),
         }

@@ -3087,9 +3087,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         }) {
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
         }
+        machine.is_before_initial_state = true;
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
+            machine.is_before_initial_state = false;
             search.visit_initial(machine, &context)
         })?;
+        machine.is_before_initial_state = false;
         search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
         // TLC stops before it expands a state, at a time of its threads' choosing.

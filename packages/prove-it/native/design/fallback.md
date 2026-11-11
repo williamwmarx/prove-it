@@ -269,12 +269,20 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
-it from one that printed something else. Each is outside the corpus and the tests:
+it from one that printed something else. Each is outside the corpus:
 - a function constructor that binds a tuple pattern over a set of functions TLC built as
   functions, applied at once (`[<<a, b>> \in {[k \in 1..2 |-> k]} |-> a][<<1, 2>>]`). TLC applies
   the function without building it, so it never binds the pattern; the engine builds it and
   declines the binding, since `ContextEnumerator` binds a tuple pattern only to a `TupleValue`
   (#245).
+- a lazy set streamed where TLC may have normalized the object it streams, whose stream differs
+  from the normalized set only where nothing printed depends on it (`lazy-duplicates.md`): an
+  invariant violated before the stream first differs, or a stream whose order alone differs
+  where the first initial state to violate an invariant is the same in either order. Nine cells
+  of `prove-it-cli/tests/lazy_duplicates.rs` printed what TLC prints so before and decline now:
+  `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
+  `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
+  first position where the stream differs from the normalized set, not where the stream starts.
 
 #### Known wrong outputs
 
@@ -284,8 +292,13 @@ with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 | Shape | Repro | TLC | Native |
 |---|---|---:|---:|
 | A held SUBSET or set of functions `\cup` a set that overlaps it | `Init == s = 0 /\ x = 0`, `Next == s' = SUBSET {1} /\ x' \in s' \cup {{1}}` | 10 | 7 |
-| A constant definition normalized elsewhere, then streamed | `C == UNION {1..2, 2..3}`, `Init == s = C /\ x = 0`, `Next == s' = s /\ x' \in C` | 13 | 17 |
-| Stream order alone, with no duplicates | `Init == s = 0 /\ x = {3}`, `Next == s' = (SUBSET {2}) \cup {{1}} /\ x' \in s'`, `INVARIANT x # {1} /\ x # {2}` (states generated at the violation) | 2 | 3 |
+
+The engine now declines the shapes that printed other counts here too: a constant definition
+normalized elsewhere, then streamed (`C == UNION {1..2, 2..3}`, `Init == s = C /\ x = 0`,
+`Next == s' = s /\ x' \in C`: TLC 13, native 17), a stream whose order alone differs from the
+normalized set's (`(SUBSET {2}) \cup {{1}}` through a variable, a constant via a variable, a `\E`
+name or a LET named twice), and a variable bound by `\in` to a set enumeration's lazy first
+element (`Next == s' \in {UNION {1..2, 2..3}} /\ y' \in s'`: TLC 17, native 13).
 
 #### Every reason
 
