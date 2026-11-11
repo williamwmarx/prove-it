@@ -180,7 +180,6 @@ fn reads_the_command_line_as_tlc() {
         (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
         (&["-simulate", "TCommit"], "the TLC option -simulate"),
         (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
-        (&["-fp", "1", "TCommit"], "-fp 1"),
         (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {
@@ -823,6 +822,46 @@ fn follows_tlc_through_a_set_operation_on_a_value_that_isnt_a_set() {
         );
         std::fs::remove_dir_all(directory).expect("removed");
     }
+}
+
+// WF_x(Next), which the engine answers from the steps the search took, beside a property that
+// refines an instance's spec: the walk through the instance's action assigns slots past the spec's
+// variables, which the shapes of what the walks assign don't cover. TLC's output at d8fb231.
+#[test]
+fn answers_fairness_of_next_beside_a_refinement_as_tlc() {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-refinement-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("Inner.tla"),
+        "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLES x, done\nInit == x = 0 /\\ done = FALSE\nStep == x' = 1 - x /\\ UNCHANGED done\nNext == Step\nSpec == Init /\\ [][Next]_<<x, done>> /\\ WF_<<x, done>>(Next)\n====\n",
+    )
+    .expect("the instance");
+    std::fs::write(
+        directory.join("Outer.tla"),
+        "---- MODULE Outer ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nI == INSTANCE Inner WITH done <- (x > 5)\nISpec == I!Spec\n====\n",
+    )
+    .expect("the spec");
+    std::fs::write(
+        directory.join("Outer.cfg"),
+        "SPECIFICATION Spec\nPROPERTY ISpec\n",
+    )
+    .expect("the configuration");
+    for workers in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noTE", "-workers", workers, "Outer"])
+            .current_dir(&directory)
+            .output()
+            .expect("the binary runs");
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(0), "{text}");
+        assert_eq!(
+            get_untimed(&text),
+            "Implied-temporal checking--satisfiability problem has 1 branches.\nComputing initial states...\nModel checking completed. No error has been found.\n  Estimates of the probability that TLC did not check all reachable states\n  because two distinct states had the same fingerprint:\n  calculated (optimistic):  val = 1.1E-19\n3 states generated, 2 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 2.\nThe average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).\n",
+            "{workers} workers"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
 }
 
 #[test]
@@ -5353,4 +5392,45 @@ fn declines_a_temporal_property_tlc_rejects_after_it_warns_about_the_symmetry() 
         "{}",
         stdout(&output)
     );
+}
+
+#[test]
+fn exports_xml_as_sanys_xml_exporter_does() {
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-xml-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("Small.tla"),
+        "---- MODULE Small ----\nVARIABLE x\nInit == x = 0\n====\n",
+    )
+    .expect("a file");
+    let exported = run(
+        &directory,
+        &["tla2sany.xml.XMLExporter", "-o", "-t", "Small.tla"],
+    );
+    assert_eq!(exported.status.code(), Some(0));
+    assert!(stdout(&exported).starts_with(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?><modules><RootModule>Small</RootModule>"
+    ));
+    let several = run(&directory, &["tla2sany.xml.XMLExporter", "-q", "Small.tla"]);
+    assert_eq!(several.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&several.stderr)
+            .starts_with("ERROR: Only one TLA file to check allowed!\n")
+    );
+    // TLC 1.7.4's XMLExporter is retired: the binary declines it rather than write master's XML.
+    let retired = run(
+        &directory,
+        &[
+            "-Dtla-ts.tlc=1.7.4",
+            "tla2sany.xml.XMLExporter",
+            "-o",
+            "Small.tla",
+        ],
+    );
+    assert!(stdout(&retired).is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&retired.stderr),
+        "prove-it: not native yet: TLC 1.7.4\n"
+    );
+    std::fs::remove_dir_all(&directory).expect("removed");
 }

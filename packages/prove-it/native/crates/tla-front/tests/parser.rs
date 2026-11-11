@@ -110,3 +110,19 @@ fn reads_an_application_as_a_fairness_subscript_before_the_action() {
         .collect();
     assert_eq!(subscripts, [true, false]);
 }
+
+#[test]
+fn ranges_an_application_subscript_over_its_arguments() {
+    // SANY locates the subscript B(A) of WF_B(A)(Act) from B to its closing parenthesis, as it
+    // does any application; XMLExporter writes that location (FairnessTest).
+    let module = parse_module("---- MODULE M ----\nx == WF_f(1, 2)(3)\n====").expect("a module");
+    let ExpressionKind::Fairness { subscript, .. } = &module.definitions[0].body.kind else {
+        panic!("a fairness expression");
+    };
+    let range = subscript.location.range.as_ref().expect("a range");
+    assert_eq!(
+        (range.start.column, range.end.column),
+        (9, 15),
+        "f(1, 2) at columns 9 to 15"
+    );
+}

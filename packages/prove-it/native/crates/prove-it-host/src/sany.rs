@@ -6,10 +6,14 @@
 //! - `{ kind: "text", text, isFailed, exception }`, SANY's report;
 //! - `{ kind: "needed", keys }`, what the report reads that isn't known yet (`sources`);
 //! - `{ kind: "declined", reason }`, where tla-front doesn't write SANY's report.
+//!
+//! `sanyXml` does the same for what SANY's XMLExporter prints.
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text_of};
+use tla_front::sany::export::export_xml;
+use tla_front::sany::xml::XmlExportOptions;
 
 use crate::hooks::HookResult;
 use crate::sources::{Sources, get_text};
@@ -36,22 +40,72 @@ fn declined(reason: &str) -> HostValue {
 #[cfg(not(target_arch = "wasm32"))]
 const REPORT_STACK_BYTES: usize = 64 * 1024 * 1024;
 
-/// `sanyText(root, source, fileName, known)`, on this thread: wasm's stack is the one it links.
+/// Runs `write` on this thread: wasm's stack is the one it links.
 #[cfg(target_arch = "wasm32")]
-pub fn sany_text(arguments: &[HostValue]) -> HookResult {
-    write_sany_text(arguments)
+fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
+    write()
 }
 
-/// `sanyText(root, source, fileName, known)`, on a thread with a deep stack.
+/// Runs `write` on a thread with a deep stack.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn sany_text(arguments: &[HostValue]) -> HookResult {
+fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(REPORT_STACK_BYTES)
-            .spawn_scoped(scope, || write_sany_text(arguments))
+            .spawn_scoped(scope, write)
             .expect("a thread for SANY's report")
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
+/// `sanyText(root, source, fileName, known)`.
+pub fn sany_text(arguments: &[HostValue]) -> HookResult {
+    on_deep_stack(|| write_sany_text(arguments))
+}
+
+/// `sanyXml(root, source, fileName, flags, known)`: what SANY's XMLExporter prints for the spec,
+/// with `flags` the letters of its -r, -u and -t. Returns `{ kind: "exported", stdout, stderr,
+/// exitCode }`, or `needed` or `declined` as `sanyText` does.
+pub fn sany_xml(arguments: &[HostValue]) -> HookResult {
+    on_deep_stack(|| write_sany_xml(arguments))
+}
+
+fn write_sany_xml(arguments: &[HostValue]) -> HookResult {
+    let [root, source, file_name, flags, known] = arguments else {
+        return Err(
+            "sanyXml takes a module's name, its text, a file name, flags and what is known".into(),
+        );
+    };
+    let root = get_text(root, "the root module's name")?;
+    let source = get_text(source, "the root module's text")?;
+    let file_name = get_text(file_name, "the file name")?;
+    let flags = get_text(flags, "the flags")?;
+    let sources = Sources::new(known)?;
+    let options = XmlExportOptions {
+        is_restricted: flags.contains('r'),
+        is_uncommented: flags.contains('u'),
+        is_terse: flags.contains('t'),
+    };
+    let result = export_xml(
+        &root,
+        &source,
+        &file_name,
+        &|name| sources.get(format!("module:{name}")),
+        &options,
+    );
+    if let Some(needed) = sources.get_needed() {
+        return Ok(needed);
+    }
+    Ok(match result {
+        Ok(exported) => HostValue::Object(vec![
+            ("kind", HostValue::text("exported")),
+            ("stdout", HostValue::text(&exported.stdout)),
+            ("stderr", HostValue::text(&exported.stderr)),
+            ("exitCode", HostValue::Number(f64::from(exported.exit_code))),
+        ]),
+        Err(FrontError::NotYet(reason)) => declined(&format!("SANY's XMLExporter of {reason}")),
+        Err(_) => declined("SANY's XMLExporter, which tla-front doesn't write"),
     })
 }
 
@@ -77,6 +131,7 @@ fn write_sany_text(arguments: &[HostValue]) -> HookResult {
                 .get(format!("file:{}:{name}", get_origin(origin)))
                 .unwrap_or_default()
         },
+        is_xml_export: false,
     };
     let result = get_sany_text_of(&root, &source, &options);
     if let Some(needed) = sources.get_needed() {

@@ -5,9 +5,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use crate::TlcVersion;
-use crate::ast::{
-    Assumed, Declaration, DefinitionKind, Expr, ExpressionKind, Module, ModuleUnit, Statement,
-};
+use crate::ast::{Declaration, DefinitionKind, Module, ModuleUnit};
 use crate::config::parse_config;
 use crate::environment::{EnvironmentOptions, get_sany_messages};
 use crate::errors::{FrontError, SanyError};
@@ -17,6 +15,7 @@ use crate::linter::Linter;
 use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
 use crate::recursive::check_recursive;
+use crate::sany::generator::{ModuleDependencies, get_dependencies};
 use crate::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 
 type Result<T> = std::result::Result<T, Stop>;
@@ -76,6 +75,9 @@ pub struct ReportOptions<'a> {
     pub load_module: &'a dyn Fn(&str) -> Option<String>,
     /// The file TLC prints that it parses a module from, as `createFileDescriber` names it.
     pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> String,
+    /// tla2sany.xml.XMLExporter runs SANY with its validAstSettings: SANY prints only its errors,
+    /// with no progress lines and no warnings, and neither validates PlusCal nor lints.
+    pub is_xml_export: bool,
 }
 
 /// tla2sany.semantic.StandardModules: SANY lints the modules other than these.
@@ -91,164 +93,10 @@ const UNLINTED_MODULES: &[&str] = &[
     "TLC",
 ];
 
-/// The modules a file extends and instantiates, as SANY's ParseUnit collects them, and the module
-/// of that file which first names each.
-#[derive(Default)]
-struct Dependencies {
-    extendees: Vec<Rc<str>>,
-    instancees: Vec<Rc<str>>,
-    importers: FastMap<Rc<str>, Rc<str>>,
-}
-
-fn get_let_instances(expression: &Expr, found: &mut Vec<Rc<str>>) {
-    if let ExpressionKind::Let {
-        instances: Some(instances),
-        ..
-    } = &expression.kind
-    {
-        found.extend(instances.iter().map(|instance| instance.module.clone()));
-    }
-    expression
-        .children()
-        .iter()
-        .for_each(|child| get_let_instances(child, found));
-}
-
-fn get_assumed_instances(assumed: &Assumed, found: &mut Vec<Rc<str>>) {
-    match assumed {
-        Assumed::Expression(expression) => get_let_instances(expression, found),
-        Assumed::NewSymbol(_) => {}
-        Assumed::AssumeProve(assume_prove) => {
-            assume_prove
-                .assumptions
-                .iter()
-                .for_each(|assumption| get_assumed_instances(assumption, found));
-            get_let_instances(&assume_prove.conclusion, found);
-        }
-    }
-}
-
-/// SpecObj.instanceResolvesToInternalModule: SANY finds a module that the root module
-/// instantiates among its inner modules only when its first top-level INSTANCE of the module
-/// follows the inner module.
-fn is_internal_instance(module: &Module, name: &str) -> bool {
-    let mut seen: FastSet<&str> = FastSet::default();
-    for unit in &module.units {
-        match unit {
-            ModuleUnit::Module(inner) => {
-                seen.insert(&inner.name);
-            }
-            ModuleUnit::Instance(instance) if &*instance.module == name => {
-                return seen.contains(name);
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-/// `getDependencies`: ParseUnit.calculateContextWithinParseUnit lets a module know the inner
-/// modules defined before it in the modules enclosing it and the inner modules of the modules it
-/// extends, but not itself.
-fn get_dependencies(module: &Rc<Module>) -> Dependencies {
-    fn visit(
-        current: &Rc<Module>,
-        is_root: bool,
-        context: &FastMap<Rc<str>, Rc<Module>>,
-        dependencies: &mut Dependencies,
-    ) {
-        let is_external = |name: &Rc<str>| !context.contains_key(name);
-        let mut add_imports = |names: Vec<Rc<str>>, is_extension: bool| {
-            for name in names {
-                dependencies
-                    .importers
-                    .entry(name.clone())
-                    .or_insert_with(|| current.name.clone());
-                if is_extension {
-                    dependencies.extendees.push(name);
-                } else {
-                    dependencies.instancees.push(name);
-                }
-            }
-        };
-        add_imports(
-            current
-                .extends
-                .iter()
-                .filter(|name| is_external(name))
-                .cloned()
-                .collect(),
-            true,
-        );
-        let mut instances = Vec::new();
-        for unit in &current.units {
-            match unit {
-                ModuleUnit::Instance(instance) => instances.push(instance.module.clone()),
-                ModuleUnit::Definition(definition) => {
-                    get_let_instances(&definition.body, &mut instances)
-                }
-                ModuleUnit::Theorem(theorem) if is_root => match &theorem.statement {
-                    Statement::Expression(expression) => {
-                        get_let_instances(expression, &mut instances)
-                    }
-                    Statement::AssumeProve(assume_prove) => get_assumed_instances(
-                        &Assumed::AssumeProve(assume_prove.clone()),
-                        &mut instances,
-                    ),
-                },
-                ModuleUnit::Assumption(assumption) if is_root => {
-                    get_let_instances(&assumption.expression, &mut instances)
-                }
-                _ => {}
-            }
-        }
-        add_imports(
-            instances
-                .into_iter()
-                .filter(|name| is_external(name) && !is_internal_instance(current, name))
-                .collect(),
-            false,
-        );
-        let mut peers = context.clone();
-        for inner in &current.modules {
-            let mut inner_context = peers.clone();
-            // ParseUnit.handleExtensions.
-            let mut extenders: Vec<*const Module> = Vec::new();
-            fn add_extended_inner_modules(
-                extender: &Rc<Module>,
-                extenders: &mut Vec<*const Module>,
-                inner_context: &mut FastMap<Rc<str>, Rc<Module>>,
-            ) {
-                if extenders.contains(&Rc::as_ptr(extender)) {
-                    return;
-                }
-                extenders.push(Rc::as_ptr(extender));
-                for name in &extender.extends {
-                    let Some(extendee) = inner_context.get(name).cloned() else {
-                        continue;
-                    };
-                    for extendee_inner in &extendee.modules {
-                        inner_context
-                            .entry(extendee_inner.name.clone())
-                            .or_insert_with(|| extendee_inner.clone());
-                    }
-                    add_extended_inner_modules(&extendee, extenders, inner_context);
-                }
-            }
-            add_extended_inner_modules(inner, &mut extenders, &mut inner_context);
-            visit(inner, false, &inner_context, dependencies);
-            peers.insert(inner.name.clone(), inner.clone());
-        }
-    }
-    let mut dependencies = Dependencies::default();
-    visit(module, true, &FastMap::default(), &mut dependencies);
-    dependencies
-}
-
 struct Loaded {
     text: String,
     module: Rc<Module>,
-    dependencies: Rc<Dependencies>,
+    dependencies: Rc<ModuleDependencies>,
 }
 
 /// A message of SANY's parsing phase, which come from its validation of PlusCal.
@@ -293,7 +141,7 @@ fn get_extendees(module: &Module) -> Vec<Rc<str>> {
 }
 
 impl Loader<'_> {
-    fn get_dependencies(&self, name: &str) -> Rc<Dependencies> {
+    fn get_dependencies(&self, name: &str) -> Rc<ModuleDependencies> {
         self.modules[name].dependencies.clone()
     }
 
@@ -344,10 +192,20 @@ impl Loader<'_> {
             (None, Ok(_)) => None,
         };
         if let Some(parse_error) = parse_error {
-            self.lines.push(parsing_line);
+            self.push_progress(parsing_line);
+            // XMLExporter gives SANY the file it is asked for, which SANY names for the root.
+            let file = match self.options.file_name {
+                Some(file_name) if self.options.is_xml_export && self.loaded.is_empty() => {
+                    format!(
+                        "{}.tla",
+                        file_name.strip_suffix(".tla").unwrap_or(file_name)
+                    )
+                }
+                _ => format!("{name}.tla"),
+            };
             return Err(Stop::Fatal {
                 location: Some(name.clone()),
-                message: format!("Could not parse module {name} from file {name}.tla"),
+                message: format!("Could not parse module {name} from file {file}"),
                 parse_error: Some(parse_error),
             });
         }
@@ -355,7 +213,7 @@ impl Loader<'_> {
             return Err(not_yet("SANY's parse errors"));
         };
         if module.name != *name {
-            self.lines.push(parsing_line);
+            self.push_progress(parsing_line);
             return Err(Stop::Fatal {
                 location: None,
                 message: format!(
@@ -393,12 +251,19 @@ impl Loader<'_> {
         for extendee in &extendees {
             self.validate(extendee)?;
         }
-        self.lines.push(parsing_line);
+        self.push_progress(parsing_line);
         if *name == self.root() {
             self.validate(name)?;
         }
         self.print_validations();
         Ok(())
+    }
+
+    /// A line of SANY's progress, which XMLExporter's SANY doesn't print.
+    fn push_progress(&mut self, line: String) {
+        if !self.options.is_xml_export {
+            self.lines.push(line);
+        }
     }
 
     fn root(&self) -> Rc<str> {
@@ -414,6 +279,9 @@ impl Loader<'_> {
     /// `validate` in `getSanyReport`, SpecObj.validateParseUnit: SANY's validation of the
     /// module's PlusCal, whose messages Errors.addMessage keeps once each.
     fn validate(&mut self, name: &Rc<str>) -> Result<()> {
+        if self.options.is_xml_export {
+            return Ok(());
+        }
         let loaded = &self.modules[name];
         let Some(range) = &loaded.module.location.range else {
             return Ok(());
@@ -870,9 +738,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             ));
         }
         for name in &order {
-            loader
-                .lines
-                .push(format!("Semantic processing of module {name}\n"));
+            loader.push_progress(format!("Semantic processing of module {name}\n"));
         }
         loader.lines.push(format!("{exception}\n"));
         loader.is_failed = true;
@@ -902,9 +768,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     let mut warnings: Vec<SanyError> = Vec::new();
     let mut errors: Vec<SanyError> = Vec::new();
     for (name, module_messages) in order.iter().zip(messages) {
-        loader
-            .lines
-            .push(format!("Semantic processing of module {name}\n"));
+        loader.push_progress(format!("Semantic processing of module {name}\n"));
         warnings.extend(module_messages.warnings);
         errors.extend(module_messages.errors);
         if warnings.is_empty() && errors.is_empty() {
@@ -916,7 +780,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         }
         let format_message =
             |message: &SanyError| format!("{}\n\n{}", message.location, message.message);
-        if !warnings.is_empty() {
+        if !warnings.is_empty() && !options.is_xml_export {
             loader
                 .lines
                 .push(format!("*** Warnings: {}\n\n", warnings.len()));
@@ -941,7 +805,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     loader.is_failed = !errors.is_empty();
     // SANY.frontEndLinting: when SANY accepts the spec, it lints the modules. TLC 1.7.4's SANY
     // has no linter.
-    if errors.is_empty() && options.version != TlcVersion::V1_7_4 {
+    if errors.is_empty() && options.version != TlcVersion::V1_7_4 && !options.is_xml_export {
         let linted: Vec<&Rc<str>> = order
             .iter()
             .filter(|name| !UNLINTED_MODULES.contains(&&***name))

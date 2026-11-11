@@ -1,0 +1,76 @@
+theory	theory T imports Constant Zenon begin\nlemma L: shows "P(%x. x(x))" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Type unification failed: occurs check
+theory	theory T imports Constant Zenon begin\nlemma L: shows "P(%x. Q(x, x(y)))" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (P:fun(fun(fun('a,'b),'c),PredicateLogic.c) (%x:fun('a,'b). ((Q:fun(fun('a,'b),fun('b,'c)) B0) (B0 y:'a)))))
+theory	theory T imports Constant Zenon begin\nlemma L: shows "P(%x y. x) & Q(%z. z) & R(z)" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (P:fun(fun('a,fun('b,'a)),PredicateLogic.c) (%x:'a. (%y:'b. B1)))) ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (Q:fun(fun('c,'c),PredicateLogic.c) (%z:'c. B0))) (R:fun('d,PredicateLogic.c) z:'d))))
+theory	theory T imports Constant Zenon begin\nlemma L: assumes h: "P(%x. x)" shows "P(%x::c. x)" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+assumes h
+assumption h: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (P:fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%x:PredicateLogic.c. B0)))
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (P:fun(fun(PredicateLogic.c,PredicateLogic.c),PredicateLogic.c) (%x:PredicateLogic.c. B0)))
+theory	theory T imports Constant Zenon begin\nlemma L: assumes h: "P(%x. x)" shows "P(%x. x) & Q(%x. x)" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+assumes h
+assumption h: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (P:fun(fun('a,'a),PredicateLogic.c) (%x:'a. B0)))
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.conj::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (P:fun(fun('a,'a),PredicateLogic.c) (%x:'a. B0))) (Q:fun(fun('b,'b),PredicateLogic.c) (%x:'b. B0))))
+theory	theory T imports Constant Zenon begin\nlemma L: assumes h: "x" shows "x(y)" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Type unification failed
+theory	theory T imports Constant Zenon begin\nlemma L: fixes x assumes h: "x = y" shows "y \\<in> x" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+fixes x
+assumes h
+assumption h: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) x:PredicateLogic.c) y:PredicateLogic.c))
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) y:PredicateLogic.c) x:PredicateLogic.c))
+theory	theory T imports Constant Zenon begin\nlemma L: fixes TRUE assumes h: "TRUE" shows "TRUE" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+fixes TRUE
+assumes h
+assumption h: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) TRUE:PredicateLogic.c)
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) TRUE:PredicateLogic.c)
+theory	theory T imports Constant Zenon begin\nlemma L: assumes h: "TRUE" fixes TRUE shows "TRUE = FALSE" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+assumes h
+fixes TRUE
+assumption h: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) PredicateLogic.TRUE::PredicateLogic.c)
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) TRUE:PredicateLogic.c) PredicateLogic.FALSE::PredicateLogic.c))
+theory	theory T imports Constant Zenon begin\nconsts "f" :: "[c] => c" "g" :: c\nlemma L: shows "f(x) = g" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (T.f::fun(PredicateLogic.c,PredicateLogic.c) x:PredicateLogic.c)) T.g::PredicateLogic.c))
+theory	theory T imports Constant Zenon begin\nconsts "f" :: "[c] => c" "g" :: c\nlemma L: fixes f shows "f(x) = g" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+fixes f
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((PredicateLogic.eq::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) (f:fun('a,PredicateLogic.c) x:'a)) T.g::PredicateLogic.c))
+theory	theory T imports Constant Zenon begin\nconsts "f" :: "[c] => c"\nlemma L: shows "f" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Type unification failed
+theory	theory T imports Constant Zenon begin\nconsts "f" :: "[c, => c"\nlemma L: shows "f" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Inner syntax error at: c
+theory	theory T imports Constant Zenon begin\nlemma L: shows "(%x. x) = (%y. y)" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Type unification failed
+theory	theory T imports Constant Zenon begin\nlemma L: shows "(%x y z. y) = (%x. %y. x)" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Type unification failed
+theory	theory T imports Constant Zenon begin\nlemma L: shows "P(%x. x)" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (P:fun(fun('a,'a),PredicateLogic.c) (%x:'a. B0)))
+theory	theory T imports Constant Zenon begin\nlemma L: shows "a ~= b" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Inner syntax error: trailing input in a ~= b
+theory	theory T imports Constant Zenon begin\nlemma L: shows "a \\<notin> S" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (PredicateLogic.not::fun(PredicateLogic.c,PredicateLogic.c) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) a:PredicateLogic.c) S:PredicateLogic.c)))
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x \\<in> BOOLEAN" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+conclusion: (PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) ((SetTheory.in::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) x:PredicateLogic.c) ((SetTheory.addElt::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) PredicateLogic.TRUE::PredicateLogic.c) ((SetTheory.addElt::fun(PredicateLogic.c,fun(PredicateLogic.c,PredicateLogic.c)) PredicateLogic.FALSE::PredicateLogic.c) SetTheory.emptyset::PredicateLogic.c))))
+theory	theory T imports Constant Zenon begin\nlemma L: shows "(\\<lambda>x::c. x) = (\\<lambda>x::prop. x)" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Type unification failed
+theory	theory T imports Constant Zenon begin\nlemma L: shows "(x::prop)" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Type unification failed
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x = " (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Inner syntax error at: end of input
+theory	theory T imports Constant Zenon begin\nlemma L: shows "x" assumes h: "y" (is "PROP ?G") proof - show "PROP ?G" by auto qed end
+ERROR: Outer syntax error at: assumes
+check	f
+ERROR: Undeclared constant: T.f
+check	g(f)
+ERROR: Undeclared constant: T.f
+check	g(x)
+(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (T.g::fun(PredicateLogic.c,PredicateLogic.c) x:PredicateLogic.c))
+check	g(g)
+ERROR: Type unification failed
+check	x(g(x), y)
+ERROR: Type unification failed: occurs check
+check	x(x)
+ERROR: Type unification failed: occurs check
+check	P(%x. x)
+(PredicateLogic.Trueprop::fun(PredicateLogic.c,prop) (P:fun(fun('a,'a),PredicateLogic.c) (%x:'a. B0)))
+check	y = y
+ERROR: Undeclared constant: PredicateLogic.eq
