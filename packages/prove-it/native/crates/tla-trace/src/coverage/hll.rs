@@ -1,11 +1,12 @@
 //! TLC's variable coverage (`CountDistinct.HyperLogLog` with 10 bits, message 2779): an estimate
 //! of how many distinct values each variable took in the states the search queued, from each
 //! value's fingerprint (`Value.fingerPrint(FP64.New())`) with TLC's polynomial (`-fp`). Without
-//! `-fp` TLC picks the polynomial at random, and an estimate past a few values may differ
-//! between its runs; the binary estimates with the polynomial its banner names: `-fp`'s, or
-//! the first without it.
+//! `-fp` TLC picks the polynomial at random, and an estimate may differ between its runs; the
+//! binary then estimates with each and prints only estimates every polynomial gives.
 
-use tla_values::fingerprint::Polynomial;
+use std::collections::HashSet;
+
+use tla_values::fingerprint::{POLYNOMIALS, Polynomial};
 
 use crate::value::{Value, elements};
 
@@ -125,42 +126,70 @@ impl HyperLogLog {
 }
 
 /// The estimates of how many distinct values each variable took in the states the search queued,
-/// which a value seen again leaves as they are.
+/// which a value seen again leaves as they are. Without `-fp` TLC draws its polynomial, so the
+/// estimate it prints is the one every polynomial gives, or differs from run to run: the
+/// distinct values' bytes are then kept to estimate with each.
 pub(crate) struct Distinct {
     estimates: Vec<HyperLogLog>,
     polynomial: &'static Polynomial,
     bytes: Vec<u8>,
+    drawn: Option<Vec<HashSet<Vec<u8>>>>,
 }
 
 impl Distinct {
-    /// The values fingerprinted with the polynomial at `polynomial`.
-    pub fn new(width: usize, polynomial: usize) -> Distinct {
+    /// The values fingerprinted with the polynomial at `polynomial`, or, where TLC draws it, with
+    /// the first, their bytes kept to estimate with each.
+    pub fn new(width: usize, polynomial: Option<usize>) -> Distinct {
         Distinct {
             estimates: (0..width).map(|_| HyperLogLog::new()).collect(),
-            polynomial: Polynomial::get(polynomial),
+            polynomial: Polynomial::get(polynomial.unwrap_or(0)),
             bytes: Vec::new(),
+            drawn: polynomial.is_none().then(|| vec![HashSet::new(); width]),
         }
     }
 
     /// Records a queued state's values; none where one has no fingerprint the port computes.
     pub fn add(&mut self, state: &[Option<Value>]) -> Option<()> {
-        for (estimate, value) in self.estimates.iter_mut().zip(state) {
+        for (position, (estimate, value)) in self.estimates.iter_mut().zip(state).enumerate() {
             self.bytes.clear();
             value_bytes(value.as_ref()?, &mut self.bytes)?;
-            let fingerprint = self
-                .bytes
-                .iter()
-                .fold(self.polynomial.value(), |fingerprint, &byte| {
-                    self.polynomial.extend_byte(fingerprint, byte)
-                });
-            estimate.add(fingerprint);
+            estimate.add(fingerprint_of(self.polynomial, &self.bytes));
+            if let Some(drawn) = &mut self.drawn
+                && !drawn[position].contains(&self.bytes)
+            {
+                drawn[position].insert(self.bytes.clone());
+            }
         }
         Some(())
     }
 
-    pub fn counts(&self) -> Vec<i64> {
-        self.estimates.iter().map(HyperLogLog::count).collect()
+    /// The estimates, or none where TLC draws its polynomial and two of them estimate a variable
+    /// differently.
+    pub fn counts(&self) -> Option<Vec<i64>> {
+        let counts: Vec<i64> = self.estimates.iter().map(HyperLogLog::count).collect();
+        let Some(drawn) = &self.drawn else {
+            return Some(counts);
+        };
+        for index in 1..POLYNOMIALS.len() {
+            let polynomial = Polynomial::get(index);
+            for (values, &count) in drawn.iter().zip(&counts) {
+                let mut estimate = HyperLogLog::new();
+                for bytes in values {
+                    estimate.add(fingerprint_of(polynomial, bytes));
+                }
+                if estimate.count() != count {
+                    return None;
+                }
+            }
+        }
+        Some(counts)
     }
+}
+
+fn fingerprint_of(polynomial: &Polynomial, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(polynomial.value(), |fingerprint, &byte| {
+        polynomial.extend_byte(fingerprint, byte)
+    })
 }
 
 #[cfg(test)]

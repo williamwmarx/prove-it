@@ -166,7 +166,9 @@ Besides the 15 declines, it does the following in the library:
 
 Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The binary writes
 `-dumpTrace tlc` and `-dumpTrace json`, and declines the other formats and the cases cli.md's
-"-dumpTrace" lists; the interpreter writes none.
+"-dumpTrace" lists; the interpreter writes none. It prints `-coverage`'s report and declines the
+cases cli.md's "-coverage" lists: its "Not native" list, the cut, `-continue` carried past a
+violation, and estimates without `-fp` that differ by polynomial.
 `src/pcal` only validates for SANY, `src/obligations` imports nothing from the interpreter, and
 `src/prover` imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
 `getParentPort`). Those move to the prover. `tlc/version.ts`, `tlc/jar-data.ts` and
@@ -665,3 +667,10 @@ check. The tests of the interpreter's own results run `checkParsed`, the TypeScr
 - A WebAssembly stack overflow becomes an error unless S2 lifts it first.
 - `-dump`, `-continue` and periodic configs are checked natively. TLC 1.7.4's output is retired.
 - The library prints what the binary prints. Today they differ only where the library hands over.
+
+## -coverage in the engine
+
+The engine's search doesn't count TLC's cost model; the replay pass in `tla-trace` does
+(cli.md, "-coverage"). Counting in the engine was built (branch `engine-coverage`) and not adopted:
+TLC with coverage runs 20 to 35 times as long as the engine's search on record-heavy specs, so the
+times of TLC's report part way through can't be bounded from the engine's.
