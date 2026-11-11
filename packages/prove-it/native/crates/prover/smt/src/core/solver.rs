@@ -31,8 +31,12 @@ pub fn check_smt(text: &str, limit: ResourceLimit) -> Result<SmtCheck, SmtError>
     manager.limit.inc();
     let problem = parse_smtlib(text, &mut manager, |manager, command| match command {
         Command::Assert(assertion) => {
-            manager.limit.inc();
-            incremental.assert_expr(manager, assertion)
+            let limit = manager.limit.clone();
+            limit.set_step_limit_suspended(true);
+            limit.inc();
+            let result = incremental.assert_expr(manager, assertion);
+            limit.set_step_limit_suspended(false);
+            result
         }
         // The new manager's solver, as at the start.
         Command::Reset => {

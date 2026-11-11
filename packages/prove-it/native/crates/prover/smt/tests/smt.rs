@@ -864,4 +864,15 @@ fn a_reset_starts_the_step_limit_again() {
         "(assert p)".repeat(50)
     );
     assert_eq!(decide(&format!("{prefix}{text}"), 1000), decision);
+    // 600 assertions pass the step limit, and the new manager's count starts below it again:
+    // Z3 5.3.3 with rlimit=500 prints unsat.
+    let past_the_limit = format!(
+        "(declare-const p Bool){}(reset)(declare-const x Bool)(assert x)(assert (not x))\
+         (check-sat)",
+        "(assert p)".repeat(600)
+    );
+    assert_eq!(
+        decide(&past_the_limit, 500).map(|text| text.starts_with("unsat ")),
+        Ok(true)
+    );
 }

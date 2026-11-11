@@ -123,9 +123,14 @@ sorts, matching neither Z3 nor any input tlapm writes) must reach `decide` as
 
 **Reset.** `(reset)` is cmd_context::reset: the parser forgets the declarations, named terms and
 assertions and makes a new manager, whose resource limit counts from 0 and the step limit with it,
-as Z3 checks rlimit against the new count; the deadline stays (`smtlib_parser.rs`,
+as Z3 checks rlimit against the new count, and a stop for the step limit or the size cap is
+forgotten; the deadline stays (`smtlib_parser.rs`,
 `ResourceLimit::restart`). Z3 also forgets the logic, and with none set runs another solver than
 UFNIA's; the port runs UFNIA's on every script, with a logic set or not, after a reset as before.
+
+**Assertions.** cmd_context::assert_expr holds `scoped_rlimit no_limit`: the solver's steps on an
+assertion are counted, but the step limit is not checked until the assertions are taken
+(`ResourceLimit::set_step_limit_suspended`).
 
 **Commands.** The port reads a script as Z3 reads it, a command at a time, up to the first
 check-sat or `(exit)`, and answers what Z3 answers to that check-sat. A reference to a `:named`
