@@ -994,7 +994,9 @@ export const checkSpecs = async (args: string[], java: JavaProperties, isTlc = f
   if (isTlc && parsed.positionals.some((path) => path.endsWith(".cfg"))) {
     return declineNatively("a module named as a configuration file");
   }
-  const isLiteral = (path: string) => existsSync(path) || existsSync(`${path}.tla`);
+  // A glob that matches nothing, or names a file as it is, may be TLC's name of a module.
+  const isLiteral = (path: string) =>
+    existsSync(path) || existsSync(`${path}.tla`) || getInputPaths([path]).length === 0;
   if (parsed.positionals.some((path) => GLOB_CHARACTERS.test(path) && (isTlc || isLiteral(path)))) {
     return declineNatively("globs");
   }
