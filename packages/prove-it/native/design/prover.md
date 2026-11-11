@@ -1107,6 +1107,22 @@ is next.
   against `prover-inputs.json`); then the `prove_obligations` boundary of 3.2, agreed with the
   prover lead first.
 
+- P6b part 1, tlapm's state: `prove-obligations::marshal` ports `ocaml-marshal.ts` (LGPL, in its
+  own file and in the notices' OCaml section), and `prove-it-prover::tlapm_cache` ports
+  `cache.ts`: `load_fingerprints`, `KnownResults::new`, `KnownResults::save`, and `save_history`.
+  - **Caller-supplied inputs:** the caller passes in the package version string
+    (`tla-ts <version>`) and the local time, since `std` has no time zone. The TypeScript reads
+    both itself.
+  - **Results:** each result keeps the field it was loaded from. That stands in for the
+    TypeScript's maps keyed by object identity.
+  - **Tests:** `tests/tlapm_cache.rs` ports `tlapm-cache.test.ts`. It also checks fixtures that
+    `scripts/tlapm-cache-fixtures.ts` records from the TypeScript:
+    - marshal round trips byte for byte, covering every code, the size boundaries and OCaml's
+      sharing codes;
+    - files `prove-it tlapm` wrote, with and without `--nofp`, which load and re-save to the same
+      bytes as the TypeScript re-saves them;
+    - every encoded result, re-encoded at its stored date and version.
+  - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
 ### TypeScript deviations from Z3
 
 Where a TypeScript back end does what the tool it ports does not, the Rust mirrors the TypeScript,
@@ -1181,19 +1197,3 @@ b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
     interprets `div0`, now leaves the declaration to its application when it is released
     (`asts=181`, was 180). `builtin-decl-release.smt` is replayed from `tables/decide-inputs.txt`,
     which `scripts/smt-decide-reference.ts` writes.
-- P6b part 1, tlapm's state: `prove-obligations::marshal` ports `ocaml-marshal.ts` (LGPL, in its
-  own file and in the notices' OCaml section), and `prove-it-prover::tlapm_cache` ports
-  `cache.ts`: `load_fingerprints`, `KnownResults::new`, `KnownResults::save`, and `save_history`.
-  - **Caller-supplied inputs:** the caller passes in the package version string
-    (`tla-ts <version>`) and the local time, since `std` has no time zone. The TypeScript reads
-    both itself.
-  - **Results:** each result keeps the field it was loaded from. That stands in for the
-    TypeScript's maps keyed by object identity.
-  - **Tests:** `tests/tlapm_cache.rs` ports `tlapm-cache.test.ts`. It also checks fixtures that
-    `scripts/tlapm-cache-fixtures.ts` records from the TypeScript:
-    - marshal round trips byte for byte, covering every code, the size boundaries and OCaml's
-      sharing codes;
-    - files `prove-it tlapm` wrote, with and without `--nofp`, which load and re-save to the same
-      bytes as the TypeScript re-saves them;
-    - every encoded result, re-encoded at its stored date and version.
-  - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
