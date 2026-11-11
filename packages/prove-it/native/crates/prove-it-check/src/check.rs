@@ -950,6 +950,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .get_variable("PROVE_IT_TEST_LIVE_CHECK_AT")
             .and_then(|at| at.parse().ok()),
         test_memo_entries: get_number(printer.host, "PROVE_IT_TEST_MEMO_ENTRIES"),
+        test_progress_at: get_number(printer.host, "PROVE_IT_TEST_PROGRESS_AT"),
         test_evaluations: printer
             .host
             .get_variable("PROVE_IT_TEST_EVALUATIONS")
@@ -998,7 +999,19 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             (outcome, relay.assumed_printed, relay.dumped)
         },
         || {
-            for event in receiver.iter() {
+            loop {
+                // TLC prints each line as it goes, so what waits in the buffer goes out whenever
+                // the search has nothing more to say yet.
+                let event = match receiver.try_recv() {
+                    Ok(event) => event,
+                    Err(_) => {
+                        printer.flush();
+                        let Ok(event) = receiver.recv() else {
+                            break;
+                        };
+                        event
+                    }
+                };
                 match event {
                     Event::InitialStatesStarted => printer.print(
                         code::COMPUTING_INIT,
@@ -2390,5 +2403,54 @@ IsSimpleCycle(S, r) ==
         let (four, threads) = get_found(&ir, &settings(4));
         assert_eq!(four, one);
         assert_eq!(threads, 1);
+    }
+
+    // The progress a search reported: states generated, distinct and left on the queue.
+    struct Progressed(Vec<[u64; 3]>);
+
+    impl Reporter for Progressed {
+        fn initial_states_started(&mut self) {}
+        fn initial_states_progress(&mut self, _count: u64) {}
+        fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
+        fn progress(&mut self, generated: u64, distinct: u64, queued: u64, _depth: u64) {
+            self.0.push([generated, distinct, queued]);
+        }
+        fn print(&mut self, _store: &tla_values::Store, _values: &[tla_values::Id]) {}
+    }
+
+    // TLC reports its progress while its workers expand a level, so a search that shares a level
+    // reports it there too: once a thread claims the state PROVE_IT_TEST_PROGRESS_AT names, with
+    // more than the 4,001 states generated before the level and fewer than the 8,001 after it.
+    #[test]
+    fn reports_its_progress_inside_a_shared_level() {
+        let ir = lower(
+            "Wide",
+            "---- MODULE Wide ----\nEXTENDS Integers\nVARIABLE n\nInit == n = 0\nNext == \\/ n = 0 /\\ n' \\in 1..4000\n        \\/ n \\in 1..4000 /\\ n' = n + 4000\nSpec == Init /\\ [][Next]_n\n====\n",
+            "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\n",
+        );
+        let settings = Settings {
+            threads: 4,
+            minimum_shared_level: 1,
+            test_progress_at: Some(2000),
+            ..Settings::default()
+        };
+        let mut progressed = Progressed(Vec::new());
+        let outcome = tla_engine::on_nesting_stack(|| search(&ir, &settings, &mut progressed));
+        let SearchOutcome::Complete { counts, .. } = outcome else {
+            panic!("a search that didn't complete");
+        };
+        assert_eq!((counts.generated, counts.distinct), (8001, 8001));
+        assert!(
+            progressed
+                .0
+                .iter()
+                .any(|&[generated, distinct, queued]| generated > 4001
+                    && generated < 8001
+                    && distinct > 4001
+                    && distinct <= 8001
+                    && distinct - queued > 1),
+            "{:?}",
+            progressed.0
+        );
     }
 }

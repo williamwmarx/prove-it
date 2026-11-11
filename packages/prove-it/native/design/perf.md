@@ -785,8 +785,8 @@ Neither was built.
 
 ## Startup constants and the memo at any thread count
 
-EWD998ChanID_shiviz (7 nodes) reached Progress(5) in 4 s on 1–3 threads, but stalled on 4.
-Two engine costs grew with the number of threads; neither does any more.
+EWD998ChanID_shiviz (7 nodes) reached Progress(5) quickly on 1–3 threads, but seemed to stall on 4.
+Two engine costs grew with the number of threads, and a shared level reported no progress until it ended. None of this holds any more.
 
 **Constants.**
 - TLC evaluates each constant-level definition of arity 0 once, at startup, and every worker reads that value (`SpecProcessor.processSpec`, SpecProcessor.java:202–207; `processConstantDefns`, 226–233 and 343–381; `evalConstantDefn` normalizes the value because "All workers share the value", 237–242).
@@ -804,12 +804,20 @@ Two engine costs grew with the number of threads; neither does any more.
 - Its probation stands: a table under 20% hits in its first 8,192 lookups turns off, which those lookups decide on any number of threads. Without it, GameOfLife's recursive definition, whose table rarely hits, took 2.95 s and 224 MB on one thread against 1.22 s and 47 MB. A recursion that reads a call twice hits about half the time, and keeps its table.
 - A value in a memo table is a function of its keys, and an evaluation that fails stores nothing, so clearing a table changes no value and no decline.
 
-**Measured.**
-- EWD998ChanID_shiviz on 4 workers, 4 cores: the shared levels end at 0.91, 0.97 and 2.30 s, against 7.30, 7.36 and 8.37 s before.
-- The level after that, 860K states, still prints nothing until it ends, since a shared level reports its progress only at its end. TLC reports every 60 s whatever the depth (AbstractChecker.java:451–488, ModelChecker.java:1009–1036).
+**Progress.**
+- TLC's workers share one queue and never wait for a depth to end. Its main thread starts them, waits up to 3 s (AbstractChecker.java:451), then loops: `doPeriodicWork` and `runTLCContinueDoing` (AbstractChecker.java:466–488), which prints `printProgresStats` (ModelChecker.java:1013, 940–959) and waits `progressInterval` (ModelChecker.java:1035), 60 s by default (TLCGlobals.java:221–222).
+- So its first report comes about 3 s in and then every 60 s, at whatever depth the workers are.
+- The engine's one thread checks the clock every 256 states on that schedule. A shared level reported only at its end, so EWD998ChanID_shiviz's level of 860K states printed nothing for as long as it took.
+- Now the search's thread, while a shared level runs, waits for the threads or the next report, whichever comes first, and reports from counts each thread keeps of the level:
+  - states generated: before the level, plus each thread's;
+  - distinct: before the level, plus the most new states any one thread found, a count the merge can only exceed, so it never drops;
+  - left on the queue: distinct less the states expanded.
+- The timer only wakes the thread to report; it stops nothing. A periodic check of the temporal properties, which TLC makes with its report, still waits for the level's end, and the one-thread search is unchanged.
+- The relay flushes what it printed whenever the search has nothing more to say, as TLC prints each line as it goes, rather than at the first report.
+- PROVE_IT_TEST_PROGRESS_AT names a state: the thread that claims it waits until the search's thread has reported, so a test sees a report inside the level without a clock.
 
 **Tests.**
-- Two hooks bound the tests by work, not time:
+- Two hooks bound the tests by work, not time, beside PROVE_IT_TEST_PROGRESS_AT:
   - PROVE_IT_TEST_MEMO_ENTRIES sets the room the tables share.
   - PROVE_IT_TEST_EVALUATIONS sets how many bodies of recursive definitions a search's machines may evaluate before it stops.
 - The tests in `prove-it-check`'s `check.rs` use the ewd998 example's IsSimpleCycle and RingOfNodes, and fail on the code before this change.
