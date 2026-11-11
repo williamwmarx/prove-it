@@ -98,12 +98,14 @@ mod tests {
             Some("lib/tla2tools.jar")
         );
         assert_eq!(get_tools_jar("classes"), None);
-        // What Node's pathToFileURL encodes, and what it leaves.
         assert_eq!(
-            get_standard_modules_url(Path::new(
-                "/a b/%#?[]^|~\"<>`{}\\\u{e9}/x!$&'()*+,-.:;=@_.jar"
-            )),
-            "jar:file:/a%20b/%25%23%3F%5B%5D%5E%7C%7E%22%3C%3E%60%7B%7D%5C%C3%A9/x!$&'()*+,-.:;=@_.jar!/tla2sany/StandardModules/"
+            get_standard_modules_url(Path::new("/lib/tla2tools.jar")),
+            "jar:file:/lib/tla2tools.jar!/tla2sany/StandardModules/"
+        );
+        // What Node's pathToFileURL encodes of a Unix path, and what it leaves.
+        assert_eq!(
+            get_url_path("/a b/%#?[]^|~\"<>`{}\\\u{e9}/x!$&'()*+,-.:;=@_.jar", false),
+            "/a%20b/%25%23%3F%5B%5D%5E%7C%7E%22%3C%3E%60%7B%7D%5C%C3%A9/x!$&'()*+,-.:;=@_.jar"
         );
         // What it writes of a Windows path.
         assert_eq!(
