@@ -800,7 +800,8 @@ Two engine costs grew with the number of threads; neither does any more.
 - So Utils' `IsSimpleCycle`, which reads `F[i-1]` twice, costs TLC 2^n − 1 bodies a call. The engine's memo table makes that n.
 - But each table took at most 2^22 / threads entries, refused more once full, and turned itself off when under half the lookups of a window then hit.
 - On 4 threads, F's table (keyed by the candidate and i) filled at 1,048,576 entries while RingOfNodes was being chosen. Every later call then missed, and the choice went from linear to exponential. On 3 threads the choice ended before the table filled.
-- Now the table of a recursive operator or function is kept (`MemoTable::kept`): it never turns off, and when full it forgets what it holds and goes on. Entries for earlier candidates are dead anyway, so each call keeps its hits within any room that holds one call's entries. Memory stays as before.
+- Now the table of a recursive operator or function is kept (`MemoTable::kept`): it doesn't turn off once full, and when full it forgets what it holds and goes on. Entries for earlier candidates are dead anyway, so each call keeps its hits within any room that holds one call's entries. Memory stays as before.
+- Its probation stands: a table under 20% hits in its first 8,192 lookups turns off, which those lookups decide on any number of threads. Without it, GameOfLife's recursive definition, whose table rarely hits, took 2.95 s and 224 MB on one thread against 1.22 s and 47 MB. A recursion that reads a call twice hits about half the time, and keeps its table.
 - A value in a memo table is a function of its keys, and an evaluation that fails stores nothing, so clearing a table changes no value and no decline.
 
 **Measured.**

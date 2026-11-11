@@ -81,8 +81,8 @@ pub(crate) struct Recursive {
 pub struct Program {
     pub(crate) width: usize,
     pub(crate) slot_count: usize,
-    /// Each memo table's width, and whether it is kept: a recursive definition's, which never
-    /// turns off (`MemoTable::kept`).
+    /// Each memo table's width, and whether it is kept: a recursive definition's, which doesn't
+    /// turn off once full (`MemoTable::kept`).
     pub(crate) memo_tables: Vec<(usize, bool)>,
     pub(crate) epoch_count: usize,
     pub(crate) once_count: usize,

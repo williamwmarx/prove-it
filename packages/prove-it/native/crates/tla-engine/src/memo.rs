@@ -1,7 +1,7 @@
 //! Caches of pure computations keyed by the ids of what they read, as `src/engine/memo.ts` keeps
 //! them: a [`MemoTable`] of one to six keys, and an [`EpochCache`] for an expression that reads
 //! many variables of the current state but no primed one. A table that hits too rarely turns
-//! itself off after [`PROBATION`] lookups, as the TypeScript tables do, unless it is kept.
+//! itself off after [`PROBATION`] lookups, as the TypeScript tables do.
 
 use tla_values::Id;
 
@@ -102,9 +102,10 @@ pub struct MemoTable {
     // The slots probed past the home in this window of lookups.
     probes: u64,
     is_enabled: bool,
-    // Whether the table is a recursive definition's, which never turns off and forgets what it
-    // holds when full: a full table that took no more entries, or none at all, would make a
-    // recursion that reads a call twice exponential, at a room that depends on the threads.
+    // Whether the table is a recursive definition's, which doesn't turn off once full and forgets
+    // what it holds then: a full table that took no more entries, or none at all, would make a
+    // recursion that reads a call twice exponential, at a room that depends on the threads. Its
+    // probation stands, which its first lookups decide on any number of threads.
     is_kept: bool,
     is_direct: bool,
     is_clustered: bool,
@@ -157,7 +158,7 @@ impl MemoTable {
         }
     }
 
-    /// A table that never turns off, and forgets what it holds when full.
+    /// A table that doesn't turn off once full, and forgets what it holds then.
     pub fn kept(width: usize) -> MemoTable {
         MemoTable {
             is_kept: true,
@@ -288,9 +289,7 @@ impl MemoTable {
     #[inline(always)]
     fn open(&mut self) -> bool {
         self.lookups += 1;
-        if self.lookups == PROBATION
-            && !self.is_kept
-            && (self.hits as f64) < self.lookups as f64 * MINIMUM_HIT_RATE
+        if self.lookups == PROBATION && (self.hits as f64) < self.lookups as f64 * MINIMUM_HIT_RATE
         {
             self.turn_off();
         }
@@ -718,18 +717,27 @@ mod tests {
     }
 
     #[test]
-    fn a_kept_table_never_turns_off() {
+    fn a_full_kept_table_never_turns_off() {
         let mut table = MemoTable::kept(2);
         table.limit(100);
         for key in 0..4 * FULL_WINDOW as u32 {
             assert_eq!(table.get(&[key, key]), EMPTY);
             table.set(&[key, key], key);
+            assert_eq!(table.get(&[key, key]), key);
         }
         assert!(table.is_enabled());
-        assert_eq!(
-            table.get(&[4 * FULL_WINDOW as u32 - 1; 2]),
-            4 * FULL_WINDOW as u32 - 1
-        );
+    }
+
+    // A recursive definition's table that rarely hits turns off at its probation, as any table
+    // does: that is decided by its first lookups, whatever the threads.
+    #[test]
+    fn a_kept_table_that_rarely_hits_turns_off() {
+        let mut table = MemoTable::kept(2);
+        for key in 0..PROBATION as u32 {
+            assert_eq!(table.get(&[key, key]), EMPTY);
+            table.set(&[key, key], key);
+        }
+        assert!(!table.is_enabled());
     }
 
     #[test]
