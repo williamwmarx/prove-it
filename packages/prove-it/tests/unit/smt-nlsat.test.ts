@@ -41,6 +41,7 @@ import {
 } from "../../src/prover/smt/solver/nlsat/upolynomial-factorization";
 import { Rational } from "../../src/prover/smt/solver/rational";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
+import { createSteps } from "../../src/prover/verdict";
 
 const FIXTURES = join(__dirname, "../fixtures/nlsat");
 
@@ -1039,5 +1040,67 @@ describe("nra check", () => {
   it("throws a named error once the search takes more steps than its budget", () => {
     const result = getSquare(KIND_EQ, 2n);
     expect(() => result.core.nra.check(Infinity, 1)).toThrow(SmtCanceledError);
+  });
+});
+
+describe("nlsat resource limit", () => {
+  // A problem of scripts/nlsat-differential.ts on which the search used to run without end inside
+  // the resultants of eval_sign_at, between two of its own checkpoints.
+  const problem = [
+    "int 0 0 1",
+    "a LT o 4:2^2 12:2^1 9:",
+    "a LT o 6:0^1,1^1,2^1 4:1^1,2^2 2:1^1,2^1",
+    "a LT o -3:2^1 3:0^1 -5:1^2",
+    "a GT o -2:0^2,2^1 -2:1^1,2^2",
+    "a LT o 2:1^3 1:0^1,1^1,2^1 5: | o 3:1^1,2^1",
+    "a LT o 3:0^3 -2:1^1 3:0^1,1^1 2:",
+    "a EQ o -3:0^1,1^1 1:0^1,2^2 -2:1^1,2^1 5:",
+    "cl 0 -2 7 -2",
+    "cl -1 3 4",
+    "cl 0 6",
+    "cl -1 -3 3 1",
+    "cl -1 -3",
+  ];
+
+  const mkSolver = (limit: ResourceLimit) => {
+    const solver = new NlsatSolver(limit);
+    const literals: number[] = [];
+    for (const line of problem) {
+      const words = line.split(" ");
+      if (words[0] === "int") for (const flag of words.slice(1)) solver.mkVar(flag === "1");
+      if (words[0] === "a") {
+        const factors = words.slice(2).join(" ").split(" | ");
+        literals.push(
+          solver.mkIneqLiteral(
+            words[1] === "EQ" ? "EQ" : words[1] === "LT" ? "LT" : "GT",
+            factors.map((factor) => parsePolynomial(solver.pm, factor.slice(2))),
+            factors.map((factor) => factor[0] === "e"),
+          ),
+        );
+      }
+      if (words[0] === "cl")
+        solver.mkExternalClause(
+          words
+            .slice(2)
+            .map(Number)
+            .map((ref) => (ref > 0 ? literals[ref - 1] : literals[-ref - 1] ^ 1)),
+          words[1] === "-1" ? null : Number(words[1]),
+        );
+    }
+    return solver;
+  };
+
+  it("stops the polynomial arithmetic at the step limit", () => {
+    const limit = new ResourceLimit(Infinity, undefined, createSteps(20000));
+    const solver = mkSolver(limit);
+    expect(() => solver.check()).toThrow(SmtCanceledError);
+    expect(limit.stopReason).toBe("steps");
+  });
+
+  it("stops the polynomial arithmetic at the deadline", () => {
+    const limit = new ResourceLimit(Date.now() + 100);
+    const solver = mkSolver(limit);
+    expect(() => solver.check()).toThrow(SmtCanceledError);
+    expect(limit.stopReason).toBe("time");
   });
 });

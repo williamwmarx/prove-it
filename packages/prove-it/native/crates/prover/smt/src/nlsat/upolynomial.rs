@@ -4,6 +4,7 @@
 //! leading zeros, over Z or over Z_p. Root isolation by Descartes' rule of signs, Sturm sequences
 //! and refinement of isolating intervals with binary rational endpoints.
 
+use super::limit::NlsatLimit;
 use super::mpbq::{Mpbq, get_log2, refine_lower, refine_upper};
 use super::{Int, Rational, SmtError, get_gcd};
 
@@ -117,13 +118,16 @@ pub struct UpolynomialManager {
     /// lifting also sets a prime power.
     modulus: Option<Int>,
     is_prime_modulus: bool,
+    /// m_limit: the polynomial manager's, or the solver's.
+    pub limit: NlsatLimit,
 }
 
 impl UpolynomialManager {
-    pub fn new(modulus: Option<Int>) -> UpolynomialManager {
+    pub fn new(modulus: Option<Int>, limit: NlsatLimit) -> UpolynomialManager {
         UpolynomialManager {
             modulus,
             is_prime_modulus: true,
+            limit,
         }
     }
 
@@ -281,24 +285,31 @@ impl UpolynomialManager {
         )
     }
 
-    pub fn mul(&self, first: &[Int], second: &[Int]) -> Upolynomial {
+    /// mul_core: the outer loop runs over the longer polynomial.
+    pub fn mul(&self, first: &[Int], second: &[Int]) -> Result<Upolynomial, SmtError> {
         if first.is_empty() || second.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let mut result = vec![Int::zero(); first.len() + second.len() - 1];
-        for index in 0..first.len() {
-            if first[index].is_zero() {
+        let (longer, shorter) = if first.len() < second.len() {
+            (second, first)
+        } else {
+            (first, second)
+        };
+        for index in 0..longer.len() {
+            self.limit.checkpoint()?;
+            if longer[index].is_zero() {
                 continue;
             }
-            for other in 0..second.len() {
-                if !second[other].is_zero() {
+            for other in 0..shorter.len() {
+                if !shorter[other].is_zero() {
                     result[index + other] = self.normalize_numeral(
-                        &(&result[index + other] + &(&first[index] * &second[other])),
+                        &(&result[index + other] + &(&longer[index] * &shorter[other])),
                     );
                 }
             }
         }
-        trim(result)
+        Ok(trim(result))
     }
 
     pub fn mul_const(&self, coeffs: &[Int], factor: &Int) -> Upolynomial {
@@ -403,7 +414,7 @@ impl UpolynomialManager {
     }
 
     /// div_rem: q and r with lc(p2)^d * p1 = q * p2 + r over Z, or p1 = q * p2 + r over a field.
-    pub fn div_rem(&self, dividend: &[Int], divisor: &[Int]) -> DivRem {
+    pub fn div_rem(&self, dividend: &[Int], divisor: &[Int]) -> Result<DivRem, SmtError> {
         let is_field = self.is_field();
         if divisor.len() == 1 {
             let quotient = if is_field {
@@ -411,19 +422,19 @@ impl UpolynomialManager {
             } else {
                 self.set(dividend)
             };
-            return DivRem {
+            return Ok(DivRem {
                 quotient,
                 remainder: Vec::new(),
                 power: 0,
-            };
+            });
         }
         let mut remainder = self.set(dividend);
         if dividend.len() <= 1 {
-            return DivRem {
+            return Ok(DivRem {
                 quotient: Vec::new(),
                 remainder,
                 power: 0,
-            };
+            });
         }
         let quotient_size = if dividend.len() >= divisor.len() {
             dividend.len() - divisor.len() + 1
@@ -433,7 +444,15 @@ impl UpolynomialManager {
         let mut quotient = vec![Int::zero(); quotient_size];
         let leading = &divisor[divisor.len() - 1];
         let mut power = 0;
-        while remainder.len() >= divisor.len() {
+        loop {
+            self.limit.checkpoint()?;
+            if remainder.len() < divisor.len() {
+                return Ok(DivRem {
+                    quotient: trim(quotient),
+                    remainder,
+                    power,
+                });
+            }
             let size = remainder.len();
             let shift = size - divisor.len();
             if is_field {
@@ -463,15 +482,10 @@ impl UpolynomialManager {
             remainder.truncate(size - 1);
             remainder = trim(remainder);
         }
-        DivRem {
-            quotient: trim(quotient),
-            remainder,
-            power,
-        }
     }
 
-    pub fn div(&self, dividend: &[Int], divisor: &[Int]) -> Upolynomial {
-        self.div_rem(dividend, divisor).quotient
+    pub fn div(&self, dividend: &[Int], divisor: &[Int]) -> Result<Upolynomial, SmtError> {
+        Ok(self.div_rem(dividend, divisor)?.quotient)
     }
 
     /// rem: the pseudo-remainder, with the number of pseudo-division steps.
@@ -492,7 +506,11 @@ impl UpolynomialManager {
         let is_field = self.is_field();
         let leading = &divisor[divisor.len() - 1];
         let mut power = 0;
-        while remainder.len() >= divisor.len() {
+        // A canceled step ends the loop and leaves the remainder unfinished, as in Z3.
+        while self.limit.inc() {
+            if remainder.len() < divisor.len() {
+                return RemWithPower { remainder, power };
+            }
             let size = remainder.len();
             let shift = size - divisor.len();
             if is_field {
@@ -603,25 +621,29 @@ impl UpolynomialManager {
 
     // GCD.
 
-    fn euclid_gcd(&self, first: &[Int], second: &[Int]) -> Upolynomial {
+    fn euclid_gcd(&self, first: &[Int], second: &[Int]) -> Result<Upolynomial, SmtError> {
         if first.is_empty() {
-            return self.flip_sign_if_lm_neg(&self.set(second));
+            return Ok(self.flip_sign_if_lm_neg(&self.set(second)));
         }
         if second.is_empty() {
-            return self.flip_sign_if_lm_neg(&self.set(first));
+            return Ok(self.flip_sign_if_lm_neg(&self.set(first)));
         }
         let mut a = self.set(first);
         let mut b = self.set(second);
-        while !b.is_empty() {
+        loop {
+            self.limit.checkpoint()?;
+            if b.is_empty() {
+                break;
+            }
             let remainder = self.normalize(&self.rem(&a, &b));
             a = b;
             b = remainder;
         }
         let normalized = self.normalize(&a);
-        match &self.modulus {
+        Ok(match &self.modulus {
             Some(modulus) if self.is_field() => self.get_monic(&normalized, modulus),
             _ => self.flip_sign_if_lm_neg(&normalized),
-        }
+        })
     }
 
     /// CRA_combine_images: the image modulo bound * prime, in the symmetric range. Returns the
@@ -660,7 +682,7 @@ impl UpolynomialManager {
 
     /// mod_gcd: the gcd over Z from images modulo big primes, combined by the Chinese remainder
     /// theorem.
-    fn mod_gcd(&mut self, first: &[Int], second: &[Int]) -> Upolynomial {
+    fn mod_gcd(&mut self, first: &[Int], second: &[Int]) -> Result<Upolynomial, SmtError> {
         let content_u = self.get_content(first);
         let content_v = self.get_content(second);
         let pp_u = self.get_primitive(first);
@@ -677,15 +699,18 @@ impl UpolynomialManager {
                 let u_zp = um.set(&pp_u);
                 let v_zp = um.set(&pp_v);
                 if u_zp.len() < degree_u + 1 || v_zp.len() < degree_v + 1 {
-                    return None;
+                    return Ok(None);
                 }
-                Some(um.mul_const(&um.get_monic(&um.euclid_gcd(&u_zp, &v_zp), &prime), &lc_g))
-            });
+                Ok(Some(um.mul_const(
+                    &um.get_monic(&um.euclid_gcd(&u_zp, &v_zp)?, &prime),
+                    &lc_g,
+                )))
+            })?;
             let Some(image) = image else {
                 continue;
             };
             if image.len() <= 1 {
-                return vec![content_g];
+                return Ok(vec![content_g]);
             }
             // The first image, or one of lower degree, replaces the accumulated image. Before the
             // first image the bound is zero, which is even.
@@ -702,18 +727,18 @@ impl UpolynomialManager {
                 && self.divides(&pp_u, &candidate)
                 && self.divides(&pp_v, &candidate)
             {
-                return self.flip_sign_if_lm_neg(&self.mul_const(&candidate, &content_g));
+                return Ok(self.flip_sign_if_lm_neg(&self.mul_const(&candidate, &content_g)));
             }
         }
         self.euclid_gcd(first, second)
     }
 
-    pub fn gcd(&mut self, first: &[Int], second: &[Int]) -> Upolynomial {
+    pub fn gcd(&mut self, first: &[Int], second: &[Int]) -> Result<Upolynomial, SmtError> {
         if first.is_empty() {
-            return self.flip_sign_if_lm_neg(&self.set(second));
+            return Ok(self.flip_sign_if_lm_neg(&self.set(second)));
         }
         if second.is_empty() {
-            return self.flip_sign_if_lm_neg(&self.set(first));
+            return Ok(self.flip_sign_if_lm_neg(&self.set(first)));
         }
         if self.modulus.is_none() {
             self.mod_gcd(first, second)
@@ -723,31 +748,31 @@ impl UpolynomialManager {
     }
 
     /// square_free: p divided by gcd(p, p'), normalized.
-    pub fn square_free(&mut self, coeffs: &[Int]) -> Upolynomial {
+    pub fn square_free(&mut self, coeffs: &[Int]) -> Result<Upolynomial, SmtError> {
         if coeffs.len() <= 1 {
-            return self.set(coeffs);
+            return Ok(self.set(coeffs));
         }
-        let common = self.gcd(coeffs, &self.derivative(coeffs));
-        if common.len() <= 1 {
+        let common = self.gcd(coeffs, &self.derivative(coeffs))?;
+        Ok(if common.len() <= 1 {
             self.set(coeffs)
         } else {
-            self.normalize(&self.div(coeffs, &common))
-        }
+            self.normalize(&self.div(coeffs, &common)?)
+        })
     }
 
-    pub fn is_square_free(&mut self, coeffs: &[Int]) -> bool {
-        coeffs.len() <= 1 || self.gcd(coeffs, &self.derivative(coeffs)).len() <= 1
+    pub fn is_square_free(&mut self, coeffs: &[Int]) -> Result<bool, SmtError> {
+        Ok(coeffs.len() <= 1 || self.gcd(coeffs, &self.derivative(coeffs))?.len() <= 1)
     }
 
-    pub fn pw(&self, coeffs: &[Int], exponent: u32) -> Upolynomial {
+    pub fn pw(&self, coeffs: &[Int], exponent: u32) -> Result<Upolynomial, SmtError> {
         if exponent == 0 {
-            return vec![Int::one()];
+            return Ok(vec![Int::one()]);
         }
         let mut result = self.set(coeffs);
         for _ in 1..exponent {
-            result = self.mul(&result, coeffs);
+            result = self.mul(&result, coeffs)?;
         }
-        result
+        Ok(result)
     }
 
     /// ext_gcd over Z_p: u, v and the monic d with a*u + b*v = d.
@@ -757,14 +782,14 @@ impl UpolynomialManager {
         let mut v1 = Vec::new();
         let mut v3 = self.set(second);
         while !v3.is_empty() {
-            let division = self.div_rem(&d, &v3);
-            let t = self.sub(&u, &self.mul(&v1, &division.quotient));
+            let division = self.div_rem(&d, &v3)?;
+            let t = self.sub(&u, &self.mul(&v1, &division.quotient)?);
             u = v1;
             d = v3;
             v1 = t;
             v3 = division.remainder;
         }
-        let v = self.div(&self.sub(&d, &self.mul(first, &u)), second);
+        let v = self.div(&self.sub(&d, &self.mul(first, &u)?), second)?;
         if d.last().is_none_or(|leading| *leading == Int::one()) {
             return Ok(ExtGcd { u, v, d });
         }
@@ -806,14 +831,15 @@ impl UpolynomialManager {
     }
 
     /// descartes_bound_0_1: the sign changes of (x+1)^n p(1/(x+1)), stopping above 1.
-    fn descartes_bound01(&self, coeffs: &[Int]) -> u32 {
+    fn descartes_bound01(&self, coeffs: &[Int]) -> Result<u32, SmtError> {
         if coeffs.len() <= 1 {
-            return 0;
+            return Ok(0);
         }
         let mut work = coeffs.to_vec();
         let mut previous = 0;
         let mut changes = 0;
         for index in 0..work.len() {
+            self.limit.checkpoint()?;
             let mut position = 1;
             while position < work.len() - index {
                 work[position] = &work[position] + &work[position - 1];
@@ -826,34 +852,36 @@ impl UpolynomialManager {
             if current != previous && previous != 0 {
                 changes += 1;
                 if changes > 1 {
-                    return changes;
+                    return Ok(changes);
                 }
             }
             previous = current;
         }
-        changes
+        Ok(changes)
     }
 
     /// translate: p(x + 1).
-    pub fn translate(&self, coeffs: &[Int]) -> Upolynomial {
+    pub fn translate(&self, coeffs: &[Int]) -> Result<Upolynomial, SmtError> {
         let mut result = coeffs.to_vec();
         let degree = result.len().saturating_sub(1);
         for step in 1..=degree {
+            self.limit.checkpoint()?;
             for index in degree - step..degree {
                 result[index] = &result[index] + &result[index + 1];
             }
         }
-        result
+        Ok(result)
     }
 
     /// translate_q: den^n * p(x + q).
-    pub fn translate_q(&self, coeffs: &[Int], value: &Rational) -> Upolynomial {
+    pub fn translate_q(&self, coeffs: &[Int], value: &Rational) -> Result<Upolynomial, SmtError> {
         if coeffs.len() <= 1 {
-            return coeffs.to_vec();
+            return Ok(coeffs.to_vec());
         }
         let mut result = self.compose_an_p_x_div_a(coeffs, value.den());
         let degree = result.len() - 1;
         for step in 1..=degree {
+            self.limit.checkpoint()?;
             result[degree - step] =
                 &result[degree - step] + &(value.num() * &result[degree - step + 1]);
             for index in degree - step + 1..degree {
@@ -861,7 +889,7 @@ impl UpolynomialManager {
             }
             result[degree] = &result[degree] * value.den();
         }
-        result
+        Ok(result)
     }
 
     /// compose_2n_p_x_div_2: 2^n * p(x/2).
@@ -1102,10 +1130,14 @@ impl UpolynomialManager {
     // Root isolation by Descartes' rule of signs.
 
     /// push_child_frames: the halves (0, 1/2) and (1/2, 1), as 2^n p(x/2) and its translation.
-    fn push_child_frames(&self, coeffs: &[Int], frames: &mut Vec<DrsFrame>) {
+    fn push_child_frames(
+        &self,
+        coeffs: &[Int],
+        frames: &mut Vec<DrsFrame>,
+    ) -> Result<(), SmtError> {
         let parent = frames.len().checked_sub(1);
         let left = self.normalize(&self.compose2n_p_x_div2(coeffs));
-        let right = self.normalize(&self.translate(&left));
+        let right = self.normalize(&self.translate(&left)?);
         frames.push(DrsFrame {
             parent,
             coeffs: left,
@@ -1118,6 +1150,7 @@ impl UpolynomialManager {
             is_first: true,
             is_left: false,
         });
+        Ok(())
     }
 
     /// The interval (0, 1), or the point 1/2, of the top frame mapped back through its ancestors.
@@ -1135,33 +1168,41 @@ impl UpolynomialManager {
         result
     }
 
-    fn drs_isolate01_roots(&self, coeffs: &[Int], result: &mut IsolatedRoots) {
-        let bound = self.descartes_bound01(coeffs);
+    fn drs_isolate01_roots(
+        &self,
+        coeffs: &[Int],
+        result: &mut IsolatedRoots,
+    ) -> Result<(), SmtError> {
+        let bound = self.descartes_bound01(coeffs)?;
         if bound == 0 {
-            return;
+            return Ok(());
         }
         if bound == 1 {
             result.lowers.push(Mpbq::zero());
             result.uppers.push(Mpbq::one());
-            return;
+            return Ok(());
         }
         let half = Mpbq::of(Int::one(), 1);
         let mut frames: Vec<DrsFrame> = Vec::new();
         let two_x_minus_one = [Int::from(-1), Int::from(2)];
         if self.has_one_half_root(coeffs) {
             result.roots.push(half.clone());
-            self.push_child_frames(&self.div(coeffs, &two_x_minus_one), &mut frames);
+            self.push_child_frames(&self.div(coeffs, &two_x_minus_one)?, &mut frames)?;
         } else {
-            self.push_child_frames(coeffs, &mut frames);
+            self.push_child_frames(coeffs, &mut frames)?;
         }
-        while let Some(frame) = frames.last_mut() {
+        while !frames.is_empty() {
+            self.limit.checkpoint()?;
+            let Some(frame) = frames.last_mut() else {
+                break;
+            };
             if !frame.is_first {
                 frames.pop();
                 continue;
             }
             frame.is_first = false;
             let frame_coeffs = frame.coeffs.clone();
-            let frame_bound = self.descartes_bound01(&frame_coeffs);
+            let frame_bound = self.descartes_bound01(&frame_coeffs)?;
             if frame_bound == 0 {
                 frames.pop();
                 continue;
@@ -1174,16 +1215,21 @@ impl UpolynomialManager {
             }
             if self.has_one_half_root(&frame_coeffs) {
                 result.roots.push(self.map_to_root(&frames, &half));
-                self.push_child_frames(&self.div(&frame_coeffs, &two_x_minus_one), &mut frames);
+                self.push_child_frames(&self.div(&frame_coeffs, &two_x_minus_one)?, &mut frames)?;
             } else {
-                self.push_child_frames(&frame_coeffs, &mut frames);
+                self.push_child_frames(&frame_coeffs, &mut frames)?;
             }
         }
+        Ok(())
     }
 
     /// drs_isolate_roots: the positive roots in (0, 2^k) and the negative ones in (-2^k', 0), each
     /// found as the roots in (0, 1) of p(2^k x) or p(-2^k' x) and scaled back.
-    fn drs_isolate_roots(&self, coeffs: &[Int], result: &mut IsolatedRoots) {
+    fn drs_isolate_roots(
+        &self,
+        coeffs: &[Int],
+        result: &mut IsolatedRoots,
+    ) -> Result<(), SmtError> {
         let normalized = self.normalize(coeffs);
         let negative_k = self.knuth_negative_root_upper_bound(coeffs);
         let positive_k = negative_k.max(self.knuth_positive_root_upper_bound(coeffs));
@@ -1191,7 +1237,7 @@ impl UpolynomialManager {
             |scaled: &[Int], k: u32, is_negated: bool, result: &mut IsolatedRoots| {
                 let roots_start = result.roots.len();
                 let bounds_start = result.lowers.len();
-                self.drs_isolate01_roots(&self.compose_p2k_x(scaled, k), result);
+                self.drs_isolate01_roots(&self.compose_p2k_x(scaled, k), result)?;
                 let adjust = |values: &mut Vec<Mpbq>, start: usize| {
                     for value in &mut values[start..] {
                         let scaled_value = value.mul2k(k);
@@ -1205,20 +1251,22 @@ impl UpolynomialManager {
                 adjust(&mut result.roots, roots_start);
                 adjust(&mut result.lowers, bounds_start);
                 adjust(&mut result.uppers, bounds_start);
-                bounds_start
+                Ok(bounds_start)
             };
-        isolate_scaled(&normalized, positive_k, false, result);
-        let negative_start = isolate_scaled(&self.p_minus_x(&normalized), negative_k, true, result);
+        isolate_scaled(&normalized, positive_k, false, result)?;
+        let negative_start =
+            isolate_scaled(&self.p_minus_x(&normalized), negative_k, true, result)?;
         for index in negative_start..result.lowers.len() {
             let lower = result.lowers[index].clone();
             result.lowers[index] = result.uppers[index].clone();
             result.uppers[index] = lower;
         }
+        Ok(())
     }
 
     /// sqf_isolate_roots: the roots of a square-free polynomial, exact roots first when zero is
     /// one, then the isolating intervals of the others.
-    pub fn sqf_isolate_roots(&self, coeffs: &[Int]) -> IsolatedRoots {
+    pub fn sqf_isolate_roots(&self, coeffs: &[Int]) -> Result<IsolatedRoots, SmtError> {
         let mut result = IsolatedRoots {
             roots: Vec::new(),
             lowers: Vec::new(),
@@ -1226,62 +1274,75 @@ impl UpolynomialManager {
         };
         if self.has_zero_roots(coeffs) {
             result.roots.push(Mpbq::zero());
-            self.drs_isolate_roots(&self.remove_zero_roots(coeffs), &mut result);
+            self.drs_isolate_roots(&self.remove_zero_roots(coeffs), &mut result)?;
         } else {
-            self.drs_isolate_roots(coeffs, &mut result);
+            self.drs_isolate_roots(coeffs, &mut result)?;
         }
-        result
+        Ok(result)
     }
 
     // Sturm sequences.
 
+    /// A canceled step ends the sequence early, as in Z3.
     fn sturm_seq_core(&self, mut sequence: Vec<Upolynomial>) -> Vec<Upolynomial> {
-        loop {
+        while self.limit.inc() {
             let remainder = self.srem(&sequence[sequence.len() - 2], &sequence[sequence.len() - 1]);
             if remainder.is_empty() {
                 return sequence;
             }
             sequence.push(self.normalize(&remainder));
         }
+        sequence
     }
 
     pub fn sturm_seq(&self, coeffs: &[Int]) -> Vec<Upolynomial> {
         self.sturm_seq_core(vec![coeffs.to_vec(), self.derivative(coeffs)])
     }
 
-    pub fn sturm_tarski_seq(&self, first: &[Int], second: &[Int]) -> Vec<Upolynomial> {
-        self.sturm_seq_core(vec![
+    pub fn sturm_tarski_seq(
+        &self,
+        first: &[Int],
+        second: &[Int],
+    ) -> Result<Vec<Upolynomial>, SmtError> {
+        Ok(self.sturm_seq_core(vec![
             first.to_vec(),
-            self.mul(&self.derivative(first), second),
-        ])
+            self.mul(&self.derivative(first), second)?,
+        ]))
     }
 
     // Refinement.
 
     /// isolating2refinable: an isolating interval of a square-free polynomial turned into one whose
     /// endpoint signs differ, or the root it contains.
-    pub fn isolating2refinable(&self, coeffs: &[Int], lower: &Mpbq, upper: &Mpbq) -> Refinement {
+    pub fn isolating2refinable(
+        &self,
+        coeffs: &[Int],
+        lower: &Mpbq,
+        upper: &Mpbq,
+    ) -> Result<Refinement, SmtError> {
+        self.limit.checkpoint()?;
         let sign_lower = self.eval_sign_at_bq(coeffs, lower);
         let sign_upper = self.eval_sign_at_bq(coeffs, upper);
         if sign_lower != 0 && sign_upper != 0 {
-            return Refinement {
+            return Ok(Refinement {
                 is_interval: true,
                 lower: lower.clone(),
                 upper: upper.clone(),
-            };
+            });
         }
         if sign_lower == 0 && sign_upper != 0 {
             let a = lower;
             let mut b = upper.clone();
             let mut new_a = a.add(&b).div2();
             loop {
+                self.limit.checkpoint()?;
                 let sign_new_a = self.eval_sign_at_bq(coeffs, &new_a);
                 if sign_new_a != sign_upper {
-                    return Refinement {
+                    return Ok(Refinement {
                         is_interval: sign_new_a != 0,
                         lower: new_a,
                         upper: b,
-                    };
+                    });
                 }
                 b = new_a;
                 new_a = b.add(a).div2();
@@ -1292,9 +1353,10 @@ impl UpolynomialManager {
             let b = upper;
             let mut new_b = a.add(b).div2();
             loop {
+                self.limit.checkpoint()?;
                 let sign_new_b = self.eval_sign_at_bq(coeffs, &new_b);
                 if sign_new_b != sign_lower {
-                    return if sign_new_b == 0 {
+                    return Ok(if sign_new_b == 0 {
                         Refinement {
                             is_interval: false,
                             lower: new_b,
@@ -1306,7 +1368,7 @@ impl UpolynomialManager {
                             lower: a,
                             upper: new_b,
                         }
-                    };
+                    });
                 }
                 a = new_b;
                 new_b = b.add(&a).div2();
@@ -1319,44 +1381,45 @@ impl UpolynomialManager {
         let sign_b1 = self.eval_sign_at_bq(coeffs, &b1);
         let sign_a2 = sign_b1;
         if sign_b1 == 0 {
-            return Refinement {
+            return Ok(Refinement {
                 is_interval: false,
                 lower: b1,
                 upper: upper.clone(),
-            };
+            });
         }
         let mut new_a1 = a1.add(&b1).div2();
         let mut new_b2 = a2.add(b2).div2();
         loop {
+            self.limit.checkpoint()?;
             let sign_new_a1 = self.eval_sign_at_bq(coeffs, &new_a1);
             if sign_new_a1 == 0 {
-                return Refinement {
+                return Ok(Refinement {
                     is_interval: false,
                     lower: new_a1,
                     upper: upper.clone(),
-                };
+                });
             }
             if sign_new_a1 == -sign_b1 {
-                return Refinement {
+                return Ok(Refinement {
                     is_interval: true,
                     lower: new_a1,
                     upper: b1,
-                };
+                });
             }
             let sign_new_b2 = self.eval_sign_at_bq(coeffs, &new_b2);
             if sign_new_b2 == 0 {
-                return Refinement {
+                return Ok(Refinement {
                     is_interval: false,
                     lower: new_b2,
                     upper: upper.clone(),
-                };
+                });
             }
             if sign_new_b2 == -sign_a2 {
-                return Refinement {
+                return Ok(Refinement {
                     is_interval: true,
                     lower: a2,
                     upper: new_b2,
-                };
+                });
             }
             b1 = new_a1;
             new_a1 = b1.add(a1).div2();
@@ -1408,7 +1471,7 @@ impl UpolynomialManager {
         lower: &Mpbq,
         upper: &Mpbq,
         precision: u32,
-    ) -> Refinement {
+    ) -> Result<Refinement, SmtError> {
         let sign_lower = self.eval_sign_at_bq(coeffs, lower);
         let mut current = Refinement {
             is_interval: true,
@@ -1416,16 +1479,17 @@ impl UpolynomialManager {
             upper: upper.clone(),
         };
         loop {
+            self.limit.checkpoint()?;
             if current
                 .upper
                 .sub(&current.lower)
                 .is_less_than_one_div2k(precision)
             {
-                return current;
+                return Ok(current);
             }
             current = self.refine_core(coeffs, sign_lower, &current.lower, &current.upper);
             if !current.is_interval {
-                return current;
+                return Ok(current);
             }
         }
     }
@@ -1547,7 +1611,7 @@ impl UpolynomialManager {
 mod tests {
     use super::super::test_util::read_fixture;
     use super::super::{Int, Rational};
-    use super::{Mpbq, UpolynomialManager};
+    use super::{Mpbq, NlsatLimit, UpolynomialManager};
 
     fn parse_rational(text: &str) -> Rational {
         let parts: Vec<&str> = text.split('/').collect();
@@ -1569,20 +1633,22 @@ mod tests {
     // Isolates the roots of the square-free part, then makes each interval refinable, refines it
     // to width 1/2^20, and reports the root's index and the interval normalized around zero.
     fn show_isolation(um: &mut UpolynomialManager, coeffs: &[Int]) -> String {
-        let square_free = um.square_free(coeffs);
-        let isolated = um.sqf_isolate_roots(&square_free);
+        let square_free = um.square_free(coeffs).expect("no limit");
+        let isolated = um.sqf_isolate_roots(&square_free).expect("no limit");
         let refined: Vec<String> = isolated
             .lowers
             .iter()
             .enumerate()
             .map(|(index, lower)| {
-                let refinable =
-                    um.isolating2refinable(&square_free, lower, &isolated.uppers[index]);
+                let refinable = um
+                    .isolating2refinable(&square_free, lower, &isolated.uppers[index])
+                    .expect("no limit");
                 if !refinable.is_interval {
                     return format!(" root {}", refinable.lower);
                 }
-                let result =
-                    um.refine_to_precision(&square_free, &refinable.lower, &refinable.upper, 20);
+                let result = um
+                    .refine_to_precision(&square_free, &refinable.lower, &refinable.upper, 20)
+                    .expect("no limit");
                 let root_id = um.get_root_id(&square_free, &result.lower);
                 if !result.is_interval {
                     return format!(
@@ -1651,7 +1717,7 @@ mod tests {
                 }
             })
             .collect();
-        let mut um = UpolynomialManager::new(None);
+        let mut um = UpolynomialManager::new(None, NlsatLimit::default());
         let first = to_coeffs(&um, &operands[0]);
         if is_modular {
             let prime: Int = words[1].parse().expect("a prime");
@@ -1659,20 +1725,20 @@ mod tests {
                 let x = um.set(&first);
                 let y = um.set(&to_coeffs(um, &operands[1]));
                 match op {
-                    "zgcd" => show_coeffs(&um.gcd(&x, &y)),
+                    "zgcd" => show_coeffs(&um.gcd(&x, &y).expect("no limit")),
                     "zextgcd" => {
                         let result = um.ext_gcd(&x, &y).expect("ext_gcd over Z_p");
                         show_coeffs(&result.u) + &show_coeffs(&result.v) + &show_coeffs(&result.d)
                     }
                     "zdivrem" => {
-                        let division = um.div_rem(&x, &y);
+                        let division = um.div_rem(&x, &y).expect("no limit");
                         show_coeffs(&division.quotient) + &show_coeffs(&division.remainder)
                     }
-                    "zsqf" => show_coeffs(&um.square_free(&x)),
-                    "zsqfp" => show_flag(um.is_square_free(&x)),
+                    "zsqf" => show_coeffs(&um.square_free(&x).expect("no limit")),
+                    "zsqfp" => show_flag(um.is_square_free(&x).expect("no limit")),
                     "zmonic" => show_coeffs(&um.mk_monic(&x).expect("mk_monic over Z_p")),
                     "zdivides" => show_flag(um.divides(&x, &y)),
-                    "zmul" => show_coeffs(&um.mul(&x, &y)),
+                    "zmul" => show_coeffs(&um.mul(&x, &y).expect("no limit")),
                     _ => match um.exact_div(&x, &y) {
                         None => " 0".to_string(),
                         Some(exact) => format!(" 1{}", show_coeffs(&exact)),
@@ -1686,10 +1752,15 @@ mod tests {
             "isolate" => format!("isolate{}", show_isolation(&mut um, &first)),
             "gcd" => {
                 let second = to_coeffs(&um, &second);
-                format!("gcd{}", show_coeffs(&um.gcd(&first, &second)))
+                format!(
+                    "gcd{}",
+                    show_coeffs(&um.gcd(&first, &second).expect("no limit"))
+                )
             }
             "divrem" => {
-                let division = um.div_rem(&first, &to_coeffs(&um, &second));
+                let division = um
+                    .div_rem(&first, &to_coeffs(&um, &second))
+                    .expect("no limit");
                 format!(
                     "divrem {}{}{}",
                     division.power,
@@ -1709,12 +1780,21 @@ mod tests {
                 "divides{}",
                 show_flag(um.divides(&first, &to_coeffs(&um, &second)))
             ),
-            "sqf" => format!("sqf{}", show_coeffs(&um.square_free(&first))),
-            "sqfp" => format!("sqfp{}", show_flag(um.is_square_free(&first))),
+            "sqf" => format!(
+                "sqf{}",
+                show_coeffs(&um.square_free(&first).expect("no limit"))
+            ),
+            "sqfp" => format!(
+                "sqfp{}",
+                show_flag(um.is_square_free(&first).expect("no limit"))
+            ),
             "sturm" => format!("sturm{}", show_sequence(&um.sturm_seq(&first))),
             "tarski" => format!(
                 "tarski{}",
-                show_sequence(&um.sturm_tarski_seq(&first, &to_coeffs(&um, &second)))
+                show_sequence(
+                    &um.sturm_tarski_seq(&first, &to_coeffs(&um, &second))
+                        .expect("no limit")
+                )
             ),
             "q2bq" => {
                 let result = um.convert_q2bq_interval(
@@ -1742,7 +1822,10 @@ mod tests {
             ),
             "transq" => format!(
                 "transq{}",
-                show_coeffs(&um.translate_q(&first, &parse_rational(&second[0])))
+                show_coeffs(
+                    &um.translate_q(&first, &parse_rational(&second[0]))
+                        .expect("no limit")
+                )
             ),
             "compq" => format!(
                 "compq{}",
@@ -1764,7 +1847,10 @@ mod tests {
             ),
             _ => format!(
                 "pw{}",
-                show_coeffs(&um.pw(&first, second[0].parse().expect("an exponent")))
+                show_coeffs(
+                    &um.pw(&first, second[0].parse().expect("an exponent"))
+                        .expect("no limit")
+                )
             ),
         }
     }
@@ -1788,10 +1874,14 @@ mod tests {
 
     #[test]
     fn skips_primes_that_divide_a_leading_coefficient_in_the_modular_gcd() {
-        let mut um = UpolynomialManager::new(None);
+        let mut um = UpolynomialManager::new(None, NlsatLimit::default());
         let shared = vec![Int::from(-2), Int::from(39103 * 39107)];
-        let first = um.mul(&[Int::from(3), Int::from(5), Int::from(7 * 39103)], &shared);
-        let second = um.mul(&shared, &[Int::from(7), Int::from(1), Int::from(39103)]);
-        assert_eq!(um.gcd(&first, &second), shared);
+        let first = um
+            .mul(&[Int::from(3), Int::from(5), Int::from(7 * 39103)], &shared)
+            .expect("no limit");
+        let second = um
+            .mul(&shared, &[Int::from(7), Int::from(1), Int::from(39103)])
+            .expect("no limit");
+        assert_eq!(um.gcd(&first, &second).expect("no limit"), shared);
     }
 }
