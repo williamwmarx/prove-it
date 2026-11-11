@@ -228,7 +228,7 @@ fn marshal_refuses_sizes_the_input_cannot_hold() {
 // longer is corrupt.
 fn chained(length: usize) -> Vec<u8> {
     let mut data = vec![0x08];
-    data.extend((((length as u32) << 10) as u32).to_be_bytes());
+    data.extend(((length as u32) << 10).to_be_bytes());
     data.extend([0x90, 0x40]);
     for _ in 1..length {
         data.extend([0x90, 0x04, 0x02]);
