@@ -1150,12 +1150,25 @@ though (equal on 1,464 inputs, a median of 0.92 of it): some of Z3's resource-li
 counted.
 
 How the divergences were found: the instance streams. `smt.qi.profile_freq=1` makes Z3 print each
-instance's quantifier as it makes it, the TypeScript's `QiQueue.instantiateEntry` gives the same
-stream, and unnamed quantifiers get the name Z3's parser gives them, `k!<line>`, written into the
-text as `:qid` (Z3 neither hashes nor compares it, and both streams stay the same). Z3's
-`trace=true` changes Z3's search and cannot be used. A Z3 5.3.3 built from the tag with tracing
-(`Z3_ENABLE_TRACING_FOR_NON_DEBUG`) gives the pinned binary's counts. Its `qi_queue_profile`,
-`mam_candidate` and `trigger_bug` traces leave the search unchanged, but `model_checker` changes it.
+instance's quantifier as it makes it, and the TypeScript's `QiQueue.instantiateEntry` gives the same
+stream. Z3 names a quantifier without `:qid` `k!<line>` with a numerical qid, and compares two
+quantifiers' qids unless both are numerical (`ast.cpp:448-449`), so a `:qid k!<line>` written into
+the text can stop Z3 from sharing two equal quantifiers and change its search (it does on
+`beb7dd1741444a77`). Z3's streams therefore come from the text as recorded, and the TypeScript's
+from the text with the names written in, which it does not change, since the TypeScript never
+compares qids (`ast.ts:1063`). Z3's `trace=true` changes Z3's search and cannot be used. A Z3 5.3.3
+built from the tag with tracing (`Z3_ENABLE_TRACING_FOR_NON_DEBUG`) gives the pinned binary's
+counts. Its `qi_queue_profile`, `mam_candidate` and `trigger_bug` traces leave the search
+unchanged, but `model_checker` changes it.
+
+Where the instance streams part, finer streams of both, compared event by event, place the first
+event that differs. In the build, trace points that print terms with `mk_ll_pp` (they leave the
+counts unchanged) give the e-matching candidates and code-tree runs, the matches and their
+fingerprints, the instantiation attempts with their bindings, the MBQI counterexamples and
+inverses, the auxiliary context's assertions, preprocessed formulas and decisions, the model
+finder's partial functions, the fresh names, and the merges. Hooks on the same functions of the
+TypeScript give its stream. A cause is confirmed by adding Z3's behaviour to a scratch copy of the
+TypeScript: the instance stream must then be Z3's past the old first difference.
 
 **The TypeScript proves, Z3 doesn't.** Z3 times out at 5 s and at 50 s on each.
 
@@ -1170,27 +1183,6 @@ text as `:qid` (Z3 neither hashes nor compares it, and both streams stay the sam
 So none of the five is a soundness risk: each `unsat` holds. They are divergences in the search.
 Each run's instances are Z3's up to the point in the table. After that, the TypeScript happens to
 reach a proof, and Z3, on its own path, doesn't in the time.
-
-- `fe8845daad4c648e` cut down to 17 of its 22 assertions still diverges the same way.
-  - The cases are the instantiation attempts (counted or not) and the e-matching candidates, in
-    order: the first 446 agree.
-  - At the 447th, one e-matching round yields `k!25`'s matches of generation 0 and 2 in the
-    opposite order. No candidate is added between them, so the order comes from the matching, not
-    from the candidates.
-  - The places: `qi-queue.ts:270-289`, which instantiates in insertion order as
-    `qi_queue.cpp:150-187` does; `e-matching.ts:445-451, 573-630` against `mam.cpp:3191-3199,
-    3930-3938` and the path-tree matching on a new equality (`mam.cpp:3556-3770`, `add_eq_eh`
-    at 4032).
-  - The first event that differs inside the matching is not found yet.
-- `1319a2956705afce` and `5e53b781a834c8ec` cannot be cut at the level of assertions: each one is
-  needed. `8df9b72d29f8a626` cuts to 20 of 29.
-- `8df9b72d29f8a626` diverges on a quantifier with no pattern, so Z3 instantiates it from an
-  inferred pattern or by MBQI. If by MBQI, the places are `model-checker.ts:200-315` against
-  `smt_model_checker.cpp:218-627`, and the model finder's instantiation sets
-  (`auf-solver.ts:55-62` against `smt_model_finder.cpp:134-153`). That is not confirmed yet.
-- On `main` the TypeScript follows Z3 on `0c812b0a8aa1347b` up to its step limit. With part 3's fix
-  it proves the input instead. So the fix leaves Z3's search on this input; compare its stream
-  with Z3's before merging.
 
 **Z3 proves, the TypeScript doesn't: 72.** Each was decided again by the TypeScript with no time
 limit and a step limit of twice Z3's `rlimit-count`.
@@ -1210,20 +1202,87 @@ limit and a step limit of twice Z3's `rlimit-count`.
   - `024f5dc53f8b63a5` 214th, `k!25` against `k!431`.
   - `d542f926ff5ed013` 213th, `k!282` against `k!276`.
   - `fa51a87ba4ebf399` 7,702nd, `k!284` against `k!286`.
-  - `41a69bf765dd7c8b` 11,110th, `k!197` against `k!53`, and `beb7dd1741444a77` 152nd, `k!26`
-    against `k!46`. The TypeScript still proves these two with more steps, on another path.
+  - `41a69bf765dd7c8b` 11,110th, `k!197` against `k!53`, and `beb7dd1741444a77` 52,974th, `k!33`
+    against `k!49` (the 152nd with the names written in, which change Z3's search there). The
+    TypeScript still proves these two with more steps, on another path.
+
+**Where the searches part.** Four causes, in the TypeScript and in Z3 5.3.3 (paths under
+`src/prover/smt/solver/` and Z3's `src/`):
+
+1. **`flatten_clauses` distributes a shared conjunction.** `cb7b13d3236da8ea`,
+   `ee2307985b84e424`, `52c873767bacfb3b`, `024f5dc53f8b63a5`, `d542f926ff5ed013`,
+   `fa51a87ba4ebf399` and `beb7dd1741444a77`; and of the TypeScript's proofs `fe8845daad4c648e`,
+   `5e53b781a834c8ec` and the first divergence of `1319a2956705afce`.
+   - Z3 distributes `(or a (not d))` into clauses only when the disjunction `d` has no other
+     parent, `d->get_ref_count() == 1` in `can_distribute` (`solver/assertions/asserted_formulas.cpp:433-437`,
+     in `flatten_clauses`, 411). `asserted-formulas.ts:426-430`, in `flattenClauses` (405-468),
+     checks only the occurrence count, so it also distributes a `d` that another formula holds.
+   - The difference shows in MBQI's auxiliary context, which preprocesses each check's formulas.
+     On `cb7b13d3236da8ea` the events agree up to the 589th instantiation attempt, an MBQI
+     instance of `k!28`. In the check of `k!26` before it the auxiliary context's assertions are
+     the same, but after `flatten_clauses` its clauses differ (`(not (or …))` over a disjunction
+     that also occurs elsewhere). Its decision at level 4 then differs, and so does its
+     counterexample for `k!28` (`smt_model_checker.cpp:218`, `add_instance`, against
+     `model-checker.ts:200`). On `ee2307985b84e424` the first difference is again a preprocessed
+     clause of the auxiliary context.
+   - With the reference-count condition added, the TypeScript's instance stream is Z3's to the
+     end on `cb7b13d3236da8ea` (471 instances), `ee2307985b84e424` (1,257), `52c873767bacfb3b`
+     (2,343), `024f5dc53f8b63a5` (1,045), `d542f926ff5ed013` (53,000) and `fa51a87ba4ebf399`
+     (8,000), and it proves each. On `beb7dd1741444a77` it is Z3's for all 449,825 instances Z3
+     makes in 6 s, and the TypeScript proves it. On `fe8845daad4c648e` (28,303) and
+     `5e53b781a834c8ec` (86,967) it is Z3's whole 5 s stream, and the TypeScript no longer proves
+     either within its step limit.
+2. **The model gives `false` the value `true`.** `8df9b72d29f8a626`.
+   - Z3's model generator takes a Boolean class's value from `get_assignment(enode)`, which
+     answers `l_false` for the `false` node (`smt/smt_model_generator.cpp:102`,
+     `smt/smt_context.cpp:1681-1690`), and `get_assignment(expr)` answers `l_false` for `false`
+     before it looks at a Boolean variable (`smt_context.cpp:1646-1648`). The TypeScript's
+     `model-generator.ts:61` calls `findAssignment` (`internalizer.ts:380`), which reads the
+     variable that `false` shares with `true` (209) before it checks for `false` (389-390), and so
+     answers true.
+   - So `(Cast_Bool false)` has no entry of its own. MBQI's `cleanup_instantiation_sets`
+     evaluates it with model completion and gives `Cast_Bool` an else value
+     (`model-evaluator.ts:225`, `getMacro`, against `model/model_evaluator.cpp:394`). In Z3 the
+     function stays partial, so `complete_partial_funcs` gives it a projection and the fresh
+     `Cast_Bool!17` (`smt_model_finder.cpp:955-971, 1072-1109`, against `auf-solver.ts:466-481,
+     520-542`). The fresh names, the auxiliary context's clauses and the counterexamples part from
+     there, and the 37th instance, made by MBQI, differs.
+   - With `false` answered first, the TypeScript's stream is Z3's for all 9,343 instances it
+     makes within its step limit, and it no longer proves the input. This corrects the guess that
+     the model checker itself parts.
+3. **Propagated values reorder a restriction.** The second divergence of `1319a2956705afce`, at
+   the 736th instance once the first two causes are taken away.
+   - The auxiliary context gets the same restriction `(or (= k!269 v45) (= k!269 v19) …)`
+     (`smt_model_finder.cpp:2674`, `restrict_sks_to_inst_set`). The rewriting in the first pass of
+     `propagate_values` moves the same eight disjuncts to the front in a different order
+     (`solver/assertions/asserted_formulas.cpp:618-622`, the rewriter of `propagate_values(i)`,
+     against `asserted-formulas.ts:351-359`).
+   - The first differing event inside the rewriter is not found yet.
+4. **A propagated equality.** `41a69bf765dd7c8b`, which the first two causes don't touch.
+   - The events agree until a match of `k!52` with generation 10, about the 21,457th
+     instantiation attempt. Z3's next merge is an asserted equality between
+     `(Proj_Int (y1!6 (FunApp (e!7 (y1!6 …)) …)))`, a chain of four `y1!6`, and a shorter
+     `Proj_Int` term. The TypeScript's next merge joins a different `Proj_Int` term,
+     `(Proj_Int (y1!6 (z!0 …)))`, to the same one.
+   - The places: Z3's `context::propagate` and `add_eq` (`smt_context.cpp:1840, 484`) against
+     `context.ts:355, 470`. The first differing event inside, the assignment that leads to the
+     merge, is not found yet.
+
+`0c812b0a8aa1347b` follows Z3 on `main` (above), with or without the first cause's condition.
+With part 3's fix the TypeScript proves it instead, so the fix leaves Z3's search on this input;
+compare its stream with Z3's before merging.
 
 **Fix order.** No decider changes with this audit. The fixes come first where a verdict changes,
 and the earliest divergence first within each group, since a single cause may explain several:
 
-1. `cb7b13d3236da8ea` and `ee2307985b84e424`. Z3 proves them with far less work than the
-   TypeScript is allowed, so they change the verdict whatever the calibration.
-2. `52c873767bacfb3b`, `024f5dc53f8b63a5`, `d542f926ff5ed013` and `fa51a87ba4ebf399`, unknown
-   even at twice Z3's work.
-3. The TypeScript's extra proofs, from the smallest repro: `fe8845daad4c648e` (17 assertions,
-   447th event), then `8df9b72d29f8a626` (37th instance), `5e53b781a834c8ec`, `1319a2956705afce`. Then
-   `0c812b0a8aa1347b` once part 3 is in.
-4. `41a69bf765dd7c8b` and `beb7dd1741444a77`, which have the same verdict and a different path.
-5. The 64 step-limit cases need no decider fix. Recording step limits from Z3's `rlimit-count`
+1. The reference-count condition of `flatten_clauses` (cause 1). It changes the verdict of
+   `cb7b13d3236da8ea` and `ee2307985b84e424` whatever the calibration, and makes `52c873767bacfb3b`,
+   `024f5dc53f8b63a5`, `d542f926ff5ed013`, `fa51a87ba4ebf399` and `beb7dd1741444a77` follow Z3.
+   It takes away the TypeScript's extra proofs of `fe8845daad4c648e` and `5e53b781a834c8ec`.
+2. The value of `false` in the model (cause 2), which takes away the extra proof of
+   `8df9b72d29f8a626`.
+3. `1319a2956705afce` (cause 3) and `41a69bf765dd7c8b` (cause 4), once their first differing
+   events are found. Then `0c812b0a8aa1347b` once part 3 is in.
+4. The 64 step-limit cases need no decider fix. Recording step limits from Z3's `rlimit-count`
    within tlapm's time would make the record match Z3's verdicts there. That needs the step count
    to charge what Z3 charges first.
