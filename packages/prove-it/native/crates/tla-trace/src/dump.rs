@@ -62,6 +62,7 @@ impl Rebuilder<'_> {
         counter_example: &CounterExample<'_>,
         is_sharing_followed: bool,
         is_initial: bool,
+        is_tool: bool,
     ) -> Result<TraceDump, Unsupported> {
         let ir = self.evaluator().ir;
         // TLC's worker builds a safety violation's counterexample from the ALIAS of each state
@@ -73,7 +74,8 @@ impl Rebuilder<'_> {
             if is_sharing_followed {
                 return unsupported("of a model with an ALIAS");
             }
-            self.alias(counter_example.trace, None, None, false)?
+            // An ALIAS that fails holds TLC's message as -tool writes it (`Tool.evalAlias`).
+            self.alias(counter_example.trace, None, None, is_tool)?
         } else {
             None
         };

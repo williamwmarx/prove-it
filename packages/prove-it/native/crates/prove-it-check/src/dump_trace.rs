@@ -27,6 +27,8 @@ pub struct TraceDumps {
     is_trace_recorded: bool,
     /// That `.bin`, where the binary knows where TLC writes it.
     trace_file: Option<String>,
+    /// Whether TLC runs with -tool, which words a failing ALIAS's message in the dump.
+    is_tool: bool,
 }
 
 /// A file a dump writes, and what TLC prints as it writes it.
@@ -66,6 +68,7 @@ impl TraceDumps {
                 .collect(),
             is_trace_recorded,
             trace_file: trace_file.filter(|_| is_trace_recorded),
+            is_tool: args.has("-tool"),
         }
     }
 
@@ -133,6 +136,7 @@ impl TraceDumps {
             counter_example,
             self.dumps.iter().any(|dump| dump.0),
             is_initial,
+            self.is_tool,
         )?;
         let model_values: Vec<&str> = self.model_values.iter().map(String::as_str).collect();
         let mut files = Vec::new();

@@ -410,3 +410,33 @@ fn writes_the_trace_file_tlc_reads_back() {
         }
     }
 }
+
+#[test]
+fn dumps_a_failing_alias_as_tlc_with_tool() {
+    // With -tool TLC words the message of an ALIAS that fails as -tool prints it, which the dump
+    // holds (`Tool.evalAlias`).
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-te-bin-tool-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for extension in ["tla", "cfg"] {
+        let name = format!("AliasFails.{extension}");
+        std::fs::copy(te_bin_fixture(&name), directory.join(&name)).expect("the spec");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args([
+            "tlc2.TLC",
+            "-tool",
+            "-dumpTrace",
+            "tlc",
+            "A.bin",
+            "AliasFails",
+        ])
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(12));
+    let actual = std::fs::read(directory.join("A.bin")).expect("the dump");
+    let expected = std::fs::read(te_bin_fixture("AliasFails.tool.bin")).expect("TLC's dump");
+    assert_eq!(compare_values(&expected, &actual), Ok(()));
+    std::fs::remove_dir_all(directory).expect("removed");
+}

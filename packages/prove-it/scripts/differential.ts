@@ -17,7 +17,8 @@
 // whole corpus takes minutes, and fails if it prints something TLC doesn't that
 // known-differences.json doesn't list for tlc/native; a run it declines as not native fails nothing.
 // --modes te, with --native-only, compares it in TLC's own default, where TLC records the trace and
-// writes the trace exploration files, which the transcripts hold. TLC's binary trace file, the .bin,
+// writes the trace exploration files, which the transcripts hold, and runs each model with an ALIAS
+// with -tool -dumpTrace tlc too, in the jar and the binary. TLC's binary trace file, the .bin,
 // holds each string's token in the run that wrote it, which no other run reproduces, so the
 // transcript holds what TLC's -loadTrace rebuilds from it, with the jar TLA2TOOLS_JAR names: TLC's
 // file and the binary's are the same where TLC reads the same trace back from each. A truncated and
@@ -219,6 +220,49 @@ const readTrace = async (model: CorpusModel, bytes: Buffer) => {
   return `${loaded}\n--- the fingerprint of the value it holds\n${value}`;
 };
 
+// The -dumpTrace tlc file a checker writes for the model with -tool, which no recording holds:
+// TLC words the message of an ALIAS that fails as -tool prints it, which the file holds.
+const dumpWithTool = async (model: CorpusModel, command: string, args: string[]) => {
+  const directory = mkdtempSync(join(tmpdir(), "prove-it-tool-dump-"));
+  const dumpPath = join(directory, "trace.bin");
+  const tlcArgs = getTlcArguments(model, "tool", join(directory, "states"));
+  const configIndex = tlcArgs.indexOf("-config");
+  await new Promise((resolve) =>
+    spawn(
+      command,
+      [
+        ...args,
+        LIBRARY_OPTION,
+        "tlc2.TLC",
+        ...tlcArgs.slice(0, configIndex),
+        "-dumpTrace",
+        "tlc",
+        dumpPath,
+        ...tlcArgs.slice(configIndex),
+      ],
+      { cwd: model.directory, env: { ...process.env, JAVA_TOOL_OPTIONS: undefined }, stdio: "ignore" },
+    ).on("close", resolve),
+  );
+  const bytes = existsSync(dumpPath) ? readFileSync(dumpPath) : undefined;
+  rmSync(directory, { recursive: true, force: true });
+  return bytes;
+};
+
+// The models with an ALIAS whose -tool dump the binary writes and TLC reads back to something else.
+const toolDumpDifferences: string[] = [];
+
+// The -tool dumps of a model with an ALIAS, the jar's and the binary's, read back by TLC; the
+// binary may decline, and writes no file then.
+const compareToolDumps = async (model: CorpusModel) => {
+  if (!/\bALIAS\b/.test(readFileSync(model.configPath, "utf8"))) return;
+  const native = await dumpWithTool(model, nativeBinary ?? "", []);
+  if (native === undefined) return;
+  const tlc = await dumpWithTool(model, "java", ["-XX:+UseParallelGC", "-cp", tlaToolsJar ?? ""]);
+  const isSame =
+    tlc !== undefined && (await readTrace(model, tlc)) === (await readTrace(model, native));
+  if (!isSame) toolDumpDifferences.push(model.id);
+};
+
 // The trace exploration files with each .bin, held in base64, as what TLC reads back from it. Where
 // `isDamageChecked`, a truncated and a corrupted copy of each must read back to something else.
 const readTraceFiles = async (
@@ -384,6 +428,7 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     if (nativeBinary && isNativeOnly) {
       const native = await runChecker(nativeBinary, [], model, mode, process.env);
       if (tlc) compareNative(model.id, mode, tlc, native);
+      if (mode === "te") await compareToolDumps(model);
       results.push({ id: model.id, mode, tlc, outputs: { native } });
       const isSame = native.transcript === tlc;
       console.log(
@@ -518,12 +563,25 @@ if (nativeBinary) {
         for (const line of comparison.diff.slice(0, 10)) console.log(`    ${line}`);
       }
     }
+    if (toolDumpDifferences.length > 0) {
+      console.log(
+        `\n${toolDumpDifferences.length} -tool dumps of models with an ALIAS TLC reads back otherwise:`,
+      );
+      for (const id of toolDumpDifferences) console.log(`  ${id}`);
+    }
     if (undamaged.length > 0) {
       console.log(`\n${undamaged.length} damaged trace files TLC read back to the same trace:`);
       for (const run of undamaged) console.log(`  ${run}`);
     }
-    if (aborted.length > 0 || differing.length > 0 || undamaged.length > 0) process.exitCode = 1;
-    nativeSummary.text = `${differing.length} native differences known-differences.json doesn't list, ${aborted.length} native runs aborted, and ${undamaged.length} damaged trace files read back.`;
+    if (
+      aborted.length > 0 ||
+      differing.length > 0 ||
+      undamaged.length > 0 ||
+      toolDumpDifferences.length > 0
+    ) {
+      process.exitCode = 1;
+    }
+    nativeSummary.text = `${differing.length} native differences known-differences.json doesn't list, ${aborted.length} native runs aborted, ${undamaged.length} damaged trace files read back, and ${toolDumpDifferences.length} -tool dumps of an ALIAS read back otherwise.`;
   }
 }
 if (missing.length > 0) {

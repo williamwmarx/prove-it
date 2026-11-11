@@ -122,6 +122,7 @@ fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
                 },
                 true,
                 false,
+                false,
             )
             .expect("a dump");
         let json = is_json_first.then(|| dumped.to_json().expect("a JSON dump"));
