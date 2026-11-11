@@ -116,7 +116,10 @@ impl Sources {
     fn get_known(&self, key: String) -> Option<Known> {
         let value = self.known.get(&key).cloned();
         if value.is_none() {
-            self.needed.borrow_mut().push(key);
+            let mut needed = self.needed.borrow_mut();
+            if !needed.contains(&key) {
+                needed.push(key);
+            }
         }
         value.flatten()
     }
