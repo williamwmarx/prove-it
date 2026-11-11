@@ -293,3 +293,37 @@ fn declines_a_periodic_expression_it_doesnt_follow() {
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
+
+// TLC compares the function a function definition is with FALSE at its first progress, and fails
+// (exit 255, "Attempted to compare equality of boolean FALSE with non-boolean").
+#[test]
+fn declines_a_periodic_function_definition() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nPeriodic[n \\in {1}] == FALSE\n====\n";
+    let (output, directory) = run_spec_every_300("periodic-function", spec);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: a _PERIODIC naming a function definition\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// TLC fails as it starts where the configuration assigns a value to the _PERIODIC name: it finds
+// the value among its definitions and casts it to one (a ClassCastException, exit 255).
+#[test]
+fn declines_a_periodic_the_configuration_assigns_a_value_to() {
+    let (output, directory) = run_spec_with(
+        "periodic-assigned",
+        &periodic_spec(PERIODIC_COUNTER, "TRUE"),
+        &format!("{PERIODIC_CONFIG}CONSTANT Periodic = FALSE\n"),
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: a _PERIODIC the configuration assigns a value to\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
