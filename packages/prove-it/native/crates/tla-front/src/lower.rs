@@ -56,7 +56,7 @@ pub struct RankedTexts<'a> {
 
 /// `isStartupDefinition`: a constant definition without parameters the configuration doesn't
 /// replace.
-fn is_startup_definition(
+pub fn is_startup_definition(
     definition: &Rc<Definition>,
     environment: &Environment,
     facts: &DefinitionFacts,
