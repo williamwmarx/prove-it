@@ -2,12 +2,14 @@
 // and compares the verdict and the statistics with the TypeScript backends' recorded ones. The
 // answers must be the same, statistics included, which shows the same search was made.
 //   --side ts (the default) decides with the TypeScript backends, which checks that the recording
-//     reproduces; --side rust with the native ones. Zenon has only its Rust port, so both sides
-//     decide its inputs in Rust.
+//     reproduces; --side rust with the native ones. A backend without a TypeScript decider, as
+//     Zenon is, is decided by its Rust port on both sides, which the run says and its results
+//     record as `decider: "rust"`.
 //   --prover smt|z3|zenon|isabelle|ls4 and --filter text keep the inputs of one backend, or whose
 //     key, prover/digest, contains the text. --jobs n runs n workers. --verbose lists every difference.
 //   --update, with --side ts only, writes the answer of each input that differs into the record,
-//     keeping its step limit, for a TypeScript change that moves the search on the recorded limits.
+//     keeping its step limit, for a change that moves the search on the recorded limits: to a
+//     TypeScript backend, or to the Rust port of a backend without one.
 // "declined" counts the inputs the native backend doesn't decide yet, and isn't a failure.
 // An answer is "unstable" when the recording or the new decision stopped for a reason that is a
 // property of the runtime rather than of the search, a full heap or stack, and isn't compared.
@@ -18,7 +20,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { getNativeAddon } from "../src/engine/native";
 import { TlaProverError } from "../src/errors";
-import { decide } from "../src/prover/deciders";
+import { decide, hasTypeScriptDecider } from "../src/prover/deciders";
 import { CONFORMANCE_DIRECTORY, getOption, writeResults } from "./corpora";
 import { runModuleWorkers } from "./module-workers";
 import { printResults } from "./proof-records";
@@ -42,6 +44,8 @@ interface Result {
   actual?: InputAnswer;
   crash?: string;
   reason?: string;
+  // On --side ts, a backend without a TypeScript decider is decided by its Rust port.
+  decider?: "rust";
 }
 
 interface Batch {
@@ -95,7 +99,12 @@ const getResult = (key: string, record: InputRecord): Result => {
     statistics: record.statistics,
     ...(record.error !== undefined && { error: record.error }),
   };
-  const base = { prover: record.prover, key, expected };
+  const base = {
+    prover: record.prover,
+    key,
+    expected,
+    ...(side === "ts" && !hasTypeScriptDecider(record.prover) && { decider: "rust" as const }),
+  };
   const actual = (() => {
     try {
       return decideOnSide(record, readFileSync(getInputPath(key), "utf8"));
@@ -118,6 +127,11 @@ const records = readInputRecords();
 const keys = Object.keys(records)
   .filter((key) => prover === undefined || records[key].prover === prover)
   .filter((key) => filter === undefined || key.includes(filter));
+if (side === "ts")
+  new Set(keys.map((key) => records[key].prover)).forEach((backend) => {
+    if (!hasTypeScriptDecider(backend))
+      console.log(`${backend} has no TypeScript decider: its Rust port decides its inputs`);
+  });
 const batches: Batch[] = Array.from(
   { length: Math.ceil(keys.length / BATCH_SIZE) },
   (_, index) => ({

@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TlaError, TlaProverError } from "../src/errors";
-import { decide } from "../src/prover/deciders";
+import { BACKENDS, decide, hasTypeScriptDecider } from "../src/prover/deciders";
 import { proveObligations } from "../src/prover/prove";
 import type { Decision } from "../src/prover/verdict";
 import { CORPORA_DIRECTORY, getOption } from "./corpora";
@@ -73,6 +73,12 @@ const record = (prover: string, text: string, timeLimitMs: number): InputRecord 
     return { prover, verdict: "unknown", statistics: {}, error: error.message };
   }
 };
+
+// A backend without a TypeScript decider, as Zenon is, is recorded from its Rust port.
+if (isRecording)
+  BACKENDS.filter((backend) => !hasTypeScriptDecider(backend)).forEach((backend) =>
+    console.log(`${backend} has no TypeScript decider: its Rust port's answers are recorded`),
+  );
 
 const RECORDING_PATH = join(PROVER_INPUTS_DIRECTORY, "recording.jsonl");
 
