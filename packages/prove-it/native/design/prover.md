@@ -1255,6 +1255,12 @@ b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
     keeps `m_model` until that `reset_model` too, so where Z3 lets the model go is not found
     yet; an instrumented Z3 (printing `get_num_asts` and the declarations' ids and counts at
     `model_core`'s holds and drops) would settle it.
-  - *Open.* The fix stays, as Z3's counting. The change that matches Z3's runs, on both sides,
-    is to release the aux context's model when the model checker pops its scope; it waits for the
-    line in Z3 that does so.
+  - *Status: reverted, open.* The fix (ea83e9c) and its re-recording (9621162) are reverted:
+    on smt/0c812b0a8aa1347b it leaves Z3's stream at the 1,255th instance and proves what Z3 does
+    not, while main's TypeScript makes all of Z3's instances there, and a change of ours must not
+    put a verdict Z3 doesn't give into the record. So the TypeScript keeps its NaN count, the Rust
+    mirrors it (`decl_ref_counts: Vec<Option<i32>>`, 3e31515), and the record is main's. Neither is
+    Z3; the change that matches Z3's runs on every input that tells them apart (the fixed counting
+    plus releasing the aux context's model when the model checker pops its scope) waits for the
+    line in Z3 that releases that model, which an instrumented Z3 would show. It is then made on
+    both sides with `prover-differential --side ts --update`.

@@ -423,8 +423,10 @@ pub struct AstManager {
     signature_decls: HashMap<SignatureKey, SignatureDecl>,
     // The references to each user declaration: the script holds the declared ones, and applications
     // and models hold the fresh ones. A deleted declaration keeps its small id here, in case an
-    // application of it is created again.
-    decl_ref_counts: Vec<i32>,
+    // application of it is created again. A builtin declaration (a model's div0, say) has no count:
+    // the TypeScript reads undefined there, which counting makes NaN, never above 0, so each release
+    // of it deletes it and each hold after that gives it a new small id. None is that NaN.
+    decl_ref_counts: Vec<Option<i32>>,
     // The named expressions of the recfun plugin, by declaration, hashed by `get_decl_hash`.
     pub macros: ObjMap<Expr>,
     deleted_decls: HashSet<Decl>,
@@ -581,7 +583,8 @@ impl AstManager {
             self.mk_small_id();
         }
         let small_id = self.mk_small_id();
-        self.free_small_id(small_id);
+        self.free_small_ids.push(small_id);
+        self.num_decls -= 1;
     }
 
     // Sets the hash and the reference count of a new declaration, past the end of either table.
@@ -596,9 +599,9 @@ impl AstManager {
     fn set_decl_ref_count(&mut self, decl: Decl, count: i32) {
         let index = decl as usize;
         if self.decl_ref_counts.len() <= index {
-            self.decl_ref_counts.resize(index + 1, 0);
+            self.decl_ref_counts.resize(index + 1, None);
         }
-        self.decl_ref_counts[index] = count;
+        self.decl_ref_counts[index] = Some(count);
     }
 
     /// insert_macro: cmd_context keeps a named expression as a recursive function with one case,
@@ -648,20 +651,14 @@ impl AstManager {
                 8 * i64::from(self.sorts[expr as usize]) + SIGNATURE_ITE,
             ));
         }
+        if decl == OP_DIV0 || decl == OP_IDIV0 || decl == OP_MOD0 {
+            return Some(SignatureKey::Number(8 * i64::from(decl) + SIGNATURE_DIV0));
+        }
         if decl == OP_DISTINCT || decl == OP_PATTERN {
             return Some(SignatureKey::Domain(
                 decl,
                 self.map_args(expr, |arg, _| self.sorts[arg as usize]),
             ));
-        }
-        self.get_decl_signature(decl)
-    }
-
-    // The signature of a builtin declaration that each of its applications shares, a division by
-    // zero or a model value, or None for any other declaration.
-    fn get_decl_signature(&self, decl: Decl) -> Option<SignatureKey> {
-        if decl == OP_DIV0 || decl == OP_IDIV0 || decl == OP_MOD0 {
-            return Some(SignatureKey::Number(8 * i64::from(decl) + SIGNATURE_DIV0));
         }
         if self.func_decls[decl as usize].family == FAMILY_MODEL_VALUE {
             return Some(SignatureKey::Number(
@@ -696,13 +693,9 @@ impl AstManager {
             self.inc_decl_ref(decl);
             return;
         }
-        if let Some(key) = self.get_signature(expr) {
-            self.hold_signature(decl, key);
-        }
-    }
-
-    // Holds the declaration of a signature, which Z3 makes when it is first held.
-    fn hold_signature(&mut self, decl: Decl, key: SignatureKey) {
+        let Some(key) = self.get_signature(expr) else {
+            return;
+        };
         if let Some(signature_decl) = self.signature_decls.get_mut(&key) {
             signature_decl.ref_count += 1;
             return;
@@ -730,28 +723,22 @@ impl AstManager {
     fn release_decl(&mut self, expr: Expr) -> Result<i32, SmtError> {
         let decl = self.decls[expr as usize];
         if self.func_decls[decl as usize].family == FAMILY_USER {
-            self.decl_ref_counts[decl as usize] -= 1;
-            if self.decl_ref_counts[decl as usize] > 0 {
+            if self.dec_decl_ref_count(decl) {
                 return Ok(-1);
             }
             self.deleted_decls.insert(decl);
             return Ok(self.func_decls[decl as usize].small_id);
         }
-        match self.get_signature(expr) {
-            Some(key) => self.release_signature(&key),
-            None => Ok(-1),
-        }
-    }
-
-    // The small id of the declaration of a signature that loses its last reference, or -1.
-    fn release_signature(&mut self, key: &SignatureKey) -> Result<i32, SmtError> {
-        let signature_decl = self.get_signature_decl(key)?;
+        let Some(key) = self.get_signature(expr) else {
+            return Ok(-1);
+        };
+        let signature_decl = self.get_signature_decl(&key)?;
         signature_decl.ref_count -= 1;
         if signature_decl.ref_count > 0 {
             return Ok(-1);
         }
         let small_id = signature_decl.small_id;
-        self.signature_decls.remove(key);
+        self.signature_decls.remove(&key);
         Ok(small_id)
     }
 
@@ -759,46 +746,67 @@ impl AstManager {
         self.ref_counts[expr as usize] += 1;
     }
 
-    /// A model holds a declaration as an application does: Z3 counts the references to a func_decl
-    /// together, so a builtin declaration with a signature (a model's div0 or model value) is
-    /// counted under it, with the applications that hold it. Z3's plugins keep the other builtin
-    /// declarations.
+    /// A model value's declaration is counted under its signature, like the applications that hold
+    /// it.
     pub fn inc_decl_ref(&mut self, decl: Decl) {
-        if self.func_decls[decl as usize].family == FAMILY_USER {
-            if self.deleted_decls.remove(&decl) {
-                self.func_decls[decl as usize].small_id = self.mk_small_id();
+        if self.func_decls[decl as usize].family == FAMILY_MODEL_VALUE {
+            let key = SignatureKey::Number(8 * i64::from(decl) + SIGNATURE_MODEL_VALUE);
+            if let Some(signature_decl) = self.signature_decls.get_mut(&key) {
+                signature_decl.ref_count += 1;
+                return;
             }
-            self.decl_ref_counts[decl as usize] += 1;
+            let small_id = self.mk_small_id();
+            self.signature_decls.insert(
+                key,
+                SignatureDecl {
+                    small_id,
+                    ref_count: 1,
+                },
+            );
+            self.func_decls[decl as usize].small_id = small_id;
             return;
         }
-        if let Some(key) = self.get_decl_signature(decl) {
-            self.hold_signature(decl, key);
+        if self.deleted_decls.remove(&decl) {
+            self.func_decls[decl as usize].small_id = self.mk_small_id();
+        }
+        if let Some(Some(count)) = self.decl_ref_counts.get_mut(decl as usize) {
+            *count += 1;
+        }
+    }
+
+    // Counts a released reference to a declaration, and returns whether references remain.
+    fn dec_decl_ref_count(&mut self, decl: Decl) -> bool {
+        match self.decl_ref_counts.get_mut(decl as usize) {
+            Some(Some(count)) => {
+                *count -= 1;
+                *count > 0
+            }
+            _ => false,
         }
     }
 
     pub fn dec_decl_ref(&mut self, decl: Decl) -> Result<(), SmtError> {
-        if self.func_decls[decl as usize].family == FAMILY_USER {
-            self.decl_ref_counts[decl as usize] -= 1;
-            if self.decl_ref_counts[decl as usize] > 0 {
+        if self.func_decls[decl as usize].family == FAMILY_MODEL_VALUE {
+            let key = SignatureKey::Number(8 * i64::from(decl) + SIGNATURE_MODEL_VALUE);
+            let signature_decl = self.get_signature_decl(&key)?;
+            signature_decl.ref_count -= 1;
+            if signature_decl.ref_count > 0 {
                 return Ok(());
             }
-            self.deleted_decls.insert(decl);
-            self.free_small_id(self.func_decls[decl as usize].small_id);
+            let small_id = signature_decl.small_id;
+            self.free_small_ids.push(small_id);
+            self.signature_decls.remove(&key);
+            self.num_decls -= 1;
             return Ok(());
         }
-        let small_id = match self.get_decl_signature(decl) {
-            Some(key) => self.release_signature(&key)?,
-            None => -1,
-        };
-        if small_id != -1 {
-            self.free_small_id(small_id);
+        if self.dec_decl_ref_count(decl) {
+            return Ok(());
         }
-        Ok(())
-    }
-
-    fn free_small_id(&mut self, small_id: i32) {
-        self.free_small_ids.push(small_id);
+        self.deleted_decls.insert(decl);
+        self.free_small_ids
+            .push(self.func_decls[decl as usize].small_id);
         self.num_decls -= 1;
+        Ok(())
     }
 
     /// Runs body, holding each expression it creates until it returns, then releases them, the last
@@ -892,7 +900,8 @@ impl AstManager {
         let mut worklist = vec![expr];
         while let Some(node) = worklist.pop() {
             if node < 0 {
-                self.free_small_id(-1 - node);
+                self.free_small_ids.push(-1 - node);
+                self.num_decls -= 1;
                 continue;
             }
             self.delete_node(node);
