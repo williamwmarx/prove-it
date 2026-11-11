@@ -238,9 +238,10 @@ sides **without a deadline and with a step limit**, as built in P0:
   `tests/conformance/prover-inputs.json`. From then on the record is a fact about the input, not
   the machine: any port, on any machine, at any load, must give the same answer and statistics
   from the same step limit.
-- **Unstable answers.** A full heap (V8's, in `rlimit.ts`) or stack ends a decision for a reason
-  of the runtime, not the search. The record keeps the reason as the statistic `stop`, and the
-  differential reports such inputs as `unstable` instead of comparing them.
+- **Unstable answers.** A full stack ends a decision for a reason of the runtime, not the search.
+  The record keeps the reason as the statistic `stop`, and the differential reports such inputs as
+  `unstable` instead of comparing them. V8's full heap was one too while the TypeScript decided;
+  the Rust SMT core's `stop=heap` is its size cap (3.6), a count, and is compared like any stop.
 
 ### 2.4 The baseline
 
