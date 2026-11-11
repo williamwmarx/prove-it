@@ -159,6 +159,9 @@ pub struct Tables {
     /// The expressions INSTANCEs put in for declarations, each with the INSTANCE and whether it
     /// applies an operator put in for an operator declaration.
     substitutions: RefCell<FastMap<usize, (Expr, usize, bool)>>,
+    /// The expressions more than one INSTANCE puts in, as a bare name put in again by an
+    /// INSTANCE in the instantiated module.
+    shared_substitutions: RefCell<FastSet<usize>>,
     instance_count: Cell<usize>,
     /// The declaration each expression an INSTANCE puts in replaces.
     substituted_declarations: RefCell<FastMap<usize, (Expr, Rc<Declaration>)>>,
@@ -181,6 +184,16 @@ impl Tables {
     /// Notes an expression the INSTANCE `instance` puts in for a declaration of the module it
     /// instantiates, or, `is_operator`, an application of the operator it puts in for one.
     pub fn add_substitution(&self, expression: &Expr, instance: usize, is_operator: bool) {
+        if self
+            .substitutions
+            .borrow()
+            .get(&address(expression))
+            .is_some_and(|substituted| substituted.1 != instance)
+        {
+            self.shared_substitutions
+                .borrow_mut()
+                .insert(address(expression));
+        }
         self.substitutions.borrow_mut().insert(
             address(expression),
             (expression.clone(), instance, is_operator),
@@ -221,6 +234,12 @@ impl Tables {
     }
 
     /// The declaration an expression an INSTANCE put in replaces.
+    pub fn is_shared_substitution(&self, expression: &Expr) -> bool {
+        self.shared_substitutions
+            .borrow()
+            .contains(&address(expression))
+    }
+
     pub fn get_substituted_declaration(&self, expression: &Expr) -> Option<Rc<Declaration>> {
         self.substituted_declarations
             .borrow()

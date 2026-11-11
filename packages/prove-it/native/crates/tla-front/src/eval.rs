@@ -46,9 +46,12 @@ struct Context {
 
 /// An argument or LET definition the property's walk binds, kept alive so no other expression
 /// takes its address, and the INSTANCEs whose copies hold it.
-struct Origin {
+#[derive(Clone)]
+pub struct Origin {
     _expression: Expr,
-    lexical: Rc<[usize]>,
+    pub lexical: Rc<[usize]>,
+    /// The INSTANCEs a named definition's copy is under that its argument enters afresh.
+    fresh: Rc<[usize]>,
 }
 
 /// The INSTANCEs whose substitutions TLC's walk of a property collected apart, and those whose
@@ -433,21 +436,22 @@ impl Evaluator<'_> {
 
     /// Notes that the property's walk bound an argument or LET definition written in the copies
     /// of `lexical`.
-    pub fn set_origin(&self, expression: &Expr, lexical: &Rc<[usize]>) {
+    pub fn set_origin(&self, expression: &Expr, lexical: &Rc<[usize]>, fresh: Rc<[usize]>) {
         self.origins.borrow_mut().insert(
             Rc::as_ptr(expression) as usize,
             Origin {
                 _expression: expression.clone(),
                 lexical: lexical.clone(),
+                fresh,
             },
         );
     }
 
-    pub fn get_origin(&self, expression: &Expr) -> Option<Rc<[usize]>> {
+    pub fn get_origin(&self, expression: &Expr) -> Option<Origin> {
         self.origins
             .borrow()
             .get(&(Rc::as_ptr(expression) as usize))
-            .map(|origin| origin.lexical.clone())
+            .cloned()
     }
 
     fn with_context<T>(&self, context: Context, run: impl FnOnce() -> T) -> T {
@@ -730,6 +734,14 @@ impl Evaluator<'_> {
         if self.depth.get() >= MAXIMUM_DEPTH {
             return Err(not_yet("a recursion too deep"));
         }
+        // An expression two INSTANCEs put in, as `K <- C` in an instantiated module puts C's
+        // substitute in again, is noted with one of them, which may not be the one TLC binds.
+        if !self.unbound.borrow().is_empty()
+            && self.environment.tables.is_shared_substitution(expression)
+        {
+            self.is_uncertain.set(true);
+            return Err(FrontError::NotYet(UNBOUND.to_owned()));
+        }
         if !self.unbound.borrow().is_empty()
             && self
                 .environment
@@ -797,9 +809,9 @@ impl Evaluator<'_> {
                                     self.depth.get(),
                                     self.get_origin(expression).map_or_else(
                                         || self.context.borrow().clone(),
-                                        |lexical| Context {
-                                            lexical,
-                                            fresh: Rc::from([]),
+                                        |origin| Context {
+                                            lexical: origin.lexical,
+                                            fresh: origin.fresh,
                                         },
                                     ),
                                 ),
@@ -903,10 +915,17 @@ impl Evaluator<'_> {
                         self.enter_definition(definition, || self.evaluate(&body, bound.as_ref()))
                     }
                     None => match self.get_origin(&body) {
-                        Some(lexical) if !self.unbound.borrow().is_empty() => {
+                        Some(origin) if !self.unbound.borrow().is_empty() => {
                             let context = Context {
-                                lexical,
-                                fresh: self.context.borrow().fresh.clone(),
+                                lexical: origin.lexical,
+                                fresh: self
+                                    .context
+                                    .borrow()
+                                    .fresh
+                                    .iter()
+                                    .chain(origin.fresh.iter())
+                                    .copied()
+                                    .collect(),
                             };
                             self.with_context(context, || self.evaluate(&body, bound.as_ref()))
                         }

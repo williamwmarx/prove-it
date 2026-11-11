@@ -297,7 +297,11 @@ impl Expansion<'_> {
                 let bound = bind_definitions(definitions, scope)?;
                 if let Some(evaluator) = self.evaluator {
                     for definition in definitions {
-                        evaluator.set_origin(&definition.body, &unbound.get_lexical());
+                        evaluator.set_origin(
+                            &definition.body,
+                            &unbound.get_lexical(),
+                            Rc::from([]),
+                        );
                     }
                 }
                 return self.expand(
@@ -325,6 +329,7 @@ impl Expansion<'_> {
                         lexical: self
                             .evaluator
                             .and_then(|evaluator| evaluator.get_origin(expression))
+                            .map(|origin| origin.lexical)
                             .or_else(|| unbound.lexical.clone()),
                     };
                     return self.expand(
@@ -404,14 +409,31 @@ impl Expansion<'_> {
                                 .flatten()
                                 .and_then(|name| get_definition(&name, self.environment));
                             match (&argument.kind, named) {
-                                (_, Some(definition)) => evaluator.set_origin(
-                                    &definition.body,
-                                    &self.environment.tables.get_copy_instances(definition),
-                                ),
-                                (ExpressionKind::Lambda { body, .. }, None) => {
-                                    evaluator.set_origin(body, &unbound.get_lexical());
+                                // TLC enters the copy through its INSTANCEs' `SubstInNode`s, which
+                                // bind their substitutions.
+                                (_, Some(definition)) => {
+                                    let copied =
+                                        self.environment.tables.get_copy_instances(definition);
+                                    let lexical = unbound.get_lexical();
+                                    let fresh = copied
+                                        .iter()
+                                        .copied()
+                                        .filter(|instance| !lexical.contains(instance))
+                                        .collect();
+                                    evaluator.set_origin(&definition.body, &copied, fresh);
                                 }
-                                _ => evaluator.set_origin(argument, &unbound.get_lexical()),
+                                (ExpressionKind::Lambda { body, .. }, None) => {
+                                    evaluator.set_origin(
+                                        body,
+                                        &unbound.get_lexical(),
+                                        Rc::from([]),
+                                    );
+                                }
+                                _ => evaluator.set_origin(
+                                    argument,
+                                    &unbound.get_lexical(),
+                                    Rc::from([]),
+                                ),
                             }
                         }
                     }
