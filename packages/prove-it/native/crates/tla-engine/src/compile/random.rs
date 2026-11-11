@@ -44,7 +44,8 @@ pub(crate) fn random_element(machine: &mut Machine<'_>, set: &Lazy) -> Outcome<I
             for _ in &keys {
                 values.push(random_element(machine, range)?);
             }
-            Ok(machine.store.function_of_sorted(&keys, &values))
+            let function = machine.store.function_of_sorted(&keys, &values);
+            Ok(machine.store.mark_built_as_function(function))
         }
         Lazy::RecordSet(keys, sets) => {
             let mut values = Vec::with_capacity(sets.len());
@@ -176,7 +177,10 @@ pub(crate) fn random_subset(
             remaining /= list.len() as u128;
         }
         drawn.push(match &keys {
-            Some(keys) => machine.store.function_of_sorted(keys, &values),
+            Some(keys) => {
+                let function = machine.store.function_of_sorted(keys, &values);
+                machine.store.mark_built_as_function(function)
+            }
             None => machine.store.tuple_of(&values),
         });
     }

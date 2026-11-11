@@ -69,6 +69,8 @@ pub struct EngineContext {
     pub is_live_registered: bool,
     /// Whether each atom reads TLCGet("diameter").
     pub diameter_atoms: Vec<bool>,
+    /// Whether each atom reads TLCGet("level").
+    pub level_atoms: Vec<bool>,
     /// Whether an invariant may print, which the search prints among Next's prints.
     pub is_invariant_printing: bool,
     /// What TLC evaluates when it starts.
@@ -98,6 +100,15 @@ pub struct StartupSymmetry {
 /// interpreter answers it (`createLiveOracle` in `live.ts`).
 pub enum Atom {
     State(Eval),
+    /// A state predicate that reads TLCGet("level"), answered at the level of the state TLC adds
+    /// and of each state a step from it reaches, one past it (`Table`).
+    LevelState(Eval),
+    /// An action that reads TLCGet("level"), at the level of its step's first state, and of the
+    /// next one past it but for the stuttering step's. Its subscript doesn't read the level.
+    LevelAction {
+        action: Eval,
+        subscript: Option<Eval>,
+    },
     /// An action, false of a step that leaves the subscript unchanged, and the position of the
     /// ENABLED atom of its fairness: the checker asks about no step from a state where that is
     /// false.
@@ -694,6 +705,10 @@ impl EngineContext {
         let is_live_printing = compiled.iter().any(|atom| atom.is_printing);
         let is_live_registered = compiled.iter().any(|atom| atom.uses_registers);
         let diameter_atoms = compiled.iter().map(|atom| atom.reads_diameter).collect();
+        let level_atoms = compiled
+            .iter()
+            .map(|atom| matches!(atom.atom, Atom::LevelState(_) | Atom::LevelAction { .. }))
+            .collect();
         let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
         let (initial_invariants, initial_invariant_owners) = invariants
             .iter()
@@ -737,6 +752,7 @@ impl EngineContext {
             is_live_printing,
             is_live_registered,
             diameter_atoms,
+            level_atoms,
             is_invariant_printing,
             startup,
         })
@@ -772,8 +788,8 @@ fn compile_live(
     scope: Option<Index>,
 ) -> Result<Compiled, String> {
     match compiler.compile_in_scope(node, scope) {
-        Ok(Some(compiled)) if compiled.reads_tlc_get() => {
-            Err("unsupported: TLCGet after the search".into())
+        Ok(Some(compiled)) if compiled.reads_distinct() => {
+            Err("unsupported: TLCGet(\"distinct\") after the search".into())
         }
         // TLC evaluates the atoms as it adds each state to the behavior graphs, in an order
         // the registers would tell.
@@ -795,6 +811,9 @@ fn compile_subscript(
     let compiled = compile_live(compiler, node, scope)?;
     if !compiled.footprint.primes.is_empty() {
         return Err("unsupported: a subscript that reads a primed variable".into());
+    }
+    if compiled.reads_level() {
+        return Err("unsupported: TLCGet(\"level\") in a subscript".into());
     }
     Ok(compiled)
 }
@@ -837,7 +856,11 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
             is_printing = compiled.is_printing();
             reads_diameter = compiled.reads_diameter();
             uses_registers = compiled.uses_registers();
-            Atom::State(compiled.eval)
+            if compiled.reads_level() {
+                Atom::LevelState(compiled.eval)
+            } else {
+                Atom::State(compiled.eval)
+            }
         }),
         AtomKind::Action { unchanged, enabled } => (|| {
             let subscript = match unchanged {
@@ -853,6 +876,12 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
                 action.reads_diameter() || subscript.as_ref().is_some_and(Compiled::reads_diameter);
             uses_registers =
                 action.uses_registers() || subscript.as_ref().is_some_and(Compiled::uses_registers);
+            if action.reads_level() {
+                return Ok(Atom::LevelAction {
+                    action: action.eval,
+                    subscript: subscript.map(|subscript| subscript.eval),
+                });
+            }
             Ok(Atom::Action {
                 is_next: !action.reads_search() && is_next(compiler, ir, atom),
                 action: action.eval,
@@ -862,6 +891,9 @@ fn compile_atom(compiler: &mut Compiler<'_>, ir: &Ir, atom: &tla_ir::Atom) -> Co
         })(),
         AtomKind::Enabled { actions } => {
             let run = match compiler.compile_enabled_in_scope(atom.expression, scope) {
+                Ok(Some(compiled)) if compiled.reads_level() => {
+                    Err("unsupported: TLCGet(\"level\") in ENABLED".to_string())
+                }
                 Ok(Some(compiled)) => {
                     is_printing = compiled.is_printing();
                     uses_registers = compiled.uses_registers();

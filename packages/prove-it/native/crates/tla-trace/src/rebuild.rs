@@ -127,6 +127,21 @@ impl<'ir> Rebuilder<'ir> {
     pub fn answer_atom(
         &mut self,
         atom: u32,
+        (state, level): (&[Value], i32),
+        (next, next_level): (&[Value], i32),
+    ) -> Result<bool, Unsupported> {
+        self.evaluator.level = level;
+        self.evaluator.next_level = Some(next_level);
+        let answer = self.evaluate_atom(atom, state, next);
+        // What evaluates with the evaluator next, such as the ALIAS, reads the next state's level
+        // as one past the state's again.
+        self.evaluator.next_level = None;
+        answer
+    }
+
+    fn evaluate_atom(
+        &mut self,
+        atom: u32,
         state: &[Value],
         next: &[Value],
     ) -> Result<bool, Unsupported> {
