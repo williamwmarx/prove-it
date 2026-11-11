@@ -1057,19 +1057,26 @@ function by its keys and values alone, so it can't tell the two apart.
 
 ## _PERIODIC
 
-TLC evaluates the `_PERIODIC` expression in `doPeriodicWork`, just before it prints its progress,
-and not at all in a run that ends first. A constant-level expression it also computes as it starts,
-and then evaluates again at each progress point: a `PrintT` in one prints again there.
+TLC evaluates the `_PERIODIC` definition's body in `doPeriodicWork`, on its main thread with the
+workers stopped, just before it prints its progress, and not at all in a run that ends first. It
+evaluates it afresh each time with no state (TLCGet("level") is 1): a constant-level one, which it
+also computes as it starts, prints again there. FALSE stops the search with no error and no
+progress line: TLC prints the statistics, with the states left on the queue, and the depth, and
+exits 10 (TLC_ASSUMPTION_FALSE). A value that is no boolean, or a failure, ends the run with an
+error.
 
-- **What the binary does:** it declines at its first progress point, cancelling the search
-  (`Reporter::is_cancelled`). A run that ends first prints as TLC does, the startup print of a
-  constant-level expression included.
-- **What that costs:** a `_PERIODIC` that is TRUE without printing, constant or not, on a run that
-  reaches a progress point, printed TLC's output before, when the binary ignored `_PERIODIC`, and
-  declines now.
-- **What removes it:** evaluating the expression at each progress point, as TLC does: printing
-  what it prints, and, where it is FALSE, stopping with TLC's statistics, work left on the queue,
-  and exit 10. It comes after -dump and -continue.
+- **What the binary does:** the IR carries the definition (`Model::periodic`, last in the model's
+  section, IR version 16), and the relay evaluates it with the trace evaluator at each progress point the engine
+  reports (`Rebuilder::periodic`), after the startup's definitions, TLCGet reading the counts that
+  progress reports. What it prints comes before the Progress line. FALSE cancels the search, and
+  the binary prints TLC's statistics with those counts, then exits 10.
+- **The counts:** TLC's workers run on between the evaluation and the Progress line, so its two
+  sets of counts can differ by a few states. The binary reports one set, which TLC prints where
+  the workers don't move on.
+- **What still declines:** an expression that fails to evaluate or is no boolean, which TLC reports
+  as an error; one that sets or reads TLC's registers, TLCGet("all"), TLCGet("duration") or
+  CounterExample, which the evaluator doesn't hold as TLC's main thread does; one after the
+  configuration's predicates; and -dump of a search it stops.
 
 ## TLC's order of strings
 

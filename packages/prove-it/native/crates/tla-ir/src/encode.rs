@@ -251,6 +251,8 @@ fn encode_here(ir: &Ir) -> Vec<u8> {
         words.extend([definition as i32, name as i32]);
     }
     words.push(model.tlc_spec.map_or(-1, |value| value as i32));
+    words.push(model.periodic.is_some() as i32);
+    words.extend(model.periodic.iter().flat_map(config_name));
     words.push(ir.definitions.len() as i32);
     words.extend(ir.definitions.iter().map(|&id| offset(id)));
     words.push(nodes.words.len() as i32);

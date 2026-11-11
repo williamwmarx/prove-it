@@ -285,7 +285,7 @@ pub(crate) enum Event {
     InitialStatesStarted,
     InitialStatesProgress(u64),
     InitialStates(u64, u64),
-    Progress(u64, u64, u64, u64),
+    Progress(Statistics),
     /// TLC checks the temporal properties part way through the search: of how many branches, on
     /// behavior graphs of how many states in all.
     LivenessStarted(u64, u64),
@@ -295,9 +295,12 @@ pub(crate) enum Event {
     /// TLC warns that the sets the symmetry permutes, by these names, hold fewer than two
     /// elements.
     SymmetrySetsTooSmall(Vec<String>),
-    /// TLC would evaluate the `_PERIODIC` expression now, as it prints its progress, which the
-    /// engine doesn't: the search ends as not native.
-    Periodic,
+    /// The `_PERIODIC` expression TLC evaluates as it prints its progress is FALSE, which stops
+    /// the search with these counts.
+    PeriodicFalse(Statistics),
+    /// The trace evaluator doesn't follow the `_PERIODIC` expression, for this reason: the search
+    /// ends as not native.
+    PeriodicDeclined(String),
     /// TLC would print a coverage report now, as it prints its progress, at a point that depends
     /// on how fast it runs: the search ends as not native.
     CoverageReported,
@@ -327,10 +330,14 @@ pub(crate) struct Relay<'ir> {
     sender: mpsc::Sender<Event>,
     /// Whether something printed has a text TLC's isn't known to be, which ends the search.
     is_misprinted: bool,
-    /// Whether the configuration names a `_PERIODIC` expression, which TLC evaluates as it prints
-    /// its progress; the search ends there, if it gets that far.
-    is_periodic: bool,
-    is_periodic_reached: bool,
+    /// The trace evaluator of the `_PERIODIC` expression the configuration names, which TLC
+    /// evaluates as it prints its progress, with the counts so far.
+    periodic: Option<Result<Rebuilder<'ir>, Unsupported>>,
+    /// Whether the `_PERIODIC` expression stopped the search, or the evaluator didn't follow it.
+    is_periodic_stopped: bool,
+    /// How many initial states TLC generated, and when it started, which TLCGet("stats") reports.
+    initial_generated: u64,
+    start: Instant,
     /// With -coverage, how many more progress reports TLC prints before the one it follows with
     /// a coverage report (`count` in `AbstractChecker.runTLC`).
     coverage_countdown: Option<i32>,
@@ -382,8 +389,10 @@ impl<'ir> Relay<'ir> {
         Relay {
             sender,
             is_misprinted: false,
-            is_periodic: false,
-            is_periodic_reached: false,
+            periodic: None,
+            is_periodic_stopped: false,
+            initial_generated: 0,
+            start: Instant::now(),
             coverage_countdown: None,
             is_coverage_reached: false,
             is_declined: false,
@@ -456,7 +465,7 @@ impl<'ir> Relay<'ir> {
 impl Reporter for Relay<'_> {
     fn is_cancelled(&self) -> bool {
         self.is_misprinted
-            || self.is_periodic_reached
+            || self.is_periodic_stopped
             || self.is_coverage_reached
             || self.is_declined
     }
@@ -519,16 +528,48 @@ impl Reporter for Relay<'_> {
     }
 
     fn initial_states(&mut self, generated: u64, distinct: u64) {
+        self.initial_generated = generated;
         let _ = self.sender.send(Event::InitialStates(generated, distinct));
     }
 
     // TLC evaluates the `_PERIODIC` expression in `doPeriodicWork` just before it prints its
-    // progress, and not at all in a run that ends first (AbstractChecker.runTLC).
+    // progress, and not at all in a run that ends first (AbstractChecker.runTLC). Where it is
+    // FALSE, TLC prints no progress and stops with the statistics.
     fn progress(&mut self, generated: u64, distinct: u64, queued: u64, depth: u64) {
-        if self.is_periodic {
-            self.is_periodic_reached = true;
-            let _ = self.sender.send(Event::Periodic);
-            return;
+        let statistics = Statistics {
+            generated,
+            distinct,
+            queued,
+            depth,
+        };
+        if let Some(rebuilder) = &mut self.periodic {
+            let run = postcondition_run(
+                self.ir,
+                None,
+                &statistics,
+                self.initial_generated,
+                self.start,
+            );
+            let periodic = rebuilder
+                .as_mut()
+                .map_err(|unsupported| unsupported.clone())
+                .and_then(|rebuilder| rebuilder.periodic(&run.stats));
+            let periodic = match periodic {
+                Ok(periodic) => periodic,
+                Err(Unsupported(reason)) => {
+                    self.is_periodic_stopped = true;
+                    let _ = self.sender.send(Event::PeriodicDeclined(reason));
+                    return;
+                }
+            };
+            for print in &periodic.printed {
+                self.send_print(Some(format_print(print)));
+            }
+            if !periodic.holds {
+                self.is_periodic_stopped = true;
+                let _ = self.sender.send(Event::PeriodicFalse(statistics));
+                return;
+            }
         }
         // TLC prints a coverage report after the progress where `count` is 0, which it counts
         // down from -coverage's minutes once per progress report (ModelChecker.runTLCContinueDoing).
@@ -540,9 +581,7 @@ impl Reporter for Relay<'_> {
             }
             *countdown -= 1;
         }
-        let _ = self
-            .sender
-            .send(Event::Progress(generated, distinct, queued, depth));
+        let _ = self.sender.send(Event::Progress(statistics));
     }
 
     fn liveness_started(&mut self, branches: u64, _expanded: u64, states: u64, _counts: [u64; 3]) {
@@ -1238,12 +1277,13 @@ fn check_spec(
     // counterexample started.
     let mut checking = None;
     let mut is_misprinted = false;
-    let mut is_periodic_reached = false;
     let mut is_coverage_reached = false;
+    // Where the `_PERIODIC` expression stopped the search: FALSE with the counts so far, or why
+    // the evaluator didn't follow it.
+    let mut periodic_stop = None;
     let mut is_dump_unwritten = false;
     let mut declined = None;
     let mut is_snapshot_begun = false;
-    let is_periodic = config.periodic.is_some();
     let ir_ref = &ir;
     let (outcome, assumed_printed, dumped) = alongside(
         move || {
@@ -1256,9 +1296,15 @@ fn check_spec(
                 workers,
                 front.startup_messages,
             );
-            relay.is_periodic = is_periodic;
-            relay.is_dumped = is_dumped;
+            relay.periodic = ir.model.periodic.as_ref().map(|_| {
+                Rebuilder::new(ir).map(|mut rebuilder| {
+                    rebuilder.set_workers(workers);
+                    rebuilder
+                })
+            });
+            relay.start = start;
             relay.coverage_countdown = coverage::get_countdown(args);
+            relay.is_dumped = is_dumped;
             relay.dot = dot;
             let outcome = search(ir, &settings, &mut relay);
             (outcome, relay.assumed_printed, relay.dumped)
@@ -1292,13 +1338,7 @@ fn check_spec(
                         initial_generated = generated;
                         print_initial_states(printer, generated, distinct)
                     }
-                    Event::Progress(generated, distinct, queued, depth) => {
-                        let statistics = Statistics {
-                            generated,
-                            distinct,
-                            queued,
-                            depth,
-                        };
+                    Event::Progress(statistics) => {
                         print_progress(printer, &statistics, Some(start));
                         printer.flush();
                     }
@@ -1319,8 +1359,12 @@ fn check_spec(
                         is_misprinted = true;
                         break;
                     }
-                    Event::Periodic => {
-                        is_periodic_reached = true;
+                    Event::PeriodicFalse(statistics) => {
+                        periodic_stop = Some(Ok(statistics));
+                        break;
+                    }
+                    Event::PeriodicDeclined(reason) => {
+                        periodic_stop = Some(Err(reason));
                         break;
                     }
                     Event::CoverageReported => {
@@ -1361,11 +1405,22 @@ fn check_spec(
     if is_dump_unwritten {
         return report_not_native(printer, "-dump into a file it can't write");
     }
-    if is_periodic_reached {
-        return report_not_native(
-            printer,
-            "_PERIODIC, which TLC evaluates as it prints its progress",
-        );
+    match periodic_stop {
+        Some(Err(reason)) => return report_not_native(printer, &reason),
+        Some(Ok(_)) if is_dumped => {
+            return report_not_native(printer, "-dump of a search _PERIODIC stops");
+        }
+        Some(Ok(_)) if args.has("-coverage") => {
+            return report_not_native(printer, "coverage of a search _PERIODIC stops");
+        }
+        // TLC stops where the workers are, with no error and no progress, and checks nothing
+        // more (`doPeriodicWork`, TLC_ASSUMPTION_FALSE).
+        Some(Ok(statistics)) => {
+            print_statistics(printer, &statistics, start);
+            print_finished(printer, start);
+            return ASSUMPTION_VIOLATION;
+        }
+        None => {}
     }
     if is_coverage_reached {
         return report_not_native(

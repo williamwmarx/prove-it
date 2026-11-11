@@ -1054,6 +1054,10 @@ impl<'a> Lowering<'a> {
         let specification =
             definition.and_then(|definition| self.write_range(definition.location.range.as_ref()));
         let startup = self.write_startup(config)?;
+        let periodic = config
+            .periodic
+            .as_deref()
+            .map(|name| self.config_name(name).root);
         Ok(Model {
             init,
             next,
@@ -1090,6 +1094,7 @@ impl<'a> Lowering<'a> {
             instance_actions: Vec::new(),
             instance_names: Vec::new(),
             tlc_spec: None,
+            periodic,
         })
     }
 

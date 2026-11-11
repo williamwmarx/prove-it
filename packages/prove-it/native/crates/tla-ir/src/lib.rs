@@ -40,7 +40,7 @@ pub use decode::{DecodeError, decode};
 pub use encode::encode;
 
 /// The version of the layout, `IR_VERSION` in `ir.ts`.
-pub const IR_VERSION: u32 = 15;
+pub const IR_VERSION: u32 = 16;
 
 /// "PIIR" as a little-endian word.
 pub const MAGIC: u32 = 0x5249_4950;
@@ -358,6 +358,9 @@ pub struct Model {
     pub tlc_spec: Option<u32>,
     /// What TLC evaluates when it starts, before the search.
     pub startup: Startup,
+    /// The configuration's `_PERIODIC` definition, which TLC evaluates with no state as it
+    /// prints its progress, and which stops the search where it is FALSE (`doPeriodicWork`).
+    pub periodic: Option<ConfigName>,
 }
 
 /// What TLC evaluates when it starts, in the order the engine evaluates it: each substitute,

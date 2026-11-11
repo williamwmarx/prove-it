@@ -16,6 +16,7 @@ mod dump;
 mod eval;
 mod failure;
 mod fingerprint;
+mod periodic;
 mod postcondition;
 mod pretty;
 mod print;
@@ -42,6 +43,7 @@ pub use eval::Registers;
 pub use failure::{
     Assumption, Failure, FingerprintFailure, Incomplete, Replay, Site, format_call_stack,
 };
+pub use periodic::Periodic;
 pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Verdict};
 pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};

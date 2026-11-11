@@ -67,6 +67,7 @@ fn lower(source: &str, name: &str) -> Ir {
             instance_actions: Vec::new(),
             instance_names: Vec::new(),
             tlc_spec: None,
+            periodic: None,
         })
         .expect("an IR")
 }

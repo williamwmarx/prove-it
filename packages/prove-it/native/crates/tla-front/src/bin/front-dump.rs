@@ -209,6 +209,7 @@ fn lower_definitions(
         instance_actions: Vec::new(),
         instance_names: Vec::new(),
         tlc_spec: None,
+        periodic: None,
     };
     Ok(tla_ir::encode(&lowering.finish(model)?))
 }
