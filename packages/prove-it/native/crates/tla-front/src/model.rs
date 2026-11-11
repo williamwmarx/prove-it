@@ -261,6 +261,8 @@ fn lower_ranked(
         .collect();
     let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
     let lowered = (|| {
+        let index_alias_decline =
+            crate::lower::check_index_overrides(&config, &environment, Some(&evaluator))?;
         let constant_invariants = check_invariants(
             &config,
             &environment,
@@ -301,6 +303,7 @@ fn lower_ranked(
         );
         lowering.evaluator = Some(&evaluator);
         lowering.random_seed = options.random_seed;
+        lowering.alias_decline = index_alias_decline;
         let version_text = options.version.map(|version| match version {
             TlcVersion::V1_7_4 => "1.7.4",
             TlcVersion::Master => "master",

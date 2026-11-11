@@ -429,6 +429,59 @@ fn reaches_in(
     false
 }
 
+/// Why a trace printed through the ALIAS declines, where only the ALIAS reads an operator a
+/// TLCOverrides index replaces.
+pub(crate) fn check_index_overrides(
+    config: &crate::config::ModelConfig,
+    environment: &Environment,
+    evaluator: Option<&crate::eval::Evaluator>,
+) -> Result<Option<String>> {
+    let mut alias_decline = None;
+    // TLC replaces an operator a TLCOverrides index names with its Java method, which the
+    // front end doesn't run, and no longer computes it as it starts. It reads the method
+    // where the model reads the operator, a constant the configuration substitutes it for
+    // included, and where the ALIAS reads it as TLC prints a trace, where the run declines.
+    for (identifier, arity) in &environment.index_overrides {
+        let is_read_by = |name: &str, is_alias_traced| {
+            is_read(name, config, environment, evaluator, is_alias_traced)
+        };
+        let is_replaced = config.substitutions.iter().any(|substitution| {
+            *substitution.name == **identifier
+                || *substitution.target == **identifier && is_read_by(&substitution.name, false)
+        });
+        // TLC skips a method whose arity isn't the operator's.
+        let definition = environment
+            .definitions
+            .get(identifier)
+            .filter(|definition| {
+                let defined_arity = match &definition.kind {
+                    DefinitionKind::Operator { params, .. } => params.len(),
+                    DefinitionKind::Function { .. } => 0,
+                };
+                arity.is_none_or(|arity| defined_arity == arity)
+            });
+        let is_alike = match definition {
+            Some(definition) => {
+                !is_replaced
+                    && !is_read_by(identifier, true)
+                    && !reaches_shown_effect(definition, environment, None)
+            }
+            None => !environment.builtins.contains_key(identifier),
+        };
+        if !is_alike {
+            return Err(FrontError::NotYet(format!(
+                "a TLCOverrides index's Java override of {identifier}"
+            )));
+        }
+        if definition.is_some() && is_read_by(identifier, false) {
+            alias_decline = Some(format!(
+                "an ALIAS that reads {identifier}, which a TLCOverrides index's Java method replaces"
+            ));
+        }
+    }
+    Ok(alias_decline)
+}
+
 /// Whether an assumption passes an operator with parameters an argument that reaches one of
 /// these builtins: the engine evaluates the argument where the operator reads it, which TLC
 /// evaluates once.
@@ -1529,49 +1582,6 @@ impl<'a> Lowering<'a> {
     /// the assumptions that aren't axioms. SYMMETRY is `NotYet` before this.
     fn write_startup(&mut self, config: &crate::config::ModelConfig) -> Result<Startup> {
         let environment = self.environment;
-        let evaluator = self.evaluator;
-        // TLC replaces an operator a TLCOverrides index names with its Java method, which the
-        // front end doesn't run, and no longer computes it as it starts. It reads the method
-        // where the model reads the operator, a constant the configuration substitutes it for
-        // included, and where the ALIAS reads it as TLC prints a trace, where the run declines.
-        for (identifier, arity) in &environment.index_overrides {
-            let is_read_by = |name: &str, is_alias_traced| {
-                is_read(name, config, environment, evaluator, is_alias_traced)
-            };
-            let is_replaced = config.substitutions.iter().any(|substitution| {
-                *substitution.name == **identifier
-                    || *substitution.target == **identifier && is_read_by(&substitution.name, false)
-            });
-            // TLC skips a method whose arity isn't the operator's.
-            let definition = environment
-                .definitions
-                .get(identifier)
-                .filter(|definition| {
-                    let defined_arity = match &definition.kind {
-                        DefinitionKind::Operator { params, .. } => params.len(),
-                        DefinitionKind::Function { .. } => 0,
-                    };
-                    arity.is_none_or(|arity| defined_arity == arity)
-                });
-            let is_alike = match definition {
-                Some(definition) => {
-                    !is_replaced
-                        && !is_read_by(identifier, true)
-                        && !reaches_shown_effect(definition, environment, None)
-                }
-                None => !environment.builtins.contains_key(identifier),
-            };
-            if !is_alike {
-                return Err(FrontError::NotYet(format!(
-                    "a TLCOverrides index's Java override of {identifier}"
-                )));
-            }
-            if definition.is_some() && is_read_by(identifier, false) {
-                self.alias_decline = Some(format!(
-                    "an ALIAS that reads {identifier}, which a TLCOverrides index's Java method replaces"
-                ));
-            }
-        }
         // TLC computes a constant definition or an assumption that reads or sets TLCExt's
         // registers once as it starts (`TLCGetOrDefault` has no minimum level), and warns of a
         // constant invariant that does; the engine computes them where the model reads them.
@@ -1626,8 +1636,24 @@ impl<'a> Lowering<'a> {
         )
         .filter_map(|name| environment.definitions.get(name.as_str()))
         .any(|definition| {
-            reaches_in(&definition.body, environment, &registers, None)
-                && !reaches_in(&definition.body, environment, &variables, None)
+            let mut seen = FastSet::default();
+            let mut pending = vec![definition.body.clone()];
+            let mut is_written = false;
+            while let Some(expression) = pending.pop() {
+                if let Some(name) = expression.reference()
+                    && !expression.is_locally_resolved()
+                {
+                    is_written |= registers.contains(&&*name);
+                    let target = environment.substitutions.get(&name).unwrap_or(&name);
+                    if let Some(callee) = environment.definitions.get(target)
+                        && seen.insert(Rc::as_ptr(callee) as usize)
+                    {
+                        pending.push(callee.body.clone());
+                    }
+                }
+                pending.extend(expression.children());
+            }
+            is_written && !reaches_in(&definition.body, environment, &variables, None)
         });
         if is_register_constant {
             return Err(FrontError::NotYet(

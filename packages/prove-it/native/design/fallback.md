@@ -336,6 +336,8 @@ found these on main, which the branch prints alike:
 | A failing conjunct of the specification that is a TLCEval of a print | `Spec == TLCEval(PrintT(FALSE)) /\ Init /\ [][Next]_x` | prints `FALSE` once | prints it after the violation and the trace again |
 | A PROPERTY the configuration substitutes a TLCGet("level") predicate for | `C <- D`, `D == TLCGet("level") > 0`, `PROPERTY C` | no warning | warns of a state-level formula |
 | A predicate the configuration substitutes a TLCEval of TLCGet or of a state's Print for | `C <- D`, `D == TLCEval(Print(x, TRUE))` as an INVARIANT, a CONSTRAINT or a conjunct | TLC's message | another |
+| A constant INVARIANT that writes TLCSet where TLC doesn't evaluate it | `Inv == IF FALSE THEN TLCSet(1, 2) ELSE TRUE`, or after `TRUE \/`, in an unused LET or argument | warns that Inv is a TRUE constant | doesn't |
+| An INVARIANT the configuration assigns a value where the module defines it | `Inv == FALSE`, `CONSTANT Inv = TRUE` | warns and finds no error | warns, then reports `Invariant Inv is violated` |
 
 The engine now declines the shapes that printed other counts here too: a constant definition
 normalized elsewhere, then streamed (`C == UNION {1..2, 2..3}`, `Init == s = C /\ x = 0`,
