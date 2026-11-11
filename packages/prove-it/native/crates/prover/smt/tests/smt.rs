@@ -594,8 +594,27 @@ fn resets_as_z3_does() {
     assert_answers_as_z3(&RESETS);
 }
 
-/// Commands Z3 refuses before the first check-sat, with what Z3 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 11] = [
+/// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
+/// 5.3.3 prints, run as above.
+const COMMAND_ERRORS: [(&str, &str); 15] = [
+    (
+        "(assert true)(set-option :produce-unsat-cores true)(check-sat)",
+        "(error \"line 1 column 47: error setting ':produce-unsat-cores', option value cannot be \
+         modified after assertions have been added\")\nsat",
+    ),
+    (
+        "(assert true)(set-option :produce-unsat-assumptions true)(assert false)(check-sat)",
+        "(error \"line 1 column 53: error setting ':produce-unsat-assumptions', option value \
+         cannot be modified after assertions have been added\")\nunsat",
+    ),
+    (
+        "(assert true)(reset)(set-option :produce-proofs true)(assert false)(check-sat)",
+        "unsat",
+    ),
+    (
+        "(assert true)(set-option :produce-models true)(assert false)(check-sat)",
+        "unsat",
+    ),
     (
         "(assert true)(set-logic UFNIA)(check-sat)",
         "(error \"line 1 column 25: logic must be set before initialization\")\nsat",

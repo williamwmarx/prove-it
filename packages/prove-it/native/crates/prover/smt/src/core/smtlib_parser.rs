@@ -965,6 +965,20 @@ pub fn parse_smtlib(
                 }
                 has_logic = is_supported_logic(logic);
             }
+            // set_option_cmd's check_no_assertions.
+            "set-option"
+                if !assertions.is_empty()
+                    && [
+                        ":produce-proofs",
+                        ":produce-unsat-cores",
+                        ":produce-unsat-assumptions",
+                    ]
+                    .contains(&parser.get_symbol(list.get(1).copied()).unwrap_or("")) =>
+            {
+                return Err(SmtError::Parse(
+                    "option value cannot be modified after assertions have been added".into(),
+                ));
+            }
             // Before the first check-sat there is no model, proof or core to get.
             "get-model" | "get-value" | "get-assignment" | "get-proof" | "get-unsat-core" => {
                 return Err(SmtError::Parse(format!("{name} has nothing to get")));
