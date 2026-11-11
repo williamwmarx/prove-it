@@ -19,7 +19,7 @@ use crate::util::hash::{
     ast_array_hash, bytes_hash, combine_hash, get_composite_hash, mk_mix, string_hash,
 };
 use crate::util::hashtable::ObjMap;
-use crate::util::rlimit::ResourceLimit;
+use crate::util::rlimit::{MAX_SIZE, ResourceLimit, StopReason};
 
 /// An expression: an index into the manager's tables, -1 for Z3's null pointer.
 pub type Expr = i32;
@@ -1333,6 +1333,9 @@ impl AstManager {
         hash: u32,
     ) -> Expr {
         let id = self.kinds.len();
+        if id > MAX_SIZE {
+            self.limit.stop(StopReason::Heap);
+        }
         self.hashes.push(hash);
         self.kinds.push(kind);
         self.decls.push(decl);

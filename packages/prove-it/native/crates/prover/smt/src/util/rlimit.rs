@@ -16,6 +16,12 @@ use crate::util::error::SmtError;
 /// The clock and the cancel cell are read on every 256th step, since a step costs less.
 const CLOCK_CHECK_MASK: u64 = 255;
 
+/// The cap on what a decision holds, in place of Z3's max_memory: the expressions the manager made,
+/// the goal's formulas, the e-graph's nodes and the instances E-matching found, each about 140
+/// bytes, so about 9 GB. Counts, so that it stops every run at the same step. The decider corpus
+/// holds at most 7.3 million under its step limits.
+pub const MAX_SIZE: usize = 1 << 26;
+
 /// Why the work was canceled: the statistic `stop`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
@@ -63,6 +69,15 @@ impl ResourceLimit {
     /// against the new manager's count. The deadline and the stop reason stay.
     pub fn restart(&self) {
         self.limits.restart_steps();
+    }
+
+    /// memory::allocate past max_memory: fails once what the decision holds passes MAX_SIZE.
+    pub fn check_size(&self, size: usize) -> Result<(), SmtError> {
+        if size <= MAX_SIZE {
+            return Ok(());
+        }
+        self.stop(StopReason::Heap);
+        Err(SmtError::Canceled)
     }
 
     /// Why the work was canceled, once it is.

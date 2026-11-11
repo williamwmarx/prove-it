@@ -473,20 +473,43 @@ fn releases_a_builtin_declaration_of_a_model_as_the_typescript_does() {
     );
 }
 
-// A mutant of smt/706e2c3eb8dbf208 of the decider corpus: past a million steps one run of a
-// multi-pattern finds millions of new instances, which the search keeps as fingerprints and queued
-// entries, about 10 GB by two million steps. Z3 5.3.3 grows the same way (`-T:5`: timeout at
-// 175 MB; `-T:20`: 1.2 GB; `-T:60`: 6.7 GB). The size cap stops it with unknown and says why.
+// Each named term is the conjunction of the one before with itself: goal::quick_process splits
+// the last into 2^59 conjuncts without taking a step, as Z3 5.3.3 does (`-T:20`: timeout at
+// 9.4 GB). The size cap stops the decision with unknown and says why.
 #[test]
 fn stops_at_the_size_cap() {
-    let text = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/inputs/instance-growth.smt"),
-    )
-    .expect("the input");
+    let text = (1..60).fold(
+        "(declare-const x Bool)(declare-const y Bool)(assert (! (and x y) :named n0))".to_string(),
+        |text, index| {
+            format!(
+                "{text}(assert (! (and n{} n{}) :named n{index}))",
+                index - 1,
+                index - 1
+            )
+        },
+    ) + "(check-sat)";
     let decision =
         on_deep_stack(|| prove_smt::decide(&text, &Limits::new(f64::INFINITY, None, None)))
             .map(|decision| get_decision_text(&decision));
-    assert_eq!(decision, Ok("unknown steps=1126729 stop=heap".into()));
+    assert_eq!(decision, Ok("unknown steps=299 stop=heap".into()));
+}
+
+// A multi-pattern over 2,910 terms of each of its two functions, with a weight that delays every
+// one of its 8.5 million instances: Z3 5.3.3 answers sat in 4.5 s at 1.2 GB, and the port, which
+// holds as much, answers too, under the cap.
+#[test]
+fn leaves_a_large_search_to_its_answer() {
+    let mut text = String::from("(declare-fun f (Int) Bool)(declare-fun g (Int) Bool)");
+    for index in 0..2910 {
+        text += &format!("(declare-const c{index} Int)(assert (f c{index}))(assert (g c{index}))");
+    }
+    text += "(assert (forall ((x Int) (y Int)) (! (or (f x) (g y)) :pattern ((f x) (g y)) \
+             :weight 100)))(check-sat)";
+    let decision = on_deep_stack(|| {
+        prove_smt::decide(&text, &Limits::new(f64::INFINITY, Some(STEP_LIMIT), None))
+    })
+    .map(|decision| get_decision_text(&decision));
+    assert_eq!(decision, Ok("sat instances=0 steps=371285".into()));
 }
 
 /// Scripts with (reset), each with what Z3 5.3.3 prints on it, run as tlapm runs it: `z3 -smt2

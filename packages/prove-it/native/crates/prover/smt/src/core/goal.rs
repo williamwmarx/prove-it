@@ -34,7 +34,7 @@ impl Goal {
             self.is_inconsistent = true;
         }
         self.forms.push(m, form);
-        Ok(())
+        m.limit.check_size(m.get_num_nodes() + self.forms.len())
     }
 
     // quick_process: splits conjunctions and negated disjunctions in order. With is_saving_first,

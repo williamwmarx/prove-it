@@ -42,16 +42,12 @@ use crate::core::theory_lra::TheoryLra;
 use crate::core::theory_lra_state::TheoryClosure;
 use crate::util::error::SmtError;
 use crate::util::lbool::LBool;
-use crate::util::rlimit::StopReason;
+use crate::util::rlimit::{MAX_SIZE, StopReason};
 
 pub const FC_DONE: u8 = 0;
 pub const FC_CONTINUE: u8 = 1;
 pub const FC_GIVEUP: u8 = 2;
 
-// The cap on the expressions, e-graph nodes and instances found that a decision may hold, in place
-// of Z3's max_memory: counts, so that it stops every run at the same step. The decider corpus holds
-// at most 7.3 million under its step limits, about 1.3 GB.
-const MAX_SIZE: usize = 1 << 24;
 const ACTIVITY_LIMIT: f64 = 1e100;
 const INV_ACTIVITY_LIMIT: f64 = 1e-100;
 const INV_DECAY: f64 = 1.052;

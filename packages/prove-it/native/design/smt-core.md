@@ -150,10 +150,11 @@ Z3 prints the error and then answers (`tests/smt.rs` records none of them):
   `Real`);
 - an unknown command, for which Z3 prints `unsupported` and reads on, as the port reads on.
 
-**Size.** The core stops at `MAX_SIZE` (`context.rs`, prover.md 3.6) with `stop=heap`: a count of
-the expressions, e-graph nodes and instances found, so that a search that grows without taking
-steps, such as one E-matching run that finds millions of instances, stops at the same step on
-every machine. A structure that can grow that way without a step joins the count.
+**Size.** The core stops at `MAX_SIZE` (`rlimit.rs`, prover.md 3.6) with `stop=heap`: a count of
+the expressions, the goal's formulas, the e-graph's nodes and the instances found, read at the
+context's cancel checks and where the goal and the manager grow, so that a decision that grows
+without taking steps stops at the same step on every machine. A structure that can grow that way
+without a step joins the count.
 
 **Recursion.** Where the TS recurses on terms and relies on catching a stack overflow
 (`isStackOverflow` → unknown), the Rust counts depth and returns `SmtError::Unsupported` past a
