@@ -465,7 +465,8 @@ extends from: of the states, which the search keys its table on, seeds each stat
 measures the "actual fingerprints" estimate by, and which order the liveness checker's tables; of
 TLCFP's values and TLCCache's keys; and `TLCGet("config").fingerprint`. Each polynomial's table is
 built the first time it is used. Without `-fp`, TLC picks a polynomial at random, and the binary
-picks the first, as `-fp 0`.
+picks the first, as `-fp 0`: the "actual fingerprints" estimate it prints is then polynomial 0's,
+where TLC's varies from run to run.
 `seqfinal` is `final` with one worker for the liveness check (`LiveCheck.java:291`), so the two
 read alike.
 
