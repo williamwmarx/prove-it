@@ -1,7 +1,8 @@
 //! What SANY prints for a spec, as tla-front writes it, for the CLI of `dist/`: the report the
-//! native binary prints. `sanyText(root, source, fileName, known)` takes the root module's name and
-//! text, the file name TLC gives SANY, and what is known of the spec's other modules and files
-//! (`sources`), and returns one of:
+//! native binary prints. `sanyText(root, source, fileName, version, rootExtendees, known)` takes the
+//! root module's name and text, or null where no file holds it, the file name TLC gives SANY, TLC's version ("master" or "1.7.4"),
+//! the modules TLC adds to the root module's EXTENDS for its post conditions, and what is known of
+//! the spec's other modules and files (`sources`), and returns one of:
 //!
 //! - `{ kind: "text", text, isFailed, exception }`, SANY's report;
 //! - `{ kind: "needed", keys }`, what the report reads that isn't known yet (`sources`);
@@ -11,12 +12,12 @@
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text_of};
+use tla_front::report::{ModuleOrigin, ReportOptions, get_missing_root_text, get_sany_text_of};
 use tla_front::sany::export::export_xml;
 use tla_front::sany::xml::XmlExportOptions;
 
 use crate::hooks::HookResult;
-use crate::sources::{Sources, get_text};
+use crate::sources::{Sources, get_strings, get_text};
 use crate::value::HostValue;
 
 fn get_origin(origin: ModuleOrigin) -> &'static str {
@@ -59,7 +60,7 @@ fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
     })
 }
 
-/// `sanyText(root, source, fileName, known)`.
+/// `sanyText(root, source, fileName, version, rootExtendees, known)`.
 pub fn sany_text(arguments: &[HostValue]) -> HookResult {
     on_deep_stack(|| write_sany_text(arguments))
 }
@@ -110,20 +111,32 @@ fn write_sany_xml(arguments: &[HostValue]) -> HookResult {
 }
 
 fn write_sany_text(arguments: &[HostValue]) -> HookResult {
-    let [root, source, file_name, known] = arguments else {
+    let [root, source, file_name, version, root_extendees, known] = arguments else {
         return Err(
-            "sanyText takes a module's name, its text, a file name and what is known".into(),
+            "sanyText takes a module's name, its text, a file name, TLC's version, the root \
+             module's added extendees and what is known"
+                .into(),
         );
     };
+    let version = match get_text(version, "TLC's version")?.as_str() {
+        "master" => TlcVersion::Master,
+        "1.7.4" => TlcVersion::V1_7_4,
+        other => return Err(format!("TLC's version is master or 1.7.4, not {other}")),
+    };
+    let root_extendees = get_strings(root_extendees, "the root module's added extendees")?;
+    let root_extendees: Vec<&str> = root_extendees.iter().map(String::as_str).collect();
     let root = get_text(root, "the root module's name")?;
-    let source = get_text(source, "the root module's text")?;
+    let source = match source {
+        HostValue::Undefined | HostValue::Null => None,
+        source => Some(get_text(source, "the root module's text")?),
+    };
     let file_name = match file_name {
         HostValue::Undefined | HostValue::Null => None,
         file_name => Some(get_text(file_name, "the file name")?),
     };
     let sources = Sources::new(known)?;
     let options = ReportOptions {
-        version: TlcVersion::Master,
+        version,
         file_name: file_name.as_deref(),
         load_module: &|name| sources.get(format!("module:{name}")),
         describe_file: &|name, origin| {
@@ -131,10 +144,18 @@ fn write_sany_text(arguments: &[HostValue]) -> HookResult {
                 .get(format!("file:{}:{name}", get_origin(origin)))
                 .unwrap_or_default()
         },
-        root_extendees: &[],
+        root_extendees: &root_extendees,
         is_xml_export: false,
     };
-    let result = get_sany_text_of(&root, &source, &options);
+    let name = file_name.as_deref().unwrap_or(&root);
+    let result = match &source {
+        Some(source) => get_sany_text_of(&root, source, &options),
+        // The module SANY names may not be the file TLC names where the name has directories.
+        None if version == TlcVersion::Master && name == root => {
+            Ok(get_missing_root_text(name, &root))
+        }
+        None => Err(FrontError::NotYet("a spec without its file".to_owned())),
+    };
     if let Some(needed) = sources.get_needed() {
         return Ok(needed);
     }
