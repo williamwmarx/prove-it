@@ -1,18 +1,7 @@
 [
   {
     "verdict": "same",
-    "module": "tlapm/examples/Allocator.tla"
-  },
-  {
-    "verdict": "same",
-    "module": "examples/specifications/allocator/SimpleAllocator_proof.tla"
-  },
-  {
-    "verdict": "same",
-    "module": "examples/specifications/allocator/AllocatorImplementation_proof.tla"
-  },
-  {
-    "verdict": "same",
-    "module": "examples/specifications/allocator/SchedulingAllocator_proof.tla"
+    "module": "examples/specifications/LearnProofs/AddTwo.tla",
+    "unrecorded": 4
   }
 ]

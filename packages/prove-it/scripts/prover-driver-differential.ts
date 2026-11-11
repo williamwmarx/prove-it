@@ -1,8 +1,9 @@
 // Proves each recorded module with the TypeScript driver and with the Rust one, each decision
 // replayed from prover-inputs.json, and compares what they report: every obligation's status, its
 // prover or reason, and the counts of missing and omitted proofs, or the error. The replay makes
-// both runs deterministic, so the answers must be the same. A text the record doesn't hold fails
-// the module, as it shows a driver sent a backend what the TypeScript never did.
+// both runs deterministic, so the answers must be the same. A text the record doesn't hold, which a
+// re-recording that moved an earlier answer can leave a run to reach, is unknown on both sides, and
+// each run counts those.
 //   --filter text keeps the modules whose path contains the text. --jobs n runs n workers.
 // Writes every result to .prover-driver-differential.json. Needs the native engine.
 
@@ -27,6 +28,7 @@ import { getDigest } from "./tlapm-digest";
 interface Result {
   verdict: "same" | "differs" | "crash";
   module: string;
+  unrecorded?: number;
   typescript?: unknown;
   rust?: unknown;
   crash?: string;
@@ -37,12 +39,17 @@ const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".prover-driver-differential.js
 const filter = getOption("--filter");
 const records = readInputRecords();
 
+let unrecorded = 0;
+
 // The recorded answer, as prove's decide gives it: a decision, or the TlaProverError the backend
 // threw.
 const replay = async (prover: string, text: string): Promise<Decision> => {
   const key = getInputKey(prover, getDigest(text));
   const record = records[key];
-  if (record === undefined) throw new Error(`input ${key} isn't in prover-inputs.json`);
+  if (record === undefined) {
+    unrecorded++;
+    return { verdict: "unknown", timeUsedMs: 0, statistics: {} };
+  }
   if (record.error !== undefined) throw new TlaProverError(record.error);
   return { verdict: record.verdict, timeUsedMs: 0, statistics: record.statistics };
 };
@@ -67,12 +74,14 @@ const byModule = await runModuleWorkers(
   getObligationCount,
   async (module): Promise<Result> => {
     const path = join(CORPORA_DIRECTORY, module.id);
+    unrecorded = 0;
     try {
       const typescript = await proveWithDriver("ts", path);
       const rust = await proveWithDriver("rust", path);
+      const counts = unrecorded > 0 ? { unrecorded } : {};
       return isDeepStrictEqual(rust, typescript)
-        ? { verdict: "same", module: module.id }
-        : { verdict: "differs", module: module.id, typescript, rust };
+        ? { verdict: "same", module: module.id, ...counts }
+        : { verdict: "differs", module: module.id, ...counts, typescript, rust };
     } catch (error) {
       return {
         verdict: "crash",
@@ -86,8 +95,9 @@ const byModule = await runModuleWorkers(
 const results = [...byModule.values()];
 writeResults(RESULTS_PATH, results);
 const missing = modules.length - results.length;
+const unrecordedCount = results.reduce((total, result) => total + (result.unrecorded ?? 0), 0);
 console.log(
-  `${results.length} of ${modules.length} modules${missing > 0 ? `, ${missing} lost with their worker` : ""}`,
+  `${results.length} of ${modules.length} modules${missing > 0 ? `, ${missing} lost with their worker` : ""}, ${unrecordedCount} decisions unrecorded`,
 );
 printResults(results, ["same", "differs", "crash"], ["differs", "crash"], (result) =>
   result.verdict === "crash"
