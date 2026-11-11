@@ -436,7 +436,10 @@ impl Evaluator<'_> {
             ("\\div", 2) => {
                 let (left, right) = integers()?;
                 if right == 0 {
-                    return Err(not_yet("a division by zero"));
+                    // Naturals.Divide's EvalException.
+                    return Err(FrontError::Evaluation(
+                        "The second argument of \\div is 0.".to_owned(),
+                    ));
                 }
                 to_integer(
                     left.div_euclid(right) - i64::from(right < 0 && left.rem_euclid(right) != 0),

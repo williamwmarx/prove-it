@@ -13,7 +13,7 @@ use crate::eval::Evaluator;
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
-use crate::tlc_messages::is_eval_exception;
+use crate::tlc_messages::{is_eval_exception, with_unexpected_exception};
 use tla_ir::PredicateForm;
 
 /// `Scope`: a name bound to a value, an expression or an operator, in front of the scope it
@@ -380,11 +380,11 @@ impl Expansion<'_> {
                 };
                 match evaluator.get_bindings(bounds, scope) {
                     // `processConfigProps` leaves a \A whose sets fail with a TLCRuntimeException
-                    // to the liveness checker.
+                    // to the liveness checker, and an EvalException escapes TLC's startup.
                     Err(error @ FrontError::Evaluation(_)) if !is_eval_exception(&error) => {}
                     bindings => {
                         let mut expanded = Vec::new();
-                        for binding in bindings? {
+                        for binding in bindings.map_err(with_unexpected_exception)? {
                             expanded.extend(self.expand(
                                 body,
                                 binding.as_ref(),

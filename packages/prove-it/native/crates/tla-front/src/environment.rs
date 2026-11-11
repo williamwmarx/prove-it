@@ -36,6 +36,7 @@ use crate::standard_builtins::{
 };
 use crate::standard_modules;
 use crate::subexpressions::{resolve_instance_subexpressions, resolve_module_subexpressions};
+use crate::tlc_messages::is_eval_exception;
 use crate::values::ValueOrder;
 
 /// A builtin the environment holds: its name, arity and flags (state-level, level-constant,
@@ -2433,10 +2434,17 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                 continue;
             }
             match evaluator.evaluate(&definition.body, None) {
-                // TLC's SpecProcessor adds the message of a TLCRuntimeException, which these are.
-                Err(FrontError::Evaluation(message)) => {
+                // TLC's SpecProcessor adds the message of a TLCRuntimeException, not an
+                // EvalException's.
+                Err(error @ FrontError::Evaluation(_)) => {
+                    let addendum = match &error {
+                        FrontError::Evaluation(message) if !is_eval_exception(&error) => {
+                            format!(" - specifically: {message}")
+                        }
+                        _ => String::new(),
+                    };
                     return Err(FrontError::Config(format!(
-                        "The configuration file substitutes constant {name} with non-constant {target} - specifically: {message}"
+                        "The configuration file substitutes constant {name} with non-constant {target}{addendum}"
                     )));
                 }
                 Err(error) => return Err(error),
