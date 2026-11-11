@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getNativeAddon } from "../../src/engine/native";
 import { TlaProverError } from "../../src/errors";
 import { decide } from "../../src/prover/deciders";
+import type { Decision } from "../../src/prover/verdict";
 
 const TESTS_DIRECTORY = join(import.meta.dirname, "..");
 
@@ -18,8 +19,22 @@ const INPUTS = [
   ["ls4", read("conformance/ptl/equivalence-of-boxes.ls4")],
 ] as const;
 
-// The inputs of the backends that still have a TypeScript decider.
-const TYPESCRIPT_INPUTS = INPUTS.filter((input) => input[0] !== "zenon");
+// What the TypeScript decider answered on the Zenon input with no limits, before it was deleted, as
+// tests/fixtures/zenon/decisions.txt records it too.
+const RECORDED: Record<string, Decision> = {
+  zenon: {
+    verdict: "unsat",
+    timeUsedMs: 0,
+    statistics: {
+      steps: 1932,
+      nodesSearched: 2246,
+      maxBranchFormulas: 319,
+      proofNodes: 183,
+      formulasCreated: 13905,
+      proof: "25254:004ede84",
+    },
+  },
+};
 
 const OPTIONS = { timeLimitMs: Infinity };
 
@@ -89,10 +104,11 @@ describe("the Rust ports", () => {
     }
   };
 
-  it.each(TYPESCRIPT_INPUTS)("%s declines, or decides as TypeScript does", (prover, text) => {
+  // A backend whose TypeScript is deleted decides as its TypeScript did, as it was recorded.
+  it.each(INPUTS)("%s declines, or decides as TypeScript does", (prover, text) => {
     const native = getAddon().decide(prover, text, Infinity, undefined, undefined);
     if (native.kind === "declined") return;
-    const typescript = useProver("ts", () => decide(prover, text, OPTIONS));
+    const typescript = RECORDED[prover] ?? useProver("ts", () => decide(prover, text, OPTIONS));
     expect(native).toEqual({
       kind: "decided",
       verdict: typescript.verdict,
@@ -108,11 +124,9 @@ describe("the Rust ports", () => {
 
   // Zenon's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
   it("decides Zenon in Rust whatever PROVE_IT_PROVER says", () => {
-    const native = getAddon().decide("zenon", INPUTS[1][1], Infinity, undefined, undefined);
-    expect(native.kind).toBe("decided");
     expect(useProver("ts", () => decide("zenon", INPUTS[1][1], OPTIONS))).toMatchObject({
       verdict: "unsat",
-      statistics: native.kind === "decided" ? native.statistics : {},
+      statistics: RECORDED.zenon.statistics,
     });
   });
 
@@ -128,14 +142,11 @@ describe("the Rust ports", () => {
     });
   });
 
-  it.each(TYPESCRIPT_INPUTS)(
-    "%s falls back to TypeScript where its port declines",
-    (prover, text) => {
-      expect(useProver("rust", () => decide(prover, text, OPTIONS))).toMatchObject({
-        verdict: "unsat",
-      });
-    },
-  );
+  it.each(INPUTS)("%s falls back to TypeScript where its port declines", (prover, text) => {
+    expect(useProver("rust", () => decide(prover, text, OPTIONS))).toMatchObject({
+      verdict: "unsat",
+    });
+  });
 
   // The native backends don't see the signal, so an aborted one keeps an input from them.
   it.each(INPUTS)("%s is unknown once its signal has aborted", (prover, text) => {

@@ -19,7 +19,11 @@ const decideZ3 = (text: string, options: DecideOptions) => {
   }
 };
 
-// The backends with a TypeScript decider.
+// The backends prove decides with, by the prover of the method that selects them.
+export const BACKENDS: readonly string[] = ["smt", "z3", "zenon", "isabelle", "ls4"];
+
+// The backends whose TypeScript decider is still kept. The others are decided by their Rust port
+// alone.
 export const DECIDERS: Partial<Record<string, (text: string, options: DecideOptions) => Verdict>> =
   {
     smt: decideZ3,
@@ -28,12 +32,9 @@ export const DECIDERS: Partial<Record<string, (text: string, options: DecideOpti
     ls4: decidePtl,
   };
 
-// The backends whose TypeScript is deleted, which only their Rust port decides.
-const RUST_ONLY_BACKENDS = new Set<string>(["zenon"]);
+export const isBackend = (prover: string) => BACKENDS.includes(prover);
 
-// Whether a prover names a backend.
-export const isBackend = (prover: string) =>
-  DECIDERS[prover] !== undefined || RUST_ONLY_BACKENDS.has(prover);
+export const hasTypeScriptDecider = (prover: string) => DECIDERS[prover] !== undefined;
 
 // The backends whose Rust port decides by default, each once it decides every recorded input as
 // the TypeScript backend does (design/prover.md, section 4).
@@ -43,7 +44,7 @@ const RUST_BACKENDS = new Set<string>(["ls4", "zenon", "isabelle"]);
 // decider, else PROVE_IT_PROVER_<PROVER>, such as PROVE_IT_PROVER_SMT, for one backend, else
 // PROVE_IT_PROVER for all, each "ts" or "rust", else the default.
 const isRust = (prover: string) => {
-  if (RUST_ONLY_BACKENDS.has(prover)) return true;
+  if (!hasTypeScriptDecider(prover)) return true;
   const setting =
     getEnvironmentSetting(`PROVE_IT_PROVER_${prover.toUpperCase()}`) ??
     getEnvironmentSetting("PROVE_IT_PROVER");
