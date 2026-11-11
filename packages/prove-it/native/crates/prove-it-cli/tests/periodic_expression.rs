@@ -327,3 +327,23 @@ fn declines_a_periodic_the_configuration_assigns_a_value_to() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// TLC reads a definition through an assignment qualified by a module, `Q = [Stop] FALSE`, which
+// the engine and the trace evaluator don't follow.
+#[test]
+fn declines_a_periodic_with_a_modules_assignment() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 1000 /\\ x' = x + 1\nQ == TRUE\nPeriodic == Q\n====\n";
+    let (output, directory) = run_spec_with(
+        "periodic-module-assignment",
+        spec,
+        &format!("{PERIODIC_CONFIG}CONSTANT Q = [Stop] FALSE\n"),
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "prove-it: not native yet: a _PERIODIC with a module's assignment in the configuration\n"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
