@@ -1,0 +1,1720 @@
+{
+  "proves HourClock": {
+    "result": {
+      "obligations": [],
+      "missingProofCount": 1,
+      "omittedProofCount": 0
+    },
+    "streamed": []
+  },
+  "proves Simple": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "157:3:157:5",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump ,\n       <1>1 ,\n       <1>2 ,\n       <1>3 ,\n       PTL \nPROVE  Spec => []PCorrect\n",
+          "status": "proved",
+          "prover": "ls4"
+        },
+        {
+          "id": 2,
+          "location": "157:6:157:10",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump \nPROVE  <1>1\n",
+          "status": "trivial"
+        },
+        {
+          "id": 3,
+          "location": "157:12:157:16",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump ,\n       <1>1 \nPROVE  <1>2\n",
+          "status": "trivial"
+        },
+        {
+          "id": 4,
+          "location": "157:18:157:22",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump ,\n       <1>1 ,\n       <1>2 \nPROVE  <1>3\n",
+          "status": "trivial"
+        },
+        {
+          "id": 5,
+          "location": "157:24:157:27",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump ,\n       <1>1 ,\n       <1>2 ,\n       <1>3 \nPROVE  PTL\n",
+          "status": "trivial"
+        },
+        {
+          "id": 6,
+          "location": "127:9:127:16",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc\nPROVE  NAssump\n",
+          "status": "trivial"
+        },
+        {
+          "id": 7,
+          "location": "129:3:129:5",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Init ==\n         /\\ x = [i \\in 0..N - 1 |-> 0]\n         /\\ y = [i \\in 0..N - 1 |-> 0]\n         /\\ pc = [self \\in ProcSet |-> \"a\"],\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Init => Inv\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 8,
+          "location": "153:5:153:7",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       <2>1 ,\n       <2>2 ,\n       <2>3 \nPROVE  Inv'\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 9,
+          "location": "153:8:153:12",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       NAssump ,\n       Inv ,\n       [Next]_vars \nPROVE  <2>1\n",
+          "status": "trivial"
+        },
+        {
+          "id": 10,
+          "location": "153:14:153:18",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       <2>1 \nPROVE  <2>2\n",
+          "status": "trivial"
+        },
+        {
+          "id": 11,
+          "location": "153:20:153:24",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       <2>1 ,\n       <2>2 \nPROVE  <2>3\n",
+          "status": "trivial"
+        },
+        {
+          "id": 12,
+          "location": "134:5:134:12",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       NAssump ,\n       <2>_a5 \nPROVE  Inv /\\ [Next]_vars => Inv'\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 13,
+          "location": "138:5:138:7",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       a(self) ==\n         /\\ pc[self] = \"a\"\n         /\\ x' = [x EXCEPT ![self] = 1]\n         /\\ pc' = [pc EXCEPT ![self] = \"b\"]\n         /\\ y' = y,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1,\n       <2>1 \nPROVE  Inv'\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 14,
+          "location": "138:8:138:12",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       a(self) ==\n         /\\ pc[self] = \"a\"\n         /\\ x' = [x EXCEPT ![self] = 1]\n         /\\ pc' = [pc EXCEPT ![self] = \"b\"]\n         /\\ y' = y,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1\nPROVE  <2>1\n",
+          "status": "trivial"
+        },
+        {
+          "id": 15,
+          "location": "149:5:149:7",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       b(self) ==\n         /\\ pc[self] = \"b\"\n         /\\ y' = [y EXCEPT ![self] = x[(self - 1) % N]]\n         /\\ pc' = [pc EXCEPT ![self] = \"Done\"]\n         /\\ x' = x,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1,\n       <2>2 ,\n       Z3 \nPROVE  Inv'\n",
+          "status": "proved",
+          "prover": "z3"
+        },
+        {
+          "id": 16,
+          "location": "149:8:149:12",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       b(self) ==\n         /\\ pc[self] = \"b\"\n         /\\ y' = [y EXCEPT ![self] = x[(self - 1) % N]]\n         /\\ pc' = [pc EXCEPT ![self] = \"Done\"]\n         /\\ x' = x,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1\nPROVE  <2>2\n",
+          "status": "trivial"
+        },
+        {
+          "id": 17,
+          "location": "149:14:149:16",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       b(self) ==\n         /\\ pc[self] = \"b\"\n         /\\ y' = [y EXCEPT ![self] = x[(self - 1) % N]]\n         /\\ pc' = [pc EXCEPT ![self] = \"Done\"]\n         /\\ x' = x,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1,\n       <2>2 \nPROVE  Z3\n",
+          "status": "trivial"
+        },
+        {
+          "id": 18,
+          "location": "151:5:151:7",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       vars == <<x, y, pc>>,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       <2>3 \nPROVE  Inv'\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 19,
+          "location": "151:8:151:12",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       vars == <<x, y, pc>>,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars \nPROVE  <2>3\n",
+          "status": "trivial"
+        },
+        {
+          "id": 20,
+          "location": "155:3:155:5",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       PCorrect ==\n         (\\A i \\in 0..N - 1 : pc[i] = \"Done\")\n         => (\\E i \\in 0..N - 1 : y[i] = 1),\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Inv => PCorrect\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 21,
+          "location": "171:11:171:13",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       <1>1 ,\n       <1>2 ,\n       <1>3 ,\n       PTL \nPROVE  Spec => []PCorrect\n",
+          "status": "proved",
+          "prover": "ls4"
+        },
+        {
+          "id": 22,
+          "location": "171:14:171:18",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  <1>1\n",
+          "status": "trivial"
+        },
+        {
+          "id": 23,
+          "location": "171:20:171:24",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       <1>1 \nPROVE  <1>2\n",
+          "status": "trivial"
+        },
+        {
+          "id": 24,
+          "location": "171:26:171:30",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       <1>1 ,\n       <1>2 \nPROVE  <1>3\n",
+          "status": "trivial"
+        },
+        {
+          "id": 25,
+          "location": "171:32:171:35",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       <1>1 ,\n       <1>2 ,\n       <1>3 \nPROVE  PTL\n",
+          "status": "trivial"
+        },
+        {
+          "id": 26,
+          "location": "164:10:164:17",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1\nPROVE  NAssump\n",
+          "status": "trivial"
+        },
+        {
+          "id": 27,
+          "location": "166:3:166:5",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Init ==\n         /\\ x = [i \\in 0..N - 1 |-> 0]\n         /\\ y = [i \\in 0..N - 1 |-> 0]\n         /\\ pc = [self \\in ProcSet |-> \"a\"],\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Init => Inv\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 28,
+          "location": "168:3:168:5",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       vars == <<x, y, pc>>,\n       ProcSet == 0..N - 1,\n       a(self) ==\n         /\\ pc[self] = \"a\"\n         /\\ x' = [x EXCEPT ![self] = 1]\n         /\\ pc' = [pc EXCEPT ![self] = \"b\"]\n         /\\ y' = y,\n       b(self) ==\n         /\\ pc[self] = \"b\"\n         /\\ y' = [y EXCEPT ![self] = x[(self - 1) % N]]\n         /\\ pc' = [pc EXCEPT ![self] = \"Done\"]\n         /\\ x' = x,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Inv /\\ [Next]_vars => Inv'\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 29,
+          "location": "170:3:170:5",
+          "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       PCorrect ==\n         (\\A i \\in 0..N - 1 : pc[i] = \"Done\")\n         => (\\E i \\in 0..N - 1 : y[i] = 1),\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Inv => PCorrect\n",
+          "status": "proved",
+          "prover": "smt"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "157:3:157:5",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump ,\n       <1>1 ,\n       <1>2 ,\n       <1>3 ,\n       PTL \nPROVE  Spec => []PCorrect\n",
+        "status": "proved",
+        "prover": "ls4"
+      },
+      {
+        "id": 2,
+        "location": "157:6:157:10",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump \nPROVE  <1>1\n",
+        "status": "trivial"
+      },
+      {
+        "id": 3,
+        "location": "157:12:157:16",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump ,\n       <1>1 \nPROVE  <1>2\n",
+        "status": "trivial"
+      },
+      {
+        "id": 4,
+        "location": "157:18:157:22",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump ,\n       <1>1 ,\n       <1>2 \nPROVE  <1>3\n",
+        "status": "trivial"
+      },
+      {
+        "id": 5,
+        "location": "157:24:157:27",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       Spec == Init /\\ [][Next]_vars,\n       NAssump ,\n       <1>1 ,\n       <1>2 ,\n       <1>3 \nPROVE  PTL\n",
+        "status": "trivial"
+      },
+      {
+        "id": 6,
+        "location": "127:9:127:16",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc\nPROVE  NAssump\n",
+        "status": "trivial"
+      },
+      {
+        "id": 7,
+        "location": "129:3:129:5",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Init ==\n         /\\ x = [i \\in 0..N - 1 |-> 0]\n         /\\ y = [i \\in 0..N - 1 |-> 0]\n         /\\ pc = [self \\in ProcSet |-> \"a\"],\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Init => Inv\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 8,
+        "location": "153:5:153:7",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       <2>1 ,\n       <2>2 ,\n       <2>3 \nPROVE  Inv'\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 9,
+        "location": "153:8:153:12",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       NAssump ,\n       Inv ,\n       [Next]_vars \nPROVE  <2>1\n",
+        "status": "trivial"
+      },
+      {
+        "id": 10,
+        "location": "153:14:153:18",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       <2>1 \nPROVE  <2>2\n",
+        "status": "trivial"
+      },
+      {
+        "id": 11,
+        "location": "153:20:153:24",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       <2>1 ,\n       <2>2 \nPROVE  <2>3\n",
+        "status": "trivial"
+      },
+      {
+        "id": 12,
+        "location": "134:5:134:12",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       NAssump ,\n       <2>_a5 \nPROVE  Inv /\\ [Next]_vars => Inv'\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 13,
+        "location": "138:5:138:7",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       a(self) ==\n         /\\ pc[self] = \"a\"\n         /\\ x' = [x EXCEPT ![self] = 1]\n         /\\ pc' = [pc EXCEPT ![self] = \"b\"]\n         /\\ y' = y,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1,\n       <2>1 \nPROVE  Inv'\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 14,
+        "location": "138:8:138:12",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       a(self) ==\n         /\\ pc[self] = \"a\"\n         /\\ x' = [x EXCEPT ![self] = 1]\n         /\\ pc' = [pc EXCEPT ![self] = \"b\"]\n         /\\ y' = y,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1\nPROVE  <2>1\n",
+        "status": "trivial"
+      },
+      {
+        "id": 15,
+        "location": "149:5:149:7",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       b(self) ==\n         /\\ pc[self] = \"b\"\n         /\\ y' = [y EXCEPT ![self] = x[(self - 1) % N]]\n         /\\ pc' = [pc EXCEPT ![self] = \"Done\"]\n         /\\ x' = x,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1,\n       <2>2 ,\n       Z3 \nPROVE  Inv'\n",
+        "status": "proved",
+        "prover": "z3"
+      },
+      {
+        "id": 16,
+        "location": "149:8:149:12",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       b(self) ==\n         /\\ pc[self] = \"b\"\n         /\\ y' = [y EXCEPT ![self] = x[(self - 1) % N]]\n         /\\ pc' = [pc EXCEPT ![self] = \"Done\"]\n         /\\ x' = x,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1\nPROVE  <2>2\n",
+        "status": "trivial"
+      },
+      {
+        "id": 17,
+        "location": "149:14:149:16",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       b(self) ==\n         /\\ pc[self] = \"b\"\n         /\\ y' = [y EXCEPT ![self] = x[(self - 1) % N]]\n         /\\ pc' = [pc EXCEPT ![self] = \"Done\"]\n         /\\ x' = x,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       NEW CONSTANT self \\in 0..N - 1,\n       <2>2 \nPROVE  Z3\n",
+        "status": "trivial"
+      },
+      {
+        "id": 18,
+        "location": "151:5:151:7",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       vars == <<x, y, pc>>,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars ,\n       <2>3 \nPROVE  Inv'\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 19,
+        "location": "151:8:151:12",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       vars == <<x, y, pc>>,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       Inv ,\n       [Next]_vars \nPROVE  <2>3\n",
+        "status": "trivial"
+      },
+      {
+        "id": 20,
+        "location": "155:3:155:5",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       PCorrect ==\n         (\\A i \\in 0..N - 1 : pc[i] = \"Done\")\n         => (\\E i \\in 0..N - 1 : y[i] = 1),\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Inv => PCorrect\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 21,
+        "location": "171:11:171:13",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       <1>1 ,\n       <1>2 ,\n       <1>3 ,\n       PTL \nPROVE  Spec => []PCorrect\n",
+        "status": "proved",
+        "prover": "ls4"
+      },
+      {
+        "id": 22,
+        "location": "171:14:171:18",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  <1>1\n",
+        "status": "trivial"
+      },
+      {
+        "id": 23,
+        "location": "171:20:171:24",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       <1>1 \nPROVE  <1>2\n",
+        "status": "trivial"
+      },
+      {
+        "id": 24,
+        "location": "171:26:171:30",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       <1>1 ,\n       <1>2 \nPROVE  <1>3\n",
+        "status": "trivial"
+      },
+      {
+        "id": 25,
+        "location": "171:32:171:35",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Spec == Init /\\ [][Next]_vars,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump ,\n       <1>1 ,\n       <1>2 ,\n       <1>3 \nPROVE  PTL\n",
+        "status": "trivial"
+      },
+      {
+        "id": 26,
+        "location": "164:10:164:17",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1\nPROVE  NAssump\n",
+        "status": "trivial"
+      },
+      {
+        "id": 27,
+        "location": "166:3:166:5",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       Init ==\n         /\\ x = [i \\in 0..N - 1 |-> 0]\n         /\\ y = [i \\in 0..N - 1 |-> 0]\n         /\\ pc = [self \\in ProcSet |-> \"a\"],\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Init => Inv\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 28,
+        "location": "168:3:168:5",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       vars == <<x, y, pc>>,\n       ProcSet == 0..N - 1,\n       a(self) ==\n         /\\ pc[self] = \"a\"\n         /\\ x' = [x EXCEPT ![self] = 1]\n         /\\ pc' = [pc EXCEPT ![self] = \"b\"]\n         /\\ y' = y,\n       b(self) ==\n         /\\ pc[self] = \"b\"\n         /\\ y' = [y EXCEPT ![self] = x[(self - 1) % N]]\n         /\\ pc' = [pc EXCEPT ![self] = \"Done\"]\n         /\\ x' = x,\n       proc(self) == a(self) \\/ b(self),\n       Terminating ==\n         /\\ \\A self \\in ProcSet : pc[self] = \"Done\"\n         /\\ UNCHANGED vars,\n       Next == (\\E self \\in 0..N - 1 : proc(self)) \\/ Terminating,\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Inv /\\ [Next]_vars => Inv'\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 29,
+        "location": "170:3:170:5",
+        "text": "ASSUME NEW CONSTANT N,\n       NAssump == N \\in Nat /\\ N > 0,\n       NEW VARIABLE x,\n       NEW VARIABLE y,\n       NEW VARIABLE pc,\n       ProcSet == 0..N - 1,\n       PCorrect ==\n         (\\A i \\in 0..N - 1 : pc[i] = \"Done\")\n         => (\\E i \\in 0..N - 1 : y[i] = 1),\n       TypeOK ==\n         /\\ x \\in [0..N - 1 -> {0, 1}]\n         /\\ y \\in [0..N - 1 -> {0, 1}]\n         /\\ pc \\in [0..N - 1 -> {\"a\", \"b\", \"Done\"}],\n       Inv ==\n         /\\ TypeOK\n         /\\ \\A i \\in 0..N - 1 : pc[i] \\in {\"b\", \"Done\"} => x[i] = 1\n         /\\ \\/ \\E i \\in 0..N - 1 : pc[i] # \"Done\"\n            \\/ \\E i \\in 0..N - 1 : y[i] = 1,\n       NAssump \nPROVE  Inv => PCorrect\n",
+        "status": "proved",
+        "prover": "smt"
+      }
+    ]
+  },
+  "proves again: the first module": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "3:15:3:17",
+          "text": "ASSUME X == 1,\n       SMT \nPROVE  X = 1\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 2,
+          "location": "3:18:3:21",
+          "text": "ASSUME X == 1\nPROVE  SMT\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME X == 1,\n       SMT \nPROVE  X = 1\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 2,
+        "location": "3:18:3:21",
+        "text": "ASSUME X == 1\nPROVE  SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "proves again: the changed module": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "3:15:3:17",
+          "text": "ASSUME X == 2,\n       SMT \nPROVE  X = 1\n",
+          "status": "failed",
+          "reason": "smt answered sat"
+        },
+        {
+          "id": 2,
+          "location": "3:18:3:21",
+          "text": "ASSUME X == 2\nPROVE  SMT\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME X == 2,\n       SMT \nPROVE  X = 1\n",
+        "status": "failed",
+        "reason": "smt answered sat"
+      },
+      {
+        "id": 2,
+        "location": "3:18:3:21",
+        "text": "ASSUME X == 2\nPROVE  SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "a tlapm bug": {
+    "error": {
+      "class": "TlapmBugError",
+      "name": "TlaProofError",
+      "message": "Oops, this seems to be a bug in TLAPM."
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "4:15:4:17",
+        "text": "ASSUME NEW VARIABLE v,\n       SMT \nPROVE  1 = 1\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 2,
+        "location": "4:18:4:21",
+        "text": "ASSUME NEW VARIABLE v\nPROVE  SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "a cycle of EXTENDS": {
+    "error": {
+      "class": "TlapmBugError",
+      "name": "TlaProofError",
+      "message": "Oops, this seems to be a bug in TLAPM."
+    },
+    "streamed": []
+  },
+  "a text again for another obligation": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "3:46:3:48",
+          "text": "ASSUME NEW CONSTANT x \\in Nat,\n       SMT ,\n       Zenon \nPROVE  x + 0 = x\n",
+          "status": "proved",
+          "prover": "zenon"
+        },
+        {
+          "id": 2,
+          "location": "3:49:3:52",
+          "text": "ASSUME NEW CONSTANT x \\in Nat\nPROVE  SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 3,
+          "location": "3:54:3:59",
+          "text": "ASSUME NEW CONSTANT x \\in Nat,\n       SMT \nPROVE  Zenon\n",
+          "status": "trivial"
+        },
+        {
+          "id": 4,
+          "location": "4:46:4:48",
+          "text": "ASSUME NEW CONSTANT x \\in Nat,\n       SMT \nPROVE  x + 0 = x\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 5,
+          "location": "4:49:4:52",
+          "text": "ASSUME NEW CONSTANT x \\in Nat\nPROVE  SMT\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:46:3:48",
+        "text": "ASSUME NEW CONSTANT x \\in Nat,\n       SMT ,\n       Zenon \nPROVE  x + 0 = x\n",
+        "status": "proved",
+        "prover": "zenon"
+      },
+      {
+        "id": 2,
+        "location": "3:49:3:52",
+        "text": "ASSUME NEW CONSTANT x \\in Nat\nPROVE  SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 3,
+        "location": "3:54:3:59",
+        "text": "ASSUME NEW CONSTANT x \\in Nat,\n       SMT \nPROVE  Zenon\n",
+        "status": "trivial"
+      },
+      {
+        "id": 4,
+        "location": "4:46:4:48",
+        "text": "ASSUME NEW CONSTANT x \\in Nat,\n       SMT \nPROVE  x + 0 = x\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 5,
+        "location": "4:49:4:52",
+        "text": "ASSUME NEW CONSTANT x \\in Nat\nPROVE  SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "every backend answers unsat": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "3:15:3:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 2,
+          "location": "3:18:3:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 3,
+          "location": "4:15:4:17",
+          "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+          "status": "proved",
+          "prover": "zenon"
+        },
+        {
+          "id": 4,
+          "location": "4:18:4:23",
+          "text": "Zenon\n",
+          "status": "trivial"
+        },
+        {
+          "id": 5,
+          "location": "4:25:4:28",
+          "text": "ASSUME Zenon \nPROVE  SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 6,
+          "location": "5:15:5:17",
+          "text": "ASSUME Isa \nPROVE  3 = 3\n",
+          "status": "proved",
+          "prover": "isabelle"
+        },
+        {
+          "id": 7,
+          "location": "5:18:5:21",
+          "text": "Isa\n",
+          "status": "trivial"
+        },
+        {
+          "id": 8,
+          "location": "6:15:6:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 9,
+          "location": "6:18:6:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 2,
+        "location": "3:18:3:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 3,
+        "location": "4:15:4:17",
+        "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+        "status": "proved",
+        "prover": "zenon"
+      },
+      {
+        "id": 4,
+        "location": "4:18:4:23",
+        "text": "Zenon\n",
+        "status": "trivial"
+      },
+      {
+        "id": 5,
+        "location": "4:25:4:28",
+        "text": "ASSUME Zenon \nPROVE  SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 6,
+        "location": "5:15:5:17",
+        "text": "ASSUME Isa \nPROVE  3 = 3\n",
+        "status": "proved",
+        "prover": "isabelle"
+      },
+      {
+        "id": 7,
+        "location": "5:18:5:21",
+        "text": "Isa\n",
+        "status": "trivial"
+      },
+      {
+        "id": 8,
+        "location": "6:15:6:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 9,
+        "location": "6:18:6:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "every backend answers sat": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "3:15:3:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "smt answered sat"
+        },
+        {
+          "id": 2,
+          "location": "3:18:3:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 3,
+          "location": "4:15:4:17",
+          "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+          "status": "failed",
+          "reason": "zenon answered sat, smt answered sat"
+        },
+        {
+          "id": 4,
+          "location": "4:18:4:23",
+          "text": "Zenon\n",
+          "status": "trivial"
+        },
+        {
+          "id": 5,
+          "location": "4:25:4:28",
+          "text": "ASSUME Zenon \nPROVE  SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 6,
+          "location": "5:15:5:17",
+          "text": "ASSUME Isa \nPROVE  3 = 3\n",
+          "status": "failed",
+          "reason": "isabelle answered sat"
+        },
+        {
+          "id": 7,
+          "location": "5:18:5:21",
+          "text": "Isa\n",
+          "status": "trivial"
+        },
+        {
+          "id": 8,
+          "location": "6:15:6:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "smt failed on an obligation with the same fingerprint"
+        },
+        {
+          "id": 9,
+          "location": "6:18:6:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "smt answered sat"
+      },
+      {
+        "id": 2,
+        "location": "3:18:3:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 3,
+        "location": "4:15:4:17",
+        "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+        "status": "failed",
+        "reason": "zenon answered sat, smt answered sat"
+      },
+      {
+        "id": 4,
+        "location": "4:18:4:23",
+        "text": "Zenon\n",
+        "status": "trivial"
+      },
+      {
+        "id": 5,
+        "location": "4:25:4:28",
+        "text": "ASSUME Zenon \nPROVE  SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 6,
+        "location": "5:15:5:17",
+        "text": "ASSUME Isa \nPROVE  3 = 3\n",
+        "status": "failed",
+        "reason": "isabelle answered sat"
+      },
+      {
+        "id": 7,
+        "location": "5:18:5:21",
+        "text": "Isa\n",
+        "status": "trivial"
+      },
+      {
+        "id": 8,
+        "location": "6:15:6:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "smt failed on an obligation with the same fingerprint"
+      },
+      {
+        "id": 9,
+        "location": "6:18:6:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "every backend answers unknown": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "3:15:3:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "smt answered unknown"
+        },
+        {
+          "id": 2,
+          "location": "3:18:3:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 3,
+          "location": "4:15:4:17",
+          "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+          "status": "failed",
+          "reason": "zenon answered unknown, smt answered unknown"
+        },
+        {
+          "id": 4,
+          "location": "4:18:4:23",
+          "text": "Zenon\n",
+          "status": "trivial"
+        },
+        {
+          "id": 5,
+          "location": "4:25:4:28",
+          "text": "ASSUME Zenon \nPROVE  SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 6,
+          "location": "5:15:5:17",
+          "text": "ASSUME Isa \nPROVE  3 = 3\n",
+          "status": "failed",
+          "reason": "isabelle answered unknown"
+        },
+        {
+          "id": 7,
+          "location": "5:18:5:21",
+          "text": "Isa\n",
+          "status": "trivial"
+        },
+        {
+          "id": 8,
+          "location": "6:15:6:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "smt failed on an obligation with the same fingerprint"
+        },
+        {
+          "id": 9,
+          "location": "6:18:6:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "smt answered unknown"
+      },
+      {
+        "id": 2,
+        "location": "3:18:3:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 3,
+        "location": "4:15:4:17",
+        "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+        "status": "failed",
+        "reason": "zenon answered unknown, smt answered unknown"
+      },
+      {
+        "id": 4,
+        "location": "4:18:4:23",
+        "text": "Zenon\n",
+        "status": "trivial"
+      },
+      {
+        "id": 5,
+        "location": "4:25:4:28",
+        "text": "ASSUME Zenon \nPROVE  SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 6,
+        "location": "5:15:5:17",
+        "text": "ASSUME Isa \nPROVE  3 = 3\n",
+        "status": "failed",
+        "reason": "isabelle answered unknown"
+      },
+      {
+        "id": 7,
+        "location": "5:18:5:21",
+        "text": "Isa\n",
+        "status": "trivial"
+      },
+      {
+        "id": 8,
+        "location": "6:15:6:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "smt failed on an obligation with the same fingerprint"
+      },
+      {
+        "id": 9,
+        "location": "6:18:6:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "every backend answers throw": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "3:15:3:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "smt failed: smt stopped"
+        },
+        {
+          "id": 2,
+          "location": "3:18:3:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 3,
+          "location": "4:15:4:17",
+          "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+          "status": "failed",
+          "reason": "zenon failed: zenon stopped, smt failed: smt stopped"
+        },
+        {
+          "id": 4,
+          "location": "4:18:4:23",
+          "text": "Zenon\n",
+          "status": "trivial"
+        },
+        {
+          "id": 5,
+          "location": "4:25:4:28",
+          "text": "ASSUME Zenon \nPROVE  SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 6,
+          "location": "5:15:5:17",
+          "text": "ASSUME Isa \nPROVE  3 = 3\n",
+          "status": "failed",
+          "reason": "isabelle failed: isabelle stopped"
+        },
+        {
+          "id": 7,
+          "location": "5:18:5:21",
+          "text": "Isa\n",
+          "status": "trivial"
+        },
+        {
+          "id": 8,
+          "location": "6:15:6:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "smt failed on an obligation with the same fingerprint"
+        },
+        {
+          "id": 9,
+          "location": "6:18:6:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "smt failed: smt stopped"
+      },
+      {
+        "id": 2,
+        "location": "3:18:3:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 3,
+        "location": "4:15:4:17",
+        "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+        "status": "failed",
+        "reason": "zenon failed: zenon stopped, smt failed: smt stopped"
+      },
+      {
+        "id": 4,
+        "location": "4:18:4:23",
+        "text": "Zenon\n",
+        "status": "trivial"
+      },
+      {
+        "id": 5,
+        "location": "4:25:4:28",
+        "text": "ASSUME Zenon \nPROVE  SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 6,
+        "location": "5:15:5:17",
+        "text": "ASSUME Isa \nPROVE  3 = 3\n",
+        "status": "failed",
+        "reason": "isabelle failed: isabelle stopped"
+      },
+      {
+        "id": 7,
+        "location": "5:18:5:21",
+        "text": "Isa\n",
+        "status": "trivial"
+      },
+      {
+        "id": 8,
+        "location": "6:15:6:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "smt failed on an obligation with the same fingerprint"
+      },
+      {
+        "id": 9,
+        "location": "6:18:6:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "every backend answers timeout": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "3:15:3:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "smt answered unknown"
+        },
+        {
+          "id": 2,
+          "location": "3:18:3:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 3,
+          "location": "4:15:4:17",
+          "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+          "status": "failed",
+          "reason": "zenon answered unknown, smt answered unknown"
+        },
+        {
+          "id": 4,
+          "location": "4:18:4:23",
+          "text": "Zenon\n",
+          "status": "trivial"
+        },
+        {
+          "id": 5,
+          "location": "4:25:4:28",
+          "text": "ASSUME Zenon \nPROVE  SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 6,
+          "location": "5:15:5:17",
+          "text": "ASSUME Isa \nPROVE  3 = 3\n",
+          "status": "failed",
+          "reason": "isabelle answered unknown"
+        },
+        {
+          "id": 7,
+          "location": "5:18:5:21",
+          "text": "Isa\n",
+          "status": "trivial"
+        },
+        {
+          "id": 8,
+          "location": "6:15:6:17",
+          "text": "ASSUME SMT \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "smt failed on an obligation with the same fingerprint"
+        },
+        {
+          "id": 9,
+          "location": "6:18:6:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "smt answered unknown"
+      },
+      {
+        "id": 2,
+        "location": "3:18:3:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 3,
+        "location": "4:15:4:17",
+        "text": "ASSUME Zenon ,\n       SMT \nPROVE  2 = 2\n",
+        "status": "failed",
+        "reason": "zenon answered unknown, smt answered unknown"
+      },
+      {
+        "id": 4,
+        "location": "4:18:4:23",
+        "text": "Zenon\n",
+        "status": "trivial"
+      },
+      {
+        "id": 5,
+        "location": "4:25:4:28",
+        "text": "ASSUME Zenon \nPROVE  SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 6,
+        "location": "5:15:5:17",
+        "text": "ASSUME Isa \nPROVE  3 = 3\n",
+        "status": "failed",
+        "reason": "isabelle answered unknown"
+      },
+      {
+        "id": 7,
+        "location": "5:18:5:21",
+        "text": "Isa\n",
+        "status": "trivial"
+      },
+      {
+        "id": 8,
+        "location": "6:15:6:17",
+        "text": "ASSUME SMT \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "smt failed on an obligation with the same fingerprint"
+      },
+      {
+        "id": 9,
+        "location": "6:18:6:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "a text again for another method": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "5:15:5:17",
+          "text": "ASSUME PA ,\n       PI ,\n       PA \nPROVE  1 = 1\n",
+          "status": "proved",
+          "prover": "isabelle"
+        },
+        {
+          "id": 2,
+          "location": "5:18:5:20",
+          "text": "PA\n",
+          "status": "trivial"
+        },
+        {
+          "id": 3,
+          "location": "5:22:5:24",
+          "text": "ASSUME PA \nPROVE  PI\n",
+          "status": "trivial"
+        },
+        {
+          "id": 4,
+          "location": "5:26:5:28",
+          "text": "ASSUME PA ,\n       PI \nPROVE  PA\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "5:15:5:17",
+        "text": "ASSUME PA ,\n       PI ,\n       PA \nPROVE  1 = 1\n",
+        "status": "proved",
+        "prover": "isabelle"
+      },
+      {
+        "id": 2,
+        "location": "5:18:5:20",
+        "text": "PA\n",
+        "status": "trivial"
+      },
+      {
+        "id": 3,
+        "location": "5:22:5:24",
+        "text": "ASSUME PA \nPROVE  PI\n",
+        "status": "trivial"
+      },
+      {
+        "id": 4,
+        "location": "5:26:5:28",
+        "text": "ASSUME PA ,\n       PI \nPROVE  PA\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "a method whose backend can't take the text": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "3:15:3:17",
+          "text": "ASSUME SMT ,\n       Zenon \nPROVE  1 = 1\n",
+          "status": "proved",
+          "prover": "zenon"
+        },
+        {
+          "id": 2,
+          "location": "3:18:3:21",
+          "text": "SMT\n",
+          "status": "trivial"
+        },
+        {
+          "id": 3,
+          "location": "3:23:3:28",
+          "text": "ASSUME SMT \nPROVE  Zenon\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME SMT ,\n       Zenon \nPROVE  1 = 1\n",
+        "status": "proved",
+        "prover": "zenon"
+      },
+      {
+        "id": 2,
+        "location": "3:18:3:21",
+        "text": "SMT\n",
+        "status": "trivial"
+      },
+      {
+        "id": 3,
+        "location": "3:23:3:28",
+        "text": "ASSUME SMT \nPROVE  Zenon\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "an identifier named like an object's property": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "4:29:4:31",
+          "text": "ASSUME NEW CONSTANT toString,\n       SMT \nPROVE  toString = toString\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 2,
+          "location": "4:32:4:35",
+          "text": "ASSUME NEW CONSTANT toString\nPROVE  SMT\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "4:29:4:31",
+        "text": "ASSUME NEW CONSTANT toString,\n       SMT \nPROVE  toString = toString\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 2,
+        "location": "4:32:4:35",
+        "text": "ASSUME NEW CONSTANT toString\nPROVE  SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "a definition named like an object's property": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "4:21:4:23",
+          "text": "ASSUME constructor == TRUE,\n       Zenon \nPROVE  constructor\n",
+          "status": "proved",
+          "prover": "zenon"
+        },
+        {
+          "id": 2,
+          "location": "4:24:4:29",
+          "text": "ASSUME constructor == TRUE\nPROVE  Zenon\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "4:21:4:23",
+        "text": "ASSUME constructor == TRUE,\n       Zenon \nPROVE  constructor\n",
+        "status": "proved",
+        "prover": "zenon"
+      },
+      {
+        "id": 2,
+        "location": "4:24:4:29",
+        "text": "ASSUME constructor == TRUE\nPROVE  Zenon\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "a prover named like an object's property": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "4:15:4:17",
+          "text": "ASSUME Mine \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "Unknown prover: toString"
+        },
+        {
+          "id": 2,
+          "location": "4:18:4:22",
+          "text": "Mine\n",
+          "status": "trivial"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "4:15:4:17",
+        "text": "ASSUME Mine \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "Unknown prover: toString"
+      },
+      {
+        "id": 2,
+        "location": "4:18:4:22",
+        "text": "Mine\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "a pragma's string with an escape JSON lacks": {
+    "error": {
+      "class": "TlapmBugError",
+      "name": "TlaProofError",
+      "message": "Oops, this seems to be a bug in TLAPM."
+    },
+    "streamed": []
+  },
+  "stops after 1 reports": {
+    "error": {
+      "class": "Error",
+      "name": "Error",
+      "message": "stop"
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME CVC4 \nPROVE  1 = 1\n",
+        "status": "unsupported",
+        "reason": "tla-ts has no cvc3 backend"
+      }
+    ]
+  },
+  "stops after 2 reports": {
+    "error": {
+      "class": "Error",
+      "name": "Error",
+      "message": "stop"
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME CVC4 \nPROVE  1 = 1\n",
+        "status": "unsupported",
+        "reason": "tla-ts has no cvc3 backend"
+      },
+      {
+        "id": 2,
+        "location": "3:18:3:22",
+        "text": "CVC4\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "a signal aborted before it starts on no obligations": {
+    "result": {
+      "obligations": [],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": []
+  },
+  "a signal aborted before it starts on a syntax error": {
+    "error": {
+      "class": "TlaProofError",
+      "name": "TlaProofError",
+      "message": "Could not parse \"M.tla\" successfully."
+    },
+    "streamed": []
+  },
+  "a signal aborted before it starts on obligations": {
+    "error": {
+      "class": "Error",
+      "name": "Error",
+      "message": "pre"
+    },
+    "streamed": []
+  },
+  "an abort before an obligation's error": {
+    "error": {
+      "class": "Error",
+      "name": "Error",
+      "message": "stop"
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "4:15:4:17",
+        "text": "ASSUME NEW VARIABLE v,\n       SMT \nPROVE  1 = 1\n",
+        "status": "proved",
+        "prover": "smt"
+      },
+      {
+        "id": 2,
+        "location": "4:18:4:21",
+        "text": "ASSUME NEW VARIABLE v\nPROVE  SMT\n",
+        "status": "trivial"
+      }
+    ]
+  },
+  "an abort before it starts and an obligation's error": {
+    "error": {
+      "class": "Error",
+      "name": "Error",
+      "message": "pre"
+    },
+    "streamed": []
+  },
+  "loads of a module two others extend": [
+    "A",
+    "B",
+    "TLAPS",
+    "C"
+  ],
+  "the signal aborts on a timer": {
+    "error": {
+      "class": "Error",
+      "name": "Error",
+      "message": "timer"
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "3:15:3:17",
+        "text": "ASSUME Trivial \nPROVE  1 = 1\n",
+        "status": "proved",
+        "prover": "trivial"
+      }
+    ]
+  },
+  "reads a standard module": {
+    "run": {
+      "result": {
+        "obligations": [
+          {
+            "id": 1,
+            "location": "3:19:3:21",
+            "text": "ASSUME SMT \nPROVE  1 + 1 = 2\n",
+            "status": "proved",
+            "prover": "smt"
+          },
+          {
+            "id": 2,
+            "location": "3:22:3:25",
+            "text": "SMT\n",
+            "status": "trivial"
+          }
+        ],
+        "missingProofCount": 0,
+        "omittedProofCount": 0
+      },
+      "streamed": [
+        {
+          "id": 1,
+          "location": "3:19:3:21",
+          "text": "ASSUME SMT \nPROVE  1 + 1 = 2\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 2,
+          "location": "3:22:3:25",
+          "text": "SMT\n",
+          "status": "trivial"
+        }
+      ]
+    },
+    "reads": [
+      "Lib",
+      "Naturals",
+      "TLAPS",
+      "Naturals"
+    ]
+  },
+  "reads a missing module": {
+    "run": {
+      "error": {
+        "class": "TlaProofError",
+        "name": "TlaProofError",
+        "message": "Unknown module \"X\""
+      },
+      "streamed": []
+    },
+    "reads": [
+      "A2",
+      "B2",
+      "TLAPS",
+      "X",
+      "X"
+    ]
+  },
+  "reads a module that doesn't parse": {
+    "run": {
+      "error": {
+        "class": "TlaProofError",
+        "name": "TlaProofError",
+        "message": "Could not parse \"A.tla\" successfully."
+      },
+      "streamed": []
+    },
+    "reads": [
+      "A"
+    ]
+  },
+  "a module that isn't well-formed UTF-16 among the loaded": {
+    "run": {
+      "result": {
+        "obligations": [
+          {
+            "id": 1,
+            "location": "3:15:3:17",
+            "text": "ASSUME X == 1,\n       SMT \nPROVE  X = 1\n",
+            "status": "proved",
+            "prover": "smt"
+          },
+          {
+            "id": 2,
+            "location": "3:18:3:21",
+            "text": "ASSUME X == 1\nPROVE  SMT\n",
+            "status": "trivial"
+          }
+        ],
+        "missingProofCount": 0,
+        "omittedProofCount": 0
+      },
+      "streamed": [
+        {
+          "id": 1,
+          "location": "3:15:3:17",
+          "text": "ASSUME X == 1,\n       SMT \nPROVE  X = 1\n",
+          "status": "proved",
+          "prover": "smt"
+        },
+        {
+          "id": 2,
+          "location": "3:18:3:21",
+          "text": "ASSUME X == 1\nPROVE  SMT\n",
+          "status": "trivial"
+        }
+      ]
+    },
+    "loads": [
+      "Lib",
+      "TLAPS",
+      "Lib2"
+    ]
+  },
+  "a pragma's string with an escape of a lone surrogate": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "4:15:4:17",
+          "text": "ASSUME F(1) \nPROVE  1 = 1\n",
+          "status": "failed",
+          "reason": "Invalid SMT budget \"\ud800\""
+        },
+        {
+          "id": 2,
+          "location": "4:18:4:22",
+          "text": "F(1)\n",
+          "status": "failed",
+          "reason": "smt answered sat, zenon answered unknown, isabelle answered unknown"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "4:15:4:17",
+        "text": "ASSUME F(1) \nPROVE  1 = 1\n",
+        "status": "failed",
+        "reason": "Invalid SMT budget \"\ud800\""
+      },
+      {
+        "id": 2,
+        "location": "4:18:4:22",
+        "text": "F(1)\n",
+        "status": "failed",
+        "reason": "smt answered sat, zenon answered unknown, isabelle answered unknown"
+      }
+    ]
+  },
+  "a pragma's string with a tactic with an escape of a lone surrogate": {
+    "result": {
+      "obligations": [
+        {
+          "id": 1,
+          "location": "4:1:4:39",
+          "text": "1 = 1\n",
+          "status": "failed",
+          "reason": "isabelle failed: Isabelle's port reads ASCII theories only"
+        }
+      ],
+      "missingProofCount": 0,
+      "omittedProofCount": 0
+    },
+    "streamed": [
+      {
+        "id": 1,
+        "location": "4:1:4:39",
+        "text": "1 = 1\n",
+        "status": "failed",
+        "reason": "isabelle failed: Isabelle's port reads ASCII theories only"
+      }
+    ]
+  },
+  "proves HourClock with workers": {
+    "obligations": [],
+    "missingProofCount": 1,
+    "omittedProofCount": 0
+  }
+}

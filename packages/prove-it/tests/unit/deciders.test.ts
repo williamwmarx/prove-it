@@ -2,10 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { getNativeAddon } from "../../src/engine/native";
-import { TlaProverError } from "../../src/errors";
-import { decide } from "../../src/prover/deciders";
-import type { Decision } from "../../src/prover/verdict";
+import { getNativeAddon, type NativeDecision } from "../../src/engine/native";
 
 const TESTS_DIRECTORY = join(import.meta.dirname, "..");
 
@@ -19,25 +16,27 @@ const INPUTS = [
   ["ls4", read("conformance/ptl/equivalence-of-boxes.ls4")],
 ] as const;
 
+type Decided = Extract<NativeDecision, { kind: "decided" }>;
+
 // What the TypeScript SMT decider answered on the SMT input with no limits, as smt and as z3, before
 // it was deleted, as crates/prover/smt/tests/tables/decide.txt records it too.
-const SMT_RECORDED: Decision = {
+const SMT_RECORDED: Decided = {
+  kind: "decided",
   verdict: "unsat",
-  timeUsedMs: 0,
   statistics: { instances: 14, steps: 4626 },
 };
 
 // What the TypeScript deciders answered on their inputs with no limits, before they were deleted,
 // as tests/fixtures/zenon/decisions.txt and prove-isabelle's testdata/decide.txt record Zenon's and
 // Isabelle's too.
-const RECORDED: Record<string, Decision> = {
+const RECORDED: Record<string, Decided> = {
   smt: SMT_RECORDED,
   z3: SMT_RECORDED,
-  isabelle: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 840 } },
-  ls4: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 5 } },
+  isabelle: { kind: "decided", verdict: "unsat", statistics: { steps: 840 } },
+  ls4: { kind: "decided", verdict: "unsat", statistics: { steps: 5 } },
   zenon: {
+    kind: "decided",
     verdict: "unsat",
-    timeUsedMs: 0,
     statistics: {
       steps: 1932,
       nodesSearched: 2246,
@@ -49,30 +48,41 @@ const RECORDED: Record<string, Decision> = {
   },
 };
 
-const OPTIONS = { timeLimitMs: Infinity };
+const getAddon = () => {
+  const addon = getNativeAddon();
+  if (typeof addon === "string") throw new Error(addon);
+  return addon;
+};
+
+// The decision with no time limit, and stepLimit steps where it is given.
+const decide = (prover: string, text: string, stepLimit?: number) =>
+  getAddon().decide(prover, text, Infinity, stepLimit, undefined);
+
+const getSteps = (decision: NativeDecision) =>
+  decision.kind === "decided" ? Number(decision.statistics.steps) : Number.NaN;
 
 describe("the deciders' steps and statistics", () => {
   it.each(INPUTS)(
     "%s proves its input and reports the same statistics each time",
     (prover, text) => {
-      const first = decide(prover, text, OPTIONS);
-      const second = decide(prover, text, OPTIONS);
-      expect(first.verdict).toBe("unsat");
-      expect(first.statistics.steps).toBeGreaterThan(0);
-      expect(second.statistics).toEqual(first.statistics);
+      const first = decide(prover, text);
+      const second = decide(prover, text);
+      expect(first).toMatchObject({ kind: "decided", verdict: "unsat" });
+      expect(getSteps(first)).toBeGreaterThan(0);
+      expect(second).toEqual(first);
     },
   );
 
   // A step limit stops a backend where its time limit would, so a search cut short is unknown.
   it.each(INPUTS)("%s gives up at a step limit", (prover, text) => {
-    const decision = decide(prover, text, OPTIONS, 1);
-    expect(decision.verdict).toBe("unknown");
+    expect(decide(prover, text, 1)).toMatchObject({ kind: "decided", verdict: "unknown" });
   });
 
   // A limit as large as the steps the proof took changes nothing.
   it.each(INPUTS)("%s proves its input within the steps it took", (prover, text) => {
-    const steps = Number(decide(prover, text, OPTIONS).statistics.steps);
-    expect(decide(prover, text, OPTIONS, steps)).toMatchObject({
+    const steps = getSteps(decide(prover, text));
+    expect(decide(prover, text, steps)).toMatchObject({
+      kind: "decided",
       verdict: "unsat",
       statistics: { steps },
     });
@@ -80,16 +90,17 @@ describe("the deciders' steps and statistics", () => {
 });
 
 // Z3 takes steps parsing up to a malformed term, so a step limit can stop it before the error, which
-// is why prover-inputs.ts records an input that throws without a step limit.
+// is why prover-inputs.ts records an input that fails without a step limit.
 describe("a malformed input", () => {
   const text = "(declare-const x Int)\n(assert (= (+ x 1) x))\n(assert (foo x))\n(check-sat)";
 
-  it("throws without a step limit", () => {
-    expect(() => decide("smt", text, OPTIONS)).toThrow(TlaProverError);
+  it("fails without a step limit", () => {
+    expect(decide("smt", text)).toMatchObject({ kind: "error" });
   });
 
   it("is unknown when the step limit stops it first", () => {
-    expect(decide("smt", text, OPTIONS, 0)).toMatchObject({
+    expect(decide("smt", text, 0)).toMatchObject({
+      kind: "decided",
       verdict: "unknown",
       statistics: { stop: "steps" },
     });
@@ -98,20 +109,11 @@ describe("a malformed input", () => {
 
 // Each backend's TypeScript is deleted, and its Rust port decides as the TypeScript did.
 describe("the Rust ports", () => {
-  const getAddon = () => {
-    const addon = getNativeAddon();
-    if (typeof addon === "string") throw new Error(addon);
-    return addon;
-  };
-
   // Z3 is sent the SMT input.
   it.each([...INPUTS, ["z3", INPUTS[0][1]] as const])(
     "%s decides as its TypeScript did",
     (prover, text) => {
-      expect(decide(prover, text, OPTIONS)).toMatchObject({
-        verdict: RECORDED[prover].verdict,
-        statistics: RECORDED[prover].statistics,
-      });
+      expect(decide(prover, text)).toMatchObject(RECORDED[prover]);
     },
   );
 
@@ -121,7 +123,7 @@ describe("the Rust ports", () => {
     ["isabelle", "theory \u{e9}"],
     ["ls4", "not ((always h00000) ->"],
   ])("fails on a malformed %s input", (prover, text) => {
-    expect(() => decide(prover, text, OPTIONS)).toThrow(TlaProverError);
+    expect(decide(prover, text)).toMatchObject({ kind: "error" });
   });
 
   it("declines a prover without a backend", () => {
@@ -131,13 +133,17 @@ describe("the Rust ports", () => {
     });
   });
 
-  it("fails on a prover the engine declines", () => {
-    expect(() => decide("cvc4", "", OPTIONS)).toThrow(TlaProverError);
+  it("declines a prover without a backend with no limits", () => {
+    expect(decide("cvc4", "")).toEqual({ kind: "declined", reason: "the cvc4 backend" });
   });
 
-  // The native backends don't see the signal, so an aborted one keeps an input from them.
-  it.each(INPUTS)("%s is unknown once its signal has aborted", (prover, text) => {
-    const options = { timeLimitMs: Infinity, signal: AbortSignal.abort() };
-    expect(decide(prover, text, options).verdict).toBe("unknown");
+  // A decision whose cancel cell is set before it starts gives up at once.
+  it.each(INPUTS)("%s is unknown once its decision is canceled", (prover, text) => {
+    const cancel = new Int32Array(new SharedArrayBuffer(4));
+    cancel[0] = 1;
+    expect(getAddon().decide(prover, text, Infinity, undefined, cancel)).toMatchObject({
+      kind: "decided",
+      verdict: "unknown",
+    });
   });
 });
