@@ -100,10 +100,10 @@ describe("Java module overrides match TLC", () => {
   it("runs a method that catches an exception up to its first return", async () => {
     // TLC at d8fb231 loads K, whose try block returns 0, and reports x = 0 violating Inv.
     const result = await checkShape("trycatch");
-    expect([result.status, result.violation?.trace.map((step) => step.state.x)]).toEqual([
-      "invariant-violation",
-      [0],
-    ]);
+    expect([
+      result.status,
+      result.violations[0]?.states.map((step) => step.variables.x?.text),
+    ]).toEqual(["invariant-violation", ["0"]]);
   });
 
   it("rejects an override whose method computes its value", async () => {
