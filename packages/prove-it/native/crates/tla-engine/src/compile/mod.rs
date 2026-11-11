@@ -287,12 +287,25 @@ impl Compiled {
 
     /// The value as TLC keeps it for later uses.
     pub(crate) fn kept(compiled: Compiled) -> Compiled {
+        Compiled::kept_from(compiled, false)
+    }
+
+    /// The value as TLC keeps it for later uses, or, with `is_assigned`, as TLC builds it until
+    /// the initial predicate completes a state, as a constant definition the initial predicate
+    /// only assigns to variables (`Compiler::initial_assignments`).
+    fn kept_from(compiled: Compiled, is_assigned: bool) -> Compiled {
         if compiled.is_kept {
             return compiled;
         }
         let reference = compiled.reference.clone().map(|reference| {
-            Arc::new(move |machine: &mut Machine<'_>| Ok(reference(machine)?.kept()))
-                as lazy::Reference
+            Arc::new(move |machine: &mut Machine<'_>| {
+                let built = reference(machine)?;
+                Ok(if is_assigned && machine.is_before_initial_state {
+                    built
+                } else {
+                    built.kept()
+                })
+            }) as lazy::Reference
         });
         Compiled {
             reference,
@@ -785,8 +798,8 @@ pub struct Compiler<'a> {
     // The contexts of the instance scopes translated so far.
     scope_contexts: HashMap<Index, Option<Context>>,
     // The definitions the spec names where TLC may cache the value it keeps for a constant
-    // definition as its normalized set (`Compiler::is_normalized_definition`).
-    normalized_definitions: OnceCell<HashSet<NodeId>>,
+    // definition as its normalized set (`Compiler::normalized_definitions`).
+    normalized_definitions: OnceCell<HashMap<NodeId, bool>>,
 }
 
 fn add_read(reads: &mut Vec<Rc<FixedPoint>>, fixed_point: &Rc<FixedPoint>) {
@@ -1659,65 +1672,203 @@ impl<'a> Compiler<'a> {
     fn kept_definition(&self, node: NodeId, compiled: Compiled) -> Compiled {
         let is_constant =
             compiled.footprint.vars.is_empty() && compiled.footprint.primes.is_empty();
-        if is_constant && self.is_normalized_definition(node) {
-            Compiled::kept(compiled)
-        } else {
-            compiled
+        match self.normalized_definitions().get(&node) {
+            Some(&is_assigned) if is_constant => Compiled::kept_from(compiled, is_assigned),
+            _ => compiled,
         }
     }
 
-    // Whether the spec names a definition other than as the set of `e \in S` or `e \notin S`, or
-    // the set a `\A`, `\E` or CHOOSE binds over, which TLC tests, streams or enumerates without
+    // The definitions the spec names other than as the set of `e \in S` or `e \notin S`, or the
+    // set a `\A`, `\E` or CHOOSE binds over, which TLC tests, streams or enumerates without
     // caching it as its normalized set (`Tool.contexts`, `toSetEnum`): where it may size,
-    // compare or fingerprint it (`convertAndCache`), as a subexpression may any definition.
-    fn is_normalized_definition(&self, node: NodeId) -> bool {
-        self.normalized_definitions
-            .get_or_init(|| {
-                let arena = &self.ir.nodes.arena;
-                if arena
+    // compare or fingerprint it (`convertAndCache`), as a subexpression may any definition. Each
+    // with whether every such name assigns it to a variable in the initial predicate
+    // (`Compiler::initial_assignments`), so that TLC caches it only once that predicate completes
+    // a state.
+    pub(super) fn normalized_definitions(&self) -> &HashMap<NodeId, bool> {
+        self.normalized_definitions.get_or_init(|| {
+            let arena = &self.ir.nodes.arena;
+            if arena
+                .iter()
+                .any(|named| matches!(named.kind, NodeKind::Subexpression(_)))
+            {
+                return self
+                    .ir
+                    .definitions
                     .iter()
-                    .any(|named| matches!(named.kind, NodeKind::Subexpression(_)))
-                {
-                    return self.ir.definitions.iter().copied().collect();
-                }
-                let tested: HashSet<NodeId> = arena
-                    .iter()
-                    .flat_map(|tested| match &tested.kind {
-                        NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
-                            Resolution::Builtin(index)
-                                if matches!(self.builtin_name(index), "\\in" | "\\notin") =>
-                            {
-                                args.get(1).copied().into_iter().collect()
-                            }
-                            _ => Vec::new(),
-                        },
-                        NodeKind::Forall { bounds, .. } | NodeKind::Exists { bounds, .. } => {
-                            bounds.iter().map(|bound| bound.set).collect()
-                        }
-                        NodeKind::Choose { set, .. } => set.iter().copied().collect(),
-                        _ => Vec::new(),
-                    })
+                    .map(|&node| (node, false))
                     .collect();
-                (0..arena.len() as NodeId)
-                    .filter(|named| !tested.contains(named))
-                    .filter_map(|named| match self.node(named).1 {
+            }
+            let tested: HashSet<NodeId> = arena
+                .iter()
+                .flat_map(|tested| match &tested.kind {
+                    NodeKind::Apply { name, args } if !name.is_local => match name.resolution {
+                        Resolution::Builtin(index)
+                            if matches!(self.builtin_name(index), "\\in" | "\\notin") =>
+                        {
+                            args.get(1).copied().into_iter().collect()
+                        }
+                        _ => Vec::new(),
+                    },
+                    NodeKind::Forall { bounds, .. } | NodeKind::Exists { bounds, .. } => {
+                        bounds.iter().map(|bound| bound.set).collect()
+                    }
+                    NodeKind::Choose { set, .. } => set.iter().copied().collect(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            let names: Vec<(NodeId, NodeId)> = (0..arena.len() as NodeId)
+                .filter(|named| !tested.contains(named))
+                .filter_map(|named| {
+                    let resolution = match self.node(named).1 {
                         NodeKind::Identifier(name) | NodeKind::OperatorReference(name)
                             if !name.is_local =>
                         {
-                            Some(name.resolution)
+                            name.resolution
                         }
                         NodeKind::Apply { name, args } if !name.is_local && args.is_empty() => {
-                            Some(name.resolution)
+                            name.resolution
+                        }
+                        _ => return None,
+                    };
+                    match resolution {
+                        Resolution::Definition(index) => {
+                            Some((named, self.ir.definitions[index as usize]))
                         }
                         _ => None,
-                    })
-                    .filter_map(|resolution| match resolution {
-                        Resolution::Definition(index) => Some(self.ir.definitions[index as usize]),
-                        _ => None,
-                    })
-                    .collect()
+                    }
+                })
+                .collect();
+            let assignments = self.initial_assignments(&names);
+            let mut definitions = HashMap::new();
+            for (named, definition) in names {
+                let is_assigned = assignments.contains(&named);
+                definitions
+                    .entry(definition)
+                    .and_modify(|is_all: &mut bool| *is_all &= is_assigned)
+                    .or_insert(is_assigned);
+            }
+            definitions
+        })
+    }
+
+    // The names of definitions, of `names` (each with its definition), that the initial
+    // predicate assigns to a variable, `v = C`, where TLC binds the value it keeps for C as
+    // built (`Tool.getInitStates`) and caches it as its normalized set only once it fingerprints
+    // the state (`DoInitFunctor.addElement`): an assignment the predicate walks at most once on a
+    // path, outside a binder or an operator's argument or body, whose variable it names nowhere
+    // else, so that no test after it compares the value as the receiver (`SetCupValue.equals`,
+    // `UnionValue.equals`).
+    fn initial_assignments(&self, names: &[(NodeId, NodeId)]) -> HashSet<NodeId> {
+        let is_equality = |node: NodeId| {
+            matches!(self.node(node).1, NodeKind::Apply { name, .. } if !name.is_local
+                && matches!(name.resolution, Resolution::Builtin(index)
+                    if self.builtin_name(index) == "="))
+        };
+        let variable = |node: NodeId| match self.node(node).1 {
+            NodeKind::Identifier(name) if !name.is_local => match name.resolution {
+                Resolution::Variable(variable) => Some(variable),
+                _ => None,
+            },
+            _ => None,
+        };
+        let named: HashSet<NodeId> = names.iter().map(|&(named, _)| named).collect();
+        // Each `v = C`, by C's name: the equality and v.
+        let mut candidates = HashMap::new();
+        for (node, entry) in self.ir.nodes.arena.iter().enumerate() {
+            if let NodeKind::Apply { args, .. } = &entry.kind
+                && let [left, right] = args[..]
+                && named.contains(&right)
+                && is_equality(node as NodeId)
+                && let Some(variable) = variable(left)
+            {
+                candidates.insert(right, (node as NodeId, variable));
+            }
+        }
+        let is_referenced = |node: NodeId| {
+            self.ir
+                .nodes
+                .arena
+                .iter()
+                .any(|entry| entry.kind == NodeKind::Reference(node))
+        };
+        candidates.retain(|&named, _| !is_referenced(named));
+        if candidates.is_empty() || self.ir.model.scope.is_some() {
+            return HashSet::new();
+        }
+        // How often the initial predicate walks each equality, and names each variable, on a
+        // path, counting one under a binder or an operator's argument or body twice.
+        let mut walked: HashMap<NodeId, u32> = HashMap::new();
+        let mut variables: HashMap<u32, u32> = HashMap::new();
+        let mut pending = vec![(self.ir.model.init, false)];
+        let mut budget = 1_000_000u32;
+        while let Some((node, is_repeated)) = pending.pop() {
+            let Some(left) = budget.checked_sub(1) else {
+                return HashSet::new();
+            };
+            budget = left;
+            let count = u32::from(is_repeated) + 1;
+            *walked.entry(node).or_default() += count;
+            if let Some(variable) = variable(node) {
+                *variables.entry(variable).or_default() += count;
+            }
+            let kind = self.node(node).1;
+            let definition = match kind {
+                NodeKind::Identifier(name) | NodeKind::OperatorReference(name)
+                    if !name.is_local =>
+                {
+                    Some(name.resolution)
+                }
+                NodeKind::Apply { name, .. } if !name.is_local => Some(name.resolution),
+                _ => None,
+            }
+            .and_then(|resolution| match resolution {
+                Resolution::Definition(index) => Some(self.ir.definitions[index as usize]),
+                _ => None,
+            });
+            if let Some(definition) = definition {
+                let body = self.definition(definition).body;
+                let is_operator = !matches!(&self.definition(definition).form,
+                    DefinitionForm::Operator(params) if params.is_empty());
+                pending.push((body, is_repeated || is_operator));
+                if let NodeKind::Apply { args, .. } = kind {
+                    pending.extend(args.iter().map(|&arg| (arg, true)));
+                }
+                continue;
+            }
+            match kind {
+                NodeKind::Reference(target) => pending.push((*target, is_repeated)),
+                NodeKind::Definition(definition) => pending.push((
+                    definition.body,
+                    is_repeated
+                        || !matches!(&definition.form,
+                            DefinitionForm::Operator(params) if params.is_empty()),
+                )),
+                NodeKind::And(_)
+                | NodeKind::Or(_)
+                | NodeKind::If { .. }
+                | NodeKind::Case { .. }
+                | NodeKind::Label { .. }
+                | NodeKind::Prime(_)
+                | NodeKind::Unchanged(_) => pending.extend(
+                    kind.children()
+                        .into_iter()
+                        .map(|child| (child, is_repeated)),
+                ),
+                // A builtin's arguments, which TLC evaluates once.
+                NodeKind::Apply { name, args } if !name.is_local => {
+                    pending.extend(args.iter().map(|&arg| (arg, is_repeated)))
+                }
+                _ => pending.extend(kind.children().into_iter().map(|child| (child, true))),
+            }
+        }
+        candidates
+            .into_iter()
+            .filter(|(_, (equality, variable))| {
+                walked.get(equality) == Some(&1) && variables.get(variable) == Some(&1)
             })
-            .contains(&node)
+            .map(|(named, _)| named)
+            .collect()
     }
 
     // A definition TLC evaluates once at startup: what it computes is its value from then on, so

@@ -1755,8 +1755,28 @@ impl<'a> Compiler<'a> {
                 set.footprint,
             )
         };
+        // A constant definition TLC streams as built until the initial predicate completes a
+        // state (`Compiler::initial_assignments`) streams anew until then, and is cached only
+        // after.
+        let is_built_initially = is_streamed
+            && self
+                .normalized_definitions()
+                .values()
+                .any(|&is_assigned| is_assigned);
+        let uncached = ordered.eval.clone();
+        let cached = self.cached(ordered).eval;
         Ok(Ordered {
-            eval: self.cached(ordered).eval,
+            eval: if is_built_initially {
+                eval(move |machine| {
+                    if machine.is_before_initial_state {
+                        uncached(machine)
+                    } else {
+                        cached(machine)
+                    }
+                })
+            } else {
+                cached
+            },
             is_ordered: true,
         })
     }

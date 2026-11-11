@@ -169,9 +169,11 @@ fn get_differences(test: &str, configuration: &str, cells: &[(String, String)]) 
                 .expect("the binary runs");
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
+            // A decline may come once the initial states are printed, which the check drops with
+            // them (`checkSources`), but never once the search has ended.
             let is_as_expected = if is_declined {
                 stderr.contains("prove-it: not native yet: ")
-                    && !stdout.contains("states generated")
+                    && !stdout.contains("distinct states found")
             } else {
                 get_untimed(&stdout) == expected
             };
@@ -329,8 +331,9 @@ fn get_kept_spec(source: &str, extra: &str, probes: &str, route: &str, is_next: 
 }
 
 // The spec of a cell of `CONSTANT_ROUTES`: a constant definition of the source, which Init
-// assigns, sizes or compares, or streams before it assigns it, or only quantifies over, which
-// leaves it as built, and Next streams.
+// assigns, sizes or compares, or only quantifies over, which leaves it as built, and Next
+// streams; or which Init assigns and streams before it completes a state, which TLC streams as
+// built.
 fn get_constant_spec(source: &str, extra: &str, probes: &str, route: &str) -> String {
     let start = &extra[1..extra.len() - 1];
     let (init, next) = match route {
@@ -408,5 +411,52 @@ fn streams_a_set_tlc_may_have_normalized_as_tlc_does_or_declines() {
         "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE\n",
         &cells,
     );
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
+}
+
+// A constant definition the initial predicate assigns to a variable, which TLC binds as built
+// and caches as its normalized set once it fingerprints the state (`DoInitFunctor.addElement`):
+// TLC streams it as built before the predicate completes a state, and normalized after it, or
+// where a use before the stream may have cached it (`initial.*.out`).
+#[test]
+fn streams_a_constant_the_initial_predicate_assigns_as_tlc_does_or_declines() {
+    let cases = [
+        (
+            "assigned",
+            "VARIABLES s, t, x\nInit == s = C /\\ t = C /\\ x \\in C\nNext == UNCHANGED <<s, t, x>>",
+        ),
+        (
+            "streamedAgain",
+            "VARIABLES s, x, y\nInit == y \\in 1..2 /\\ s = C /\\ x \\in C\nNext == UNCHANGED <<s, x, y>>",
+        ),
+        (
+            "streamedInNext",
+            "VARIABLES s, x\nInit == s = C /\\ x \\in C\nNext == s' = s /\\ x' \\in C",
+        ),
+        (
+            "assignedTwice",
+            "VARIABLES s, x\nA == s = C\nInit == A /\\ A /\\ x \\in C\nNext == UNCHANGED <<s, x>>",
+        ),
+        (
+            "tested",
+            "VARIABLES s, x\nInit == s = C /\\ s # {} /\\ x \\in C\nNext == UNCHANGED <<s, x>>",
+        ),
+        (
+            "assumed",
+            "VARIABLES s, x\nASSUME Cardinality(C) > 0\nInit == s = C /\\ x \\in C\nNext == UNCHANGED <<s, x>>",
+        ),
+    ];
+    let cells: Vec<(String, String)> = cases
+        .into_iter()
+        .map(|(name, body)| {
+            (
+                format!("initial.{name}"),
+                format!(
+                    "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nC == UNION {{1..2, 2..3}}\n{body}\n====\n"
+                ),
+            )
+        })
+        .collect();
+    let differences = get_differences("lazy-initial", PLAIN, &cells);
     assert!(differences.is_empty(), "{}", differences.join("\n"));
 }

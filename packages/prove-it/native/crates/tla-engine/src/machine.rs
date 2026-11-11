@@ -159,6 +159,10 @@ pub struct Machine<'p> {
     /// TLC binds the set as built until it fingerprints the state the walk completes, which
     /// caches it as its normalized set (`Tool.getInitStates`, `Tool.getNextStates`).
     pub(crate) held: Vec<Option<(Id, Option<Lazy>)>>,
+    /// Whether the search walks the initial predicate and it has completed no state yet, before
+    /// which TLC fingerprints no state, so it has cached no value a state holds as its
+    /// normalized set (`DoInitFunctor.addElement`).
+    pub(crate) is_before_initial_state: bool,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -215,6 +219,7 @@ impl<'p> Machine<'p> {
             fingerprints: Fingerprints::new(program.polynomial()),
             lazy_functions: Vec::new(),
             held: vec![None; program.width],
+            is_before_initial_state: false,
         }
     }
 
