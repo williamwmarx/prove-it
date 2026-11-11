@@ -394,6 +394,7 @@ cells TLC holds as values found them. Each spec has `VARIABLE x`, `Init == x = 0
 | A POSTCONDITION the configuration assigns | `CONSTANT PC = TRUE`, `POSTCONDITION PC` | "The post condition PC cannot be a constant." | another report |
 | An ALIAS whose body is a literal, substituted by a module-scoped `<- [M]` in its module, the root, an extended or an instantiated one | `Alias == 3`, `CONSTANT Alias <- [M] Q` | TLC's unexpected ClassCastException | the plain states |
 | An ALIAS substituted for a definition of a module both extended and instantiated with parameters, which TLC doesn't compute | `Y <- Alias`, with `Alias == 3` | the plain states | "The alias Alias cannot be a constant." |
+| An ALIAS from an INSTANCE with substitutions that the configuration assigns in that module | `INSTANCE N WITH c <- 1`, N's `Alias == [y \|-> c]`, `CONSTANT Alias = [N] 3` | `y = 1` | the plain states |
 
 #### Every reason
 
