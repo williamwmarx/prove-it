@@ -305,7 +305,9 @@ the same constant; a failure evaluating the spec past the initial states, after 
 the postconditions on a trace it can't find again; a spec that draws RandomElement or
 RandomSubset, whose trace TLC may not find again, writing nothing; a deadlock that violates a
 temporal property; a file name that isn't printable ASCII or holds a quote or a backslash; a file
-in a directory that doesn't exist; `-dumpTrace` with `-continue`; a module of the user's that a
+in a directory that doesn't exist; `-dumpTrace` with `-continue`; a configuration POSTCONDITION TLC
+rejects, as TLC then writes no dump (it collects every postcondition before it checks any,
+`Spec.getPostConditionSpecs`); a module of the user's that a
 trace module uses, such as a `Json.tla` beside the spec, which SANY loads in place of the standard
 one, failing TLC's run in `_JsonTrace`'s analysis ("Unknown operator: `JsonSerialize'.") where
 it lacks what `_JsonTrace` uses (SANY's report of the extra modules declines it as it does for the
