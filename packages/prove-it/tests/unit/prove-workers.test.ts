@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -40,4 +41,31 @@ describe("prove with workers matches one thread", () => {
     });
     await expect(proving).rejects.toThrow(controller.signal.reason);
   });
+});
+
+// A browser has no process.dlopen, so prove needs the engine as WebAssembly the package ships, which
+// it compiles before deciding: Zenon has no TypeScript decider to fall back to. The build has the
+// engine once `platform-packages.ts build --target wasm32-unknown-unknown` writes it.
+describe("prove without process.dlopen", () => {
+  it.if(existsSync(join(DIST, "../prove-it-engine.wasm")))(
+    "proves with Zenon through the engine as WebAssembly",
+    () => {
+      const script = [
+        'Object.defineProperty(process, "dlopen", { value: undefined });',
+        `const { prove } = await import(${JSON.stringify(DIST)});`,
+        'const source = "---- MODULE M ----\\nEXTENDS TLAPS\\nTHEOREM \\\\A x : x = x BY Zenon\\n====\\n";',
+        "const result = await prove({ source });",
+        "console.log(JSON.stringify(result.obligations.map((o) => [o.status, o.prover ?? null])));",
+      ].join("\n");
+      const run = spawnSync("bun", ["-e", script], {
+        encoding: "utf8",
+        env: { ...process.env, PROVE_IT_ENGINE_ADDON: undefined },
+      });
+      expect(run.stderr).toBe("");
+      expect(JSON.parse(run.stdout)).toEqual([
+        ["proved", "zenon"],
+        ["trivial", null],
+      ]);
+    },
+  );
 });
