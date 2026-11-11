@@ -828,9 +828,11 @@ impl RewriterEngine {
         Ok(())
     }
 
-    /// ~rewriter_tpl: the shifters' caches go first, the inverse shifter's before the other's, then
-    /// the rewriter's.
+    /// ~rewriter_tpl: the members go in the reverse order of their declarations
+    /// (rewriter.h:224-227), the last result m_r first, then the inverse shifter's cache and the
+    /// other shifter's, then the rewriter's.
     pub fn release(&mut self, m: &mut AstManager) -> Result<(), SmtError> {
+        self.last_result.set(m, -1)?;
         self.inv_shifter.release(m)?;
         self.shifter.release(m)?;
         self.core.release_caches(m)
@@ -1485,8 +1487,10 @@ impl BetaReducer {
         Ok(())
     }
 
-    /// ~rewriter_tpl: the shifter's cache goes first, then the rewriter's.
+    /// ~rewriter_tpl: the last result m_r goes first, then the shifter's cache, then the
+    /// rewriter's.
     pub fn release(&mut self, m: &mut AstManager) -> Result<(), SmtError> {
+        self.last_result.set(m, -1)?;
         self.shifter.release(m)?;
         self.core.release_caches(m)
     }
@@ -1760,5 +1764,71 @@ impl BetaReducer {
             m.dec_ref(*pattern)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use prove_decide::Limits;
+
+    use super::BetaReducer;
+    use crate::core::ast::{AstManager, Expr, OP_ITE, SORT_BOOL, SmtSymbol};
+    use crate::core::rewriter::{KERNEL_REWRITER_OPTIONS, Rewriter};
+    use crate::util::rlimit::ResourceLimit;
+
+    fn mk_manager() -> AstManager {
+        AstManager::new(ResourceLimit::new(&Limits::new(f64::INFINITY, None, None)))
+    }
+
+    fn mk_const(m: &mut AstManager, name: &str) -> Expr {
+        let decl = m.mk_func_decl(SmtSymbol::Name(name.into()), &[], SORT_BOOL, false);
+        m.mk_app(decl, &[], SORT_BOOL).unwrap()
+    }
+
+    // ~rewriter_tpl releases m_r, which holds the last result (rewriter.h:227): once the rewriter
+    // and the result are released, so is every expression the rewrite made.
+    #[test]
+    fn releases_the_last_result_of_a_rewriter() {
+        let mut m = mk_manager();
+        let p = mk_const(&mut m, "p");
+        let q = mk_const(&mut m, "q");
+        let r = mk_const(&mut m, "r");
+        let inner = m.mk_and(&[q, r]).unwrap();
+        m.inc_ref(inner);
+        let expr = m.mk_and(&[p, inner]).unwrap();
+        m.inc_ref(expr);
+        let num_asts = m.get_num_asts();
+        let mut rewriter = Rewriter::new(&m, KERNEL_REWRITER_OPTIONS, false);
+        let result = rewriter.rewrite(&mut m, expr).unwrap();
+        assert!(m.get_num_asts() > num_asts);
+        m.dec_ref(result).unwrap();
+        rewriter.release(&mut m).unwrap();
+        assert_eq!(m.get_num_asts(), num_asts);
+    }
+
+    #[test]
+    fn releases_the_last_result_of_a_beta_reducer() {
+        let mut m = mk_manager();
+        let p = mk_const(&mut m, "p");
+        let r = mk_const(&mut m, "r");
+        let condition = m.mk_var(0, SORT_BOOL);
+        let variable = m.mk_var(1, SORT_BOOL);
+        let then_expr = m.mk_and(&[variable, p]).unwrap();
+        let expr = m
+            .mk_app(OP_ITE, &[condition, then_expr, r], SORT_BOOL)
+            .unwrap();
+        m.inc_ref(expr);
+        let q = mk_const(&mut m, "q");
+        m.inc_ref(q);
+        let num_asts = m.get_num_asts();
+        let mut reducer = BetaReducer::new(&m);
+        let true_expr = m.true_expr;
+        let result = reducer
+            .rewrite_with_bindings(&mut m, expr, &[q, true_expr])
+            .unwrap();
+        assert!(m.get_num_asts() > num_asts);
+        m.dec_ref(result).unwrap();
+        reducer.release(&mut m).unwrap();
+        assert_eq!(m.get_num_asts(), num_asts);
     }
 }

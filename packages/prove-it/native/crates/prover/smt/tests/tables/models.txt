@@ -126,7 +126,7 @@ eval complete (f a)#34 = U!val!1#30 steps=146
 eval complete (f b)#35 = U!val!1#30 steps=150
 eval complete (f (f a))#36 = U!val!1#30 steps=158
 eval complete (g a b)#37 = U!val!0#29 steps=160
-released: steps=160 asts=209
+released: steps=160 asts=207
 == partial-theory ==
 eval partial (div x y)#25 = (ite (= 0 y) 7 (div x y))#32 steps=2
 eval partial (div x 0)#27 = 7#24 steps=4
