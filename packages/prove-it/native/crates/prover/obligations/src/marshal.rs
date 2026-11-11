@@ -44,10 +44,11 @@ const PREFIX_SMALL_BLOCK: u8 = 0x80;
 
 const HEADER_SIZE: usize = 20;
 
-// How deep blocks may nest. intern.c reads with its own stack and has no bound; the TypeScript recurses
-// until JavaScript's stack runs out. Deeper input is corrupt here rather than a stack overflow,
-// which in Rust aborts the process; the bound also keeps dropping and comparing a value within a
-// 2 MB thread's stack in a debug build. The deepest nesting in tlapm's files is a hash bucket's
+// How high a value may be: the longest path down its blocks, through shared references too, which
+// bounds the reader's recursion and the recursion of dropping, comparing and writing the value.
+// intern.c reads with its own stack and has no bound; the TypeScript recurses until JavaScript's
+// stack runs out. A higher value is corrupt here rather than a stack overflow, which in Rust aborts
+// the process; 256 levels drop and compare within a 2 MB thread's stack in a debug build. The deepest nesting in tlapm's files is a hash bucket's
 // chain, a few fingerprints long.
 const MAX_DEPTH: usize = 256;
 
@@ -65,7 +66,8 @@ struct Reader<'b> {
     bytes: &'b [u8],
     position: usize,
     end: usize,
-    objects: Vec<Option<MarshalValue>>,
+    // Each value with its height: the longest path down its blocks, shared ones included.
+    objects: Vec<Option<(MarshalValue, usize)>>,
     depth: usize,
 }
 
@@ -85,13 +87,13 @@ impl Reader<'_> {
         Ok(bytes.try_into().expect("take returns the length asked"))
     }
 
-    fn read_string(&mut self, length: usize) -> Result<MarshalValue> {
+    fn read_string(&mut self, length: usize) -> Result<(MarshalValue, usize)> {
         let value = MarshalValue::Text(String::from_utf8_lossy(self.take(length)?).into_owned());
-        self.objects.push(Some(value.clone()));
-        Ok(value)
+        self.objects.push(Some((value.clone(), 0)));
+        Ok((value, 0))
     }
 
-    fn read_block(&mut self, tag: u8, size: usize) -> Result<MarshalValue> {
+    fn read_block(&mut self, tag: u8, size: usize) -> Result<(MarshalValue, usize)> {
         if self.depth == MAX_DEPTH {
             return Err(corrupted());
         }
@@ -108,18 +110,25 @@ impl Reader<'_> {
             return Err(corrupted());
         }
         let mut fields = Vec::with_capacity(size);
+        let mut height = 1;
         for _ in 0..size {
-            fields.push(self.read()?);
+            let (field, field_height) = self.read()?;
+            fields.push(field);
+            height = height.max(field_height + 1);
+        }
+        // Shared references can stack blocks higher than the encoding nests them.
+        if height > MAX_DEPTH {
+            return Err(corrupted());
         }
         self.depth -= 1;
         let value = block(tag, fields);
         if size > 0 {
-            self.objects[index] = Some(value.clone());
+            self.objects[index] = Some((value.clone(), height));
         }
-        Ok(value)
+        Ok((value, height))
     }
 
-    fn read_shared(&self, distance: usize) -> Result<MarshalValue> {
+    fn read_shared(&self, distance: usize) -> Result<(MarshalValue, usize)> {
         self.objects
             .len()
             .checked_sub(distance)
@@ -127,27 +136,30 @@ impl Reader<'_> {
             .ok_or_else(corrupted)
     }
 
-    fn read(&mut self) -> Result<MarshalValue> {
+    fn read(&mut self) -> Result<(MarshalValue, usize)> {
         let code = self.take(1)?[0];
         if code >= PREFIX_SMALL_BLOCK {
             return self.read_block(code & 0xf, usize::from((code >> 4) & 0x7));
         }
         if code >= PREFIX_SMALL_INT {
-            return Ok(MarshalValue::Int(i64::from(code & 0x3f)));
+            return Ok((MarshalValue::Int(i64::from(code & 0x3f)), 0));
         }
         if code >= PREFIX_SMALL_STRING {
             return self.read_string(usize::from(code & 0x1f));
         }
         match code {
-            CODE_INT8 => Ok(MarshalValue::Int(i64::from(i8::from_be_bytes(
-                self.take_array()?,
-            )))),
-            CODE_INT16 => Ok(MarshalValue::Int(i64::from(i16::from_be_bytes(
-                self.take_array()?,
-            )))),
-            CODE_INT32 => Ok(MarshalValue::Int(i64::from(i32::from_be_bytes(
-                self.take_array()?,
-            )))),
+            CODE_INT8 => Ok((
+                MarshalValue::Int(i64::from(i8::from_be_bytes(self.take_array()?))),
+                0,
+            )),
+            CODE_INT16 => Ok((
+                MarshalValue::Int(i64::from(i16::from_be_bytes(self.take_array()?))),
+                0,
+            )),
+            CODE_INT32 => Ok((
+                MarshalValue::Int(i64::from(i32::from_be_bytes(self.take_array()?))),
+                0,
+            )),
             CODE_SHARED8 => {
                 let distance = usize::from(u8::from_be_bytes(self.take_array()?));
                 self.read_shared(distance)
@@ -174,8 +186,8 @@ impl Reader<'_> {
             }
             CODE_DOUBLE_LITTLE => {
                 let value = MarshalValue::Float(f64::from_le_bytes(self.take_array()?));
-                self.objects.push(Some(value.clone()));
-                Ok(value)
+                self.objects.push(Some((value.clone(), 0)));
+                Ok((value, 0))
             }
             _ => Err(corrupted()),
         }
@@ -203,7 +215,7 @@ pub fn read_marshaled(bytes: &[u8], offset: usize) -> Result<(MarshalValue, usiz
         objects: Vec::new(),
         depth: 0,
     };
-    Ok((reader.read()?, end))
+    Ok((reader.read()?.0, end))
 }
 
 #[derive(Default)]

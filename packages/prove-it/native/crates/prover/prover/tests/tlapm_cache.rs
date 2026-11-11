@@ -222,3 +222,32 @@ fn marshal_refuses_sizes_the_input_cannot_hold() {
         assert!(read_marshaled(&input, 0).is_err(), "{data:?}");
     }
 }
+
+// Sibling blocks, each holding the one before it by a shared reference: the encoding nests two
+// levels, but the value is a chain as long as the list. Up to 256 it reads, compares and drops;
+// longer is corrupt.
+fn chained(length: usize) -> Vec<u8> {
+    let mut data = vec![0x08];
+    data.extend((((length as u32) << 10) as u32).to_be_bytes());
+    data.extend([0x90, 0x40]);
+    for _ in 1..length {
+        data.extend([0x90, 0x04, 0x02]);
+    }
+    let mut input = from_hex("8495a6be0000000000000000000000000000000000000000");
+    input.truncate(20);
+    input[4..8].copy_from_slice(&(data.len() as u32).to_be_bytes());
+    input.extend(data);
+    input
+}
+
+#[test]
+fn marshal_bounds_how_deep_shared_references_chain() {
+    let input = chained(255);
+    let (value, _) = read_marshaled(&input, 0).expect("readable");
+    let (again, _) = read_marshaled(&input, 0).expect("readable");
+    assert!(value == again);
+    drop(value);
+    for length in [256, 50_000] {
+        assert!(read_marshaled(&chained(length), 0).is_err(), "{length}");
+    }
+}
