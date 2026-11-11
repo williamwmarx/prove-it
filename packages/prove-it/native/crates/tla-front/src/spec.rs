@@ -9,7 +9,7 @@ use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
 use crate::errors::{FrontError, TAUTOLOGY, describe_range};
-use crate::eval::Evaluator;
+use crate::eval::{Evaluator, Unrolled};
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
@@ -409,23 +409,38 @@ impl Expansion<'_> {
                 let Some(evaluator) = self.evaluator else {
                     return Err(not_yet("a property's \\A that TLC unrolls"));
                 };
-                if let Some(bindings) = evaluator.get_bindings_unbound(bounds, scope, unbound)? {
-                    let mut expanded = Vec::new();
-                    for binding in bindings {
-                        expanded.extend(self.expand(
-                            body,
-                            binding.as_ref(),
-                            expanding,
-                            is_substituted,
-                            unbound,
-                            Some(Rc::from(describe_range(body))),
-                        )?);
-                    }
-                    if expanded.is_empty() {
-                        return Err(FrontError::Evaluation(TAUTOLOGY.to_owned()));
-                    }
-                    return Ok(expanded);
+                let (bindings, is_uncertain) =
+                    match evaluator.get_bindings_unbound(bounds, scope, unbound)? {
+                        Unrolled::Whole => {
+                            return Ok(vec![Expanded {
+                                expression: expression.clone(),
+                                scope: scope.cloned(),
+                                name,
+                            }]);
+                        }
+                        Unrolled::Bindings(bindings) => (bindings, false),
+                        // Where the front end can't follow TLC's lookup, it unrolls the \A with
+                        // the substitutions bound, as it did before it followed TLC's rule.
+                        Unrolled::Uncertain => (evaluator.get_bindings(bounds, scope)?, true),
+                    };
+                let mut expanded = Vec::new();
+                for binding in bindings {
+                    expanded.extend(self.expand(
+                        body,
+                        binding.as_ref(),
+                        expanding,
+                        is_substituted,
+                        unbound,
+                        Some(Rc::from(describe_range(body))),
+                    )?);
                 }
+                if expanded.is_empty() && is_uncertain {
+                    return Err(not_yet("a property TLC finds a tautology"));
+                }
+                if expanded.is_empty() {
+                    return Err(FrontError::Evaluation(TAUTOLOGY.to_owned()));
+                }
+                return Ok(expanded);
             }
             _ => {}
         }

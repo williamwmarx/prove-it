@@ -212,6 +212,14 @@ impl Tables {
         );
     }
 
+    /// Notes that an application of an operator an INSTANCE puts in replaces the declaration the
+    /// operator itself replaces.
+    pub fn carry_declaration(&self, replacement: &Expr, application: &Expr) {
+        if let Some(declaration) = self.get_substituted_declaration(replacement) {
+            self.add_substituted_declaration(application, &declaration);
+        }
+    }
+
     /// The declaration an expression an INSTANCE put in replaces.
     pub fn get_substituted_declaration(&self, expression: &Expr) -> Option<Rc<Declaration>> {
         self.substituted_declarations

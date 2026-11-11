@@ -974,6 +974,7 @@ impl<'a> Instantiator<'a> {
                                         && replacement.resolved.is_local.get(),
                                 );
                                 self.tables.add_substitution(&copy, self.instance, true);
+                                self.tables.carry_declaration(replacement, &copy);
                                 return Ok(copy);
                             }
                             ExpressionKind::Apply {
@@ -990,6 +991,7 @@ impl<'a> Instantiator<'a> {
                                     .is_local
                                     .set(replacement.resolved.is_local.get());
                                 self.tables.add_substitution(&copy, self.instance, true);
+                                self.tables.carry_declaration(replacement, &copy);
                                 return Ok(copy);
                             }
                             ExpressionKind::Lambda {
@@ -1013,6 +1015,7 @@ impl<'a> Instantiator<'a> {
                                 let applied =
                                     let_expression(vec![Rc::new(definition)], call, location);
                                 self.tables.add_substitution(&applied, self.instance, true);
+                                self.tables.carry_declaration(replacement, &applied);
                                 return Ok(applied);
                             }
                             _ => {

@@ -28,6 +28,16 @@ const MAXIMUM_DEPTH: usize = 400;
 /// Why an evaluation that leaves substitutions unbound fails where it reads one.
 const UNBOUND: &str = "a declaration whose substitution is unbound";
 
+/// What evaluating a property's \A sets with substitutions unbound finds.
+pub enum Unrolled {
+    /// The bindings TLC unrolls the \A into.
+    Bindings(Vec<Option<Rc<Scope>>>),
+    /// TLC takes the \A whole, where reading a substitution fails.
+    Whole,
+    /// The evaluation read what the front end can't follow TLC's lookup of.
+    Uncertain,
+}
+
 /// The keys of TLCGet that TLC's model checker holds.
 const CHECKER_KEYS: [&str; 6] = [
     "diameter",
@@ -101,6 +111,10 @@ pub struct Evaluator<'a> {
     /// The INSTANCEs whose substitutions it leaves unbound, as TLC's context leaves those of the
     /// `SubstInNode`s `SpecProcessor.processConfigProps` passes through.
     unbound: RefCell<Rc<[usize]>>,
+    /// Whether an evaluation with substitutions unbound read what the front end can't follow
+    /// TLC's lookup of: a root constant past an INSTANCE's substitution, or a copy of a definition
+    /// the configuration overrides or assigns a value to.
+    is_uncertain: Cell<bool>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -118,6 +132,7 @@ impl<'a> Evaluator<'a> {
             depth: Cell::new(0),
             is_deferring: Cell::new(false),
             unbound: RefCell::new(Rc::from([])),
+            is_uncertain: Cell::new(false),
         }
     }
 
@@ -256,9 +271,10 @@ impl Evaluator<'_> {
         get_boolean(&self.evaluate(expression, scope)?)
     }
 
-    /// The definition a name has where nothing binds it locally. Where substitutions are
-    /// unbound, a copy an INSTANCE made of a definition the configuration overrides is the
-    /// override, as TLC overrides the definition's node, which the INSTANCE shares.
+    /// The definition a name has where nothing binds it locally. Where substitutions are unbound,
+    /// a copy an INSTANCE made of a definition the configuration overrides or assigns a value to
+    /// makes the evaluation uncertain: TLC overrides the definition's node, which the INSTANCE
+    /// shares, in ways the front end doesn't follow.
     fn get_global_definition(&self, name: &str) -> Option<&Rc<Definition>> {
         let environment = self.environment;
         let definition = get_definition(name, environment)?;
@@ -266,21 +282,18 @@ impl Evaluator<'_> {
             return Some(definition);
         }
         let original = environment.tables.get_original(definition);
-        if Rc::ptr_eq(&original, definition) {
-            return Some(definition);
+        if !Rc::ptr_eq(&original, definition)
+            && (environment.constants.contains_key(&*original.name)
+                || environment.substitutions.iter().any(|(key, _)| {
+                    environment
+                        .definitions
+                        .get(key)
+                        .is_some_and(|overridden| Rc::ptr_eq(overridden, &original))
+                }))
+        {
+            self.is_uncertain.set(true);
         }
-        environment
-            .substitutions
-            .iter()
-            .find(|(key, _)| {
-                environment
-                    .definitions
-                    .get(*key)
-                    .is_some_and(|overridden| Rc::ptr_eq(overridden, &original))
-            })
-            .map_or(Some(definition), |(_, key)| {
-                environment.definitions.get(key)
-            })
+        Some(definition)
     }
 
     /// The value a name has where nothing binds it locally: a configuration's value, a
@@ -368,19 +381,23 @@ impl Evaluator<'_> {
 
     /// The bindings of the bounds as `opDefEvaluator.contexts` makes them in
     /// `SpecProcessor.processConfigProps`, with the substitutions of the INSTANCEs `unbound` left
-    /// unbound, or `None` where reading one of them fails, as reading its declaration fails in TLC.
+    /// unbound: `Whole` where reading one of them fails, as reading its declaration fails in TLC.
     pub fn get_bindings_unbound(
         &self,
         bounds: &[Bound],
         scope: Option<&Rc<Scope>>,
         unbound: &Rc<[usize]>,
-    ) -> Result<Option<Vec<Option<Rc<Scope>>>>> {
+    ) -> Result<Unrolled> {
         let outer = self.unbound.replace(unbound.clone());
+        let was_uncertain = self.is_uncertain.replace(false);
         let bindings = self.get_bindings(bounds, scope);
         *self.unbound.borrow_mut() = outer;
+        if self.is_uncertain.replace(was_uncertain) {
+            return Ok(Unrolled::Uncertain);
+        }
         match bindings {
-            Err(FrontError::NotYet(reason)) if reason == UNBOUND => Ok(None),
-            bindings => bindings.map(Some),
+            Err(FrontError::NotYet(reason)) if reason == UNBOUND => Ok(Unrolled::Whole),
+            bindings => bindings.map(Unrolled::Bindings),
         }
     }
 
@@ -627,15 +644,10 @@ impl Evaluator<'_> {
                         .iter()
                         .any(|constant| Rc::ptr_eq(constant, declaration))
                 });
-            return match root {
-                None => Err(FrontError::NotYet(UNBOUND.to_owned())),
-                Some(declaration) if declaration.arity == 0 => {
-                    self.evaluate_global(&declaration.name)
-                }
-                Some(_) => Err(not_yet(
-                    "an operator constant TLC reads past an INSTANCE's substitution",
-                )),
-            };
+            if root.is_some() {
+                self.is_uncertain.set(true);
+            }
+            return Err(FrontError::NotYet(UNBOUND.to_owned()));
         }
         self.depth.set(self.depth.get() + 1);
         let value = self.evaluate_expression(expression, scope);
