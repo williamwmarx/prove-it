@@ -155,12 +155,11 @@ fn trusts_no_zenon_or_isabelle_result_of_other_versions_under_safefp() {
     assert_eq!(get_provers(true), ["smt"]);
 }
 
-// Thirty blocks, each holding its child twice, the second time by a shared reference: a DAG of
-// thirty nodes that reads back as one, not as a tree of 2^30.
-#[test]
-fn marshal_keeps_shared_blocks_shared() {
+// Blocks nested `levels` deep, each holding its child twice, the second time by a shared
+// reference: a DAG of `levels` blocks in 3 bytes each, which writes out as 2^(levels + 1) - 1.
+fn doubled(levels: u8) -> Vec<u8> {
     let mut data = vec![0xa0, 0x40, 0x40];
-    for level in 2..=30u8 {
+    for level in 2..=levels {
         data.insert(0, 0xa0);
         data.extend([0x04, level - 1]);
     }
@@ -168,7 +167,13 @@ fn marshal_keeps_shared_blocks_shared() {
     input.truncate(20);
     input[4..8].copy_from_slice(&(data.len() as u32).to_be_bytes());
     input.extend(&data);
-    let (mut value, _) = read_marshaled(&input, 0).expect("readable");
+    input
+}
+
+// Twenty levels read back as a DAG of twenty blocks, not as a tree of 2^20.
+#[test]
+fn marshal_keeps_shared_blocks_shared() {
+    let (mut value, _) = read_marshaled(&doubled(20), 0).expect("readable");
     let mut depth = 0;
     while let MarshalValue::Block(inner) = value {
         let first = inner.fields[0].clone();
@@ -176,12 +181,24 @@ fn marshal_keeps_shared_blocks_shared() {
             (MarshalValue::Block(left), MarshalValue::Block(right)) => {
                 assert!(std::rc::Rc::ptr_eq(left, right), "shared at depth {depth}");
             }
-            _ => assert_eq!(depth, 29),
+            _ => assert_eq!(depth, 19),
         }
         value = first;
         depth += 1;
     }
-    assert_eq!(depth, 30);
+    assert_eq!(depth, 20);
+}
+
+// Saving writes every reference out in full: twenty levels write 2 MB, and from 28 levels, which
+// would write 512 MB, a value is corrupt when read, as a few bytes cannot stand for more than
+// 256 MB written.
+#[test]
+fn marshal_bounds_what_shared_blocks_write() {
+    let (value, _) = read_marshaled(&doubled(20), 0).expect("readable");
+    assert_eq!(write_marshaled(&value).len(), 20 + (1 << 21) - 1);
+    for levels in [28, 30, 255] {
+        assert!(read_marshaled(&doubled(levels), 0).is_err(), "{levels}");
+    }
 }
 
 fn nested(depth: usize) -> Vec<u8> {

@@ -52,6 +52,13 @@ const HEADER_SIZE: usize = 20;
 // chain, a few fingerprints long.
 const MAX_DEPTH: usize = 256;
 
+// How many bytes a value may take written out, which `write_marshaled` does without sharing: a
+// block shared many times is written as often as it is referenced, so a few bytes of shared
+// references can stand for gigabytes, which writing, comparing or dropping it would then walk. A
+// fingerprints file tlapm writes grows by a tenth or so, as it shares only strings, small blocks
+// and versions; above this it is corrupt here. The TypeScript has no bound and runs out of memory.
+const MAX_WRITTEN_SIZE: usize = 1 << 28;
+
 pub fn block(tag: u8, fields: Vec<MarshalValue>) -> MarshalValue {
     MarshalValue::Block(Rc::new(MarshalBlock { tag, fields }))
 }
@@ -60,14 +67,32 @@ fn corrupted() -> ObligationError {
     ObligationError::proof("corrupted fingerprint file")
 }
 
+/// A value read, with its height (the longest path down its blocks, shared ones included) and the
+/// bytes it takes written without sharing.
+#[derive(Clone)]
+struct Measured {
+    value: MarshalValue,
+    height: usize,
+    size: usize,
+}
+
+impl Measured {
+    fn new(value: MarshalValue, size: usize) -> Measured {
+        Measured {
+            value,
+            height: 0,
+            size,
+        }
+    }
+}
+
 /// The values read so far that a shared code can refer to: blocks with fields, strings and floats,
 /// in the order they started, as intern.c numbers them.
 struct Reader<'b> {
     bytes: &'b [u8],
     position: usize,
     end: usize,
-    // Each value with its height: the longest path down its blocks, shared ones included.
-    objects: Vec<Option<(MarshalValue, usize)>>,
+    objects: Vec<Option<Measured>>,
     depth: usize,
 }
 
@@ -87,13 +112,15 @@ impl Reader<'_> {
         Ok(bytes.try_into().expect("take returns the length asked"))
     }
 
-    fn read_string(&mut self, length: usize) -> Result<(MarshalValue, usize)> {
-        let value = MarshalValue::Text(String::from_utf8_lossy(self.take(length)?).into_owned());
-        self.objects.push(Some((value.clone(), 0)));
-        Ok((value, 0))
+    fn read_string(&mut self, length: usize) -> Result<Measured> {
+        let text = String::from_utf8_lossy(self.take(length)?).into_owned();
+        let size = get_text_header_size(text.len()) + text.len();
+        let measured = Measured::new(MarshalValue::Text(text), size);
+        self.objects.push(Some(measured.clone()));
+        Ok(measured)
     }
 
-    fn read_block(&mut self, tag: u8, size: usize) -> Result<(MarshalValue, usize)> {
+    fn read_block(&mut self, tag: u8, size: usize) -> Result<Measured> {
         if self.depth == MAX_DEPTH {
             return Err(corrupted());
         }
@@ -111,24 +138,30 @@ impl Reader<'_> {
         }
         let mut fields = Vec::with_capacity(size);
         let mut height = 1;
+        let mut written_size = get_block_header_size(tag, size);
         for _ in 0..size {
-            let (field, field_height) = self.read()?;
-            fields.push(field);
-            height = height.max(field_height + 1);
+            let field = self.read()?;
+            fields.push(field.value);
+            height = height.max(field.height + 1);
+            written_size = written_size.saturating_add(field.size);
         }
-        // Shared references can stack blocks higher than the encoding nests them.
-        if height > MAX_DEPTH {
+        // Shared references can stack blocks higher, and repeat them more, than the encoding does.
+        if height > MAX_DEPTH || written_size > MAX_WRITTEN_SIZE {
             return Err(corrupted());
         }
         self.depth -= 1;
-        let value = block(tag, fields);
+        let measured = Measured {
+            value: block(tag, fields),
+            height,
+            size: written_size,
+        };
         if size > 0 {
-            self.objects[index] = Some((value.clone(), height));
+            self.objects[index] = Some(measured.clone());
         }
-        Ok((value, height))
+        Ok(measured)
     }
 
-    fn read_shared(&self, distance: usize) -> Result<(MarshalValue, usize)> {
+    fn read_shared(&self, distance: usize) -> Result<Measured> {
         self.objects
             .len()
             .checked_sub(distance)
@@ -136,30 +169,21 @@ impl Reader<'_> {
             .ok_or_else(corrupted)
     }
 
-    fn read(&mut self) -> Result<(MarshalValue, usize)> {
+    fn read(&mut self) -> Result<Measured> {
         let code = self.take(1)?[0];
         if code >= PREFIX_SMALL_BLOCK {
             return self.read_block(code & 0xf, usize::from((code >> 4) & 0x7));
         }
         if code >= PREFIX_SMALL_INT {
-            return Ok((MarshalValue::Int(i64::from(code & 0x3f)), 0));
+            return Ok(get_int(i64::from(code & 0x3f)));
         }
         if code >= PREFIX_SMALL_STRING {
             return self.read_string(usize::from(code & 0x1f));
         }
         match code {
-            CODE_INT8 => Ok((
-                MarshalValue::Int(i64::from(i8::from_be_bytes(self.take_array()?))),
-                0,
-            )),
-            CODE_INT16 => Ok((
-                MarshalValue::Int(i64::from(i16::from_be_bytes(self.take_array()?))),
-                0,
-            )),
-            CODE_INT32 => Ok((
-                MarshalValue::Int(i64::from(i32::from_be_bytes(self.take_array()?))),
-                0,
-            )),
+            CODE_INT8 => Ok(get_int(i64::from(i8::from_be_bytes(self.take_array()?)))),
+            CODE_INT16 => Ok(get_int(i64::from(i16::from_be_bytes(self.take_array()?)))),
+            CODE_INT32 => Ok(get_int(i64::from(i32::from_be_bytes(self.take_array()?)))),
             CODE_SHARED8 => {
                 let distance = usize::from(u8::from_be_bytes(self.take_array()?));
                 self.read_shared(distance)
@@ -185,9 +209,10 @@ impl Reader<'_> {
                 self.read_string(length)
             }
             CODE_DOUBLE_LITTLE => {
-                let value = MarshalValue::Float(f64::from_le_bytes(self.take_array()?));
-                self.objects.push(Some((value.clone(), 0)));
-                Ok((value, 0))
+                let float = f64::from_le_bytes(self.take_array()?);
+                let measured = Measured::new(MarshalValue::Float(float), 9);
+                self.objects.push(Some(measured.clone()));
+                Ok(measured)
             }
             _ => Err(corrupted()),
         }
@@ -215,7 +240,33 @@ pub fn read_marshaled(bytes: &[u8], offset: usize) -> Result<(MarshalValue, usiz
         objects: Vec::new(),
         depth: 0,
     };
-    Ok((reader.read()?.0, end))
+    Ok((reader.read()?.value, end))
+}
+
+fn get_int(integer: i64) -> Measured {
+    Measured::new(MarshalValue::Int(integer), get_int_size(integer))
+}
+
+// The bytes `write` takes for each kind of value: an int, a string's header and a block's header.
+fn get_int_size(integer: i64) -> usize {
+    match integer {
+        0..0x40 => 1,
+        -0x80..0x80 => 2,
+        -0x8000..0x8000 => 3,
+        _ => 5,
+    }
+}
+
+fn get_text_header_size(length: usize) -> usize {
+    match length {
+        0..0x20 => 1,
+        0x20..0x100 => 2,
+        _ => 5,
+    }
+}
+
+fn get_block_header_size(tag: u8, size: usize) -> usize {
+    if tag < 16 && size < 8 { 1 } else { 5 }
 }
 
 #[derive(Default)]
