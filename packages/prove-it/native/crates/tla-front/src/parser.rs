@@ -3275,22 +3275,15 @@ fn parse_collecting(
     // SANY's lexer marks where each definition begins before its parser runs, which can split a
     // module's name from a keyword that the parser would take for one. That check is SANY's own
     // parser, which a later milestone ports.
-    if parser.is_keyword_module_name && mode == Mode::Tlapm {
+    if parser.is_keyword_module_name {
         return match get_sany_parse_error(source, version) {
             Some(message) => Err(SyntaxError {
                 message,
                 failure: None,
                 sany: None,
             }),
-            None => Ok((module, Vec::new())),
+            None => Ok((module, parser.sany_errors.unwrap_or_default())),
         };
-    }
-    if parser.is_keyword_module_name {
-        return Err(SyntaxError {
-            message: "unsupported: a keyword names a module".to_string(),
-            failure: None,
-            sany: None,
-        });
     }
     Ok((module, parser.sany_errors.unwrap_or_default()))
 }
