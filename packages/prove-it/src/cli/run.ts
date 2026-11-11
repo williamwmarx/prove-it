@@ -4,7 +4,7 @@ import { EngineUnavailableError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import { getTlcVersion } from "../tlc/version";
 import { NOT_NATIVE_EXIT_CODE } from "./sany-text";
-import { getToolsJar, type JavaProperties, reportErrors, UnreadableModuleError } from "./shared";
+import { getToolsJar, type JavaProperties, reportErrors, UnreadableFileError } from "./shared";
 import { checkNatively, checkSpecs } from "./tlc";
 
 // Tools that run TLC with Java, such as pstack's statechart skill, can run tla-ts in place of java,
@@ -89,7 +89,7 @@ const run = async (args: string[]) => {
 // Without a native engine, the CLI exits as TLC does on an internal error.
 export const runCli = async () => {
   process.exitCode = await run(process.argv.slice(2)).catch((error: unknown) => {
-    if (error instanceof UnreadableModuleError) {
+    if (error instanceof UnreadableFileError) {
       console.error(`prove-it: not native yet: ${error.message}`);
       return NOT_NATIVE_EXIT_CODE;
     }

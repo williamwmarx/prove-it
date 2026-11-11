@@ -141,13 +141,8 @@ impl Host for SystemHost {
         path.exists()
     }
 
-    // Java decodes a file's malformed UTF-8 to replacement characters.
     fn read_text(&self, path: &Path) -> Option<String> {
-        let bytes = std::fs::read(path).ok()?;
-        Some(match String::from_utf8(bytes) {
-            Ok(text) => text,
-            Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
-        })
+        std::fs::read(path).ok().map(decode_as_java)
     }
 
     fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
@@ -232,4 +227,27 @@ fn get_memory_megabytes() -> u64 {
             line.split_whitespace().nth(1)?.parse::<u64>().ok()
         })
         .map_or(0, |kilobytes| kilobytes / 1024)
+}
+
+/// Java's decoder of UTF-8: malformed bytes become replacement characters, one for each byte as
+/// in Rust, but one for the three bytes that encode a surrogate.
+fn decode_as_java(bytes: Vec<u8>) -> String {
+    let error = match String::from_utf8(bytes) {
+        Ok(text) => return text,
+        Err(error) => error,
+    };
+    let mut bytes = error.into_bytes();
+    let mut index = 0;
+    while index + 2 < bytes.len() {
+        if bytes[index] == 0xed
+            && (0xa0..=0xbf).contains(&bytes[index + 1])
+            && (0x80..=0xbf).contains(&bytes[index + 2])
+        {
+            bytes[index..index + 3].copy_from_slice("\u{fffd}".as_bytes());
+            index += 3;
+        } else {
+            index += 1;
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }

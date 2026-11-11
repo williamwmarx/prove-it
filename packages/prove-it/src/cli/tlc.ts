@@ -69,12 +69,15 @@ import { getNativeSanyReport, NOT_NATIVE_EXIT_CODE, type SanyModuleOrigin } from
 import {
   createModuleLoader,
   getInputPaths,
+  getJavaChild,
+  getJavaPath,
   getStandardModulesUrl,
   getToolsJar,
   type JavaProperties,
   printError,
   printMissingFile,
   printMissingFile174,
+  readSourceText,
   reportErrors,
   reportMissingModules174,
   toLibraryPath,
@@ -721,7 +724,7 @@ const checkSpec = async (
   // when it can't read it.
   const config = (() => {
     try {
-      return parseConfig(readFileSync(configPath, "utf8"), version);
+      return parseConfig(readSourceText(configPath), version);
     } catch (error) {
       if (!(error instanceof TlaConfigError)) throw error;
       return error;
@@ -760,7 +763,10 @@ const checkSpec = async (
     printMissingFile(
       isAbsoluteSpec ? directory : process.cwd(),
       isAbsoluteSpec ? `${fileName}.tla` : `./${specName}.tla`,
-      [...(isAbsoluteSpec || directory === "." ? [] : [directory]), ...java.libraries],
+      // TLC gives SANY the directory a relative path names in place of the library path.
+      isAbsoluteSpec || directory === "."
+        ? java.libraries.map(getJavaPath)
+        : [getJavaPath(directory)],
     );
   }
   const describeFile = createFileDescriber(
@@ -775,20 +781,15 @@ const checkSpec = async (
   // as SANY looks for it.
   const isFound = existsSync(specPath);
   // SANY reads a root module no file holds from its standard modules.
-  const sany = getNativeSanyReport(
-    specPath,
-    isFound ? readFileSync(specPath, "utf8") : null,
-    version,
-    {
-      fileName: specName,
-      loadModule: reportMissingFile
-        ? reportMissingModules174(loadModule, reportMissingFile)
-        : loadModule,
-      describeFile,
-      // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
-      rootExtendees: isRecorded ? ["_TLCTrace"] : [],
-    },
-  );
+  const sany = getNativeSanyReport(specPath, isFound ? readSourceText(specPath) : null, version, {
+    fileName: specName,
+    loadModule: reportMissingFile
+      ? reportMissingModules174(loadModule, reportMissingFile)
+      : loadModule,
+    describeFile,
+    // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
+    rootExtendees: isRecorded ? ["_TLCTrace"] : [],
+  });
   if ("declined" in sany) return declineNatively(sany.declined);
   writeOutput(1, sany.text);
   if (sany.isFailed) {
@@ -799,7 +800,7 @@ const checkSpec = async (
   }
   // SANY rejected a spec whose module isn't named for its file, so check reads the spec's module.
   try {
-    const source = readFileSync(specPath, "utf8");
+    const source = readSourceText(specPath);
     const result = await checkParsed(
       {
         workers,
@@ -889,7 +890,7 @@ const getModuleDirectories = (path: string, libraries: string[]) => {
 const findSpec = (path: string, java: JavaProperties) =>
   existsSync(path) || isAbsolute(path)
     ? path
-    : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
+    : (java.libraries.map((directory) => getJavaChild(directory, path)).find(existsSync) ?? path);
 
 // The zone TLC prints its dates in, as a POSIX TZ rule of the offset the process has now.
 const getZoneRule = () => {
@@ -931,7 +932,7 @@ export const checkNatively = async (
   const readKey = (key: string) => {
     const [kind, ...rest] = key.split(":");
     const name = rest.join(":");
-    if (kind === "text") return existsSync(name) ? readFileSync(name, "utf8") : undefined;
+    if (kind === "text") return existsSync(name) ? readSourceText(name) : undefined;
     if (kind === "bytes") return existsSync(name) ? new Uint8Array(readFileSync(name)) : undefined;
     if (kind === "module") return loadModule(name);
     if (kind === "class") {

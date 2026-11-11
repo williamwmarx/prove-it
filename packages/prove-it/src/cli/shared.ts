@@ -1,5 +1,5 @@
 import { existsSync, globSync, readFileSync } from "node:fs";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "../errors";
@@ -32,24 +32,49 @@ export const getInputPaths = (paths: string[]): InputPath[] =>
 
 // Like TLC, tla-ts finds a module in the directory of the spec, then in each library directory.
 export const findModuleFile = (directories: string[], name: string) =>
-  directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
+  directories.map((directory) => getJavaChild(directory, `${name}.tla`)).find(existsSync);
 
-// TLC's resolver takes the first directory where the module's file exists, as a directory may,
-// which SANY can't read.
-export class UnreadableModuleError extends Error {
+// Java's Path.resolve: the directory's path and the name, with `.` and `..` left for the file
+// system to follow, through symbolic links; the working directory is "".
+export const getJavaChild = (directory: string, name: string) =>
+  directory === "" ? name : `${directory.replace(/\/+$/, "")}/${name}`;
+
+// Java's Path.of: each separator written once, and none at the end.
+export const getJavaPath = (path: string) => path.replace(/\/{2,}/g, "/").replace(/(.)\/$/, "$1");
+
+// A file TLC finds but can't read, such as a directory, where TLC's resolver takes the first
+// directory where a module's file exists.
+export class UnreadableFileError extends Error {
   constructor() {
-    super("a module whose file SANY finds but can't read");
+    super("a file TLC finds but can't read");
   }
 }
 
-export const createModuleLoader = (directories: string[]) => (name: string) => {
-  const entry = directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
-  if (entry === undefined) return undefined;
+// Java's decoder of UTF-8: malformed bytes become replacement characters, one for each byte as in
+// Node, but one for the three bytes that encode a surrogate.
+export const readSourceText = (path: string) => {
+  let bytes: Buffer;
   try {
-    return readFileSync(entry, "utf8");
+    bytes = readFileSync(path);
   } catch {
-    throw new UnreadableModuleError();
+    throw new UnreadableFileError();
   }
+  for (let index = 0; index + 2 < bytes.length; index++) {
+    if (
+      bytes[index] === 0xed &&
+      (bytes[index + 1] & 0xe0) === 0xa0 &&
+      (bytes[index + 2] & 0xc0) === 0x80
+    ) {
+      bytes.set([0xef, 0xbf, 0xbd], index);
+      index += 2;
+    }
+  }
+  return bytes.toString("utf8");
+};
+
+export const createModuleLoader = (directories: string[]) => (name: string) => {
+  const entry = findModuleFile(directories, name);
+  return entry === undefined ? undefined : readSourceText(entry);
 };
 
 // SimpleFilenameToStream: SANY names the file of a module it can't find, and where it looked.
