@@ -264,6 +264,7 @@ pub fn get_outcome(outcome: &SearchOutcome) -> HostValue {
         }
         // The interpreter rejects the configuration before it hands the search over.
         SearchOutcome::ConfigError { message } => declined(message),
+        SearchOutcome::StartupException { message } => declined(message),
         // The interpreter checks the assumptions before it hands the search over.
         SearchOutcome::AssumptionViolated { name } => {
             declined(&format!("the assumption {name} is false"))

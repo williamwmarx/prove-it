@@ -304,6 +304,10 @@ pub enum SearchOutcome {
     /// A constant definition the configuration names has a value TLC rejects, with TLC's
     /// configuration error, after the startup reported what the constant definitions printed.
     ConfigError { message: String },
+    /// TLC's startup threw a RuntimeException with this message, which TLC reports as an
+    /// exception it didn't expect, after the startup reported what the constant definitions
+    /// printed.
+    StartupException { message: String },
     /// The assumption at this position of the IR's assumptions failed to evaluate (2105), after
     /// the startup reported what it printed, the assumptions before it included. Only where
     /// `Settings::is_violation_reported`; elsewhere the engine declines.
@@ -2452,6 +2456,8 @@ struct Started {
     failed: Option<(u32, Bail)>,
     /// The configuration error a constant definition's value gave, which ends the startup.
     config_error: Option<String>,
+    /// The message of the RuntimeException the symmetry threw, which ends the startup.
+    exception: Option<&'static str>,
     /// The assumption the engine left to its caller, by its position.
     // The assumption left to the caller, and why the engine didn't evaluate it.
     delegated: Option<(u32, Bail)>,
@@ -2527,6 +2533,23 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
             violated: None,
             failed: None,
             config_error: Some(message),
+            exception: None,
+            delegated: None,
+        });
+    }
+    if let Some(symmetry) = &startup.symmetry
+        && let Some(failure) = symmetry.failure
+    {
+        (symmetry.definition)(machine)?;
+        return Ok(Started {
+            printed: take(machine),
+            small_sets: Vec::new(),
+            group: None,
+            assumed: Vec::new(),
+            violated: None,
+            failed: None,
+            config_error: None,
+            exception: Some(failure),
             delegated: None,
         });
     }
@@ -2544,6 +2567,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         violated: assumed.violated,
         failed: assumed.failed,
         config_error: None,
+        exception: None,
         delegated: assumed.delegated,
     })
 }
@@ -2762,6 +2786,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             report(reporter, &started.printed);
             if let Some(message) = started.config_error {
                 return SearchOutcome::ConfigError { message };
+            }
+            if let Some(message) = started.exception {
+                return SearchOutcome::StartupException {
+                    message: message.to_owned(),
+                };
             }
             if !started.small_sets.is_empty() {
                 reporter.symmetry_sets_too_small(&started.small_sets);

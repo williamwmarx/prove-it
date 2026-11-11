@@ -33,7 +33,7 @@ use crate::trace::{
 use crate::xml_exporter::run_xml_exporter;
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
-use tla_front::errors::FrontError;
+use tla_front::errors::{FrontError, UNEXPECTED_EXCEPTION};
 use tla_front::model::StartupMessage;
 use tla_front::tlc_messages::CodedError;
 use tla_trace::{Rebuilder, Site, Unsupported, pretty_print};
@@ -1085,6 +1085,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         SearchOutcome::Declined(_)
             | SearchOutcome::AssumptionViolated { .. }
             | SearchOutcome::ConfigError { .. }
+            | SearchOutcome::StartupException { .. }
             | SearchOutcome::AssumptionFailed { .. }
     );
     // Under -continue TLC reports an error or a deadlock otherwise than it does without it, with
@@ -1269,6 +1270,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return match FrontError::Config(message).get_coded(printer.is_tool) {
                 Some(coded) => print_coded_failure(printer, &coded, start),
                 None => report_not_native(printer, "a configuration error without TLC's code"),
+            };
+        }
+        SearchOutcome::StartupException { message } => {
+            let error = FrontError::Evaluation(format!("{UNEXPECTED_EXCEPTION}{message}"));
+            return match error.get_coded(printer.is_tool) {
+                Some(coded) => print_coded_failure(printer, &coded, start),
+                None => report_not_native(printer, "an exception without TLC's code"),
             };
         }
         // TLC reports a false assumption with no statistics, since it hasn't searched.

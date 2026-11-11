@@ -1241,10 +1241,24 @@ impl<'a> Lowering<'a> {
                 .any(|substitution| substitution.name == name)
         };
         // TLC takes the arguments of the body's node, whatever operator SANY made of it, and
-        // fails on a body that is no application, such as a LET (`Tool.getSymmetryPerms`).
+        // fails on a body that is no application, such as a LET (`Tool.getSymmetryPerms`). It
+        // evaluates the body first, and fails on a number's or a string's value, which isn't a set,
+        // and on a set of them, whose elements aren't functions, before it looks at the node.
+        let is_literal = |expression: &Expr| {
+            matches!(
+                expression.kind,
+                ExpressionKind::Number { .. } | ExpressionKind::String { .. }
+            )
+        };
         let permuted = match &definition.body.kind {
             ExpressionKind::Apply { args, .. } => args.clone(),
             ExpressionKind::Identifier { .. } => Vec::new(),
+            _ if is_literal(&definition.body) => Vec::new(),
+            ExpressionKind::SetEnumeration(elements)
+                if !elements.is_empty() && elements.iter().all(is_literal) =>
+            {
+                elements.clone()
+            }
             _ => {
                 return Err(FrontError::NotYet(
                     "a SYMMETRY definition that isn't an operator applied to its sets".to_owned(),
