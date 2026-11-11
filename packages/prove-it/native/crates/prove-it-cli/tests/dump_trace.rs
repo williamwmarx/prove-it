@@ -309,3 +309,32 @@ fn loads_the_integers_methods_a_trace_module_loads() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn declines_a_postcondition_tlc_rejects() {
+    // TLC collects the postconditions, -dumpTrace's and the configuration's, before it evaluates
+    // any, and fails on one that takes an argument: it prints the trace and writes no file
+    // (TLC at d8fb231).
+    let (text, directory) = run_files(
+        "rejected",
+        &[
+            (
+                "R.tla",
+                "---- MODULE R ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 2\nP(y) == TRUE\n====\n",
+            ),
+            (
+                "R.cfg",
+                "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION P\n",
+            ),
+        ],
+        &["-tool", "-modelcheck", "-dumpTrace", "json", "R.json", "R"],
+    );
+    assert!(
+        text.contains("not native yet: the engine stopped")
+            && text.contains("-dumpTrace with a POSTCONDITION TLC rejects"),
+        "{text}"
+    );
+    assert!(!text.contains("CounterExample written"), "{text}");
+    assert!(!directory.join("R.json").exists());
+    std::fs::remove_dir_all(directory).expect("removed");
+}
