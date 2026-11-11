@@ -7,6 +7,7 @@ use crate::eval::{Context, Runtime};
 use crate::postcondition::{Stats, stats_record};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::Value;
+use tla_ir::DefinitionForm;
 
 /// What TLC found of the `_PERIODIC` expression, and what it printed as TLC evaluated it.
 #[derive(Debug, PartialEq, Eq)]
@@ -51,9 +52,14 @@ impl Rebuilder<'_> {
             possible_counts: None,
         });
         let writes = evaluator.register_writes;
-        let body = evaluator
-            .definition(ir.definitions[definition as usize])
-            .body;
+        let defined = evaluator.definition(ir.definitions[definition as usize]);
+        // TLC compares the function a function definition is with FALSE, and fails.
+        if matches!(defined.form, DefinitionForm::Function(_)) {
+            return Err(Unsupported(
+                "a _PERIODIC naming a function definition".into(),
+            ));
+        }
+        let body = defined.body;
         let result = evaluator.evaluate(body, &Context::default());
         evaluator.runtime = None;
         let printed = std::mem::take(&mut evaluator.printed);

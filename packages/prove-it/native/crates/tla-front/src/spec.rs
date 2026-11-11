@@ -1254,6 +1254,15 @@ pub fn check_search_config(
     }
     if let Some(name) = &config.periodic {
         get_config_operator("periodic", name, environment)?;
+        // TLC looks the name up among its definitions, where the configuration put the value
+        // instead, and fails casting the value to a definition (`Spec.getPeriodic`).
+        if config
+            .constants
+            .iter()
+            .any(|constant| constant.name == *name && constant.module.is_none())
+        {
+            return Err(not_yet("a _PERIODIC the configuration assigns a value to"));
+        }
     }
     for (index, name) in config.possible.iter().enumerate() {
         if config.possible[..index].contains(name) {
