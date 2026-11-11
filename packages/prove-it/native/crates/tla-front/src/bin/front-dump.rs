@@ -369,6 +369,72 @@ fn write_pcal_validation(out: &mut String, source: &str, version: TlcVersion) {
     out.push('}');
 }
 
+/// TLC's startup decision for a model (`tla_front::startup`), against the definitions the front
+/// end marks normalized: each definition TLC attempts, by rule, and each one whose decision
+/// differs from the mark.
+fn write_startup(
+    out: &mut String,
+    source: &str,
+    path: &Path,
+    library: Option<&Path>,
+    config: &str,
+) {
+    let environment = match link(source, path, library, Some(config)) {
+        Ok(environment) => environment,
+        Err(error) => {
+            out.push_str("{\"error\":");
+            write_js_string(out, &format!("{error:?}"));
+            out.push('}');
+            return;
+        }
+    };
+    let facts = create_definition_facts(&environment);
+    let model = tla_front::startup::get_startup_model(&environment);
+    let mut attempted = Vec::new();
+    for (definition, rule) in &model.attempted {
+        attempted.push(format!("{}:{rule:?}", definition.name));
+    }
+    let mut differences = Vec::new();
+    for definition in &environment.startup_definitions {
+        let is_normalized =
+            tla_front::lower::is_startup_definition(definition, &environment, &facts);
+        let read = model.read(definition);
+        let is_attempted =
+            read == tla_front::startup::Read::Attempted && model.is_held_in_defns(definition);
+        if is_normalized != is_attempted {
+            let rule = model
+                .attempted
+                .iter()
+                .find(|(attempted, _)| Rc::ptr_eq(attempted, definition))
+                .map_or("none".to_owned(), |(_, rule)| format!("{rule:?}"));
+            let effect = if facts.is_impure_definition(definition, &environment) {
+                ", with effects"
+            } else {
+                ""
+            };
+            differences.push(format!(
+                "{}: normalized {is_normalized}, read {read:?}, rule {rule}{effect}",
+                definition.name
+            ));
+        }
+    }
+    out.push_str("{\"attempted\":[");
+    for (index, entry) in attempted.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write_js_string(out, entry);
+    }
+    out.push_str("],\"differences\":[");
+    for (index, entry) in differences.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write_js_string(out, entry);
+    }
+    out.push_str("]}");
+}
+
 fn write_time(out: &mut String, source: &str) {
     let best = (0..5)
         .map(|_| {
@@ -390,7 +456,7 @@ fn main() -> ExitCode {
         .map(PathBuf::from);
     let write: fn(&mut String, &str) = match mode.as_str() {
         "resolve" | "model" | "ir" | "order" | "model-ir" | "model-full" | "spec"
-        | "properties" | "levels" => |_, _| {},
+        | "properties" | "levels" | "startup" => |_, _| {},
         "tokens" => write_tokens,
         "ast" => |out, source| write_module(out, parse_module(source)),
         "sany-ast" => |out, source| {
@@ -441,7 +507,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: front-dump tokens|ast|sany-ast|tlapm-ast|config|coded|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|levels|time < paths"
+                "usage: front-dump tokens|ast|sany-ast|tlapm-ast|config|coded|pcal|sany-parse-error|resolve|model|ir|order|model-ir|model-full|spec|properties|levels|startup|time < paths"
             );
             return ExitCode::from(2);
         }
@@ -508,6 +574,16 @@ fn main() -> ExitCode {
                 get_specification(&config, &environment, &facts, TlcVersion::Master, None)
             });
             dump::specification(&specification).write(&mut line);
+        } else if mode == "startup" {
+            // The line names the configuration and then, after a tab, the spec.
+            let spec = std::fs::read_to_string(spec_path).unwrap_or_default();
+            write_startup(
+                &mut line,
+                &spec,
+                Path::new(spec_path),
+                library.as_deref(),
+                &source,
+            );
         } else if mode == "model" {
             // The line names the configuration and then, after a tab, the spec.
             let spec = std::fs::read_to_string(spec_path).unwrap_or_default();

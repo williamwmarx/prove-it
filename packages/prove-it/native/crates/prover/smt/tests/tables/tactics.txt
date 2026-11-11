@@ -2627,13 +2627,13 @@ refs => 220 2200695079 769928614 steps=675 asts=263
 run asserted => - steps=0 asts=165
 parse => n=5 ids=2369956266 | #562:4228343540 steps=0 asts=256
 assert => 5 steps=255 asts=308
-reduce => inconsistent=0 n=8 ids=1683648 | #440:436746311 steps=921 asts=331
-push-assert => 9 steps=947 asts=310
-push-reduce => inconsistent=1 n=0 ids=2166136261 |  steps=951 asts=309
-pop => 8 inconsistent=0 steps=951 asts=309
-reassert => 8 steps=963 asts=313
-rereduce => inconsistent=0 n=0 ids=2166136261 |  steps=963 asts=313
-refs => 233 826286675 222336854 steps=963 asts=313
+reduce => inconsistent=0 n=12 ids=2535082952 | #529:3889299838 steps=921 asts=335
+push-assert => 13 steps=947 asts=314
+push-reduce => inconsistent=1 n=0 ids=2166136261 |  steps=951 asts=313
+pop => 12 inconsistent=0 steps=951 asts=313
+reassert => 12 steps=963 asts=317
+rereduce => inconsistent=0 n=0 ids=2166136261 |  steps=963 asts=317
+refs => 241 1042016584 3561933223 steps=963 asts=317
 random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun b () Int) (declare-fun c () Int) (declare-fun p () Bool) (declare-fun q () Bool) (declare-fun r () Bool) (declare-fun u () U) (declare-fun v () U) (declare-fun f (Int) Int) (declare-fun g (Int Int) Bool) (declare-fun h (U) Int) (declare-fun k (Int) U) (declare-fun P (U) Bool) (assert (= (h v) (h v))) (assert (g (ite (forall ((x0 Int)) (! (or (not (= x0 x0)) (not (= x0 2)) false) :pattern ((f x0)))) 1 (* b 3)) (ite (not r) (h v) (ite r 1 0)))) (assert (not (not r))) (assert (exists ((x1 Int)) (and r (ite (or false false p) (= x1 (- 0 1)) (= x1 5))))) (assert (= (h u) 0)) (assert (<= (ite (not r) (h v) (ite r 1 0)) c)) (check-sat)
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=5 n=6 ids=3454029941 | #297:2672576657 steps=71 asts=241

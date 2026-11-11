@@ -433,6 +433,19 @@ create NamedInputStream in toIStream method`. Where the TypeScript check finds t
   spec, which TLC resolves against the spec's directory; a missing configuration named by its
   path rather than its name; and options TLC doesn't know, which it rejects.
 
+Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
+record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
+(prover.md, "Deviations from Z3", has the gate):
+
+| Obligation | `smt` input | Why |
+|---|---|---|
+| SequencesExtTheorems_proofs #409 | b7775ca0b1b01064 | Z3 4.8.9 proves it, 5.3.3 times out; the port's search is longer |
+| Bakery #89 | e67cda013bcdbc0e | the same |
+| CRDT_proof #129 | 5390a15510ed57e1 | both Z3s prove it; the port needs 2,570,874 steps, above its limit of 1,321,216 |
+| LamportMutex_proofs #574 | cf2bc77dbe72f5d0 | Z3 4.8.9 proves it, 5.3.3 times out |
+| PaxosCommit_proof #345 | c4f10dabeaca0a49 | Z3 4.8.9 proves it, 5.3.3 times out; the port needs 10,358,109 steps, above its limit of 7,321,600 |
+| Boulanger #240 | b2ca9ee96f3db516 | flattening clauses as Z3 4.8.9 does lengthens the port's search from 1,807,047 steps to 8,170,365, though its 4 distributions are 4.8.9's: open |
+
 #### Every reason
 
 Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so the counts follow
