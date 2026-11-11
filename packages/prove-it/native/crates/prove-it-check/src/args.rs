@@ -68,8 +68,14 @@ pub fn get_java_launch(args: &[String]) -> Option<Launch> {
                 java,
             });
         } else if let Some(libraries) = arg.strip_prefix("-DTLA-Library=") {
-            // Java keeps a system property's last value.
-            java.libraries = libraries.split(PATH_DELIMITER).map(String::from).collect();
+            // Java keeps a system property's last value, and String.split drops the empty entries
+            // it ends with, unless the property is empty.
+            let kept = libraries.trim_end_matches(PATH_DELIMITER);
+            java.libraries = if !libraries.is_empty() && kept.is_empty() {
+                Vec::new()
+            } else {
+                kept.split(PATH_DELIMITER).map(String::from).collect()
+            };
         } else if let Some(directory) = arg.strip_prefix("-Djava.io.tmpdir=") {
             java.temporary_directory = Some(directory.into());
         } else if let Some(version) = arg.strip_prefix("-Dtla-ts.tlc=") {
@@ -538,6 +544,13 @@ mod tests {
         ]))
         .expect("a launch");
         assert_eq!(last.java.libraries, strings(&["/c"]));
+        let trailing = format!("-DTLA-Library=/c{PATH_DELIMITER}{PATH_DELIMITER}");
+        let trailing =
+            get_java_launch(&strings(&[&trailing, "tlc2.TLC", "Spec"])).expect("a launch");
+        assert_eq!(trailing.java.libraries, strings(&["/c"]));
+        let empty = format!("-DTLA-Library={PATH_DELIMITER}");
+        let empty = get_java_launch(&strings(&[&empty, "tlc2.TLC", "Spec"])).expect("a launch");
+        assert!(empty.java.libraries.is_empty());
         assert_eq!(launch.java.unmodelled_property, None);
         assert_eq!(get_java_launch(&strings(&["Spec.tla", "-tool"])), None);
         let properties = get_java_launch(&strings(&[

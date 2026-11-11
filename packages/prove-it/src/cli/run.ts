@@ -35,8 +35,14 @@ const getJavaLaunch = (args: string[]) => {
       java.classPath = args[index + 1];
       return { mainClass: "tlc2.TLC", args: args.slice(index + 2), java };
     } else if (arg.startsWith(TLA_LIBRARY_PROPERTY)) {
-      // Java keeps a system property's last value.
-      java.libraries = arg.slice(TLA_LIBRARY_PROPERTY.length).split(delimiter);
+      // Java keeps a system property's last value, and String.split drops the empty entries it
+      // ends with, unless the property is empty.
+      const libraries = arg.slice(TLA_LIBRARY_PROPERTY.length).split(delimiter);
+      while (libraries.length > 1 && libraries[libraries.length - 1] === "") libraries.pop();
+      java.libraries =
+        libraries.length === 1 && libraries[0] === "" && arg.length > TLA_LIBRARY_PROPERTY.length
+          ? []
+          : libraries;
     } else if (arg.startsWith(TEMPORARY_DIRECTORY_PROPERTY)) {
       java.temporaryDirectory = arg.slice(TEMPORARY_DIRECTORY_PROPERTY.length);
     } else if (arg.startsWith(TLC_VERSION_PROPERTY)) {
