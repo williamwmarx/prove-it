@@ -560,11 +560,29 @@ impl<'a> Lowering<'a> {
                 NodeKind::Identifier(self.write_bound_name(&name, false, is_local)?)
             }
             ExpressionKind::Apply { args, .. } => {
-                let name = expression.reference().unwrap_or_default();
-                let name = self.write_bound_name(&name, true, is_local)?;
-                NodeKind::Apply {
-                    name,
-                    args: self.write_nodes(args)?,
+                let reference = expression.reference().unwrap_or_default();
+                let name = self.write_bound_name(&reference, true, is_local)?;
+                let target = self
+                    .environment
+                    .substitutions
+                    .get(&reference)
+                    .unwrap_or(&reference);
+                match self.environment.operator_constants.get(target) {
+                    // `Tool.evalAppl` gives an operator the configuration assigns a value that
+                    // value, without evaluating its arguments.
+                    Some(value) if matches!(name.resolution, Resolution::Builtin(_)) => {
+                        let (target, value) = (target.clone(), value.clone());
+                        NodeKind::Identifier(IrName {
+                            resolution: Resolution::Constant(
+                                self.get_constant_index(&target, &value)?,
+                            ),
+                            ..name
+                        })
+                    }
+                    _ => NodeKind::Apply {
+                        name,
+                        args: self.write_nodes(args)?,
+                    },
                 }
             }
             ExpressionKind::OperatorReference { .. } => {

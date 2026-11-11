@@ -62,6 +62,9 @@ pub struct Environment {
     pub substitutions: OrderedMap<Name, Name>,
     /// The values the configuration assigns, by key.
     pub constants: OrderedMap<Name, ConfigValue>,
+    /// The values the configuration assigns operators with parameters, by key, which TLC gives
+    /// any application of the operator without evaluating its arguments (`Tool.evalAppl`).
+    pub operator_constants: OrderedMap<Name, ConfigValue>,
     pub variables: Vec<Name>,
     /// Where the root module declares each of its variables (`variableLocations`).
     pub variable_locations: Vec<Location>,
@@ -2113,16 +2116,21 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         };
     let mut constants: OrderedMap<Name, ConfigValue> = OrderedMap::new();
     let mut operator_keys: FastSet<Name> = FastSet::default();
-    let mut set_operator =
-        |key: &Name,
-         builtin: Builtin,
-         definitions: &mut OrderedMap<Name, Rc<Definition>>,
-         constants: &mut OrderedMap<Name, ConfigValue>| {
-            builtins.insert(key.clone(), builtin);
-            definitions.remove(key);
-            constants.remove(key);
-            operator_keys.insert(key.clone());
-        };
+    let mut operator_constants: OrderedMap<Name, ConfigValue> = OrderedMap::new();
+    let mut set_operator = |key: &Name,
+                            builtin: Builtin,
+                            definitions: &mut OrderedMap<Name, Rc<Definition>>,
+                            constants: &mut OrderedMap<Name, ConfigValue>,
+                            value: Option<&ConfigValue>| {
+        builtins.insert(key.clone(), builtin);
+        definitions.remove(key);
+        constants.remove(key);
+        operator_keys.insert(key.clone());
+        operator_constants.remove(key);
+        if let Some(value) = value {
+            operator_constants.insert(key.clone(), value.clone());
+        }
+    };
     for assignment in config
         .constants
         .iter()
@@ -2144,6 +2152,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                     },
                     &mut definitions,
                     &mut constants,
+                    Some(&assignment.value),
                 );
             }
         }
@@ -2203,6 +2212,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
                 },
                 &mut definitions,
                 &mut constants,
+                None,
             );
         }
     }
@@ -2373,6 +2383,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         builtins,
         substitutions,
         constants,
+        operator_constants,
         variables,
         variable_locations: linked_root.variable_locations.clone(),
         variable_index,

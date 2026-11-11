@@ -1,0 +1,5 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module M
+Linting of module M
+Error: Assumption line 4, col 8 to line 4, col 15 of module M is false.
