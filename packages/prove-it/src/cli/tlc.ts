@@ -39,11 +39,7 @@ import {
 import { describeRange } from "../evaluate";
 import { EXIT_STATUS } from "../exit-codes";
 import { checkParsed } from "../parallel";
-import {
-  getSanyStandardModules,
-  SANY_174_STANDARD_MODULES,
-  SANY_STANDARD_MODULES,
-} from "../sany/modules";
+import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
 import type { StateDump } from "../state-graph";
 import { getTlcFingerprint } from "../tlc/fingerprint";
 import {
@@ -820,18 +816,20 @@ const checkSpec = async (
   // as SANY looks for it.
   const isFound = existsSync(specPath);
   // SANY reads a root module no file holds from its standard modules.
-  const sany =
-    isFound || !getSanyStandardModules(version).has(fileName)
-      ? getNativeSanyReport(specPath, isFound ? readFileSync(specPath, "utf8") : null, version, {
-          fileName: specName,
-          loadModule: reportMissingFile
-            ? reportMissingModules174(loadModule, reportMissingFile)
-            : loadModule,
-          describeFile,
-          // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
-          rootExtendees: isRecorded ? ["_TLCTrace"] : [],
-        })
-      : { declined: "SANY's report of a standard module given as the spec" };
+  const sany = getNativeSanyReport(
+    specPath,
+    isFound ? readFileSync(specPath, "utf8") : null,
+    version,
+    {
+      fileName: specName,
+      loadModule: reportMissingFile
+        ? reportMissingModules174(loadModule, reportMissingFile)
+        : loadModule,
+      describeFile,
+      // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
+      rootExtendees: isRecorded ? ["_TLCTrace"] : [],
+    },
+  );
   if ("declined" in sany) return declineNatively(sany.declined);
   writeOutput(1, sany.text);
   if (sany.isFailed) {
