@@ -2382,8 +2382,14 @@ impl<'ir> Evaluator<'ir> {
             }
             DefinitionForm::Operator(_) => return fail("an operator used as a value"),
         };
-        // A definition that built a lazy value holding the states reads them where it is applied.
-        if self.reads == reads && self.captures == captures && self.printed.len() == printed {
+        // A definition that built a lazy value holding the states reads them where it is applied,
+        // unless it is one TLC computes as it starts, of constant level and reaching none of what
+        // TLC can't read then (`processConstantDefns`), whose value holds no state.
+        if self.reads == reads
+            && self.printed.len() == printed
+            && (self.captures == captures
+                || !self.may_reach(node, &["TLCGet", "CounterExample", "_Counts"]))
+        {
             // TLC computed the value of a definition that reads no state as it started, and
             // sorted it.
             if matches!(&definition.form, DefinitionForm::Operator(_)) {

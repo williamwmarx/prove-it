@@ -508,9 +508,10 @@ inputs that broke a version are in `prove-it-cli/tests/trace-kept/`, each with T
 way to TLC's time there is for the engine to check the assumption natively: it leaves
 TransitiveClosure's to the trace evaluator through the tuple-pattern decline of #245.
 
-A zero-arity definition TLC doesn't compute at startup is cached only where it read no state and
-built no lazy function or filter holding the states (`captures`), so `D == [i \in Nat |-> x']` is
-applied in each successor's states.
+A zero-arity definition is cached only where it read no state and, if it built a lazy function or
+filter holding the states (`captures`), only where TLC computes it as it starts, of constant level
+and reaching none of TLCGet, CounterExample and `_Counts` (`processConstantDefns`, which TLCSet
+doesn't stop), so `D == [i \in Nat |-> x']` is applied in each successor's states.
 
 ## Sets TLC holds unnormalized
 
