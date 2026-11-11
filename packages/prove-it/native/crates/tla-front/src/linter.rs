@@ -453,7 +453,10 @@ impl Collector<'_> {
                 locals.push((symbol.name.clone(), Binding::Formal));
                 Ok(())
             }
-            Assumed::AssumeProve(assume_prove) => {
+            Assumed::AssumeProve(assume_prove)
+            | Assumed::Label {
+                body: assume_prove, ..
+            } => {
                 let mut inner = locals.clone();
                 for assumption in &assume_prove.assumptions {
                     self.assumed(assumption, &mut inner)?;

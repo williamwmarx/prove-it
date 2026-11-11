@@ -443,3 +443,31 @@ fn leaves_a_let_whose_recursive_definitions_are_shaped_otherwise_not_native() {
         );
     }
 }
+
+// SANY's corpus AssumeProveTest: an assumption may be a labeled ASSUME/PROVE, which a proof names
+// as a fact.
+#[test]
+fn reads_a_labeled_assume_prove_named_as_a_fact() {
+    assert_eq!(
+        get_text(
+            "labeled-assume-prove",
+            "---- MODULE Main ----\nTHEOREM T ==\n  ASSUME inner :: ASSUME NEW c PROVE c = c, TRUE\n  PROVE TRUE\nPROOF BY T, T!inner\n====\n",
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nLinting of module Main\n"
+    );
+    // Named as an expression, or past its label, it isn't followed yet.
+    for proof in ["PROOF BY T!inner!1", "PROOF BY T!inner = T!inner"] {
+        assert!(
+            matches!(
+                get_report(
+                    "labeled-assume-prove-selected",
+                    &format!(
+                        "---- MODULE Main ----\nTHEOREM T ==\n  ASSUME inner :: ASSUME NEW c PROVE c = c, TRUE\n  PROVE TRUE\n{proof}\n====\n"
+                    ),
+                ),
+                Err(FrontError::NotYet(_))
+            ),
+            "{proof}"
+        );
+    }
+}

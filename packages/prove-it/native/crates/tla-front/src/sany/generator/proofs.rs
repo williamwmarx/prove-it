@@ -547,6 +547,17 @@ impl ModuleGenerator<'_> {
                 }
                 Assumed::NewSymbol(symbol) => self.generate_new_symbol(symbol)?,
                 Assumed::Expression(expression) => self.generate_expression(expression)?,
+                Assumed::Label {
+                    name,
+                    body,
+                    location,
+                    ..
+                } => {
+                    let label_location = get_span_location(&file, self.get_unit_span(location));
+                    self.generate_labeled(name, &[], &[], label_location, true, |generator| {
+                        generator.generate_assume_prove(body, depth + 1, None)
+                    })?
+                }
             };
             self.assume_prove_state.depth = depth;
             if is_new {

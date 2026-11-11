@@ -1557,7 +1557,8 @@ impl<'a> LevelAnalyzer<'a> {
                     }
                     inner = inner.bind(vec![(symbol.name.clone(), Entry::Formal(symbol.arity))]);
                 }
-                Assumed::AssumeProve(nested) => {
+                // `LabelNode.levelCheck`: a label without parameters has its body's level.
+                Assumed::AssumeProve(nested) | Assumed::Label { body: nested, .. } => {
                     parts.push(self.analyze_assume_prove(nested, &inner)?)
                 }
                 Assumed::Expression(expression) => parts.push(self.analyze(expression, &inner)?),
