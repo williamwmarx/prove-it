@@ -14,9 +14,13 @@
 //! it, or the `reason` it is unproved.
 
 use prove_it_prover::Verdict;
-use prove_it_prover::driver::{Answer, Report, Status, prove_obligations};
+use std::cell::RefCell;
+
+use prove_it_prover::driver::{Answer, Cache, Report, Status, prove_obligations};
 use prove_obligations::errors::ObligationError;
-use prove_obligations::index::{ObligationSource, get_obligations};
+use prove_obligations::index::{
+    ModuleObligations, ObligationSource, PrintedObligation, get_obligations,
+};
 use prove_obligations::reset_caches;
 use prove_obligations::tlaps_module::TLAPS_MODULE;
 
@@ -43,20 +47,91 @@ fn on_deep_stack(prove: impl FnOnce() -> HookResult + Send) -> HookResult {
     prove()
 }
 
-/// On a thread with a deep stack: the obligations recurse as deep as the proofs nest.
+/// On the calling thread's prove thread, which has a deep stack, since the obligations recurse as
+/// deep as the proofs nest, and which keeps a run's cache from one round to the next. Each calling
+/// thread keeps its own for as long as it lives; a panic replaces it, as its cache may be half
+/// built.
 #[cfg(not(target_arch = "wasm32"))]
-fn on_deep_stack(prove: impl FnOnce() -> HookResult + Send) -> HookResult {
-    std::thread::scope(|scope| {
+fn on_deep_stack(prove: impl FnOnce() -> HookResult + Send + 'static) -> HookResult {
+    use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+    use std::sync::mpsc::{Receiver, Sender, channel};
+
+    type Job = Box<dyn FnOnce() -> HookResult + Send>;
+
+    struct ProveThread {
+        jobs: Sender<Job>,
+        results: Receiver<std::thread::Result<HookResult>>,
+    }
+
+    let spawn = || {
+        let (jobs, received) = channel::<Job>();
+        let (answered, results) = channel();
         std::thread::Builder::new()
+            .name("prove-it prove".into())
             .stack_size(PROVE_STACK_BYTES)
-            .spawn_scoped(scope, prove)
-            .expect("a thread for prove")
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    })
+            .spawn(move || {
+                for job in received {
+                    if answered.send(catch_unwind(AssertUnwindSafe(job))).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("a thread for prove");
+        ProveThread { jobs, results }
+    };
+
+    thread_local! {
+        static PROVE_THREAD: RefCell<Option<ProveThread>> = const { RefCell::new(None) };
+    }
+    let result = PROVE_THREAD.with_borrow_mut(|prove_thread| {
+        let thread = prove_thread.get_or_insert_with(spawn);
+        thread.jobs.send(Box::new(prove)).expect("the prove thread");
+        let result = thread.results.recv().expect("the prove thread's result");
+        if result.is_err() {
+            *prove_thread = None;
+        }
+        result
+    });
+    result.unwrap_or_else(|panic| resume_unwind(panic))
+}
+
+// A run's obligations and cache, by what the run reads: the main module and the modules it loads.
+struct Run {
+    key: String,
+    modules: Vec<ModuleObligations>,
+    obligations: Vec<PrintedObligation>,
+    cache: Cache,
+}
+
+thread_local! {
+    static RUN: RefCell<Option<Run>> = const { RefCell::new(None) };
 }
 
 fn prove_here(file: String, source: String, sources: Sources) -> HostValue {
+    let mut key = format!("{file}\0{source}");
+    for (name, text) in sources.get_answered_with("module:") {
+        key.push_str(&format!("\0{name}\0{}", text.unwrap_or_default()));
+    }
+    RUN.with_borrow_mut(|run| {
+        if run.as_ref().is_some_and(|run| run.key == key) {
+            return prove_round(run.as_mut().expect("a run"), &sources);
+        }
+        *run = None;
+        match load_run(key, file, source, &sources) {
+            Ok(loaded) => prove_round(run.insert(loaded), &sources),
+            Err(result) => result,
+        }
+    })
+}
+
+// A new run's obligations, or what to return in place of a round: the modules it needs, or the
+// error getObligations throws.
+fn load_run(
+    key: String,
+    file: String,
+    source: String,
+    sources: &Sources,
+) -> Result<Run, HostValue> {
     // A run gives what a fresh process gives, whatever ran on this thread before.
     reset_caches();
     let modules = get_obligations(
@@ -74,24 +149,38 @@ fn prove_here(file: String, source: String, sources: Sources) -> HostValue {
         &mut |_| {},
     );
     if sources.has_needed() {
-        let Some(HostValue::Object(mut needed)) = sources.get_needed() else {
-            return HostValue::Undefined;
-        };
-        needed.push(("requests", HostValue::Array(Vec::new())));
-        needed.push(("reports", HostValue::Array(Vec::new())));
-        return HostValue::Object(needed);
+        return Err(get_needed(sources));
     }
-    let modules = match modules {
-        Ok(modules) => modules,
-        Err(error) => return get_error(&error),
-    };
-    let obligations: Vec<_> = modules
+    let modules = modules.map_err(|error| get_error(&error))?;
+    let obligations = modules
         .iter()
         .flat_map(|module| module.obligations.iter().cloned())
         .collect();
-    let round = match prove_obligations(&obligations, &|key| {
-        get_answer(&sources.get_answered(&format!("decide:{key}"))?)
-    }) {
+    Ok(Run {
+        key,
+        modules,
+        obligations,
+        cache: Cache::default(),
+    })
+}
+
+// The modules the run needs, with no requests or reports yet.
+fn get_needed(sources: &Sources) -> HostValue {
+    let Some(HostValue::Object(mut needed)) = sources.get_needed() else {
+        return HostValue::Undefined;
+    };
+    needed.push(("requests", HostValue::Array(Vec::new())));
+    needed.push(("reports", HostValue::Array(Vec::new())));
+    HostValue::Object(needed)
+}
+
+fn prove_round(run: &mut Run, sources: &Sources) -> HostValue {
+    let modules = &run.modules;
+    let round = match prove_obligations(
+        &run.obligations,
+        &|key| get_answer(&sources.get_answered(&format!("decide:{key}"))?),
+        &mut run.cache,
+    ) {
         Ok(round) => round,
         Err(error) => return get_error(&error),
     };

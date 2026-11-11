@@ -17,7 +17,7 @@ use prove_obligations::errors::{ObligationError, Result};
 use prove_obligations::expression::{Expr, ExprCore, Hyp, Hyps, Sequent, get_children, map_hyp};
 use prove_obligations::index::PrintedObligation;
 use prove_obligations::prep::fingerprint::get_fingerprint;
-use prove_obligations::prep::methods::{Method, find_methods};
+use prove_obligations::prep::methods::{FoundMethods, Method, find_methods};
 use prove_obligations::prep::normalize::{is_trivial, normalize_expand};
 use prove_obligations::proof::ObligationKind;
 use prove_obligations::ship::{ProofAttempt, encode_normalized};
@@ -131,9 +131,22 @@ fn get_digest(text: &str) -> String {
     format!("{hash:016x}")
 }
 
+/// What the rounds of one run work out the same way each time, by obligation index: its methods and
+/// fingerprint, its sequent after Prep.normalize_expand, and each text a backend receives, by the
+/// method and the CASE count it starts from. A round starts again from the beginning, and with it
+/// costs the driver's bookkeeping and not Prep's. A caller keeps one per run, and a new run starts
+/// with a new one.
+#[derive(Default)]
+pub struct Cache {
+    heads: HashMap<usize, (FoundMethods, String)>,
+    sequents: HashMap<usize, (Sequent, bool)>,
+    texts: HashMap<(usize, usize, usize), (Result<String>, usize)>,
+}
+
 // What tlapm keeps across one run's obligations.
 struct Run<'a> {
     answers: &'a dyn Fn(&str) -> Option<Answer>,
+    cache: &'a mut Cache,
     results: HashMap<String, HashMap<String, Attempt>>,
     // The CASE errors the SMT encoder has standardized so far.
     case_errors: usize,
@@ -188,7 +201,7 @@ impl Run<'_> {
     // in turn until one proves the obligation. Prep.already_processed reuses what a prover concluded
     // for an earlier obligation with the same fingerprint: a proof, or a failure within at least as
     // much time. Unless the first prover's proof is reused, a trivial obligation needs no prover.
-    fn prove(&mut self, obligation: &PrintedObligation) -> Result<Proving> {
+    fn prove(&mut self, position: usize, obligation: &PrintedObligation) -> Result<Proving> {
         let base = |status| Report {
             id: obligation.id,
             location: obligation.location.clone(),
@@ -201,8 +214,17 @@ impl Run<'_> {
                 reason: message.clone(),
             })));
         }
-        let methods = find_methods(&obligation.sequent, obligation.method.as_ref())?;
-        let fingerprint = get_fingerprint(&obligation.sequent)?;
+        let (methods, fingerprint) = match self.cache.heads.get(&position) {
+            Some(head) => head.clone(),
+            None => {
+                let head = (
+                    find_methods(&obligation.sequent, obligation.method.as_ref())?,
+                    get_fingerprint(&obligation.sequent)?,
+                );
+                self.cache.heads.insert(position, head.clone());
+                head
+            }
+        };
         if self.waiting_fingerprints.contains(&fingerprint) {
             self.is_count_open = true;
             return Ok(Proving::Waiting);
@@ -244,11 +266,20 @@ impl Run<'_> {
             reuse(&mut attempts, prior);
             return Ok(proved(&prover, attempts));
         }
-        let sequent = normalize_expand(
-            &obligation.sequent,
-            obligation.method.as_ref(),
-            Some(&methods),
-        )?;
+        let (sequent, is_numbering) = match self.cache.sequents.get(&position) {
+            Some(prepared) => prepared.clone(),
+            None => {
+                let sequent = normalize_expand(
+                    &obligation.sequent,
+                    obligation.method.as_ref(),
+                    Some(&methods),
+                )?;
+                let prepared = (sequent.clone(), is_case_numbered("smt", &sequent)?);
+                self.cache.sequents.insert(position, prepared.clone());
+                prepared
+            }
+        };
+        let is_numbered_for = |prover: &str| is_numbering && matches!(prover, "smt" | "z3");
         // Fpfile.fp_writes keeps no trivial result, but adds the fingerprint.
         if matches!(obligation.kind, ObligationKind::Support) && is_trivial(&sequent)? {
             self.results.entry(fingerprint).or_default();
@@ -302,31 +333,40 @@ impl Run<'_> {
                 );
                 continue;
             }
-            let is_numbered = is_case_numbered(&method.prover, &sequent)?;
+            let is_numbered = is_numbered_for(&method.prover);
             if is_numbered && self.is_count_open {
                 self.waiting_fingerprints.push(fingerprint);
                 return Ok(Proving::Waiting);
             }
-            let mut session = EncodingSession {
-                case_errors: if is_numbered { self.case_errors } else { 0 },
+            let start = if is_numbered { self.case_errors } else { 0 };
+            let (encoded, end) = match self.cache.texts.get(&(position, index, start)) {
+                Some(encoded) => encoded.clone(),
+                None => {
+                    let mut session = EncodingSession { case_errors: start };
+                    let encoded = encode_normalized(
+                        &method.prover,
+                        obligation.id,
+                        &sequent,
+                        method,
+                        &mut session,
+                    );
+                    let entry = (encoded, session.case_errors);
+                    self.cache
+                        .texts
+                        .insert((position, index, start), entry.clone());
+                    entry
+                }
             };
-            let encoded = encode_normalized(
-                &method.prover,
-                obligation.id,
-                &sequent,
-                method,
-                &mut session,
-            );
             if is_numbered {
-                self.case_errors = session.case_errors;
+                self.case_errors = end;
             }
             let answer = match encoded {
                 Ok(text) => match self.get_answer(&method.prover, text, method.time_limit_ms)? {
                     Some(answer) => answer,
                     None => {
-                        for later in &methods.provers[index + 1..] {
-                            self.is_count_open |= is_case_numbered(&later.prover, &sequent)?;
-                        }
+                        self.is_count_open |= methods.provers[index + 1..]
+                            .iter()
+                            .any(|later| is_numbered_for(&later.prover));
                         self.waiting_fingerprints.push(fingerprint);
                         return Ok(Proving::Waiting);
                     }
@@ -420,9 +460,11 @@ impl Run<'_> {
 pub fn prove_obligations(
     obligations: &[PrintedObligation],
     answers: &dyn Fn(&str) -> Option<Answer>,
+    cache: &mut Cache,
 ) -> Result<Round> {
     let mut run = Run {
         answers,
+        cache,
         results: HashMap::new(),
         case_errors: 0,
         is_waiting: false,
@@ -432,10 +474,10 @@ pub fn prove_obligations(
         requests: Vec::new(),
     };
     let mut round = Round::default();
-    for obligation in obligations {
+    for (position, obligation) in obligations.iter().enumerate() {
         // An error that escapes proveWithBackends: what Prove It can't handle is unsupported, and
         // what tlapm refuses, as a frontend's soundness check, fails.
-        let proving = match run.prove(obligation) {
+        let proving = match run.prove(position, obligation) {
             Ok(proving) => proving,
             Err(ObligationError::Unsupported(reason)) => Proving::Settled(Report {
                 id: obligation.id,

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use prove_decide::Verdict;
-use prove_it_prover::driver::{Answer, Report, Request, Round, Status, prove_obligations};
+use prove_it_prover::driver::{Answer, Cache, Report, Request, Round, Status, prove_obligations};
 use prove_obligations::index::{ObligationSource, PrintedObligation, get_obligations};
 use prove_obligations::tlaps_module::TLAPS_MODULE;
 
@@ -36,8 +36,9 @@ fn prove(
 ) -> (Round, Vec<Request>) {
     let mut answers: HashMap<String, Answer> = HashMap::new();
     let mut requested = Vec::new();
+    let mut cache = Cache::default();
     loop {
-        let round = prove_obligations(obligations, &|key| answers.get(key).cloned())
+        let round = prove_obligations(obligations, &|key| answers.get(key).cloned(), &mut cache)
             .expect("the run proves");
         if round.requests.is_empty() {
             return (round, requested);
@@ -85,7 +86,8 @@ THEOREM Three == x = 2 => x + 1 = 3
 #[test]
 fn a_proof_needs_its_decision_first() {
     let obligations = get_module_obligations(SPEC);
-    let round = prove_obligations(&obligations, &|_| None).expect("the run proves");
+    let round =
+        prove_obligations(&obligations, &|_| None, &mut Cache::default()).expect("the run proves");
     assert!(round.reports.is_empty());
     assert_eq!(
         round
