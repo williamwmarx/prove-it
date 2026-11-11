@@ -1,0 +1,3 @@
+---- MODULE RBareUse ----
+USE
+====

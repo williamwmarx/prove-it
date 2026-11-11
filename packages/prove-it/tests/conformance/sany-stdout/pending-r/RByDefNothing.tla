@@ -1,0 +1,4 @@
+---- MODULE RByDefNothing ----
+CONSTANT C
+THEOREM TRUE BY DEF C
+====
