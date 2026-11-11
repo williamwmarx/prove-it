@@ -38,7 +38,7 @@ export const hasTypeScriptDecider = (prover: string) => DECIDERS[prover] !== und
 
 // The backends whose Rust port decides by default, each once it decides every recorded input as
 // the TypeScript backend does (design/prover.md, section 4).
-const RUST_BACKENDS = new Set<string>(["ls4", "zenon", "isabelle"]);
+const RUST_BACKENDS = new Set<string>(["ls4", "zenon", "isabelle", "smt", "z3"]);
 
 // Which port decides a backend's inputs: the Rust port alone for a backend without a TypeScript
 // decider, else PROVE_IT_PROVER_<PROVER>, such as PROVE_IT_PROVER_SMT, for one backend, else

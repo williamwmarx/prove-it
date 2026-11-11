@@ -1245,54 +1245,54 @@ mod tests {
 
     const EXPECTED: &str = "tree regs=4 choices=1
   0 INIT reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=1 alt=-
-  1 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=67108864,0 q=-1 regs=[] joints=[] next=2 alt=-
+  1 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=4194304,0 q=-1 regs=[] joints=[] next=2 alt=-
   2 BIND reg=1 reg2=0 oreg=3 n=1 label=31 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=3 alt=-
-  3 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=14 regs=[2,3] joints=[] next=- alt=-
+  3 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=18 regs=[2,3] joints=[] next=- alt=-
 tree regs=4 choices=2
   0 INIT reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=1 alt=-
-  1 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=67108864,0 q=-1 regs=[] joints=[] next=2 alt=-
+  1 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=4194304,0 q=-1 regs=[] joints=[] next=2 alt=-
   2 BIND reg=1 reg2=0 oreg=3 n=1 label=31 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=3 alt=-
   3 CHOOSE reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=4 alt=5
-  4 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=14 regs=[2,3] joints=[] next=- alt=-
+  4 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=18 regs=[2,3] joints=[] next=- alt=-
   5 NOOP reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=- alt=-
 tree regs=5 choices=4
   0 INIT reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=1 alt=-
-  1 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=69206016,0 q=-1 regs=[] joints=[] next=2 alt=-
+  1 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=4194304,8 q=-1 regs=[] joints=[] next=2 alt=-
   2 CHOOSE reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=3 alt=8
-  3 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=67108864,0 q=-1 regs=[] joints=[] next=4 alt=-
+  3 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=4194304,0 q=-1 regs=[] joints=[] next=4 alt=-
   4 BIND reg=1 reg2=0 oreg=3 n=1 label=31 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=5 alt=-
   5 CHOOSE reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=6 alt=7
-  6 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=14 regs=[2,3] joints=[] next=- alt=-
+  6 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=18 regs=[2,3] joints=[] next=- alt=-
   7 NOOP reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=- alt=-
   8 NOOP reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=- alt=-
 tree regs=7 choices=7
   0 INIT reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=1 alt=-
   1 CHOOSE reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=2 alt=10
-  2 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=69206016,0 q=-1 regs=[] joints=[] next=3 alt=-
+  2 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=4194304,8 q=-1 regs=[] joints=[] next=3 alt=-
   3 CHOOSE reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=4 alt=9
-  4 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=67108864,0 q=-1 regs=[] joints=[] next=5 alt=-
+  4 FILTER reg=1 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=4194304,0 q=-1 regs=[] joints=[] next=5 alt=-
   5 BIND reg=1 reg2=0 oreg=3 n=1 label=31 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=6 alt=-
   6 CHOOSE reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=7 alt=8
-  7 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=14 regs=[2,3] joints=[] next=- alt=-
+  7 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=18 regs=[2,3] joints=[] next=- alt=-
   8 NOOP reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=- alt=-
   9 NOOP reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=- alt=-
   10 NOOP reg=0 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=11 alt=-
-  11 FILTER reg=2 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=67108864,0 q=-1 regs=[] joints=[] next=12 alt=-
+  11 FILTER reg=2 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=4194304,0 q=-1 regs=[] joints=[] next=12 alt=-
   12 BIND reg=2 reg2=0 oreg=5 n=1 label=31 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=13 alt=-
-  13 FILTER reg=5 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=2097152,0 q=-1 regs=[] joints=[] next=14 alt=-
+  13 FILTER reg=5 reg2=0 oreg=0 n=0 label=-1 enode=-1 lbl=0,8 q=-1 regs=[] joints=[] next=14 alt=-
   14 BIND reg=5 reg2=0 oreg=6 n=1 label=32 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=15 alt=-
-  15 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=23 regs=[1,6] joints=[] next=- alt=-
+  15 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=27 regs=[1,6] joints=[] next=- alt=-
 tree regs=5 choices=0
   0 INIT reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=1 alt=-
-  1 GET_CGR reg=0 reg2=0 oreg=3 n=2 label=33 enode=-1 lbl=4,0 q=-1 regs=[2,1] joints=[] next=2 alt=-
-  2 GET_CGR reg=0 reg2=0 oreg=4 n=1 label=31 enode=-1 lbl=67108864,0 q=-1 regs=[1] joints=[] next=3 alt=-
-  3 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=29 regs=[2,1] joints=[] next=- alt=-
+  1 GET_CGR reg=0 reg2=0 oreg=3 n=2 label=33 enode=-1 lbl=4096,0 q=-1 regs=[2,1] joints=[] next=2 alt=-
+  2 GET_CGR reg=0 reg2=0 oreg=4 n=1 label=31 enode=-1 lbl=4194304,0 q=-1 regs=[1] joints=[] next=3 alt=-
+  3 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=33 regs=[2,1] joints=[] next=- alt=-
 tree regs=5 choices=1
   0 INIT reg=0 reg2=0 oreg=0 n=1 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=1 alt=-
-  1 CONTINUE reg=0 reg2=0 oreg=2 n=2 label=33 enode=-1 lbl=4,0 q=-1 regs=[] joints=[2/-1/1/-1/0,0/-1/0/-1/0] next=2 alt=-
+  1 CONTINUE reg=0 reg2=0 oreg=2 n=2 label=33 enode=-1 lbl=4096,0 q=-1 regs=[] joints=[2/-1/1/-1/0,0/-1/0/-1/0] next=2 alt=-
   2 COMPARE reg=1 reg2=2 oreg=0 n=0 label=-1 enode=-1 lbl=0,0 q=-1 regs=[] joints=[] next=3 alt=-
-  3 GET_CGR reg=0 reg2=0 oreg=4 n=2 label=33 enode=-1 lbl=4,0 q=-1 regs=[3,1] joints=[] next=4 alt=-
-  4 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=29 regs=[3,1] joints=[] next=- alt=-
+  3 GET_CGR reg=0 reg2=0 oreg=4 n=2 label=33 enode=-1 lbl=4096,0 q=-1 regs=[3,1] joints=[] next=4 alt=-
+  4 YIELD reg=0 reg2=0 oreg=0 n=2 label=-1 enode=-1 lbl=0,0 q=33 regs=[3,1] joints=[] next=- alt=-
 ";
 
     /// Each instruction, numbered in the order a walk of next before alt reaches it.
@@ -1392,8 +1392,7 @@ tree regs=5 choices=1
             },
         )
         .unwrap();
-        // Without setup_context, as the script: the TypeScript theory makes numerals that the
-        // stubbed one does not, which would shift the ids.
+        context.setup_context().unwrap();
         let u = context.m.mk_sort("U");
         let func = |context: &mut Context, name: &str, domain: &[Sort], range: Sort| {
             context
