@@ -851,7 +851,9 @@ impl Parser {
         if self.is_tlapm_incomplete(&token) && self.is_standalone(token.line) {
             return Err(self.error_at("incomplete expression", token.line, token.column));
         }
-        if is_operator_alone && &*token.text == "\\X" {
+        // SANY's parser rejects the operator by its image, `\X` or `\times`, but not `×`.
+        let image = raw.spelling.as_deref().unwrap_or(&raw.text);
+        if is_operator_alone && (image == "\\X" || image == "\\times") {
             return Err(self.error_at(
                 "\\X may not be used as an infix operator",
                 token.line,
