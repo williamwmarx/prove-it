@@ -30,7 +30,10 @@ use crate::context::{
     holds_all, holds_all_changed,
 };
 use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atoms};
-use crate::machine::{Eval, Machine, Printed, Registers, Step, UNASSIGNED};
+use crate::machine::{
+    EVALUATIONS_SPENT, Eval, Machine, Printed, Program, Registers, Step, UNASSIGNED,
+};
+use crate::memo::EMPTY;
 use crate::symmetry::{
     Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
 };
@@ -77,6 +80,9 @@ pub struct Settings {
     /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
     /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
     pub test_live_check_at: Option<usize>,
+    /// PROVE_IT_TEST_EVALUATIONS, for tests: how many bodies of recursive definitions the search's
+    /// machines may evaluate between them before it stops with EVALUATIONS_SPENT.
+    pub test_evaluations: Option<u64>,
     /// Whether the search hands every state it found to [`Reporter::dumped`] as it ends, for
     /// `-dump`.
     pub is_dumped: bool,
@@ -119,6 +125,7 @@ impl Default for Settings {
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
+            test_evaluations: None,
             is_dumped: false,
             is_continued: false,
             large_region_advice: None,
@@ -1932,8 +1939,10 @@ struct Worker<'p> {
 }
 
 impl Worker<'_> {
-    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints) {
+    // Lays the worker's overlay on the store, with the values the store's machine computed once.
+    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints, onces: &[Id]) {
         self.machine.forget_from(self.bound);
+        self.machine.adopt_onces(onces);
         self.fingerprints
             .attach(fingerprints, store.value_count() as Id);
         if let Some(canonicalizer) = &mut self.canonicalizer {
@@ -2145,6 +2154,7 @@ impl Search<'_, States> {
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
         let fingerprints = self.fingerprints.share();
+        let onces = &machine.onces;
         let expanded: Vec<Expanded> = std::thread::scope(|scope| {
             let threads: Vec<_> = workers
                 .iter_mut()
@@ -2153,7 +2163,7 @@ impl Search<'_, States> {
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
-                            worker.attach(store, fingerprints);
+                            worker.attach(store, fingerprints, onces);
                             expand_claimed(worker, shared)
                         })
                         .expect("a thread for the search")
@@ -2402,6 +2412,20 @@ impl Search<'_, States> {
                         machine.store.join_shape(join, id);
                     }
                     *found = ShapeJoin::default();
+                }
+            }
+        }
+        // The values the threads computed once that the store's machine has none of, for every
+        // thread to read from the next level on. Such a value reads no state and nothing the
+        // threads differ in, so each thread that computed one computed the same value, and which
+        // thread's is imported shows nowhere.
+        for worker in workers.iter_mut() {
+            let overlay = &worker.machine.store;
+            for (own, &computed) in machine.onces.iter_mut().zip(&worker.machine.onces) {
+                if *own == EMPTY && computed != EMPTY {
+                    *own = machine
+                        .store
+                        .import(overlay, computed, &mut worker.imported);
                 }
             }
         }
@@ -2736,7 +2760,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     } else {
         thread_count
     };
-    let program = compiler.finish();
+    let program = Program {
+        evaluation_budget: settings.test_evaluations,
+        ..compiler.finish()
+    };
     let mut machine = Machine::new(&program, store);
     // TLCGet("level") is 0 while TLC starts.
     let startup = machine.store.int(0).and_then(|zero| {
@@ -3333,6 +3360,11 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     checkpoint_count = search.states.count();
                     checkpoint_generated = search.generated;
                     expanded?;
+                    // A thread that spent the budget stopped the level, which this thread would
+                    // end without the evaluations the thread made.
+                    if program.is_evaluation_budget_spent() {
+                        return Err(Bail(EVALUATIONS_SPENT));
+                    }
                     if search.reporter.is_cancelled() {
                         return Err(Bail(CANCELLED));
                     }

@@ -76,6 +76,8 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         is_violation_reported: false,
         is_liveness_periodic: liveness_periodic != 0,
         test_live_check_at: usize::try_from(test_live_check_at).ok(),
+        // The native checker's tests bound the evaluations.
+        test_evaluations: None,
         // The interpreter writes -dump itself.
         is_dumped: false,
         // The interpreter goes on past violations itself.
