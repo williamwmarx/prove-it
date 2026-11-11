@@ -1122,3 +1122,108 @@ is next.
       bytes as the TypeScript re-saves them;
     - every encoded result, re-encoded at its stored date and version.
   - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
+
+### TypeScript deviations from Z3
+
+The record holds what the TypeScript answers, so it cannot show where the TypeScript leaves Z3.
+`scripts/z3-parity.ts` runs Z3 5.3.3, the version the solver ports, on every `smt` and `z3` input
+of the record as tlapm runs it: `z3 -smt2 -v:0 AUTO_CONFIG=false smt.MBQI=true`, under the time
+limit prove sent the input with (5 s for all but 24 inputs; 2 have an `rlimit` budget and no time
+limit), which prover-inputs now writes to
+`.prover-inputs/time-limits.json`. The script's header cites tlapm's source for each part of the
+invocation. It fails unless the binary is Z3 5.3.3, records the binary's SHA-256 (`f6aa070c…6470`,
+the binary of the `z3-solver` 5.3.3.0 wheel), journals each run, and writes `.z3-parity.json`.
+
+On the record of `main` at b830769, and as it will be once the SMT part 3 re-record lands:
+
+| | `smt` | `z3` | after part 3 (`smt`) |
+|---|---|---|---|
+| Same verdict | 10,246 | 54 | 10,245 |
+| The TypeScript proves, Z3 doesn't | 4 | — | 5 |
+| Z3 proves, the TypeScript doesn't | 70 | 2 | 70 |
+| A verdict that contradicts (`sat` against `unsat`) | 0 | 0 | 0 |
+| Z3 errors | 0 | 0 | 0 |
+
+Where both prove, the search is mostly Z3's: on 9,996 of the 10,032 inputs both prove, the
+TypeScript makes as many quantifier instances as Z3. Its step count is not Z3's `rlimit-count`,
+though (equal on 1,464 inputs, a median of 0.92 of it): some of Z3's resource-limit charges are not
+counted.
+
+How the divergences were found: the instance streams. `smt.qi.profile_freq=1` makes Z3 print each
+instance's quantifier as it makes it, the TypeScript's `QiQueue.instantiateEntry` gives the same
+stream, and unnamed quantifiers get the name Z3's parser gives them, `k!<line>`, written into the
+text as `:qid` (Z3 neither hashes nor compares it, and both streams stay the same). Z3's
+`trace=true` changes Z3's search and cannot be used. A Z3 5.3.3 built from the tag with tracing
+(`Z3_ENABLE_TRACING_FOR_NON_DEBUG`) gives the pinned binary's counts. Its `qi_queue_profile`,
+`mam_candidate` and `trigger_bug` traces leave the search unchanged, but `model_checker` changes it.
+
+**The TypeScript proves, Z3 doesn't.** Z3 times out at 5 s and at 50 s on each.
+
+| Input | Obligation (`proofs.json`) | First instance that differs | Is the TypeScript's `unsat` right? |
+|---|---|---|---|
+| `smt/8df9b72d29f8a626` | VoteProof `Consensus` #33 | 37th: Z3 `k!33` (`SeqLenDef`, which has no pattern), the TypeScript `k!35` | Yes. Z3 5.3.3 proves it with `smt.random_seed` 1, 2 and 3, and with its default configuration. tlapm's Isabelle proved the obligation. |
+| `smt/fe8845daad4c648e` | `EmptySetEqCases_proofs` #1084 | 53rd: Z3 makes one more `k!25` (`EnumDefIntro 1`) | Yes. Z3 proves it with seeds 1, 2 and 3. tlapm's Z3 proved it. |
+| `smt/5e53b781a834c8ec` | TeachingConcurrency `Simple` #7, #27; `Simple_proof` #7 | 163rd: Z3 `k!39`, the TypeScript `k!42` | Yes. Z3 proves it in 1.1 s with its default configuration. tlapm's Z3 proved it. |
+| `smt/1319a2956705afce` | `EmptySetEqCases_proofs` #640 | 371st: Z3 `k!28`, the TypeScript `k!25` | Yes, from the obligation: tlapm's Zenon proved it. No Z3 setting tried proves the text: seeds 0 to 14 with tlapm's options and 0 to 13 with the default configuration, at 60 s each. |
+| `smt/0c812b0a8aa1347b` (after part 3) | DiningPhilosophers `DiningPhilosophers_proof` #274 | none on `main`: its 153,469 instances are Z3's first 153,469 | Yes, from the obligation: tlapm's Isabelle proved it. Z3 doesn't decide the text at 5 s or 50 s, or with seeds 1 to 3 or the default configuration at 60 s. |
+
+So none of the five is a soundness risk: each `unsat` holds. They are divergences in the search.
+Each run's instances are Z3's up to the point in the table. After that, the TypeScript happens to
+reach a proof, and Z3, on its own path, doesn't in the time.
+
+- `fe8845daad4c648e` cut down to 17 of its 22 assertions still diverges the same way.
+  - The cases are the instantiation attempts (counted or not) and the e-matching candidates, in
+    order: the first 446 agree.
+  - At the 447th, one e-matching round yields `k!25`'s matches of generation 0 and 2 in the
+    opposite order. No candidate is added between them, so the order comes from the matching, not
+    from the candidates.
+  - The places: `qi-queue.ts:270-289`, which instantiates in insertion order as
+    `qi_queue.cpp:150-187` does; `e-matching.ts:445-451, 573-630` against `mam.cpp:3191-3199,
+    3930-3938` and the path-tree matching on a new equality (`mam.cpp:3556-3770`, `add_eq_eh`
+    at 4032).
+  - The first event that differs inside the matching is not found yet.
+- `1319a2956705afce` and `5e53b781a834c8ec` cannot be cut at the level of assertions: each one is
+  needed. `8df9b72d29f8a626` cuts to 20 of 29.
+- `8df9b72d29f8a626` diverges on a quantifier with no pattern, so Z3 instantiates it from an
+  inferred pattern or by MBQI. If by MBQI, the places are `model-checker.ts:200-315` against
+  `smt_model_checker.cpp:218-627`, and the model finder's instantiation sets
+  (`auf-solver.ts:55-62` against `smt_model_finder.cpp:134-153`). That is not confirmed yet.
+- On `main` the TypeScript follows Z3 on `0c812b0a8aa1347b` up to its step limit. With part 3's fix
+  it proves the input instead. So the fix leaves Z3's search on this input; compare its stream
+  with Z3's before merging.
+
+**Z3 proves, the TypeScript doesn't: 72.** Each was decided again by the TypeScript with no time
+limit and a step limit of twice Z3's `rlimit-count`.
+
+- **64 come from the step limits** (62 `smt`, both `z3`). The TypeScript proves each with exactly
+  Z3's number of instances, so it makes the same search. It needs about 0.9 of Z3's
+  `rlimit-count`, and the record's step limit is less than that.
+  - The record's step limit is the steps the TypeScript took in tlapm's time on the recording
+    machine. That is 0.08 to 0.88 of the resources Z3 uses in that time.
+  - These are a matter of the decider's speed, not of the search.
+- **8 are real divergences** (all `smt`). The first instance that differs, Z3's against the
+  TypeScript's:
+  - `cb7b13d3236da8ea` 413th, `k!41` against `k!30`; Z3 proves it with 0.14 of the record's
+    step limit.
+  - `ee2307985b84e424` 137th, `k!43` against `k!38`; Z3 proves it with 0.22 of the step limit.
+  - `52c873767bacfb3b` 2,343rd, Z3's last instance, the goal's `k!270`, against `k!23`.
+  - `024f5dc53f8b63a5` 214th, `k!25` against `k!431`.
+  - `d542f926ff5ed013` 213th, `k!282` against `k!276`.
+  - `fa51a87ba4ebf399` 7,702nd, `k!284` against `k!286`.
+  - `41a69bf765dd7c8b` 11,110th, `k!197` against `k!53`, and `beb7dd1741444a77` 152nd, `k!26`
+    against `k!46`. The TypeScript still proves these two with more steps, on another path.
+
+**Fix order.** No decider changes with this audit. The fixes come first where a verdict changes,
+and the earliest divergence first within each group, since a single cause may explain several:
+
+1. `cb7b13d3236da8ea` and `ee2307985b84e424`. Z3 proves them with far less work than the
+   TypeScript is allowed, so they change the verdict whatever the calibration.
+2. `52c873767bacfb3b`, `024f5dc53f8b63a5`, `d542f926ff5ed013` and `fa51a87ba4ebf399`, unknown
+   even at twice Z3's work.
+3. The TypeScript's extra proofs, from the smallest repro: `fe8845daad4c648e` (17 assertions,
+   447th event), then `8df9b72d29f8a626` (37th instance), `5e53b781a834c8ec`, `1319a2956705afce`. Then
+   `0c812b0a8aa1347b` once part 3 is in.
+4. `41a69bf765dd7c8b` and `beb7dd1741444a77`, which have the same verdict and a different path.
+5. The 64 step-limit cases need no decider fix. Recording step limits from Z3's `rlimit-count`
+   within tlapm's time would make the record match Z3's verdicts there. That needs the step count
+   to charge what Z3 charges first.
