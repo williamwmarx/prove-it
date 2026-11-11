@@ -14,6 +14,7 @@ use crate::ast::*;
 use crate::config::ConfigValue;
 use crate::environment::Environment;
 use crate::errors::{FrontError, describe_range};
+use crate::hash::FastMap;
 use crate::resolve::Result;
 use crate::spec::{Binding, Scope, ScopeOf, bind_definitions, get_definition, lookup_scope};
 use crate::tlc_data::SANY_OPERATOR_SYNONYMS;
@@ -27,6 +28,13 @@ const MAXIMUM_DEPTH: usize = 400;
 
 /// Why an evaluation that leaves substitutions unbound fails where it reads one.
 const UNBOUND: &str = "a declaration whose substitution is unbound";
+
+/// A lazy argument: the depth its application evaluates it at where it isn't lazy, or its value.
+#[derive(Clone)]
+enum Lazy {
+    Pending(usize),
+    Computed(ConfigValue),
+}
 
 /// What evaluating a property's \A sets with substitutions unbound finds.
 pub enum Unrolled {
@@ -115,6 +123,9 @@ pub struct Evaluator<'a> {
     /// TLC's lookup of: a root constant past an INSTANCE's substitution, or a copy of a definition
     /// the configuration overrides or assigns a value to.
     is_uncertain: Cell<bool>,
+    /// The lazy bindings where substitutions are unbound, by the scope node that holds each, kept
+    /// alive so no other node takes its address: TLC's `LazyValue` computes once.
+    lazy_values: RefCell<FastMap<usize, (Rc<Scope>, Lazy)>>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -133,6 +144,7 @@ impl<'a> Evaluator<'a> {
             is_deferring: Cell::new(false),
             unbound: RefCell::new(Rc::from([])),
             is_uncertain: Cell::new(false),
+            lazy_values: RefCell::default(),
         }
     }
 
@@ -392,6 +404,7 @@ impl Evaluator<'_> {
         let was_uncertain = self.is_uncertain.replace(false);
         let bindings = self.get_bindings(bounds, scope);
         *self.unbound.borrow_mut() = outer;
+        self.lazy_values.borrow_mut().clear();
         if self.is_uncertain.replace(was_uncertain) {
             return Ok(Unrolled::Uncertain);
         }
@@ -671,7 +684,28 @@ impl Evaluator<'_> {
                     return match lookup_scope(scope, &name) {
                         Some((_, Binding::Value(value))) => Ok(value.clone()),
                         Some((node, Binding::Thunk { expression, scope })) => {
-                            self.evaluate(expression, scope.resolve(node).as_ref())
+                            if self.unbound.borrow().is_empty() {
+                                return self.evaluate(expression, scope.resolve(node).as_ref());
+                            }
+                            let key = Rc::as_ptr(node) as usize;
+                            let lazy = self
+                                .lazy_values
+                                .borrow()
+                                .get(&key)
+                                .map(|(_, lazy)| lazy.clone());
+                            let depth = match lazy {
+                                Some(Lazy::Computed(value)) => return Ok(value),
+                                Some(Lazy::Pending(depth)) => depth,
+                                None => self.depth.get(),
+                            };
+                            let outer = self.depth.replace(depth);
+                            let value = self.evaluate(expression, scope.resolve(node).as_ref());
+                            self.depth.set(outer);
+                            let value = value?;
+                            self.lazy_values
+                                .borrow_mut()
+                                .insert(key, (node.clone(), Lazy::Computed(value.clone())));
+                            Ok(value)
                         }
                         _ => Err(not_yet("an operator as a value")),
                     };
@@ -729,7 +763,7 @@ impl Evaluator<'_> {
                     if param.arity > 0 {
                         return Err(not_yet("an operator argument"));
                     }
-                    bound = Some(Rc::new(Scope {
+                    let node = Rc::new(Scope {
                         name: param.name.clone(),
                         binding: if is_lazy {
                             Binding::Thunk {
@@ -740,7 +774,14 @@ impl Evaluator<'_> {
                             Binding::Value(self.evaluate(argument, scope)?)
                         },
                         parent: bound,
-                    }));
+                    });
+                    if is_lazy {
+                        self.lazy_values.borrow_mut().insert(
+                            Rc::as_ptr(&node) as usize,
+                            (node.clone(), Lazy::Pending(self.depth.get())),
+                        );
+                    }
+                    bound = Some(node);
                 }
                 self.evaluate(&body, bound.as_ref())
             }
