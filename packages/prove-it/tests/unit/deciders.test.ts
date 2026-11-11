@@ -18,6 +18,9 @@ const INPUTS = [
   ["ls4", read("conformance/ptl/equivalence-of-boxes.ls4")],
 ] as const;
 
+// The inputs of the backends that still have a TypeScript decider.
+const TYPESCRIPT_INPUTS = INPUTS.filter((input) => input[0] !== "zenon");
+
 const OPTIONS = { timeLimitMs: Infinity };
 
 describe("the deciders' steps and statistics", () => {
@@ -66,7 +69,7 @@ describe("a malformed input", () => {
 });
 
 // Until a backend's port lands, the native engine declines its inputs and TypeScript decides them.
-// Where it decides, it must answer as TypeScript does.
+// Where it decides, it must answer as TypeScript does, until the TypeScript backend is deleted.
 describe("the Rust ports", () => {
   const getAddon = () => {
     const addon = getNativeAddon();
@@ -86,7 +89,7 @@ describe("the Rust ports", () => {
     }
   };
 
-  it.each(INPUTS)("%s declines, or decides as TypeScript does", (prover, text) => {
+  it.each(TYPESCRIPT_INPUTS)("%s declines, or decides as TypeScript does", (prover, text) => {
     const native = getAddon().decide(prover, text, Infinity, undefined, undefined);
     if (native.kind === "declined") return;
     const typescript = useProver("ts", () => decide(prover, text, OPTIONS));
@@ -103,10 +106,19 @@ describe("the Rust ports", () => {
     );
   });
 
-  it("decides Zenon", () => {
-    expect(getAddon().decide("zenon", INPUTS[1][1], Infinity, undefined, undefined).kind).toBe(
-      "decided",
-    );
+  // Zenon's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
+  it("decides Zenon in Rust whatever PROVE_IT_PROVER says", () => {
+    const native = getAddon().decide("zenon", INPUTS[1][1], Infinity, undefined, undefined);
+    expect(native.kind).toBe("decided");
+    expect(useProver("ts", () => decide("zenon", INPUTS[1][1], OPTIONS))).toMatchObject({
+      verdict: "unsat",
+      statistics: native.kind === "decided" ? native.statistics : {},
+    });
+  });
+
+  // tlapm counts a Zenon that stops on its input as a failure.
+  it("fails on a malformed Zenon input", () => {
+    expect(() => decide("zenon", "$sig a", OPTIONS)).toThrow(TlaProverError);
   });
 
   it("declines a prover without a backend", () => {
@@ -116,11 +128,14 @@ describe("the Rust ports", () => {
     });
   });
 
-  it.each(INPUTS)("%s falls back to TypeScript where its port declines", (prover, text) => {
-    expect(useProver("rust", () => decide(prover, text, OPTIONS))).toMatchObject({
-      verdict: "unsat",
-    });
-  });
+  it.each(TYPESCRIPT_INPUTS)(
+    "%s falls back to TypeScript where its port declines",
+    (prover, text) => {
+      expect(useProver("rust", () => decide(prover, text, OPTIONS))).toMatchObject({
+        verdict: "unsat",
+      });
+    },
+  );
 
   // The native backends don't see the signal, so an aborted one keeps an input from them.
   it.each(INPUTS)("%s is unknown once its signal has aborted", (prover, text) => {
