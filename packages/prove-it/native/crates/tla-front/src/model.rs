@@ -262,8 +262,16 @@ fn lower_ranked(
             TlcVersion::V1_7_4 => "1.7.4",
             TlcVersion::Master => "master",
         });
-        // `createSearch`'s checks of the configuration.
-        let is_checking_behaviors = !config.invariants.is_empty()
+        // `processSpec`'s checks of the configuration, which count the invariants it keeps: not
+        // those that are TRUE constants.
+        let is_invariant_kept = match &constant_invariants {
+            Some(constant_true) => config
+                .invariants
+                .iter()
+                .any(|name| !constant_true.iter().any(|constant| **constant == **name)),
+            None => !config.invariants.is_empty(),
+        };
+        let is_checking_behaviors = is_invariant_kept
             || !properties.invariants.is_empty()
             || !properties.action_properties.is_empty()
             || !properties.liveness.is_empty();
