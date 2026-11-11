@@ -152,6 +152,18 @@ pub(crate) struct ModuleDependencies {
     pub(crate) extendees: Vec<Name>,
     pub(crate) instancees: Vec<Name>,
     pub(crate) importers: FastMap<Name, Name>,
+    /// The module's own EXTENDS and INSTANCEs and its inner modules', module by module.
+    pub(crate) scope: DependencyScope,
+}
+
+/// The modules a module or one of its inner modules names outside the file, and its inner
+/// modules' in order (`ModulePointer.getDirectInnerModules`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DependencyScope {
+    pub(crate) name: Name,
+    pub(crate) extendees: Vec<Name>,
+    pub(crate) instancees: Vec<Name>,
+    pub(crate) inners: Vec<DependencyScope>,
 }
 
 /// A context of the symbol table: a module's, which the module's node holds, or one of the
@@ -493,9 +505,18 @@ pub(crate) fn get_dependencies(module: &Rc<Module>) -> ModuleDependencies {
         is_root: bool,
         context: &FastMap<Name, Rc<Module>>,
         dependencies: &mut ModuleDependencies,
-    ) {
+    ) -> DependencyScope {
         let is_external = |name: &Name| !context.contains_key(name);
+        let mut scope = DependencyScope {
+            name: current.name.clone(),
+            ..DependencyScope::default()
+        };
         let mut add_imports = |names: Vec<Name>, is_extension: bool| {
+            if is_extension {
+                scope.extendees.extend(names.iter().cloned());
+            } else {
+                scope.instancees.extend(names.iter().cloned());
+            }
             for name in names {
                 dependencies
                     .importers
@@ -573,12 +594,14 @@ pub(crate) fn get_dependencies(module: &Rc<Module>) -> ModuleDependencies {
                 }
             }
             add_extended_inner_modules(inner, &mut extenders, &mut inner_context);
-            visit(inner, false, &inner_context, dependencies);
+            let inner_scope = visit(inner, false, &inner_context, dependencies);
+            scope.inners.push(inner_scope);
             peers.insert(inner.name.clone(), inner.clone());
         }
+        scope
     }
     let mut dependencies = ModuleDependencies::default();
-    visit(module, true, &FastMap::default(), &mut dependencies);
+    dependencies.scope = visit(module, true, &FastMap::default(), &mut dependencies);
     dependencies
 }
 
