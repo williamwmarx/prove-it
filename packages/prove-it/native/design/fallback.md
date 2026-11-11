@@ -74,7 +74,7 @@ replaced").
 Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
 2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a
 spec's paths and files, then 4,350 more, in TLC's default mode and with `-noGenerateSpecTE`) found the report wrong
-or declining for 2,051; each is a case of tla-front's `tests/sany-cases`, recorded in
+or declining for 2,112; each is a case of tla-front's `tests/sany-cases`, recorded in
 `sany-cases.json`, whose `case.json` gives the reason where the front end declines it. All print
 what TLC prints but these, which decline:
 - a module SANY's parser accepts and the front end's rejects (36 cases): a definition of the
@@ -93,8 +93,9 @@ what TLC prints but these, which decline:
 - a record field named like a definition whose value applies a recursive operator, on which
   SANY's linter overflows its stack (4 cases);
 - `@` as a DEF clause entry, which SANY reports as an unknown operator (2 cases);
-- a module nested in a module that its extender extends, which ParseUnit.handleExtensions lets
-  the extender's EXTENDS and INSTANCE name, and the front end looks for in a file;
+- a module nested at the top of a module that its extender extends, which
+  ParseUnit.handleExtensions lets the extender's EXTENDS and INSTANCE name, and the front end
+  looks for in a file (21 cases);
 - LETs nested 100 deep in their definitions, where SANY's generator throws (1 case);
 - brackets nested so deep that SANY's parser may overflow Java's default stack: past 1,100,
   counting a square bracket twice, where Java overflows past about 1,500 parentheses, braces or
