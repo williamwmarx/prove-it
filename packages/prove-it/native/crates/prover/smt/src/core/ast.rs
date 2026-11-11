@@ -768,6 +768,11 @@ impl AstManager {
         if self.deleted_decls.remove(&decl) {
             self.func_decls[decl as usize].small_id = self.mk_small_id();
         }
+        // A builtin declaration (a model's div0, say) has no count yet; the TypeScript reads
+        // undefined there.
+        if self.decl_ref_counts.len() <= decl as usize {
+            self.decl_ref_counts.resize(decl as usize + 1, 0);
+        }
         self.decl_ref_counts[decl as usize] += 1;
     }
 

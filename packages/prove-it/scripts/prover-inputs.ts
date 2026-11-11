@@ -11,8 +11,8 @@
 // the backend must reproduce from the same step limit, on any machine. A recording keeps each
 // module's answers in .prover-inputs/recording.jsonl as it finishes it, and a recording that
 // finds the file goes on from it, so a recording stopped part way loses only the modules it was
-// in. Run it under Node with a larger heap than the default, as the solver's heap fills on a few
-// modules:
+// in. Run it, replaying or recording, under Node with a larger heap than the default, as the
+// solver's heap fills on a few modules, and the run fails when it loses a module:
 //   NODE_OPTIONS=--max-old-space-size=4500 bun scripts/run.ts prover-inputs [--record] [--jobs n]
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -134,3 +134,8 @@ const count = Object.keys(inputs).length;
 console.log(
   `${count} inputs from ${byModule.size} of ${modules.length} modules in ${PROVER_INPUTS_DIRECTORY}`,
 );
+// A module lost with its worker leaves its inputs unwritten, so the differential can't read them.
+if (byModule.size < modules.length) {
+  console.error(`${modules.length - byModule.size} modules lost with their workers`);
+  process.exitCode = 1;
+}
