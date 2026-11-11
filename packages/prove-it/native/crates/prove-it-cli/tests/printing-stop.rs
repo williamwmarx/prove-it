@@ -194,8 +194,7 @@ fn prints_as_tlc_does_at_a_stop_in_a_model_with_temporal_properties() {
 fn declines_a_late_node_of_a_state_whose_next_states_fail() {
     // TLC's late node of the state whose next states failed runs Next from it again, which fails
     // as TLC adds the state to the behavior graphs: TLC prints that failure's call stack after
-    // evaluating the checks a second time, on a graph the first attempt changed. The stop comes
-    // in the first expansion, so it declines as main does.
+    // evaluating the checks a second time, on a graph the first attempt changed.
     let (status, _, errors) = run(
         "late",
         "Init == x = 0\nA == PrintT(x) /\\ (x' = 1 \\/ x' = 1 \\div 0)\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nP == [](x = 0 => <>(x = 1))",
@@ -204,7 +203,9 @@ fn declines_a_late_node_of_a_state_whose_next_states_fail() {
     );
     assert_eq!(status, Some(1), "{errors}");
     assert!(
-        errors.contains("not native yet: the engine stopped: division by zero"),
+        errors.contains(
+            "not native yet: the engine stopped: division by zero: a late node of a state whose next states fail, which TLC fails on again"
+        ),
         "{errors}"
     );
 }

@@ -4395,13 +4395,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             // search placed it.
             let mut stop_added = None;
             // Where the engine doesn't place what TLC prints at the stop, the stop is reported as
-            // main reports it where nothing but the initial states prints, or where main does
-            // (nothing past the initial states held, as a stop in the first expansion), and
-            // declined otherwise.
-            let is_held_past_initial = search
-                .held
-                .as_ref()
-                .is_some_and(|held| held.iter().skip(1).any(|printed| !printed.is_empty()));
+            // main reports it where nothing but the initial states prints, and declined otherwise.
+            // A stop it doesn't start to place, as one whose atoms read TLC's level, is also
+            // reported as main reports it where main does: with nothing held past the initial
+            // states, as a stop in the first expansion.
             let mut found = found;
             if let Some(stop) = &found
                 && online.is_none()
@@ -4413,28 +4410,37 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                 ) && bail.0 == INCOMPLETE_SUCCESSOR)
                 && search.graph.is_some()
                 && search.held.is_some()
-                && (get_stop_completeness(&context, model, &search, stop).is_ok()
-                    || is_printed_past_initial(&mut machine, &context, &search, stop))
             {
-                match place_stop_prints(
-                    &mut machine,
-                    &context,
-                    model,
-                    &mut search,
-                    stop,
-                    initial_states,
-                    &|machine, search, expanded, count| {
-                        graph_tables(machine, search, expanded, count, None, None)
-                    },
-                ) {
-                    Ok(added) => stop_added = Some(added),
-                    Err(_)
-                        if !is_held_past_initial
-                            || !is_printed_past_initial(&mut machine, &context, &search, stop) => {}
-                    Err(why) => {
+                let is_complete = get_stop_completeness(&context, model, &search, stop);
+                let is_printed = is_printed_past_initial(&mut machine, &context, &search, stop);
+                let is_held_past_initial = search
+                    .held
+                    .as_ref()
+                    .is_some_and(|held| held.iter().skip(1).any(|printed| !printed.is_empty()));
+                let placed = match is_complete {
+                    Ok(_) => Some(place_stop_prints(
+                        &mut machine,
+                        &context,
+                        model,
+                        &mut search,
+                        stop,
+                        initial_states,
+                        &|machine, search, expanded, count| {
+                            graph_tables(machine, search, expanded, count, None, None)
+                        },
+                    )),
+                    Err(why) if is_printed && is_held_past_initial => Some(Err(why)),
+                    Err(_) => None,
+                };
+                match placed {
+                    Some(Ok(added)) => stop_added = Some(added),
+                    Some(Err(_))
+                        if !is_printed_past_initial(&mut machine, &context, &search, stop) => {}
+                    Some(Err(why)) => {
                         online_declined = Some(why.into());
                         found = None;
                     }
+                    None => {}
                 }
             }
             // TLC adds each state it expands to the behavior graphs, even under -lncheck final, the
