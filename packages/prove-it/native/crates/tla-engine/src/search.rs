@@ -4079,6 +4079,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                                             | Verdict::Accepted { .. }
                                     ),
                                     context.is_invariant_printing
+                                        || context.is_action_property_printing
                                         || is_distinct_read
                                         || model.actions.len() > 1,
                                 )
@@ -5576,10 +5577,12 @@ fn place_held_prints(
     graph_tables: &GraphTables<'_>,
 ) -> Result<Vec<Prints>, &'static str> {
     // As for a complete search, a late node's prints are the expansion's but where an invariant
-    // may print among them, anything reads the count of distinct states, or Next has several
-    // actions.
-    let is_replay_inexact =
-        context.is_invariant_printing || search.is_distinct_read || model.actions.len() > 1;
+    // or an action property may print among them, which a late node doesn't check, anything
+    // reads the count of distinct states, or Next has several actions.
+    let is_replay_inexact = context.is_invariant_printing
+        || context.is_action_property_printing
+        || search.is_distinct_read
+        || model.actions.len() > 1;
     // What the expansion printed up to the stop.
     let stopped_output = std::mem::take(&mut machine.output);
     let is_complete = get_stop_completeness(context, search, found)?;

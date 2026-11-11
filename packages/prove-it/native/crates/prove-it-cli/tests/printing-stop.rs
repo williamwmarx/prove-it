@@ -223,3 +223,23 @@ fn declines_an_invariant_listed_twice_that_prints() {
         );
     }
 }
+
+#[test]
+fn declines_an_action_property_that_prints_at_a_stop() {
+    // TLC checks C on each step the search finds, printing <<"AP", 0>> then <<"AP", 1>>, and a
+    // late node of x = 0 runs Next again without checking it. The search's held expansion holds
+    // C's prints too, so replaying it for the late node would print <<"AP", 0>> twice.
+    for threads in ["1", "4"] {
+        let (status, _, errors) = run(
+            "action",
+            "Init == x = 0\nA == x < 2 /\\ x' = x + 1\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nP == [](x = 0 => <>(x = 1))\nC == [][PrintT(<<\"AP\", x>>) /\\ x' = x + 1]_x",
+            "SPECIFICATION Spec\nPROPERTY P\nPROPERTY C\n",
+            threads,
+        );
+        assert_eq!(status, Some(1), "{errors}");
+        assert!(
+            errors.contains("not native yet: the engine stopped: deadlock"),
+            "{errors}"
+        );
+    }
+}
