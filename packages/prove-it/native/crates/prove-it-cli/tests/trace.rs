@@ -156,3 +156,47 @@ fn declines_a_module_of_the_users_that_the_trace_exploration_spec_uses() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+#[test]
+fn checks_the_other_specs_after_declining_a_counterexample() {
+    // The binary checks each spec it's given in turn, as after any spec it declines.
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-trace-batch-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let files = [
+        (
+            "Viol.tla",
+            "---- MODULE Viol ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x > 0\n====\n",
+        ),
+        ("Viol.cfg", "INIT Init\nNEXT Next\nINVARIANT Inv\n"),
+        (
+            "Good.tla",
+            "---- MODULE Good ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====\n",
+        ),
+        ("Good.cfg", "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n"),
+    ];
+    for (name, text) in files {
+        std::fs::write(directory.join(name), text).expect("a file");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args(["Viol", "Good"])
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    let text = format!(
+        "{}{}",
+        stdout(&output),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("not native yet: the trace exploration spec TLC writes for a counterexample"),
+        "{text}"
+    );
+    assert!(text.contains("Checking Good.tla with Good.cfg\n"), "{text}");
+    assert!(
+        text.contains("Model checking completed. No error has been found."),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
