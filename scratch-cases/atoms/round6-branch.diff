@@ -1,0 +1,2040 @@
+diff --git a/packages/prove-it/native/crates/prove-it-check/src/check.rs b/packages/prove-it/native/crates/prove-it-check/src/check.rs
+index 80d13658..ed644f98 100644
+--- a/packages/prove-it/native/crates/prove-it-check/src/check.rs
++++ b/packages/prove-it/native/crates/prove-it-check/src/check.rs
+@@ -1651,7 +1651,9 @@ fn check_spec(
+                         && (dumps.has_command_line_dumps()
+                             || !config.postconditions.is_empty()
+                                 && match site {
+-                                    ErrorSite::Invariant(_) => false,
++                                    ErrorSite::Invariant(_) | ErrorSite::ActionConstraint(_) => {
++                                        false
++                                    }
+                                     ErrorSite::Next => {
+                                         ir.model.check_deadlock
+                                             && violation.counts.generated != initial_generated
+@@ -1682,6 +1684,9 @@ fn check_spec(
+                             ErrorSite::Init => Site::Init,
+                             ErrorSite::Next => Site::Next,
+                             ErrorSite::Invariant(position) => Site::Invariant(position),
++                            ErrorSite::ActionConstraint(position) => {
++                                Site::ActionConstraint(position)
++                            }
+                             ErrorSite::InitialConstraint(position) => {
+                                 Site::InitialConstraint(position)
+                             }
+diff --git a/packages/prove-it/native/crates/prove-it-check/src/failure.rs b/packages/prove-it/native/crates/prove-it-check/src/failure.rs
+index 1d4f4d88..6481eee0 100644
+--- a/packages/prove-it/native/crates/prove-it-check/src/failure.rs
++++ b/packages/prove-it/native/crates/prove-it-check/src/failure.rs
+@@ -97,7 +97,11 @@ pub fn print_failure(
+     // (`ModelChecker.doNext`), so the temporal properties show only in what their atoms print as
+     // TLC adds the states before it. The search reports a failure of the next-state relation in
+     // such a model only where it followed TLC's checks of the state as TLC adds it after.
+-    let is_next = matches!(stop.site, Site::Next | Site::NextAtom { .. });
++    // An action constraint that fails to evaluate fails TLC's next states (`Worker.addElement`).
++    let is_next = matches!(
++        stop.site,
++        Site::Next | Site::NextAtom { .. } | Site::ActionConstraint(_)
++    );
+     let is_followed = is_atom
+         || is_initial
+         || is_next
+@@ -439,9 +443,10 @@ fn evaluate(
+         }
+         let failure =
+             rebuilder.evaluate_failure(stop.store, &stop.states, &stop.actions, stop.site)?;
+-        // TLC holds a successor that fails an invariant as it found it.
++        // TLC holds a successor that fails an invariant or an action constraint as it found it.
+         let ending = match stop.site {
+             Site::Invariant(_) => Ending::Violation,
++            Site::ActionConstraint(_) => Ending::Failed,
+             _ => Ending::Kept,
+         };
+         // TLC prints no trace for a check of an initial state that fails.
+@@ -470,10 +475,10 @@ fn evaluate(
+         // TLC rebuilds the trace once more after it prints it, for the postconditions, then
+         // replays the failure. Its worker rebuilds it after a failure in the next-state relation
+         // only as it goes on to check the state for deadlock, having generated no successor of
+-        // it, and never after an invariant fails to evaluate, since it generated the successor
+-        // (`Worker.run`, `Worker.addElement`).
++        // it, and never after an invariant or an action constraint fails to evaluate, since it
++        // generated the successor (`Worker.run`, `Worker.addElement`).
+         let is_rebuilt_again = match stop.site {
+-            Site::Invariant(_) => false,
++            Site::Invariant(_) | Site::ActionConstraint(_) => false,
+             Site::Next | Site::NextAtom { .. } => {
+                 ir.model.check_deadlock && !failure.replay.is_successor_generated
+             }
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/cli.rs b/packages/prove-it/native/crates/prove-it-cli/tests/cli.rs
+index 53a1af27..7b77bc49 100644
+--- a/packages/prove-it/native/crates/prove-it-cli/tests/cli.rs
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/cli.rs
+@@ -3246,6 +3246,286 @@ fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_co
+     }
+ }
+ 
++// tests/action-constraint-failures: an ACTION_CONSTRAINT that fails to evaluate on a step, by each
++// of a mistyped comparison, a function applied outside its domain, a value that isn't a boolean,
++// Assert, CHOOSE over {}, \div by zero, a missing record field, a tuple index out of range and
++// TLCGet("level") compared with a string, on every step or some, plainly, without deadlock checking
++// and with a temporal property; beside an invariant, with two action constraints, and a constant
++// the configuration binds. TLC reports such a failure as one of the next states, with the trace to
++// the successor it hadn't counted as found, then the call stack of its replay of the expansion
++// (`Worker.addElement`, `ModelChecker.doNextFailed`). A constraint that is a literal fails in TLC
++// with a ClassCastException whose message names the JVM's classes, which the binary declines.
++// TLC's output at d8fb231 is beside each spec, with -lncheck final and without, and the status it
++// exits with in exit-codes.txt.
++#[test]
++fn reports_a_failing_action_constraint_as_tlc() {
++    let declined = [
++        "failStringRes_live",
++        "failStringRes_nodl",
++        "failStringRes_plain",
++    ];
++    let directory =
++        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/action-constraint-failures");
++    let codes = std::fs::read_to_string(directory.join("exit-codes.txt")).expect("the codes");
++    let codes: Vec<(&str, i32)> = codes
++        .lines()
++        .map(|line| {
++            let (name, code) = line.split_once(' ').expect("a name and a code");
++            (name, code.parse().expect("a code"))
++        })
++        .collect();
++    assert_eq!(codes.len(), 56);
++    for (name, code) in codes {
++        let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
++        let config =
++            std::fs::read_to_string(directory.join(format!("{name}.cfg"))).expect("a config");
++        for (suffix, lncheck) in [(".final", &["-lncheck", "final"][..]), ("", &[][..])] {
++            let tlc = std::fs::read_to_string(directory.join(format!("{name}{suffix}.txt")))
++                .expect("TLC's output");
++            for workers in ["1", "4"] {
++                let test = format!("action-constraint-{name}{suffix}-{workers}");
++                let mut args = vec!["-workers", workers, "-nowarning", "-seed", "4", "-fp", "0"];
++                args.extend_from_slice(lncheck);
++                let (output, run) = run_front(&test, &spec, &config, &args);
++                let text = stdout(&output);
++                let error = String::from_utf8_lossy(&output.stderr).into_owned();
++                if declined.contains(&name) {
++                    assert!(
++                        error.contains("prove-it: not native yet: "),
++                        "{name}{suffix} {workers}: {text}{error}"
++                    );
++                } else {
++                    assert_eq!(get_untimed(&text), tlc, "{name}{suffix} {workers}: {error}");
++                    assert_eq!(output.status.code(), Some(code), "{name}{suffix} {workers}");
++                }
++                std::fs::remove_dir_all(run).expect("removed");
++            }
++        }
++    }
++}
++
++// TLC checks no constraint the configuration binds to TRUE (`SpecProcessor.processModelConstraints`,
++// `processActionConstraints`). TLC's output at d8fb231 for either.
++#[test]
++fn checks_no_constraint_the_configuration_binds_to_true() {
++    let spec = "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nvars == <<x, y>>\nInit == x = 0 /\\ y = 0\nIncX == x < 3 /\\ x' = x + 1 /\\ UNCHANGED y\nIncY == y < 2 /\\ y' = y + 1 /\\ UNCHANGED x\nReset == x = 3 /\\ x' = 0 /\\ y' = 0\nNext == IncX \\/ IncY \\/ Reset\nSpec == Init /\\ [][Next]_vars\nFairSpec == Spec /\\ WF_vars(Next)\nCONSTANT C\n====\n";
++    let tlc = "Computing initial states...\nModel checking completed. No error has been found.\n  Estimates of the probability that TLC did not check all reachable states\n  because two distinct states had the same fingerprint:\n  calculated (optimistic):  val = 5.9E-18\n21 states generated, 12 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 6.\nThe average outdegree of the complete state graph is 1 (minimum is 0, the maximum 2 and the 95th percentile is 2).\n";
++    for kind in ["CONSTRAINT", "ACTION_CONSTRAINT"] {
++        let config = format!("SPECIFICATION Spec\nCONSTANT C = TRUE\n{kind} C\n");
++        let (output, directory) = run_front(&format!("true-{kind}"), spec, &config, &[]);
++        let text = stdout(&output);
++        assert_eq!(output.status.code(), Some(0), "{kind}: {text}");
++        assert_eq!(get_untimed(&text), tlc, "{kind}");
++        std::fs::remove_dir_all(directory).expect("removed");
++    }
++}
++
++// TLC computes a constant definition as it starts, building a function over an interval as a
++// `FcnRcdValue` (`SpecProcessor.evalConstantDefn`, `Tool`'s OPCODE_fc), which words a key outside
++// its domain as such, wherever the definition is applied. TLC's output at d8fb231.
++#[test]
++fn applies_a_constant_function_as_tlc_computed_it() {
++    let spec = "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nf == [i \\in 0..2 |-> i]\nInv == f[x] >= 0\nN2 == x' = f[x + 1]\n====\n";
++    let applied = "Attempted to apply function:\n(0 :> 0 @@ 1 :> 1 @@ 2 :> 2)\nto argument 3, which is not in the domain of the function.\n";
++    let invariant = format!(
++        "Computing initial states...\nError: Evaluating invariant Inv failed.\n{applied}Error: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\nState 4: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 3\n\n4 states generated, 4 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 4.\nThe average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).\n"
++    );
++    let next = format!(
++        "Computing initial states...\nError: TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: {applied}Error: The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <N2 line 8, col 7 to line 8, col 19 of module M>\nx = 1\n\nState 3: <N2 line 8, col 7 to line 8, col 19 of module M>\nx = 2\n\nError: The error occurred when TLC was evaluating the nested\nexpressions at the following positions:\n0. Line 8, column 7 to line 8, column 19 in M\n1. Line 8, column 12 to line 8, column 19 in M\n\n\n3 states generated, 3 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 3.\n"
++    );
++    for (name, config, tlc, code) in [
++        (
++            "invariant",
++            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
++            invariant,
++            76,
++        ),
++        ("next", "INIT Init\nNEXT N2\n", next, 75),
++    ] {
++        let (output, directory) =
++            run_front(&format!("constant-function-{name}"), spec, config, &[]);
++        let text = stdout(&output);
++        assert_eq!(output.status.code(), Some(code), "{name}: {text}");
++        assert_eq!(get_untimed(&text), tlc, "{name}");
++        std::fs::remove_dir_all(directory).expect("removed");
++    }
++}
++
++// Runs each case of a directory of tests/ at 1 and 4 workers: a directory of modules with M.cfg
++// (or the root module `root` names, and its configuration), any Java class beside them, TLC's
++// output at d8fb231 in tlc.txt, and, in cases.txt, the status TLC exits with and whether the binary
++// prints that exactly ("match") or declines ("decline").
++fn check_recorded(cases: &str, count: usize) {
++    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("tests")
++        .join(cases);
++    let listed = std::fs::read_to_string(directory.join("cases.txt")).expect("the cases");
++    assert_eq!(listed.lines().count(), count);
++    for line in listed.lines() {
++        let [name, code, verdict] = line.split(' ').collect::<Vec<_>>()[..] else {
++            panic!("a case: {line}");
++        };
++        let code: i32 = code.parse().expect("a code");
++        let case = directory.join(name);
++        // A case names its root module in `root` where it isn't M.
++        let root = std::fs::read_to_string(case.join("root"))
++            .map(|root| root.trim().to_owned())
++            .unwrap_or_else(|_| "M".to_owned());
++        for workers in ["1", "4"] {
++            let run = std::env::temp_dir().join(format!(
++                "prove-it-cli-{cases}-{name}-{workers}-{}",
++                std::process::id()
++            ));
++            std::fs::create_dir_all(&run).expect("a directory");
++            for entry in std::fs::read_dir(&case).expect("the case") {
++                let path = entry.expect("an entry").path();
++                if matches!(
++                    path.extension().and_then(|it| it.to_str()),
++                    Some("tla" | "cfg" | "class")
++                ) {
++                    std::fs::copy(&path, run.join(path.file_name().expect("a name")))
++                        .expect("copied");
++                }
++            }
++            let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
++                .args([
++                    "-noTE",
++                    "-workers",
++                    workers,
++                    "-nowarning",
++                    "-seed",
++                    "4",
++                    "-fp",
++                    "0",
++                ])
++                .arg(&root)
++                .current_dir(&run)
++                .output()
++                .expect("the binary runs");
++            let text = stdout(&output);
++            let error = String::from_utf8_lossy(&output.stderr).into_owned();
++            match verdict {
++                "decline" => assert!(
++                    error.contains("prove-it: not native yet: "),
++                    "{name} {workers}: {text}{error}"
++                ),
++                "match" => {
++                    let tlc = std::fs::read_to_string(case.join("tlc.txt")).expect("TLC's output");
++                    assert_eq!(get_untimed(&text), tlc, "{name} {workers}: {error}");
++                    assert_eq!(output.status.code(), Some(code), "{name} {workers}");
++                }
++                _ => panic!("a verdict: {verdict}"),
++            }
++            std::fs::remove_dir_all(run).expect("removed");
++        }
++    }
++}
++
++// tests/undefined-constraints: a CONSTRAINT or ACTION_CONSTRAINT named W that the configuration
++// binds to TRUE, where W is each of a name the spec doesn't declare, a variable, a constant only an
++// instanced module declares, an INSTANCE's name, a LOCAL definition, an operator with a parameter,
++// a definition, a constant of an extended module and one of the spec, and a constant or a
++// definition the configuration also substitutes for (`C <- D`, or `C <- [M] D`). TLC drops the
++// constraint where its definitions still hold TRUE for the name, applying a substitute without a
++// module after the values, and otherwise reports that the spec doesn't define it
++// (`SpecProcessor.processSpec`, `processModelConstraints`, `processActionConstraints`). The binary
++// drops it for a constant or a definition of the root module itself, and declines the rest. A root
++// module named for a Java class TLC loads (`TLAClass`: TLC, Sequences, AnySet, Json, a class of the
++// jar's default package such as JPF_PolDetListener, or one beside the spec) may override the name
++// or fail to load, which the binary declines; one named for no class (Toolbox, Strings2) doesn't.
++#[test]
++fn drops_a_true_constraint_only_where_the_spec_defines_it() {
++    check_recorded("undefined-constraints", 45);
++}
++
++// tests/startup-failures: a constant definition of a function TLC fails to compute as it starts,
++// by \div by zero, a tuple index, a record field, an inner function, @@, Assert, a function that
++// fails, CHOOSE with no element, applied in an action constraint, a next-state relation and an
++// invariant.
++// TLC swallows the failure and keeps the definition as written (`processConstantDefns`), applying
++// the function lazily where it is used, so no error surfaces where the key is in the domain.
++#[test]
++fn keeps_a_constant_definition_tlc_fails_to_compute_as_written() {
++    check_recorded("startup-failures", 36);
++}
++
++// tests/constant-substitutes: a function, a tuple or a function TLC fails to build, that the
++// configuration substitutes for a constant (`C <- f`) or a definition (`f <- f2`), applied outside
++// its domain in an action constraint, a next-state relation and an invariant. TLC evaluates the
++// substitute's body each time it reads the name (`Spec.lookup` gives its `OpDefNode`), not the
++// value it computed as it started, so it applies a function lazily and its replay's `CallStackTool`
++// gives what it builds a source.
++#[test]
++fn reads_a_configuration_substitute_as_written() {
++    check_recorded("constant-substitutes", 27);
++}
++
++// tests/instance-substitutions: a failure in the body of a definition an INSTANCE with
++// substitutions copies, read by the instance's name through an action constraint and a
++// next-state relation. TLC's call stack holds the `SubstInNode` SANY wraps the body in, at the
++// INSTANCE, which the IR doesn't keep. And, as MCetcdraft has it, a root module that extends the
++// module it instantiates and reads a definition of a module that one extends by its own name, on
++// a tuple and on a state's value: TLC reads the module's own definition, with no such frame.
++#[test]
++fn declines_a_call_stack_through_an_instance_with_substitutions() {
++    check_recorded("instance-substitutions", 11);
++}
++
++// tests/startup-levels: a constant function whose body applies an operator with a parameter, a
++// bound name or a LET definition named as a state variable is, and the same with no such name, a
++// LAMBDA and a definition of no name at all, applied outside its domain or not. TLC bounds the
++// level of an application of any name a variable has above constant (`getLevelBoundAppl`'s
++// `getVarLoc`), computes no such definition as it starts, and applies its function lazily.
++#[test]
++fn computes_at_startup_only_what_tlc_bounds_as_constant() {
++    check_recorded("startup-levels", 29);
++}
++
++// tests/java-constraints: a CONSTRAINT or ACTION_CONSTRAINT named for an operator of a standard
++// module the configuration binds to TRUE, Nat, Int, +, .., -., Seq, Head, SelectSeq, Cardinality,
++// the Bags, TLC, TLCExt and Randomization operators, BOOLEAN and STRING. TLC binds the name, then
++// replaces the value with the Java method that implements the operator (`processModuleOverrides`),
++// or holds BOOLEAN's and STRING's own, and rejects the constraint with that value, which the
++// binary declines. AssertEq, SubBag and TestRandomSetOfSubsets, which TLC evaluates as written,
++// keep TRUE, and TLC drops them; the binary declines those too, as for any name the root module
++// doesn't define itself.
++#[test]
++fn drops_a_true_standard_operator_only_where_tlc_keeps_its_value() {
++    check_recorded("java-constraints", 78);
++}
++
++// tests/unprocessed-instances: a constant function of a module an INSTANCE gives parameters to,
++// read inside it, named, unnamed, LOCAL, nested and with a constant substituted, beside the
++// same read by the instance's name in the root module, a parameter-free instance, an extended
++// module and a module that extends one. TLC computes no definition of such a module as it starts
++// (`ModuleNode.processConstantDefns`), so it applies the function lazily there, and computes the
++// one the root module names.
++#[test]
++fn reads_a_definition_of_an_instantiated_module_as_tlc_does() {
++    check_recorded("unprocessed-instances", 110);
++}
++
++// tests/scoped-substitutes: `CONSTANT G <- [Inner] f2` or `g <- [Lib] f2`, a substitute for a
++// definition of an instanced or extended module, a function constructor, one `@@` builds or a
++// tuple, read with no failure, in an invariant violated or a deadlock, applied outside its domain,
++// directly or after an EXCEPT, in a next-state relation, an invariant or an action constraint. TLC
++// sets it on the body of the module's definition (`SpecProcessor.processSpec`), applies a
++// constructor's function lazily, as the one EXCEPT makes of it, and reports a tuple read through
++// an INSTANCE with a frame for its body, which the binary declines.
++#[test]
++fn declines_a_function_substituted_in_another_module() {
++    check_recorded("scoped-substitutes", 35);
++}
++
++// tests/root-scoped-substitutes: `CONSTANT f <- [M] f2` for M the root module, for a definition
++// the model reads or not. TLC sets the substitute on the body of the root's definition
++// (`SpecProcessor.processSpec`), which the front end doesn't follow: where the model reads the
++// definition, it declines rather than check the spec as written.
++#[test]
++fn declines_a_substitute_scoped_to_the_root_module() {
++    check_recorded("root-scoped-substitutes", 13);
++}
++
+ // tests/membership-grid: x' \in S beside x' = a \/ x' = b, under WF_x(Next), which the engine
+ // answers from the steps the search took where the guard lets it, and WF_x(Alias) with
+ // Alias == Next, which it evaluates. S is each of an enumeration, an interval, records, functions,
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/strings.rs b/packages/prove-it/native/crates/prove-it-cli/tests/strings.rs
+index a898ec6f..a364c52d 100644
+--- a/packages/prove-it/native/crates/prove-it-cli/tests/strings.rs
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/strings.rs
+@@ -70,3 +70,94 @@ fn orders_the_strings_it_makes_as_tlc() {
+         std::fs::remove_dir_all(run).expect("removed");
+     }
+ }
++
++// What a run printed from `Starting...` to `Finished in`, but the lines that tell the time.
++fn get_untimed(text: &str) -> String {
++    let start = text.find("Starting... (").expect("the start");
++    let end = text.find("Finished in ").expect("the end");
++    text[start..end]
++        .lines()
++        .skip(1)
++        .filter(|line| {
++            ![
++                "Finished computing initial states",
++                "Progress(",
++                "Checking ",
++                "Finished checking temporal properties",
++            ]
++            .iter()
++            .any(|prefix| line.starts_with(prefix))
++        })
++        .map(|line| format!("{line}\n"))
++        .collect()
++}
++
++// Checks a fixture of tests/string-order as Stop with the arguments and returns its output, its
++// untimed text, and the dump `-dump dumped` wrote, if any.
++fn check_fixture(
++    test: &str,
++    (spec, config): (&str, &str),
++    args: &[&str],
++) -> (Output, String, Option<String>) {
++    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/string-order");
++    let read = |name: &str| std::fs::read_to_string(directory.join(name)).expect("a fixture");
++    let run = std::env::temp_dir().join(format!("prove-it-strings-{test}-{}", std::process::id()));
++    std::fs::create_dir_all(&run).expect("a directory");
++    std::fs::write(run.join("Stop.tla"), read(spec)).expect("the spec");
++    std::fs::write(run.join("Stop.cfg"), read(config)).expect("the configuration");
++    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
++        .args(args)
++        .arg("Stop")
++        .current_dir(&run)
++        .output()
++        .expect("the binary runs");
++    let text = String::from_utf8_lossy(&output.stdout).into_owned();
++    let dump = std::fs::read_to_string(run.join("dumped.dump")).ok();
++    std::fs::remove_dir_all(run).expect("removed");
++    (output, get_untimed(&text), dump)
++}
++
++// tests/string-order/trace-modules: strings the root module writes only as literals, in functions,
++// records, sets, sequences and nested values, with strings only the configuration names and field
++// names of records, as TLC printed them at d8fb231 on 1 and 4 workers. SANY interns each token's
++// image as it parses a module (SyntaxTreeNode.java 227), a string literal's with its quotes, and
++// the literal's text only in semantic analysis (StringNode.java 39), after every module is parsed
++// (SANY.java 192-196); TLC compares strings by when it interned them (UniqueString.java 227-231).
++// Recording the trace, TLC adds `_TLCTrace` to the root module's EXTENDS (TraceExplorationSpec.java
++// 70, ParameterizedSpecObj.java 76-85), whose modules name `e`, `b` and `Len` as identifiers, so
++// with -noTE `"z"` comes before `"e"`, as the spec writes them, and without it after.
++// tests/string-order/model-values: an untyped model value comes before any other value
++// (ModelValue.java 166), and model values in the order the configuration names them, which TLC
++// reads before SANY parses (Spec.java 100, ModelValue.java 91).
++#[test]
++fn orders_strings_by_the_tokens_of_the_modules_tlc_parses() {
++    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/string-order");
++    let read = |name: &str| std::fs::read_to_string(directory.join(name)).expect("a fixture");
++    for workers in ["1", "4"] {
++        for name in ["trace-modules", "model-values"] {
++            let (output, untimed, _) = check_fixture(
++                &format!("{name}-{workers}"),
++                (&format!("{name}.tla"), &format!("{name}.cfg")),
++                &["-workers", workers, "-noTE"],
++            );
++            assert_eq!(
++                output.status.code(),
++                Some(12),
++                "{name} {workers}: {untimed}"
++            );
++            assert_eq!(untimed, read(&format!("{name}.txt")), "{name} {workers}");
++        }
++        let (output, untimed, dump) = check_fixture(
++            &format!("recorded-{workers}"),
++            ("trace-modules.tla", "trace-modules-recorded.cfg"),
++            &["-workers", workers, "-dump", "dumped"],
++        );
++        assert_eq!(output.status.code(), Some(0), "{workers}: {untimed}");
++        assert_eq!(untimed, read("trace-modules-recorded.txt"), "{workers}");
++        assert_eq!(
++            dump.as_deref(),
++            Some(read("trace-modules-recorded.dump").as_str()),
++            "{workers}"
++        );
++    }
++}
+diff --git a/packages/prove-it/native/crates/tla-engine/src/search.rs b/packages/prove-it/native/crates/tla-engine/src/search.rs
+index 7e182f45..ccba99dc 100644
+--- a/packages/prove-it/native/crates/tla-engine/src/search.rs
++++ b/packages/prove-it/native/crates/tla-engine/src/search.rs
+@@ -471,6 +471,9 @@ pub enum ErrorSite {
+     /// Evaluating the invariant at this position of the model's invariants on the trace's last
+     /// state, a successor of the state before it.
+     Invariant(u32),
++    /// Evaluating the action constraint at this position of the model's action constraints on the
++    /// trace's last step, to a successor of the state before it that isn't counted as found.
++    ActionConstraint(u32),
+     /// Evaluating the constraint at this position of the model's constraints on an initial state,
+     /// the violation's one state.
+     InitialConstraint(u32),
+@@ -1470,6 +1473,42 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
+         Ok(())
+     }
+ 
++    // Whether every action constraint holds of the step to the successor. TLC reports one that
++    // fails to evaluate with the trace to the successor, which it hasn't counted as found
++    // (`Worker.addElement`, `ModelChecker.doNextFailed`).
++    fn holds_action_constraints(
++        &mut self,
++        machine: &mut Machine<'_>,
++        context: &EngineContext,
++    ) -> Outcome<bool> {
++        for (position, constraint) in context.action_constraints.iter().enumerate() {
++            match crate::context::holds(machine, constraint) {
++                Ok(true) => {}
++                Ok(false) => return Ok(false),
++                Err(bail) => {
++                    if self.violation.is_none() && !self.is_continued && !is_engine_limit(bail.0) {
++                        self.violation = Some(Found {
++                            kind: ViolationKind::Error {
++                                site: ErrorSite::ActionConstraint(position as u32),
++                            },
++                            parent: Some(self.expanding),
++                            last: Some(self.successor.clone()),
++                            fingerprint: None,
++                            random: None,
++                            replayed: None,
++                            counts: StopCounts {
++                                depth: self.depth.max(1),
++                                ..self.stop_counts(false)
++                            },
++                        });
++                    }
++                    return Err(bail);
++                }
++            }
++        }
++        Ok(true)
++    }
++
+     // Checks the successor that is the machine's next state; its fingerprint is `known` when the
+     // pipeline computed it already.
+     fn check_successor(
+@@ -1526,7 +1565,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
+             Ok(is_state_in_model)
+         });
+         self.swap_successor(machine, self.expansion_epoch, self.level_id);
+-        let is_in_model = is_state_in_model? && holds_all(machine, &context.action_constraints)?;
++        let is_in_model = is_state_in_model? && self.holds_action_constraints(machine, context)?;
+         // TLC fingerprints a successor, which evaluates the VIEW, only where it is in the model
+         // (Worker.addElement).
+         let fingerprint = match known {
+@@ -4332,7 +4371,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
+                 Some(Found {
+                     kind:
+                         ViolationKind::Error {
+-                            site: ErrorSite::Next,
++                            site: ErrorSite::Next | ErrorSite::ActionConstraint(_),
+                         },
+                     ..
+                 }) if online.is_some()
+@@ -4362,11 +4401,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
+                     // TLC's worker adds a state whose next states failed to the behavior graphs
+                     // too, with the successors Next gave before it failed and the stuttering step
+                     // (`Worker#doNextCheckLiveness`), and prints the call stack of the first check
+-                    // that fails there in place of Next's.
++                    // that fails there in place of Next's. An action constraint that fails to
++                    // evaluate fails Next so (`Worker.addElement`).
+                     let is_next_failure = matches!(
+                         found.kind,
+                         ViolationKind::Error {
+-                            site: ErrorSite::Next
++                            site: ErrorSite::Next | ErrorSite::ActionConstraint(_)
+                         }
+                     );
+                     if is_deadlock || is_next_failure {
+@@ -4440,6 +4480,15 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
+                                     unanswered,
+                                 );
+                             }
++                            // An atom that fails after an action constraint did isn't reported.
++                            if matches!(
++                                found.kind,
++                                ViolationKind::Error {
++                                    site: ErrorSite::ActionConstraint(_)
++                                }
++                            ) {
++                                return None;
++                            }
+                             let extra = atom_extra(&context, &search, unanswered)?;
+                             found.kind = ViolationKind::Error {
+                                 site: ErrorSite::NextAtom {
+diff --git a/packages/prove-it/native/crates/tla-front/src/environment.rs b/packages/prove-it/native/crates/tla-front/src/environment.rs
+index 66137fc7..6228ccaf 100644
+--- a/packages/prove-it/native/crates/tla-front/src/environment.rs
++++ b/packages/prove-it/native/crates/tla-front/src/environment.rs
+@@ -81,6 +81,14 @@ pub struct Environment {
+     /// the modules in the order SANY finishes them, except a module an INSTANCE gives parameters
+     /// to; empty for a spec linked without a configuration.
+     pub startup_definitions: Vec<Rc<Definition>>,
++    /// The modules an INSTANCE gives parameters to, whose definitions TLC doesn't compute when
++    /// it starts (`ModuleNode.processConstantDefns`).
++    pub unprocessed_modules: FastSet<Name>,
++    /// The root module's name.
++    pub root_name: Name,
++    /// The definitions of the root module the configuration gives a substitute scoped to it
++    /// (`f <- [M] g`), by name.
++    pub root_scoped_substitutes: Vec<Name>,
+     /// The assumptions of the root module and the modules it extends, an extended module's first.
+     pub assumptions: Vec<Rc<Assumption>>,
+     /// The resolution tables SANY's level analysis reads.
+@@ -2206,6 +2214,12 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
+             );
+         }
+     }
++    let root_scoped_substitutes: Vec<Name> = config
++        .substitutions
++        .iter()
++        .filter(|substitution| substitution.module.as_deref() == Some(&*root.name))
++        .map(|substitution| Rc::from(substitution.name.as_str()))
++        .collect();
+     let substitutions: OrderedMap<Name, Name> = config
+         .substitutions
+         .iter()
+@@ -2358,15 +2372,25 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
+             .unwrap_or(variable_index.len());
+         variable_index.insert(get_enabled_variable_name(&name), index);
+     }
++    let unprocessed_modules = get_unprocessed_modules(&linker);
+     let startup_definitions = if options.is_unconfigured {
+         Vec::new()
+     } else {
+-        get_startup_definitions(&linker, &linked_root, &definitions, options)?
++        get_startup_definitions(
++            &linker,
++            &linked_root,
++            &definitions,
++            &unprocessed_modules,
++            options,
++        )?
+     };
+     let mut assumptions = Vec::new();
+     add_assumptions(&linked_root, &mut Vec::new(), &mut assumptions);
+     let environment = Environment {
+         startup_definitions,
++        unprocessed_modules,
++        root_name: linked_root.module.name.clone(),
++        root_scoped_substitutes,
+         assumptions,
+         tables: linker.tables.clone(),
+         definitions,
+@@ -2429,12 +2453,9 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
+ 
+ // TLC computes the constant definitions of each module in the order SANY finishes the modules,
+ // except those of a module that an INSTANCE gives parameters to.
+-fn get_startup_definitions(
+-    linker: &Linker,
+-    linked_root: &Rc<LinkedModule>,
+-    definitions: &OrderedMap<Name, Rc<Definition>>,
+-    options: &EnvironmentOptions,
+-) -> Result<Vec<Rc<Definition>>> {
++// The modules an INSTANCE names that declare constants or variables: `isInstantiated` and not
++// `isParameterFree`.
++fn get_unprocessed_modules(linker: &Linker) -> FastSet<Name> {
+     let link_order = linker.link_order.borrow();
+     let instantiated: FastSet<Name> = link_order
+         .iter()
+@@ -2446,12 +2467,30 @@ fn get_startup_definitions(
+                 .map(|instance| instance.module.clone())
+         })
+         .collect();
++    link_order
++        .iter()
++        .filter(|linked| {
++            instantiated.contains(&linked.module.name)
++                && !(linked.constants.is_empty() && linked.variables.is_empty())
++        })
++        .map(|linked| linked.module.name.clone())
++        .collect()
++}
++
++fn get_startup_definitions(
++    linker: &Linker,
++    linked_root: &Rc<LinkedModule>,
++    definitions: &OrderedMap<Name, Rc<Definition>>,
++    unprocessed_modules: &FastSet<Name>,
++    options: &EnvironmentOptions,
++) -> Result<Vec<Rc<Definition>>> {
++    let link_order = linker.link_order.borrow();
+     let order = TlcOrder::new(options.source, options.load_module, options.version)?;
+     let mut startup = Vec::new();
+-    for linked in link_order.iter().filter(|linked| {
+-        !instantiated.contains(&linked.module.name)
+-            || (linked.constants.is_empty() && linked.variables.is_empty())
+-    }) {
++    for linked in link_order
++        .iter()
++        .filter(|linked| !unprocessed_modules.contains(&linked.module.name))
++    {
+         let name = (!Rc::ptr_eq(linked, linked_root)).then_some(&*linked.module.name);
+         for name in order.get_definition_order(name)? {
+             let key = linked
+diff --git a/packages/prove-it/native/crates/tla-front/src/lower.rs b/packages/prove-it/native/crates/tla-front/src/lower.rs
+index aab44b81..2ad1ba11 100644
+--- a/packages/prove-it/native/crates/tla-front/src/lower.rs
++++ b/packages/prove-it/native/crates/tla-front/src/lower.rs
+@@ -22,9 +22,80 @@ use crate::environment::Environment;
+ use crate::errors::{FrontError, describe_range};
+ use crate::hash::{FastMap, FastSet};
+ use crate::live::{Live, Liveness};
+-use crate::resolve::Result;
++use crate::resolve::{Result, SymbolKind};
+ use crate::values::ValueOrder;
+ 
++/// The modules TLC's jar holds a Java class for, by the module's name: its own
++/// (`tlc2.module`) and the CommunityModules' (`tlc2.overrides`, by the module their annotations
++/// name).
++const JAVA_MODULES: &[&str] = &[
++    "AnySet",
++    "Bags",
++    "BagsExt",
++    "Bitwise",
++    "BuiltInModuleHelper",
++    "CBOR",
++    "CSV",
++    "Combinatorics",
++    "DyadicRationals",
++    "FiniteSets",
++    "FiniteSetsExt",
++    "Functions",
++    "GraphViz",
++    "Graphs",
++    "IOUtils",
++    "Integers",
++    "Json",
++    "Naturals",
++    "Randomization",
++    "SVG",
++    "Sequences",
++    "SequencesExt",
++    "Statistics",
++    "Strings",
++    "TLC",
++    "TLCBuiltInOverrides",
++    "TLCEval",
++    "TLCExt",
++    "TLCGetSet",
++    "TransitiveClosure",
++    "UndirectedGraphs",
++    "VectorClocks",
++    "_JsonTrace",
++    "_Possible",
++    "_TLCTrace",
++];
++
++/// The classes of TLC's jar in the default package whose names a module can have, which
++/// `TLAClass.loadClass` finds by `Class.forName(name)` before it tries `tlc2.module`: the jar's
++/// top-level entries ending in `.class` (`unzip -Z1 tla2tools.jar | grep -v /`), less the nested
++/// classes, whose `$` no module name holds.
++const DEFAULT_PACKAGE_CLASSES: &[&str] = &[
++    "ClassFieldExplorer",
++    "ClassMethodExplorer",
++    "ConsoleTopicPublisher",
++    "ContentPane",
++    "ErrorTableAndMapPane",
++    "ErrorTracePanel",
++    "ErrorTracePrinter",
++    "FieldNode",
++    "JPF_PolDetListener",
++    "LocationInGraph",
++    "MenuPane",
++    "MethodNode",
++    "MyJTree",
++    "PaneConstants",
++    "SummaryCell",
++    "TextLine",
++    "TextLineList",
++    "ThreadStateView",
++    "Topic",
++    "TopicPublisher",
++    "TraceData",
++    "TraceVisualPanel",
++    "TraceVisualPrinter",
++];
++
+ /// SyntaxTreeNode.getHumanReadableImage, which joins the tokens of an expression without spaces.
+ fn get_expression_image(expression: &Expression) -> String {
+     let name = expression.reference().unwrap_or_default();
+@@ -501,6 +572,15 @@ impl<'a> Lowering<'a> {
+             IrDefinition::NORMALIZED
+         } else {
+             0
++        } | if definition
++            .location
++            .range
++            .as_ref()
++            .is_some_and(|range| self.environment.unprocessed_modules.contains(&range.module))
++        {
++            IrDefinition::UNPROCESSED
++        } else {
++            0
+         };
+         let id = self.open(&definition.location);
+         let name = self.get_text(&definition.name);
+@@ -984,13 +1064,61 @@ impl<'a> Lowering<'a> {
+             });
+             property_invariant_names.push(self.get_text(&invariant.name));
+         }
+-        let constraints = config
+-            .constraints
++        // TLC checks no constraint whose name holds TRUE, having rejected any other value before
++        // it searches (`processModelConstraints`, `processActionConstraints`). A name holds the
++        // value the configuration binds it to where it is a constant or a definition visible in
++        // the root module (`processSpec`), unless a Java class then overrides the definition
++        // (`processModuleOverrides`), which TLC loads for any module by its name (`TLAClass`),
++        // or a substitute the configuration gives it (`f <- g`), which `processSpec` applies
++        // after both; any other name is undefined there. A constant or a definition of the root
++        // module itself, whose name names no class, certainly holds it. Where the root module's
++        // name names a class, whether one of its methods overrides the name, or loading them
++        // fails, the front end doesn't follow.
++        let environment = self.environment;
++        let root = &environment.root_name;
++        let is_overridden = JAVA_MODULES.contains(&&**root)
++            || DEFAULT_PACKAGE_CLASSES.contains(&&**root)
++            || environment
++                .java_overrides
++                .iter()
++                .any(|java| java.module == **root);
++        let is_root = |range: Option<&Range>| range.is_some_and(|range| range.module == *root);
++        let checked = |names: &[String]| -> Result<Vec<String>> {
++            let mut kept = Vec::new();
++            for name in names {
++                let is_bound_true = environment.constants.get(name.as_str())
++                    == Some(&ConfigValue::Boolean(true))
++                    && !config.substitutions.iter().any(|substitution| {
++                        substitution.module.is_none() && substitution.name == *name
++                    });
++                let is_root_name = environment.root_constants.iter().any(|constant| {
++                    *constant.name == **name && is_root(constant.location.range.as_ref())
++                }) || environment.root_symbols.get(name.as_str()).is_some_and(
++                    |symbol| {
++                        symbol.kind == SymbolKind::Definition && is_root(symbol.range.as_ref())
++                    },
++                );
++                if is_bound_true && is_root_name && is_overridden {
++                    return Err(FrontError::NotYet(
++                        "a constraint bound to TRUE in a root module a Java class is named for"
++                            .to_owned(),
++                    ));
++                }
++                if !(is_bound_true && is_root_name) {
++                    kept.push(name.clone());
++                }
++            }
++            Ok(kept)
++        };
++        let (constraints, action_constraints) = (
++            checked(&config.constraints)?,
++            checked(&config.action_constraints)?,
++        );
++        let constraints = constraints
+             .iter()
+             .map(|name| self.config_name(name).root)
+             .collect();
+-        let action_constraints = config
+-            .action_constraints
++        let action_constraints = action_constraints
+             .iter()
+             .map(|name| self.config_name(name).root)
+             .collect();
+@@ -1497,6 +1625,22 @@ impl<'a> Lowering<'a> {
+                 break;
+             }
+         }
++        // TLC sets a substitute the configuration scopes to the root module on the body of the
++        // root's definition (`SpecProcessor.processSpec`, its module overrides), which the front
++        // end doesn't follow where the model reads the definition.
++        if self.environment.root_scoped_substitutes.iter().any(|name| {
++            self.environment
++                .definitions
++                .get(name)
++                .is_some_and(|definition| {
++                    self.definition_ids
++                        .contains_key(&(Rc::as_ptr(definition) as usize))
++                })
++        }) {
++            return Err(FrontError::NotYet(
++                "a substitute the configuration scopes to the root module".to_owned(),
++            ));
++        }
+         // Where the specification reaches the next-state relation through an INSTANCE, and what TLC
+         // names the actions of the definitions INSTANCEs copy, of the definitions the IR holds, by
+         // index.
+diff --git a/packages/prove-it/native/crates/tla-ir/src/decode.rs b/packages/prove-it/native/crates/tla-ir/src/decode.rs
+index c6e26d79..52f4f90e 100644
+--- a/packages/prove-it/native/crates/tla-ir/src/decode.rs
++++ b/packages/prove-it/native/crates/tla-ir/src/decode.rs
+@@ -1112,7 +1112,7 @@ impl Decoder<'_> {
+                 NodeKind::Subexpression(selectors)
+             }
+             tag::DEFINITION => {
+-                if flags & !0x3f != 0 {
++                if flags & !0x7f != 0 {
+                     return self.error(format!("definition flags {flags}"));
+                 }
+                 let name = self.text()?;
+diff --git a/packages/prove-it/native/crates/tla-ir/src/lib.rs b/packages/prove-it/native/crates/tla-ir/src/lib.rs
+index 981826fd..22169b80 100644
+--- a/packages/prove-it/native/crates/tla-ir/src/lib.rs
++++ b/packages/prove-it/native/crates/tla-ir/src/lib.rs
+@@ -539,6 +539,9 @@ impl Definition {
+     pub const SUBSTITUTED: i32 = 16;
+     /// A constant definition TLC computes and deep-normalizes at startup (`processConstantDefns`).
+     pub const NORMALIZED: i32 = 32;
++    /// A definition written in a module an INSTANCE gives parameters to, whose definitions TLC
++    /// doesn't compute at startup (`ModuleNode.processConstantDefns`).
++    pub const UNPROCESSED: i32 = 64;
+ }
+ 
+ #[derive(Debug, Clone, PartialEq)]
+diff --git a/packages/prove-it/native/crates/tla-trace/src/eval.rs b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+index 1c320473..1378d35d 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/eval.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+@@ -286,6 +286,9 @@ pub struct CallStack {
+     /// An initial state the initial predicate leaves without a value for some variable, its
+     /// values as TLC prints them, `null` for those it lacks, in the IR's order of the variables.
+     pub incomplete: Option<Vec<String>>,
++    /// Whether TLC evaluates the failure with its `CallStackTool`, as it replays the computation,
++    /// rather than with the `Tool` of its search.
++    pub is_tool_replay: bool,
+ }
+ 
+ impl CallStack {
+@@ -401,6 +404,11 @@ pub struct Evaluator<'ir> {
+     constants: Vec<Option<Value>>,
+     /// Zero-arity definitions that read nothing of the state, evaluated once, as TLC does.
+     cache: HashMap<(NodeId, bool), Value>,
++    /// The values of definitions read as written: substitutes, and those TLC doesn't compute as
++    /// it starts.
++    written_cache: HashMap<(NodeId, bool), Value>,
++    /// The modules an INSTANCE gives parameters to, found when first asked for.
++    unprocessed_modules: Option<HashSet<TextId>>,
+     /// The value the search computed of each constant definition whose body is a CHOOSE over a
+     /// set, and whose evaluation has no effect but its value, by its node (`set_chosen`).
+     chosen: HashMap<NodeId, Value>,
+@@ -465,6 +473,19 @@ pub struct Evaluator<'ir> {
+     keeping_lazy: u32,
+     /// The function constructors a LET names once, found when first asked for.
+     once_named: Option<HashSet<NodeId>>,
++    /// Whether the evaluator is computing a definition TLC computed as it started
++    /// (`processConstantDefns`), which builds the functions it constructs over reducible domains
++    /// (`toFcnRcd`) and normalizes them (`evalConstantDefn`).
++    is_computing_startup: bool,
++    /// The definitions the front end marks as computed at startup whose computation fails, which
++    /// TLC keeps as written.
++    failed_startup: HashSet<NodeId>,
++    /// Whether TLC bounds each definition's level above constant by a name, by its node.
++    variable_named: HashMap<NodeId, bool>,
++    /// The functions read through a substitute the configuration gives a definition of another
++    /// module that TLC keeps lazy, and those an EXCEPT makes of them, by their address, each kept
++    /// so that no other value takes it.
++    scoped_substitutes: HashMap<usize, Value>,
+     /// Where the evaluator made a value TLC shares with another, or shared one TLC made again,
+     /// which a dumped trace, writing each object once, would show.
+     pub(crate) unshared: Option<&'static str>,
+@@ -745,6 +766,8 @@ impl<'ir> Evaluator<'ir> {
+             startup_ranked: None,
+             constants: vec![None; ir.values.list.len()],
+             cache: HashMap::new(),
++            written_cache: HashMap::new(),
++            unprocessed_modules: None,
+             chosen: HashMap::new(),
+             current: vec![None; width],
+             next: vec![None; width],
+@@ -770,6 +793,10 @@ impl<'ir> Evaluator<'ir> {
+             asserting: 0,
+             keeping_lazy: 0,
+             once_named: None,
++            is_computing_startup: false,
++            failed_startup: HashSet::new(),
++            variable_named: HashMap::new(),
++            scoped_substitutes: HashMap::new(),
+             unshared: None,
+         }
+     }
+@@ -1954,9 +1981,16 @@ impl<'ir> Evaluator<'ir> {
+             }
+             NodeKind::Except { function, updates } => {
+                 let mut value = self.evaluate(*function, context)?;
++                let is_marked = !matches!(&value, Value::Function(inner)
++                        if inner.class.get() == Class::Tuple)
++                    && address(&value).is_some_and(|it| self.scoped_substitutes.contains_key(&it));
+                 for update in updates {
+                     value = self.except(&value, &update.path, update.value, context)?;
+                 }
++                // `FcnLambdaValue.takeExcept` keeps the function lazy; a tuple's makes another.
++                if is_marked && let Some(address) = address(&value) {
++                    self.scoped_substitutes.insert(address, value.clone());
++                }
+                 Ok(value)
+             }
+             NodeKind::ExceptAt => match &context.at {
+@@ -2039,6 +2073,7 @@ impl<'ir> Evaluator<'ir> {
+                 };
+             }
+             Resolution::Definition(index) => {
++                let reference = node;
+                 let node = self.ir.definitions[index as usize];
+                 // TLC evaluates the definition the configuration substitutes for a constant each
+                 // time it reads the constant (`SpecProcessor.processConstantDefns`).
+@@ -2046,7 +2081,54 @@ impl<'ir> Evaluator<'ir> {
+                     self.unshared
+                         .get_or_insert("of a value a configuration's substitute made again");
+                 }
+-                return self.definition_value(node, context);
++                // `Spec.lookup` gives the substitute's `OpDefNode`, whose body `evalAppl`
++                // evaluates: not the value TLC computed for the substitute as it started. A copy
++                // an INSTANCE makes is read by its key, the definition's name and a suffix.
++                let read = self.name(name.text);
++                let defined = self.name(self.definition(node).name);
++                let is_substitute = read != defined
++                    && !read
++                        .strip_prefix(defined)
++                        .is_some_and(|suffix| suffix.starts_with('@'));
++                let as_written = (is_substitute || self.is_unprocessed(reference, node))
++                    && self.definition(node).flags & Definition::NORMALIZED != 0
++                    && !self.ir.model.startup.definitions.contains(&index);
++                let value = self.read_definition(node, context, as_written)?;
++                // A substitute the configuration gives a definition of another module
++                // (`G <- [Inner] f2`) TLC sets on the body of the module's definition
++                // (`SpecProcessor.processSpec`), and evaluates that body each time: a function
++                // constructor gives a `FcnLambdaValue`, which words a key outside the domain
++                // otherwise, where the evaluator may have built it. Through an INSTANCE, TLC
++                // reports a tuple's index out of bounds with a frame for the body the evaluator
++                // doesn't give.
++                let is_instanced = read.split_once('@').is_some_and(|(_, module)| {
++                    let ir = self.ir;
++                    self.get_unprocessed_modules()
++                        .iter()
++                        .any(|&it| &*ir.texts[it as usize] == module)
++                });
++                let class = match &value {
++                    Value::Function(inner) => Some(inner.class.get()),
++                    _ => None,
++                };
++                let is_constructed = matches!(
++                    self.kind(self.definition(node).body),
++                    NodeKind::FunctionConstruction { .. }
++                );
++                let is_marked = match class {
++                    Some(Class::Lambda) => true,
++                    Some(Class::Plain) => is_constructed,
++                    Some(Class::Tuple) => is_instanced,
++                    _ => false,
++                };
++                if is_substitute
++                    && read.contains('@')
++                    && is_marked
++                    && let Some(address) = address(&value)
++                {
++                    self.scoped_substitutes.insert(address, value.clone());
++                }
++                return Ok(value);
+             }
+             Resolution::Builtin(index) if self.ir.builtins[index as usize].arity == 0 => {
+                 return self.builtin(index, &[], context);
+@@ -2315,6 +2397,99 @@ impl<'ir> Evaluator<'ir> {
+         body: NodeId,
+         context: &Context,
+     ) -> Evaluated<Value> {
++        // TLC computed a definition the front end marks as it started, with its plain `Tool` and
++        // no function kept lazy for an application (`EvalControl.Clear`), and evaluates it no
++        // more. One whose computation or normalization fails it keeps as written, and evaluates
++        // where it is used (`processConstantDefns` swallows the failure), as does the evaluator
++        // with one whose computation it can't follow.
++        if self.definition(node).flags & Definition::NORMALIZED != 0
++            && !self.is_computing_startup
++            && !self.failed_startup.contains(&node)
++            && !self.names_a_variable(node)
++        {
++            let effects = (self.printed.len(), self.register_writes, self.reads);
++            let call_stack = self.call_stack.take();
++            let keeping_lazy = std::mem::replace(&mut self.keeping_lazy, 0);
++            self.is_computing_startup = true;
++            let value = self.evaluate_definition(node, body, context);
++            self.is_computing_startup = false;
++            self.keeping_lazy = keeping_lazy;
++            self.call_stack = call_stack;
++            match value {
++                Ok(value) if !holds_unsorted(&value) => return Ok(value),
++                _ if effects != (self.printed.len(), self.register_writes, self.reads) => {
++                    return fail("a definition TLC computes as it starts that fails with effects");
++                }
++                _ => {
++                    self.failed_startup.insert(node);
++                }
++            }
++        }
++        self.evaluate_body(node, body, context)
++    }
++
++    // Whether TLC bounds a definition's level above constant by name, and so doesn't compute it as
++    // it starts: where it, or a definition it applies, applies a user-defined operator, a
++    // parameter or a bound name named as a state variable is (`getLevelBoundAppl` returns 1 where
++    // `opName.getVarLoc() >= 0`). `getLevelBound` gives an operator argument, such as a LAMBDA,
++    // level 0.
++    fn names_a_variable(&mut self, definition: NodeId) -> bool {
++        if let Some(&known) = self.variable_named.get(&definition) {
++            return known;
++        }
++        let ir = self.ir;
++        let variables: HashSet<&str> = ir
++            .variables
++            .iter()
++            .map(|&name| &*ir.texts[name as usize])
++            .collect();
++        let mut seen = HashSet::new();
++        let mut pending = vec![definition];
++        let mut is_named = false;
++        while let Some(node) = pending.pop() {
++            if !seen.insert(node) {
++                continue;
++            }
++            match &ir.nodes.arena[node as usize].kind {
++                NodeKind::Reference(target) => pending.push(*target),
++                NodeKind::Lambda { .. } | NodeKind::OperatorReference(_) => {}
++                NodeKind::Definition(defined) => {
++                    pending.push(defined.body);
++                    if let DefinitionForm::Function(bounds) = &defined.form {
++                        pending.extend(bounds.iter().map(|bound| bound.set));
++                    }
++                }
++                NodeKind::SetFilter { bound, predicate } => {
++                    pending.extend([bound.set, *predicate]);
++                }
++                kind @ (NodeKind::Identifier(name) | NodeKind::Apply { name, .. }) => {
++                    pending.extend(kind.children());
++                    if matches!(name.resolution, Resolution::Builtin(_)) {
++                        continue;
++                    }
++                    // A key the front end makes names the definition before its separators.
++                    let text = &*ir.texts[name.text as usize];
++                    let written = text.split(['@', '#']).next().unwrap_or(text);
++                    if variables.contains(written) {
++                        is_named = true;
++                        break;
++                    }
++                    if let Resolution::Definition(index) = name.resolution
++                        && !name.is_local
++                    {
++                        pending.push(ir.definitions[index as usize]);
++                    }
++                }
++                kind => pending.extend(kind.children()),
++            }
++        }
++        self.variable_named.insert(definition, is_named);
++        is_named
++    }
++
++    // A definition's body, as `evaluate_definition` evaluates it where TLC holds no value it
++    // computed as it started.
++    fn evaluate_body(&mut self, node: NodeId, body: NodeId, context: &Context) -> Evaluated<Value> {
+         if let NodeKind::Choose { set: Some(set), .. } = self.kind(body)
+             && let Some(chosen) = self.chosen.get(&node).cloned()
+             && let Ok(set) = self.evaluate(*set, context)
+@@ -2332,9 +2507,87 @@ impl<'ir> Evaluator<'ir> {
+     }
+ 
+     pub(crate) fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
++        self.read_definition(node, context, false)
++    }
++
++    // Whether TLC holds no value it computed as it started for the definition a reference reads:
++    // where both are written in a module an INSTANCE gives parameters to, whose definitions
++    // `processConstantDefns` doesn't compute (`ModuleNode.processConstantDefns`), and which TLC
++    // reads through the `SubstInNode` of the INSTANCE. One the root module reads by the name the
++    // INSTANCE gives it, TLC computes as the root's.
++    fn is_unprocessed(&mut self, reference: NodeId, definition: NodeId) -> bool {
++        let ir = self.ir;
++        let module = |node: NodeId| {
++            ir.nodes.arena[node as usize]
++                .range
++                .map(|range| range.module)
++        };
++        let is_marked = |node: NodeId| {
++            matches!(&ir.nodes.arena[node as usize].kind,
++                NodeKind::Definition(defined) if defined.flags & Definition::UNPROCESSED != 0)
++        };
++        if !is_marked(definition) {
++            return false;
++        }
++        module(reference).is_some_and(|module| self.get_unprocessed_modules().contains(&module))
++    }
++
++    // The modules an INSTANCE gives parameters to.
++    fn get_unprocessed_modules(&mut self) -> &HashSet<TextId> {
++        let ir = self.ir;
++        self.unprocessed_modules.get_or_insert_with(|| {
++            ir.definitions
++                .iter()
++                .filter(|&&node| {
++                    matches!(&ir.nodes.arena[node as usize].kind,
++                        NodeKind::Definition(defined) if defined.flags & Definition::UNPROCESSED != 0)
++                })
++                .filter_map(|&node| ir.nodes.arena[node as usize].range.map(|range| range.module))
++                .collect()
++        })
++    }
++
++    fn cache_for(&mut self, as_written: bool) -> &mut HashMap<(NodeId, bool), Value> {
++        if as_written {
++            &mut self.written_cache
++        } else {
++            &mut self.cache
++        }
++    }
++
++    fn evaluate_read(
++        &mut self,
++        node: NodeId,
++        body: NodeId,
++        context: &Context,
++        as_written: bool,
++    ) -> Evaluated<Value> {
++        if as_written {
++            self.evaluate_body(node, body, &context.global())
++        } else {
++            self.evaluate_definition(node, body, &context.global())
++        }
++    }
++
++    // A definition's value, or `as_written` its body's, ignoring any value TLC computed for it as
++    // it started: where the configuration substitutes the definition, or TLC reads it in a
++    // module it computes no definitions of.
++    fn read_definition(
++        &mut self,
++        node: NodeId,
++        context: &Context,
++        as_written: bool,
++    ) -> Evaluated<Value> {
+         let definition = self.definition(node);
+         let key = (node, context.is_primed);
+-        if let Some(value) = self.cache.get(&key) {
++        // TLC's replay evaluates a substitute each time it reads it, with its `CallStackTool`,
++        // which gives the values it builds sources.
++        let is_replayed_as_written = as_written
++            && self
++                .call_stack
++                .as_ref()
++                .is_some_and(|stack| stack.is_tool_replay);
++        if !is_replayed_as_written && let Some(value) = self.cache_for(as_written).get(&key) {
+             return Ok(value.clone());
+         }
+         // The value TLC computed at startup, which the search computed and hands on.
+@@ -2353,13 +2606,14 @@ impl<'ir> Evaluator<'ir> {
+         // TLC computes a definition of constant level as it starts, with its plain `Tool`, whose
+         // values have no source (`processConstantDefns`). One that fails, or that holds a set it
+         // can't normalize (`evalConstantDefn`'s `deepNormalize`), it evaluates again where it is
+-        // used.
++        // used, as it does a substitute.
+         if self.call_stack.is_some()
++            && !is_replayed_as_written
+             && matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+             && self.is_precomputed(node)
+         {
+             let call_stack = self.call_stack.take();
+-            let computed = self.evaluate_definition(node, definition.body, &context.global());
++            let computed = self.evaluate_read(node, definition.body, context, as_written);
+             self.call_stack = call_stack;
+             if let Ok(value) = computed
+                 && self.reads == reads
+@@ -2367,7 +2621,7 @@ impl<'ir> Evaluator<'ir> {
+                 && !holds_unsorted(&value)
+             {
+                 note_sorted(&value);
+-                self.cache.insert(key, value.clone());
++                self.cache_for(as_written).insert(key, value.clone());
+                 return Ok(value);
+             }
+             self.reads = reads;
+@@ -2384,7 +2638,7 @@ impl<'ir> Evaluator<'ir> {
+                 })?
+             }
+             DefinitionForm::Operator(params) if params.is_empty() => {
+-                self.evaluate_definition(node, definition.body, &context.global())?
++                self.evaluate_read(node, definition.body, context, as_written)?
+             }
+             DefinitionForm::Operator(_) => return fail("an operator used as a value"),
+         };
+@@ -2400,7 +2654,9 @@ impl<'ir> Evaluator<'ir> {
+             if matches!(&definition.form, DefinitionForm::Operator(_)) {
+                 note_sorted(&value);
+             }
+-            self.cache.insert(key, value.clone());
++            if !is_replayed_as_written {
++                self.cache_for(as_written).insert(key, value.clone());
++            }
+         }
+         Ok(value)
+     }
+@@ -3237,7 +3493,7 @@ impl<'ir> Evaluator<'ir> {
+                     let context = context.bind_value(name, Value::Int(key));
+                     values.push(self.function_body(body, &context, is_built)?);
+                 }
+-                return Ok(Value::over_interval(low, values, Class::Lambda));
++                return Ok(self.built(Value::over_interval(low, values, Class::Lambda), is_built));
+             }
+             let mut keys = Vec::new();
+             let mut values = Vec::new();
+@@ -3246,7 +3502,7 @@ impl<'ir> Evaluator<'ir> {
+                 let context = context.bind_value(name, element.clone());
+                 values.push(self.function_body(body, &context, is_built)?);
+             }
+-            let function = sorted_function(keys, values, Class::Lambda)?;
++            let function = self.built(sorted_function(keys, values, Class::Lambda)?, is_built);
+             // Applied while TLC keeps it lazy, the function asks its bound's set for the
+             // argument, which TLC has sorted where a definition that reads no state names it.
+             if let Value::Function(inner) = &function
+@@ -3287,7 +3543,7 @@ impl<'ir> Evaluator<'ir> {
+                 Ok(())
+             },
+         )?;
+-        let function = sorted_function(keys, values, Class::Lambda)?;
++        let function = self.built(sorted_function(keys, values, Class::Lambda)?, is_built);
+         if let ([bound], Value::Function(inner)) = (bounds, &function)
+             && self.is_sorted_constant(bound.set)
+         {
+@@ -3311,6 +3567,18 @@ impl<'ir> Evaluator<'ir> {
+             && self.cache.contains_key(&(definition, false))
+     }
+ 
++    // A function constructed over domains it `is_built` of, which TLC holds as a `FcnRcdValue`
++    // where it computed it as it started.
++    fn built(&self, function: Value, is_built: bool) -> Value {
++        if let Value::Function(inner) = &function
++            && is_built
++            && self.is_computing_startup
++        {
++            inner.class.set(Class::Plain);
++        }
++        function
++    }
++
+     // Whether `Tool`'s OPCODE_fc builds a function of these domains as it constructs it
+     // (`FcnLambdaValue.toFcnRcd`): where each is reducible, a set enumeration or an interval, and
+     // TLC doesn't keep the function lazy.
+@@ -3441,6 +3709,22 @@ impl<'ir> Evaluator<'ir> {
+             return self.apply_lambda(lambda, &argument);
+         }
+         let result = self.apply_checked(&function, &argument);
++        // A tuple's failure differs only in the call stack TLC's `CallStackTool` prints.
++        let is_tuple =
++            matches!(&function, Value::Function(inner) if inner.class.get() == Class::Tuple);
++        let is_tool_replay = self
++            .call_stack
++            .as_ref()
++            .is_some_and(|stack| stack.is_tool_replay);
++        if let Err(error) = &result
++            && error.reason == "applied a function outside its domain"
++            && address(&function).is_some_and(|it| self.scoped_substitutes.contains_key(&it))
++            && (!is_tuple || is_tool_replay)
++        {
++            return fail(
++                "a function the configuration substitutes in another module, applied outside its domain",
++            );
++        }
+         // TLC evaluates the function it applies keeping a constructor lazy
+         // (`EvalControl.KeepLazy`), and `FcnLambdaValue.apply` words a key outside the domain
+         // with the function as its `FcnRcdValue` prints. It reports the failure with where the
+diff --git a/packages/prove-it/native/crates/tla-trace/src/failure.rs b/packages/prove-it/native/crates/tla-trace/src/failure.rs
+index 7cbd66e4..6359171d 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/failure.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/failure.rs
+@@ -3,7 +3,7 @@
+ //! tracing evaluator of `evaluate.ts` record them and `getFailureMessage` and `formatCallStack` in
+ //! TypeScript print them.
+ 
+-use tla_ir::{AtomKind, NodeId, NodeKind, SourceRange, TextId};
++use tla_ir::{AtomKind, Definition, NodeId, NodeKind, SourceRange, TextId};
+ use tla_values::fingerprint::{Fingerprints, Polynomial};
+ use tla_values::{Id, Store};
+ 
+@@ -27,6 +27,9 @@ pub enum Site {
+     /// Evaluating the invariant at this position of the model's invariants on the path's last
+     /// state, a successor that failed it, past the initial states.
+     Invariant(u32),
++    /// Evaluating the action constraint at this position of the model's action constraints on the
++    /// path's last step, to a successor that failed it, which the path holds as TLC found it.
++    ActionConstraint(u32),
+     /// Evaluating the constraint at this position of the model's constraints on the initial state
+     /// the path holds.
+     InitialConstraint(u32),
+@@ -492,7 +495,7 @@ impl<'ir> Rebuilder<'ir> {
+             ));
+         }
+         // TLC reports an invariant that fails on an initial state otherwise, which isn't ported.
+-        if matches!(site, Site::Invariant(_)) && states.len() < 2 {
++        if matches!(site, Site::Invariant(_) | Site::ActionConstraint(_)) && states.len() < 2 {
+             return Err(Unsupported(
+                 "evaluating the failure again: an invariant of an initial state".into(),
+             ));
+@@ -527,9 +530,11 @@ impl<'ir> Rebuilder<'ir> {
+             },
+             _ => (states, None),
+         };
+-        // A successor that fails an invariant is held as TLC found it, as a violating one is.
++        // A successor that fails an invariant or an action constraint is held as TLC found it, as
++        // a violating one is.
+         let ending = match site {
+             Site::Invariant(_) => Ending::Violation,
++            Site::ActionConstraint(_) => Ending::Failed,
+             _ => Ending::Kept,
+         };
+         let is_initial = matches!(
+@@ -556,7 +561,11 @@ impl<'ir> Rebuilder<'ir> {
+         let ir = evaluator.ir;
+         evaluator.printed.clear();
+         clear_unnormalized();
++        // TLC's search evaluates an invariant with its plain `Tool`.
+         evaluator.call_stack = Some(CallStack::default());
++        if let Some(stack) = &mut evaluator.call_stack {
++            stack.is_tool_replay = !matches!(site, Site::Invariant(_));
++        }
+         let width = ir.variables.len();
+         let level = states.len() as i32;
+         let path: Vec<Vec<Value>> = last
+@@ -703,19 +712,7 @@ impl<'ir> Rebuilder<'ir> {
+                         // constraint's frames after the initial predicate's. A constraint that
+                         // isn't a boolean fails once evaluated (`Tool.isInModel`), without them.
+                         evaluator.call_stack = call_stack;
+-                        let depth = evaluator
+-                            .call_stack
+-                            .as_ref()
+-                            .map(|stack| (stack.frames.len(), stack.is_frozen));
+-                        let value = evaluator.evaluate(*failed, &Context::default())?;
+-                        if let (Some(stack), Some((depth, is_frozen))) =
+-                            (&mut evaluator.call_stack, depth)
+-                            && !stack.is_fingerprinted
+-                        {
+-                            stack.frames.truncate(depth);
+-                            stack.is_frozen = is_frozen;
+-                        }
+-                        constraint_value_holds(evaluator, *failed, value)
++                        traced_constraint_holds(evaluator, *failed)
+                     })
+                 })
+             }
+@@ -873,6 +870,10 @@ impl<'ir> Rebuilder<'ir> {
+                     }
+                 })
+             }
++            Site::ActionConstraint(position) => {
++                *is_successor_generated = true;
++                replay_action_constraint(evaluator, &path, position)?
++            }
+             Site::Invariant(position) => {
+                 evaluator.current = current;
+                 evaluator.level = level;
+@@ -985,7 +986,7 @@ impl<'ir> Rebuilder<'ir> {
+                     code: INITIAL_STATE,
+                     message: message.text.clone(),
+                     tool_message: nested(&message),
+-                    call_stack: ranges(evaluator, &call_stack),
++                    call_stack: ranges(evaluator, &call_stack)?,
+                     exit_code: FAILURE_SPEC_EVAL,
+                     printed,
+                     fingerprint: None,
+@@ -1063,7 +1064,7 @@ impl<'ir> Rebuilder<'ir> {
+                 exit_code: FAILURE_SPEC_EVAL,
+                 printed,
+                 fingerprint: Some(FingerprintFailure {
+-                    sources: fingerprint_ranges(evaluator, &call_stack),
++                    sources: fingerprint_ranges(evaluator, &call_stack)?,
+                     reason: message.text.clone(),
+                     tool_reason: nested(message),
+                     is_replayed: true,
+@@ -1076,14 +1077,15 @@ impl<'ir> Rebuilder<'ir> {
+         // reports as it is, then fails again as a FingerprintException as it replays the
+         // computation with its `CallStackTool`, which gives values their sources, and prints that
+         // call stack (`ModelChecker.modelCheckImpl`).
++        let is_next_state = matches!(site, Site::Next | Site::ActionConstraint(_));
+         if call_stack.is_fingerprinted
+-            && matches!(site, Site::Init | Site::Next)
++            && (site == Site::Init || is_next_state)
+             && let Some(message) = &error.message
+             && (!call_stack.fingerprinted_sources.is_empty()
+                 || call_stack.is_frozen_before_fingerprint)
+         {
+-            let (code, text, tool_text) = report(message, site == Site::Next);
+-            let sources = fingerprint_ranges(evaluator, &call_stack);
++            let (code, text, tool_text) = report(message, is_next_state);
++            let sources = fingerprint_ranges(evaluator, &call_stack)?;
+             return Ok(Failure {
+                 code,
+                 message: text,
+@@ -1194,7 +1196,7 @@ impl<'ir> Rebuilder<'ir> {
+                 },
+                 message: message.text.clone(),
+                 tool_message: nested(&message),
+-                call_stack: ranges(evaluator, &call_stack),
++                call_stack: ranges(evaluator, &call_stack)?,
+                 exit_code: FAILURE_SPEC_EVAL,
+                 printed,
+                 fingerprint: None,
+@@ -1244,26 +1246,30 @@ impl<'ir> Rebuilder<'ir> {
+         // TLC reports an error adding a state to the behavior graphs as one in the next states
+         // (`Worker#doNextCheckLiveness`), and exits on an exception it didn't expect as for any.
+         let is_atom = matches!(site, Site::Atom { .. });
+-        let (code, text, tool_text) = report(&message, site == Site::Next || is_atom);
++        let (code, text, tool_text) = report(&message, is_next_state || is_atom);
+         Ok(Failure {
+             code,
+             message: text,
+             tool_message: tool_text,
+-            call_stack: ranges(evaluator, &call_stack),
++            call_stack: ranges(evaluator, &call_stack)?,
+             // A failed assertion in the next states exits as one, and any other error, or any
+             // in the initial predicate, as the failure of the replay (`getFailureExitCode`).
+             exit_code: match (site, message.code) {
+-                (Site::Next | Site::Atom { .. }, Some(ASSERT_FAILED)) => VIOLATION_ASSERT,
++                (
++                    Site::Next | Site::ActionConstraint(_) | Site::Atom { .. },
++                    Some(ASSERT_FAILED),
++                ) => VIOLATION_ASSERT,
+                 // TLC's replay of the expansion, and an error adding a state to the behavior
+                 // graphs, exit by an EvalException's code (`errorConstantToExitStatus`): an
+                 // undefined identifier is among the configuration's errors, and the others are
+                 // general ones.
+-                (Site::Next | Site::Atom { .. }, Some(UNDEFINED_IDENTIFIER))
+-                    if message.is_eval_exception =>
+-                {
+-                    ERROR_CONFIG_PARSE
++                (
++                    Site::Next | Site::ActionConstraint(_) | Site::Atom { .. },
++                    Some(UNDEFINED_IDENTIFIER),
++                ) if message.is_eval_exception => ERROR_CONFIG_PARSE,
++                (Site::Next | Site::ActionConstraint(_), _) if message.is_eval_exception => {
++                    FAILURE_ERROR
+                 }
+-                (Site::Next, _) if message.is_eval_exception => FAILURE_ERROR,
+                 _ if is_atom => FAILURE_ERROR,
+                 _ => FAILURE_SPEC_EVAL,
+             },
+@@ -1337,11 +1343,14 @@ fn replay_initial_atom(
+                 .into(),
+         ));
+     }
+-    Ok(ranges(evaluator, &call_stack))
++    ranges(evaluator, &call_stack)
+ }
+ 
+-fn fingerprint_ranges(evaluator: &Evaluator<'_>, call_stack: &CallStack) -> Vec<SourceRange> {
+-    let mut sources = ranges(evaluator, call_stack);
++fn fingerprint_ranges(
++    evaluator: &Evaluator<'_>,
++    call_stack: &CallStack,
++) -> Result<Vec<SourceRange>, Unsupported> {
++    let mut sources = ranges(evaluator, call_stack)?;
+     for &source in &call_stack.fingerprinted_sources {
+         if let Some(range) = node_range(evaluator, source)
+             && sources.last() != Some(&range)
+@@ -1349,7 +1358,7 @@ fn fingerprint_ranges(evaluator: &Evaluator<'_>, call_stack: &CallStack) -> Vec<
+             sources.push(range);
+         }
+     }
+-    sources
++    Ok(sources)
+ }
+ 
+ // What TLC's replay of an expansion found, and how it failed where it did: as a
+@@ -1387,6 +1396,9 @@ fn replay_expansion(
+     let level = path.len() as i32;
+     let invariants = evaluator.tlc_invariants()?;
+     evaluator.call_stack = Some(CallStack::default());
++    if let Some(stack) = &mut evaluator.call_stack {
++        stack.is_tool_replay = true;
++    }
+     let Ok(actions) = evaluator.tlc_actions() else {
+         return unsupported("the next-state relation doesn't split");
+     };
+@@ -1474,7 +1486,7 @@ fn replay_expansion(
+                                 return unsupported("a FingerprintException the replay throws");
+                             }
+                             ReplayFailure::Fingerprint(FingerprintFailure {
+-                                sources: fingerprint_ranges(evaluator, &call_stack),
++                                sources: fingerprint_ranges(evaluator, &call_stack)?,
+                                 reason: message.text.clone(),
+                                 tool_reason: nested(&message),
+                                 is_replayed: true,
+@@ -1483,7 +1495,7 @@ fn replay_expansion(
+                             // TLC exits by the code of an EvalException, and by that of the
+                             // nested expressions it prints for any other error.
+                             ReplayFailure::Nested(
+-                                ranges(evaluator, &call_stack),
++                                ranges(evaluator, &call_stack)?,
+                                 match message.code {
+                                     Some(ASSERT_FAILED) => VIOLATION_ASSERT,
+                                     _ if message.is_eval_exception => FAILURE_ERROR,
+@@ -1509,15 +1521,180 @@ fn replay_expansion(
+     })
+ }
+ 
++// TLC's replay of the expansion of the state before the path's last, after an action constraint
++// failed to evaluate on the step to the last (`ModelChecker.doNext` with the `CallStackTool`):
++// each action's successors in turn, checked as `doNext` checks them, until the step to the last,
++// where the action constraint at `position` fails again within the call stack. Each successor in
++// the model before it is one TLC's worker added to its set of fingerprints, so it checks nothing
++// more of it, and the invariants hold of each outside the model, or TLC's worker would have
++// stopped there.
++fn replay_action_constraint(
++    evaluator: &mut Evaluator<'_>,
++    path: &[Vec<Value>],
++    position: u32,
++) -> Result<Evaluated<bool>, Unsupported> {
++    let ir = evaluator.ir;
++    let unsupported = |reason: &str| Err(Unsupported(format!("replaying the expansion: {reason}")));
++    if !ir.model.action_properties.is_empty() {
++        return unsupported("a property TLC checks of each step");
++    }
++    let [.., predecessor, target] = path else {
++        return unsupported("no state to expand");
++    };
++    let bodies = |evaluator: &Evaluator<'_>, names: &[tla_ir::ConfigName]| {
++        names
++            .iter()
++            .map(|name| {
++                name.definition
++                    .map(|index| evaluator.definition(ir.definitions[index as usize]).body)
++            })
++            .collect::<Option<Vec<NodeId>>>()
++    };
++    let (Some(constraints), Some(action_constraints)) = (
++        bodies(evaluator, &ir.model.constraints),
++        bodies(evaluator, &ir.model.action_constraints),
++    ) else {
++        return unsupported("a constraint without a definition");
++    };
++    if position as usize >= action_constraints.len() {
++        return unsupported("an action constraint the model doesn't have");
++    }
++    let invariants = evaluator.tlc_invariants()?;
++    let Ok(actions) = evaluator.tlc_actions() else {
++        return unsupported("the next-state relation doesn't split");
++    };
++    let width = ir.variables.len();
++    let level = path.len() as i32 - 1;
++    let mut fingerprints = Fingerprints::new(Polynomial::get(ir.model.fingerprint_index));
++    let mut fingerprint = |state: &[Value]| {
++        let ordered: Vec<&Value> = ir
++            .tlc_order
++            .iter()
++            .map(|&position| &state[position as usize])
++            .collect();
++        state_fingerprint(&mut fingerprints, &ordered)
++    };
++    let Some(target) = fingerprint(target) else {
++        return unsupported("a successor whose fingerprint the evaluator can't tell");
++    };
++    let state = |values: &[Value]| values.iter().cloned().map(Some).collect::<Vec<_>>();
++    let predecessor = state(predecessor);
++    for (expression, context) in actions {
++        // TLC computes every successor by the action before it checks the first.
++        evaluator.current = predecessor.clone();
++        evaluator.next = vec![None; width];
++        evaluator.level = level;
++        let mut successors = Vec::new();
++        let walked = evaluator.walk_action(expression, &context, false, &mut |evaluator| {
++            successors.push(evaluator.next.clone());
++            Ok(true)
++        });
++        if walked.is_err() {
++            return unsupported("the next states fail");
++        }
++        for successor in successors {
++            let Some(successor) = successor.into_iter().collect::<Option<Vec<Value>>>() else {
++                return unsupported("a successor that isn't complete");
++            };
++            let is_target = fingerprint(&successor) == Some(target);
++            // TLCGet("level") reads the successor's level in a constraint, and its
++            // predecessor's in an action constraint.
++            evaluator.current = state(&successor);
++            evaluator.next = vec![None; width];
++            evaluator.level = level + 1;
++            let mut is_in_model = true;
++            for &constraint in &constraints {
++                if !run(constraint_holds(evaluator, constraint))? {
++                    is_in_model = false;
++                    break;
++                }
++            }
++            if is_in_model {
++                evaluator.current = predecessor.clone();
++                evaluator.next = state(&successor);
++                evaluator.level = level;
++                for (index, &constraint) in action_constraints.iter().enumerate() {
++                    if is_target && index == position as usize {
++                        return Ok(traced_constraint_holds(evaluator, constraint));
++                    }
++                    if !run(constraint_holds(evaluator, constraint))? {
++                        is_in_model = false;
++                        break;
++                    }
++                }
++            }
++            if is_target {
++                return unsupported("the step to the successor that failed holds");
++            }
++            if is_in_model {
++                if successor
++                    .iter()
++                    .any(|value| !matches!(fingerprint_failure(value), Ok(None)))
++                {
++                    return unsupported("a successor TLC fails to fingerprint");
++                }
++                continue;
++            }
++            evaluator.current = state(&successor);
++            evaluator.next = vec![None; width];
++            evaluator.level = level + 1;
++            for &(invariant, scope, _) in &invariants {
++                let context = run(evaluator.scope_context(scope))?;
++                if !run(evaluator.boolean(invariant, &context))? {
++                    return unsupported("a successor outside the model that violates an invariant");
++                }
++            }
++        }
++    }
++    unsupported("no step to the successor that failed")
++}
++
+ // The ranges of the call stack's nodes, as `CallStack.toString` prints them: a node TLC evaluates
+-// again right inside itself once, and nothing for a node without a range.
+-fn ranges(evaluator: &Evaluator<'_>, call_stack: &CallStack) -> Vec<SourceRange> {
++// again right inside itself once, and nothing for a node without a range. SANY wraps the body of
++// each definition an INSTANCE with substitutions copies in a `SubstInNode` (`Generator`'s
++// instantiation), which TLC's stack holds, at the INSTANCE, where an expression reads the copy by
++// its instance's name (`CallStackTool.evalImpl`); the IR keeps no such node. A copied body reads
++// the definitions of the instantiated module themselves, as the root reads those it extends,
++// which add no frame, where the IR may share the body with the copy's.
++fn ranges(
++    evaluator: &Evaluator<'_>,
++    call_stack: &CallStack,
++) -> Result<Vec<SourceRange>, Unsupported> {
++    let ir = evaluator.ir;
++    // The definition a node reads by the name an INSTANCE with substitutions gives it: a key the
++    // front end makes for the copy, with a count (`Linker::create_name`), where the module's own
++    // definitions, which the IR may share with the copy, are read by their own keys.
++    let substituted = |node: NodeId| {
++        let (NodeKind::Identifier(name) | NodeKind::Apply { name, .. }) =
++            &ir.nodes.arena[node as usize].kind
++        else {
++            return None;
++        };
++        let tla_ir::Resolution::Definition(index) = name.resolution else {
++            return None;
++        };
++        let definition = ir.definitions[index as usize];
++        (!name.is_local
++            && ir.texts[name.text as usize].contains('#')
++            && evaluator.definition(definition).flags & Definition::SUBSTITUTED != 0)
++            .then_some(definition)
++    };
+     let mut ranges = Vec::new();
+     let mut previous = None;
+     for &frame in &call_stack.frames {
+         if previous == Some(frame) {
+             continue;
+         }
++        if let (Some(StackFrame::Node(reference)), StackFrame::Node(node)) = (previous, frame)
++            && let Some(definition) = substituted(reference)
++            && (node == definition
++                || node == evaluator.resolved(evaluator.definition(definition).body))
++        {
++            return Err(Unsupported(
++                "evaluating the failure again: a call stack through an INSTANCE's substitutions"
++                    .into(),
++            ));
++        }
+         previous = Some(frame);
+         let range = match frame {
+             StackFrame::Node(node) => node_range(evaluator, node),
+@@ -1525,7 +1702,7 @@ fn ranges(evaluator: &Evaluator<'_>, call_stack: &CallStack) -> Vec<SourceRange>
+         };
+         ranges.extend(range);
+     }
+-    ranges
++    Ok(ranges)
+ }
+ 
+ // A node's range, or for an infix junction the IR keeps none of, SANY's: from its first operand's
+@@ -1879,6 +2056,24 @@ fn contains_unsorted(value: &Value) -> bool {
+ }
+ 
+ // Whether a state satisfies a constraint, which TLC fails where it isn't a boolean (`isInModel`).
++// Whether a constraint holds, evaluated within the call stack TLC's `CallStackTool` keeps. A
++// constraint that isn't a boolean fails once evaluated (`Tool.isInModel`, `Tool.isInActions`),
++// outside the frames of its evaluation.
++fn traced_constraint_holds(evaluator: &mut Evaluator<'_>, body: NodeId) -> Evaluated<bool> {
++    let depth = evaluator
++        .call_stack
++        .as_ref()
++        .map(|stack| (stack.frames.len(), stack.is_frozen));
++    let value = evaluator.evaluate(body, &Context::default())?;
++    if let (Some(stack), Some((depth, is_frozen))) = (&mut evaluator.call_stack, depth)
++        && !stack.is_fingerprinted
++    {
++        stack.frames.truncate(depth);
++        stack.is_frozen = is_frozen;
++    }
++    constraint_value_holds(evaluator, body, value)
++}
++
+ fn constraint_holds(evaluator: &mut Evaluator<'_>, body: NodeId) -> Evaluated<bool> {
+     let value = evaluator.evaluate(body, &Context::default())?;
+     constraint_value_holds(evaluator, body, value)
+diff --git a/packages/prove-it/native/crates/tla-trace/src/lib.rs b/packages/prove-it/native/crates/tla-trace/src/lib.rs
+index ffe2f50f..cecb9cce 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/lib.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/lib.rs
+@@ -63,6 +63,9 @@ pub enum Ending {
+     /// A state that violates an invariant or an action property, which TLC holds as it found it:
+     /// matched by its value, and printed with the one before it as TLC has them.
+     Violation,
++    /// A successor whose checks failed to evaluate, as an action constraint's, which TLC holds as
++    /// it holds a violating one, having checked it up to the check that failed.
++    Failed,
+     /// A lasso's last state: TLC recovers every state, and doesn't rebuild the trace again.
+     Lasso,
+ }
+diff --git a/packages/prove-it/native/crates/tla-trace/src/rebuild.rs b/packages/prove-it/native/crates/tla-trace/src/rebuild.rs
+index 3babf145..34718662 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/rebuild.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/rebuild.rs
+@@ -400,7 +400,7 @@ impl<'ir> Rebuilder<'ir> {
+         evaluator.current = vec![None; width];
+         // TLC prints a violating state as it found it, not as it recovers a state, so it is the
+         // candidate equal to the search's, whatever the VIEW or SYMMETRY.
+-        let is_held = matches!(ending, Ending::Violation);
++        let is_held = matches!(ending, Ending::Violation | Ending::Failed);
+         // TLC's first rebuild of a violation's trace of two states prints the initial state as it
+         // holds it (`printTrace`), so the walk of the initial predicate sets no register of TLC's.
+         let is_initial_held = is_first && is_held && states.len() == 2;
+@@ -418,7 +418,7 @@ impl<'ir> Rebuilder<'ir> {
+         // state of a violation of two states and of a trace of one state, which it doesn't rebuild.
+         let is_initial_rebuilt = is_first
+             && match ending {
+-                Ending::Violation => states.len() > 2,
++                Ending::Violation | Ending::Failed => states.len() > 2,
+                 Ending::Kept => states.len() > 1,
+                 Ending::Lasso => true,
+             };
+@@ -544,7 +544,13 @@ impl<'ir> Rebuilder<'ir> {
+             // TLC's rebuild evaluates neither the constraints nor the invariants
+             // (`Tool.getState`): what these checks set of its registers is undone.
+             let registers = evaluator.registers.clone();
+-            if is_in_model(evaluator, &rebuilt)? {
++            if matches!(ending, Ending::Failed) {
++                // TLC's checks of the successor stop at the one that fails to evaluate, having
++                // sorted what those before it reached, and it fingerprints nothing of it.
++                if run_in_model(evaluator, &rebuilt)?.is_ok() {
++                    return unsupported("a successor whose checks no longer fail");
++                }
++            } else if is_in_model(evaluator, &rebuilt)? {
+                 settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
+             } else if is_held && is_checked {
+                 // A violating state outside the model isn't fingerprinted, but TLC's checks of it
+@@ -637,7 +643,7 @@ fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace
+     // The states TLC holds rather than rebuilds at the trace's end (`known` in `toTrace`).
+     let known = match ending {
+         Ending::Kept => 1,
+-        Ending::Violation => 2,
++        Ending::Violation | Ending::Failed => 2,
+         Ending::Lasso => 0,
+     };
+     let recovered = count - known;
+@@ -877,6 +883,16 @@ pub(crate) fn is_in_model(
+     evaluator: &mut Evaluator<'_>,
+     rebuilt: &[Vec<Value>],
+ ) -> Result<bool, Unsupported> {
++    run(run_in_model(evaluator, rebuilt)?)
++}
++
++// TLC's checks of whether the last state of a rebuilt path is in the model, as `Worker.addElement`
++// makes them: the constraints of the state, then the action constraints of the step to it, each
++// until one fails.
++fn run_in_model(
++    evaluator: &mut Evaluator<'_>,
++    rebuilt: &[Vec<Value>],
++) -> Result<Evaluated<bool>, Unsupported> {
+     let ir = evaluator.ir;
+     let state = |values: &[Value]| values.iter().cloned().map(Some).collect();
+     let last = rebuilt.len() - 1;
+@@ -900,11 +916,12 @@ pub(crate) fn is_in_model(
+             evaluator.level = last as i32 + 1;
+         }
+         let body = evaluator.definition(ir.definitions[index as usize]).body;
+-        if !run(evaluator.boolean(body, &Context::default()))? {
+-            return Ok(false);
++        match evaluator.boolean(body, &Context::default()) {
++            Ok(true) => {}
++            held => return Ok(held),
+         }
+     }
+-    Ok(true)
++    Ok(Ok(true))
+ }
+ 
+ // TLC's checks of a violating state, as `doNextCheckInvariants` and `doNextCheckImplied` make
+diff --git a/packages/prove-it/native/crates/tla-trace/tests/stops.rs b/packages/prove-it/native/crates/tla-trace/tests/stops.rs
+index 66db0f80..71a58207 100644
+--- a/packages/prove-it/native/crates/tla-trace/tests/stops.rs
++++ b/packages/prove-it/native/crates/tla-trace/tests/stops.rs
+@@ -50,6 +50,7 @@ fn stop(path: &str) -> (ErrorSite, usize, Failure, [u64; OUT_DEGREE_BUCKETS]) {
+             ErrorSite::Init => Site::Init,
+             ErrorSite::Next => Site::Next,
+             ErrorSite::Invariant(position) => Site::Invariant(position),
++            ErrorSite::ActionConstraint(position) => Site::ActionConstraint(position),
+             ErrorSite::Atom { atom, is_extra } => Site::Atom { atom, is_extra },
+             ErrorSite::NextAtom { atom, is_extra } => Site::NextAtom { atom, is_extra },
+             ErrorSite::InitialAtom { atom, replayed } => Site::InitialAtom { atom, replayed },
+diff --git a/packages/prove-it/native/design/fallback.md b/packages/prove-it/native/design/fallback.md
+index 85e594f3..d34f2461 100644
+--- a/packages/prove-it/native/design/fallback.md
++++ b/packages/prove-it/native/design/fallback.md
+@@ -268,6 +268,91 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
+ - uncounted branches;
+ - every decline of atoms that read or set TLC's registers.
+ 
++#### Action constraints that fail to evaluate
++
++An ACTION_CONSTRAINT that fails to evaluate on a step is native: TLC throws out of
++`Worker.addElement` before it counts the successor as found and reports the error as one of the
++next states (`ModelChecker.doNextFailed`), with the trace to that successor, then the call stack of
++its replay of the expansion with its `CallStackTool` (`ModelChecker.doNext`), as in
++`prove-it-cli/tests/action-constraint-failures` (from the grid of 796 runs: 772 match, 24
++decline, none differ). A constraint or action constraint the configuration binds to TRUE is
++dropped as TLC drops it where the name is a constant or a definition of the root module itself
++(`SpecProcessor.processSpec`, `processModelConstraints`, `processActionConstraints`), unless the
++configuration also substitutes for it (`C <- D`, which `processSpec` applies after the values, so
++TLC checks D, as the binary does). Where a Java class TLC loads by the root module's name could
++override it or fail to load (`processModuleOverrides`, `TLAClass`: the jar's `tlc2.module` and
++default-package classes, or a class beside the spec), the binary declines (`a constraint bound to
++TRUE in a root module a Java class is named for`). Any other name keeps its check, which declines
++(`the constraint W isn't defined`):
++TLC reports a name the root module doesn't define undefined, and rejects the method that an
++operator a Java class implements holds in place of TRUE, as it does BOOLEAN's and STRING's
++values (`The constraint of Head is equal to <Java Method: ...>`, exit 151), as in
++`prove-it-cli/tests/undefined-constraints` and `java-constraints`. What still declines:
++- an action constraint that is a literal and no boolean (`AC == "yes"`): TLC fails casting the
++  definition it holds for it, with a ClassCastException whose message names the JVM's classes
++  (`a constraint that is a literal, which TLC fails to cast`), as for a CONSTRAINT;
++- one that fails under `-continue`, or with an ALIAS, `-dumpTrace`, a property TLC checks of each
++  step (`[][A]_v`), or online liveness checking;
++- one after which an atom of the temporal properties fails as TLC adds the state it was
++  expanding to the behavior graphs: TLC then prints the atom's call stack with the trace to the
++  successor, which isn't followed;
++- one whose replay doesn't follow TLC: a successor before it TLC fails to fingerprint, one
++  outside the model that violates an invariant, a next-state relation the evaluator doesn't split
++  into TLC's actions, or a step that no longer fails;
++- a CONSTRAINT or a VIEW that fails to evaluate on a successor, as before (`a constraint, a VIEW
++  or an action property that fails on a successor`).
++
++#### Constant definitions and substitutes
++
++A constant definition TLC fails to compute as it starts, it keeps as written and evaluates where
++it is used (`SpecProcessor.processConstantDefns` swallows the failure), so it applies a function
++the definition constructs lazily, where the engine builds it. Where the engine's search then
++fails, the binary declines (`the body of a function TLC keeps lazy`), as in
++`prove-it-cli/tests/startup-failures`. A definition TLC does compute is applied as the
++`FcnRcdValue` it built.
++
++A definition the configuration substitutes for a constant or a definition (`C <- f`,
++`f <- f2`) TLC evaluates as written each time it reads the name, not as the value it computed as
++it started (`Spec.lookup` gives the substitute's `OpDefNode`), and its replay's `CallStackTool`
++gives what it builds a source. The binary does the same. A function so applied outside its
++domain declines (`applied a function outside its domain`), as in
++`prove-it-cli/tests/constant-substitutes`.
++
++A failure in the body of a definition that an INSTANCE with substitutions copies, read by the
++instance's name, declines where TLC prints its call stack (`a call stack through an INSTANCE's
++substitutions`). That stack holds the `SubstInNode` SANY wraps the body in, at the INSTANCE, which
++the IR doesn't keep; the binary printed it without that frame before. The same definition read by
++its own name, as a root module that extends the module it instantiates reads it (MCetcdraft),
++has no such frame and prints as TLC does (`prove-it-cli/tests/instance-substitutions`).
++
++TLC computes no definition of a module an INSTANCE gives parameters to as it starts
++(`ModuleNode.processConstantDefns`), so a function such a definition constructs, read inside the
++module, TLC applies lazily; the one the root module names by the instance's name it computes as
++the root's. The binary reads it as TLC does, and a function so applied outside its domain declines,
++as in `prove-it-cli/tests/unprocessed-instances`.
++
++TLC computes no definition as it starts whose level it bounds above constant, which it does for
++an application of any name a state variable has, a parameter's or a bound name's too
++(`getLevelBoundAppl`, `opName.getVarLoc()`), so it applies a function such a definition
++constructs lazily. The binary reads it as written there, and a function so applied outside its
++domain declines, as in `prove-it-cli/tests/startup-levels`.
++
++A substitute the configuration gives a definition of another module (`G <- [Inner] f2`,
++`g <- [Lib] f2`) TLC sets on the body of that module's definition and evaluates that body each
++time: a function constructor there gives a `FcnLambdaValue`, which TLC applies lazily, as it does
++the one an EXCEPT makes of it (`takeExcept`). Where such a function is applied outside its
++domain, which TLC words as a lazy one's, the binary declines (`a function the configuration
++substitutes in another module, applied outside its domain`); one `@@` or `:>` builds, TLC applies
++as built, as the binary does. A tuple so substituted through an INSTANCE and indexed out of
++bounds declines the same way where TLC prints the failure's call stack, in a next-state relation
++or an action constraint: TLC gives the body a frame there, which the binary doesn't. As in
++`prove-it-cli/tests/scoped-substitutes`.
++
++One the configuration scopes to the root module (`f <- [M] f2`) TLC applies to the root's
++definition as well. The front end didn't apply it, so the binary checked the spec as written
++(TLC 3 states, native 6); where the model reads the definition, it now declines (`a substitute the
++configuration scopes to the root module`, `prove-it-cli/tests/root-scoped-substitutes`).
++
+ #### Declines to win back
+ 
+ A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
+@@ -285,6 +370,12 @@ it from one that printed something else. Each is outside the corpus:
+   `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
+   `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
+   first position where the stream differs from the normalized set, not where the stream starts.
++- a substitute the configuration scopes to the root module (`f <- [M] f2`, `f == 1`, `f2 == 2`)
++  read only where its value changes nothing TLC prints: a PROPERTY violated with either value
++  (`Prop == <>(x = 4 + f)`), or a VIEW injective with either (`V == x * f`). The binary checked
++  the spec as written, and matched by chance; it declines wherever the model reads the definition
++  now (`a substitute the configuration scopes to the root module`). To win them back, apply the
++  substitute to the root's definition, as `processSpec` does.
+ 
+ #### Known wrong outputs
+ 
+@@ -307,6 +398,36 @@ Outside the counts, SANY's report differs on an INSTANCE of a module with semant
+ `*** Errors: 2` for module Spec, while the binary prints `*** Errors: 3`, adding `Substitution error,
+ probably due to error in module being instantiated.` at the INSTANCE (exit 150 in both).
+ 
++A temporal formula TLC can't handle prints only its first line natively. With
++`Next == \E self \in DOMAIN c : a(self)` and fairness `\A self \in DOMAIN c : WF_vars(a(self))`,
++`c` a variable, TLC prints `Error: TLC cannot handle the temporal formula <range>:` followed by
++`In evaluation, the identifier c is either undefined or not an operator.` and the identifier's
++range. The native checker prints the first line without the colon and stops there.
++
++Two more found by the adversarial review of the per-process fairness branch:
++- A parameterised INSTANCE applied to a state-level argument, `I(k) == INSTANCE Inner WITH K <- k`
++  and `Next == \E self \in S : I(c[self] + 1)!P(self)`: SANY rejects it ("The level of argument 1
++  exceeds the maximum level allowed by the operator.", exit 150); the native checker checks it.
++- `CONSTANT Spec = TRUE` in the configuration beside `SPECIFICATION Spec`: TLC stops with "The value
++  of Spec is equal to TRUE" (exit 151); the native checker checks the module's Spec.
++- A THEOREM or ASSUME name the configuration binds to TRUE and names as a CONSTRAINT or
++  ACTION_CONSTRAINT (`THEOREM W == x \in Nat`, `CONSTANT W = TRUE`, `CONSTRAINT W`): TLC reports
++  that the spec doesn't define W (exit 151); the native checker checks the model.
++- `CONSTANT W <- TRUE` with `CONSTRAINT W`, W a definition: TLC checks the model with the
++  constraint dropped; the native checker stops with "The constraint W specified in the
++  configuration file is not defined in the specification." (exit 151).
++- `CONSTANT W = [Lib] TRUE` with `CONSTRAINT W`, W a definition of an extended module Lib: TLC
++  checks the model (1 state generated, 0 distinct, exit 0); the native checker stops with "The
++  constraint of W is equal to FALSE" (exit 151).
++- `CONSTANT W = TRUE` with `CONSTRAINT W`, W a definition of an extended user module: TLC drops
++  the constraint; the native checker checks W's own definition (`W == FALSE`: 1 state generated, 0
++  distinct, where TLC deadlocks after 3 states).
++- `CONSTANT ANY = TRUE` with `CONSTRAINT ANY`, ANY a definition of a user module named AnySet:
++  TLC loads its Java class `tlc2.module.AnySet` by the module's name and stops with "The
++  constraint of ANY is equal to <Java Method: ...>" (exit 151); the native checker evaluates ANY's
++  own definition (`ANY == {}`: "TLC expected a boolean value", exit 75). Likewise for an operator
++  of a CommunityModules module the jar overrides in Java.
++
+ #### Every reason
+ 
+ Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so the counts follow
