@@ -129,6 +129,15 @@ impl SelectorItem {
 /// `getNameParts`: the parts of a name like `I!Op` or `Op!lab`, except for an operator such as
 /// `!!` that contains a `!`.
 fn get_name_parts(name: &Name) -> Vec<Name> {
+    // `I ! !!` selects the operator `!!` of I.
+    if let Some(prefix) = name.strip_suffix("!!!")
+        && !prefix.is_empty()
+        && !prefix.ends_with('!')
+    {
+        let mut parts = get_name_parts(&Name::from(prefix));
+        parts.push(Name::from("!!"));
+        return parts;
+    }
     if !name.contains('!') || name.split('!').any(str::is_empty) {
         return vec![name.clone()];
     }
