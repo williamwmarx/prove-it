@@ -608,6 +608,17 @@ fn prints_a_simulations_alias_that_reads_trace_actions_as_tlc() {
         ),
         ("Len(ToString(Trace[1]))", ["151"; 5].map(String::from)),
         (
+            "LET t == Tail(Trace) IN IF Len(t) > 1 THEN t[1] = t[2] ELSE t",
+            [
+                "<<>>",
+                "<<[_action |-> [name |-> \"Up\", location |-> [beginLine |-> 5, beginColumn |-> 7, endLine |-> 5, endColumn |-> 35, module |-> \"Act\"]], n |-> 1, x |-> 1]>>",
+                "FALSE",
+                "FALSE",
+                "FALSE",
+            ]
+            .map(String::from),
+        ),
+        (
             "[y |-> 1] @@ [Trace[Len(Trace)] EXCEPT !._action = 0]",
             [0, 1, 2, 3, 4]
                 .map(|n| format!("[y |-> 1, x |-> {}, n |-> {n}, _action |-> 0]", n % 2)),
@@ -641,14 +652,6 @@ fn prints_a_simulations_alias_that_reads_trace_actions_as_tlc() {
             "/\\ _ALIASEvalError = \"Attempted to check if the value:\\n[ name |-> \\\"Init\\\",\\n  location |->\\n      [ beginLine |-> 4,\\n        beginColumn |-> 9,\\n        endLine |-> 4,\\n        endColumn |-> 22,\\n        module |-> \\\"Act\\\" ] ]\\nis an element of STRING.\"\n"
         ),
         "{text}"
-    );
-    // The evaluator evaluates a LET definition as often as it's read, where TLC reads Trace once,
-    // so a comparison that sorts the records declines.
-    let output = run("LET t == Tail(Trace) IN IF Len(t) > 1 THEN t[1] = t[2] ELSE t");
-    assert_eq!(output.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("an ALIAS that reads Trace more than once and sorts its records")
     );
     let output = run("Trace[1]._action = \"a\"");
     assert_eq!(output.status.code(), Some(1));
@@ -858,4 +861,57 @@ fn names_an_initial_predicate_a_let_defines_as_tlc() {
         text.contains("State 1: <In line 8, col 19 to line 8, col 22 of module Spec>\n/\\ x = 0\n/\\ t = <<[_action |-> [name |-> \"In\", location |-> [beginLine |-> 8, beginColumn |-> 19, endLine |-> 8, endColumn |-> 22, module |-> \"Spec\"]], x |-> 0, y |-> 0]>>\n"),
         "{text}"
     );
+}
+
+// TLC names an initial predicate passed to an operator by the argument's definition, not the
+// operator's parameter.
+#[test]
+fn names_an_initial_predicate_passed_as_an_argument_as_tlc() {
+    let spec = "---- MODULE Spec ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLES x, y\nNext == x' = x + 1 /\\ y' = y\nInv == x < 2\nAl == [x |-> x, t |-> Trace]\nInit0 == x = 0 /\\ y = 0\nMyInit(a) == a\nSpec == MyInit(Init0) /\\ [][Next]_<<x, y>>\n====\n";
+    let (code, text) = simulate(
+        "simulate-argument-init",
+        "Spec",
+        (spec, "SPECIFICATION Spec\nINVARIANT Inv\n"),
+        &["-seed", "1", "-simulate", "num=1", "-depth", "10"],
+    );
+    assert_eq!(code, Some(12), "{text}");
+    assert!(
+        text.contains("State 1: <Init0 line 7, col 10 to line 7, col 23 of module Spec>\n"),
+        "{text}"
+    );
+}
+
+// An alias that reads Trace without showing its records, or a set an action binds a parameter
+// to, prints as TLC prints it: TLC's other reads of Trace, and the set's form, don't show.
+#[test]
+fn prints_an_alias_that_reads_trace_without_showing_it() {
+    for (next, alias, values) in [
+        (
+            "Next == \\E i \\in {{1}} : A(i)",
+            "[x |-> x, n |-> Len(Trace)]",
+            ["n = 1", "n = 2", "n = 3"],
+        ),
+        (
+            "Next == A(1)",
+            "[x |-> x, t |-> Trace[1] = Trace[Len(Trace)]]",
+            ["t = TRUE", "t = FALSE", "t = FALSE"],
+        ),
+    ] {
+        let spec = format!(
+            "---- MODULE Spec ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLES x, y\nA(i) == x < 3 /\\ x' = x + 1 /\\ y' = 0\nInv == x < 2\n{next}\nAl == {alias}\nSpec == x = 0 /\\ y = 0 /\\ [][Next]_<<x, y>>\n====\n"
+        );
+        let (code, text) = simulate(
+            "simulate-unshown-trace",
+            "Spec",
+            (&spec, "SPECIFICATION Spec\nINVARIANT Inv\nALIAS Al\n"),
+            &["-seed", "1", "-simulate", "num=1", "-depth", "10"],
+        );
+        assert_eq!(code, Some(12), "{alias}: {text}");
+        for (position, value) in values.iter().enumerate() {
+            assert!(
+                text.contains(&format!("/\\ x = {position}\n/\\ {value}\n")),
+                "{alias}: {text}"
+            );
+        }
+    }
 }

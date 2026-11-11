@@ -737,10 +737,12 @@ Declined, each with its reason:
   binds Trace to records of its states with each state's action first, as `_action`
   (`TLCExt.getTrace`), the initial predicate's for an initial state, and builds them anew each
   time the alias reads Trace. The trace evaluator builds them once for each state it prints, and
-  declines where the alias reads Trace more than once and sorts the records (by `@@` or a
-  comparison), where an action binds a parameter to a record of several fields (which TLC sorts
-  where the evaluator doesn't follow) or to a set (which TLC may hold as an interval or lazily),
-  and where an initial predicate a named INSTANCE copies labels the trace;
+  declines where the alias reads Trace more than once, sorts the records (by `@@` or a
+  comparison) and its value holds a record or a text; where an action binds a parameter to a
+  record of several fields (which TLC sorts where the evaluator doesn't follow); where it binds
+  one to a set (which TLC may hold as an interval or lazily) and the alias's value holds the set
+  or a text; and where an initial predicate a named INSTANCE copies, or a LET in another module
+  defines, labels the trace;
 - a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),
   which the simulation builds only as it checks a trace.
 
