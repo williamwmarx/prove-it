@@ -605,6 +605,7 @@ impl<'a> Instantiator<'a> {
     pub fn new(instantiation: Instantiation<'a>, tables: &'a Tables) -> Instantiator<'a> {
         let mut names = Vec::new();
         for expression in instantiation.substitutions.values() {
+            tables.add_substitution(expression);
             get_free_names(expression, &FastSet::default(), tables, &mut names);
         }
         Instantiator {

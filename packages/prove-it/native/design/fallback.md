@@ -273,9 +273,12 @@ are native. TLC stops at a property's \A over the empty set as it unrolls the pr
 (`ModelChecker.modelCheckImpl`), with `EC.TLC_LIVE_FORMULA_TAUTOLOGY`. It stops at a constant part
 of a temporal formula whose value isn't a boolean (`Liveness.astToLive`) with
 `EC.TLC_EXPECTED_VALUE`, which names the part by `SemanticNode.toString`: a numeral's image, such
-as `\b101`, or else the part's location. A grid of 64 small specs
-(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 488 of its 512 runs, and the
-other 24 decline for the constant evaluator's gaps.
+as `\b101`, or else the part's location. Where the part is an expression an INSTANCE puts in for
+a declaration of the module it instantiates, TLC's `SubstInNode` keeps the declaration's node and
+binds it to the expression's value (`Liveness.astToLive`), so TLC names the declaration where the
+instantiated module writes it, which the front end doesn't keep: that declines. A grid of 72 small
+specs (`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 504 of its 576 runs; 24
+decline for the constant evaluator's gaps, and 48 for a substituted declaration.
 
 Nothing reaches these liveness declines, so they stay declines until a test or a model does:
 - an accepting node under SYMMETRY or a VIEW;

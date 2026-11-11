@@ -157,6 +157,11 @@ impl Converter<'_> {
                 let reason = "a constant part of a temporal formula";
                 return match self.evaluate_boolean(expression, scope, reason)? {
                     Some(value) => Ok(Rc::new(Live::Boolean(value))),
+                    // TLC names the declaration an INSTANCE substitutes, which may be written
+                    // in several places.
+                    None if self.environment.tables.is_substitution(expression) => Err(not_yet(
+                        "a constant part of a temporal formula that isn't a boolean, put in for an instance's declaration",
+                    )),
                     // `EC.TLC_EXPECTED_VALUE` names the formula by its `toString`: a numeral's
                     // image, or else the formula's location.
                     None => Err(FrontError::Evaluation(format!(

@@ -141,7 +141,8 @@ type SelectionError = (Expr, Vec<Expr>, SanyError);
 
 /// What the TypeScript front end keeps in `WeakSet`s and `WeakMap`s by node: the names that select
 /// a subexpression (`selections`, `selectionErrors`), the arities of the names resolution renamed
-/// (`renamedArities`), and the names of the definitions instances copy (`sourceNames`). A table
+/// (`renamedArities`), the names of the definitions instances copy (`sourceNames`), and the
+/// expressions instances put in for declarations. A table
 /// keeps each node it names, so no other node takes its address.
 #[derive(Default)]
 pub struct Tables {
@@ -152,6 +153,7 @@ pub struct Tables {
     source_names: RefCell<FastMap<usize, (Rc<Definition>, Name)>>,
     errors: RefCell<FastMap<usize, SelectionError>>,
     renamed_arities: RefCell<FastMap<usize, (Expr, usize)>>,
+    substitutions: RefCell<FastMap<usize, Expr>>,
 }
 
 fn address(expression: &Expr) -> usize {
@@ -159,6 +161,21 @@ fn address(expression: &Expr) -> usize {
 }
 
 impl Tables {
+    /// Notes an expression an INSTANCE puts in for a declaration of the module it instantiates.
+    pub fn add_substitution(&self, expression: &Expr) {
+        self.substitutions
+            .borrow_mut()
+            .insert(address(expression), expression.clone());
+    }
+
+    /// Whether an INSTANCE puts this expression in for a declaration, where TLC's `SubstInNode`
+    /// keeps the declaration's node and binds it to the expression's value.
+    pub fn is_substitution(&self, expression: &Expr) -> bool {
+        self.substitutions
+            .borrow()
+            .contains_key(&address(expression))
+    }
+
     /// `getSourceName`.
     pub fn get_source_name(&self, definition: &Rc<Definition>) -> Name {
         self.source_names
