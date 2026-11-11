@@ -1,8 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 
-import { SmtParseError } from "../src/errors";
-import { decideSmt } from "../src/prover/smt/solver/solver";
+import { getNativeAddon } from "../src/engine/native";
 import { CONFORMANCE_DIRECTORY, getOption, writeResults } from "./corpora";
 import { type BackendVerdict, getSmtVerdict, PROOF_INPUTS_DIRECTORY } from "./proof-records";
 
@@ -27,14 +26,15 @@ const listInputs = (directory: string): string[] =>
       return path.endsWith(".smt") || path.endsWith(".smt2") ? [path] : [];
     });
 
-// Z3 rejects malformed input with an error, which counts as unknown.
+const addon = getNativeAddon();
+if (typeof addon === "string") throw new Error(`no native engine: ${addon}`);
+
+// The native SMT decider's verdict. Z3 rejects malformed input with an error, which counts as
+// unknown.
 const decide = (text: string) => {
-  try {
-    return decideSmt(text, { timeLimitMs: WALL_LIMIT_MS });
-  } catch (error) {
-    if (error instanceof SmtParseError) return "unknown";
-    throw error;
-  }
+  const decision = addon.decide("smt", text, WALL_LIMIT_MS, undefined, undefined);
+  if (decision.kind === "declined") throw new Error(`smt declined: ${decision.reason}`);
+  return decision.kind === "decided" ? decision.verdict : "unknown";
 };
 
 // An answer that contradicts Z3 is unsound whenever it comes, and other answers count only within

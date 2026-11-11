@@ -36,6 +36,27 @@ pub fn format_date(time: SystemTime, zone: &Zone) -> String {
     )
 }
 
+/// `java.util.Date.toString` in UTC: `EEE MMM dd HH:mm:ss zzz yyyy`.
+pub fn format_java_date(time: SystemTime) -> String {
+    const WEEKDAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let seconds = time
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs() as i64);
+    let (days, second) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{} {} {day:02} {:02}:{:02}:{:02} UTC {year}",
+        WEEKDAYS[days.rem_euclid(7) as usize],
+        MONTHS[(month - 1) as usize],
+        second / 3600,
+        second / 60 % 60,
+        second % 60
+    )
+}
+
 /// The proleptic Gregorian date of a day counted from 1970-01-01 (Howard Hinnant's algorithm).
 pub fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let shifted = days + 719_468;
@@ -60,6 +81,13 @@ mod tests {
     use super::*;
     use crate::zone::parse_rule;
     use std::time::Duration;
+
+    #[test]
+    fn formats_a_date_as_java_in_utc() {
+        // The date TLC wrote at the end of a trace exploration spec.
+        let time = UNIX_EPOCH + Duration::from_secs(1_794_362_816);
+        assert_eq!(format_java_date(time), "Wed Nov 11 02:06:56 UTC 2026");
+    }
 
     #[test]
     fn formats_durations_in_two_units() {

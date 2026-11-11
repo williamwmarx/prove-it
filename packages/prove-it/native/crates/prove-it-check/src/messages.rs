@@ -8,7 +8,8 @@ use std::io::{BufWriter, Write};
 use crate::host::Host;
 use crate::outcome::{Outcome, Reported, ReportedState};
 use crate::plain::Variable;
-use crate::time::format_date;
+use crate::te_spec::{RecordedTrace, TraceSpec};
+use crate::time::{format_date, format_java_date};
 use crate::trace::format_variables;
 
 pub const GENERAL: u32 = 1000;
@@ -56,6 +57,7 @@ pub const SYMMETRY_SET_TOO_SMALL: u32 = 2300;
 pub const CONSTANT_INVARIANT: u32 = 2149;
 pub const STATE_LEVEL_PROPERTY: u32 = 2255;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
+pub const TRACE_SPEC_WRITTEN: u32 = 2501;
 pub const CONFIG_ID_REQUIRES_NO_ARG: u32 = 2228;
 pub const CONFIG_ID_MUST_NOT_BE_CONSTANT: u32 = 2233;
 
@@ -89,10 +91,13 @@ pub struct Printer<'o> {
     /// Whether the run records the trace TLC writes beside the spec for its trace exploration
     /// spec: TLC's default, where tla-front read the spec.
     pub is_trace_recorded: bool,
+    /// The trace exploration spec TLC writes after an error trace, where it writes one.
+    pub trace_spec: Option<TraceSpec>,
+    pub recorded_trace: RecordedTrace,
+    /// Why the run declines, where it can't write the spec TLC writes.
+    pub trace_spec_decline: Option<String>,
     /// TLC's coverage report of the run, which comes before the statistics.
     pub coverage: Option<Vec<tla_trace::CoverageMessage>>,
-    /// Whether it printed a state of an error trace, which TLC records for that spec.
-    pub is_trace_printed: bool,
     pub outcome: &'o mut Outcome,
 }
 
@@ -106,8 +111,10 @@ impl<'o> Printer<'o> {
             err: &mut *output.err,
             host: output.host,
             is_trace_recorded: false,
+            trace_spec: None,
+            recorded_trace: RecordedTrace::default(),
+            trace_spec_decline: None,
             coverage: None,
-            is_trace_printed: false,
             outcome: &mut output.outcome,
         }
     }
@@ -116,12 +123,19 @@ impl<'o> Printer<'o> {
     /// states printed after it.
     pub fn report(&mut self, code: u32, headline: &str) {
         self.print(code, Level::Error, headline);
-        self.outcome.violations.push(Reported {
+        self.record(Reported {
             code,
             headline: headline.to_string(),
             states: Vec::new(),
             loop_start: None,
         });
+    }
+
+    /// Keeps a violation or an error in the outcome, where its caller reads it (`Host::is_plain`).
+    pub fn record(&mut self, reported: Reported) {
+        if self.host.is_plain() {
+            self.outcome.violations.push(reported);
+        }
     }
 
     /// A state of the behavior TLC reports, at its position from 1.
@@ -131,12 +145,7 @@ impl<'o> Printer<'o> {
             Level::State,
             &format!("{position}: <{label}>\n{}", format_variables(&variables)),
         );
-        if let Some(reported) = self
-            .outcome
-            .violations
-            .last_mut()
-            .filter(|_| self.host.is_plain())
-        {
+        if let Some(reported) = self.outcome.violations.last_mut() {
             reported.states.push(ReportedState {
                 label: label.to_string(),
                 variables,
@@ -157,12 +166,24 @@ impl<'o> Printer<'o> {
         format_date(self.host.now(), self.host.zone())
     }
 
+    /// The date and time now as `java.util.Date.toString` writes it, where the binary knows the
+    /// zone's name Java gives it: UTC's.
+    pub fn java_date(&self) -> Option<String> {
+        let is_named_utc = self
+            .host
+            .get_variable("TZ")
+            .is_none_or(|name| matches!(name.trim_start_matches(':'), "UTC" | "Etc/UTC"));
+        (is_named_utc && self.host.zone().is_utc()).then(|| format_java_date(self.host.now()))
+    }
+
     pub fn print(&mut self, code: u32, level: Level, text: &str) {
         let is_warning = level == Level::Warning;
         if is_warning && !self.is_warning_enabled {
             return;
         }
-        self.is_trace_printed |= level == Level::State;
+        if level == Level::State {
+            self.recorded_trace.note_printed();
+        }
         let message = if self.is_tool {
             format!(
                 "@!@!@STARTMSG {code}:{} @!@!@\n{text}\n@!@!@ENDMSG {code} @!@!@",

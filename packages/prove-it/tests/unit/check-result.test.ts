@@ -191,6 +191,26 @@ describe("check's result", () => {
     ]);
   });
 
+  // TLC at d8fb231 prints a function it keeps lazy, and fails to apply, as its lazy text. The
+  // native check prints the ALIAS's error in its place, which isn't TLC's, so only the TypeScript
+  // check, which onProgress asks for, is checked here until the trace printer follows TLC.
+  it("carries a lazy function that fails to apply as its lazy text", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nf[i \\in 1..1] == IF i = 1 THEN 1 \\div 0 ELSE f[i]\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, f |-> f]\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+      onProgress: () => {},
+    });
+    const text = "[i \\in 1..1 |-> <expression line 4, col 18 to line 4, col 49 of module M>]";
+    expect(result.violations.map((violation) => violation.states)).toEqual([
+      [0, 1].map((x, index) => ({
+        label:
+          index === 0 ? "Initial predicate" : "Next line 6, col 9 to line 6, col 18 of module M",
+        variables: { x: { text: String(x), value: x }, f: { text, value: { "@lazy": text } } },
+      })),
+    ]);
+  });
+
   // TLC at d8fb231 reports the violation, fails to print its first state, whose ALIAS holds a set
   // it can't normalize, and reports the exception with no states. The native check prints the
   // whole trace, which isn't TLC's, so only the TypeScript check, which onProgress asks for, is

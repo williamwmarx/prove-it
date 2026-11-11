@@ -30,6 +30,7 @@ use crate::summary::{
     actual_probability, fingerprint_distance, format_count, format_probability,
     optimistic_probability, out_degree_summary,
 };
+use crate::te_spec::{self, TraceSpec};
 use crate::time::format_duration;
 use crate::trace::{
     PostconditionRun, Postconditions, PrintedState, PrintedTrace, TraceChecks,
@@ -59,16 +60,6 @@ const CONFIG_PARSE_ERROR: i32 = 151;
 const NOT_NATIVE: i32 = 1;
 // How much of the -dump file's text the relay holds before it sends it to be written.
 const DUMP_PART_BYTES: usize = 1 << 20;
-
-/// The exit codes of a run that may stop at a counterexample: a deadlock, a violation of an
-/// invariant, an action property or a temporal property, or a failure evaluating a state.
-const COUNTEREXAMPLE_EXITS: [i32; 5] = [
-    DEADLOCK,
-    SAFETY_VIOLATION,
-    LIVENESS_VIOLATION,
-    crate::failure::FAILURE_SPEC_EVAL,
-    crate::failure::ERROR,
-];
 
 const GLOB_CHARACTERS: [char; 4] = ['*', '?', '[', '{'];
 
@@ -175,7 +166,7 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
     }
     // TLC also looks for the spec itself in the library directories.
     let mut paths: Vec<String> = Vec::new();
-    for path in spec_paths {
+    for path in spec_paths.clone() {
         let found = if output.host.is_file(Path::new(&path)) || Path::new(&path).is_absolute() {
             path
         } else {
@@ -197,7 +188,7 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
         );
     }
     let mut exit_codes = Vec::new();
-    for (index, path) in paths.iter().enumerate() {
+    for (index, (path, given)) in paths.iter().zip(&spec_paths).enumerate() {
         let mut printer = Printer::new(parsed.has("-tool"), !parsed.has("-nowarning"), output);
         if index > 0 {
             printer.line("");
@@ -208,24 +199,15 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             let stem = name.strip_suffix(".tla").unwrap_or(&name);
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
-        let exit_code = check_spec(path, &parsed, java, &mut printer);
-        // Where TLC records the trace for its trace exploration spec, a counterexample, or any
-        // error after which it printed the behavior, makes it write the trace's file beside the
-        // spec (`_TLCTraceSilent`), and, for a trace of two or more states, the spec
-        // (`TraceExplorationSpec.generate`), which the binary doesn't yet. The other specs are
-        // checked as after any spec it declines.
-        exit_codes.push(
-            if printer.is_trace_recorded
-                && (COUNTEREXAMPLE_EXITS.contains(&exit_code) || printer.is_trace_printed)
-            {
-                report_not_native(
-                    &mut printer,
-                    "the trace exploration spec TLC writes for a counterexample",
-                )
-            } else {
-                exit_code
-            },
-        );
+        // TLC names the trace exploration spec's directory by the path it was given, not where it
+        // found the spec.
+        let main_file = (path == given).then(|| given.strip_suffix(".tla").unwrap_or(given));
+        let exit_code = check_spec(path, main_file, &parsed, java, &mut printer);
+        // The other specs are checked as after any spec the binary declines.
+        exit_codes.push(match printer.trace_spec_decline.take() {
+            Some(reason) => report_not_native(&mut printer, &reason),
+            None => exit_code,
+        });
     }
     exit_codes
         .into_iter()
@@ -855,7 +837,14 @@ fn print_initial_states(printer: &mut Printer, generated: u64, distinct: u64) {
     }
 }
 
-fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer) -> i32 {
+fn check_spec(
+    spec_path: &str,
+    main_file: Option<&str>,
+    args: &Parsed,
+    java: &Java,
+    printer: &mut Printer,
+) -> i32 {
+    let started = printer.host.now();
     let seed = args
         .first("-seed")
         .and_then(|seed| seed.parse::<i64>().ok())
@@ -945,7 +934,15 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         None => return report_not_native(printer, "a configuration file the front end rejects"),
     };
-    let dumps = TraceDumps::new(args, &config, is_trace_recorded(args));
+    let mut dumps = TraceDumps::new(
+        args,
+        &config,
+        is_trace_recorded(args, spec_path),
+        main_file.map(|main_file| {
+            let (directory, _, name) = te_spec::get_files_place(main_file, started);
+            format!("{directory}/{name}.bin")
+        }),
+    );
     let front = match read_front(
         spec_path,
         config_text.as_deref().unwrap_or_default(),
@@ -1086,7 +1083,28 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     }
     if let Some(sany) = &front.sany {
         print_sany(printer, sany);
-        printer.is_trace_recorded = is_trace_recorded(args);
+        printer.is_trace_recorded = is_trace_recorded(args, spec_path);
+        if is_trace_spec_written(args, spec_path) {
+            if args.has("-teSpecOutDir") {
+                return report_not_native(printer, "-teSpecOutDir");
+            }
+            let Some(main_file) = main_file else {
+                return report_not_native(
+                    printer,
+                    "the trace exploration spec of a spec found in a library directory",
+                );
+            };
+            printer.trace_spec = Some(TraceSpec::new(
+                main_file,
+                started,
+                &ir,
+                &config,
+                &front.defined_names,
+                fingerprint_index,
+            ));
+        }
+    } else {
+        dumps.leave_out_trace_file();
     }
     // TLC loads the classes of the modules before it computes the constant definitions.
     for message in &front.override_messages {
@@ -1190,6 +1208,12 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .host
             .get_variable("PROVE_IT_TEST_LIVE_CHECK_AT")
             .and_then(|at| at.parse().ok()),
+        test_memo_entries: get_number(printer.host, "PROVE_IT_TEST_MEMO_ENTRIES"),
+        test_progress_at: get_number(printer.host, "PROVE_IT_TEST_PROGRESS_AT"),
+        test_evaluations: printer
+            .host
+            .get_variable("PROVE_IT_TEST_EVALUATIONS")
+            .and_then(|evaluations| evaluations.parse().ok()),
         is_dumped,
         is_continued,
         large_region_advice: printer.host.large_region_advice(),
@@ -1230,7 +1254,19 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             (outcome, relay.assumed_printed, relay.dumped)
         },
         || {
-            for event in receiver.iter() {
+            loop {
+                // TLC prints each line as it goes, so what waits in the buffer goes out whenever
+                // the search has nothing more to say yet.
+                let event = match receiver.try_recv() {
+                    Ok(event) => event,
+                    Err(_) => {
+                        printer.flush();
+                        let Ok(event) = receiver.recv() else {
+                            break;
+                        };
+                        event
+                    }
+                };
                 match event {
                     Event::InitialStatesStarted => printer.print(
                         code::COMPUTING_INIT,
@@ -1643,7 +1679,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 // -dumpTrace TLC's worker may check them on a trace it fails to find again.
                 ViolationKind::Error { site }
                     if !is_initial_site(site)
-                        && (!dumps.is_empty()
+                        && (dumps.has_command_line_dumps()
                             || !config.postconditions.is_empty()
                                 && match site {
                                     ErrorSite::Invariant(_) => false,
@@ -1938,7 +1974,12 @@ pub(crate) fn print_violation(
     if !is_writable(printer.host, &trace.dumped) {
         return Err("-dumpTrace into a directory that doesn't exist");
     }
-    let dumped_lines: Vec<String> = trace.dumped.iter().map(|file| file.get_line()).collect();
+    let dumped_lines: Vec<String> = trace
+        .dumped
+        .iter()
+        .filter(|file| file.is_printed)
+        .map(|file| file.get_line())
+        .collect();
     // TLC adds a deadlocked state to the behavior graphs after it reports the deadlock, and
     // reports the tableau node that accepts every behavior it reaches next.
     let accepted = match &violation.kind {
@@ -2104,7 +2145,7 @@ pub(crate) fn print_violation(
                 "-dumpTrace into a file it can't write",
             ));
         }
-        printer.outcome.violations.push(Reported {
+        printer.record(Reported {
             code,
             headline: text,
             states: vec![ReportedState {
@@ -2221,13 +2262,20 @@ pub(crate) fn print_violation(
                 printer.line(line);
             }
         }
-        Some((loop_start, true, _, _)) => printer.print(
-            code::STATE_PRINT_3,
-            Level::State,
-            &format!("{}: Stuttering", loop_start + 2),
-        ),
+        Some((loop_start, true, _, _)) => {
+            printer.print(
+                code::STATE_PRINT_3,
+                Level::State,
+                &format!("{}: Stuttering", loop_start + 2),
+            );
+            printer.recorded_trace.record_stuttering();
+        }
         Some((loop_start, false, label, _)) => {
             let label = format!(": <{}>\n", label.unwrap_or_default());
+            let is_tool = printer.is_tool;
+            printer
+                .recorded_trace
+                .record_back_to_state(loop_start + 1, is_tool);
             if printer.is_tool {
                 printer.print(
                     code::BACK_TO_STATE,
@@ -2359,7 +2407,7 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
             Level::Error,
             &format!("{}\n{}", report.headline, format_variables(&variables)),
         );
-        printer.outcome.violations.push(Reported {
+        printer.record(Reported {
             code: report.code,
             headline: report.headline.clone(),
             states: vec![ReportedState {
@@ -2399,6 +2447,9 @@ fn print_states(printer: &mut Printer, states: &[PrintedState], labels: &[&str])
             }
         }
         printer.state(position + 1, label, state.variables.clone());
+        printer
+            .recorded_trace
+            .record_state(position + 1, state.values.clone());
     }
 }
 
@@ -2534,10 +2585,22 @@ fn print_sany(printer: &mut Printer, sany: &str) {
 }
 
 // `isTraceRecorded`: whether TLC writes the trace exploration spec, which it parses with the spec.
-fn is_trace_recorded(args: &Parsed) -> bool {
-    let is_spec_generated = args.has("-generateSpecTE")
-        || (!args.has("-noGenerateSpecTE") && !args.has("-tool") && !args.has("-continue"));
-    is_spec_generated && !args.has("-noGenerateSpecTEBin")
+// Whether TLC writes a trace exploration spec after an error trace: unless -noGenerateSpecTE, -tool
+// or -continue says not to, or the spec is one it wrote (`TraceExplorationSpec.isTESpecFile`), or
+// where -generateSpecTE says to.
+fn is_trace_spec_written(args: &Parsed, spec_path: &str) -> bool {
+    let name = spec_path.rsplit('/').next().unwrap_or(spec_path);
+    args.has("-generateSpecTE")
+        || (!args.has("-noGenerateSpecTE")
+            && !args.has("-tool")
+            && !args.has("-continue")
+            && !name.contains("_TTrace"))
+}
+
+// Whether TLC records the trace in a file for its trace exploration spec too, with `_TLCTrace`'s
+// postcondition.
+fn is_trace_recorded(args: &Parsed, spec_path: &str) -> bool {
+    is_trace_spec_written(args, spec_path) && !args.has("-noGenerateSpecTEBin")
 }
 
 // A message TLC prints itself as it starts, as tla-front writes it.
@@ -2633,6 +2696,7 @@ pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
         Level::None,
         &format!("Finished in {duration} at ({})", printer.date()),
     );
+    te_spec::write_after_finish(printer);
 }
 
 pub(crate) fn report_not_native(printer: &mut Printer, what: &str) -> i32 {
@@ -2659,20 +2723,13 @@ mod tests {
         fn print(&mut self, _store: &tla_values::Store, _prints: &tla_engine::Prints) {}
     }
 
-    #[test]
-    fn answers_atoms_that_cache_on_the_machine_that_searched() {
-        // TLC keeps one TLCCache for the run, filled as it first evaluates the expression: the
-        // key 0 caches x of the initial state, 0, so the atom is FALSE where x is 1, and the
-        // lasso that stutters there violates Prop, on any number of threads.
+    // The engine IR of a model of the module, which is named `name`, and the configuration.
+    fn lower(name: &str, module: &str, config: &str) -> tla_ir::Ir {
         let directory =
-            std::env::temp_dir().join(format!("prove-it-cached-atoms-{}", std::process::id()));
+            std::env::temp_dir().join(format!("prove-it-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("a directory");
-        let spec = directory.join("Cached.tla");
-        std::fs::write(
-            &spec,
-            "---- MODULE Cached ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = 1\nSpec == Init /\\ [][Next]_x\nProp == <>[](\\E i \\in {x} : TLCCache(i, 0) = x)\n====\n",
-        )
-        .expect("a spec");
+        let spec = directory.join(format!("{name}.tla"));
+        std::fs::write(&spec, module).expect("a spec");
         let options = tla_front::model::ModelOptions {
             libraries: &[],
             version: None,
@@ -2681,11 +2738,21 @@ mod tests {
             random_seed: 0,
             root_extendees: &[],
         };
-        let bytes =
-            tla_front::model::lower_model(&spec, "SPECIFICATION Spec\nPROPERTY Prop\n", &options)
-                .expect("a model");
+        let bytes = tla_front::model::lower_model(&spec, config, &options).expect("a model");
         std::fs::remove_dir_all(&directory).expect("removed");
-        let ir = tla_ir::decode(&bytes).expect("an IR");
+        tla_ir::decode(&bytes).expect("an IR")
+    }
+
+    #[test]
+    fn answers_atoms_that_cache_on_the_machine_that_searched() {
+        // TLC keeps one TLCCache for the run, filled as it first evaluates the expression: the
+        // key 0 caches x of the initial state, 0, so the atom is FALSE where x is 1, and the
+        // lasso that stutters there violates Prop, on any number of threads.
+        let ir = lower(
+            "Cached",
+            "---- MODULE Cached ----\nEXTENDS Integers, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = 1\nSpec == Init /\\ [][Next]_x\nProp == <>[](\\E i \\in {x} : TLCCache(i, 0) = x)\n====\n",
+            "SPECIFICATION Spec\nPROPERTY Prop\n",
+        );
         for threads in [1, 2, 4] {
             let settings = Settings {
                 is_violation_reported: true,
@@ -2707,5 +2774,186 @@ mod tests {
                 "{threads} threads"
             );
         }
+    }
+
+    // IsSimpleCycle as the ewd998 example's Utils.tla defines it, with Range from the community
+    // modules' Functions.tla, which reads F[i-1] twice: without its memo table, a call over n
+    // nodes evaluates F's body 2^n - 1 times.
+    const SIMPLE_CYCLE: &str = r"EXTENDS Integers, Sequences, FiniteSets, TLC
+Range(f) == { f[x] : x \in DOMAIN f }
+IsSimpleCycle(S, r) ==
+  LET
+   F[ i \in 1..Cardinality(S) ] ==
+         IF i = 1 THEN << CHOOSE s \in S : TRUE >>
+         ELSE LET seq == F[i-1]
+                  head == Head(seq)
+              IN << r[head] >> \o F[i-1]
+  IN Range(F[Cardinality(S)]) = S
+";
+
+    // What a search found, from its counts and the fingerprints of its states in order, and on
+    // how many threads it shared a level.
+    fn get_found(ir: &tla_ir::Ir, settings: &Settings) -> (String, usize) {
+        let outcome = tla_engine::on_nesting_stack(|| search(ir, settings, &mut Quiet));
+        match outcome {
+            SearchOutcome::Complete {
+                counts,
+                fingerprints,
+                threads,
+                ..
+            } => (format!("{counts:?} {fingerprints:?}"), threads),
+            SearchOutcome::Declined(reason) | SearchOutcome::Stopped { reason, .. } => {
+                panic!("{reason}")
+            }
+            _ => panic!("a search that didn't complete"),
+        }
+    }
+
+    // The workers read the ring the search's machine chose as the initial states were computed,
+    // as TLC's do the value it computed at startup (SpecProcessor.processConstantDefns), rather
+    // than choose it again each: within a budget of twice what one thread evaluates, they find
+    // what one thread finds.
+    #[test]
+    fn shares_the_constants_the_search_computed_with_the_threads() {
+        let ir = lower(
+            "Ring",
+            &format!(
+                "---- MODULE Ring ----\n{SIMPLE_CYCLE}Node == 1..5\nRingOfNodes ==\n  CHOOSE r \\in [ Node -> Node ]: IsSimpleCycle(Node, r)\nVARIABLES x, n\nInit == x = RingOfNodes[1] /\\ n = 0\nNext == \\E k \\in 1..20 : n' = (n + k) % 400 /\\ x' = RingOfNodes[x]\nSpec == Init /\\ [][Next]_<<x, n>>\n====\n"
+            ),
+            "SPECIFICATION Spec\n",
+        );
+        let settings = |threads| Settings {
+            threads,
+            minimum_shared_level: 1,
+            test_evaluations: Some(RING_EVALUATIONS),
+            ..Settings::default()
+        };
+        let (one, _) = get_found(&ir, &settings(1));
+        let (four, threads) = get_found(&ir, &settings(4));
+        assert_eq!(four, one);
+        assert!(threads > 1);
+    }
+
+    // Twice the 9,710 bodies of F that the search evaluates on one thread, choosing RingOfNodes
+    // over 1..5, where each of four threads choosing it again would take about five times that.
+    const RING_EVALUATIONS: u64 = 2 * 9_710;
+
+    // A constant the threads read first is computed at most once on each, rather than again at
+    // each level, by those that read it before the search's machine has it: within a budget of
+    // four times the 4,855 bodies of F that choosing RingOfNodes over 1..5 evaluates, and a
+    // fifth for room, they find what one thread finds.
+    #[test]
+    fn computes_a_constant_the_threads_read_first_at_most_once_on_each() {
+        let ir = lower(
+            "LateRing",
+            &format!(
+                "---- MODULE LateRing ----\n{SIMPLE_CYCLE}Node == 1..5\nRingOfNodes ==\n  CHOOSE r \\in [ Node -> Node ]: IsSimpleCycle(Node, r)\nVARIABLES x, n\nInit == x = 1 /\\ n = 0\nNext == \\E k \\in 1..20 : n' = (n + k) % 400 /\\ x' = IF n >= 50 THEN RingOfNodes[x] ELSE x\nSpec == Init /\\ [][Next]_<<x, n>>\n====\n"
+            ),
+            "SPECIFICATION Spec\n",
+        );
+        let settings = |threads, evaluations| Settings {
+            threads,
+            minimum_shared_level: 1,
+            test_evaluations: Some(evaluations),
+            ..Settings::default()
+        };
+        let (one, _) = get_found(&ir, &settings(1, 4_855));
+        let (four, threads) = get_found(&ir, &settings(4, 5 * 4_855));
+        assert_eq!(four, one);
+        assert!(threads > 1);
+    }
+
+    // A full memo table of a recursive function forgets what it holds rather than take no more or
+    // turn off, so each state's call over 20 nodes evaluates F's body 20 times rather than
+    // 2^20 - 1, with a room that fills in a few states, on any number of threads.
+    #[test]
+    fn keeps_memoizing_a_recursive_function_once_its_table_is_full() {
+        let ir = lower(
+            "Shifted",
+            &format!(
+                "---- MODULE Shifted ----\n{SIMPLE_CYCLE}Node == 1..20\nShift(n) == [ i \\in Node |-> ((i + n) % 20) + 1 ]\nVARIABLE n\nInit == n = 0\nNext == \\E k \\in 1..10 : n' = (n + k) % 200\nSpec == Init /\\ [][Next]_n\nInv == IsSimpleCycle(Node, Shift(n)) \\in BOOLEAN\n====\n"
+            ),
+            "SPECIFICATION Spec\nINVARIANT Inv\n",
+        );
+        let settings = |threads| Settings {
+            threads,
+            minimum_shared_level: 1,
+            test_memo_entries: Some(256),
+            test_evaluations: Some(200 * 100),
+            ..Settings::default()
+        };
+        let (one, _) = get_found(&ir, &settings(1));
+        let (four, threads) = get_found(&ir, &settings(4));
+        assert_eq!(four, one);
+        assert!(threads > 1);
+    }
+
+    // A constant TLC computed at startup that draws keeps the search on one thread, which reads
+    // the value drawn.
+    #[test]
+    fn keeps_a_search_that_draws_on_one_thread() {
+        let ir = lower(
+            "Drawn",
+            "---- MODULE Drawn ----\nEXTENDS Integers, TLC\nDrawn == RandomElement(1..1000000)\nVARIABLES n, d\nInit == n = 0 /\\ d = Drawn\nNext == \\E k \\in 1..10 : n' = (n + k) % 200 /\\ d' = Drawn\nSpec == Init /\\ [][Next]_<<n, d>>\n====\n",
+            "SPECIFICATION Spec\n",
+        );
+        let settings = |threads| Settings {
+            threads,
+            minimum_shared_level: 1,
+            ..Settings::default()
+        };
+        let (one, _) = get_found(&ir, &settings(1));
+        let (four, threads) = get_found(&ir, &settings(4));
+        assert_eq!(four, one);
+        assert_eq!(threads, 1);
+    }
+
+    // The progress a search reported: states generated, distinct and left on the queue.
+    struct Progressed(Vec<[u64; 3]>);
+
+    impl Reporter for Progressed {
+        fn initial_states_started(&mut self) {}
+        fn initial_states_progress(&mut self, _count: u64) {}
+        fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
+        fn progress(&mut self, generated: u64, distinct: u64, queued: u64, _depth: u64) {
+            self.0.push([generated, distinct, queued]);
+        }
+        fn print(&mut self, _store: &tla_values::Store, _prints: &tla_engine::Prints) {}
+    }
+
+    // TLC reports its progress while its workers expand a level, so a search that shares a level
+    // reports it there too: once a thread claims the state PROVE_IT_TEST_PROGRESS_AT names, with
+    // more than the 4,001 states generated before the level and fewer than the 8,001 after it.
+    #[test]
+    fn reports_its_progress_inside_a_shared_level() {
+        let ir = lower(
+            "Wide",
+            "---- MODULE Wide ----\nEXTENDS Integers\nVARIABLE n\nInit == n = 0\nNext == \\/ n = 0 /\\ n' \\in 1..4000\n        \\/ n \\in 1..4000 /\\ n' = n + 4000\nSpec == Init /\\ [][Next]_n\n====\n",
+            "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE\n",
+        );
+        let settings = Settings {
+            threads: 4,
+            minimum_shared_level: 1,
+            test_progress_at: Some(2000),
+            ..Settings::default()
+        };
+        let mut progressed = Progressed(Vec::new());
+        let outcome = tla_engine::on_nesting_stack(|| search(&ir, &settings, &mut progressed));
+        let SearchOutcome::Complete { counts, .. } = outcome else {
+            panic!("a search that didn't complete");
+        };
+        assert_eq!((counts.generated, counts.distinct), (8001, 8001));
+        assert!(
+            progressed
+                .0
+                .iter()
+                .any(|&[generated, distinct, queued]| generated > 4001
+                    && generated < 8001
+                    && distinct > 4001
+                    && distinct <= 8001
+                    && distinct - queued > 1),
+            "{:?}",
+            progressed.0
+        );
     }
 }

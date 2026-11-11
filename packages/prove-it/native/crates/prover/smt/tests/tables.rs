@@ -1,5 +1,5 @@
 //! prove-smt's foundation against the TypeScript it ports: the tables
-//! `scripts/smt-foundation-tables.ts` records from `hash.ts`, `hashtable.ts` and `random-gen.ts`.
+//! `scripts/smt-foundation-tables.ts` recorded from `hash.ts`, `hashtable.ts` and `random-gen.ts`.
 
 use prove_smt::util::hash::{
     ast_array_hash, combine_hash, get_composite_hash, hash_u, mk_mix, string_hash,

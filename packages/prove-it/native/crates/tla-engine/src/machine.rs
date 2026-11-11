@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tla_ir::NodeId;
 use tla_values::fingerprint::{Fingerprints, Polynomial};
@@ -14,7 +15,7 @@ use tla_values::{Bail, Id, Store};
 
 use crate::compile::Lambda;
 use crate::compile::lazy::Lazy;
-use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MAXIMUM_ENTRIES, MemoTable};
+use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MemoTable};
 use tla_values::random::JavaRandom;
 
 /// A compiled expression: its value, or where TLC would fail, or the engine hands over.
@@ -36,6 +37,10 @@ pub enum Printed {
     Values(Prints),
     InitialStates(u64),
 }
+
+/// What a search stops with once its machines evaluated as many bodies of recursive definitions
+/// as PROVE_IT_TEST_EVALUATIONS allows.
+pub const EVALUATIONS_SPENT: &str = "stopped where PROVE_IT_TEST_EVALUATIONS asked";
 
 /// What one Print or PrintT printed: the values, and in the native checker TLC's text of each,
 /// which the compiler knows where the store forgets how TLC built a value the spec writes there.
@@ -86,7 +91,9 @@ pub(crate) struct Recursive {
 pub struct Program {
     pub(crate) width: usize,
     pub(crate) slot_count: usize,
-    pub(crate) memo_widths: Vec<usize>,
+    /// Each memo table's width, and whether it is kept: a recursive definition's, which doesn't
+    /// turn off once full (`MemoTable::kept`).
+    pub(crate) memo_tables: Vec<(usize, bool)>,
     pub(crate) epoch_count: usize,
     pub(crate) once_count: usize,
     pub(crate) round_count: usize,
@@ -97,9 +104,20 @@ pub struct Program {
     pub(crate) random_seed: u64,
     /// The index in FP64.Polys of the polynomial TLC fingerprints with.
     pub(crate) fingerprint_index: usize,
+    /// PROVE_IT_TEST_EVALUATIONS: how many bodies of recursive definitions the machines of a
+    /// search may evaluate between them, and how many they have.
+    pub(crate) evaluation_budget: Option<u64>,
+    pub(crate) evaluations: AtomicU64,
 }
 
 impl Program {
+    /// Whether the machines evaluated more bodies of recursive definitions than
+    /// PROVE_IT_TEST_EVALUATIONS allows.
+    pub(crate) fn is_evaluation_budget_spent(&self) -> bool {
+        self.evaluation_budget
+            .is_some_and(|budget| self.evaluations.load(Ordering::Relaxed) > budget)
+    }
+
     pub(crate) fn polynomial(&self) -> &'static Polynomial {
         Polynomial::get(self.fingerprint_index)
     }
@@ -209,9 +227,15 @@ impl<'p> Machine<'p> {
             epoch_count: 0,
             program,
             tables: program
-                .memo_widths
+                .memo_tables
                 .iter()
-                .map(|&width| MemoTable::new(width))
+                .map(|&(width, is_kept)| {
+                    if is_kept {
+                        MemoTable::kept(width)
+                    } else {
+                        MemoTable::new(width)
+                    }
+                })
                 .collect(),
             epochs: (0..program.epoch_count)
                 .map(|_| EpochCache::default())
@@ -265,15 +289,25 @@ impl<'p> Machine<'p> {
         self.random = JavaRandom::seeded(fingerprint ^ self.program.random_seed);
     }
 
-    /// Forgets what the caches hold of ids from `bound` on, which the store has let go of.
-    /// Shares each memo table's room with the other machines of a search on `threads` threads,
-    /// so that the tables of all of them take about what one machine's do.
-    pub fn share_memo(&mut self, threads: usize) {
+    /// Lets each memo table take no more than `entries` entries, such as its share of the room of
+    /// the machines of a search on threads, so that the tables of all of them take about what one
+    /// machine's do.
+    pub fn limit_memo(&mut self, entries: usize) {
         for table in &mut self.tables {
-            table.limit(MAXIMUM_ENTRIES / threads);
+            table.limit(entries);
         }
     }
 
+    /// Takes the values another machine on the same store computed once where this one has none.
+    pub(crate) fn adopt_onces(&mut self, onces: &[Id]) {
+        for (own, &other) in self.onces.iter_mut().zip(onces) {
+            if *own == EMPTY {
+                *own = other;
+            }
+        }
+    }
+
+    /// Forgets what the caches hold of ids from `bound` on, which the store has let go of.
     pub fn forget_from(&mut self, bound: Id) {
         for table in &mut self.tables {
             table.forget_from(bound);
@@ -482,21 +516,26 @@ impl<'p> Machine<'p> {
                 if known != EMPTY {
                     Ok(known)
                 } else {
-                    let value = self.keeping_slots(
-                        &recursive.body,
-                        recursive.slot_start,
-                        recursive.slot_end,
-                    );
+                    let value = self.evaluate_recursive(recursive);
                     if let Ok(value) = value {
                         self.tables[table].set(keys, value);
                     }
                     value
                 }
             }
-            _ => self.keeping_slots(&recursive.body, recursive.slot_start, recursive.slot_end),
+            _ => self.evaluate_recursive(recursive),
         };
         self.depth -= 1;
         result
+    }
+
+    fn evaluate_recursive(&mut self, recursive: &Recursive) -> Outcome<Id> {
+        if let Some(budget) = self.program.evaluation_budget
+            && self.program.evaluations.fetch_add(1, Ordering::Relaxed) >= budget
+        {
+            return Err(Bail(EVALUATIONS_SPENT));
+        }
+        self.keeping_slots(&recursive.body, recursive.slot_start, recursive.slot_end)
     }
 
     /// Runs a walk of a recursive function's body one call deeper, as `call_recursive` runs a
@@ -526,7 +565,7 @@ mod tests {
     #[test]
     fn a_machine_starts_with_only_its_programs_empty_tables() {
         let program = Program {
-            memo_widths: vec![1, 3],
+            memo_tables: vec![(1, false), (3, true)],
             ..Program::default()
         };
         let mut store = Store::new();

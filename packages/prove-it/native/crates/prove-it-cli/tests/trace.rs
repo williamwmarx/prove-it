@@ -95,8 +95,8 @@ fn checks_as_tlc_does_by_default_where_it_records_the_trace() {
 
 #[test]
 fn declines_a_counterexample_where_tlc_records_the_trace() {
-    // TLC writes the trace's file for any counterexample, and the trace exploration spec for one
-    // of two states or more, which the binary doesn't yet.
+    // TLC writes the trace's file for any counterexample, compressed with Java's Deflater, which
+    // the binary doesn't yet.
     let spec = "---- MODULE Viol ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x > 0\n====\n";
     let (output, directory) = run_spec(
         "trace-counterexample",
@@ -111,7 +111,7 @@ fn declines_a_counterexample_where_tlc_records_the_trace() {
     );
     assert!(
         text.contains(
-            "prove-it: not native yet: the trace exploration spec TLC writes for a counterexample"
+            "prove-it: not native yet: the trace file of the trace exploration spec, which TLC compresses with Java's Deflater"
         ),
         "{text}"
     );
@@ -119,35 +119,45 @@ fn declines_a_counterexample_where_tlc_records_the_trace() {
 }
 
 #[test]
-fn declines_an_error_after_a_behavior_where_tlc_records_the_trace() {
+fn writes_the_spec_after_an_error_after_a_behavior_where_tlc_records_the_trace() {
     // TLC records the behavior it prints before any error, so it writes the trace exploration
     // spec for an Assert that fails in an action (exit 14) and for an invariant that fails to
     // evaluate (exit 76) as for a counterexample: at d8fb231, Stop_TTrace_<epoch>.tla and its path
-    // after both.
-    for (name, spec, config) in [
+    // after both, and no trace file. tests/te_spec.rs checks the spec's text.
+    for (name, spec, config, exit) in [
         (
             "trace-assert",
             "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ Assert(x < 1, \"x is one\")\n====\n",
             "INIT Init\nNEXT Next\n",
+            14,
         ),
         (
             "trace-invariant",
             "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == IF x = 1 THEN 1 ELSE TRUE\n====\n",
             "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+            76,
         ),
     ] {
         let (output, directory) = run_spec(name, spec, config, &[]);
-        let text = format!(
-            "{}{}",
-            stdout(&output),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(
-            text.contains(
-                "prove-it: not native yet: the trace exploration spec TLC writes for a counterexample"
-            ),
-            "{name}: {text}"
-        );
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(exit), "{name}: {text}");
+        let line = text.lines().last().unwrap_or_default();
+        let path = line
+            .strip_prefix("Trace exploration spec path: ./")
+            .unwrap_or_else(|| panic!("{name}: {text}"));
+        assert!(directory.join(path).exists(), "{name}: {path}");
+        let files = std::fs::read_dir(&directory)
+            .expect("the directory")
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("_TTrace_")
+            })
+            .count();
+        assert_eq!(files, 1, "{name}");
         std::fs::remove_dir_all(directory).expect("removed");
     }
 }
@@ -224,7 +234,9 @@ fn checks_the_other_specs_after_declining_a_counterexample() {
     );
     assert_eq!(output.status.code(), Some(1), "{text}");
     assert!(
-        text.contains("not native yet: the trace exploration spec TLC writes for a counterexample"),
+        text.contains(
+            "not native yet: the trace file of the trace exploration spec, which TLC compresses with Java's Deflater"
+        ),
         "{text}"
     );
     assert!(text.contains("Checking Good.tla with Good.cfg\n"), "{text}");
