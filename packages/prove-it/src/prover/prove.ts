@@ -475,10 +475,17 @@ const proveNatively = async (
   options: ProveOptions,
   name: string,
   native: Exclude<ReturnType<typeof getNativeAddon>, string>,
+  decideWith: DecidePool["decide"] | undefined,
 ): Promise<ProveResult> => {
   const workerCount = options.workers ?? 1;
-  const pool = workerCount > 1 && isWorkerSupported() ? await createDecidePool(workerCount) : undefined;
-  const decideText = pool?.decide ?? (async (prover, text, decideOptions) => decide(prover, text, decideOptions));
+  const pool =
+    workerCount > 1 && isWorkerSupported() && decideWith === undefined
+      ? await createDecidePool(workerCount)
+      : undefined;
+  const decideText =
+    decideWith ??
+    pool?.decide ??
+    (async (prover, text, decideOptions) => decide(prover, text, decideOptions));
   const known = new Map<string, string | undefined>();
   let reportedCount = 0;
   try {
@@ -529,10 +536,14 @@ const getNativeDriver = () => {
   return undefined;
 };
 
-export const prove = async (options: ProveOptions): Promise<ProveResult> => {
+// prove, deciding with decideWith where it is given, for scripts that replay recorded decisions.
+export const proveWith = async (
+  options: ProveOptions,
+  decideWith?: DecidePool["decide"],
+): Promise<ProveResult> => {
   const name = getModuleName(options.source);
   const native = options.backend === "tlapm" ? undefined : getNativeDriver();
-  if (native !== undefined) return proveNatively(options, name, native);
+  if (native !== undefined) return proveNatively(options, name, native, decideWith);
   const modules = new Map<string, string>();
   const results = getObligations(
     [{ file: `${name}.tla`, source: options.source }],
@@ -573,8 +584,11 @@ export const prove = async (options: ProveOptions): Promise<ProveResult> => {
   }
   const reports = await proveObligations(obligations, {
     workers: options.workers,
+    decide: decideWith,
     signal: options.signal,
     onReport: (report) => options.onObligation?.(report.obligation),
   });
   return { obligations: reports.map((report) => report.obligation), ...counts };
 };
+
+export const prove = (options: ProveOptions) => proveWith(options);
