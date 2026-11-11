@@ -566,14 +566,10 @@ export const createFileDescriber = (
       const index =
         basename(specPath) === fileName
           ? -1
-          : directories.findIndex((directory) => existsSync(join(directory, fileName)));
-      const given =
-        index === -1
-          ? specPath
-          : directories[index] === ""
-            ? fileName
-            : `${directories[index]}/${fileName}`;
-      const real = realpathSync(index === -1 ? specPath : join(directories[index], fileName));
+          : directories.findIndex((directory) => existsSync(getJavaChild(directory, fileName)));
+      const given = index === -1 ? specPath : getJavaChild(directories[index], fileName);
+      // Node's realpathSync resolves `..` by name before it follows a link; the system's doesn't.
+      const real = realpathSync.native(given);
       const made = existsSync(given) ? getJavaAbsolute(given) : real;
       return made === real ? real : `${real} (file:${quoteUriPath(made)})`;
     }
@@ -582,7 +578,7 @@ export const createFileDescriber = (
     // FileUtil.createTempFile copies a module from the root module's file into the -metadir.
     if (origin === "root file") {
       const directory = metadir === undefined ? temporaryDirectory : resolve(metadir);
-      const root = realpathSync(specPath);
+      const root = realpathSync.native(specPath);
       return `${join(directory, getTemporaryName(`${root} ${name}`), fileName)} (${root})`;
     }
     const copy = join(libraryDirectory, fileName);
@@ -769,13 +765,16 @@ const checkSpec = async (
       reportMissingFile(`${fileName}.tla`);
     }
   } else if (!existsSync(specPath) && !SANY_STANDARD_MODULES.has(fileName)) {
+    // TLC gives SANY the directory a relative path names in place of the library path.
+    const namedDirectory = specPath.includes("/")
+      ? specPath.slice(0, specPath.lastIndexOf("/"))
+      : undefined;
     printMissingFile(
-      isAbsoluteSpec ? directory : process.cwd(),
-      isAbsoluteSpec ? `${fileName}.tla` : `./${specName}.tla`,
-      // TLC gives SANY the directory a relative path names in place of the library path.
-      isAbsoluteSpec || directory === "."
+      isAbsoluteSpec ? getJavaPath(directory) : process.cwd(),
+      isAbsoluteSpec ? `${fileName}.tla` : getJavaPath(`./${specName}.tla`),
+      isAbsoluteSpec || namedDirectory === undefined
         ? java.libraries.map(getJavaPath)
-        : [getJavaPath(directory)],
+        : [getJavaPath(namedDirectory)],
     );
   }
   const describeFile = createFileDescriber(
