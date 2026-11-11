@@ -311,6 +311,12 @@ found these on main, which the branch prints alike:
 | An INVARIANT the configuration substitutes a temporal formula for | `INVARIANT C`, `C <- D`, `D == [](x > 0)` | names D, or fails at run time where another invariant reads C | names C, or fails as it starts |
 | A tuple or a lexing error in a configuration's value | `CONSTANT K = <<"a">>`, an unclosed string | a lexical error | a parse error, or another position |
 | A string where the configuration names a definition | `INVARIANT "a\\b"`, `K <- "a\\b"` | quotes the string | doesn't |
+| An ASSUME passing an argument with effects that the operator reads more than once | `Twice(a) == <<a, a>>`, `ASSUME Twice(PrintT("t")) = Twice(PrintT("t"))` | prints once per argument | prints at each read |
+| A configuration substitute scoped to an instanced module for a name only it defines | `IK <- [I] IV`, IV defined only in I | `The configuration file substitutes for IK with the undefined identifier IV.` | runs the model |
+| A `\*` comment in a configuration with lone carriage returns | a cfg whose lines end in CR alone | ends the comment at the CR | comments out the rest of the file |
+| An undefined INVARIANT after a printing constant definition | `D == PrintT("d")`, `INVARIANT Undef` | prints `"d"` first | doesn't |
+| An INVARIANT or a conjunct the configuration substitutes an action for | `C <- D`, `D == x' = x` | names D, or `TLC cannot handle this conjunct of the spec: …` | names C, or `TLC cannot handle the action-level conjunct …` |
+| A predicate the configuration substitutes a TLCEval of TLCGet or of a state's Print for | `C <- D`, `D == TLCEval(Print(x, TRUE))` as an INVARIANT, a CONSTRAINT or a conjunct | TLC's message | another |
 
 The engine now declines the shapes that printed other counts here too: a constant definition
 normalized elsewhere, then streamed (`C == UNION {1..2, 2..3}`, `Init == s = C /\ x = 0`,
