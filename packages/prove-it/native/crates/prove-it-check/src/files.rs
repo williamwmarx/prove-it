@@ -1,18 +1,21 @@
-//! The paths TLC names the files SANY parses by, as `createFileDescriber` in `src/cli/tlc.ts` writes
-//! them: a module's own file, the root module's file copied into a directory named for it, or a
-//! standard module copied into a directory named for the spec, from the jar on the class path.
+//! The paths TLC names the files SANY parses by: a module's own file, the root module's file copied
+//! into a directory named for it, or a standard module copied into a directory named for the spec,
+//! from the jar on the class path. It reads the host's file system, which the CLI's host answers
+//! for its own.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use tla_front::report::ModuleOrigin;
 use tla_values::fingerprint::Polynomial;
 
-use crate::host::Files;
+use crate::host::{Files, Host};
 use crate::jar::get_standard_modules_url;
+use crate::resolve::{get_java_absolute, resolve};
 
 const STRING_VALUE: u8 = 3;
 
-pub struct FileDescriber {
+pub struct FileDescriber<'h> {
+    host: &'h dyn Host,
     spec: PathBuf,
     /// The spec's path as TLC was given it, or as it found it on the library path, which names the
     /// root module's file.
@@ -25,23 +28,28 @@ pub struct FileDescriber {
     is_174: bool,
 }
 
-impl FileDescriber {
+impl<'h> FileDescriber<'h> {
     /// The temporary directory is the JVM's `java.io.tmpdir` where the launch sets it.
-    pub fn new(files: &Files) -> FileDescriber {
-        let spec = resolve(files.spec);
+    pub fn new(files: &Files, host: &'h dyn Host) -> FileDescriber<'h> {
+        let current = host.current_dir();
         let directories = files.directories.iter().map(PathBuf::from).collect();
         let temporary = files
             .temporary
-            .map_or_else(std::env::temp_dir, PathBuf::from);
+            .map_or_else(|| host.temp_dir(), PathBuf::from);
         FileDescriber {
-            spec,
+            host,
+            spec: resolve(&current, files.spec),
             given_spec: files.spec.to_path_buf(),
             directories,
-            temporary: std::fs::canonicalize(&temporary).unwrap_or_else(|_| resolve(&temporary)),
-            metadir: files.metadir.map(|metadir| resolve(Path::new(metadir))),
+            temporary: host
+                .real_path(&temporary)
+                .unwrap_or_else(|| resolve(&current, &temporary)),
+            metadir: files
+                .metadir
+                .map(|metadir| resolve(&current, Path::new(metadir))),
             standard_modules: files
                 .jar
-                .map(|jar| get_standard_modules_url(&resolve(Path::new(jar)))),
+                .map(|jar| get_standard_modules_url(&resolve(&current, Path::new(jar)))),
             is_174: files.is_174,
         }
     }
@@ -49,8 +57,9 @@ impl FileDescriber {
     pub fn describe(&self, name: &str, origin: ModuleOrigin) -> String {
         let file_name = format!("{name}.tla");
         let real = |path: &Path| {
-            std::fs::canonicalize(path)
-                .unwrap_or_else(|_| path.to_path_buf())
+            self.host
+                .real_path(path)
+                .unwrap_or_else(|| path.to_path_buf())
                 .display()
                 .to_string()
         };
@@ -66,12 +75,12 @@ impl FileDescriber {
                     self.directories
                         .iter()
                         .map(|directory| directory.join(&file_name))
-                        .find(|path| path.exists())
+                        .find(|path| self.host.is_file(path))
                 }) else {
                     return real(&self.spec);
                 };
                 let resolved = real(&found);
-                let made = get_java_absolute(&found);
+                let made = get_java_absolute(&self.host.current_dir(), &found);
                 if made == resolved {
                     resolved
                 } else {
@@ -130,30 +139,6 @@ fn temporary_name(contents: &str) -> String {
     fingerprint.to_string()
 }
 
-/// Java's `File.getAbsolutePath`: against the working directory, with repeated separators and a
-/// trailing one dropped, and `.` and `..` kept.
-fn get_java_absolute(path: &Path) -> String {
-    let text = path.to_string_lossy();
-    let absolute = if path.is_absolute() {
-        text.into_owned()
-    } else {
-        format!(
-            "{}/{text}",
-            std::env::current_dir().unwrap_or_default().display()
-        )
-    };
-    let mut normalized = String::new();
-    for character in absolute.chars() {
-        if !(character == '/' && normalized.ends_with('/')) {
-            normalized.push(character);
-        }
-    }
-    if normalized.len() > 1 && normalized.ends_with('/') {
-        normalized.pop();
-    }
-    normalized
-}
-
 /// A path as `java.net.URI` quotes it in `File.toURI`: each byte of a character a URI's path
 /// doesn't allow as `%XX`, and characters beyond ASCII as they are.
 fn quote_uri_path(path: &str) -> String {
@@ -172,22 +157,6 @@ fn quote_uri_path(path: &str) -> String {
         }
     }
     quoted
-}
-
-/// Node's `path.resolve`: absolute, with `.` and `..` resolved by name, not through links.
-fn resolve(path: &Path) -> PathBuf {
-    let absolute = std::env::current_dir().unwrap_or_default().join(path);
-    let mut resolved = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::ParentDir => {
-                resolved.pop();
-            }
-            Component::CurDir => {}
-            other => resolved.push(other),
-        }
-    }
-    resolved
 }
 
 #[cfg(test)]

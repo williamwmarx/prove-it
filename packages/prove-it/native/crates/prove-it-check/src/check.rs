@@ -24,6 +24,7 @@ use crate::host::{Files, Host};
 use crate::jar::{get_tools_jar, is_174};
 use crate::messages::{self as code, Level, Output, Printer};
 use crate::outcome::{Counts, Reported, ReportedState};
+use crate::resolve::{Config, find_config, find_spec, get_module_directories};
 use crate::simulation::{Simulating, check_simulation, get_simulation, print_banner};
 use crate::stack::{alongside, on_search_stack};
 use crate::summary::{
@@ -168,19 +169,7 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
     // was given, which names where TLC writes its trace exploration spec.
     let mut paths: Vec<(String, &str)> = Vec::new();
     for given in &spec_paths {
-        // TLC looks there only for a spec named without a directory (`SimpleFilenameToStream`).
-        let found = if output.host.is_file(Path::new(given)) || given.contains('/') {
-            given.clone()
-        } else {
-            java.libraries
-                .iter()
-                .map(|directory| Path::new(directory).join(given))
-                .find(|candidate| output.host.is_file(candidate))
-                .map_or_else(
-                    || given.clone(),
-                    |candidate| candidate.to_string_lossy().into_owned(),
-                )
-        };
+        let found = find_spec(output.host, given, &java.libraries);
         if !paths.iter().any(|(path, _)| *path == found) {
             paths.push((found, given));
         }
@@ -851,39 +840,26 @@ fn check_spec(
         Some([_]) => return report_not_native(printer, "-dump into the meta directory"),
         Some(_) => return report_not_native(printer, "-dump dot"),
     };
-    // -config keeps its name with `.cfg` added; TLC reads the CONFIG section of a module named
-    // `.tla` (`MonolithSpecExtractor.getConfig`).
-    if args
-        .first("-config")
-        .is_some_and(|path| path.ends_with(".tla.cfg"))
-    {
-        return report_not_native(
-            printer,
-            "a configuration in a module's CONFIG section, which TLC reads from a -config ending in .tla",
-        );
-    }
-    // TLC names the configuration file by -config or the spec's name, then finds it as it finds a
-    // module (`ModelConfig`), and names it by that name when it finds none.
-    let config_name = match args.first("-config") {
-        Some(path) => format!("{}.cfg", path.strip_suffix(".cfg").unwrap_or(path)),
-        // TLC takes an absolute spec's directory for its user directory and the spec by its name.
-        None if Path::new(main_file).is_absolute() => format!("{}.cfg", file_name(main_file)),
-        None => format!("{main_file}.cfg"),
-    };
     let directories = get_module_directories(main_file, &java.libraries);
-    let Some(config_path) = directories
-        .iter()
-        .map(|directory| Path::new(directory).join(&config_name))
-        .find(|path| printer.host.is_file(path))
-    else {
-        printer.print(
-            code::CONFIG_FILE_ERROR,
-            Level::Error,
-            &format!(
-                "TLC encountered the following error when trying to read the configuration file {config_name}:\nFile not found."
-            ),
-        );
-        return CONFIG_PARSE_ERROR;
+    let config_path = match find_config(
+        printer.host,
+        args.first("-config"),
+        main_file,
+        &directories,
+        TlcVersion::Master,
+    ) {
+        Config::Found(path) => path,
+        Config::NotNative(what) => return report_not_native(printer, what),
+        Config::Missing(name) => {
+            printer.print(
+                code::CONFIG_FILE_ERROR,
+                Level::Error,
+                &format!(
+                    "TLC encountered the following error when trying to read the configuration file {name}:\nFile not found."
+                ),
+            );
+            return CONFIG_PARSE_ERROR;
+        }
     };
     let start = Instant::now();
     // TLC reads the configuration file before it parses the spec, and reports one it can't parse
@@ -2650,25 +2626,6 @@ pub(crate) fn print_finished(printer: &mut Printer, start: Instant) {
         &format!("Finished in {duration} at ({})", printer.date()),
     );
     te_spec::write_after_finish(printer);
-}
-
-/// The directories TLC's resolver finds a spec's modules in, in its order, for the spec at
-/// `main_file`, the path TLC was given without `.tla` (`SimpleFilenameToStream`): an absolute
-/// spec's own directory, which TLC makes its user directory, then the library path; or the working
-/// directory, written "", then the directory the spec was named in, or, for a spec named without
-/// one, the library path.
-fn get_module_directories(main_file: &str, libraries: &[String]) -> Vec<String> {
-    match main_file.rfind('/') {
-        Some(end) if Path::new(main_file).is_absolute() => {
-            std::iter::once(main_file[..=end].to_string())
-                .chain(libraries.iter().cloned())
-                .collect()
-        }
-        Some(end) => vec![String::new(), main_file[..=end].to_string()],
-        None => std::iter::once(String::new())
-            .chain(libraries.iter().cloned())
-            .collect(),
-    }
 }
 
 pub(crate) fn report_not_native(printer: &mut Printer, what: &str) -> i32 {

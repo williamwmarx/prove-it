@@ -10,10 +10,8 @@ import { dirname, join, resolve } from "node:path";
 
 import { getTranscript } from "../../scripts/normalize-output";
 import { getBuiltAddon } from "../../scripts/platform-packages";
-import { createModuleLoader } from "../../src/cli/shared";
-import { createFileDescriber } from "../../src/cli/tlc";
+import { readFileKey } from "../../src/cli/shared";
 import { checkAllSources, getNativeAddon } from "../../src/engine/native";
-import type { SanyModuleOrigin } from "../../src/sany/report";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 const BINARY = join(dirname(getBuiltAddon() ?? ""), "bin", "prove-it");
@@ -89,33 +87,22 @@ const getDirectory = (test: Case) => {
 
 const getSpecPath = (directory: string, args: string[]) => resolve(directory, args.at(-1) ?? "");
 
-// What the engine reads for the spec in the directory, by the keys check.rs names it by.
-const readKey = (directory: string, args: string[], key: string) => {
+// What the engine reads of the files, by the keys check.rs names them by, as the CLI answers them
+// from the directory the binary runs in.
+const readKey = (directory: string, key: string) => {
+  const [kind, ...rest] = key.split(":");
+  if (kind === "cwd") return directory;
+  return readFileKey(rest.length === 0 ? kind : `${kind}:${resolve(directory, rest.join(":"))}`);
+};
+
+// What the library answers: the spec's text, and a module beside it by its name.
+const readLibraryKey = (directory: string, key: string) => {
   const [kind, ...rest] = key.split(":");
   const name = rest.join(":");
-  if (kind === "text") {
-    const path = resolve(directory, name);
-    return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-  }
-  if (kind === "module") return createModuleLoader([directory])(name);
-  if (kind === "class" || kind === "bytes") {
-    const path = kind === "class" ? join(directory, `${name}.class`) : resolve(directory, name);
-    return existsSync(path) ? new Uint8Array(readFileSync(path)) : undefined;
-  }
-  if (kind !== "file") return undefined;
-  const [origin, ...moduleName] = rest;
-  const classPathIndex = args.indexOf("-cp");
-  return createFileDescriber(
-    getSpecPath(directory, args),
-    [directory],
-    {
-      libraries: [],
-      properties: new Map(),
-      classPath: classPathIndex === -1 ? undefined : args[classPathIndex + 1],
-    },
-    undefined,
-    "master",
-  )(moduleName.join(":"), origin as SanyModuleOrigin);
+  const path = kind === "module" ? join(directory, `${name}.tla`) : resolve(directory, name);
+  return ["text", "module"].includes(kind) && existsSync(path)
+    ? readFileSync(path, "utf8")
+    : undefined;
 };
 
 const getAddon = () => {
@@ -140,7 +127,7 @@ const checkInProcess = (directory: string, args: string[]) => {
       [],
       false,
     ],
-    (key) => readKey(directory, args, key),
+    (key) => readKey(directory, key),
   );
   return result.kind === "declined"
     ? `declined: ${result.reason}`
@@ -174,7 +161,7 @@ describe("checkSources", () => {
         getAddon(),
         ["-noGenerateSpecTE", getSpecPath(directory, test.args)],
         ["", "", "", 1, 0, 0, 0, "UTC0", [], true],
-        (key) => readKey(directory, test.args, key),
+        (key) => readLibraryKey(directory, key),
       );
       rmSync(directory, { recursive: true, force: true });
       if (result.kind === "declined") throw new Error(result.reason);

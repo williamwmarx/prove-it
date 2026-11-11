@@ -15,6 +15,7 @@ mod jar;
 mod messages;
 mod outcome;
 mod plain;
+pub mod resolve;
 mod simulation;
 mod stack;
 mod summary;
@@ -26,7 +27,8 @@ mod zip;
 pub mod zone;
 
 pub use check::run;
-pub use host::{FileDescription, Files, Host, Machine, SystemHost};
+pub use files::FileDescriber;
+pub use host::{FileDescription, FileKind, Files, Host, Machine, SystemHost};
 pub use messages::Output;
 pub use outcome::{Counts, Outcome, Reported, ReportedState};
 pub use plain::Variable;

@@ -61,6 +61,20 @@ code runs: SANY's report still needs the addon or the WebAssembly engine. Where 
 CLI throws `EngineUnavailableError` for the report, worded for the front end, as `check` does for
 the search. Until then, the CLI prints the TypeScript report where no engine loads.
 
+### Decision: the CLI finds a spec's files with the engine
+
+Settled on 2026-11-11, as the CLI's TypeScript copy of TLC's resolver is deleted: the CLI finds the
+spec, its config, its modules and its Java overrides as the binary does, through `prove-it-host`'s
+`resolveFiles` and `checkSources`, which name the paths they stat, read and resolve and the working
+and temporary directories, for JavaScript to answer. So `PROVE_IT_ENGINE=0` means, here too, that
+the interpreter searches, not that no native code runs. An install without the platform package
+checks with the WebAssembly engine beside `dist/cli.js` (`tests/unit/native.test.ts` runs a copy of
+`dist/` that no package resolves from). The CLI throws `EngineUnavailableError` only where an engine
+`PROVE_IT_ENGINE_ADDON` or `PROVE_IT_ENGINE_WASM` names, or an executable embeds, fails to load, or
+where neither the addon nor the WebAssembly engine loads. Its message then names no setting, since
+none checks without the engine. The library's `check` of a source string reads no file and is
+unchanged.
+
 The engine reads nothing itself: an export that reads what JavaScript holds, such as a spec's
 modules, names what it needs and is called again with it (`prove-it-host`'s `sources`), so the
 WebAssembly engine needs no file system and calls nothing in JavaScript.

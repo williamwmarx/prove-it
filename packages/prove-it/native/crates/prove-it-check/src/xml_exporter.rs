@@ -132,9 +132,7 @@ fn print_missing_root(
     root: &str,
     includes: &[String],
 ) -> i32 {
-    let user_directory = std::env::current_dir()
-        .map(|directory| directory.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let user_directory = output.host.current_dir().to_string_lossy().into_owned();
     let directories: String = includes
         .iter()
         .map(|include| format!("{include}, "))
@@ -224,8 +222,8 @@ pub fn run_xml_exporter(args: &[String], output: &mut Output<'_>) -> Result<i32,
     };
     let exported =
         export_xml(&root, &source, name, &load_module, &options).map_err(|error| match error {
-            FrontError::NotYet(reason) => reason,
-            other => format!("{other:?}"),
+            FrontError::NotYet(reason) => format!("SANY's XMLExporter of {reason}"),
+            _ => "SANY's XMLExporter, which tla-front doesn't write".to_owned(),
         })?;
     if unreadable.get() {
         return Err(
