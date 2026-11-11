@@ -8,11 +8,12 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The coverage report's tree, which the engine's search counts into (design/coverage.md).
+tla-engine = { path = "../tla-engine" }
 tla-ir = { path = "../tla-ir" }
 tla-values = { path = "../tla-values" }
 
 [dev-dependencies]
-tla-engine = { path = "../tla-engine" }
 # For the dumps' tests, which lower their specs as the binary does: a dev-dependency only, whose
 # cycle Cargo allows, tla-front depending on tla-trace.
 tla-front = { path = "../tla-front" }

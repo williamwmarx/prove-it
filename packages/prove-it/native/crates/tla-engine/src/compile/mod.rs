@@ -16,6 +16,8 @@
 
 mod bridged;
 mod builtins;
+mod coverage;
+mod coverage_walk;
 mod fused;
 pub(crate) mod lazy;
 pub(crate) mod lazy_function;
@@ -29,6 +31,7 @@ mod sets;
 mod walker;
 
 pub(crate) use builtins::NON_SET_OPERAND;
+pub(crate) use coverage_walk::Counting;
 pub use walker::ActionOptions;
 pub(crate) use walker::INFINITE_BOUND;
 
@@ -463,6 +466,9 @@ pub(crate) struct Context {
     /// keeps its caller's, so a definition reached again through an argument isn't taken for
     /// recursion.
     expanding: Option<Rc<Expansion>>,
+    /// With `-coverage`, the wrapper of TLC's cost model the expression's evaluation counts
+    /// under, or `NO_CM` where TLC counts nothing (`compile/coverage.rs`).
+    cm: crate::coverage::Cm,
 }
 
 struct Expansion {
@@ -477,6 +483,7 @@ impl Context {
         is_init: false,
         can_print: false,
         expanding: None,
+        cm: crate::coverage::NO_CM,
     };
 
     fn is_expanding(&self, node: NodeId) -> bool {
@@ -571,6 +578,9 @@ struct Argument {
     /// For a binding of an instance's scope whose expression closes over that scope: the scope
     /// that binds it, which its context reaches.
     own_scope: RefCell<Weak<Scope>>,
+    /// In the counting variant, the machine's cell that keeps TLC's lazy value of it, or none
+    /// where TLC binds none, as a walk's LET doesn't (`compile/coverage.rs`).
+    cell: Option<usize>,
 }
 
 // The context an argument's expression compiles in.
@@ -826,6 +836,14 @@ pub struct Compiler<'a> {
     // The definitions the spec names where TLC may cache the value it keeps for a constant
     // definition as its normalized set (`Compiler::normalized_definitions`).
     normalized_definitions: OnceCell<HashMap<NodeId, bool>>,
+    /// With `-coverage`, the tree of TLC's cost model the counting variant counts into.
+    pub(crate) coverage: Option<Arc<crate::coverage::Plan>>,
+    /// Whether the expression compiling counts, which nothing then caches.
+    is_counting_now: bool,
+    /// How many of TLC's lazy values the counting variant keeps (`Machine::coverage`).
+    pub(crate) cell_count: usize,
+    /// The slots of names bound to values that carry no cost model.
+    deep_slots: HashSet<u32>,
 }
 
 fn add_read(reads: &mut Vec<Rc<FixedPoint>>, fixed_point: &Rc<FixedPoint>) {
@@ -909,6 +927,10 @@ impl<'a> Compiler<'a> {
             is_tlc_cache_used: false,
             scope_contexts: HashMap::new(),
             normalized_definitions: OnceCell::new(),
+            coverage: None,
+            is_counting_now: false,
+            cell_count: 0,
+            deep_slots: HashSet::new(),
         }
     }
 
@@ -1055,7 +1077,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn once(&mut self, compiled: Compiled, is_constant: bool) -> Compiled {
-        if self.options.is_memo_off {
+        if self.options.is_memo_off || self.is_counting_now {
             return compiled;
         }
         let once = self.allocate_once();
@@ -1071,7 +1093,10 @@ impl<'a> Compiler<'a> {
     // each value of the bound names it reads, however many variables it reads.
     fn cached_in_epoch(&mut self, compiled: Compiled) -> Compiled {
         let footprint = &compiled.footprint;
-        if !footprint.primes.is_empty() || footprint.slots.len() > EPOCH_KEYS {
+        if !footprint.primes.is_empty()
+            || footprint.slots.len() > EPOCH_KEYS
+            || self.is_counting_now
+        {
             return compiled;
         }
         let cache = self.program.epoch_count;
@@ -1089,7 +1114,11 @@ impl<'a> Compiler<'a> {
     // Caches a costly expression by the ids it reads, and evaluates one that reads nothing only
     // once.
     fn cached(&mut self, compiled: Compiled) -> Compiled {
-        if compiled.is_printing() || compiled.uses_registers() || self.options.is_memo_off {
+        if compiled.is_printing()
+            || compiled.uses_registers()
+            || self.options.is_memo_off
+            || self.is_counting_now
+        {
             return compiled;
         }
         let width = compiled.footprint.width();
@@ -1238,6 +1267,28 @@ impl<'a> Compiler<'a> {
     }
 
     pub(crate) fn compile(&mut self, node: NodeId, context: &Context) -> Compiling<Compiled> {
+        if self.coverage.is_some() {
+            let is_counting = context.cm != crate::coverage::NO_CM;
+            let outer = std::mem::replace(&mut self.is_counting_now, is_counting);
+            let result = if is_counting {
+                self.depth += 1;
+                let result = if self.depth > MAXIMUM_EXPANSION {
+                    unsupported("expansion too deep")
+                } else {
+                    self.compile_counted(node, context)
+                };
+                self.depth -= 1;
+                result
+            } else {
+                self.compile_uncounted(node, context)
+            };
+            self.is_counting_now = outer;
+            return result;
+        }
+        self.compile_uncounted(node, context)
+    }
+
+    fn compile_uncounted(&mut self, node: NodeId, context: &Context) -> Compiling<Compiled> {
         self.depth += 1;
         let result = if self.depth > MAXIMUM_EXPANSION {
             unsupported("expansion too deep")
@@ -1592,6 +1643,17 @@ impl<'a> Compiler<'a> {
     fn compile_binding(&mut self, node: &Rc<Scope>, context: &Context) -> Compiling<Compiled> {
         match &node.binding {
             Binding::Slot(slot) => Ok(self.read_slot(*slot)),
+            // Where the counting variant counts nothing, the argument counts nothing either.
+            Binding::Argument(argument) if self.coverage.is_some() => {
+                let is_primed = context.is_primed || argument.context.is_primed;
+                self.compile(
+                    argument.expression,
+                    &Context {
+                        cm: crate::coverage::NO_CM,
+                        ..argument_context(argument).primed(is_primed)
+                    },
+                )
+            }
             Binding::Argument(argument) => {
                 let is_primed = context.is_primed || argument.context.is_primed;
                 let index = usize::from(is_primed);
@@ -1669,9 +1731,12 @@ impl<'a> Compiler<'a> {
             return unsupported("an operator used as a value");
         }
         let index = definition_index(context);
+        // The counting variant counts each expansion into its own wrappers.
+        let is_cached = !self.is_counting_now;
         if let Some((entry, known)) = self
             .definition_cache
             .get(&node)
+            .filter(|_| is_cached)
             .and_then(|entries| entries[index].clone())
         {
             self.note_cached_read(entry);
@@ -1691,7 +1756,9 @@ impl<'a> Compiler<'a> {
             Ok(compiler.cached(Self::mark_costly(compiled)))
         });
         let compiled = self.kept_definition(node, result?);
-        self.cache_definition(node, index, compiled.clone(), &read);
+        if is_cached {
+            self.cache_definition(node, index, compiled.clone(), &read);
+        }
         Ok(compiled)
     }
 
@@ -2287,6 +2354,11 @@ impl<'a> Compiler<'a> {
                             context: definition_context,
                             compiled: RefCell::new([None, None]),
                             own_scope: RefCell::new(Weak::new()),
+                            cell: if is_expression {
+                                self.allocate_cell()
+                            } else {
+                                None
+                            },
                         })),
                     );
                 }
@@ -2345,6 +2417,7 @@ impl<'a> Compiler<'a> {
                     context: argument_context.clone(),
                     compiled: RefCell::new([None, None]),
                     own_scope: RefCell::new(Weak::new()),
+                    cell: self.allocate_cell(),
                 }))
             };
             scope = bind(&scope, param.name, binding);
@@ -2693,6 +2766,7 @@ impl<'a> Compiler<'a> {
             is_init: context.is_init,
             can_print: false,
             expanding,
+            cm: context.cm,
         };
         let mut read = Vec::new();
         let settled = self.settle_operator(&created, body, &body_context, &mut read);

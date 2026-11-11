@@ -175,6 +175,66 @@ pub struct Machine<'p> {
     /// which TLC fingerprints no state, so it has cached no value a state holds as its
     /// normalized set (`DoInitFunctor.addElement`).
     pub(crate) is_before_initial_state: bool,
+    /// With `-coverage`, what the counting variant counted into each wrapper of TLC's cost model,
+    /// and the lazy values it keeps (`compile/coverage.rs`); empty otherwise.
+    pub(crate) coverage: Coverage,
+}
+
+/// What the counting variant of compiled code counts as it runs: each wrapper's count and
+/// secondary count, and TLC's `LazyValue`s.
+#[derive(Default)]
+pub(crate) struct Coverage {
+    pub counts: Vec<u64>,
+    pub secondary: Vec<u64>,
+    pub cells: Vec<Cell>,
+    /// Why the search can't count as TLC does after all, which it finds as it runs: it goes on,
+    /// and the report comes from the replay.
+    pub abandoned: Option<&'static str>,
+    /// How many successors the next-state walk has added, which says whether the walk after a
+    /// leaf added one.
+    pub added: u64,
+    /// The leaf of the initial predicate's walk that completes the state it walks to, and its
+    /// root.
+    pub leaf: (u32, u32),
+}
+
+/// A `LazyValue` of an operator's argument or a LET's definition, which TLC evaluates at its first
+/// use and keeps for later uses in states that hold what the states it was evaluated in held.
+#[derive(Clone, Default)]
+pub(crate) struct Cell {
+    pub is_kept: bool,
+    pub current: Vec<Id>,
+    pub next: Vec<Id>,
+}
+
+impl Machine<'_> {
+    #[inline(always)]
+    pub(crate) fn count(&mut self, cm: u32) {
+        self.coverage.counts[cm as usize] += 1;
+    }
+
+    /// Whether TLC finds the cell's value kept for the states now (`LazyValue.getValue`'s
+    /// `isSubset` of each state).
+    pub(crate) fn is_cell_kept(&self, cell: usize) -> bool {
+        let kept = &self.coverage.cells[cell];
+        let is_subset = |now: &[Id], kept: &[Id]| {
+            kept.iter()
+                .zip(now)
+                .all(|(&kept, &now)| kept == UNASSIGNED || kept == now)
+        };
+        kept.is_kept && is_subset(&self.cur, &kept.current) && is_subset(&self.next, &kept.next)
+    }
+
+    pub(crate) fn abandon_coverage(&mut self, why: &'static str) {
+        self.coverage.abandoned.get_or_insert(why);
+    }
+
+    pub(crate) fn keep_cell(&mut self, cell: usize) {
+        let kept = &mut self.coverage.cells[cell];
+        kept.is_kept = true;
+        kept.current.clone_from(&self.cur);
+        kept.next.clone_from(&self.next);
+    }
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -233,6 +293,7 @@ impl<'p> Machine<'p> {
             lazy_functions: Vec::new(),
             held: vec![None; program.width],
             is_before_initial_state: false,
+            coverage: Coverage::default(),
         }
     }
 

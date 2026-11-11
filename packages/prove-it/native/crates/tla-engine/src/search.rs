@@ -29,6 +29,8 @@ use crate::context::{
     Atom, EngineContext, Startup, StartupSymmetry, count_possible, first_failing_changed,
     holds_all, holds_all_changed,
 };
+use crate::coverage::HyperLogLog;
+use crate::coverage::{Counted, Plan};
 use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atoms};
 use crate::machine::{Eval, Machine, Printed, Prints, Registers, Step, UNASSIGNED};
 use crate::symmetry::{
@@ -87,6 +89,9 @@ pub struct Settings {
     /// and not yet touched, its address and length in bytes: the state table, from 32 MB, whose
     /// probes land anywhere in it. The CLI asks Linux to back it with huge pages.
     pub large_region_advice: Option<Advice>,
+    /// `-coverage`: the tree of TLC's cost model, which the search counts into where it can
+    /// count as TLC does, and hands to [`Reporter::counted`].
+    pub coverage: Option<Arc<Plan>>,
 }
 
 /// See [`Settings::large_region_advice`].
@@ -122,6 +127,7 @@ impl Default for Settings {
             is_dumped: false,
             is_continued: false,
             large_region_advice: None,
+            coverage: None,
         }
     }
 }
@@ -182,6 +188,9 @@ pub trait Reporter {
     /// Under `-continue`, a violation the search goes on past, as TLC reports it when it finds
     /// it.
     fn continued(&mut self, _trace: ContinuedTrace<'_>) {}
+    /// Where `Settings::coverage` asks for it, what the search counted once it ran to its end, or
+    /// why the engine doesn't count the model as TLC does (design/coverage.md).
+    fn counted(&mut self, _counted: Result<Counted, String>) {}
 }
 
 /// A violation a search under `-continue` goes on past, with what rebuilding its trace as TLC
@@ -1068,6 +1077,17 @@ struct Search<'r, T, E = Dense> {
     held: Option<Vec<Vec<Printed>>>,
     // Whether TLCSet("exit", TRUE) ran in an invariant, where the search follows it.
     is_exit_followed: bool,
+    // With -coverage, what the counting variant counts besides what its code counts.
+    coverage: Option<SearchCoverage>,
+}
+
+// What the search counts of TLC's cost model as it adds each successor (`Worker.addElement`):
+// a step into the root of its action, a new state into its secondary count, and each value of a
+// new state into its variable's estimate.
+struct SearchCoverage {
+    plan: Arc<Plan>,
+    values: Vec<HyperLogLog>,
+    cells: usize,
 }
 
 impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
@@ -1113,6 +1133,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             possible: Vec::new(),
             held: None,
             is_exit_followed: false,
+            coverage: None,
         }
     }
 
@@ -1479,6 +1500,9 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         }
         self.successors += 1;
         self.generated += 1;
+        if let Some(counting) = &self.coverage {
+            machine.count(counting.plan.actions[self.action as usize]);
+        }
         self.successor.clear();
         self.successor.extend_from_slice(machine.next());
         let successor_epoch = machine.next_epoch();
@@ -1526,6 +1550,14 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         let is_new = matches!(found, Some(Err(_)));
         if is_new {
             self.set_distinct(machine, self.states.count() + 1)?;
+            if let Some(counting) = &mut self.coverage {
+                let root = counting.plan.actions[self.action as usize];
+                machine.coverage.secondary[root as usize] += 1;
+                for (estimate, &value) in counting.values.iter_mut().zip(&self.successor) {
+                    let fingerprint = machine.fingerprints.get_value(&machine.store, value)?;
+                    estimate.add(machine.fingerprints.of_state(&[fingerprint]));
+                }
+            }
         }
         self.check_exit_followed(machine)?;
         if !is_in_model || is_new {
@@ -2806,10 +2838,29 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     compiler.workers = settings.workers;
     compiler.is_native = settings.is_violation_reported;
-    let context = match EngineContext::build(&mut compiler, ir) {
+    let mut context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
     };
+    // With -coverage, the counting variant walks and checks in place of what the search compiled,
+    // where it counts as TLC does; elsewhere the search runs as it always does and says why.
+    let mut counting = None;
+    if let Some(plan) = &settings.coverage {
+        compiler.coverage = Some(Arc::clone(plan));
+        let compiled = compiler.compile_counting(ir);
+        compiler.coverage = None;
+        match compiled {
+            Ok(compiled) => {
+                context.install_counting(compiled);
+                counting = Some(SearchCoverage {
+                    plan: Arc::clone(plan),
+                    values: vec![HyperLogLog::default(); ir.variables.len()],
+                    cells: compiler.cell_count,
+                });
+            }
+            Err(error) => reporter.counted(Err(describe(error))),
+        }
+    }
     // A search that ranked strings may start over in the interpreter, which would print again
     // what the search printed; the native checker never starts over.
     if compiler.is_printing && compiler.is_ranking && !settings.is_violation_reported {
@@ -2825,7 +2876,8 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     // nothing prints, reads the count of distinct states, caches what TLC first evaluates, or
     // fingerprints a VIEW or symmetry's representative, which the walk would then interleave with.
     let is_lambda_built = compiler.is_lambda_built;
-    let is_pipelined = !is_printing
+    let is_pipelined = counting.is_none()
+        && !is_printing
         && !is_lambda_built
         && !compiler.is_cached
         && !is_distinct_read
@@ -2848,6 +2900,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         && !compiler.is_cached
         && !is_distinct_read
         && !settings.is_continued
+        // TLC's counts are of its worker's order, which the counting variant follows on one
+        // thread.
+        && counting.is_none()
         && !(model.is_recording_graph && settings.test_live_check_at.is_some())
         // The online checker adds each state as it is expanded, between the expansions, and the
         // held prints come out between them: neither may meet a level the threads share.
@@ -2924,6 +2979,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         program.polynomial(),
     );
     search.is_continued = settings.is_continued;
+    if let Some(counting) = counting {
+        machine.coverage.counts = vec![0; counting.plan.tree.wrappers.len()];
+        machine.coverage.secondary = vec![0; counting.plan.tree.wrappers.len()];
+        machine.coverage.cells = vec![Default::default(); counting.cells];
+        search.coverage = Some(counting);
+    }
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
     search.is_lambda_built = is_lambda_built;
@@ -2980,7 +3041,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let actions = context
         .actions
         .as_ref()
-        .filter(|_| model.is_recording_graph && model.is_labelled);
+        .filter(|_| model.is_recording_graph && model.is_labelled || search.coverage.is_some());
     let is_live_checked = settings.is_live_checked && actions.is_some();
     let mut out_degrees = [0u64; OUT_DEGREE_BUCKETS];
     let mut checkpoint_count = 0usize;
@@ -3502,6 +3563,19 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         }
         Ok(())
     })();
+    if let Some(counting) = &search.coverage
+        && result.is_ok()
+    {
+        let counted = match machine.coverage.abandoned {
+            Some(why) => Err(format!("coverage: {why}")),
+            None => Ok(Counted {
+                counts: std::mem::take(&mut machine.coverage.counts),
+                secondary: std::mem::take(&mut machine.coverage.secondary),
+                values: counting.values.iter().map(HyperLogLog::count).collect(),
+            }),
+        };
+        search.reporter.counted(counted);
+    }
     let variables: Vec<&str> = ir
         .variables
         .iter()

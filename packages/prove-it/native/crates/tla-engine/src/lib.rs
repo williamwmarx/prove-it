@@ -6,6 +6,7 @@
 pub mod clock;
 pub mod compile;
 pub mod context;
+pub mod coverage;
 pub mod footprint;
 pub mod live;
 mod log_file;

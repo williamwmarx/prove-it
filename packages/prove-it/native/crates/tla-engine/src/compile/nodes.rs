@@ -364,53 +364,7 @@ impl Compiler<'_> {
                     let key = self.store.str(&units);
                     compiled.push((key, self.compile(value, context)?));
                 }
-                // TLC evaluates the fields in the order written, and keeps them in its order of
-                // their names, which strings compare without fail.
-                let mut order: Vec<usize> = (0..compiled.len()).collect();
-                let mut sort_error = None;
-                order.sort_by(|&left, &right| {
-                    match self.store.compare(compiled[left].0, compiled[right].0) {
-                        Ok(order) => order.cmp(&0),
-                        Err(bail) => {
-                            sort_error = Some(bail);
-                            std::cmp::Ordering::Equal
-                        }
-                    }
-                });
-                if let Some(bail) = sort_error {
-                    return Err(bail.into());
-                }
-                let keys: Vec<Id> = order.iter().map(|&field| compiled[field].0).collect();
-                let shape = self.store.create_record_shape(&keys);
-                // Each field as written, with its place among the fields in TLC's order.
-                let mut evaluators: Vec<(Eval, usize)> = compiled
-                    .iter()
-                    .map(|field| (field.1.eval.clone(), 0))
-                    .collect();
-                for (place, &field) in order.iter().enumerate() {
-                    evaluators[field].1 = place;
-                }
-                Ok(Compiled {
-                    is_costly: true,
-                    ..leaf(
-                        eval(move |machine| {
-                            let at = machine.stack.len();
-                            machine.stack.resize(at + evaluators.len(), 0);
-                            for (evaluate, place) in &evaluators {
-                                match evaluate(machine) {
-                                    Ok(value) => machine.stack[at + place] = value,
-                                    Err(bail) => {
-                                        machine.stack.truncate(at);
-                                        return Err(bail);
-                                    }
-                                }
-                            }
-                            let values = machine.stack.split_off(at);
-                            Ok(machine.store.record_of(&shape, &values))
-                        }),
-                        Footprint::merge_all(compiled.iter().map(|field| &field.1.footprint)),
-                    )
-                })
+                self.record_of(compiled)
             }
             NodeKind::FunctionApplication { function, args } => {
                 self.compile_function_application(*function, args, context)
@@ -515,6 +469,58 @@ impl Compiler<'_> {
             )),
             kind => unsupported(format!("expression {}", kind_name(kind))),
         }
+    }
+
+    /// A record of each field's name and value, compiled, in the order written: TLC evaluates
+    /// them in that order and keeps them in its order of the names.
+    pub(crate) fn record_of(&mut self, compiled: Vec<(Id, Compiled)>) -> Compiling<Compiled> {
+        // TLC evaluates the fields in the order written, and keeps them in its order of
+        // their names, which strings compare without fail.
+        let mut order: Vec<usize> = (0..compiled.len()).collect();
+        let mut sort_error = None;
+        order.sort_by(|&left, &right| {
+            match self.store.compare(compiled[left].0, compiled[right].0) {
+                Ok(order) => order.cmp(&0),
+                Err(bail) => {
+                    sort_error = Some(bail);
+                    std::cmp::Ordering::Equal
+                }
+            }
+        });
+        if let Some(bail) = sort_error {
+            return Err(bail.into());
+        }
+        let keys: Vec<Id> = order.iter().map(|&field| compiled[field].0).collect();
+        let shape = self.store.create_record_shape(&keys);
+        // Each field as written, with its place among the fields in TLC's order.
+        let mut evaluators: Vec<(Eval, usize)> = compiled
+            .iter()
+            .map(|field| (field.1.eval.clone(), 0))
+            .collect();
+        for (place, &field) in order.iter().enumerate() {
+            evaluators[field].1 = place;
+        }
+        Ok(Compiled {
+            is_costly: true,
+            ..leaf(
+                eval(move |machine| {
+                    let at = machine.stack.len();
+                    machine.stack.resize(at + evaluators.len(), 0);
+                    for (evaluate, place) in &evaluators {
+                        match evaluate(machine) {
+                            Ok(value) => machine.stack[at + place] = value,
+                            Err(bail) => {
+                                machine.stack.truncate(at);
+                                return Err(bail);
+                            }
+                        }
+                    }
+                    let values = machine.stack.split_off(at);
+                    Ok(machine.store.record_of(&shape, &values))
+                }),
+                Footprint::merge_all(compiled.iter().map(|field| &field.1.footprint)),
+            )
+        })
     }
 
     pub(crate) fn compile_unchanged(
@@ -1222,6 +1228,15 @@ impl Compiler<'_> {
             let uses_at = value.footprint.slots.contains(&at_slot);
             compiled.push((path, at_slot, value, uses_at));
         }
+        Ok(Self::except_of(function, compiled))
+    }
+
+    /// `[f EXCEPT ...]` of the function and each update's path, `@`'s slot, value and whether
+    /// the value reads `@`, compiled.
+    pub(crate) fn except_of(
+        function: Compiled,
+        compiled: Vec<(Vec<Compiled>, u32, Compiled, bool)>,
+    ) -> Compiled {
         let footprint = Footprint::merge_all(
             [function.footprint.clone()]
                 .into_iter()
@@ -1269,10 +1284,10 @@ impl Compiler<'_> {
                 .collect();
             except_nested(base, updates)
         };
-        Ok(Compiled {
+        Compiled {
             is_costly: true,
             ..leaf(evaluate, footprint)
-        })
+        }
     }
 
     // {e1, ..., en} of elements already compiled.

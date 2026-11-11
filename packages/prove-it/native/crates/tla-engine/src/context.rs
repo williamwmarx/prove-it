@@ -181,6 +181,29 @@ fn get_subscript_key(ir: &Ir, node: NodeId, scope: Option<Index>) -> SubscriptKe
     }
 }
 
+impl EngineContext {
+    /// Walks and checks with the counting variant of `-coverage`: TLC's actions in place of the
+    /// next-state relation, and each invariant and constraint whole, on every state, as TLC
+    /// evaluates them (`compile/coverage_walk.rs`).
+    pub(crate) fn install_counting(&mut self, counting: crate::compile::Counting) {
+        let whole = |evaluators: Vec<Eval>| -> Vec<Predicate> {
+            evaluators
+                .into_iter()
+                .map(|eval| Predicate { eval, vars: None })
+                .collect()
+        };
+        self.init = counting.init;
+        self.actions = Some(counting.actions);
+        self.invariant_owners = counting.invariant_owners;
+        self.initial_invariant_owners = self.invariant_owners.clone();
+        self.initial_invariants = counting.invariants.clone();
+        self.invariants = whole(counting.invariants);
+        self.constraint_owners = counting.constraint_owners;
+        self.constraints = whole(counting.constraints);
+        self.action_constraints = counting.action_constraints;
+    }
+}
+
 /// Whether a compiled predicate holds, failing on a value that isn't a boolean.
 pub fn holds(machine: &mut Machine<'_>, predicate: &Eval) -> Outcome<bool> {
     match predicate(machine)? {

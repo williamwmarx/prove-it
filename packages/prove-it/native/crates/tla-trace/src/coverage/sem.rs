@@ -13,6 +13,8 @@ use tla_ir::{
     Resolution, SourceRange, TextId,
 };
 
+use tla_engine::coverage::SanyNode;
+
 use crate::Unsupported;
 
 pub(crate) type SId = u32;
@@ -195,6 +197,24 @@ impl<'ir> Sem<'ir> {
 
     pub fn node(&self, id: SId) -> &SNode {
         &self.nodes[id as usize]
+    }
+
+    /// The nodes as the engine's lookups of the cost model ask of them, and the node each IR node
+    /// translated to, by the IR node a reference resolves to.
+    pub fn export(&self) -> (Vec<SanyNode>, HashMap<NodeId, SId>) {
+        let nodes = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(id, node)| SanyNode {
+                kind: super::model::kind_of(self, id as SId),
+                args: match &node.kind {
+                    SKind::Appl { args, .. } => args.clone(),
+                    _ => Vec::new(),
+                },
+            })
+            .collect();
+        (nodes, self.translated.clone())
     }
 
     pub fn def(&self, id: DefId) -> &SDef {

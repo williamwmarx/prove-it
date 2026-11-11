@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
+use tla_engine::coverage::Plan;
 use tla_engine::search::{SearchOutcome, ViolationKind};
 use tla_ir::Ir;
-use tla_trace::{CoverageMessage, Rebuilder};
+use tla_trace::{Counted, CoverageMessage, Rebuilder};
 
 use crate::args::Parsed;
 use crate::host::Host;
@@ -27,13 +28,53 @@ pub(crate) fn get_countdown(args: &Parsed) -> Option<i32> {
     Some(minutes.wrapping_mul(60 * 1000) / (60 * 1000))
 }
 
-/// TLC's report of a run, none where TLC prints none, or why the binary can't print it.
+/// The sources of the modules the IR places nodes in, which place the nodes SANY makes.
+pub(crate) struct Sources(HashMap<String, String>);
+
+impl Sources {
+    pub(crate) fn load(ir: &Ir, host: &dyn Host, spec_path: &str, libraries: &[String]) -> Sources {
+        let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
+        let directories: Vec<&Path> = std::iter::once(directory)
+            .chain(libraries.iter().map(Path::new))
+            .collect();
+        let mut sources = HashMap::new();
+        for node in &ir.nodes.arena {
+            if let Some(range) = node.range {
+                let name = &ir.texts[range.module as usize];
+                if !sources.contains_key(&**name)
+                    && let Some(text) = host.load_module(&directories, name)
+                {
+                    sources.insert(name.to_string(), text);
+                }
+            }
+        }
+        Sources(sources)
+    }
+
+    fn get(&self, name: &str) -> Option<String> {
+        self.0.get(name).cloned()
+    }
+}
+
+/// The tree of TLC's cost model the search counts into, none where the report isn't followed.
+pub(crate) fn plan(ir: &Ir, sources: &Sources) -> Option<Plan> {
+    on_search_stack(|| {
+        Rebuilder::new(ir)
+            .and_then(|mut rebuilder| rebuilder.coverage_plan(&|name| sources.get(name)))
+    })
+    .ok()
+}
+
+/// TLC's report of a run, none where TLC prints none, or why the binary can't print it: from
+/// what the search counted where it counted, else from the replay. `is_compared` runs both and
+/// fails where their counts differ (`PROVE_IT_TEST_COVERAGE_COMPARE`).
 pub(crate) fn compute(
     ir: &Ir,
     outcome: &SearchOutcome,
-    host: &dyn Host,
-    directories: &[&Path],
+    sources: &Sources,
     polynomial: usize,
+    counted: Option<Result<Counted, String>>,
+    is_compared: bool,
 ) -> Result<Vec<CoverageMessage>, String> {
     let counts = match outcome {
         SearchOutcome::Complete { counts, .. } => (counts.generated, counts.distinct),
@@ -51,22 +92,37 @@ pub(crate) fn compute(
         }
         _ => return Err("coverage of a run that ends other than at a violation or its end".into()),
     };
-    // The sources of the modules the IR places nodes in, which place the nodes SANY makes.
-    let mut sources = HashMap::new();
-    for node in &ir.nodes.arena {
-        if let Some(range) = node.range {
-            let name = &ir.texts[range.module as usize];
-            if !sources.contains_key(&**name)
-                && let Some(text) = host.load_module(directories, name)
-            {
-                sources.insert(name.to_string(), text);
+    let counted = match (outcome, counted) {
+        (SearchOutcome::Complete { .. }, Some(Ok(counted))) => Ok(counted),
+        (_, Some(Err(why))) => Err(why),
+        _ => Err("a search that stopped".to_string()),
+    };
+    if is_compared {
+        eprintln!(
+            "coverage compare: {}",
+            match &counted {
+                Ok(_) => "engine counted".to_string(),
+                Err(why) => format!("engine declined: {why}"),
             }
-        }
+        );
+    }
+    let engine = match &counted {
+        Ok(counted) => Some(
+            on_search_stack(|| {
+                Rebuilder::new(ir).and_then(|mut rebuilder| {
+                    rebuilder.coverage_report(&|name| sources.get(name), counted)
+                })
+            })
+            .map_err(|unsupported| format!("coverage: {}", unsupported.0))?,
+        ),
+        Err(_) => None,
+    };
+    if engine.is_some() && !is_compared {
+        return Ok(engine.unwrap_or_default());
     }
     let report = on_search_stack(|| {
-        Rebuilder::new(ir).and_then(|mut rebuilder| {
-            rebuilder.coverage(&|name| sources.get(name).cloned(), polynomial)
-        })
+        Rebuilder::new(ir)
+            .and_then(|mut rebuilder| rebuilder.coverage(&|name| sources.get(name), polynomial))
     })
     .map_err(|unsupported| format!("coverage: {}", unsupported.0))?;
     if !report.messages.is_empty() && (report.generated, report.distinct) != counts {
@@ -75,9 +131,49 @@ pub(crate) fn compute(
             report.generated, report.distinct, counts.0, counts.1
         ));
     }
+    if let (Some(engine), Ok(counted)) = (&engine, &counted) {
+        let differences = compare(report.counted.as_ref(), counted);
+        if !differences.is_empty() || *engine != report.messages {
+            eprintln!("coverage compare: DIFFER {}", differences.join(" "));
+            for (engine, replayed) in engine.iter().zip(&report.messages) {
+                if engine != replayed {
+                    eprintln!("coverage compare: engine   {}", engine.text);
+                    eprintln!("coverage compare: replayed {}", replayed.text);
+                }
+            }
+            return Err("the engine's coverage counts differ from the replay's".into());
+        }
+        eprintln!("coverage compare: same");
+    }
     Ok(report.messages)
 }
 
+// Where the engine's counts differ from the replay's: each wrapper's, then each variable's.
+fn compare(replayed: Option<&Counted>, counted: &Counted) -> Vec<String> {
+    let Some(replayed) = replayed else {
+        return vec!["the replay printed no report".into()];
+    };
+    let mut differences = Vec::new();
+    for (cm, (wanted, got)) in replayed.counts.iter().zip(&counted.counts).enumerate() {
+        if wanted != got {
+            differences.push(format!("count[{cm}]={got}/{wanted}"));
+        }
+    }
+    for (cm, (wanted, got)) in replayed
+        .secondary
+        .iter()
+        .zip(&counted.secondary)
+        .enumerate()
+    {
+        if wanted != got {
+            differences.push(format!("secondary[{cm}]={got}/{wanted}"));
+        }
+    }
+    if replayed.values != counted.values {
+        differences.push(format!("values={:?}/{:?}", counted.values, replayed.values));
+    }
+    differences
+}
 /// The report as TLC prints it, between its 2201 and 2202 messages.
 pub(crate) fn print(printer: &mut Printer, messages: &[CoverageMessage]) {
     if messages.is_empty() {

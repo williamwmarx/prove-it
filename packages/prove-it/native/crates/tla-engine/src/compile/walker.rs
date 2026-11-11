@@ -1375,6 +1375,7 @@ impl<'a> Compiler<'a> {
                                 context: argument_context.clone(),
                                 compiled: RefCell::new([None, None]),
                                 own_scope: RefCell::new(std::rc::Weak::new()),
+                                cell: None,
                             }))
                         }
                         None => {
@@ -2962,7 +2963,10 @@ fn exists_step(levels: Vec<Level>, body: Rest, reject: Option<Reject>) -> Step {
 impl<'a> Compiler<'a> {
     /// The context an instance's scope stands for, or `None` for one that binds what the engine
     /// can't translate, such as a builtin (`contextFromScope`).
-    fn context_from_scope(&mut self, scope: Option<Index>) -> Compiling<Option<Context>> {
+    pub(super) fn context_from_scope(
+        &mut self,
+        scope: Option<Index>,
+    ) -> Compiling<Option<Context>> {
         let Some(index) = scope else {
             return Ok(Some(Context::ROOT));
         };
@@ -3007,6 +3011,7 @@ impl<'a> Compiler<'a> {
                     context,
                     compiled: RefCell::new([None, None]),
                     own_scope: RefCell::new(std::rc::Weak::new()),
+                    cell: None,
                 }))
             }
             ScopeBinding::Closure {

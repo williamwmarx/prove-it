@@ -27,6 +27,7 @@ mod value;
 pub use alias::Alias;
 pub use coverage::{CoverageMessage, CoverageReport};
 pub use dump::TraceDump;
+pub use tla_engine::coverage::Counted;
 
 /// The texts TLC interns as it computes the model's constant definitions, `definitions` by index
 /// in TLC's order, past the first `interned` texts the IR ranks, in the order it interns them.

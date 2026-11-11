@@ -13,6 +13,7 @@ mod tool;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use tla_engine::coverage::Counted;
 use tla_ir::{Index, NodeKind, Resolution, SourceRange};
 use tla_values::fingerprint::{Fingerprints, Polynomial};
 
@@ -39,6 +40,9 @@ pub struct CoverageReport {
     pub messages: Vec<CoverageMessage>,
     pub generated: u64,
     pub distinct: u64,
+    /// What the pass counted, where it prints a report: each wrapper's counts, as the engine's
+    /// search counts them, which `PROVE_IT_TEST_COVERAGE_COMPARE` holds against the engine's.
+    pub counted: Option<Counted>,
 }
 
 /// How many states `DiskStateQueue` holds in memory before it writes them out, which loses the
@@ -56,13 +60,48 @@ impl Rebuilder<'_> {
         sources: &dyn Fn(&str) -> Option<String>,
         polynomial: usize,
     ) -> Result<CoverageReport, Unsupported> {
+        self.with_layout(sources, |tool, plan, layout| {
+            run(tool, plan, layout, polynomial)
+        })
+    }
+
+    /// What the engine's search counts the report into: the tree TLC's cost model builds, which
+    /// IR node each of its SANY nodes is, and the roots, or why the report isn't followed.
+    pub fn coverage_plan(
+        &mut self,
+        sources: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<tla_engine::coverage::Plan, Unsupported> {
+        self.with_layout(sources, |tool, _, layout| Ok(engine_plan(tool.sem, layout)))
+    }
+
+    /// The report of what the engine's search counted into the tree [`Self::coverage_plan`]
+    /// made, for a search that ran to its end.
+    pub fn coverage_report(
+        &mut self,
+        sources: &dyn Fn(&str) -> Option<String>,
+        counted: &Counted,
+    ) -> Result<Vec<CoverageMessage>, Unsupported> {
+        self.with_layout(sources, |tool, plan, layout| {
+            if layout.roots.actions.is_empty() {
+                return Ok(Vec::new());
+            }
+            report(tool.sem, plan, layout, counted)
+        })
+    }
+
+    fn with_layout<T>(
+        &mut self,
+        sources: &dyn Fn(&str) -> Option<String>,
+        run: impl FnOnce(&mut Tool, &Plan, Layout) -> Result<T, Halt>,
+    ) -> Result<T, Unsupported> {
         let ir = self.evaluator().ir;
         decline_unported(ir)?;
         let old = std::mem::replace(self.evaluator(), crate::eval::Evaluator::new(ir));
         let mut sem = Sem::new(ir, sources);
         let result = Plan::new(&mut sem).and_then(|plan| {
             let mut tool = Tool::new(&sem, old, ir.model.is_warning_enabled);
-            run(&mut tool, &plan, polynomial)
+            let layout = layout(&mut tool, &plan)?;
+            run(&mut tool, &plan, layout)
         });
         result.map_err(|halt| match halt {
             Halt::No(why) => Unsupported(why),
@@ -366,7 +405,13 @@ fn label(sem: &Sem, def: DefId, pred: SId) -> Result<String, Halt> {
     ))
 }
 
-fn run(tool: &mut Tool, plan: &Plan, polynomial: usize) -> Result<CoverageReport, Halt> {
+/// The cost model's tree with its roots, which the pass and the engine's search count into.
+struct Layout {
+    model: Model,
+    roots: Roots,
+}
+
+fn layout(tool: &mut Tool, plan: &Plan) -> Result<Layout, Halt> {
     let sem = tool.sem;
     // TLC's actions, split as `Tool.getActions` splits the next-state relation.
     let mut split = Vec::new();
@@ -499,7 +544,51 @@ fn run(tool: &mut Tool, plan: &Plan, polynomial: usize) -> Result<CoverageReport
     roots
         .report
         .extend(roots.constraints.iter().map(|action| action.cm));
-    tool.model = model;
+    Ok(Layout { model, roots })
+}
+
+/// The SANY nodes as the engine's lookups ask of them, and the IR node each IR node translates
+/// to, with the roots.
+fn engine_plan(sem: &Sem, layout: Layout) -> tla_engine::coverage::Plan {
+    let (nodes, of_ir) = sem.export();
+    // The IR node of a root's predicate: the least of those that translate to it.
+    let mut of_sany: FastMap<SId, tla_ir::NodeId> = FastMap::default();
+    for (&node, &id) in &of_ir {
+        let known = of_sany.entry(id).or_insert(node);
+        *known = (*known).min(node);
+    }
+    let roots = |actions: &[Action]| -> Vec<(tla_ir::NodeId, Cm)> {
+        actions
+            .iter()
+            .map(|action| (of_sany[&action.pred], action.cm))
+            .collect()
+    };
+    tla_engine::coverage::Plan {
+        tree: layout.model.tree,
+        nodes,
+        of_ir,
+        inits: roots(&layout.roots.inits),
+        actions: layout
+            .roots
+            .actions
+            .iter()
+            .map(|action| action.cm)
+            .collect(),
+        invariants: roots(&layout.roots.invariants),
+        action_constraints: roots(&layout.roots.action_constraints),
+        constraints: roots(&layout.roots.constraints),
+    }
+}
+
+fn run(
+    tool: &mut Tool,
+    plan: &Plan,
+    layout: Layout,
+    polynomial: usize,
+) -> Result<CoverageReport, Halt> {
+    let sem = tool.sem;
+    let roots = layout.roots;
+    tool.model = layout.model;
     let mut search = Search {
         roots: &roots,
         queue: Queue::new(),
@@ -521,26 +610,58 @@ fn run(tool: &mut Tool, plan: &Plan, polynomial: usize) -> Result<CoverageReport
             messages: Vec::new(),
             generated,
             distinct,
+            counted: None,
         });
     }
     tool.mismatch_check()?;
-    let counts = search.distinct.counts();
+    let model = std::mem::replace(&mut tool.model, Model::new());
+    let counted = Counted {
+        counts: model.counts,
+        secondary: model.secondary,
+        values: search.distinct.counts(),
+    };
+    let layout = Layout {
+        model: Model {
+            counts: Vec::new(),
+            secondary: Vec::new(),
+            ..model
+        },
+        roots,
+    };
+    Ok(CoverageReport {
+        messages: report(sem, plan, layout, &counted)?,
+        generated,
+        distinct,
+        counted: Some(counted),
+    })
+}
+
+/// `CostModelCreator.report` of the counts, after each variable's estimate.
+fn report(
+    sem: &Sem,
+    plan: &Plan,
+    layout: Layout,
+    counted: &Counted,
+) -> Result<Vec<CoverageMessage>, Halt> {
     let mut messages = Vec::new();
-    for &position in &search.order {
+    for position in tlc_order(sem.ir) {
         let place = describe(sem, Some(plan.variables[position]));
         let name = sem.text(sem.ir.variables[position]);
         messages.push(CoverageMessage {
             code: 2779,
-            text: format!("<{name} {place}>: {}", counts[position]),
+            text: format!("<{name} {place}>: {}", counted.values[position]),
         });
     }
     let mut printer = Printer {
-        model: &tool.model,
+        tree: &layout.model.tree,
+        counts: &counted.counts,
+        secondary: &counted.secondary,
+        labels: &layout.model.labels,
         sem,
         lines: Vec::new(),
         is_unplaced: false,
     };
-    for &root in &roots.report {
+    for &root in &layout.roots.report {
         printer.report_root(root);
     }
     if printer.is_unplaced {
@@ -552,11 +673,7 @@ fn run(tool: &mut Tool, plan: &Plan, polynomial: usize) -> Result<CoverageReport
             .into_iter()
             .map(|(code, text)| CoverageMessage { code, text }),
     );
-    Ok(CoverageReport {
-        messages,
-        generated,
-        distinct,
-    })
+    Ok(messages)
 }
 
 /// TLC's order of the variables, as positions in the IR's.

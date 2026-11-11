@@ -4,13 +4,14 @@
 
 use std::collections::{HashMap, HashSet};
 
+use tla_engine::coverage::{SanyKind, Tree, Wrapper};
 use tla_ir::SourceRange;
 
 use super::FastMap;
 use super::sem::{Code, DefId, Op, SId, SKind, Sem};
 use crate::Unsupported;
 
-pub(crate) type Cm = u32;
+pub(crate) use tla_engine::coverage::{Cm, NO_CM};
 
 /// A node's location, as TLC's wrappers compare them.
 pub(crate) type Place = (u32, i32, i32, i32, i32);
@@ -24,8 +25,6 @@ pub(crate) fn place(range: SourceRange) -> Place {
         range.end_column,
     )
 }
-/// `CostModel.DO_NOT_RECORD`.
-pub(crate) const NO_CM: Cm = u32::MAX;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Relation {
@@ -43,138 +42,79 @@ pub(crate) struct Root {
     pub label: String,
 }
 
-pub(crate) struct CmNode {
-    /// The wrapped node, none for a root.
-    pub node: Option<SId>,
-    pub root: Cm,
-    /// The children by their node, in the order added (`LinkedHashMap`).
-    pub children: Vec<(SId, Cm)>,
-    child_index: FastMap<SId, usize>,
-    pub lets: Vec<(SId, Cm)>,
-    pub recursive: Option<Cm>,
-    pub is_primed: bool,
-    pub is_unchanged: bool,
-    pub count: u64,
-    pub secondary: u64,
-    pub label: Option<Root>,
-}
-
+/// The cost model: the engine's tree of wrappers, which the engine's search counts into too, with
+/// the counts the port adds as it evaluates.
 pub(crate) struct Model {
-    pub nodes: Vec<CmNode>,
+    pub tree: Tree,
+    pub counts: Vec<u64>,
+    pub secondary: Vec<u64>,
+    pub labels: FastMap<Cm, Root>,
     /// The lookups that failed, which TLC reports (`TLC_COVERAGE_MISMATCH`).
     pub mismatch: Option<String>,
+}
+
+/// What the cost model's lookup asks of a node.
+pub(crate) fn kind_of(sem: &Sem, node: SId) -> SanyKind {
+    match &sem.node(node).kind {
+        SKind::Appl { .. } => SanyKind::Appl,
+        SKind::Let { body, .. } => SanyKind::Let(*body),
+        _ => SanyKind::Other,
+    }
 }
 
 impl Model {
     pub fn new() -> Model {
         Model {
-            nodes: Vec::new(),
+            tree: Tree::default(),
+            counts: Vec::new(),
+            secondary: Vec::new(),
+            labels: FastMap::default(),
             mismatch: None,
         }
     }
 
     fn add(&mut self, node: Option<SId>, root: Cm) -> Cm {
-        self.nodes.push(CmNode {
-            node,
-            root,
-            children: Vec::new(),
-            child_index: FastMap::default(),
-            lets: Vec::new(),
-            recursive: None,
-            is_primed: false,
-            is_unchanged: false,
-            count: 0,
-            secondary: 0,
-            label: None,
-        });
-        (self.nodes.len() - 1) as Cm
+        self.counts.push(0);
+        self.secondary.push(0);
+        self.tree.add(node, root)
     }
 
-    // `addChild`: a child already there is replaced in its place, as `LinkedHashMap.put` does with
-    // assertions off.
-    fn add_child(&mut self, parent: Cm, key: SId, child: Cm) {
-        let node = &mut self.nodes[parent as usize];
-        match node.child_index.get(&key) {
-            Some(&position) => node.children[position].1 = child,
-            None => {
-                node.child_index.insert(key, node.children.len());
-                node.children.push((key, child));
-            }
-        }
-    }
-
-    fn child(&self, parent: Cm, key: SId) -> Option<Cm> {
-        let node = &self.nodes[parent as usize];
-        // Most wrappers have a few children, which a scan finds sooner than a hash.
-        if node.children.len() <= 8 {
-            return node
-                .children
-                .iter()
-                .find(|(child, _)| *child == key)
-                .map(|&(_, cm)| cm);
-        }
-        node.child_index
-            .get(&key)
-            .map(|&position| node.children[position].1)
+    fn wrapper(&mut self, cm: Cm) -> &mut Wrapper {
+        &mut self.tree.wrappers[cm as usize]
     }
 
     /// `CostModel.get`: the wrapper of `node` under `cm`, or `cm` where TLC's lookup fails.
     pub fn get(&mut self, cm: Cm, node: SId, sem: &Sem) -> Cm {
-        if cm == NO_CM {
-            return cm;
-        }
-        let wrapper = &self.nodes[cm as usize];
-        if wrapper.node.is_none() {
-            // An ActionWrapper finds a LET's body for the LET.
-            let key = match &sem.node(node).kind {
-                SKind::Let { body, .. } => *body,
-                _ => node,
-            };
-            return self.child(cm, key).unwrap_or(cm);
-        }
-        if wrapper.node == Some(node) || !sem.node(node).is_appl() {
-            return cm;
-        }
-        if let Some(child) = self.child(cm, node) {
-            return child;
-        }
-        if let Some(recursive) = wrapper.recursive
-            && let Some(child) = self.child(recursive, node)
-        {
-            return child;
-        }
-        if let Some(&(_, child)) = wrapper.lets.iter().find(|(key, _)| *key == node) {
-            return child;
-        }
-        self.mismatch
-            .get_or_insert_with(|| format!("a lookup of the cost model TLC fails, at {node}"));
-        cm
+        self.tree
+            .get(cm, node, kind_of(sem, node))
+            .unwrap_or_else(|cm| {
+                self.mismatch.get_or_insert_with(|| {
+                    format!("a lookup of the cost model TLC fails, at {node}")
+                });
+                cm
+            })
     }
 
     pub fn increment(&mut self, cm: Cm) {
         if cm != NO_CM {
-            self.nodes[cm as usize].count += 1;
+            self.counts[cm as usize] += 1;
         }
     }
 
     pub fn add_count(&mut self, cm: Cm, count: u64) {
         if cm != NO_CM {
-            self.nodes[cm as usize].count += count;
+            self.counts[cm as usize] += count;
         }
     }
 
     pub fn add_secondary(&mut self, cm: Cm, count: u64) {
         if cm != NO_CM {
-            self.nodes[cm as usize].secondary += count;
+            self.secondary[cm as usize] += count;
         }
     }
 
     pub fn root_of(&self, cm: Cm) -> Cm {
-        if cm == NO_CM {
-            cm
-        } else {
-            self.nodes[cm as usize].root
-        }
+        self.tree.root_of(cm)
     }
 }
 
@@ -204,8 +144,8 @@ impl<'m, 's, 'ir> Creator<'m, 's, 'ir> {
         label: Root,
     ) -> Result<Cm, Unsupported> {
         let root = model.add(None, 0);
-        model.nodes[root as usize].root = root;
-        model.nodes[root as usize].label = Some(label);
+        model.wrapper(root).root = root;
+        model.labels.insert(root, label);
         let mut creator = Creator {
             model,
             sem,
@@ -268,15 +208,15 @@ impl<'m, 's, 'ir> Creator<'m, 's, 'ir> {
             return Err(Unsupported("a node of a standard module".into()));
         }
         let wrapper = self.model.add(Some(id), self.root);
-        self.model.nodes[wrapper as usize].is_unchanged = *op == Op::Code(Code::Unchanged);
+        self.model.wrapper(wrapper).is_unchanged = *op == Op::Code(Code::Unchanged);
         if !self.is_substitution && range.is_some_and(|range| self.primed.contains(&place(range))) {
-            self.model.nodes[wrapper as usize].is_primed = true;
+            self.model.wrapper(wrapper).is_primed = true;
         }
         // The body of a LET's definition: the LET's body's wrappers on the stack take it.
         if let Some(&in_body) = self.lets.get(&id) {
             for &on_stack in &self.stack {
-                if self.model.nodes[on_stack as usize].node == Some(in_body) {
-                    let lets = &mut self.model.nodes[on_stack as usize].lets;
+                if self.model.tree.wrappers[on_stack as usize].node == Some(in_body) {
+                    let lets = &mut self.model.wrapper(on_stack).lets;
                     match lets.iter_mut().find(|(key, _)| *key == id) {
                         Some(entry) => entry.1 = wrapper,
                         None => lets.push((id, wrapper)),
@@ -301,13 +241,13 @@ impl<'m, 's, 'ir> Creator<'m, 's, 'ir> {
             let dummy = substitution.model.add(None, self.root);
             substitution.stack.push(dummy);
             substitution.walk(body)?;
-            let children = &self.model.nodes[dummy as usize].children;
+            let children = &self.model.tree.wrappers[dummy as usize].children;
             let Some(&(key, child)) = children.first().filter(|_| children.len() == 1) else {
                 return Err(Unsupported(
                     "a constant replaced by a definition whose body is no application".into(),
                 ));
             };
-            self.model.add_child(wrapper, key, child);
+            self.model.tree.add_child(wrapper, key, child);
         }
         // An application of a RECURSIVE operator looks up what it doesn't find under the
         // nearest application of the same operator on the stack.
@@ -315,14 +255,14 @@ impl<'m, 's, 'ir> Creator<'m, 's, 'ir> {
             && self.sem.def(*def).is_recursive
         {
             let recursive = self.stack.iter().rev().copied().find(|&on_stack| {
-                self.model.nodes[on_stack as usize].node.is_some_and(|node| {
+                self.model.tree.wrappers[on_stack as usize].node.is_some_and(|node| {
                     matches!(&self.sem.node(node).kind, SKind::Appl { op: Op::Def(other), .. } if other == def)
                 })
             });
-            self.model.nodes[wrapper as usize].recursive = recursive;
+            self.model.wrapper(wrapper).recursive = recursive;
         }
         let parent = *self.stack.last().expect("a parent");
-        self.model.add_child(parent, id, wrapper);
+        self.model.tree.add_child(parent, id, wrapper);
         self.stack.push(wrapper);
         // The operator, then the operands, then the bounds' sets.
         if let Op::Def(def) = op {
@@ -490,7 +430,10 @@ impl JavaSet {
 }
 
 pub(crate) struct Printer<'m, 's, 'ir> {
-    pub model: &'m Model,
+    pub tree: &'m Tree,
+    pub counts: &'m [u64],
+    pub secondary: &'m [u64],
+    pub labels: &'m FastMap<Cm, Root>,
     pub sem: &'s Sem<'ir>,
     pub lines: Vec<Line>,
     /// Whether a line names an expression the IR holds without a place, which SANY has.
@@ -500,9 +443,9 @@ pub(crate) struct Printer<'m, 's, 'ir> {
 impl Printer<'_, '_, '_> {
     /// `ActionWrapper.report`.
     pub fn report_root(&mut self, root: Cm) {
-        let node = &self.model.nodes[root as usize];
-        let label = node.label.as_ref().expect("a root");
-        let (count, secondary) = (node.count, node.secondary);
+        let node = &self.tree.wrappers[root as usize];
+        let label = &self.labels[&root];
+        let (count, secondary) = (self.counts[root as usize], self.secondary[root as usize]);
         self.lines.push(match label.relation {
             Relation::Prop => (2774, label.label.clone()),
             Relation::Init => (
@@ -521,17 +464,16 @@ impl Printer<'_, '_, '_> {
     }
 
     fn pair(&self, cm: Cm) -> Pair {
-        let node = &self.model.nodes[cm as usize];
         Pair {
-            primary: node.count,
-            secondary: node.secondary,
+            primary: self.counts[cm as usize],
+            secondary: self.secondary[cm as usize],
         }
     }
 
     // `collectAndFreezeEvalCounts`, at the end of the run, where the counts no longer change: the
     // node's own counts and its children's, each child's set added in its own order.
     fn collect(&self, cm: Cm) -> JavaSet {
-        let node = &self.model.nodes[cm as usize];
+        let node = &self.tree.wrappers[cm as usize];
         let own = self.pair(cm);
         let mut result = JavaSet::new();
         if !own.is_zero() || node.is_primed || node.is_unchanged {
@@ -547,7 +489,7 @@ impl Printer<'_, '_, '_> {
 
     fn collect_children(&self, cm: Cm) -> JavaSet {
         let mut result = JavaSet::new();
-        for &(_, child) in &self.model.nodes[cm as usize].children {
+        for &(_, child) in &self.tree.wrappers[cm as usize].children {
             for pair in self.collect(child).iter() {
                 result.insert(pair);
             }
@@ -556,7 +498,7 @@ impl Printer<'_, '_, '_> {
     }
 
     fn print_line(&mut self, cm: Cm, level: usize, pair: Pair) {
-        let range = self.model.nodes[cm as usize]
+        let range = self.tree.wrappers[cm as usize]
             .node
             .and_then(|node| self.sem.node(node).range);
         self.is_unplaced |= range.is_none();
@@ -589,7 +531,7 @@ impl Printer<'_, '_, '_> {
     }
 
     fn print_children(&mut self, cm: Cm, level: usize) {
-        let children: Vec<Cm> = self.model.nodes[cm as usize]
+        let children: Vec<Cm> = self.tree.wrappers[cm as usize]
             .children
             .iter()
             .map(|&(_, child)| child)
@@ -601,7 +543,7 @@ impl Printer<'_, '_, '_> {
 
     /// `OpApplNodeWrapper.print`, and `UnchangedOpApplNodeWrapper.print`.
     fn print(&mut self, cm: Cm, level: usize) {
-        let node = &self.model.nodes[cm as usize];
+        let node = &self.tree.wrappers[cm as usize];
         let is_primed = node.is_primed || node.is_unchanged;
         let mut collected = self.collect_children(cm);
         if node.is_unchanged {
@@ -612,7 +554,7 @@ impl Printer<'_, '_, '_> {
             match collected.iter().next() {
                 None => self.print_self(cm, level),
                 Some(first) => {
-                    let count = node.count.max(first.primary);
+                    let count = self.counts[cm as usize].max(first.primary);
                     self.print_count(cm, level, count);
                 }
             }

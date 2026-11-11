@@ -2,7 +2,7 @@
 //! TLC would in a process of its own; the exit code is the first that is not success.
 
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 use tla_engine::Prints;
 use tla_engine::clock::Instant;
@@ -346,6 +346,8 @@ pub(crate) struct Relay<'ir> {
     /// a coverage report (`count` in `AbstractChecker.runTLC`).
     coverage_countdown: Option<i32>,
     is_coverage_reached: bool,
+    /// With -coverage, what the engine counted, or why it didn't (`Reporter::counted`).
+    counted: Option<Result<tla_trace::Counted, String>>,
     /// Whether the relay sent `Event::Declined`.
     is_declined: bool,
     /// Whether `-dump` writes each state the search found, as TLC's `StateWriter` does: the relay
@@ -394,6 +396,7 @@ impl<'ir> Relay<'ir> {
             is_periodic_reached: false,
             coverage_countdown: None,
             is_coverage_reached: false,
+            counted: None,
             is_declined: false,
             is_dumped,
             dumped: None,
@@ -465,6 +468,10 @@ impl Reporter for Relay<'_> {
             || self.is_periodic_reached
             || self.is_coverage_reached
             || self.is_declined
+    }
+
+    fn counted(&mut self, counted: Result<tla_trace::Counted, String>) {
+        self.counted = Some(counted);
     }
 
     // TLC prints each violation with its trace as it finds it under -continue (`printTrace`).
@@ -1109,7 +1116,16 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return report_not_native(printer, reason);
         }
     }
+    // With -coverage, the search counts TLC's cost model where it can, and the report is printed
+    // from what it counted; elsewhere it comes from the replay (design/coverage.md).
+    let coverage_sources = args
+        .has("-coverage")
+        .then(|| coverage::Sources::load(&ir, printer.host, spec_path, &java.libraries));
+    let coverage_plan = coverage_sources
+        .as_ref()
+        .and_then(|sources| coverage::plan(&ir, sources));
     let settings = Settings {
+        coverage: coverage_plan.map(Arc::new),
         is_violation_reported: true,
         workers,
         // The search shares its levels and the liveness checker's atoms between as many threads
@@ -1146,7 +1162,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let mut declined = None;
     let is_periodic = config.periodic.is_some();
     let ir_ref = &ir;
-    let (outcome, assumed_printed, dumped) = alongside(
+    let (outcome, assumed_printed, dumped, counted) = alongside(
         move || {
             let ir = ir_ref;
             let mut relay = Relay::new(
@@ -1160,7 +1176,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             );
             relay.coverage_countdown = coverage::get_countdown(args);
             let outcome = search(ir, &settings, &mut relay);
-            (outcome, relay.assumed_printed, relay.dumped)
+            (outcome, relay.assumed_printed, relay.dumped, relay.counted)
         },
         || {
             for event in receiver.iter() {
@@ -1294,12 +1310,12 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         }
         _ => {}
     }
-    if args.has("-coverage") {
-        let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
-        let directories: Vec<&Path> = std::iter::once(directory)
-            .chain(java.libraries.iter().map(Path::new))
-            .collect();
-        match coverage::compute(&ir, &outcome, printer.host, &directories, fingerprint_index) {
+    if let Some(sources) = &coverage_sources {
+        let compared = printer
+            .host
+            .get_variable("PROVE_IT_TEST_COVERAGE_COMPARE")
+            .is_some_and(|value| value == "1");
+        match coverage::compute(&ir, &outcome, sources, fingerprint_index, counted, compared) {
             Ok(messages) => printer.coverage = Some(messages),
             Err(why) => return report_not_native(printer, &why),
         }

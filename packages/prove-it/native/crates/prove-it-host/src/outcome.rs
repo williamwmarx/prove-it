@@ -82,6 +82,8 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         is_continued: false,
         // The addon's tables stay on the pages its host's allocator gives.
         large_region_advice: None,
+        // The addon prints no coverage report.
+        coverage: None,
     })
 }
 
