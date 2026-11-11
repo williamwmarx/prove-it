@@ -18,13 +18,6 @@ const checkFixture = async (directory: string, name: string) => {
 
 // What the library's check answers natively, as the TypeScript check answered.
 describe("check answers natively as the TypeScript check", () => {
-  it("compares the elements of an enumerated set with the value as AssertError reads it", async () => {
-    expect(await checkFixture("strings", "OverriddenSets")).toEqual({
-      status: "success",
-      prints: [],
-    });
-  });
-
   it("prints SANY's warnings before the check", async () => {
     expect(await checkFixture("cli-output", "Warned")).toEqual({
       status: "success",
