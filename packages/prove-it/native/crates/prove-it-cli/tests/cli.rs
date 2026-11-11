@@ -179,7 +179,10 @@ fn reads_the_command_line_as_tlc() {
     for (args, what) in [
         (&["-difftrace", "TCommit"][..], "the TLC option -difftrace"),
         (&["-simulate", "TCommit"], "the TLC option -simulate"),
-        (&["-coverage", "1", "TCommit"], "the TLC option -coverage"),
+        (
+            &["-maxSetSize", "10", "TCommit"],
+            "the TLC option -maxSetSize",
+        ),
         (&["-lncheck", "off", "TCommit"], "-lncheck off"),
         (&["TCommit.cfg"], "a module named as a configuration file"),
     ] {

@@ -10,6 +10,7 @@
 
 mod action;
 mod alias;
+mod coverage;
 mod dump;
 mod eval;
 mod failure;
@@ -24,6 +25,7 @@ mod split;
 mod value;
 
 pub use alias::Alias;
+pub use coverage::{CoverageMessage, CoverageReport};
 pub use dump::TraceDump;
 
 /// The texts TLC interns as it computes the model's constant definitions, `definitions` by index

@@ -1,0 +1,39 @@
+Starting... (_)
+Computing initial states...
+Finished computing initial states: 2 distinct states generated at _.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 8.7E-13
+The coverage statistics at _ (see https://explain.tlapl.us/module-coverage-statistics for how to interpret the following statistics).
+<x line 3, col 11 to line 3, col 11 of module Counter>: 4276
+<y line 3, col 14 to line 3, col 14 of module Counter>: 2
+<Init line 5, col 1 to line 5, col 4 of module Counter>: 2:2
+  line 5, col 18 to line 5, col 27 of module Counter: 2
+  |line 5, col 24 to line 5, col 27 of module Counter: 1
+<Step line 6, col 1 to line 6, col 4 of module Counter>: 3998:3998
+  line 6, col 12 to line 6, col 19 of module Counter: 3998
+  |line 6, col 12 to line 6, col 12 of module Counter: 4000
+  line 7, col 34 to line 7, col 42 of module Counter: 3998
+  line 8, col 12 to line 8, col 22 of module Counter: 3998
+<Flip line 9, col 1 to line 9, col 4 of module Counter (9 12 9 46)>: 0:2000
+  line 9, col 12 to line 9, col 16 of module Counter: 6000
+  |line 9, col 12 to line 9, col 12 of module Counter: 4000
+  line 9, col 21 to line 9, col 31 of module Counter: 2000
+  line 9, col 36 to line 9, col 46 of module Counter: 2000
+<Flip line 9, col 1 to line 9, col 4 of module Counter (10 12 10 41)>: 0:2000
+  line 10, col 12 to line 10, col 16 of module Counter: 6000
+  |line 10, col 12 to line 10, col 12 of module Counter: 4000
+  line 10, col 21 to line 10, col 26 of module Counter: 2000
+  line 10, col 31 to line 10, col 41 of module Counter: 2000
+<Inv line 14, col 1 to line 14, col 3 of module Counter>
+  line 14, col 8 to line 14, col 13 of module Counter: 4000
+<Moving line 13, col 1 to line 13, col 6 of module Counter>: 7998:7998
+  line 13, col 11 to line 13, col 17 of module Counter: 7998
+<Small line 12, col 1 to line 12, col 5 of module Counter>: 8000:8000
+  line 12, col 10 to line 12, col 21 of module Counter: 8000
+End of statistics.
+8000 states generated, 4000 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2000.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+Finished in _ at (_)

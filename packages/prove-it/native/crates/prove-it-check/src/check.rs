@@ -3,6 +3,7 @@
 
 use std::path::Path;
 use std::sync::mpsc;
+use std::time::Duration;
 use tla_engine::Prints;
 use tla_engine::clock::Instant;
 
@@ -15,6 +16,7 @@ use tla_values::print::{is_printable, is_printable_normalized, write_value};
 use tla_values::{Id, Store};
 
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
+use crate::coverage;
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
@@ -302,6 +304,9 @@ enum Event {
     /// TLC would evaluate the `_PERIODIC` expression now, as it prints its progress, which the
     /// engine doesn't: the search ends as not native.
     Periodic,
+    /// TLC would print a coverage report now, as it prints its progress, at a point that depends
+    /// on how fast it runs: the search ends as not native.
+    CoverageReported,
     /// A part of the `-dump` file's text, in order, for the host to append.
     Dumped(String),
     /// Under -continue, a violation the search went on past, as TLC reports it.
@@ -329,6 +334,10 @@ struct Relay<'ir> {
     /// its progress; the search ends there, if it gets that far.
     is_periodic: bool,
     is_periodic_reached: bool,
+    /// With -coverage, how many more progress reports TLC prints before the one it follows with
+    /// a coverage report (`count` in `AbstractChecker.runTLC`).
+    coverage_countdown: Option<i32>,
+    is_coverage_reached: bool,
     /// Whether the relay sent `Event::Declined`.
     is_declined: bool,
     /// Whether `-dump` writes each state the search found, as TLC's `StateWriter` does: the relay
@@ -409,7 +418,10 @@ impl Relay<'_> {
 
 impl Reporter for Relay<'_> {
     fn is_cancelled(&self) -> bool {
-        self.is_misprinted || self.is_periodic_reached || self.is_declined
+        self.is_misprinted
+            || self.is_periodic_reached
+            || self.is_coverage_reached
+            || self.is_declined
     }
 
     // TLC prints each violation with its trace as it finds it under -continue (`printTrace`).
@@ -480,6 +492,16 @@ impl Reporter for Relay<'_> {
             self.is_periodic_reached = true;
             let _ = self.sender.send(Event::Periodic);
             return;
+        }
+        // TLC prints a coverage report after the progress where `count` is 0, which it counts
+        // down from -coverage's minutes once per progress report (ModelChecker.runTLCContinueDoing).
+        if let Some(countdown) = &mut self.coverage_countdown {
+            if *countdown == 0 {
+                self.is_coverage_reached = true;
+                let _ = self.sender.send(Event::CoverageReported);
+                return;
+            }
+            *countdown -= 1;
         }
         let _ = self
             .sender
@@ -733,6 +755,13 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         Some(workers) => workers.parse().unwrap_or(1),
         None => 1,
     };
+    // With several workers TLC's counts depend on how the workers interleave.
+    if args.has("-coverage") && workers > 1 {
+        return report_not_native(
+            printer,
+            "coverage on more than one worker is timing-dependent in TLC",
+        );
+    }
     print_welcome(printer);
     print_startup_banner(printer, fingerprint_index, seed, workers);
     // TLC opens the file before it reads the configuration, and names it with a suffix of .dump
@@ -970,6 +999,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let mut checking = None;
     let mut is_misprinted = false;
     let mut is_periodic_reached = false;
+    let mut is_coverage_reached = false;
     let mut is_dump_unwritten = false;
     let mut declined = None;
     let is_periodic = config.periodic.is_some();
@@ -982,6 +1012,8 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 is_misprinted: false,
                 is_periodic,
                 is_periodic_reached: false,
+                coverage_countdown: coverage::get_countdown(args),
+                is_coverage_reached: false,
                 is_declined: false,
                 is_dumped,
                 dumped: None,
@@ -1046,6 +1078,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         is_periodic_reached = true;
                         break;
                     }
+                    Event::CoverageReported => {
+                        is_coverage_reached = true;
+                        break;
+                    }
                     Event::Continued(report) => print_continued(printer, &report),
                     Event::Declined(reason) => {
                         declined = Some(reason);
@@ -1070,6 +1106,12 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         return report_not_native(
             printer,
             "_PERIODIC, which TLC evaluates as it prints its progress",
+        );
+    }
+    if is_coverage_reached {
+        return report_not_native(
+            printer,
+            "coverage TLC reports part way through the search is timing-dependent",
         );
     }
     if is_misprinted {
@@ -1118,6 +1160,34 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             );
         }
         _ => {}
+    }
+    if args.has("-coverage") {
+        let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
+        let directories: Vec<&Path> = std::iter::once(directory)
+            .chain(java.libraries.iter().map(Path::new))
+            .collect();
+        match coverage::compute(&ir, &outcome, printer.host, &directories, fingerprint_index) {
+            Ok(messages) => printer.coverage = Some(messages),
+            Err(why) => return report_not_native(printer, &why),
+        }
+        // TLC ends a report of a run of more than 5 minutes with 2777 rather than 2202, by its own
+        // clock, which a native run past the cut can't rule out (design/cli.md, "-coverage").
+        let cut = printer
+            .host
+            .get_variable("PROVE_IT_TEST_COVERAGE_CUT")
+            .and_then(|seconds| seconds.parse().ok())
+            .map_or(coverage::CUT, Duration::from_secs);
+        if printer
+            .coverage
+            .as_ref()
+            .is_some_and(|messages| !messages.is_empty())
+            && start.elapsed() > cut
+        {
+            return report_not_native(
+                printer,
+                "coverage of a run TLC may take more than 5 minutes over, which ends its report otherwise",
+            );
+        }
     }
     let (counts, fingerprints) = match outcome {
         SearchOutcome::Complete {
@@ -1508,6 +1578,9 @@ fn print_liveness_finished(printer: &mut Printer, checking: Instant) {
 /// After a search, TLC prints how many states it found and how deep it went, after the progress
 /// with -tool.
 pub(crate) fn print_statistics(printer: &mut Printer, statistics: &Statistics, start: Instant) {
+    if let Some(messages) = printer.coverage.take() {
+        coverage::print(printer, &messages);
+    }
     if printer.is_tool {
         print_progress(printer, statistics, Some(start));
     }
