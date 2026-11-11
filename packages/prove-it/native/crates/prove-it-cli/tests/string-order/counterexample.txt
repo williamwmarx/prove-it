@@ -1,0 +1,12 @@
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Up line 10, col 7 to line 10, col 25 of module Stop>
+x = 1
+
+State 3: <Up line 10, col 7 to line 10, col 25 of module Stop>
+x = 2
+
+<<[x |-> 0], [x |-> 1], [x |-> 2]>>
+{<<1, "Up", 2>>, <<2, "Up", 3>>}

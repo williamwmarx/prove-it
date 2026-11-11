@@ -208,6 +208,37 @@
     ]
   },
   {
+    "id": "tla-rs/test_cases/should_pass/function_syntax/function_syntax.cfg",
+    "mode": "te",
+    "pair": "tlc/native",
+    "reason": "TLC overflows the Java stack on the recursive definition, with its default stack size; Prove It evaluates it. This depends on TLC's runtime, not on Prove It.",
+    "diff": [
+      "-exit 75",
+      "+exit 0",
+      "-Error: This was a Java StackOverflowError. It was probably the result",
+      "-of an incorrect recursive function definition that caused TLC to enter",
+      "-an infinite loop when trying to compute the function or its application",
+      "-to an element in its putative domain.",
+      "-While working on the initial state:",
+      "-x = 0",
+      "-",
+      "-Error: The error occurred when TLC was evaluating the nested",
+      "-expressions at the following positions:",
+      "-    The error call stack is empty.",
+      "-",
+      "-1 states generated, 1 distinct states found, 1 states left on queue.",
+      "-The depth of the complete state graph search is 1.",
+      "+Finished computing initial states: 1 distinct state generated at _.",
+      "+Model checking completed. No error has been found.",
+      "+  Estimates of the probability that TLC did not check all reachable states",
+      "+  because two distinct states had the same fingerprint:",
+      "+  calculated (optimistic):  val = 0.0",
+      "+3 states generated, 3 distinct states found, 0 states left on queue.",
+      "+The depth of the complete state graph search is 3.",
+      "+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1)."
+    ]
+  },
+  {
     "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
     "mode": "default",
     "pair": "tlc/rust",
@@ -275,6 +306,16 @@
       "-  fingerprint |-> \"-7992595565342442794\",",
       "-  install |-> \"unknown\" ]",
       "+[install |-> \"unknown\", mode |-> \"bfs\", deadlock |-> TRUE, seed |-> \"4\", fingerprint |-> \"0\", worker |-> 1]"
+    ]
+  },
+  {
+    "id": "tlc/tlatools/org.lamport.tlatools/test-model/qlearning/Counter.cfg",
+    "mode": "te",
+    "pair": "tlc/native",
+    "reason": "TLCGet(\"config\") holds where TLC is installed, which TLC prints from its own runtime and the native checker has none of. This depends on TLC's runtime, not on Prove It.",
+    "diff": [
+      "-  install |-> \"/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar\" ]",
+      "+  install |-> \"unknown\" ]"
     ]
   }
 ]

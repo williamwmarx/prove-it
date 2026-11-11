@@ -6,7 +6,10 @@ use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 
 use crate::host::Host;
+use crate::outcome::{Outcome, Reported, ReportedState};
+use crate::plain::Variable;
 use crate::time::format_date;
+use crate::trace::format_variables;
 
 pub const GENERAL: u32 = 1000;
 pub const COMMAND_LINE_ERROR: u32 = 1102;
@@ -53,6 +56,8 @@ pub const SYMMETRY_SET_TOO_SMALL: u32 = 2300;
 pub const CONSTANT_INVARIANT: u32 = 2149;
 pub const STATE_LEVEL_PROPERTY: u32 = 2255;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
+pub const CONFIG_ID_REQUIRES_NO_ARG: u32 = 2228;
+pub const CONFIG_ID_MUST_NOT_BE_CONSTANT: u32 = 2233;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -63,11 +68,13 @@ pub enum Level {
 }
 
 /// Where a check writes: what TLC prints, and Prove It's own notes, such as that a model isn't
-/// native yet, which the binary writes to stdout and stderr; and the host it reads from.
+/// native yet, which the binary writes to stdout and stderr; the host it reads from; and the
+/// outcome it records as it prints, which the library reads.
 pub struct Output<'o> {
     pub out: &'o mut dyn Write,
     pub err: &'o mut dyn Write,
     pub host: &'o dyn Host,
+    pub outcome: Outcome,
 }
 
 /// Writes TLC's messages. MP.printWarning prints a warning once, which -nowarning drops, and
@@ -82,6 +89,11 @@ pub struct Printer<'o> {
     /// Whether the run records the trace TLC writes beside the spec for its trace exploration
     /// spec: TLC's default, where tla-front read the spec.
     pub is_trace_recorded: bool,
+    /// TLC's coverage report of the run, which comes before the statistics.
+    pub coverage: Option<Vec<tla_trace::CoverageMessage>>,
+    /// Whether it printed a state of an error trace, which TLC records for that spec.
+    pub is_trace_printed: bool,
+    pub outcome: &'o mut Outcome,
 }
 
 impl<'o> Printer<'o> {
@@ -94,6 +106,49 @@ impl<'o> Printer<'o> {
             err: &mut *output.err,
             host: output.host,
             is_trace_recorded: false,
+            coverage: None,
+            is_trace_printed: false,
+            outcome: &mut output.outcome,
+        }
+    }
+
+    /// The message TLC reports a violation or an error with, which the outcome records with the
+    /// states printed after it.
+    pub fn report(&mut self, code: u32, headline: &str) {
+        self.print(code, Level::Error, headline);
+        self.outcome.violations.push(Reported {
+            code,
+            headline: headline.to_string(),
+            states: Vec::new(),
+            loop_start: None,
+        });
+    }
+
+    /// A state of the behavior TLC reports, at its position from 1.
+    pub fn state(&mut self, position: usize, label: &str, variables: Vec<Variable>) {
+        self.print(
+            STATE_PRINT_2,
+            Level::State,
+            &format!("{position}: <{label}>\n{}", format_variables(&variables)),
+        );
+        if let Some(reported) = self
+            .outcome
+            .violations
+            .last_mut()
+            .filter(|_| self.host.is_plain())
+        {
+            reported.states.push(ReportedState {
+                label: label.to_string(),
+                variables,
+            });
+        }
+    }
+
+    /// A line the spec printed as TLC searched, which the outcome records where its caller reads it.
+    pub fn printed(&mut self, text: &str) {
+        self.line(text);
+        if self.host.is_plain() {
+            self.outcome.prints.push(text.to_string());
         }
     }
 
@@ -107,6 +162,7 @@ impl<'o> Printer<'o> {
         if is_warning && !self.is_warning_enabled {
             return;
         }
+        self.is_trace_printed |= level == Level::State;
         let message = if self.is_tool {
             format!(
                 "@!@!@STARTMSG {code}:{} @!@!@\n{text}\n@!@!@ENDMSG {code} @!@!@",

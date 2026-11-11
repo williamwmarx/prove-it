@@ -6,6 +6,9 @@ dist
 coverage
 # TLC's coverage test models keep their golden IRs.
 !packages/prove-it/tests/conformance/ir/**/coverage/
+# The native binary's port of TLC's coverage report, and its tests.
+!packages/prove-it/native/crates/tla-trace/src/coverage/
+!packages/prove-it/native/crates/prove-it-cli/tests/coverage/
 *.tsbuildinfo
 
 # Copied into the package by prepack

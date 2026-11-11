@@ -62,6 +62,8 @@ const TEMPORAL_OPERATORS: [&str; 2] = ["~>", "-+->"];
 /// The facts of every definition of the environment, by the definition's address.
 pub struct DefinitionFacts {
     ids: FastMap<usize, usize>,
+    // The definitions `ids` keys, kept so their addresses aren't reused.
+    _definitions: Vec<Rc<Definition>>,
     rows: Vec<u32>,
     words: usize,
 }
@@ -414,7 +416,12 @@ pub fn create_definition_facts(environment: &Environment) -> DefinitionFacts {
             }
         })
         .collect();
-    DefinitionFacts { ids, rows, words }
+    DefinitionFacts {
+        ids,
+        _definitions: definitions,
+        rows,
+        words,
+    }
 }
 
 impl DefinitionFacts {

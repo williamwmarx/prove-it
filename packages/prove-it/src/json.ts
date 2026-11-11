@@ -99,22 +99,31 @@ const toJsonObject = (value: Value) => {
   return toFunctionJson(value, TO_JSON_OBJECT_SIGNATURE);
 };
 
-// TLC reads a JSON number with Gson's intValue, which truncates the exact decimal toward zero and
-// keeps its low 32 bits, so 3000000000 becomes -1294967296 and 1.5 becomes 1.
-const toInteger = (source: string) => {
-  const [, sign, whole = "0", fraction = "", exponent = "0"] =
-    /^(-?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source) ?? [];
-  const digits = BigInt(whole + fraction);
-  const shift = Number(exponent) - fraction.length;
-  const magnitude = shift >= 0 ? digits * 10n ** BigInt(shift) : digits / 10n ** BigInt(-shift);
-  return Number(BigInt.asIntN(32, sign === "-" ? -magnitude : magnitude));
+// The text of each number JSON.parse read, which the parse holds in its place.
+const numberSources = new WeakMap<object, string>();
+
+const INTEGER_PATTERN = /^-?\d+$/;
+
+// TLC reads a JSON number by its text with Integer.parseInt, as it converts the value: a 32-bit
+// integer, -0 as 0, and fails on any other.
+const toInteger = (source: string, method: string) => {
+  const integer = Number(source);
+  if (!INTEGER_PATTERN.test(source) || integer < -(2 ** 31) || integer >= 2 ** 31) {
+    throw createJavaOverrideError(
+      method,
+      `Cannot convert value: expected a 32-bit integer JSON number, but found ${source}`,
+    );
+  }
+  return integer || 0;
 };
 
 const fromJson = (json: unknown, method: string): Value => {
-  if (typeof json === "boolean" || typeof json === "number") return json;
+  if (typeof json === "boolean") return json;
   if (typeof json === "string") return rankString(json);
   if (Array.isArray(json)) return createTuple(json.map((element) => fromJson(element, method)));
   if (json !== null && typeof json === "object") {
+    const source = numberSources.get(json);
+    if (source !== undefined) return toInteger(source, method);
     return createRecord(
       Object.entries(json).map(([key, field]): [string, Value] => [
         rankString(key),
@@ -132,9 +141,12 @@ const parseJson = (text: string, method: string) => {
   if (text.trim() === "") return fromJson(null, method);
   try {
     return fromJson(
-      JSON.parse(text, (_, value: unknown, context?: ParseContext) =>
-        typeof value === "number" ? toInteger(context?.source ?? String(value)) : value,
-      ),
+      JSON.parse(text, (_, value: unknown, context?: ParseContext) => {
+        if (typeof value !== "number") return value;
+        const number = {};
+        numberSources.set(number, context?.source ?? String(value));
+        return number;
+      }),
       method,
     );
   } catch (error) {

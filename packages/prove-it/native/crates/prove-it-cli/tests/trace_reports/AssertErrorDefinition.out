@@ -1,0 +1,15 @@
+exit 10
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module AssertErrorDefinition
+Linting of module TLCExt
+Linting of module AssertErrorDefinition
+Error: Evaluating assumption line 6, col 8 to line 6, col 37 of module AssertErrorDefinition failed.
+Attempted to apply the operator overridden by the Java method
+public static synchronized tlc2.value.impl.Value tlc2.module.TLCExt.assertError(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),
+but it produced the following error:
+In computing AssertError, a non-string expression (line 6, col 20 to line 6, col 26 of module AssertErrorDefinition) was used as the err of an AssertError(err, exp).

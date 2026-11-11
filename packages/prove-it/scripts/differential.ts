@@ -16,16 +16,18 @@
 // --native-only runs the native binary alone, without the CLI's runs, so a pass over the
 // whole corpus takes minutes, and fails if it prints something TLC doesn't that
 // known-differences.json doesn't list for tlc/native; a run it declines as not native fails nothing.
+// --modes te, with --native-only, compares it in TLC's own default, where TLC records the trace and
+// writes the trace exploration files, which the transcripts hold.
 // A run without a TLC recording fails the check, since nothing compared it with TLC. --timeout-ms
 // stops a checker that runs longer, and without it nothing does.
 // Usage: bun scripts/run.ts differential [--max-tlc-ms 20000] [--filter text] [--concurrency 3]
-//        [--modes default,tool] [--stop-at] [--timeout-ms ms] [--update] [--out path]
+//        [--modes default,tool,te] [--stop-at] [--timeout-ms ms] [--update] [--out path]
 //        [--native path [--native-only]]
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import {
   CONFORMANCE_DIRECTORY,
@@ -51,6 +53,8 @@ import {
   OUTPUT_MODES,
   type OutputMode,
   readRecording,
+  RECORDED_MODES,
+  runTakingTraceFiles,
 } from "./tlc-recordings";
 
 interface Output {
@@ -91,7 +95,7 @@ const concurrency = Number(getOption("--concurrency") ?? 3);
 const timeoutOption = getOption("--timeout-ms");
 const timeoutMilliseconds = timeoutOption === undefined ? undefined : Number(timeoutOption);
 const modes = (getOption("--modes")?.split(",") ?? OUTPUT_MODES).filter(
-  (mode): mode is OutputMode => OUTPUT_MODES.some((known) => known === mode),
+  (mode): mode is OutputMode => RECORDED_MODES.some((known) => known === mode),
 );
 const isStopping = process.argv.includes("--stop-at");
 const isUpdate = process.argv.includes("--update");
@@ -101,16 +105,17 @@ const nativeOption = getOption("--native");
 const nativeBinary = nativeOption && resolve(nativeOption);
 const isNativeOnly = process.argv.includes("--native-only");
 if (isNativeOnly && !nativeBinary) throw new Error("--native-only needs --native");
+if (modes.includes("te") && !isNativeOnly) throw new Error("--modes te needs --native-only");
 
 // Runs a checker with TLC's command line for the model, from the model's directory.
-const runChecker = (
+const spawnChecker = (
   command: string,
   args: string[],
   model: CorpusModel,
   mode: OutputMode,
   environment: NodeJS.ProcessEnv,
 ) =>
-  new Promise<Output>((resolve) => {
+  new Promise<{ status: string; isAborted: boolean; stdout: string; stderr: string }>((resolve) => {
     const metadataDirectory = mkdtempSync(join(tmpdir(), "prove-it-differential-"));
     const child = spawn(
       command,
@@ -128,21 +133,37 @@ const runChecker = (
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("close", (exitCode, signal) => {
       rmSync(metadataDirectory, { recursive: true, force: true });
-      const output = Buffer.concat(stdout).toString("utf8");
-      const errorOutput = Buffer.concat(stderr).toString("utf8");
       resolve({
-        transcript: getTranscript(
-          signal === "SIGKILL" ? `killed after ${timeoutMilliseconds} ms` : String(exitCode),
-          output,
-          errorOutput,
-        ),
+        status: signal === "SIGKILL" ? `killed after ${timeoutMilliseconds} ms` : String(exitCode),
         isAborted: signal !== null && !child.killed,
-        engineLine: getEngineLine(errorOutput),
-        stdout: output,
-        stderr: errorOutput,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
       });
     });
   });
+
+// A run in TLC's own default writes the trace exploration files, which its transcript holds.
+const runChecker = async (
+  command: string,
+  args: string[],
+  model: CorpusModel,
+  mode: OutputMode,
+  environment: NodeJS.ProcessEnv,
+): Promise<Output> => {
+  const run = () => spawnChecker(command, args, model, mode, environment);
+  const checked =
+    mode === "te"
+      ? await runTakingTraceFiles(dirname(model.specPath), run)
+      : { result: await run(), files: {} };
+  const result = checked.result;
+  return {
+    transcript: getTranscript(result.status, result.stdout, result.stderr, checked.files),
+    isAborted: result.isAborted,
+    engineLine: getEngineLine(result.stderr),
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+};
 
 const runCli = (model: CorpusModel, mode: OutputMode, environment: NodeJS.ProcessEnv) =>
   runChecker(process.execPath, [CLI_PATH], model, mode, environment);
@@ -243,7 +264,13 @@ const work = async (queue: { model: CorpusModel; mode: OutputMode }[], total: nu
     const recording = readRecording(model, mode);
     if (!recording) missing.push(`${model.id} ${mode}`);
     const tlc =
-      recording && getTranscript(String(recording.exitCode), recording.stdout, recording.stderr);
+      recording &&
+      getTranscript(
+        String(recording.exitCode),
+        recording.stdout,
+        recording.stderr,
+        recording.files,
+      );
     if (nativeBinary && isNativeOnly) {
       const native = await runChecker(nativeBinary, [], model, mode, process.env);
       if (tlc) compareNative(model.id, mode, tlc, native);

@@ -394,7 +394,7 @@ impl Store {
         if self.is_kept_lazy(id) {
             return NONE;
         }
-        let is_ordered = |store: &Store| store.text(meta.payload).rank < store.unordered_rank;
+        let is_ordered = |store: &Store| store.is_startup_rank(store.text(meta.payload).rank);
         match meta.kind {
             KIND_BOOL => BOOL,
             KIND_INT => INT,

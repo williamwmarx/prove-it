@@ -1,14 +1,16 @@
 //! Decides the text tlapm sends LS4, as LS4 does: unsat when the negated obligation has no model,
-//! which proves the obligation: `ptl/decide.ts`.
+//! which proves the obligation.
 
 use prove_decide::{DecideError, Decision, Limits, Statistic, Verdict};
 
 use crate::tableau::{Formula, Formulas, get_satisfiability};
 
-/// Where the TypeScript throws a `TlaSyntaxError`, the port declines, so that the TypeScript reads
-/// the input again and throws it with its own message.
-fn not_ls4() -> DecideError {
-    DecideError::Declined("the text isn't LS4 input this port reads".into())
+/// Text that isn't LS4 input is a prover error, which tlapm counts as a failure.
+fn not_ls4(expected: &str, found: Option<&str>) -> DecideError {
+    DecideError::Prover(format!(
+        "Expected {expected} in LS4 input, found {}",
+        found.unwrap_or("the end")
+    ))
 }
 
 /// The tokens of `<->|->|[()~&|]|[\w']+|\S`, on ASCII text.
@@ -54,7 +56,7 @@ impl<'a> Parser<'a> {
     }
 
     fn take(&mut self) -> Result<&'a str, DecideError> {
-        let token = self.peek().ok_or_else(not_ls4)?;
+        let token = self.peek().ok_or_else(|| not_ls4("a formula", None))?;
         self.position += 1;
         Ok(token)
     }
@@ -69,10 +71,13 @@ impl<'a> Parser<'a> {
         match token {
             "(" => {
                 let inner = self.parse_equiv()?;
-                if self.take()? != ")" {
-                    return Err(not_ls4());
+                match self.peek() {
+                    Some(")") => {
+                        self.position += 1;
+                        Ok(inner)
+                    }
+                    found => Err(not_ls4(")", found)),
                 }
-                Ok(inner)
             }
             "~" | "not" => {
                 let body = self.parse_unary()?;
@@ -104,7 +109,7 @@ impl<'a> Parser<'a> {
                 };
                 Ok(self.add(Formula::Atom(atom)))
             }
-            _ => Err(not_ls4()),
+            _ => Err(not_ls4("a formula", Some(token))),
         }
     }
 
@@ -150,7 +155,7 @@ impl<'a> Parser<'a> {
 
 fn parse_ls4(text: &str) -> Result<Formulas, DecideError> {
     if !text.is_ascii() {
-        return Err(not_ls4());
+        return Err(DecideError::Prover("Expected ASCII LS4 input".into()));
     }
     let mut parser = Parser {
         tokens: tokenize(text),
@@ -162,8 +167,10 @@ fn parse_ls4(text: &str) -> Result<Formulas, DecideError> {
         },
     };
     parser.formulas.root = parser.parse_equiv()?;
-    if parser.position < parser.tokens.len() {
-        return Err(not_ls4());
+    if let Some(token) = parser.peek() {
+        return Err(DecideError::Prover(format!(
+            "Expected the end of LS4 input, found {token}"
+        )));
     }
     Ok(parser.formulas)
 }

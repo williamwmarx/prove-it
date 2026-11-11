@@ -1,0 +1,84 @@
+@!@!@STARTMSG 2262:0 @!@!@
+TLC2 Version 2026.11.11.000927
+@!@!@ENDMSG 2262 @!@!@
+@!@!@STARTMSG 2187:0 @!@!@
+Running breadth-first search Model-Checking with fp 127 and seed 5467478051987254896 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 15483] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+@!@!@ENDMSG 2187 @!@!@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Parsing file DumpInvariant.tla
+Parsing file Naturals.tla
+Parsing file Sequences.tla
+Parsing file _TLCTrace.tla
+Parsing file _JsonTrace.tla
+Parsing file TLC.tla
+Parsing file TLCExt.tla
+Parsing file FiniteSets.tla
+Parsing file Integers.tla
+Parsing file Json.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module Json
+Semantic processing of module _JsonTrace
+Semantic processing of module DumpInvariant
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module Json
+Linting of module _JsonTrace
+Linting of module DumpInvariant
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+Starting... (2026-11-11 00:09:28)
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2189:0 @!@!@
+Computing initial states...
+@!@!@ENDMSG 2189 @!@!@
+@!@!@STARTMSG 2190:0 @!@!@
+Finished computing initial states: 1 distinct state generated at 2026-11-11 00:09:28.
+@!@!@ENDMSG 2190 @!@!@
+@!@!@STARTMSG 2110:1 @!@!@
+Invariant Inv is violated.
+@!@!@ENDMSG 2110 @!@!@
+@!@!@STARTMSG 2121:1 @!@!@
+The behavior up to this point is:
+@!@!@ENDMSG 2121 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+1: <Initial predicate>
+/\ pc = (p1 :> "idle" @@ p2 :> "idle")
+/\ log = <<>>
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+2: <Next line 7, col 11 to line 9, col 61 of module DumpInvariant>
+/\ pc = (p1 :> "busy" @@ p2 :> "idle")
+/\ log = <<[who |-> p1, at |-> 0]>>
+
+@!@!@ENDMSG 2217 @!@!@
+@!@!@STARTMSG 2217:4 @!@!@
+3: <Next line 7, col 11 to line 9, col 61 of module DumpInvariant>
+/\ pc = (p1 :> "busy" @@ p2 :> "busy")
+/\ log = <<[who |-> p1, at |-> 0], [who |-> p2, at |-> 1]>>
+
+@!@!@ENDMSG 2217 @!@!@
+"CounterExample written: DumpInvariant.bin"
+"CounterExample written: DumpInvariant.json"
+@!@!@STARTMSG 2200:0 @!@!@
+Progress(3) at 2026-11-11 00:09:28: 4 states generated (181 s/min), 4 distinct states found (181 ds/min), 1 states left on queue.
+@!@!@ENDMSG 2200 @!@!@
+@!@!@STARTMSG 2199:0 @!@!@
+4 states generated, 4 distinct states found, 1 states left on queue.
+@!@!@ENDMSG 2199 @!@!@
+@!@!@STARTMSG 2194:0 @!@!@
+The depth of the complete state graph search is 3.
+@!@!@ENDMSG 2194 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+Finished in 1327ms at (2026-11-11 00:09:28)
+@!@!@ENDMSG 2186 @!@!@

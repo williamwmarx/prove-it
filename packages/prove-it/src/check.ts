@@ -122,7 +122,6 @@ import type { TlcVersion } from "./tlc/version";
 import {
   combineHash,
   createCanonicalizer,
-  createModelValue,
   forgetDeepWrittenOrder,
   forgetNormalizedWrittenOrder,
   formatState,
@@ -135,6 +134,7 @@ import {
   setStringOrder,
   setValueVersion,
   toFiniteFunction,
+  UNDEFINED_VARIABLE,
   type Value,
 } from "./values";
 
@@ -1238,8 +1238,7 @@ const searchStates = (
     // TLC 1.7.4 says a variable is not assigned rather than not defined.
     const verb = is174 ? "assigned" : "defined";
     const message = `Successor state is not completely specified by ${subject}. The following variable${missing.length > 1 ? "s are" : " is"} not ${verb}: ${missing.join(", ")}.\n`;
-    const undefinedValue = createModelValue("null");
-    const partial = error.state.map((value) => value ?? undefinedValue);
+    const partial = error.state.map((value) => value ?? UNDEFINED_VARIABLE);
     const failure = createFailureResult(error, getStateTrace(index));
     return withOutDegrees({
       ...failure,
@@ -2142,7 +2141,7 @@ const searchStates = (
         const illegal = createFailureResult(
           error,
           { trace: [] },
-          { initialState: error.state.map((value) => value ?? createModelValue("null")) },
+          { initialState: error.state.map((value) => value ?? UNDEFINED_VARIABLE) },
         );
         return {
           ...illegal,

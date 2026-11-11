@@ -1,10 +1,14 @@
 ----------------------------- MODULE JsonValues -----------------------------
 EXTENDS Integers, Json, TLCExt
 
-\* TLC reads a JSON number with Gson, which truncates it toward zero and keeps
-\* its low 32 bits.
-ASSUME JsonDeserialize("Numbers.json") =
-           <<1, -2, 1, -1, 1000, -1294967296, -350287150, 0, 0>>
+\* TLC reads a JSON number by its text with Integer.parseInt, so only a 32-bit
+\* integer, and fails on the first other.
+ASSUME JsonDeserialize("Integers.json") =
+           <<1, -2, 0, 0, 2147483647, -2147483647 - 1>>
+
+ASSUME AssertError(
+           "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException,\nbut it produced the following error:\nCannot convert value: expected a 32-bit integer JSON number, but found 1.5",
+           JsonDeserialize("Numbers.json"))
 
 \* Newline delimited JSON skips blank lines and trims the others.
 ASSUME ndJsonDeserialize("Lines.ndjson") = <<1, <<2, "x">>, [a |-> TRUE]>>

@@ -1,0 +1,59 @@
+Starting... (_)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at _.
+Error: Invariant Small is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ f = <<0, 0>>
+/\ s = {}
+
+State 2: <Grow line 5, col 9 to line 6, col 36 of module Sets>
+/\ f = <<0, 0>>
+/\ s = {1}
+
+State 3: <Grow line 5, col 9 to line 6, col 36 of module Sets>
+/\ f = <<0, 0>>
+/\ s = {1, 2}
+
+State 4: <Grow line 5, col 9 to line 6, col 36 of module Sets>
+/\ f = <<0, 0>>
+/\ s = {1, 2, 3}
+
+State 5: <Grow line 5, col 9 to line 6, col 36 of module Sets>
+/\ f = <<0, 0>>
+/\ s = {1, 2, 3, 4}
+
+The coverage statistics at _ (see https://explain.tlapl.us/module-coverage-statistics for how to interpret the following statistics).
+<f line 3, col 14 to line 3, col 14 of module Sets>: 4
+<s line 3, col 11 to line 3, col 11 of module Sets>: 15
+<Init line 4, col 1 to line 4, col 4 of module Sets>: 3:3
+  line 4, col 9 to line 4, col 14 of module Sets: 3:2
+  line 4, col 19 to line 4, col 42 of module Sets: 3
+  |line 4, col 23 to line 4, col 42 of module Sets: 3:6
+  ||line 4, col 30 to line 4, col 35 of module Sets: 3:9
+<Grow line 5, col 1 to line 5, col 4 of module Sets>: 60:749
+  line 5, col 12 to line 5, col 54 of module Sets: 187
+  |line 5, col 19 to line 5, col 54 of module Sets: 37:352
+  ||line 5, col 27 to line 5, col 53 of module Sets: 37
+  |||line 5, col 27 to line 5, col 27 of module Sets: 37
+  |||line 5, col 34 to line 5, col 53 of module Sets: 37:62
+  ||||line 5, col 35 to line 5, col 52 of module Sets: 37
+  line 6, col 12 to line 6, col 36 of module Sets: 748
+  |line 6, col 19 to line 6, col 36 of module Sets: 188:1498
+  ||line 6, col 20 to line 6, col 25 of module Sets: 188
+  ||line 6, col 30 to line 6, col 35 of module Sets: 188:1873
+<Typed line 8, col 1 to line 8, col 5 of module Sets>
+  line 8, col 10 to line 10, col 41 of module Sets: 61
+  |line 8, col 13 to line 8, col 31 of module Sets: 61
+  |line 9, col 13 to line 9, col 34 of module Sets: 61
+  |line 10, col 13 to line 10, col 41 of module Sets: 61
+  ||line 10, col 13 to line 10, col 29 of module Sets: 61:148
+  |||line 10, col 24 to line 10, col 28 of module Sets: 116
+  |||line 10, col 20 to line 10, col 20 of module Sets: 61
+  ||line 10, col 41 to line 10, col 41 of module Sets: 61
+<Small line 11, col 1 to line 11, col 5 of module Sets>
+  line 11, col 10 to line 11, col 27 of module Sets: 61
+End of statistics.
+510 states generated, 61 distinct states found, 31 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in _ at (_)

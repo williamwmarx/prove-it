@@ -57,7 +57,10 @@ describe("liveness matches TLC", () => {
         "---- MODULE Many ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == IF x = 0 THEN x' \\in 1..1000 ELSE UNCHANGED x\nLive == <>(x = 1)\n====",
       config: "INIT Init\nNEXT Next\nPROPERTY Live",
     });
-    expect([result.status, result.violation?.properties]).toEqual(["liveness-violation", ["Live"]]);
+    expect([result.status, result.violations[0]?.headline]).toEqual([
+      "liveness-violation",
+      "Temporal property Live was violated.\n",
+    ]);
   });
 
   // TLC's LNAction of <<A>>_v compares v in the two states before it evaluates A, so A, whose
@@ -76,9 +79,9 @@ describe("liveness matches TLC", () => {
       source: SOURCE,
       config: readFileSync(join(DIRECTORY, "Unfair-ReachesLimit.cfg"), "utf8"),
     });
-    const violation = result.violation;
+    const violation = result.violations[0];
     expect(violation?.loopStart).toBeDefined();
-    expect(violation?.loopStart).toBeLessThan(violation?.trace.length ?? 0);
+    expect(violation?.loopStart).toBeLessThan(violation?.states.length ?? 0);
   });
 
   it("reports the deadlock before the temporal property that fails in the same state", async () => {
@@ -90,14 +93,18 @@ describe("liveness matches TLC", () => {
       });
       return [
         result.status,
-        result.violation?.name,
-        result.violation?.trace.map((step) => step.state.x),
+        result.violations[0]?.headline,
+        result.violations[0]?.states.map((step) => step.variables.x.value),
       ];
     };
-    expect(await checkConfig("Github710d")).toEqual(["deadlock", "deadlock", [0, 1, 2, 3]]);
+    expect(await checkConfig("Github710d")).toEqual([
+      "deadlock",
+      "Deadlock reached.",
+      [0, 1, 2, 3],
+    ]);
     expect(await checkConfig("Github710dNoDeadlock")).toEqual([
       "property-violation",
-      "NeverThree",
+      "Temporal property NeverThree was violated.\n",
       [0, 1, 2, 3],
     ]);
   });
@@ -110,9 +117,11 @@ describe("liveness matches TLC", () => {
         config: readFileSync(join(directory, "Github710d.cfg"), "utf8"),
         version,
       });
-      return result.additionalViolation?.name;
+      return result.violations[1]?.headline;
     };
-    expect(await getAdditionalViolation("master")).toBe("NeverThree");
+    expect(await getAdditionalViolation("master")).toBe(
+      "Temporal property NeverThree was violated.\n",
+    );
     expect(await getAdditionalViolation("1.7.4")).toBeUndefined();
   });
 

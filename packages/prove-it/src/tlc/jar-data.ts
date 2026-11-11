@@ -382,6 +382,7 @@ export const TLC_STARTUP_STRINGS = [
   "@",
 ];
 
+// The names tlc2.module.TLCGetSet interns as its class initializes, in the order it declares them.
 export const TLC_RUNTIME_STRINGS = [
   "exit",
   "pause",
@@ -393,6 +394,7 @@ export const TLC_RUNTIME_STRINGS = [
   "id",
   "behavior",
   "all",
+  "all:named",
   "mode",
   "deadlock",
   "seed",
@@ -418,6 +420,7 @@ export const TLC_RUNTIME_STRINGS = [
   "variables",
   "actionconstraints",
   "constraints",
+  "level",
   "stats",
   "duration",
   "generated",
@@ -429,7 +432,6 @@ export const TLC_RUNTIME_STRINGS = [
   "distinctvalues",
   "levelmean",
   "levelvariance",
-  "bfs",
 ];
 
 export const SANY_NODE_NAMES = [

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
-import { check, formatValue } from "../../src";
+import { checkParsed } from "../../src/parallel";
+import { formatValue } from "../../src/values";
 
 const checkPrinting = async (body: string, config = "") => {
   const printed: string[] = [];
-  const result = await check({
+  const result = await checkParsed({
     source: `---- MODULE M ----\nEXTENDS Integers, TLC\n${body}\n====`,
     config,
     onPrint: (text) => printed.push(text),

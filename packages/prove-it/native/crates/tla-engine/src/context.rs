@@ -75,6 +75,9 @@ pub struct EngineContext {
     pub is_invariant_printing: bool,
     /// What TLC evaluates when it starts.
     pub startup: Startup,
+    /// The constant definitions whose body is a CHOOSE over a set, as the compiler found them
+    /// once it compiled the rest (`Compiler::get_constant_choices`).
+    pub choices: Vec<(Index, Eval)>,
 }
 
 /// What TLC evaluates when it starts, compiled: each substitute, then each constant definition
@@ -763,7 +766,8 @@ impl EngineContext {
                         ActionOptions {
                             is_init: false,
                             is_shortcut: model.is_warning_enabled,
-                            can_print: false,
+                            // A simulation takes its steps by the actions alone.
+                            can_print: compiler.simulation.is_some(),
                         },
                         "an action",
                     ) {
@@ -846,6 +850,7 @@ impl EngineContext {
             level_atoms,
             is_invariant_printing,
             startup,
+            choices: compiler.get_constant_choices(),
         })
     }
 }

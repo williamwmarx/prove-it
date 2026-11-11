@@ -56,8 +56,9 @@ let table = new Int32Array(INITIAL_CAPACITY * 4).fill(-1);
 let tableMask = (table.length >> 1) - 1;
 
 const texts: string[] = [];
-// TLC orders strings by when it interned them. The rank of a string the spec doesn't mention is -1,
-// and TLC orders those after the others, by their text.
+// TLC orders strings by when it interned them. The rank of a string the spec doesn't mention is -1:
+// TLC made it as it ran, after it interned the others, and two of those compare in the order TLC made
+// them, which the store doesn't know.
 const textRanks: number[] = [];
 const stringIds = new Map<string, number>();
 const modelIds = new Map<string, number>();
@@ -312,7 +313,7 @@ const compareTexts = (left: number, right: number) => {
   if (leftRank !== -1 && rightRank !== -1) return leftRank - rightRank;
   if (leftRank !== -1) return -1;
   if (rightRank !== -1) return 1;
-  return texts[left] < texts[right] ? -1 : 1;
+  return bail("an order of strings the search made");
 };
 
 const compareSets = (left: number, right: number) => {

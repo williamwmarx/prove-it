@@ -486,9 +486,46 @@ const createContexts = (getParsed: ModuleSet) => {
   };
 };
 
+// The name tla2sany.st.Location gives an unknown module, which it interns as it initializes.
+const UNKNOWN_LOCATION = "--unknown--";
+
+// The field names tlc2.value.impl.RecordValue interns as it initializes, in the order it declares
+// them.
+const RECORD_VALUE_FIELDS = [
+  "beginLine",
+  "beginColumn",
+  "endLine",
+  "endColumn",
+  "module",
+  "name",
+  "location",
+  "context",
+  "parameters",
+  "_action",
+];
+
+// The strings TLC interns as it builds its checker, after it computes the constant definitions:
+// tlc2.tool.Action's name for an unnamed action as processConfig builds the first action, the names
+// TLCGetSet interns as AbstractChecker.createConfig initializes it, the mode createConfig makes, and
+// RecordValue's field names as createConfig builds its record, unless a constant definition built a
+// record before.
+const getCheckerStrings = (config: ModelConfig) => [
+  ...(config.init !== undefined ||
+  config.next !== undefined ||
+  config.specification !== undefined ||
+  config.invariants.length > 0 ||
+  config.properties.length > 0
+    ? ["UnnamedAction"]
+    : []),
+  ...TLC_RUNTIME_STRINGS,
+  "bfs",
+  ...RECORD_VALUE_FIELDS,
+];
+
 // Every string TLC interns before model checking starts, in order: values in the config, TLC's
-// startup strings, each module's tokens in the order SpecObj.loadSpec parses the modules, string
-// literals in semantic analysis order, and the names TLC interns for TLCGet.
+// startup strings, each module's tokens in the order SpecObj.loadSpec parses the modules, with
+// Location's after the root's, string literals in semantic analysis order, and the strings TLC
+// interns as it builds its checker.
 const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => {
   const order = new Set<string>();
   const intern = (text: string) => {
@@ -554,6 +591,9 @@ const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => 
     if (index === 3) SANY_NODE_NAMES.forEach(intern);
     intern(text);
   });
+  // pcal.Validator reads the root module's location once SANY has parsed it, which initializes
+  // tla2sany.st.Location before SANY parses the modules the root uses.
+  intern(UNKNOWN_LOCATION);
   const rootReferences = getUnitReferences(undefined);
   while (true) {
     const found =
@@ -587,7 +627,7 @@ const getStringOrder = (getParsed: ModuleSet, config: ModelConfig): string[] => 
     });
   };
   analyze(undefined);
-  TLC_RUNTIME_STRINGS.forEach(intern);
+  getCheckerStrings(config).forEach(intern);
   return [...order];
 };
 

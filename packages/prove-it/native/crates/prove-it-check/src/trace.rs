@@ -13,6 +13,8 @@ use tla_trace::{
 };
 use tla_values::{Id, Store};
 
+use crate::dump_trace::{DumpedFile, TraceDumps};
+use crate::plain::{Variable, to_plain};
 use crate::stack::on_search_stack;
 use tla_trace::pretty_print;
 
@@ -23,6 +25,8 @@ pub struct PrintedTrace {
     pub trace_output: Vec<String>,
     /// What the postconditions found on the trace, when the caller asked for them.
     pub postconditions: Option<Postconditions>,
+    /// The files -dumpTrace's postconditions write, which TLC checks before the configuration's.
+    pub dumped: Vec<DumpedFile>,
     /// Under SYMMETRY or a VIEW, the action of a lasso's step back into its cycle, as TLC finds it
     /// from the last state it rebuilt, and the positions of the properties TLC finds the rebuilt
     /// lasso violates.
@@ -40,6 +44,14 @@ pub struct PostconditionRun {
     pub stats: Stats,
 }
 
+/// The postconditions TLC checks on a violation's trace: -dumpTrace's first, then, where the
+/// caller asks for them, the configuration's with what TLCGet reads.
+#[derive(Clone, Copy)]
+pub struct TraceChecks<'a> {
+    pub dumps: &'a TraceDumps,
+    pub run: Option<&'a PostconditionRun>,
+}
+
 /// What TLC printed as it evaluated the postconditions, each print as one line, and the first one
 /// that doesn't hold, by its position in the model's postconditions, with what TLC found.
 pub struct Postconditions {
@@ -48,7 +60,7 @@ pub struct Postconditions {
 }
 
 pub struct PrintedState {
-    pub text: String,
+    pub variables: Vec<Variable>,
     /// The position in the model's actions of the action that took the step to the state, as
     /// TLC finds it.
     pub action: Option<u32>,
@@ -60,6 +72,7 @@ pub struct PrintedState {
 struct Recorded<'v> {
     store: &'v Store,
     startup: &'v [Id],
+    chosen: &'v [(u32, Id)],
     startup_random: u64,
     random: Option<u64>,
     symmetry: Option<&'v NamedGroup>,
@@ -71,6 +84,7 @@ impl<'v> From<&'v Violation> for Recorded<'v> {
         Recorded {
             store: &violation.store,
             startup: &violation.startup,
+            chosen: &violation.chosen,
             startup_random: violation.startup_random,
             random: violation.random,
             symmetry: violation.symmetry.as_ref(),
@@ -79,13 +93,21 @@ impl<'v> From<&'v Violation> for Recorded<'v> {
     }
 }
 
+/// How a rebuilt trace's states are written: with -tool's messages, and with plain data.
+#[derive(Clone, Copy)]
+struct Writing {
+    is_tool: bool,
+    is_plain: bool,
+}
+
 /// The violation's trace, or why `tla-trace` can't rebuild it. The evaluator recurses with the
 /// expressions it evaluates, so it runs on a thread with the search's stack.
 pub fn rebuild_trace(
     ir: &Ir,
     violation: &Violation,
-    postconditions: Option<&PostconditionRun>,
+    checks: TraceChecks,
     is_tool: bool,
+    is_plain: bool,
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
@@ -93,8 +115,8 @@ pub fn rebuild_trace(
         &violation.kind,
         &violation.states,
         violation.labels.clone(),
-        postconditions,
-        is_tool,
+        Some(checks),
+        Writing { is_tool, is_plain },
     )
 }
 
@@ -104,6 +126,7 @@ pub fn rebuild_accepted(
     violation: &Violation,
     accepted: &AcceptedTrace,
     is_tool: bool,
+    is_plain: bool,
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
@@ -114,7 +137,7 @@ pub fn rebuild_accepted(
         &accepted.states,
         vec![None; accepted.states.len().saturating_sub(1)],
         None,
-        is_tool,
+        Writing { is_tool, is_plain },
     )
 }
 
@@ -125,17 +148,27 @@ pub fn rebuild_continued(
     trace: &ContinuedTrace<'_>,
     kind: &ViolationKind,
     is_tool: bool,
+    is_plain: bool,
 ) -> Result<PrintedTrace, String> {
     let recorded = Recorded {
         store: trace.store,
         startup: trace.startup,
+        chosen: trace.chosen,
         startup_random: trace.startup_random,
         random: trace.random,
         symmetry: None,
         registers: trace.registers,
     };
     let labels = vec![None; trace.states.len().saturating_sub(1)];
-    rebuild(ir, &recorded, kind, &trace.states, labels, None, is_tool)
+    rebuild(
+        ir,
+        &recorded,
+        kind,
+        &trace.states,
+        labels,
+        None,
+        Writing { is_tool, is_plain },
+    )
 }
 
 fn rebuild(
@@ -144,9 +177,11 @@ fn rebuild(
     kind: &ViolationKind,
     states: &[Vec<Id>],
     mut labels: Vec<Option<u32>>,
-    postconditions: Option<&PostconditionRun>,
-    is_tool: bool,
+    checks: Option<TraceChecks>,
+    writing: Writing,
 ) -> Result<PrintedTrace, String> {
+    let dumps = checks.map(|checks| checks.dumps);
+    let postconditions = checks.and_then(|checks| checks.run);
     on_search_stack(|| {
         let mut states: Vec<&[Id]> = states.iter().map(Vec::as_slice).collect();
         // Under SYMMETRY or a VIEW the lasso's states are the stored ones: TLC rebuilds
@@ -199,6 +234,7 @@ fn rebuild(
         // TLC prints each state through the ALIAS, when there is one.
         let rebuilt = Rebuilder::new(ir).and_then(|mut rebuilder| {
             rebuilder.set_startup(recorded.store, recorded.startup, recorded.startup_random)?;
+            rebuilder.set_chosen(recorded.store, recorded.chosen);
             if let Some(random) = recorded.random {
                 rebuilder.set_violation_random(random);
             }
@@ -235,10 +271,32 @@ fn rebuild(
             // TLC prints a deadlocked initial state as it is (`TLCTrace.printTrace`).
             let is_alone =
                 matches!(kind, ViolationKind::Deadlock { .. }) && trace.states.len() == 1;
+            // TLC binds the builtin Trace in the ALIAS to the states up to each it prints, that
+            // one included (`TLCTrace.printTrace`), but to none for an initial state and the
+            // successor that violates, and in a lasso to those before each state of the path to
+            // its cycle (`LiveWorker.printTrace`). For a violating initial state, the Java method
+            // gives the state alone (`TLCExt.getTrace`).
+            let length = trace.states.len();
+            let prefixes: Option<Vec<usize>> = match *kind {
+                ViolationKind::Invariant(_) | ViolationKind::ActionProperty(_) if length == 2 => {
+                    Some(vec![0; 2])
+                }
+                ViolationKind::Deadlock { .. }
+                | ViolationKind::Invariant(_)
+                | ViolationKind::ActionProperty(_)
+                | ViolationKind::InitialInvariant(_)
+                | ViolationKind::InitialPredicate(_) => Some((1..=length).collect()),
+                ViolationKind::Lasso { loop_start, .. } => Some(
+                    (0..length)
+                        .map(|position| position + usize::from(position >= loop_start))
+                        .collect(),
+                ),
+                _ => None,
+            };
             let aliases = if is_alone {
                 None
             } else {
-                rebuilder.alias(&trace, cycle_start, is_tool)?
+                rebuilder.alias(&trace, cycle_start, prefixes.as_deref(), writing.is_tool)?
             };
             // CounterExample closes a lasso with its step back into the cycle. TLC's record of a
             // stuttering lasso, one whose cycle ends in its first state, closes it by the action
@@ -265,6 +323,27 @@ fn rebuild(
                 }
                 _ => None,
             };
+            // TLC holds an invariant's violation for the postconditions as it found it, the
+            // trace before it rebuilt again (`Worker.doPostCondition`).
+            let dumped = match dumps.filter(|dumps| !dumps.is_empty()) {
+                Some(dumps) => {
+                    let held = match kind {
+                        ViolationKind::Invariant(_)
+                        | ViolationKind::ActionProperty(_)
+                        | ViolationKind::InitialInvariant(_)
+                        | ViolationKind::InitialPredicate(_) => Some(
+                            rebuilder.rebuild_counter_example(recorded.store, &states, &labels)?,
+                        ),
+                        _ => None,
+                    };
+                    let counter_example = CounterExample {
+                        trace: held.as_ref().unwrap_or(&trace),
+                        cycle,
+                    };
+                    dumps.dump(ir, &mut rebuilder, &counter_example)?
+                }
+                None => Vec::new(),
+            };
             let checked = postconditions
                 .map(|run| {
                     check(
@@ -278,12 +357,13 @@ fn rebuild(
                     )
                 })
                 .transpose()?;
-            Ok((trace, aliases, checked, loop_action, violated))
+            Ok((trace, aliases, checked, dumped, loop_action, violated))
         });
         rebuilt
             .map(
-                |(trace, aliases, postconditions, loop_action, violated)| PrintedTrace {
+                |(trace, aliases, postconditions, dumped, loop_action, violated)| PrintedTrace {
                     postconditions,
+                    dumped,
                     loop_action,
                     violated,
                     is_successor_lost: trace.is_successor_lost,
@@ -292,13 +372,14 @@ fn rebuild(
                         .iter()
                         .enumerate()
                         .map(|(position, state)| PrintedState {
-                            text: match aliases.as_ref().map(|aliases| &aliases[position]) {
-                                Some(Alias::Record(fields)) => format_fields(
+                            variables: match aliases.as_ref().map(|aliases| &aliases[position]) {
+                                Some(Alias::Record(fields)) => get_field_variables(
                                     fields
                                         .iter()
                                         .map(|(name, value)| (name.as_str(), Some(value))),
+                                    writing.is_plain,
                                 ),
-                                _ => format_state(ir, &state.values),
+                                _ => get_state_variables(ir, &state.values, writing.is_plain),
                             },
                             action: state.action,
                             output: state
@@ -448,19 +529,27 @@ pub(crate) fn format_print(texts: &[String]) -> String {
         .join("  ")
 }
 
-/// A state's values, in the engine's order of the variables, as TLC prints the state.
-pub(crate) fn format_state(ir: &Ir, values: &[Value]) -> String {
-    format_partial_state(ir, &values.iter().map(Some).collect::<Vec<_>>())
+/// A state's values, in the engine's order of the variables, as TLC prints the state, with their
+/// plain data where `is_plain`.
+pub(crate) fn get_state_variables(ir: &Ir, values: &[Value], is_plain: bool) -> Vec<Variable> {
+    get_partial_variables(ir, &values.iter().map(Some).collect::<Vec<_>>(), is_plain)
 }
 
 /// A state some of whose variables are unassigned, which TLC prints as null.
-pub(crate) fn format_partial_state(ir: &Ir, values: &[Option<&Value>]) -> String {
-    format_fields(ir.tlc_order.iter().map(|&position| {
-        (
-            ir.texts[ir.variables[position as usize] as usize].as_ref(),
-            values[position as usize],
-        )
-    }))
+pub(crate) fn get_partial_variables(
+    ir: &Ir,
+    values: &[Option<&Value>],
+    is_plain: bool,
+) -> Vec<Variable> {
+    get_field_variables(
+        ir.tlc_order.iter().map(|&position| {
+            (
+                ir.texts[ir.variables[position as usize] as usize].as_ref(),
+                values[position as usize],
+            )
+        }),
+        is_plain,
+    )
 }
 
 /// A state whose values are the texts TLC prints for them, in the IR's order of the variables.
@@ -478,17 +567,29 @@ pub(crate) fn format_texts(ir: &Ir, texts: &[String]) -> String {
     text
 }
 
-/// Named values as TLC prints a state (`TLCStateMut.toString`): a line each, as a conjunction when
+/// Named values as TLC prints them in a state, null where unassigned, and their plain data, which
+/// only the library's check asks for: else `null`, which nothing reads.
+pub(crate) fn get_field_variables<'v>(
+    fields: impl Iterator<Item = (&'v str, Option<&'v Value>)>,
+    is_plain: bool,
+) -> Vec<Variable> {
+    fields
+        .map(|(name, value)| Variable {
+            name: name.to_string(),
+            text: value.map_or_else(|| "null".to_string(), |value| pretty(&format_value(value))),
+            data: value
+                .filter(|_| is_plain)
+                .map_or_else(|| "null".to_string(), to_plain),
+        })
+        .collect()
+}
+
+/// A state as TLC prints it (`TLCStateMut.toString`): a line per variable, as a conjunction when
 /// there are several.
-pub(crate) fn format_fields<'v>(
-    fields: impl ExactSizeIterator<Item = (&'v str, Option<&'v Value>)>,
-) -> String {
-    let is_conjunction = fields.len() > 1;
-    let mut text = String::new();
-    for (name, value) in fields {
-        let conjunct = if is_conjunction { "/\\ " } else { "" };
-        let value = value.map_or_else(|| "null".to_string(), |value| pretty(&format_value(value)));
-        text.push_str(&format!("{conjunct}{name} = {value}\n"));
-    }
-    text
+pub(crate) fn format_variables(variables: &[Variable]) -> String {
+    let conjunct = if variables.len() > 1 { "/\\ " } else { "" };
+    variables
+        .iter()
+        .map(|variable| format!("{conjunct}{} = {}\n", variable.name, variable.text))
+        .collect()
 }

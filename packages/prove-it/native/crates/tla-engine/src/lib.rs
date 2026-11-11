@@ -13,6 +13,7 @@ pub mod machine;
 pub mod memo;
 pub mod oracle;
 pub mod search;
+pub mod simulate;
 pub mod symmetry;
 
 pub use compile::{CompileError, Compiled, Compiler, Options, Root};

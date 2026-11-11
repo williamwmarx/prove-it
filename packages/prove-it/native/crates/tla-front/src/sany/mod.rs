@@ -10,12 +10,17 @@ pub mod builtins;
 pub mod export;
 pub mod generator;
 pub mod levels;
+pub mod messages;
 pub mod nodes;
 pub mod selectors;
 pub mod source;
 pub mod xml;
 
 pub type Result<T> = std::result::Result<T, crate::errors::FrontError>;
+
+/// What `Generator.endOpDefNode` throws when a module defines more operators than its RECURSIVE
+/// statements declared, as `SANY.parse` prints it.
+pub const GENERATOR_EXCEPTION: &str = "util.WrongInvocationException: Defined more recursive operators than were declared in RECURSIVE statements.";
 
 /// The `NotYet` the port returns where the TypeScript throws.
 pub fn not_yet<T>(reason: impl Into<String>) -> Result<T> {

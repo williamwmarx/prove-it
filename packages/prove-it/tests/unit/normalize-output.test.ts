@@ -103,6 +103,19 @@ describe("normalizeOutput", () => {
     },
   );
 
+  it("rewrites the machine and process in a simulation's banner", () => {
+    expect(
+      [
+        "Running Random Simulation with seed 4 with 1 worker on 4 cores with 1024MB heap and 64MB offheap memory [pid: 22845] (Linux 6.18.44 amd64, Ubuntu 21.0.12.1 64bit).",
+        "Running Random Simulation with seed 4 with 1 worker on 16 cores with 16086MB heap and 0MB offheap memory [pid: 7] (Linux 6.18.44 x64, prove-it native 64bit).",
+      ].map(normalizeOutput),
+    ).toEqual(
+      new Array(2).fill(
+        "Running Random Simulation with seed 4 with 1 worker on _ cores with _MB heap and _MB offheap memory [pid: _] (_).",
+      ),
+    );
+  });
+
   it("rewrites each form of TLC's durations", () => {
     expect(
       ["494ms", "05s", "02min 05s", "01h 02min", "1d 01h"].map((duration) =>

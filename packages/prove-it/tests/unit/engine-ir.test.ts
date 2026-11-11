@@ -8,9 +8,9 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { check } from "../../src";
 import { parseConfig } from "../../src/config";
 import { IR_VERSION } from "../../src/engine/ir";
+import { checkParsed } from "../../src/parallel";
 import { createTlcOrder } from "../../src/tlc/order";
 import { getStringRank } from "../../src/values";
 
@@ -43,7 +43,7 @@ const checkCommit = async (dump?: string) => {
     if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
   });
   try {
-    const result = await check({ source: SOURCE, config: CONFIG, onPrint: () => {} });
+    const result = await checkParsed({ source: SOURCE, config: CONFIG, onPrint: () => {} });
     return { result, lines };
   } finally {
     spy.mockRestore();
@@ -98,7 +98,7 @@ describe("the engine IR", () => {
       lines.map((line) => line.replaceAll(/ \(?\d+(\.\d+)? ms\)?/g, ""));
     expect(withoutTimes(dumped.lines)).toEqual(withoutTimes(plain.lines));
     process.env.PROVE_IT_ENGINE = "0";
-    expect(await check({ source: SOURCE, config: CONFIG, onPrint: () => {} })).toEqual(
+    expect(await checkParsed({ source: SOURCE, config: CONFIG, onPrint: () => {} })).toEqual(
       plain.result,
     );
   });
@@ -141,7 +141,7 @@ describe("the engine IR", () => {
     const dump = join(directory, "overridden.ir");
     process.env.PROVE_IT_IR_DUMP = dump;
     const overrides = join(import.meta.dirname, "../fixtures/overrides");
-    await check({
+    await checkParsed({
       source:
         "---- MODULE Overrides ----\nVARIABLE x\nFlag == FALSE\nInit == x = Flag\nNext == x' = x\nSpec == Init /\\ [][Next]_x\nProp == []x\n====",
       config: "SPECIFICATION Spec\nPROPERTY Prop",
@@ -170,7 +170,7 @@ describe("the engine IR", () => {
     const run = async (dump?: string) => {
       if (dump === undefined) delete process.env.PROVE_IT_IR_DUMP;
       else process.env.PROVE_IT_IR_DUMP = dump;
-      const result = await check({
+      const result = await checkParsed({
         source,
         config: "INIT Init\nNEXT Next\nINVARIANT Inv",
         seed: 1n,
@@ -187,7 +187,7 @@ describe("the engine IR", () => {
     const run = async (dump?: string) => {
       if (dump === undefined) delete process.env.PROVE_IT_IR_DUMP;
       else process.env.PROVE_IT_IR_DUMP = dump;
-      const result = await check({
+      const result = await checkParsed({
         source,
         config: "SPECIFICATION Spec\nINVARIANT Inv",
         seed: 1n,

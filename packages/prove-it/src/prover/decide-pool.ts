@@ -17,6 +17,10 @@ export interface DecideRequest {
 // result.
 export type DecideResponse = Decision | { error: string };
 
+// What a worker posts once it can decide: its backends are loaded, and the engine as WebAssembly too
+// where there is no process.dlopen.
+export const WORKER_READY = "ready";
+
 interface PendingDecision {
   request: DecideRequest;
   priority: number;
@@ -55,6 +59,10 @@ export const createDecidePool = async (workerCount: number): Promise<DecidePool>
     }
   };
   const onResponse = (index: number, message: unknown) => {
+    if (message === WORKER_READY) {
+      idle.push(index);
+      return dispatch();
+    }
     const response = message as DecideResponse;
     const decision = running.get(index);
     running.delete(index);
@@ -82,7 +90,6 @@ export const createDecidePool = async (workerCount: number): Promise<DecidePool>
       ),
     )),
   );
-  idle.push(...workers.keys());
   cells.push(
     ...workers.map(() =>
       typeof SharedArrayBuffer === "undefined"

@@ -8,24 +8,24 @@ use crate::TlcVersion;
 use crate::ast::SourceRange;
 use crate::config::parse_config;
 use crate::dependencies::create_definition_facts;
-use crate::describe::{Description, Part, describe};
+use crate::describe::{Description, Part, UNNAMED_ACTION, describe};
 use crate::environment::{EnvironmentOptions, create_environment};
-use crate::errors::FrontError;
+use crate::errors::{FrontError, format_range};
 use crate::eval::Evaluator;
-use crate::hash::FastMap;
+use crate::hash::{FastMap, FastSet};
 use crate::lower::{Lowering, RankedTexts};
-use crate::order::TlcOrder;
+use crate::order::{TlcOrder, get_checker_strings, get_unique};
 use crate::spec::{
     Properties, Specification, check_invariants, check_search_config, create_identifier,
     get_properties, get_specification,
 };
 use crate::values::ValueOrder;
 
-/// What the model is checked with besides its files.
 /// The module TLC adds to the root module's EXTENDS where it records the trace for its trace
 /// exploration spec, for the post condition that writes it.
 pub const TRACE_MODULE: &str = "_TLCTrace";
 
+/// What the model is checked with besides its files.
 pub struct ModelOptions<'a> {
     /// The directories of the modules a spec reads that aren't beside it, such as the community
     /// modules, in the order TLC searches them (`-DTLA-Library`).
@@ -40,10 +40,11 @@ pub struct ModelOptions<'a> {
     pub is_spec_described: bool,
     /// The seed TLC seeds its generator with, which `-seed` gives.
     pub random_seed: u64,
-    /// Whether TLC records the trace for its trace exploration spec, its default: SANY loads
-    /// `_TLCTrace` with the spec, which interns its strings first, and TLC loads Integers' Java
-    /// methods over Naturals' (`TLC.java`'s `TraceExplorationSpec`).
-    pub is_trace_recorded: bool,
+    /// The modules of the post conditions TLC adds to the root module's EXTENDS, in its order
+    /// (`ParameterizedSpecObj`): `-dumpTrace`'s, and `_TLCTrace` where TLC records the trace for
+    /// its trace exploration spec, its default. SANY loads them with the spec, which interns their
+    /// strings, and each loads Integers, whose Java methods TLC then loads over Naturals'.
+    pub root_extendees: &'a [&'a str],
 }
 
 /// A module's text from the spec's directory, or else the first library's that has it.
@@ -77,6 +78,11 @@ pub struct LoweredModel {
     /// What TLC prints of the Java overrides it loads, right after `Starting...`, before it
     /// computes the constant definitions.
     pub override_messages: Vec<StartupMessage>,
+    /// How a simulation labels an initial state, as `TLCStateInfo` labels the last of TLC's
+    /// initial predicates (`initPredVec`): `Init line 4, col 9 to line 4, col 13 of module M`, or
+    /// `Initial predicate` and where an unnamed one is written. None where the front end can't
+    /// tell.
+    pub initial_label: Option<String>,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -97,7 +103,7 @@ pub fn lower_front(
     options: &ModelOptions,
 ) -> Result<LoweredModel, FrontError> {
     with_files(spec_path, options, |sources| {
-        lower_ranked(sources, config_text, options, &[]).map(|(lowered, _)| lowered)
+        lower_ranked(sources, config_text, options, &[]).map(|(lowered, ..)| lowered)
     })
 }
 
@@ -130,8 +136,8 @@ fn with_files<T>(
 }
 
 /// What finds the texts TLC interns as it computes the constant definitions an IR holds, given
-/// their indexes in TLC's order.
-pub type StartupTexts = dyn Fn(&tla_ir::Ir, &[tla_ir::Index]) -> Vec<Box<[u16]>>;
+/// their indexes in TLC's order and how many of the IR's ranked texts TLC interned before.
+pub type StartupTexts = dyn Fn(&tla_ir::Ir, &[tla_ir::Index], usize) -> Vec<Box<[u16]>>;
 
 /// The model as `lower_front` lowers it, with the strings TLC makes as it computes the constant
 /// definitions ranked after the spec's, as `check.ts` lowers its IR once it has computed them.
@@ -155,27 +161,23 @@ pub fn lower_front_ranking_of(
     options: &ModelOptions,
     get_startup_texts: &StartupTexts,
 ) -> Result<LoweredModel, FrontError> {
-    let (lowered, startup) = lower_ranked(sources, config_text, options, &[])?;
+    let (lowered, startup, interned) = lower_ranked(sources, config_text, options, &[])?;
     let Ok(ir) = tla_ir::decode(&lowered.ir) else {
         return Ok(lowered);
     };
-    // A text Rust can't hold as a string ends the ranks, which stay TLC's up to it.
-    let startup_texts: Vec<Rc<str>> = get_startup_texts(&ir, &startup)
-        .iter()
-        .map_while(|units| String::from_utf16(units).ok().map(Rc::from))
-        .collect();
+    let startup_texts = get_startup_texts(&ir, &startup, interned);
     if startup_texts.is_empty() {
         return Ok(lowered);
     }
-    lower_ranked(sources, config_text, options, &startup_texts).map(|(lowered, _)| lowered)
+    lower_ranked(sources, config_text, options, &startup_texts).map(|(lowered, ..)| lowered)
 }
 
 fn lower_ranked(
     sources: &ModelSources,
     config_text: &str,
     options: &ModelOptions,
-    startup_texts: &[Rc<str>],
-) -> Result<(LoweredModel, Vec<tla_ir::Index>), FrontError> {
+    startup_texts: &[Box<[u16]>],
+) -> Result<(LoweredModel, Vec<tla_ir::Index>, usize), FrontError> {
     let version = options.version.unwrap_or(TlcVersion::Master);
     let source = sources.source;
     let load = sources.load_module;
@@ -192,24 +194,56 @@ fn lower_ranked(
         is_level_checked: false,
         load_class: Some(load_class),
     })?;
-    if options.is_trace_recorded {
+    // TLC loads Integers' methods over Naturals' once Integers is anywhere in the parsed closure.
+    // Every module a root extendee can be today (`_TLCTrace` and the -dumpTrace modules) reaches
+    // it through TLCExt, so any root extendee loads them; one that doesn't would need its closure.
+    if !options.root_extendees.is_empty() {
         for builtin in environment.builtins.values_mut() {
             builtin.flags &=
                 !(tla_ir::Builtin::NATURALS_GEQ | tla_ir::Builtin::NATURALS_METHOD) as u32;
         }
     }
-    let root_extendees: &[&str] = if options.is_trace_recorded {
-        &[TRACE_MODULE]
-    } else {
-        &[]
-    };
-    let order = TlcOrder::new(source, load, version)?.with_root_extendees(root_extendees);
-    let texts: Vec<Rc<str>> = order
-        .get_string_order(&config)?
+    let order = TlcOrder::new(source, load, version)?.with_root_extendees(options.root_extendees);
+    // TLC computes the constant definitions after SANY and before it builds its checker.
+    let sany = order.get_sany_string_order(&config)?;
+    let decoded: Vec<Option<String>> = startup_texts
         .iter()
-        .map(|text| Rc::from(text.as_str()))
-        .chain(startup_texts.iter().cloned())
+        .map(|units| String::from_utf16(units).ok())
         .collect();
+    // A text with a lone surrogate, which a `str` can't hold, as `Tail("😀a")` makes, ranks by a
+    // name of its own and keeps its units for the IR's wide texts. The name is U+FFFF, as many
+    // times as it takes to be no text the front ranks, then the units in hex.
+    let taken: FastSet<&str> = sany
+        .iter()
+        .chain(decoded.iter().flatten())
+        .map(String::as_str)
+        .chain(get_checker_strings(&config))
+        .collect();
+    let mut wide: FastMap<Rc<str>, Box<[u16]>> = FastMap::default();
+    let startup: Vec<String> = decoded
+        .iter()
+        .zip(startup_texts)
+        .map(|(text, units)| {
+            text.clone().unwrap_or_else(|| {
+                let hex: String = units.iter().map(|unit| format!("{unit:04x}")).collect();
+                let name = (1..)
+                    .map(|count| format!("{}{hex}", "\u{FFFF}".repeat(count)))
+                    .find(|name| !taken.contains(name.as_str()))
+                    .expect("a name no text takes");
+                wide.insert(Rc::from(name.as_str()), units.clone());
+                name
+            })
+        })
+        .collect();
+    let texts: Vec<Rc<str>> = get_unique(
+        sany.iter()
+            .map(String::as_str)
+            .chain(startup.iter().map(String::as_str))
+            .chain(get_checker_strings(&config)),
+    )
+    .into_iter()
+    .map(Rc::from)
+    .collect();
     let variable_order = order.get_declaration_order(true)?;
     let facts = create_definition_facts(&environment);
     let ranks: FastMap<Rc<str>, u32> = texts
@@ -254,6 +288,7 @@ fn lower_ranked(
             RankedTexts {
                 texts: &texts,
                 ranks: ranks.clone(),
+                wide: &wide,
             },
         );
         lowering.evaluator = Some(&evaluator);
@@ -348,15 +383,27 @@ fn lower_ranked(
         let (ir, startup) = lowering.finish_indexing(model)?;
         // TLCGet("spec"), where an expression reads it; where the front end can't describe the
         // specification, the engine stops where TLC would read it.
-        let ir = if options.is_spec_described && reads_spec(&ir) {
-            describe(&config, &environment, &facts, &evaluator)
-                .ok()
-                .and_then(|description| {
-                    tla_trace::add_spec(&ir, &to_spec_description(&ir, description)).ok()
-                })
-                .unwrap_or(ir)
-        } else {
-            ir
+        let description = describe(&config, &environment, &facts, &evaluator).ok();
+        // TLC places a definition an INSTANCE with substitutions copies at the INSTANCE.
+        let initial_label = description.as_ref().and_then(|description| {
+            let init = description.inits.last()?;
+            let location = environment
+                .instance_actions
+                .values()
+                .find(|action| action.name == init.name)
+                .map_or(&init.location, |action| &action.location);
+            let range = format_range(location.range.as_ref()?);
+            Some(if &*init.name == UNNAMED_ACTION {
+                format!("Initial predicate {range}")
+            } else {
+                format!("{} {range}", init.name)
+            })
+        });
+        let ir = match description {
+            Some(description) if options.is_spec_described && reads_spec(&ir) => {
+                tla_trace::add_spec(&ir, &to_spec_description(&ir, description)).unwrap_or(ir)
+            }
+            _ => ir,
         };
         // Under -nowarning TLC prints none of its warnings.
         let (constant_invariants, state_level) = if options.is_warning_enabled {
@@ -399,6 +446,7 @@ fn lower_ranked(
                 override_messages,
                 ir: tla_ir::encode(&ir),
                 startup_messages,
+                initial_label,
             },
             startup,
         ))
@@ -409,7 +457,7 @@ fn lower_ranked(
         Err(error) if evaluator.is_deferring() && !matches!(error, FrontError::NotYet(_)) => Err(
             FrontError::NotYet("an error after a constant predicate the engine checks".to_owned()),
         ),
-        lowered => lowered,
+        lowered => lowered.map(|(lowered, startup)| (lowered, startup, sany.len())),
     }
 }
 

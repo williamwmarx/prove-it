@@ -13,6 +13,8 @@ fn utf16(text: &str) -> Vec<u16> {
 #[test]
 fn writes_what_create_state_encoder_writes() {
     let mut store = Store::new();
+    // The spec's strings, which TLC interned as it started.
+    store.rank_strings(["a", "b"].map(utf16).iter().map(Vec::as_slice));
     let (one, two) = (store.int(1).unwrap(), store.int(2).unwrap());
     let (a, b) = (store.str(&utf16("a")), store.str(&utf16("b")));
     let model = store.model(&utf16("m"));
@@ -44,7 +46,10 @@ fn writes_what_create_state_encoder_writes() {
 
 #[test]
 fn reads_states_back_as_the_same_values() {
+    // The spec's strings, which TLC interned as it started, as each store ranks them.
+    let texts = [utf16("x"), vec![0xd800]];
     let mut store = Store::new();
+    store.rank_strings(texts.iter().map(Vec::as_slice));
     let ids: Vec<Id> = (0..40)
         .map(|value| store.int(value * 1000).unwrap())
         .collect();
@@ -61,6 +66,7 @@ fn reads_states_back_as_the_same_values() {
     assert_eq!(decode_states(&mut store, &encoded, 4), Ok(state.to_vec()));
     // Into another store, where the same values get ids of their own.
     let mut other = Store::new();
+    other.rank_strings(texts.iter().map(Vec::as_slice));
     let decoded = decode_states(&mut other, &encoded, 4).unwrap();
     let mut again = StateEncoder::new();
     again.encode(&other, &decoded).unwrap();
