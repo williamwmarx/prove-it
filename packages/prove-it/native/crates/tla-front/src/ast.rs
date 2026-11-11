@@ -433,6 +433,13 @@ pub enum Assumed {
     Expression(Expr),
     NewSymbol(NewSymbol),
     AssumeProve(AssumeProve),
+    /// `name :: ASSUME ... PROVE ...`, which SANY parses as an `N_Label`.
+    Label {
+        name: Name,
+        name_range: Option<Range>,
+        body: AssumeProve,
+        location: Location,
+    },
 }
 
 #[derive(Clone, Debug)]

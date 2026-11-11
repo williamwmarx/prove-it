@@ -20,6 +20,7 @@ use crate::tlc_data::{
     SANY_BUILTINS, SANY_NODE_NAMES, SANY_OPERATOR_SYNONYMS, TLC_RUNTIME_STRINGS,
     TLC_STARTUP_STRINGS,
 };
+use tla_trace::RECORD_VALUE_FIELDS;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SymbolKind {
@@ -88,6 +89,37 @@ impl SymbolTable {
         self.keys.insert(entry.key.clone());
         self.inserted.push(entry);
     }
+}
+
+/// The name tla2sany.st.Location gives an unknown module, which it interns as it initializes.
+const UNKNOWN_LOCATION: &str = "--unknown--";
+
+/// The strings TLC interns as it builds its checker, after it computes the constant definitions:
+/// tlc2.tool.Action's name for an unnamed action as `processConfig` builds the first action, the
+/// names TLCGetSet interns as `AbstractChecker.createConfig` initializes it, the mode createConfig
+/// makes, and RecordValue's field names as createConfig builds its record, unless a constant
+/// definition built a record before.
+pub fn get_checker_strings<'a>(config: &ModelConfig) -> impl Iterator<Item = &'a str> {
+    let has_actions = config.init.is_some()
+        || config.next.is_some()
+        || config.specification.is_some()
+        || !config.invariants.is_empty()
+        || !config.properties.is_empty();
+    has_actions
+        .then_some("UnnamedAction")
+        .into_iter()
+        .chain(TLC_RUNTIME_STRINGS.iter().copied())
+        .chain(["bfs"])
+        .chain(RECORD_VALUE_FIELDS)
+}
+
+/// Texts in the order of their first occurrences, as TLC interns them.
+pub fn get_unique<'a>(texts: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut seen: FastSet<&str> = FastSet::default();
+    texts
+        .filter(|text| seen.insert(text))
+        .map(str::to_owned)
+        .collect()
 }
 
 const SEMANTIC_PRELUDE: [&str; 5] = [
@@ -568,10 +600,23 @@ impl<'a> TlcOrder<'a> {
         self.get_file(name)
     }
 
-    /// Every string TLC interns before model checking starts, in order: values in the config,
-    /// TLC's startup strings, each module's tokens in the order `SpecObj.loadSpec` parses the
-    /// modules, string literals in semantic analysis order, and the names TLC interns for TLCGet.
+    /// Every string TLC interns before model checking starts but those it makes computing the
+    /// constant definitions: the strings SANY interns, then those TLC interns as it builds its
+    /// checker.
     pub fn get_string_order(&self, config: &ModelConfig) -> Result<Vec<String>> {
+        let sany = self.get_sany_string_order(config)?;
+        Ok(get_unique(
+            sany.iter()
+                .map(String::as_str)
+                .chain(get_checker_strings(config)),
+        ))
+    }
+
+    /// The strings TLC interns before it computes the constant definitions, in order: values in
+    /// the config, TLC's startup strings, each module's tokens in the order `SpecObj.loadSpec`
+    /// parses the modules, with Location's after the root's, and string literals in semantic
+    /// analysis order.
+    pub fn get_sany_string_order(&self, config: &ModelConfig) -> Result<Vec<String>> {
         let mut order: OrderedMap<String, ()> = OrderedMap::new();
         let mut intern = |text: &str| {
             if !order.contains_key(text) {
@@ -630,6 +675,9 @@ impl<'a> TlcOrder<'a> {
             }
             intern(text);
         }
+        // pcal.Validator reads the root module's location once SANY has parsed it, which
+        // initializes tla2sany.st.Location before SANY parses the modules the root uses.
+        intern(UNKNOWN_LOCATION);
         let root_references = get_unit_references(None, &mut inner_modules)?;
         let mut parsed_units: FastSet<String> = FastSet::default();
         loop {
@@ -687,7 +735,6 @@ impl<'a> TlcOrder<'a> {
             &mut get_unit_references,
             &mut intern,
         )?;
-        TLC_RUNTIME_STRINGS.iter().for_each(|text| intern(text));
         Ok(order.keys().cloned().collect())
     }
 

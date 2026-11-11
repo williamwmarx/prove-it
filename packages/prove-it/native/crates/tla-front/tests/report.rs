@@ -207,14 +207,17 @@ fn reports_a_named_step_of_an_implicit_level_as_a_semantic_error() {
     );
 }
 
+// SANY's corpus E4333_Theorem_Test: `processTheorem` begins a label scope only for a named
+// theorem, and a labeled ASSUME/PROVE is a label.
 #[test]
-fn declines_a_module_that_sany_parses_and_the_front_end_does_not() {
-    // TLC's tla2sany corpus, AssumeProveTest: a labeled ASSUME/PROVE among the assumptions.
-    let report = get_report(
-        "unparsed",
-        "---- MODULE Main ----\nTHEOREM ASSUME inner :: ASSUME TRUE PROVE TRUE PROVE TRUE\n====\n",
+fn reports_a_labeled_assume_prove_of_an_unnamed_theorem() {
+    assert_eq!(
+        get_text(
+            "unnamed",
+            "---- MODULE Main ----\nTHEOREM ASSUME inner :: ASSUME TRUE PROVE TRUE PROVE TRUE\n====\n",
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 1\n\nline 2, col 16 to line 2, col 46 of module Main\n\nLabel not in definition or proof step.\n\n\n"
     );
-    assert!(matches!(report, Err(FrontError::NotYet(_))));
 }
 
 #[test]
@@ -442,6 +445,62 @@ fn leaves_a_let_whose_recursive_definitions_are_shaped_otherwise_not_native() {
         assert!(
             matches!(get_report("reshaped", source), Err(FrontError::NotYet(_))),
             "{source}"
+        );
+    }
+}
+
+// SANY's corpus AssumeProveTest: an assumption may be a labeled ASSUME/PROVE, which a proof names
+// as a fact.
+#[test]
+fn reads_a_labeled_assume_prove_named_as_a_fact() {
+    assert_eq!(
+        get_text(
+            "labeled-assume-prove",
+            "---- MODULE Main ----\nTHEOREM T ==\n  ASSUME inner :: ASSUME NEW c PROVE c = c, TRUE\n  PROVE TRUE\nPROOF BY T, T!inner\n====\n",
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nLinting of module Main\n"
+    );
+    // Named as an expression, or past its label, it isn't followed yet.
+    for proof in ["PROOF BY T!inner!1", "PROOF BY T!inner = T!inner"] {
+        assert!(
+            matches!(
+                get_report(
+                    "labeled-assume-prove-selected",
+                    &format!(
+                        "---- MODULE Main ----\nTHEOREM T ==\n  ASSUME inner :: ASSUME NEW c PROVE c = c, TRUE\n  PROVE TRUE\n{proof}\n====\n"
+                    ),
+                ),
+                Err(FrontError::NotYet(_))
+            ),
+            "{proof}"
+        );
+    }
+}
+
+// TLC's test-model UseHideModuleDefsXml and suite test208: `generateUseOrHide` takes a module that
+// `SymbolTable.resolveModule` finds, the current module, an extended module or an inner module
+// defined before, as a fact or a DEF entry.
+#[test]
+fn reads_a_module_named_as_a_fact_or_def_entry() {
+    let text = get_text(
+        "module-fact",
+        "---- MODULE Main ----\nEXTENDS Naturals\n---- MODULE Inner ----\n====\nUSE MODULE Main, MODULE Inner DEF MODULE Naturals\nHIDE DEFS MODULE Inner\n====\n",
+    );
+    assert!(!text.contains("Semantic errors"), "{text}");
+    assert!(text.ends_with("Linting of module Main\n"), "{text}");
+    // SANY's message for a module it doesn't find has no recording.
+    for statement in ["USE MODULE Inner", "USE DEF MODULE Sequences"] {
+        assert!(
+            matches!(
+                get_report(
+                    "module-fact-missing",
+                    &format!(
+                        "---- MODULE Main ----\n{statement}\n---- MODULE Inner ----\n====\n====\n"
+                    ),
+                ),
+                Err(FrontError::NotYet(_))
+            ),
+            "{statement}"
         );
     }
 }

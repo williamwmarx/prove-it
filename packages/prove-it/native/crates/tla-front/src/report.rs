@@ -76,8 +76,8 @@ pub struct ReportOptions<'a> {
     /// The file TLC prints that it parses a module from, as `createFileDescriber` names it.
     pub describe_file: &'a dyn Fn(&str, ModuleOrigin) -> String,
     /// The modules TLC adds to the root module's EXTENDS for its post conditions, which SANY
-    /// loads after the ones the root module extends: `_TLCTrace` where TLC records the trace for
-    /// its trace exploration spec.
+    /// loads after the ones the root module extends: `-dumpTrace`'s, then `_TLCTrace` where TLC
+    /// records the trace for its trace exploration spec (`ModelOptions::root_extendees`).
     pub root_extendees: &'a [&'a str],
     /// tla2sany.xml.XMLExporter runs SANY with its validAstSettings: SANY prints only its errors,
     /// with no progress lines and no warnings, and neither validates PlusCal nor lints.

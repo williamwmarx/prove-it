@@ -968,7 +968,16 @@ export const checkModuleLevels = (
         })),
       ...module.assumptions.map((assumption) => ({
         location: assumption.location,
-        check: () => analyzer.analyze(assumption.expression, new Map()),
+        check: () => {
+          const level = analyzer.analyze(assumption.expression, new Map()).level;
+          // AssumeNode.levelCheck, at the assumption.
+          if (level !== 0 && assumption.location.range) {
+            throw createSemanticError(
+              `Level error: assumptions must be level 0 (Constant), \nbut this one has level ${level}.`,
+              assumption.location.range,
+            );
+          }
+        },
       })),
       ...module.theorems.map((theorem) => ({
         location: theorem.location,

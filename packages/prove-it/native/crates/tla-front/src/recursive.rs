@@ -255,7 +255,10 @@ impl Parts {
                 self.names.push(symbol.name.clone());
                 self.expressions.extend(symbol.set.clone());
             }
-            Assumed::AssumeProve(assume_prove) => {
+            Assumed::AssumeProve(assume_prove)
+            | Assumed::Label {
+                body: assume_prove, ..
+            } => {
                 for assumed in &assume_prove.assumptions {
                     self.add_assumed(assumed);
                 }

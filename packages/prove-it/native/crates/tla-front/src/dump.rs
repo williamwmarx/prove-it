@@ -733,6 +733,18 @@ fn assume_prove(value: &AssumeProve) -> Json {
                 Assumed::Expression(item) => expression(item),
                 Assumed::NewSymbol(item) => new_symbol(item),
                 Assumed::AssumeProve(item) => assume_prove(item),
+                Assumed::Label {
+                    name,
+                    name_range,
+                    body,
+                    location: label_location,
+                } => object(vec![
+                    ("kind", Some(text("AssumeProveLabel"))),
+                    ("name", Some(text(name))),
+                    ("nameRange", name_range.as_ref().map(range)),
+                    ("body", Some(assume_prove(body))),
+                    ("location", Some(location(label_location))),
+                ]),
             })),
         ),
         ("conclusion", Some(expression(&value.conclusion))),

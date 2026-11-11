@@ -33,8 +33,9 @@ pub struct Files<'a> {
     pub metadir: Option<&'a str>,
     pub jar: Option<&'a str>,
     pub is_174: bool,
-    /// TLC records the trace for its trace exploration spec, so SANY parses `_TLCTrace` too.
-    pub is_trace_recorded: bool,
+    /// The modules of TLC's post conditions, which SANY parses with the spec
+    /// (`ModelOptions::root_extendees`).
+    pub root_extendees: &'a [&'a str],
 }
 
 /// The path TLC prints for the file it parses a module from, by the module's name and origin.
@@ -70,10 +71,10 @@ pub trait Host {
     fn large_region_advice(&self) -> Option<Advice> {
         None
     }
-    /// Writes the text to the file at the path, after what it holds where `is_appended`, and in
+    /// Writes the bytes to the file at the path, after what it holds where `is_appended`, and in
     /// place of it otherwise, such as `-dump`'s; whether it could. A host that writes no files
     /// leaves the check to decline what writes one.
-    fn write_file(&self, _path: &Path, _text: &str, _is_appended: bool) -> bool {
+    fn write_file(&self, _path: &Path, _bytes: &[u8], _is_appended: bool) -> bool {
         false
     }
 }
@@ -127,14 +128,14 @@ impl Host for SystemHost {
         std::fs::read_to_string(path).ok()
     }
 
-    fn write_file(&self, path: &Path, text: &str, is_appended: bool) -> bool {
+    fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
         std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .append(is_appended)
             .truncate(!is_appended)
             .open(path)
-            .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()))
+            .and_then(|mut file| std::io::Write::write_all(&mut file, bytes))
             .is_ok()
     }
 

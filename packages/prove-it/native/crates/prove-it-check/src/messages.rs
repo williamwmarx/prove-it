@@ -50,6 +50,9 @@ pub const NO_FAIRNESS_BUT_PROPERTY: u32 = 2259;
 pub const COMPUTING_INIT_PROGRESS: u32 = 2269;
 pub const SYMMETRY_SET_TOO_SMALL: u32 = 2300;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
+pub const GENERAL: u32 = 1000;
+pub const CONFIG_ID_REQUIRES_NO_ARG: u32 = 2228;
+pub const CONFIG_ID_MUST_NOT_BE_CONSTANT: u32 = 2233;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -79,6 +82,10 @@ pub struct Printer<'o> {
     /// Whether the run records the trace TLC writes beside the spec for its trace exploration
     /// spec: TLC's default, where tla-front read the spec.
     pub is_trace_recorded: bool,
+    /// TLC's coverage report of the run, which comes before the statistics.
+    pub coverage: Option<Vec<tla_trace::CoverageMessage>>,
+    /// Whether it printed a state of an error trace, which TLC records for that spec.
+    pub is_trace_printed: bool,
 }
 
 impl<'o> Printer<'o> {
@@ -91,6 +98,8 @@ impl<'o> Printer<'o> {
             err: &mut *output.err,
             host: output.host,
             is_trace_recorded: false,
+            coverage: None,
+            is_trace_printed: false,
         }
     }
 
@@ -104,6 +113,7 @@ impl<'o> Printer<'o> {
         if is_warning && !self.is_warning_enabled {
             return;
         }
+        self.is_trace_printed |= level == Level::State;
         let message = if self.is_tool {
             format!(
                 "@!@!@STARTMSG {code}:{} @!@!@\n{text}\n@!@!@ENDMSG {code} @!@!@",

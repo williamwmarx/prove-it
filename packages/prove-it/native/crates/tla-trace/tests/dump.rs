@@ -10,8 +10,8 @@ use std::path::PathBuf;
 
 use payload::compare_dumps;
 use tla_engine::search::{Reporter, SearchOutcome, Settings, ViolationKind, search};
-use tla_front::config::{ConfigValue, parse_config};
-use tla_front::model::{ModelOptions, lower_model};
+use tla_front::config::parse_config;
+use tla_front::model::{ModelOptions, lower_front_ranking};
 use tla_trace::{CounterExample, Ending, Rebuilder, Registers, add_actions};
 use tla_values::{Id, Store};
 
@@ -22,7 +22,7 @@ impl Reporter for Quiet {
     fn initial_states_progress(&mut self, _count: u64) {}
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _store: &Store, _values: &[Id]) {}
+    fn print(&mut self, _store: &Store, _prints: &tla_engine::Prints) {}
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -31,33 +31,16 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-// The configuration's model values in the order TLC makes them as it parses it.
-fn get_model_values(config: &str) -> Vec<String> {
-    fn collect(value: &ConfigValue, names: &mut Vec<String>) {
-        match value {
-            ConfigValue::ModelValue(name) if !names.contains(name) => names.push(name.clone()),
-            ConfigValue::Set(values) => values.iter().for_each(|value| collect(value, names)),
-            _ => {}
-        }
-    }
-    let model = parse_config(config, tla_front::TlcVersion::Master).expect("a configuration");
-    let mut names = Vec::new();
-    for constant in &model.constants {
-        constant
-            .args
-            .iter()
-            .flatten()
-            .for_each(|value| collect(value, &mut names));
-        collect(&constant.value, &mut names);
-    }
-    names
-}
-
 /// What tla-trace dumps of the spec's counterexample: the `-dumpTrace tlc` file and the
 /// `-dumpTrace json` one, written in the order the command line gives them, as TLC writes them.
+/// The spec is lowered as the binary lowers it, with the strings its constant definitions make
+/// ranked as TLC interns them.
 fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
     let config = std::fs::read_to_string(fixture(&format!("{spec}.cfg"))).expect("a configuration");
-    let bytes = lower_model(
+    let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index], interned: usize| {
+        tla_values::on_nesting_stack(|| tla_trace::get_startup_texts(ir, definitions, interned))
+    };
+    let bytes = lower_front_ranking(
         &fixture(&format!("{spec}.tla")),
         &config,
         &ModelOptions {
@@ -66,15 +49,17 @@ fn dump(spec: &str, is_json_first: bool) -> (Vec<u8>, String) {
             is_warning_enabled: true,
             is_spec_described: true,
             random_seed: 0,
-            is_trace_recorded: false,
+            root_extendees: &[],
         },
+        &get_startup_texts,
     )
+    .map(|lowered| lowered.ir)
     .expect("a model tla-front lowers");
     let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
     // The binary splits TLC's actions as it checks a model.
     let ir = tla_values::on_nesting_stack(|| add_actions(&ir)).expect("TLC's actions");
-    let model_values = get_model_values(&config);
-    let model_values: Vec<&str> = model_values.iter().map(String::as_str).collect();
+    let model = parse_config(&config, tla_front::TlcVersion::Master).expect("a configuration");
+    let model_values = model.get_model_values();
     tla_values::on_nesting_stack(|| {
         let settings = Settings {
             is_violation_reported: true,
@@ -196,8 +181,17 @@ fn dumps_nested_values() {
 }
 
 #[test]
+fn dumps_values_as_tlc_makes_them_once_or_again() {
+    // A function into a record set TLC enumerates once for each argument, so no two share a
+    // record; the empty sequence SubSeq gives and `\o` passes on, which is TLC's one; and the
+    // strings DOMAIN makes of a record's fields, new each time.
+    check("DumpShared");
+}
+
+#[test]
 fn dumps_function_keys_with_unpaired_surrogates() {
     // Two keys that are each half of a different character stay apart, written as `?`, as TLC
-    // keeps them as Java strings.
+    // keeps them as Java strings. The constant definitions make them as TLC starts, which ranks
+    // them: two strings the search made, the engine couldn't order as TLC does, and declines.
     check("DumpSurrogate");
 }

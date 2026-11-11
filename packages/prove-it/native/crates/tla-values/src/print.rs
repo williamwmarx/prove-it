@@ -181,6 +181,356 @@ pub fn write_value(store: &Store, id: Id, out: &mut Vec<u16>) -> Outcome<()> {
     Ok(())
 }
 
+/// How TLC built a value an expression writes, where TLC's text of the value depends on it and
+/// the store forgets it: the compiler knows it from the expression, and [`write_constructed`]
+/// writes the value as TLC prints a value so built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Construction {
+    /// Any value, whose text is TLC's where [`is_printable`] holds, or [`is_printable_normalized`]
+    /// once TLC has normalized it.
+    Held,
+    /// `a..b` (`IntervalValue`), which prints as `1..3`, or `{}` where empty.
+    Interval,
+    /// `{e1, …, en}` (`SetEnumValue`) whose elements are built alike, with how many elements
+    /// it writes where that may be more than it holds: TLC sorts the elements written, which
+    /// compares, and so normalizes, a duplicate the set then drops.
+    Set(Box<Construction>, Option<u32>),
+    /// `<<e1, …, en>>`.
+    Tuple(Vec<Construction>),
+    /// `[f1 |-> e1, …]` (`RecordValue`): its fields in the order written, each with how its
+    /// value is built.
+    Record(Vec<(Vec<u16>, Construction)>),
+    /// A function TLC builds as a `FcnRcdValue` over its keys in their sorted order, such as
+    /// `[x \in S |-> e]` over a set enumeration or an interval, or `k :> v`: how its keys are
+    /// built, and how its values are.
+    Function(Box<Construction>, Box<Construction>),
+    /// `SUBSET S` (`SubsetValue`) of a set enumeration or an interval.
+    Subset(Box<Construction>),
+    /// `[S -> T]` (`SetOfFcnsValue`) of set enumerations or intervals.
+    FunctionSet(Box<Construction>, Box<Construction>),
+}
+
+impl Construction {
+    /// How a set's elements are built, where the set is a set enumeration or an interval.
+    pub fn of_elements(&self) -> Option<&Construction> {
+        match self {
+            Construction::Interval => Some(&Construction::Held),
+            Construction::Set(element, _) => Some(element),
+            _ => None,
+        }
+    }
+}
+
+/// TLC's text of a value built so, as [`write_value`] writes it, once TLC has normalized it
+/// (`deepNormalize`, as Print and PrintT do) or not (as ToString doesn't): false, with part of the
+/// text written, where it depends on more than how the value is built.
+pub fn write_constructed(
+    store: &Store,
+    id: Id,
+    construction: &Construction,
+    is_normalized: bool,
+    out: &mut Vec<u16>,
+) -> bool {
+    let normalized = if is_normalized {
+        Normalized::Yes
+    } else {
+        Normalized::No
+    };
+    write_normalized(store, id, construction, normalized, out)
+}
+
+// Whether TLC has normalized a value: `Maybe` where it is part of an element of a set TLC sorted,
+// whose comparisons normalize the records and functions they reach, and maybe not all of them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Normalized {
+    No,
+    Maybe,
+    Yes,
+}
+
+fn write_normalized(
+    store: &Store,
+    id: Id,
+    construction: &Construction,
+    normalized: Normalized,
+    out: &mut Vec<u16>,
+) -> bool {
+    let push = |out: &mut Vec<u16>, text: &str| out.extend(text.encode_utf16());
+    let kind = store.kind_of(id);
+    let size = store.size_of(id);
+    let join = |out: &mut Vec<u16>,
+                (open, separator, close): (&str, &str, &str),
+                part: &mut dyn FnMut(&mut Vec<u16>, u32) -> bool| {
+        push(out, open);
+        for index in 0..size {
+            if index > 0 {
+                push(out, separator);
+            }
+            if !part(out, index) {
+                return false;
+            }
+        }
+        push(out, close);
+        true
+    };
+    let set = ("{", ", ", "}");
+    let tuple = ("<<", ", ", ">>");
+    let write = |out: &mut Vec<u16>, id: Id, construction: &Construction| {
+        write_normalized(store, id, construction, normalized, out)
+    };
+    // The elements of a set of two or more written, which TLC sorted.
+    let written = match construction {
+        Construction::Set(_, Some(written)) => *written,
+        _ => size,
+    };
+    let element_normalized = if normalized == Normalized::No && written > 1 {
+        Normalized::Maybe
+    } else {
+        normalized
+    };
+    let write_element = |out: &mut Vec<u16>, id: Id, construction: &Construction| {
+        write_normalized(store, id, construction, element_normalized, out)
+    };
+    match construction {
+        Construction::Held => {
+            is_written_as_held(store, id, normalized == Normalized::Yes)
+                && write_value(store, id, out).is_ok()
+        }
+        Construction::Interval => {
+            if kind != KIND_SET || (size > 0 && store.kind_of(store.element_at(id, 0)) != KIND_INT)
+            {
+                return false;
+            }
+            if size == 0 {
+                push(out, "{}");
+            } else {
+                let bound = |index| store.int_of(store.element_at(id, index));
+                push(out, &format!("{}..{}", bound(0), bound(size - 1)));
+            }
+            true
+        }
+        Construction::Set(element, _) => {
+            kind == KIND_SET
+                && join(out, set, &mut |out, index| {
+                    write_element(out, store.element_at(id, index), element)
+                })
+        }
+        Construction::Tuple(elements) => {
+            kind == KIND_TUPLE
+                && size as usize == elements.len()
+                && join(out, tuple, &mut |out, index| {
+                    write(
+                        out,
+                        store.get_range_value(id, index),
+                        &elements[index as usize],
+                    )
+                })
+        }
+        Construction::Record(fields) => {
+            if kind != KIND_FUNCTION || size as usize != fields.len() {
+                return false;
+            }
+            // The position of each field written among the store's keys, which are in the order
+            // TLC sorts a record's fields as it normalizes it.
+            let mut positions = Vec::with_capacity(fields.len());
+            for (name, _) in fields {
+                let Some(position) = (0..size).find(|&index| {
+                    store
+                        .peek_key(id, index)
+                        .is_some_and(|key| store.text_of(key) == name.as_slice())
+                }) else {
+                    return false;
+                };
+                positions.push(position);
+            }
+            // A record TLC may have compared, and so sorted, prints alike either way only where
+            // its fields are written in their sorted order.
+            if normalized == Normalized::Maybe && !positions.is_sorted() {
+                return false;
+            }
+            join(out, ("[", ", ", "]"), &mut |out, index| {
+                let field = if normalized == Normalized::Yes {
+                    positions
+                        .iter()
+                        .position(|&position| position == index)
+                        .expect("a field at each position")
+                } else {
+                    index as usize
+                };
+                let (name, construction) = &fields[field];
+                out.extend_from_slice(name);
+                push(out, " |-> ");
+                write(
+                    out,
+                    store.get_range_value(id, positions[field]),
+                    construction,
+                )
+            })
+        }
+        Construction::Function(key, value) => {
+            if kind == KIND_TUPLE {
+                return join(out, tuple, &mut |out, index| {
+                    write(out, store.get_range_value(id, index), value)
+                });
+            }
+            if kind != KIND_FUNCTION {
+                return false;
+            }
+            let keys: Vec<Id> = (0..size)
+                .filter_map(|index| store.peek_key(id, index))
+                .collect();
+            let is_string = |key: Id| store.kind_of(key) == KIND_STRING;
+            // `FcnRcdValue.isName` takes Unicode's letters and digits, which `is_field_name`
+            // doesn't follow.
+            if keys
+                .iter()
+                .any(|&key| is_string(key) && store.text_of(key).iter().any(|&unit| unit > 0x7f))
+            {
+                return false;
+            }
+            let is_record = keys
+                .iter()
+                .all(|&key| is_string(key) && is_field_name(store.text_of(key)));
+            let delimiters = if is_record {
+                ("[", ", ", "]")
+            } else {
+                ("(", " @@ ", ")")
+            };
+            join(out, delimiters, &mut |out, index| {
+                let key_id = keys[index as usize];
+                if is_record {
+                    out.extend_from_slice(store.text_of(key_id));
+                    push(out, " |-> ");
+                } else {
+                    // The keys of a domain of two or more, which TLC sorted.
+                    if !write_element(out, key_id, key) {
+                        return false;
+                    }
+                    push(out, " :> ");
+                }
+                write(out, store.get_range_value(id, index), value)
+            })
+        }
+        Construction::Subset(base) => {
+            let Some(element) = base.of_elements() else {
+                return false;
+            };
+            if kind != KIND_SET || !size.is_power_of_two() {
+                return false;
+            }
+            // `SubsetValue.toString` enumerates a power set whose base has fewer than 7
+            // elements, and otherwise writes it as SUBSET of its base, in parentheses for an
+            // interval (`ParenthesizedSubset`).
+            let base_size = size.trailing_zeros();
+            if base_size < 7 {
+                return join(out, set, &mut |out, index| {
+                    write_element(
+                        out,
+                        store.element_at(id, index),
+                        &Construction::Set(Box::new(element.clone()), None),
+                    )
+                });
+            }
+            let Some(base_set) = (0..size)
+                .map(|index| store.element_at(id, index))
+                .find(|&subset| store.size_of(subset) == base_size)
+            else {
+                return false;
+            };
+            let is_parenthesized = **base == Construction::Interval;
+            push(
+                out,
+                if is_parenthesized {
+                    "SUBSET ("
+                } else {
+                    "SUBSET "
+                },
+            );
+            let is_written = write(out, base_set, base);
+            if is_parenthesized {
+                push(out, ")");
+            }
+            is_written
+        }
+        Construction::FunctionSet(domain, range) => {
+            let (Some(key), Some(value)) = (domain.of_elements(), range.of_elements()) else {
+                return false;
+            };
+            if kind != KIND_SET {
+                return false;
+            }
+            // `SetOfFcnsValue.toString` enumerates a set of fewer than `TLCGlobals.enumBound`
+            // (2000) functions, which counts |T|^|S| as the store's size does.
+            if size < 2000 {
+                let function =
+                    Construction::Function(Box::new(key.clone()), Box::new(value.clone()));
+                return join(out, set, &mut |out, index| {
+                    write_element(out, store.element_at(id, index), &function)
+                });
+            }
+            // Otherwise it writes `[S -> T]`, with S the keys of any of the functions and T, an
+            // interval, the values they take.
+            if **range != Construction::Interval {
+                return false;
+            }
+            let first = store.element_at(id, 0);
+            let mut values = (0..size).flat_map(|index| {
+                let function = store.element_at(id, index);
+                (0..store.size_of(function)).map(move |key| store.get_range_value(function, key))
+            });
+            let (mut low, mut high) = (i32::MAX, i32::MIN);
+            if !values.all(|value| {
+                let is_int = store.kind_of(value) == KIND_INT;
+                if is_int {
+                    low = low.min(store.int_of(value));
+                    high = high.max(store.int_of(value));
+                }
+                is_int
+            }) {
+                return false;
+            }
+            let keys = (0..store.size_of(first))
+                .map(|index| store.peek_key(first, index))
+                .collect::<Option<Vec<Id>>>();
+            let Some(keys) = keys.filter(|keys| {
+                is_function_kind(store.kind_of(first))
+                    && (**domain != Construction::Interval
+                        || keys.iter().all(|&key| store.kind_of(key) == KIND_INT))
+            }) else {
+                return false;
+            };
+            push(out, "[");
+            let is_domain_written = if **domain == Construction::Interval {
+                let (first, last) = (keys[0], keys[keys.len() - 1]);
+                push(
+                    out,
+                    &format!("{}..{}", store.int_of(first), store.int_of(last)),
+                );
+                true
+            } else {
+                push(out, "{");
+                let mut is_written = true;
+                for (index, &key_id) in keys.iter().enumerate() {
+                    if index > 0 {
+                        push(out, ", ");
+                    }
+                    let normalized = if normalized == Normalized::No && keys.len() > 1 {
+                        Normalized::Maybe
+                    } else {
+                        normalized
+                    };
+                    is_written =
+                        is_written && write_normalized(store, key_id, key, normalized, out);
+                }
+                push(out, "}");
+                is_written
+            };
+            push(out, &format!(" -> {low}..{high}]"));
+            is_domain_written
+        }
+    }
+}
+
 /// `isFieldName` of `values.ts` (`FcnRcdValue.isName`) on ASCII text: letters, digits and `_`,
 /// with a letter, and not `WF_` or `SF_` past three characters. Text past ASCII, whose letters and
 /// digits are Unicode's, isn't one here, so a value keyed by it isn't printable.
@@ -201,8 +551,11 @@ mod tests {
     use super::*;
     use crate::store::{EMPTY_SET, FALSE};
 
+    // A string of the spec's, which TLC interned as it started.
     fn text(store: &mut Store, text: &str) -> Id {
-        store.str(&text.encode_utf16().collect::<Vec<u16>>())
+        let units: Vec<u16> = text.encode_utf16().collect();
+        store.get_string_rank(&units);
+        store.str(&units)
     }
 
     fn new_store() -> Store {
@@ -306,6 +659,93 @@ mod tests {
                 format_value(&store, id).unwrap()
             );
         }
+    }
+
+    // The texts are TLC's of values built as the constructions say.
+    #[test]
+    fn prints_a_value_as_tlc_built_it() {
+        let mut store = new_store();
+        let integers: Vec<Id> = (0..=3)
+            .map(|value| store.int(value).expect("an integer"))
+            .collect();
+        let (a, b, spaced) = (
+            text(&mut store, "a"),
+            text(&mut store, "b"),
+            text(&mut store, "a b"),
+        );
+        let utf16 = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
+        let write = |store: &Store, id: Id, construction: &Construction, is_normalized: bool| {
+            let mut text = Vec::new();
+            write_constructed(store, id, construction, is_normalized, &mut text)
+                .then(|| String::from_utf16(&text).expect("UTF-16"))
+        };
+        let interval = store.set_of(&integers[1..]).expect("a set");
+        let pair = store.set_of(&integers[1..3]).expect("a set");
+        let set = |inner: Construction| Construction::Set(Box::new(inner), None);
+        assert_eq!(
+            write(&store, interval, &Construction::Interval, false).as_deref(),
+            Some("1..3")
+        );
+        assert_eq!(
+            write(&store, EMPTY_SET, &Construction::Interval, false).as_deref(),
+            Some("{}")
+        );
+        let nested = store.set_of(&[interval]).expect("a set");
+        assert_eq!(
+            write(&store, nested, &set(Construction::Interval), false).as_deref(),
+            Some("{1..3}")
+        );
+        // Held, a set of consecutive integers may be an interval.
+        assert_eq!(write(&store, nested, &set(Construction::Held), false), None);
+        // A record prints its fields as written until TLC normalizes it, and as an element of a
+        // set TLC sorted only where both orders agree.
+        let record = store
+            .function_of(&[a, b], &[integers[1], interval])
+            .expect("a record");
+        let written = Construction::Record(vec![
+            (utf16("b"), Construction::Interval),
+            (utf16("a"), Construction::Held),
+        ]);
+        assert_eq!(
+            write(&store, record, &written, false).as_deref(),
+            Some("[b |-> 1..3, a |-> 1]")
+        );
+        assert_eq!(
+            write(&store, record, &written, true).as_deref(),
+            Some("[a |-> 1, b |-> 1..3]")
+        );
+        let other = store
+            .function_of(&[a, b], &[integers[2], interval])
+            .expect("a record");
+        let records = store.set_of(&[record, other]).expect("a set");
+        assert_eq!(write(&store, records, &set(written), false), None);
+        // A function over strings that aren't field names prints with :>.
+        let function = store.function_of(&[spaced], &[pair]).expect("a function");
+        let keyed = Construction::Function(
+            Box::new(Construction::Held),
+            Box::new(Construction::Interval),
+        );
+        assert_eq!(
+            write(&store, function, &keyed, false).as_deref(),
+            Some("(\"a b\" :> 1..2)")
+        );
+        assert_eq!(write(&store, function, &Construction::Held, true), None);
+        // A power set enumerates its subsets below a base of 7 elements.
+        let subsets: Vec<Id> = [&[][..], &[integers[1]], &[integers[2]], &integers[1..3]]
+            .iter()
+            .map(|subset| store.set_of(subset).expect("a set"))
+            .collect();
+        let power_set = store.set_of(&subsets).expect("a set");
+        assert_eq!(
+            write(
+                &store,
+                power_set,
+                &Construction::Subset(Box::new(Construction::Interval)),
+                false
+            )
+            .as_deref(),
+            Some("{{}, {1}, {2}, {1, 2}}")
+        );
     }
 
     #[test]
