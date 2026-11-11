@@ -49,7 +49,7 @@ about 9.5 times the TypeScript engine the model checker replaced.
 ```
 
 The decisive fact for the plan: **every back end takes text and returns a verdict.** `DECIDERS` in
-`deciders.ts` maps a prover name to `(text, {timeLimitMs, signal}) => Verdict`, and the worker
+`deciders.ts` mapped a prover name to `(text, {timeLimitMs, signal}) => Verdict`, and the worker
 pool already ships only `{prover, text, timeLimitMs}` across a thread boundary. Each decider is a
 port of a separate program whose input is the file tlapm writes (`.smt`, `.znn`, `.thy`, LS4's
 input), so each can be ported, tested and switched on alone, exactly at that seam.
@@ -193,8 +193,9 @@ answer.
    Replaying the record writes the same inputs on any machine in minutes. This is the per-back-end
    test set and needs no tlapm. Its size is in 2.4.
 3. **The decider differential** (`scripts/prover-differential.ts`, P0): decides every input of
-   the decider corpus with its step limit, by the Rust port through the addon (`--side rust`) or by
-   the TypeScript (`--side ts`), and compares verdict and statistics with the record;
+   the decider corpus with its step limit, by the Rust port through the addon (until every
+   TypeScript decider was deleted, `--side ts` decided by the TypeScript), and compares verdict
+   and statistics with the record;
    `--prover smt|z3|zenon|isabelle|ls4`, `--jobs`, `--filter`, as the other conformance scripts. It
    reports `same`, `differs` (verdict or statistics), `unstable` (a runtime limit, 2.3),
    `declined` and `crash`. The gate is zero `differs`, `declined` and `crash`.
@@ -361,9 +362,7 @@ Like the engine, the Rust prover arrives through the addon and the WebAssembly m
 TypeScript keeps the orchestration until P6:
 
 ```
- prove.ts (TS)            decide(prover, text, limits) ──► DECIDERS[prover]
-                                                           ├─ TS decider     (default until its flip)
-                                                           └─ native decide  (addon / wasm)
+ prove.ts (TS)            decide(prover, text, limits) ──► native decide  (addon / wasm)
 ```
 
 - One binding call, as built in P0 (`prove-it-host/src/prover.rs`, ABI 12): `decide(prover,
@@ -373,13 +372,12 @@ TypeScript keeps the orchestration until P6:
   decision takes milliseconds to seconds, so the 15–160 ns crossing (DESIGN 10.1) is noise.
   WebAssembly exports it as `prove_it_decide` through the `call()` ABI and reads the clock from the
   `prove_it_now` import the engine already uses.
-- `src/prover/deciders.ts` chooses per prover: `PROVE_IT_PROVER=ts|rust` forces all, and
-  `PROVE_IT_PROVER_<NAME>=ts|rust` one back end, such as `PROVE_IT_PROVER_ZENON` (for the
-  differential and for bisecting). The default for each back end flips to `rust` in the PR that
-  makes its differential clean, by adding it to `RUST_BACKENDS` in `deciders.ts`. If no addon
-  loads, or the Rust port declines the input, the TypeScript decider runs (`PROVE_IT_ENGINE=debug`
-  reports it), until P7 deletes it; then `prove` follows `check`'s
-  rule (fallback.md): the WebAssembly module, or `EngineUnavailableError`.
+- `src/prover/deciders.ts` chose per prover while TypeScript deciders remained:
+  `PROVE_IT_PROVER=ts|rust` forced all, and `PROVE_IT_PROVER_<NAME>=ts|rust` one back end, the
+  default flipping to `rust` in the PR that made its differential clean (`RUST_BACKENDS`). With
+  every TypeScript decider deleted, that choice is gone: `decide` calls the native engine, a port
+  that declines its input is a `TlaProverError`, and where no engine loads `prove` follows
+  `check`'s rule (fallback.md): the WebAssembly module, or `EngineUnavailableError`.
 - The worker pool keeps working: each worker calls the addon synchronously. Cancellation cannot
   reach a thread inside a native call by `worker.terminate()`, so the pool hands each worker a
   cell of a `SharedArrayBuffer` (`DecideOptions.cancel`) and sets it when it stops; the N-API
@@ -707,16 +705,16 @@ addon (`bun scripts/platform-packages.ts build`):
 
 ```
 NODE_OPTIONS=--max-old-space-size=4500 bun scripts/run.ts prover-inputs   # writes .prover-inputs/, minutes
-bun scripts/run.ts prover-differential --side rust --prover zenon --jobs 4
+bun scripts/run.ts prover-differential --prover zenon --jobs 4
 ```
 
 The heap flag is needed: without it the solver's heap fills on two modules, their workers die,
 and `prover-inputs` exits with an error, naming how many modules it lost.
 
-`--side ts` checks the record against the TypeScript (it reproduces), `--filter` keeps the inputs
+`--update` writes the answers that differ into the record, `--filter` keeps the inputs
 whose key, `prover/digest`, contains the text (`--filter /0` keeps about a sixteenth), and `.prover-differential.json` holds every result. Outcomes: `same`, `differs`,
 `unstable` (2.3), `declined` (not covered by the port yet), `crash`. With
-`PROVE_IT_ENGINE_WASM=dist/prove-it-engine.wasm` the Rust side is the WebAssembly module. A track
+`PROVE_IT_ENGINE_WASM=dist/prove-it-engine.wasm` the decider is the WebAssembly module. A track
 that changes a TypeScript decider (it should not need to) re-records with `prover-inputs --record`
 in the same PR, under Node with `NODE_OPTIONS=--max-old-space-size=4500`.
 
@@ -1133,6 +1131,13 @@ is next.
   through the addon and through WebAssembly, none differing, unstable, declined or crashed. Under
   WebAssembly, three workers, the most a worker's process held (its `VmHWM`, sampled every half
   second) was 844 MB over the smt inputs and 1,637 MB over the z3 ones, well inside wasm32's 4 GB.
+- The TypeScript dispatch removed, with no TypeScript decider left: `deciders.ts` keeps
+  `decide`, which calls the native engine and throws where it declines or no engine loads, and
+  `isBackend`. `DECIDERS`, `hasTypeScriptDecider`, `RUST_BACKENDS`, `PROVE_IT_PROVER` and
+  `PROVE_IT_PROVER_<NAME>`, `verdict.ts`'s step counter (`Steps`, `createSteps`,
+  `isStepLimitReached`, `DecideOptions.steps` and `.statistics`), `useTypeScriptBackends` and
+  `prover-differential`'s `--side` are gone. `prover-differential` decides with the native
+  engine, and `--update` re-records from it.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and

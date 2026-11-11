@@ -96,8 +96,7 @@ describe("a malformed input", () => {
   });
 });
 
-// Until a backend's port lands, the native engine declines its inputs and TypeScript decides them.
-// Where it decides, it must answer as TypeScript does, until the TypeScript backend is deleted.
+// Each backend's TypeScript is deleted, and its Rust port decides as the TypeScript did.
 describe("the Rust ports", () => {
   const getAddon = () => {
     const addon = getNativeAddon();
@@ -105,37 +104,12 @@ describe("the Rust ports", () => {
     return addon;
   };
 
-  // Runs a decision with PROVE_IT_PROVER set to the port given.
-  const useProver = <Value>(setting: string, getValue: () => Value) => {
-    const previous = process.env.PROVE_IT_PROVER;
-    process.env.PROVE_IT_PROVER = setting;
-    try {
-      return getValue();
-    } finally {
-      if (previous === undefined) delete process.env.PROVE_IT_PROVER;
-      else process.env.PROVE_IT_PROVER = previous;
-    }
-  };
-
-  // A backend whose TypeScript is deleted decides as its TypeScript did, as it was recorded.
-  it.each(INPUTS)("%s declines, or decides as TypeScript does", (prover, text) => {
-    const native = getAddon().decide(prover, text, Infinity, undefined, undefined);
-    if (native.kind === "declined") return;
-    const typescript = RECORDED[prover] ?? useProver("ts", () => decide(prover, text, OPTIONS));
-    expect(native).toEqual({
-      kind: "decided",
-      verdict: typescript.verdict,
-      statistics: typescript.statistics,
-    });
-  });
-
-  // Every backend's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it. Z3 is sent the SMT
-  // input.
+  // Z3 is sent the SMT input.
   it.each([...INPUTS, ["z3", INPUTS[0][1]] as const])(
-    "decides %s in Rust whatever PROVE_IT_PROVER says",
+    "%s decides as its TypeScript did",
     (prover, text) => {
-      expect(useProver("ts", () => decide(prover, text, OPTIONS))).toMatchObject({
-        verdict: "unsat",
+      expect(decide(prover, text, OPTIONS)).toMatchObject({
+        verdict: RECORDED[prover].verdict,
         statistics: RECORDED[prover].statistics,
       });
     },
@@ -157,15 +131,13 @@ describe("the Rust ports", () => {
     });
   });
 
-  it.each(INPUTS)("%s falls back to TypeScript where its port declines", (prover, text) => {
-    expect(useProver("rust", () => decide(prover, text, OPTIONS))).toMatchObject({
-      verdict: "unsat",
-    });
+  it("fails on a prover the engine declines", () => {
+    expect(() => decide("cvc4", "", OPTIONS)).toThrow(TlaProverError);
   });
 
   // The native backends don't see the signal, so an aborted one keeps an input from them.
   it.each(INPUTS)("%s is unknown once its signal has aborted", (prover, text) => {
     const options = { timeLimitMs: Infinity, signal: AbortSignal.abort() };
-    expect(useProver("rust", () => decide(prover, text, options)).verdict).toBe("unknown");
+    expect(decide(prover, text, options).verdict).toBe("unknown");
   });
 });
