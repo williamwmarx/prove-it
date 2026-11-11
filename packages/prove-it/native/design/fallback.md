@@ -301,6 +301,31 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
 - uncounted branches;
 - every decline of atoms that read or set TLC's registers.
 
+#### Action constraints that fail to evaluate
+
+An ACTION_CONSTRAINT that fails to evaluate on a step is native: TLC throws out of
+`Worker.addElement` before it counts the successor as found and reports the error as one of the
+next states (`ModelChecker.doNextFailed`), with the trace to that successor, then the call stack of
+its replay of the expansion with its `CallStackTool` (`ModelChecker.doNext`), as in
+`prove-it-cli/tests/action-constraint-failures` (from the grid of 796 runs: 744 match, 52
+decline, none differ). What still declines:
+- an action constraint that is a literal and no boolean (`AC == "yes"`): TLC fails casting the
+  definition it holds for it, with a ClassCastException whose message names the JVM's classes
+  (`a constraint that is a literal, which TLC fails to cast`), as for a CONSTRAINT;
+- one that fails under `-continue`, or with an ALIAS, `-dumpTrace`, a property TLC checks of each
+  step (`[][A]_v`), or online liveness checking;
+- one after which an atom of the temporal properties fails as TLC adds the state it was
+  expanding to the behavior graphs: TLC then prints the atom's call stack with the trace to the
+  successor, which isn't followed;
+- one whose replay doesn't follow TLC: a successor before it TLC fails to fingerprint, one
+  outside the model that violates an invariant, a next-state relation the evaluator doesn't split
+  into TLC's actions, or a step that no longer fails;
+- one the configuration binds (`= TRUE` outside a module scope, or `<-`), whose definition the
+  search evaluates where TLC holds the value and drops the constraint bound to TRUE (`a failing action constraint the
+  configuration binds`);
+- a CONSTRAINT or a VIEW that fails to evaluate on a successor, as before (`a constraint, a VIEW
+  or an action property that fails on a successor`).
+
 #### Declines to win back
 
 A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
@@ -332,6 +357,13 @@ it from one that printed something else. Each is outside the corpus:
   constant definition or an assumption reads TLCExt's registers, or where only those builtins make
   a constant definition impure, the IR marks the four `Builtin::DECLINED`, and the engine declines
   them where it computes them, as it did before it checked them.
+- an action constraint that applies a constant function outside its domain
+  (`f == [i \in 0..2 |-> i]`, `AC == f[x'] > 0`, the failDom* cases of
+  `prove-it-cli/tests/action-constraint-failures`). TLC words the failure with the `FcnRcdValue` it
+  computed as it started (`Attempted to apply function:`), which the evaluator doesn't build, so
+  the binary declines it (`applied a function outside its domain`), as it did before action
+  constraint failures were native. To win them back, build a constant definition's function as
+  TLC computed it at startup.
 
 A property's \A that TLC unrolls, or takes whole, with the substitutions of the INSTANCEs it went
 through left unbound declines where it is a tautology or has a constant part that isn't a boolean,

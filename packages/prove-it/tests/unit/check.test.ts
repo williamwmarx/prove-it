@@ -2312,13 +2312,7 @@ describe("evaluation errors match TLC", () => {
     expect(await getMessage("Inv == 1", "INVARIANT Inv")).toBe(
       "TLC expected a boolean value, but did not find one. 1\nWhile working on the initial state:\nx = 0\n",
     );
-    expect(
-      await getMessage(
-        "C == x' + 1",
-        "ACTION_CONSTRAINT C",
-        "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
-      ),
-    ).toBe(
+    expect(await getMessage("C == x' + 1", "ACTION_CONSTRAINT C")).toBe(
       "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: TLC expected a boolean value, but did not find one. line 6, col 6 to line 6, col 11 of module M",
     );
     const property = await checkStepsOnEngine(

@@ -63,6 +63,9 @@ pub enum Ending {
     /// A state that violates an invariant or an action property, which TLC holds as it found it:
     /// matched by its value, and printed with the one before it as TLC has them.
     Violation,
+    /// A successor whose checks failed to evaluate, as an action constraint's, which TLC holds as
+    /// it holds a violating one, having checked it up to the check that failed.
+    Failed,
     /// A lasso's last state: TLC recovers every state, and doesn't rebuild the trace again.
     Lasso,
 }

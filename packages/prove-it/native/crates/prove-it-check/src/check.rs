@@ -1790,7 +1790,9 @@ fn check_spec(
                         && (dumps.has_command_line_dumps()
                             || !config.postconditions.is_empty()
                                 && match site {
-                                    ErrorSite::Invariant(_) => false,
+                                    ErrorSite::Invariant(_) | ErrorSite::ActionConstraint(_) => {
+                                        false
+                                    }
                                     ErrorSite::Next => {
                                         ir.model.check_deadlock
                                             && violation.counts.generated != initial_generated
@@ -1810,6 +1812,28 @@ fn check_spec(
                 {
                     Err("a failure outside the next-state relation with an ALIAS".to_string())
                 }
+                // TLC holds a name the configuration binds as its value, and drops an action
+                // constraint bound to TRUE (`SpecProcessor.processModelConstraints`), where the
+                // search evaluated the definition. A binding scoped to a module (`= [M] TRUE`)
+                // leaves TLC evaluating the definition.
+                ViolationKind::Error {
+                    site: ErrorSite::ActionConstraint(position),
+                } if config
+                    .action_constraints
+                    .get(position as usize)
+                    .is_some_and(|name| {
+                        config
+                            .constants
+                            .iter()
+                            .any(|constant| constant.module.is_none() && &constant.name == name)
+                            || config
+                                .substitutions
+                                .iter()
+                                .any(|substitution| &substitution.name == name)
+                    }) =>
+                {
+                    Err("a failing action constraint the configuration binds".to_string())
+                }
                 ViolationKind::Error { site } => 'failure: {
                     let added = match violation.added.as_ref().map(|_| format_added(&violation)) {
                         Some(Err(why)) => break 'failure Err(why.to_string()),
@@ -1827,6 +1851,9 @@ fn check_spec(
                             ErrorSite::Init => Site::Init,
                             ErrorSite::Next => Site::Next,
                             ErrorSite::Invariant(position) => Site::Invariant(position),
+                            ErrorSite::ActionConstraint(position) => {
+                                Site::ActionConstraint(position)
+                            }
                             ErrorSite::InitialConstraint(position) => {
                                 Site::InitialConstraint(position)
                             }

@@ -101,7 +101,11 @@ pub fn print_failure(
     // properties show only in what their atoms print, which the search places where it holds
     // what the spec prints. The search reports a failure of the next-state relation in such a
     // model only where it followed TLC's checks of the state as TLC adds it after.
-    let is_next = matches!(stop.site, Site::Next | Site::NextAtom { .. });
+    // An action constraint that fails to evaluate fails TLC's next states (`Worker.addElement`).
+    let is_next = matches!(
+        stop.site,
+        Site::Next | Site::NextAtom { .. } | Site::ActionConstraint(_)
+    );
     let is_followed = is_atom
         || is_initial
         || is_next
@@ -505,9 +509,10 @@ fn evaluate(
         }
         let failure =
             rebuilder.evaluate_failure(stop.store, &stop.states, &stop.actions, stop.site)?;
-        // TLC holds a successor that fails an invariant as it found it.
+        // TLC holds a successor that fails an invariant or an action constraint as it found it.
         let ending = match stop.site {
             Site::Invariant(_) => Ending::Violation,
+            Site::ActionConstraint(_) => Ending::Failed,
             _ => Ending::Kept,
         };
         // TLC prints no trace for a check of an initial state that fails.
@@ -537,10 +542,10 @@ fn evaluate(
         // TLC rebuilds the trace once more after it prints it, for the postconditions, then
         // replays the failure. Its worker rebuilds it after a failure in the next-state relation
         // only as it goes on to check the state for deadlock, having generated no successor of
-        // it, and never after an invariant fails to evaluate, since it generated the successor
-        // (`Worker.run`, `Worker.addElement`).
+        // it, and never after an invariant or an action constraint fails to evaluate, since it
+        // generated the successor (`Worker.run`, `Worker.addElement`).
         let is_rebuilt_again = match stop.site {
-            Site::Invariant(_) => false,
+            Site::Invariant(_) | Site::ActionConstraint(_) => false,
             Site::Next | Site::NextAtom { .. } => {
                 ir.model.check_deadlock && !failure.replay.is_successor_generated
             }
