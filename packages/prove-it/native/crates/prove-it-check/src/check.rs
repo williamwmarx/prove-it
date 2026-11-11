@@ -203,12 +203,15 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
         let exit_code = check_spec(path, &parsed, java, &mut printer);
-        // Where TLC records the trace for its trace exploration spec, a counterexample makes it
-        // write the trace's file beside the spec (`_TLCTraceSilent`), and, for one of two or more
-        // states, the spec (`TraceExplorationSpec.generate`), which the binary doesn't yet. The
-        // other specs are checked as after any spec it declines.
+        // Where TLC records the trace for its trace exploration spec, a counterexample, or any
+        // error after which it printed the behavior, makes it write the trace's file beside the
+        // spec (`_TLCTraceSilent`), and, for a trace of two or more states, the spec
+        // (`TraceExplorationSpec.generate`), which the binary doesn't yet. The other specs are
+        // checked as after any spec it declines.
         exit_codes.push(
-            if printer.is_trace_recorded && COUNTEREXAMPLE_EXITS.contains(&exit_code) {
+            if printer.is_trace_recorded
+                && (COUNTEREXAMPLE_EXITS.contains(&exit_code) || printer.is_trace_printed)
+            {
                 report_not_native(
                     &mut printer,
                     "the trace exploration spec TLC writes for a counterexample",

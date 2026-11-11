@@ -79,6 +79,8 @@ pub struct Printer<'o> {
     /// Whether the run records the trace TLC writes beside the spec for its trace exploration
     /// spec: TLC's default, where tla-front read the spec.
     pub is_trace_recorded: bool,
+    /// Whether it printed a state of an error trace, which TLC records for that spec.
+    pub is_trace_printed: bool,
 }
 
 impl<'o> Printer<'o> {
@@ -91,6 +93,7 @@ impl<'o> Printer<'o> {
             err: &mut *output.err,
             host: output.host,
             is_trace_recorded: false,
+            is_trace_printed: false,
         }
     }
 
@@ -104,6 +107,7 @@ impl<'o> Printer<'o> {
         if is_warning && !self.is_warning_enabled {
             return;
         }
+        self.is_trace_printed |= level == Level::State;
         let message = if self.is_tool {
             format!(
                 "@!@!@STARTMSG {code}:{} @!@!@\n{text}\n@!@!@ENDMSG {code} @!@!@",

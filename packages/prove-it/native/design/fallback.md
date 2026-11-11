@@ -625,6 +625,13 @@ zip reader and inflater of its own (`zip.rs`, `inflate.rs`), and checks a master
 declines TLC 1.7.4's jar and a manifest it can't read with certainty. Of the 117 CLI test runs, 56
 now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator.
 
+Since #250 the binary prints SANY's report of the trace exploration spec too, and checks TLC's
+default natively until TLC would write the trace's files: after any error it printed a behavior for,
+a counterexample or not, it declines with "the trace exploration spec TLC writes for a
+counterexample". On the 733 corpus models in TLC's default, against TLC's recordings of that mode,
+529 print TLC's output, 202 decline so, and 2 differ as they do with `-noGenerateSpecTE`, by TLC's
+runtime (a Java stack overflow, and where TLC is installed).
+
 ### The public API afterwards
 
 `check` and its option, progress, result and status types, `prove` and its types, `parseConfig`,
