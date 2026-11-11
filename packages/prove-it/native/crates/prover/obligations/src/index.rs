@@ -874,4 +874,42 @@ mod tests {
         assert_eq!(search_module_header(&get_units("x---- \tMODULE")), None);
         assert_eq!(search_module_header(&get_units("é------MODULE")), Some(1));
     }
+
+    // tlapm recurses until its stack overflows on an INSTANCE that instantiates, inside a LET or
+    // a DEFINE, a module whose instantiation it is in.
+    #[test]
+    fn fails_an_instance_inside_its_own_instantiation_as_a_stack_overflow() {
+        let sources = [
+            "---- MODULE M ----\n---- MODULE Inner ----\nTHEOREM LET I == INSTANCE Inner IN TRUE\n====\nTHEOREM TRUE\n====\n",
+            "---- MODULE M ----\n---- MODULE P ----\nTHEOREM LET I == INSTANCE Q IN TRUE\n====\n---- MODULE Q ----\nTHEOREM LET J == INSTANCE P IN TRUE\n====\nTHEOREM TRUE\n====\n",
+            "---- MODULE M ----\nTHEOREM LET I == INSTANCE M IN TRUE\n====\n",
+            "---- MODULE M ----\n---- MODULE Inner ----\nTHEOREM LET I == INSTANCE Inner IN TRUE\n====\nJ == INSTANCE Inner\nTHEOREM TRUE\n====\n",
+        ];
+        for source in sources {
+            let result = run("M.tla", source, &[], None);
+            assert_eq!(
+                result.results.err(),
+                Some(ObligationError::bug("Stack overflow")),
+                "{source}"
+            );
+        }
+    }
+
+    // Instantiating the same module twice, one after the other, is no recursion.
+    #[test]
+    fn instantiates_a_module_again_after_its_instantiation() {
+        let result = run(
+            "M.tla",
+            "---- MODULE M ----\n---- MODULE Inner ----\nX == TRUE\n====\nTHEOREM LET I == INSTANCE Inner IN I!X\nOBVIOUS\nTHEOREM LET J == INSTANCE Inner IN J!X\nOBVIOUS\n====\n",
+            &[],
+            None,
+        );
+        let counts = result
+            .results
+            .expect("obligations")
+            .iter()
+            .map(|module| module.obligations.len())
+            .collect::<Vec<_>>();
+        assert_eq!(counts, [0, 2]);
+    }
 }
