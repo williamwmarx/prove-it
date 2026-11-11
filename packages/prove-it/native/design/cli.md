@@ -545,6 +545,7 @@ with `dot,strict`.
 Not native, where TLC writes what the binary doesn't model:
 
 - `-dump class,...` and a file under `${metadir}`;
+- a plain `-dump` after a `-dump dot`: TLC goes on writing a graph, into the last file;
 - `-dump dot,constrained`: TLC writes a step to each successor a constraint excludes and to each
   that an action's guard excludes (`addUnsatisfiedState`), with the predicate;
 - `-dump dot` with an ALIAS, which labels the states; with `colorize` or `actionlabels` where the
@@ -730,6 +731,8 @@ Declined, each with its reason:
   (`TLCGlobals.continuation`) and exits with 0;
 - a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS, or
   that holds a record of several fields where the store can't print it;
+- an ALIAS in a spec that reads TLCExt's Trace: the simulation binds Trace to records of its
+  states with their actions (`TLCExt.getTrace`), which the trace evaluator doesn't make;
 - a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),
   which the simulation builds only as it checks a trace.
 
