@@ -293,10 +293,10 @@ it from one that printed something else. Each is outside the corpus:
   does. The groups: register readers, TLCGet("level") printers, invisible override reads, random
   draws, final methods, VIEW and POSTCONDITION reads, and recursive-operator arguments. The
   `front-constants-full` branch declines them where the run computes the read
-  (`Definition::READ_DECLINED`) and reads the index; its 13,050 adversarial specs, against TLC at
-  d8fb231, are the regression set for winning them back. A substitute that reaches AssertEq,
-  TLCGetOrDefault, TLCGetAndSet or PickSuccessor where the run reads it stays declined, as it was
-  before the engine checked them.
+  (`Definition::READ_DECLINED`) and reads the index. Its 13,067 adversarial specs, against TLC at
+  d8fb231, on the `front-constants-cases` branch, are the regression set for winning them back.
+  A substitute that reaches AssertEq, TLCGetOrDefault, TLCGetAndSet or PickSuccessor where the
+  run reads it stays declined, as it was before the engine checked them.
 
 #### Known wrong outputs
 
