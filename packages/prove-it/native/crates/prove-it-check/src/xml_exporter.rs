@@ -6,6 +6,7 @@ use std::path::Path;
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::get_standard_module;
+use tla_front::report::get_missing_root_text;
 use tla_front::sany::export::export_xml;
 use tla_front::sany::xml::{
     XML_EXPORT_ARGS_PARSING_FAILURE, XML_EXPORT_SPEC_PARSING_FAILURE, XmlExportOptions,
@@ -138,10 +139,10 @@ fn print_missing_root(
         .iter()
         .map(|include| format!("{include}, "))
         .collect();
-    let fatal = format!("Unknown location\n\nCannot find source file for module {root}");
     let _ = write!(
         output.err,
-        "File does not exist: {user_directory}/./{file_name} while looking in these directories: {user_directory}, {directories}classpath:/tla2sany/StandardModules, classpath:/\n\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\nERROR: Failed to parse module.\n"
+        "File does not exist: {user_directory}/./{file_name} while looking in these directories: {user_directory}, {directories}classpath:/tla2sany/StandardModules, classpath:/\n{}ERROR: Failed to parse module.\n",
+        get_missing_root_text(name, root).text
     );
     XML_EXPORT_SPEC_PARSING_FAILURE
 }

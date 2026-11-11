@@ -18,6 +18,7 @@ use crate::recursive::check_recursive;
 use crate::sany::GENERATOR_EXCEPTION;
 use crate::sany::generator::{ModuleDependencies, get_dependencies};
 use crate::sany::messages::{Generated, get_generator_messages};
+use crate::sany::source::get_unboxed_source;
 use crate::sany_parse_error::{get_sany_174_lexical_error, get_sany_parse_error};
 
 type Result<T> = std::result::Result<T, Stop>;
@@ -170,15 +171,18 @@ impl Loader<'_> {
             ));
         }
         let Some(text) = text else {
+            // TLC 1.7.4's SANY gives the error no location.
             return Err(Stop::Fatal {
-                location: Some(importer.clone()),
+                location: (self.options.version == TlcVersion::Master).then(|| importer.clone()),
                 message: format!(
                     "Cannot find source file for module {name} imported in module {importer}."
                 ),
                 parse_error: None,
             });
         };
-        let parsed = parse_sany_module(&text, None, self.options.version);
+        // SANY's parser takes []ASSUME and []PROVE, which the front end's reads unboxed.
+        let parsed = get_unboxed_source(&text)
+            .and_then(|unboxed| parse_sany_module(&unboxed, None, self.options.version));
         let parsing_line = format!(
             "Parsing file {}\n",
             (self.options.describe_file)(name, origin)
@@ -613,10 +617,6 @@ pub fn get_sany_text_of(
         Err(Stop::Fatal { .. }) if !loader.parse_messages.is_empty() => Err(FrontError::NotYet(
             "SANY's parse messages with a fatal error".to_owned(),
         )),
-        // TLC 1.7.4's SANY aborts with an AbortException instead.
-        Err(Stop::Fatal { .. }) if options.version == TlcVersion::V1_7_4 => {
-            Err(FrontError::NotYet("TLC 1.7.4's fatal errors".to_owned()))
-        }
         Err(Stop::Fatal {
             location,
             message,
@@ -629,16 +629,46 @@ pub fn get_sany_text_of(
                     |module| format!("In module {module}")
                 )
             );
-            let parse_error = parse_error.map_or_else(String::new, |text| format!("{text}\n"));
+            let is_tlc_174 = options.version == TlcVersion::V1_7_4;
+            // TLC 1.7.4's ParseException.getShortMessage fails on an error at the first token,
+            // which has no image.
+            let is_imageless = is_tlc_174
+                && parse_error
+                    .as_deref()
+                    .is_some_and(|text| text.contains(" and token \"\" "));
+            let parse_error = parse_error
+                .filter(|_| !is_imageless)
+                .map_or_else(String::new, |text| format!("{text}\n"));
+            // TLC 1.7.4's SANY aborts with an AbortException, and keeps the message as an abort.
+            let ending = if is_imageless {
+                "java.lang.NullPointerException: Cannot invoke \"String.length()\" because \"str\" is null\n".to_owned()
+            } else if is_tlc_174 {
+                format!("tla2sany.semantic.AbortException\n*** Abort messages: 1\n\n{fatal}\n\n\n")
+            } else {
+                format!("{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n")
+            };
             Ok(SanyText {
                 text: format!(
-                    "{}{parse_error}\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n",
+                    "{}{parse_error}\nFatal errors while parsing TLA+ spec in file {name}\n\n{ending}",
                     loader.lines.concat()
                 ),
                 is_failed: true,
                 exception: None,
             })
         }
+    }
+}
+
+/// What SANY prints where no file holds the root module `root`, which TLC gives SANY as `name`:
+/// `SANY.frontEndParse`'s fatal error.
+pub fn get_missing_root_text(name: &str, root: &str) -> SanyText {
+    let fatal = format!("Unknown location\n\nCannot find source file for module {root}");
+    SanyText {
+        text: format!(
+            "\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n"
+        ),
+        is_failed: true,
+        exception: None,
     }
 }
 
