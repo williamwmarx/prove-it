@@ -2613,6 +2613,24 @@ impl Parser {
         let keyword = self.expect("ASSUME")?;
         let mut location = self.location_of(&keyword);
         let assumptions = self.separated(|parser| {
+            if parser.peek_kind(0) == TokenKind::Identifier
+                && parser.is_at("::", 1)
+                && parser.is_at("ASSUME", 2)
+            {
+                let label_start = parser.index;
+                let token = parser.advance()?;
+                let mut location = parser.location_of(&token);
+                let name_range = Some(parser.get_range(label_start));
+                parser.expect("::")?;
+                let body = parser.with_proof_scope(Self::parse_assume_prove)?;
+                location.range = Some(parser.get_range(label_start));
+                return Ok(Assumed::Label {
+                    name: token.text.clone(),
+                    name_range,
+                    body,
+                    location,
+                });
+            }
             if parser.is_at("ASSUME", 0) {
                 return Ok(Assumed::AssumeProve(
                     parser.with_proof_scope(Self::parse_assume_prove)?,

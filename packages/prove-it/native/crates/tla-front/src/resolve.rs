@@ -833,6 +833,8 @@ enum Clause {
     Expression(Expr),
     NewSymbol(NewSymbol),
     AssumeProve(AssumeProve),
+    /// A labeled ASSUME/PROVE, which the front end lets a name select only as a fact.
+    Label(Name),
 }
 
 fn get_clauses(assume_prove: &AssumeProve) -> Vec<Clause> {
@@ -843,6 +845,7 @@ fn get_clauses(assume_prove: &AssumeProve) -> Vec<Clause> {
             Assumed::Expression(expression) => Clause::Expression(expression.clone()),
             Assumed::NewSymbol(symbol) => Clause::NewSymbol(symbol.clone()),
             Assumed::AssumeProve(inner) => Clause::AssumeProve(inner.clone()),
+            Assumed::Label { name, .. } => Clause::Label(name.clone()),
         })
         .chain([Clause::Expression(assume_prove.conclusion.clone())])
         .collect()
@@ -856,7 +859,7 @@ fn statement_clause(statement: &Statement) -> Clause {
 }
 
 /// SANY drops a label in the scope of a NEW in a nested ASSUME, after it reports the label.
-fn find_clause_label(clause: &Clause, name: &str, is_forbidden: bool) -> Option<Expr> {
+fn find_clause_label(clause: &Clause, name: &str, is_forbidden: bool) -> Option<Clause> {
     match clause {
         Clause::AssumeProve(assume_prove) => {
             get_clauses(assume_prove)
@@ -871,8 +874,13 @@ fn find_clause_label(clause: &Clause, name: &str, is_forbidden: bool) -> Option<
                 })
         }
         _ if is_forbidden => None,
-        Clause::NewSymbol(symbol) => symbol.set.as_ref().and_then(|set| find_label(set, name)),
-        Clause::Expression(expression) => find_label(expression, name),
+        Clause::NewSymbol(symbol) => symbol
+            .set
+            .as_ref()
+            .and_then(|set| find_label(set, name))
+            .map(Clause::Expression),
+        Clause::Expression(expression) => find_label(expression, name).map(Clause::Expression),
+        Clause::Label(label) => (&**label == name).then(|| clause.clone()),
     }
 }
 
@@ -915,7 +923,7 @@ fn check_selection(
     scope: &Scope,
     unit: &Unit,
     is_fact: bool,
-) {
+) -> Result<()> {
     let report = |index: Option<usize>, message: String| {
         let range = index
             .and_then(|index| get_selector_ranges(reference).and_then(|ranges| ranges.get(index)))
@@ -946,7 +954,7 @@ fn check_selection(
                             "A name selector here must be from a LET clause.".to_owned(),
                         );
                     }
-                    return;
+                    return Ok(());
                 }
                 let found = if index == 1 {
                     let clauses = match &statement {
@@ -960,7 +968,7 @@ fn check_selection(
                     match &node {
                         Clause::Expression(expression) => match &expression.kind {
                             ExpressionKind::Label { body, .. } => {
-                                find_label(body, name).map(|label| (0, label))
+                                find_label(body, name).map(|label| (0, Clause::Expression(label)))
                             }
                             _ => None,
                         },
@@ -969,7 +977,7 @@ fn check_selection(
                 };
                 let Some((position, label)) = found else {
                     report(Some(index), format!("Cannot find label `{name}'."));
-                    return;
+                    return Ok(());
                 };
                 if index == 1
                     && let Clause::AssumeProve(assume_prove) = &statement
@@ -982,17 +990,29 @@ fn check_selection(
                             "Accessing subexpression labeled `{name}' of ASSUME/PROVE clause {SCOPE_MESSAGE}"
                         ),
                     );
-                    return;
+                    return Ok(());
                 }
+                let label = match label {
+                    Clause::Expression(label) => label,
+                    // `Generator.selectorToNode` returns a LabelNode of an ASSUME/PROVE as a fact.
+                    _ if is_fact && args.is_empty() && index == selectors.len() - 1 => {
+                        return Ok(());
+                    }
+                    _ => {
+                        return Err(FrontError::NotYet(
+                            "a labeled ASSUME/PROVE selected other than as a fact".to_owned(),
+                        ));
+                    }
+                };
                 let ExpressionKind::Label { params, .. } = &label.kind else {
-                    return;
+                    return Ok(());
                 };
                 if args.len() != params.len() {
                     report(
                         Some(index),
                         format!("Label `{name}' used with wrong number of arguments."),
                     );
-                    return;
+                    return Ok(());
                 }
                 node = Clause::Expression(label.clone());
                 is_goal = false;
@@ -1010,13 +1030,18 @@ fn check_selection(
                                 format!("Nonexistent operand specified by `{operand_name}'.")
                             },
                         );
-                        return;
+                        return Ok(());
                     }
                     is_suffices_open = false;
                     continue;
                 }
                 match &node {
-                    Clause::NewSymbol(_) => return,
+                    Clause::NewSymbol(_) => return Ok(()),
+                    Clause::Label(_) => {
+                        return Err(FrontError::NotYet(
+                            "a selection within a labeled ASSUME/PROVE".to_owned(),
+                        ));
+                    }
                     Clause::Expression(labeled) => {
                         let expression = get_label_body(labeled);
                         if is_literal(&expression) {
@@ -1024,7 +1049,7 @@ fn check_selection(
                                 Some(index),
                                 "Selecting subexpression of expression that has none.".to_owned(),
                             );
-                            return;
+                            return Ok(());
                         }
                         let kind = match &expression.kind {
                             ExpressionKind::Identifier { .. } => find_binding(
@@ -1042,7 +1067,7 @@ fn check_selection(
                                     "Choosing operand `{operand_name}' of subexpression with no operands."
                                 ),
                             );
-                            return;
+                            return Ok(());
                         }
                         let operands = match &expression.kind {
                             ExpressionKind::Identifier { .. } => Some(Vec::new()),
@@ -1056,14 +1081,14 @@ fn check_selection(
                             },
                         };
                         let Some(operands) = operands else {
-                            return;
+                            return Ok(());
                         };
                         let Some(position) = get_operand_index(operand, operands.len()) else {
                             report(
                                 Some(index),
                                 format!("Nonexistent operand specified by `{operand_name}'."),
                             );
-                            return;
+                            return Ok(());
                         };
                         node = Clause::Expression(operands[position].clone());
                         is_goal = false;
@@ -1075,7 +1100,7 @@ fn check_selection(
                                 Some(index),
                                 format!("Nonexistent operand specified by `{operand_name}'."),
                             );
-                            return;
+                            return Ok(());
                         };
                         if is_in_scope_of_declaration(assume_prove, position)
                             && (!is_goal || is_out_of_scope)
@@ -1084,7 +1109,7 @@ fn check_selection(
                                 Some(index),
                                 format!("Accessing ASSUME/PROVE clause {SCOPE_MESSAGE}"),
                             );
-                            return;
+                            return Ok(());
                         }
                         let clause = clauses[position].clone();
                         if matches!(clause, Clause::NewSymbol(_)) && index != selectors.len() - 1 {
@@ -1092,18 +1117,23 @@ fn check_selection(
                                 Some(index),
                                 "Selected a subexpression of a NEW clause of an ASSUME.".to_owned(),
                             );
-                            return;
+                            return Ok(());
                         }
                         node = clause;
                         is_goal = false;
                     }
                 }
             }
-            _ => return,
+            _ => return Ok(()),
         }
     }
     if is_fact {
-        return;
+        return Ok(());
+    }
+    if matches!(node, Clause::Label(_)) {
+        return Err(FrontError::NotYet(
+            "a labeled ASSUME/PROVE selected as an expression".to_owned(),
+        ));
     }
     if matches!(node, Clause::AssumeProve(_)) {
         report(
@@ -1117,10 +1147,11 @@ fn check_selection(
             "Selected a NEW declaration as an expression or operator.".to_owned(),
         );
     }
+    Ok(())
 }
 
 /// `Generator.generateLabel` reports a label where it may not appear, and skips the label's body.
-fn is_label_reported(label: &Expression, unit: &Unit) -> bool {
+fn is_label_reported(range: Option<&Range>, unit: &Unit) -> bool {
     let message = if unit.is_generated {
         None
     } else if !unit.has_label_scope {
@@ -1132,7 +1163,7 @@ fn is_label_reported(label: &Expression, unit: &Unit) -> bool {
     } else {
         None
     };
-    let (Some(message), Some(range)) = (message, &label.location.range) else {
+    let (Some(message), Some(range)) = (message, range) else {
         return false;
     };
     unit.error(format_range(range), message.to_owned());
@@ -1143,17 +1174,15 @@ fn is_label_reported(label: &Expression, unit: &Unit) -> bool {
 /// name, then `formalParamsEqual` each parameter given twice, each name bound since the label
 /// scope began that the label leaves out, and the parameters it adds, and then a label of a name
 /// already used.
-fn check_label(label: &Expression, scope: &Scope, unit: &Unit) {
-    let ExpressionKind::Label {
-        name,
-        params,
-        param_ranges,
-        ..
-    } = &label.kind
-    else {
-        return;
-    };
-    let Some(range) = &label.location.range else {
+fn check_label(
+    name: &Name,
+    params: &[Name],
+    param_ranges: &[Range],
+    range: Option<&Range>,
+    scope: &Scope,
+    unit: &Unit,
+) {
+    let Some(range) = range else {
         return;
     };
     if unit.is_generated {
@@ -1222,10 +1251,19 @@ fn check_label(label: &Expression, scope: &Scope, unit: &Unit) {
     unit.labels.borrow_mut().insert(name.clone());
 }
 
+/// The unit of a label's body, which begins a label scope of its own.
+fn get_label_unit<'a>(unit: &Unit<'a>) -> Unit<'a> {
+    Unit {
+        label_params: Rc::default(),
+        labels: Rc::default(),
+        ..unit.clone()
+    }
+}
+
 /// Checks a name that selects part of a theorem or step, and tells whether it is one.
-fn check_reference(expression: &Expr, scope: &Scope, unit: &Unit, is_fact: bool) -> bool {
+fn check_reference(expression: &Expr, scope: &Scope, unit: &Unit, is_fact: bool) -> Result<bool> {
     if !is_reference(expression) {
-        return false;
+        return Ok(false);
     }
     let selectors = get_selectors(expression);
     let goal = match selectors.first() {
@@ -1235,9 +1273,9 @@ fn check_reference(expression: &Expr, scope: &Scope, unit: &Unit, is_fact: bool)
         _ => None,
     };
     if let Some(goal) = &goal {
-        check_selection(expression, &selectors, goal, scope, unit, is_fact);
+        check_selection(expression, &selectors, goal, scope, unit, is_fact)?;
     }
-    goal.is_some()
+    Ok(goal.is_some())
 }
 
 fn apply_arity(expression: &Expression) -> usize {
@@ -1295,7 +1333,7 @@ fn get_symbol_arity(
         );
         return Ok(None);
     }
-    if check_reference(expression, scope, unit, false) || (is_step_name(name) && local.is_some()) {
+    if check_reference(expression, scope, unit, false)? || (is_step_name(name) && local.is_some()) {
         return Ok(Some(apply_arity(expression)));
     }
     let is_operator_reference = matches!(expression.kind, ExpressionKind::OperatorReference { .. });
@@ -2305,20 +2343,24 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
         ExpressionKind::Fairness {
             subscript, action, ..
         } => resolve_all(&[subscript.clone(), action.clone()], scope, unit),
-        ExpressionKind::Label { body, .. } => {
-            if is_label_reported(expression, unit) {
+        ExpressionKind::Label {
+            name,
+            params,
+            param_ranges,
+            body,
+        } => {
+            if is_label_reported(expression.location.range.as_ref(), unit) {
                 return Ok(());
             }
-            resolve_expression(
-                body,
+            resolve_expression(body, scope, &get_label_unit(unit))?;
+            check_label(
+                name,
+                params,
+                param_ranges,
+                expression.location.range.as_ref(),
                 scope,
-                &Unit {
-                    label_params: Rc::default(),
-                    labels: Rc::default(),
-                    ..unit.clone()
-                },
-            )?;
-            check_label(expression, scope, unit);
+                unit,
+            );
             Ok(())
         }
         ExpressionKind::Subexpression { selectors, .. } => {
@@ -2330,7 +2372,7 @@ fn resolve_expression(expression: &Expr, scope: &Scope, unit: &Unit) -> Result<(
                     resolve_argument(arg, scope, unit)?;
                 }
             }
-            check_reference(expression, scope, unit, false);
+            check_reference(expression, scope, unit, false)?;
             Ok(())
         }
     }
@@ -2352,7 +2394,8 @@ fn check_facts(facts: &[Fact], scope: &Scope, unit: &Unit) -> Result<()> {
                 ));
             }
         };
-        if is_instance_arity_reported(fact, scope, unit) || check_reference(fact, scope, unit, true)
+        if is_instance_arity_reported(fact, scope, unit)
+            || check_reference(fact, scope, unit, true)?
         {
             continue;
         }
@@ -2553,6 +2596,29 @@ fn resolve_assume_prove(
             }
             Assumed::AssumeProve(inner) => {
                 resolve_assume_prove(inner, &current_scope, &current_unit, true)?;
+            }
+            Assumed::Label {
+                name,
+                body,
+                location,
+                ..
+            } => {
+                if !is_label_reported(location.range.as_ref(), &current_unit) {
+                    resolve_assume_prove(
+                        body,
+                        &current_scope,
+                        &get_label_unit(&current_unit),
+                        true,
+                    )?;
+                    check_label(
+                        name,
+                        &[],
+                        &[],
+                        location.range.as_ref(),
+                        &current_scope,
+                        &current_unit,
+                    );
+                }
             }
             Assumed::Expression(expression) => {
                 resolve_expression(expression, &current_scope, &current_unit)?;
