@@ -1044,12 +1044,18 @@ is next.
 - P1, PTL (#231): `prove-ptl` gives the reference LS4's verdict on the 26 formulas of
   `tests/conformance/ptl`, and on the 297 LS4 inputs of the record the TypeScript's verdict and
   step count on every one (297 same, 0 differs, declined or crash). Rust decides PTL by default.
-- P2 Zenon: `prove-zenon` ports all of `zenon/` but `encode.ts`, one module per TS file, behind
-  `PROVE_IT_PROVER`. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's tests
-  are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on each
-  fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches in
-  verdict, steps, every statistic and the proof's digest. Malformed input is declined. Next: the
-  decider differential on the corpus's `.znn` inputs, then the flip commit.
+- P2 Zenon (#227, flip in this entry's PR): `prove-zenon` ports all of `zenon/` but `encode.ts`,
+  one module per TS file. `tests/zenon.rs` ports `zenon.test.ts` on its fixtures (the checker's
+  tests are in `src/check.rs`); `scripts/zenon-fixtures.ts` records what the TypeScript decides on
+  each fixture under a step limit into `tests/fixtures/zenon/decisions.txt`, which the Rust matches
+  in verdict, steps, every statistic and the proof's digest. Malformed input is declined. On the
+  949 Zenon inputs of the record, `prover-differential --side rust --prover zenon` gives 949 same,
+  0 differs, unstable, declined or crash, through the addon and through WebAssembly; the TS unit
+  tests pass with `PROVE_IT_PROVER_ZENON=rust`. Rust decides Zenon by default. Size, release builds
+  on linux-x64-gnu from b736513 to fb96510: `prove-it-engine.node` 5,918,368 → 7,080,784 bytes,
+  `prove-it-engine.wasm` 4,303,223 → 5,210,377, the `prove-it` binary 5,701,384, unchanged (it
+  doesn't link the prover yet). Rust's Zenon peaks at 958 MB where the TypeScript's takes
+  1,416 MB on the input that reaches the memory limit.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
