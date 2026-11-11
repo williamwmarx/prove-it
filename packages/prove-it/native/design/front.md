@@ -792,12 +792,10 @@ report. The other 6 decline in both.
 Against TLC's output on d8fb231, recorded in `tests/conformance/sany-stdout`, the binary prints
 what TLC prints on all 153 of the corpus's specs, and on 183 of the grid's 190, declining 7 in the
 check stage's linking; none differ. Verification's Front End task holds it to that.
-The CLI, with the addon, differs on 17 of the corpus's specs and 7 of the grid's (`--cli`, measured
-at train-three 8695192d and main f941e354): E4243 ×3, E4260 ×2, E4294_Module, E4350_Plus/Star,
-AssumeProveTest, AssumeTest, BasicTest, FairnessTest, InnerModuleTest, LetInTest, NumbersTest,
-ProofsTest and Semantics, and the grid's RLetBodyLevel, RLetInfix, RModuleModuleInSection,
-RModuleModuleInSectionUsed, RModuleModuleNamedLikeIt, RNestedBodyLevel and RNestedInfix. So
-`--cli` stays out of the gate until stage 3 retires those.
+The CLI, with the addon, prints what TLC prints on the same 153 and 183, and declines the same 7
+(`--cli`, measured at train-three 8695192d with `PROVE_IT_ENGINE_ADDON` naming the addon). Without
+an engine it prints the TypeScript report, which differs on 17 of the corpus's specs and 7 of the
+grid's. An npm install loads the platform package's addon or the WebAssembly engine `dist` ships.
 
 The addon writes the report on a 64 MiB thread, as the binary's run does: a formula nested a few
 hundred parentheses deep overflows the stack of the thread JavaScript calls on.
