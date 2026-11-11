@@ -15,7 +15,7 @@ use crate::sany::source::{
     get_parenthesized_span, get_span_location, get_token_index, get_token_location,
     get_token_source, is_token,
 };
-use crate::sany::{Result, not_yet};
+use crate::sany::{Result, not_yet, not_yet_unlinkable};
 
 use super::{
     BoundSymbols, LabelGoal, LocalContext, ModuleGenerator, OpApplBinding, get_bound_groups,
@@ -430,6 +430,10 @@ impl ModuleGenerator<'_> {
         let (let_in, context) = self.with_context(LocalContext::default(), |generator| {
             generator.state.cur_level += 1;
             let level = generator.state.cur_level as usize;
+            // Generator.unresolvedCnt holds MaxLetInLevel, 100, levels.
+            if level >= 100 {
+                return not_yet_unlinkable("LETs nested 100 deep");
+            }
             let counts = &mut generator.state.unresolved_count;
             if counts.len() <= level {
                 counts.resize(level + 1, 0);

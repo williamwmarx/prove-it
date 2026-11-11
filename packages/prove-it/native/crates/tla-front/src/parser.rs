@@ -2905,6 +2905,10 @@ impl Parser {
     fn parse_proof(&mut self) -> Parsed<Proof> {
         let start = self.index;
         self.proof_levels.push(-1);
+        // TLAplusParser.pushProofLevel: SANY's parser stops at MaxProofDepth, 100, proofs.
+        if self.proof_levels.len() > 100 {
+            return Err(self.error("Proofs nested more than 100deep."));
+        }
         let mut proof = self.with_proof_scope(Self::parse_proof_body)?;
         self.proof_levels.pop();
         proof.location.range = Some(self.get_range(start));
