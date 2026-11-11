@@ -71,7 +71,8 @@ describe("prove without process.dlopen", () => {
 });
 
 // A worker that can't decide fails the proof rather than leaving it waiting: here no engine loads,
-// as the named addon is missing, and Zenon has no TypeScript decider.
+// as the named addon is missing, and Zenon has no TypeScript decider, so the worker's decide throws
+// EngineUnavailableError.
 describe("prove with workers and no engine", () => {
   it("rejects", () => {
     const script = [
@@ -79,7 +80,7 @@ describe("prove with workers and no engine", () => {
       'const source = "---- MODULE M ----\\nEXTENDS TLAPS\\nTHEOREM \\\\A x : x = x BY Zenon\\n====\\n";',
       "await prove({ source, workers: 2 }).then(",
       '  () => console.log("resolved"),',
-      '  () => console.log("rejected"),',
+      '  (error) => console.log("rejected", String(error?.message).includes("native engine is unavailable")),',
       ");",
     ].join("\n");
     const run = spawnSync("bun", ["-e", script], {
@@ -90,6 +91,6 @@ describe("prove with workers and no engine", () => {
         PROVE_IT_ENGINE_WASM: undefined,
       },
     });
-    expect(run.stdout.trim()).toBe("rejected");
+    expect(run.stdout.trim()).toBe("rejected true");
   });
 });
