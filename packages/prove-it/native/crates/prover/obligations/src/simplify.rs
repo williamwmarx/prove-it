@@ -15,6 +15,7 @@ use crate::expression::{
 };
 use crate::format::{FormatArg, format, render_doc};
 use crate::generate::{at_nowhere, get_true, prove_assertion, use_assertion};
+use crate::ocaml::succ;
 use crate::printer::print_expression;
 use crate::proof::{
     Counter, Omission, Proof, ProofCore, ProofProps, QedStep, Step, StepCore, StepNumber, Usable,
@@ -42,7 +43,7 @@ fn get_step_expr_props(from: &ProofProps) -> ExprProps {
     }
 }
 
-fn get_level(step: Option<&StepNumber>) -> usize {
+fn get_level(step: Option<&StepNumber>) -> i64 {
     match step {
         Some(StepNumber::Named { level, .. } | StepNumber::Unnamed { level, .. }) => *level,
         None => 0,
@@ -257,7 +258,7 @@ pub fn create_simplifier(counter: Rc<Counter>) -> Simplifier {
 }
 
 impl Simplifier {
-    fn get_anonymous(&self, level: usize) -> StepNumber {
+    fn get_anonymous(&self, level: i64) -> StepNumber {
         StepNumber::Named {
             level,
             label: format!("_a{}", get_unique(&self.counter)),
@@ -265,7 +266,7 @@ impl Simplifier {
         }
     }
 
-    fn renumber_number(&self, level: usize, step: Option<&StepNumber>) -> StepNumber {
+    fn renumber_number(&self, level: i64, step: Option<&StepNumber>) -> StepNumber {
         match step {
             Some(StepNumber::Named {
                 label,
@@ -280,7 +281,7 @@ impl Simplifier {
         }
     }
 
-    fn renumber(&self, level: usize, proof: &Proof) -> Proof {
+    fn renumber(&self, level: i64, proof: &Proof) -> Proof {
         let props = ProofProps {
             step: Some(self.renumber_number(level, proof.props.step.as_ref())),
             ..proof.props.clone()
@@ -296,7 +297,7 @@ impl Simplifier {
             .map(|step| self.renumber_step(level, step))
             .collect();
         let qed = QedStep {
-            proof: self.renumber(level + 1, &qed.proof),
+            proof: self.renumber(succ(level), &qed.proof),
             props: qed.props.clone(),
         };
         Proof {
@@ -308,7 +309,7 @@ impl Simplifier {
         }
     }
 
-    fn renumber_step(&self, level: usize, step: &Step) -> Step {
+    fn renumber_step(&self, level: i64, step: &Step) -> Step {
         let renumbered = Step {
             core: step.core.clone(),
             props: ProofProps {
@@ -318,7 +319,7 @@ impl Simplifier {
         };
         match get_step_proof(&renumbered) {
             Some(proof) => {
-                let proof = self.renumber(level + 1, proof);
+                let proof = self.renumber(succ(level), proof);
                 with_step_proof(&renumbered, proof)
             }
             None => renumbered,

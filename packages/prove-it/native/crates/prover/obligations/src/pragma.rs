@@ -6,6 +6,7 @@
 //! TypeScript's string indices do.
 
 use crate::errors::{ObligationError, Result};
+use crate::source::get_lexed_numeral;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PragmaValue {
@@ -122,6 +123,26 @@ fn match_number(rest: &[u16]) -> Option<usize> {
     })
 }
 
+/// A `\b`, `\o` or `\h` numeral's length and decimal value, as tlapm's lexer reads the
+/// pragma's tokens (alexer.mll:105-113, `source::get_lexed_numeral`).
+fn match_based_number(rest: &[u16]) -> Option<(usize, String)> {
+    let radix = match u8::try_from(*rest.get(1)?).ok()? {
+        b'b' => 2,
+        b'o' => 8,
+        b'h' => 16,
+        _ => return None,
+    };
+    if !is_unit(rest.first(), b'\\') {
+        return None;
+    }
+    let digits = rest[2..]
+        .iter()
+        .take_while(|&&unit| is_ascii_unit(unit, |byte| char::from(byte).is_digit(radix)))
+        .count();
+    let text = String::from_utf16_lossy(&rest[..2 + digits]);
+    (digits > 0).then(|| (2 + digits, get_lexed_numeral(&text)))
+}
+
 fn is_line_terminator(unit: u16) -> bool {
     matches!(unit, 0x0a | 0x0d | 0x2028 | 0x2029)
 }
@@ -220,6 +241,12 @@ fn tokenize_pragma<Line: AsRef<[u16]>>(
         let rest = line.as_ref().get(position.column..).unwrap_or(&[]);
         if rest.starts_with(&closing) {
             return Ok(Some(tokens));
+        }
+        if let Some((length, decimal)) = match_based_number(rest) {
+            tokens.push(Token::Number(decimal));
+            position.column += length;
+            skip_blanks(lines, &mut position);
+            continue;
         }
         let length = match_ident(rest)
             .or_else(|| match_number(rest))
@@ -1134,6 +1161,28 @@ mod tests {
                 "a",
                 PragmaValue::String("x\u{fffd}y".to_owned())
             )]]))
+        );
+    }
+
+    // alexer.mll:105-113: tlapm's lexer reads a pragma's \b, \o and \h numerals in decimal, as it
+    // does any other.
+    #[test]
+    fn reads_based_numerals_in_decimal() {
+        let start = Position { line: 0, column: 0 };
+        assert_eq!(
+            read_old_method(&get_lines(r"(*{ by (zenon \h1E) }*)"), start),
+            Ok(Some(old("zenon", None, Some(30.0))))
+        );
+        assert_eq!(
+            read_new_method(&get_lines(r"(*{ by (timeout: \b11; a: \o17) }*)"), start),
+            Ok(Some(vec![vec![
+                set("timeout", PragmaValue::Float(3.0)),
+                set("a", PragmaValue::Float(15.0))
+            ]]))
+        );
+        assert_eq!(
+            read_old_method(&get_lines(r"(*{ by (zenon \h4000000000000000) }*)"), start),
+            Ok(Some(old("zenon", None, Some(-4_611_686_018_427_387_904.0))))
         );
     }
 }

@@ -1445,7 +1445,7 @@ mod tests {
     fn to_selector(item: &Json) -> Selector {
         match item.text("kind").as_str() {
             "Down" => Selector::Down,
-            "Number" => Selector::Number(item.number("value")),
+            "Number" => Selector::Number(item.number("value") as i64),
             "Left" => Selector::Left,
             "Right" => Selector::Right,
             "At" => Selector::At,

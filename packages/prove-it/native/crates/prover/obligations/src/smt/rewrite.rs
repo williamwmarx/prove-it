@@ -13,6 +13,7 @@ use crate::expression::{
     Bound, BoundDomain, Builtin, Bullet, CaseArm, ExceptPoint, ExceptSpec, Expr, ExprCore, HypCore,
     Level, Quantifier, Sequent, Visibility, expr,
 };
+use crate::ocaml::int_of_string;
 use crate::smt::axioms::get_integers;
 use crate::smt::context::{Context, Identifier, create_context};
 use crate::smt::extensionality::{Polarity, get_equality, resolve_triggers};
@@ -313,66 +314,14 @@ fn get_primed(env: &EnvRef, name: &str) -> Result<String> {
     ))
 }
 
-/// The digits of `digits` in `radix` as a decimal string.
-fn to_decimal(digits: &str, radix: u32) -> Option<String> {
-    // Little-endian base 10^9 limbs.
-    let mut limbs: Vec<u64> = vec![0];
-    for character in digits.chars() {
-        let mut carry = u64::from(character.to_digit(radix)?);
-        for limb in &mut limbs {
-            let value = *limb * u64::from(radix) + carry;
-            *limb = value % 1_000_000_000;
-            carry = value / 1_000_000_000;
-        }
-        while carry > 0 {
-            limbs.push(carry % 1_000_000_000);
-            carry /= 1_000_000_000;
-        }
-    }
-    let mut decimal = limbs.last().map_or(String::new(), u64::to_string);
-    for limb in limbs.iter().rev().skip(1) {
-        decimal.push_str(&format!("{limb:09}"));
-    }
-    Some(decimal)
-}
-
-/// `String(BigInt(text))`: StringToBigInt, which trims white space, reads an empty string as 0, and
-/// takes a sign only on decimal digits.
-fn get_big_int(text: &str) -> Result<String> {
-    let failure = || ObligationError::bug("SyntaxError: Failed to parse String to BigInt");
-    let trimmed = text.trim_matches(is_js_space);
-    let prefixed = [
-        ("0x", 16),
-        ("0X", 16),
-        ("0o", 8),
-        ("0O", 8),
-        ("0b", 2),
-        ("0B", 2),
-    ]
-    .iter()
-    .find_map(|(prefix, radix)| trimmed.strip_prefix(prefix).map(|rest| (rest, *radix)));
-    if let Some((digits, radix)) = prefixed {
-        if digits.is_empty() {
-            return Err(failure());
-        }
-        return to_decimal(digits, radix).ok_or_else(failure);
-    }
-    if trimmed.is_empty() {
-        return Ok("0".to_string());
-    }
-    let (is_negative, digits) = match trimmed.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
-    };
-    if digits.is_empty() {
-        return Err(failure());
-    }
-    let decimal = to_decimal(digits, 10).ok_or_else(failure)?;
-    Ok(if is_negative && decimal != "0" {
-        format!("-{decimal}")
-    } else {
-        decimal
-    })
+/// An integer as tlapm's SMT encoding reads it: `int_of_string m` (encode/n_standardize.ml:246,
+/// 251), which raises `Failure "int_of_string"` past OCaml's ints. The SMT backend reports that
+/// failure as not tried (backend/prep.ml:485-489), which a `TlaProverError` stands for. The
+/// literal prints as `pp_print_int` writes the int (backend/smtlib.ml:122-123).
+fn get_smt_integer(text: &str) -> Result<String> {
+    int_of_string(text)
+        .map(|value| value.to_string())
+        .ok_or_else(|| ObligationError::prover("int_of_string"))
 }
 
 /// An expression's `kind`, as the TypeScript names it.
@@ -1357,8 +1306,8 @@ impl Encoder<'_> {
                 }
                 Ok(Term {
                     is_bool: false,
-                    text: format!("({CAST_INT} {})", get_big_int(integer)?),
-                    integer: Some(get_big_int(integer)?),
+                    text: format!("({CAST_INT} {})", get_smt_integer(integer)?),
+                    integer: Some(get_smt_integer(integer)?),
                 })
             }
             ExprCore::At { .. } => match &mode.at {
@@ -1651,37 +1600,28 @@ mod tests {
         );
     }
 
+    // encode/n_standardize.ml:246, 251: the digits as an OCaml int, written back in decimal.
     #[test]
-    fn reads_integers_as_big_int_does() {
+    fn reads_integers_as_int_of_string_does() {
         let cases = [
-            ("0b1010", Some("10")),
-            ("", Some("0")),
-            ("+12", Some("12")),
-            ("007", Some("7")),
-            (" 12 ", Some("12")),
-            ("0x1F", Some("31")),
-            ("-0", Some("0")),
+            ("007", Ok("7".to_owned())),
+            ("4611686018427387903", Ok("4611686018427387903".to_owned())),
+            // A \h numeral past max_int, as the lexer wraps it.
+            (
+                "-4611686018427387904",
+                Ok("-4611686018427387904".to_owned()),
+            ),
+            (
+                "4611686018427387904",
+                Err(ObligationError::prover("int_of_string")),
+            ),
             (
                 "123456789012345678901234567890",
-                Some("123456789012345678901234567890"),
+                Err(ObligationError::prover("int_of_string")),
             ),
-            ("-0x1", None),
-            ("\\h1F", None),
-            ("1_0", None),
-            ("\u{ff11}", None),
         ];
         for (text, expected) in cases {
-            assert_eq!(
-                get_big_int(text).ok(),
-                expected.map(str::to_string),
-                "{text}"
-            );
+            assert_eq!(get_smt_integer(text), expected, "{text}");
         }
-        assert_eq!(
-            get_big_int("\\h1F"),
-            Err(ObligationError::bug(
-                "SyntaxError: Failed to parse String to BigInt"
-            ))
-        );
     }
 }

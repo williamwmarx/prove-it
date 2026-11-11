@@ -684,7 +684,7 @@ mod tests {
         })
     }
 
-    fn label(value: usize) -> Vec<Selector> {
+    fn label(value: i64) -> Vec<Selector> {
         vec![
             Selector::Down,
             Selector::Number(value),

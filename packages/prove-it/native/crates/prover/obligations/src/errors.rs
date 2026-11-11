@@ -1,6 +1,7 @@
 //! The errors of `src/errors.ts` the obligations throw: `TlaProofError` (with `TlapmBugError`, which
 //! keeps its name), `TlaProverError`, `TlaUnsupportedError`, and the `TlaSyntaxError` of a parse
-//! that fails without a place tlapm reports.
+//! that fails without a place tlapm reports; and the decline of an input whose answer Prove It
+//! doesn't know yet, which it reports as a `TlaUnsupportedError`.
 
 use std::fmt;
 
@@ -19,6 +20,9 @@ pub enum ObligationError {
     Unsupported(String),
     /// `TlaSyntaxError`.
     Syntax(String),
+    /// `prove-it: not native yet: <reason>`: what tlapm does here depends on more than its source,
+    /// such as its stack, or isn't known, so Prove It declines rather than guess.
+    NotNative(String),
 }
 
 pub type Result<T> = std::result::Result<T, ObligationError>;
@@ -94,12 +98,17 @@ impl ObligationError {
         Self::Unsupported(message.into())
     }
 
+    pub fn not_native(reason: &str) -> Self {
+        Self::NotNative(format!("prove-it: not native yet: {reason}"))
+    }
+
     pub fn message(&self) -> &str {
         match self {
             Self::Proof { message, .. }
             | Self::Prover(message)
             | Self::Unsupported(message)
-            | Self::Syntax(message) => message,
+            | Self::Syntax(message)
+            | Self::NotNative(message) => message,
         }
     }
 
@@ -108,7 +117,7 @@ impl ObligationError {
         match self {
             Self::Proof { .. } => "TlaProofError",
             Self::Prover(_) => "TlaProverError",
-            Self::Unsupported(_) => "TlaUnsupportedError",
+            Self::Unsupported(_) | Self::NotNative(_) => "TlaUnsupportedError",
             Self::Syntax(_) => "TlaSyntaxError",
         }
     }

@@ -7,13 +7,14 @@ use crate::pragma::OldMethod;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StepNumber {
+    /// `level` is an OCaml int, as tlapm's lexer reads it (alexer.mll:93).
     Named {
-        level: usize,
+        level: i64,
         label: String,
         is_anonymous: bool,
     },
     Unnamed {
-        level: usize,
+        level: i64,
         id: usize,
     },
 }

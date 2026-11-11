@@ -233,12 +233,16 @@ pub struct Bound {
 #[derive(Clone, Debug)]
 pub enum Selector {
     Down,
-    Number(usize),
+    /// `!n`, an OCaml int as tlapm's parser reads it (tla_parser.ml:193-196).
+    Number(i64),
     Left,
     Right,
     At,
     Instance(Vec<Expr>),
-    Label { label: String, args: Vec<Expr> },
+    Label {
+        label: String,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Clone, Debug)]

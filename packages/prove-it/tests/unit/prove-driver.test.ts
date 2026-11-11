@@ -416,6 +416,63 @@ describe("the Rust driver", () => {
     });
   });
 
+  // tlapm reads numerals and step levels into OCaml's 63-bit ints, where the TypeScript throws
+  // a JavaScript engine's exception or reads JavaScript numbers (design/prover.md, P6a, "OCaml's
+  // ints"), so the Rust driver alone is checked against tlapm's source.
+  it.each([
+    [
+      "a \\h numeral past OCaml's ints, which tlapm's lexer fails on",
+      "THEOREM \\h8000000000000000 = 1 BY SMT",
+      { class: "TlaProofError", name: "TlaProofError", message: "int_of_string" },
+    ],
+    [
+      "a step level past OCaml's ints",
+      "THEOREM TRUE\n<4611686018427387904>1. QED OBVIOUS",
+      { class: "TlaProofError", name: "TlaProofError", message: "int_of_string" },
+    ],
+    [
+      "a negative numeral in Zenon's successors, which overflow tlapm's stack",
+      "VARIABLE x\nTHEOREM x = \\h4000000000000000 => x = \\h4000000000000000 BY Zenon",
+      {
+        class: "TlapmBugError",
+        name: "TlaProofError",
+        message: "Oops, this seems to be a bug in TLAPM.",
+      },
+    ],
+    [
+      "a numeral whose successors may overflow tlapm's stack",
+      "VARIABLE x\nTHEOREM x = 65537 => x = 65537 BY Zenon",
+      {
+        class: "TlaUnsupportedError",
+        name: "TlaUnsupportedError",
+        message:
+          "prove-it: not native yet: a numeral past 65536 in a Zenon or Isabelle obligation, whose successors may overflow tlapm's stack, as OCaml's stack and frame sizes decide",
+      },
+    ],
+  ])("follows tlapm on %s", async (_name, body, error) => {
+    const run = await proveWithDriver("rust", {
+      options: { source: getModule(body) },
+      decide: byProver({}),
+    });
+    expect(run.error).toEqual(error);
+  });
+
+  // A numeral past OCaml's ints in an encoding is one the backend didn't try.
+  it("fails a numeral past OCaml's ints in Zenon's encoding as not tried", async () => {
+    const run = await proveWithDriver("rust", {
+      options: {
+        source: getModule(
+          "VARIABLE x\nTHEOREM x = 4611686018427387904 => x = 4611686018427387904 BY Zenon",
+        ),
+      },
+      decide: byProver({}),
+    });
+    expect(run.result?.obligations.find((obligation) => obligation.id === 1)).toMatchObject({
+      status: "failed",
+      reason: "zenon failed: int_of_string",
+    });
+  });
+
   // TLA+ names that objects inherit, which neither driver takes for a builtin or a prover.
   it.each([
     ["an identifier", "CONSTANT toString\nTHEOREM toString = toString BY SMT"],

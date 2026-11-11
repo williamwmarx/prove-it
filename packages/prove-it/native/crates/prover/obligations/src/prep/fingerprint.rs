@@ -1091,7 +1091,7 @@ pub(crate) mod tests {
                     .iter()
                     .map(|selector| match selector.kind().as_str() {
                         "Down" => Selector::Down,
-                        "Number" => Selector::Number(selector.count("value")),
+                        "Number" => Selector::Number(selector.count("value") as i64),
                         "Left" => Selector::Left,
                         "Right" => Selector::Right,
                         "At" => Selector::At,

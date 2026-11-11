@@ -8,7 +8,7 @@ use crate::expression::{
     Quantifier, Sequent, Visibility, located,
 };
 use crate::first_order::{
-    get_unprintable_error, pickle, print_fact, repeat_parsed, split_first_bound,
+    get_successors, get_unprintable_error, pickle, print_fact, split_first_bound,
 };
 use crate::format::{Doc, FormatArg, format, format_delimited, render_doc, text};
 use crate::printer::{Context, create_context, get_bound_name, pop_names, push_name};
@@ -81,14 +81,6 @@ fn get_operator(builtin: Builtin) -> Option<(&'static str, usize)> {
         Builtin::ToString => ("TLA.ToString", 1),
         _ => return None,
     })
-}
-
-fn get_successors(integer: &str) -> Result<String> {
-    Ok(format!(
-        "{}0{}",
-        repeat_parsed("(TLA.fapply TLA.Succ ", integer)?,
-        repeat_parsed(")", integer)?
-    ))
 }
 
 /// The closures of `encodeZenon`, over the names bound where they print.
@@ -540,7 +532,11 @@ impl Printer {
                 if !fraction.is_empty() {
                     return Err(ObligationError::unsupported("Real number constants"));
                 }
-                Ok(text(&get_successors(integer)?))
+                Ok(text(&get_successors(
+                    "(TLA.fapply TLA.Succ ",
+                    ")",
+                    integer,
+                )?))
             }
             ExprCore::Bang { .. } | ExprCore::Let { .. } | ExprCore::At { .. } => {
                 Err(ObligationError::assert_failure())

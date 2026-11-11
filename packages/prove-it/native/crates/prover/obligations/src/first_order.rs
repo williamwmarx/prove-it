@@ -4,9 +4,8 @@
 use std::iter::once;
 
 use crate::errors::{ObligationError, Result};
-use crate::expression::{
-    Bound, BoundDomain, Builtin, Expr, ExprCore, Quantifier, is_js_space, located,
-};
+use crate::expression::{Bound, BoundDomain, Builtin, Expr, ExprCore, Quantifier, located};
+use crate::ocaml::int_of_string;
 use crate::printer::{Context, pop_names};
 use crate::substitution::shift_expr;
 
@@ -235,44 +234,32 @@ pub fn print_fact<Printer: AsMut<Context>, Printed>(
     }
 }
 
-/// `text.repeat(Number.parseInt(integer, 10))`, as the encoders spell a numeral, with the errors of
-/// V8's `repeat`, as `format.rs` reports them.
-pub(crate) fn repeat_parsed(text: &str, integer: &str) -> Result<String> {
-    let trimmed = integer.trim_start_matches(is_js_space);
-    let (sign, unsigned) = match trimmed.strip_prefix('-') {
-        Some(unsigned) => (-1.0, unsigned),
-        None => (1.0, trimmed.strip_prefix('+').unwrap_or(trimmed)),
-    };
-    let digits_end = unsigned
-        .find(|character: char| !character.is_ascii_digit())
-        .unwrap_or(unsigned.len());
-    let digits = &unsigned[..digits_end];
-    // parseInt's NaN repeats nothing.
-    let count = if digits.is_empty() {
-        0.0
-    } else {
-        sign * digits.parse::<f64>().unwrap_or(f64::INFINITY)
-    };
-    if count < 0.0 || count.is_infinite() {
-        let shown = if count.is_infinite() {
-            if count > 0.0 { "Infinity" } else { "-Infinity" }.to_owned()
-        } else {
-            count.to_string()
-        };
-        return Err(ObligationError::bug(format!(
-            "RangeError: Invalid count value: {shown}"
+/// The most successors Prove It writes for a numeral, a recursion that every build of tlapm
+/// holds. How many more fit depends on OCaml's stack and frame sizes, so past it Prove It
+/// declines.
+pub const MOST_SUCCESSORS: i64 = 1 << 16;
+
+/// A numeral as the Zenon and Isabelle encodings spell it, `before` and `after` each successor of
+/// 0: `uloop (int_of_string m)` (backend/zenon.ml:429-434, backend/isabelle.ml:451-456). The
+/// backend reports the `Failure "int_of_string"` of a numeral past OCaml's ints as not tried
+/// (backend/prep.ml:230-233, 315-318), which a `TlaProverError` stands for. `uloop` of a negative
+/// int, which a `\h` numeral wraps to, never reaches 0 and allocates nothing as it recurses, so
+/// it overflows any stack, and its `Stack_overflow` reaches tlapm's top level, a bug in tlapm
+/// (tlapm_lib.ml:645-668).
+pub(crate) fn get_successors(before: &str, after: &str, integer: &str) -> Result<String> {
+    let count = int_of_string(integer).ok_or_else(|| ObligationError::prover("int_of_string"))?;
+    if count < 0 {
+        return Err(ObligationError::bug("Stack overflow"));
+    }
+    if count > MOST_SUCCESSORS {
+        return Err(ObligationError::not_native(&format!(
+            "a numeral past {MOST_SUCCESSORS} in a Zenon or Isabelle obligation, whose successors may overflow tlapm's stack, as OCaml's stack and frame sizes decide"
         )));
     }
-    // V8's longest string.
-    const MAX_LENGTH: f64 = 536_870_888.0;
-    #[allow(clippy::cast_precision_loss)]
-    let length = text.encode_utf16().count() as f64 * count;
-    if length > MAX_LENGTH {
-        return Err(ObligationError::bug("RangeError: Invalid string length"));
-    }
-    // The count is a whole, non-negative number below MAX_LENGTH.
+    // The count is at most MOST_SUCCESSORS.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Ok(text.repeat(count as usize))
+    let count = count as usize;
+    Ok(format!("{}0{}", before.repeat(count), after.repeat(count)))
 }
 
 /// The cases the encoders' tests share: sequents in the JSON the TypeScript serializes them to,
@@ -1324,27 +1311,33 @@ mod tests {
         }
     }
 
+    // backend/zenon.ml:429-434 and backend/isabelle.ml:451-456: uloop (int_of_string m).
     #[test]
-    fn spells_numerals_as_repeat_does() {
-        let attempt =
-            |integer: &str| repeat_parsed("ab", integer).map_err(|error| describe(&error));
-        let bug = |exception: &str| {
-            Err(format!(
-                "TlaProofError: Oops, this seems to be a bug in TLAPM. [{exception}]"
-            ))
-        };
-        assert_eq!(attempt("3"), Ok("ababab".to_owned()));
-        assert_eq!(attempt(" 007x"), Ok("ab".repeat(7)));
-        assert_eq!(attempt("x"), Ok(String::new()));
-        assert_eq!(attempt("-0"), Ok(String::new()));
-        assert_eq!(attempt("-2"), bug("RangeError: Invalid count value: -2"));
+    fn spells_numerals_as_tlapm_does() {
+        let spell = |integer: &str| get_successors("s(", ")", integer);
+        assert_eq!(spell("0"), Ok("0".to_owned()));
+        assert_eq!(spell("3"), Ok("s(s(s(0)))".to_owned()));
+        assert_eq!(spell("007"), Ok("s(s(s(s(s(s(s(0)))))))".to_owned()));
+        assert_eq!(spell("65536").map(|text| text.len()), Ok(3 * 65536 + 1));
+        let count = |integer: &str| get_successors("", "", integer);
+        assert_eq!(count("65536"), Ok("0".to_owned()));
+        for integer in ["65537", "67141616", "4611686018427387903"] {
+            assert_eq!(
+                count(integer),
+                Err(ObligationError::not_native(
+                    "a numeral past 65536 in a Zenon or Isabelle obligation, whose successors may overflow tlapm's stack, as OCaml's stack and frame sizes decide"
+                )),
+                "{integer}"
+            );
+        }
+        // A \h numeral the lexer wraps to a negative int.
         assert_eq!(
-            attempt(&"9".repeat(400)),
-            bug("RangeError: Invalid count value: Infinity")
+            spell("-4611686018427387904"),
+            Err(ObligationError::bug("Stack overflow"))
         );
         assert_eq!(
-            attempt("999999999999"),
-            bug("RangeError: Invalid string length")
+            spell("4611686018427387904"),
+            Err(ObligationError::prover("int_of_string"))
         );
     }
 }

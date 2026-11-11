@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use prove_decide::Verdict;
 use prove_it_prover::driver::{Answer, Cache, Report, Request, Round, Status, prove_obligations};
+use prove_obligations::errors::ObligationError;
 use prove_obligations::index::{ObligationSource, PrintedObligation, get_obligations};
 use prove_obligations::tlaps_module::TLAPS_MODULE;
 
@@ -167,4 +168,70 @@ fn a_failed_decision_fails_the_obligation_with_its_reason() {
             reason: "zenon answered sat, smt failed: malformed".to_owned()
         }
     );
+}
+
+// A numeral as each backend encodes it (design/prover.md, P6a): Zenon and Isabelle spell it as
+// successors, `uloop (int_of_string m)` (backend/zenon.ml:429-434, backend/isabelle.ml:451-456),
+// and SMT reads it with `int_of_string m` (encode/n_standardize.ml:246, 251).
+fn prove_numeral(numeral: &str, method: &str) -> Round {
+    let source = format!(
+        "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nVARIABLE x\nTHEOREM x = {numeral} => x = {numeral}\n  BY {method}\n====\n"
+    );
+    prove(&get_module_obligations(&source), |_| {
+        decided(Verdict::Unsat)
+    })
+    .0
+}
+
+// backend/prep.ml:230-233, 315-318, 485-489: the Failure of int_of_string is not tried.
+#[test]
+fn a_numeral_past_ocamls_ints_is_not_tried() {
+    for (method, prover) in [("Zenon", "zenon"), ("Isa", "isabelle"), ("SMT", "smt")] {
+        let round = prove_numeral("4611686018427387904", method);
+        assert_eq!(round.error, None);
+        assert_eq!(
+            get_decided(&round)[0].status,
+            Status::Failed {
+                reason: format!("{prover} failed: int_of_string")
+            },
+            "{method}"
+        );
+    }
+}
+
+// A \h numeral the lexer wraps to a negative int: uloop never reaches 0, and tlapm's stack
+// overflows, which its top level reports as a bug (tlapm_lib.ml:645-668). SMT reads the int.
+#[test]
+fn a_negative_numeral_overflows_the_stack_of_the_successors() {
+    for method in ["Zenon", "Isa"] {
+        let round = prove_numeral("\\h4000000000000000", method);
+        assert_eq!(
+            round.error,
+            Some(ObligationError::bug("Stack overflow")),
+            "{method}"
+        );
+    }
+    let round = prove_numeral("\\h4000000000000000", "SMT");
+    assert_eq!(round.error, None);
+    assert_eq!(
+        get_decided(&round)[0].status,
+        Status::Proved {
+            prover: "smt".to_owned()
+        }
+    );
+}
+
+// How deep tlapm's stack lets uloop go depends on OCaml's stack and frame sizes: Prove It writes
+// up to 2^16 successors and declines past them (first_order::MOST_SUCCESSORS).
+#[test]
+fn a_numeral_whose_successors_may_overflow_the_stack_is_declined() {
+    for method in ["Zenon", "Isa"] {
+        let round = prove_numeral("65536", method);
+        assert_eq!(round.error, None, "{method}");
+        let round = prove_numeral("65537", method);
+        assert!(
+            matches!(round.error, Some(ObligationError::NotNative(_))),
+            "{method}"
+        );
+    }
 }

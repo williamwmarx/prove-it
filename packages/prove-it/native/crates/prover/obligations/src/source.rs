@@ -2,10 +2,12 @@
 //! anonymization resolves them, and proof steps get tlapm's levels and anonymous step numbers.
 //! A port of `src/obligations/source.ts`, on tla-front's AST of `parse_tlapm_module`.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use tla_front::ast;
 
+use crate::alexer::Place;
 use crate::errors::{ObligationError, Result};
 use crate::expression::{
     Bound, BoundDomain, Builtin, Bullet, CaseArm, Defn, DefnCore, ExceptPoint, ExceptSpec, Expr,
@@ -14,6 +16,7 @@ use crate::expression::{
     WhereDefined, at, at_expr, expr, get_fact, located,
 };
 use crate::module::{Declaration, ModuleUnit, ModuleUnitCore, Mule, MutateMode};
+use crate::ocaml::{MAX_INT, int_of_string, succ};
 use crate::operators::{Fixity, lookup_operator};
 use crate::pragma::{OldMethod, Position, find_pragma, read_new_method, read_old_method};
 use crate::proof::{
@@ -68,6 +71,27 @@ fn get_canonical_name(name: &str) -> String {
 struct StepToken {
     level: String,
     label: String,
+}
+
+/// A numeral as tlapm's lexer gives it: a `\b`, `\o` or `\h` numeral in decimal, as
+/// `string_of_int (int_of_string ("0b" ^ digits))` (alexer.mll:105-113) writes it, and any other as
+/// written. A numeral `int_of_string` fails on keeps its text: tlapm's lexer fails there, which
+/// `index.rs` reports before the module is used.
+pub fn get_lexed_numeral(text: &str) -> String {
+    let prefix = match text.get(..2) {
+        Some("\\b") => "0b",
+        Some("\\o") => "0o",
+        Some("\\h") => "0x",
+        _ => return text.to_owned(),
+    };
+    int_of_string(&format!("{prefix}{}", &text[2..]))
+        .map_or_else(|| text.to_owned(), |value| value.to_string())
+}
+
+/// A step number's level as tlapm's lexer reads it, with `int_of_string` (alexer.mll:93). One past
+/// OCaml's ints is read as `max_int`: tlapm's lexer fails there, which `index.rs` reports first.
+fn get_step_level(level: &str) -> i64 {
+    int_of_string(level).unwrap_or(MAX_INT)
 }
 
 fn match_step_token(token: &str) -> Option<StepToken> {
@@ -249,6 +273,8 @@ pub struct Source {
     lines: Vec<Vec<u16>>,
     counter: Rc<Counter>,
     is_expanding_tuples: bool,
+    // The first step whose subproof's level wraps around where tlapm reads it.
+    wrapped_at: Cell<Option<Place>>,
 }
 
 pub fn create_source(
@@ -265,10 +291,42 @@ pub fn create_source(
             .collect(),
         counter,
         is_expanding_tuples,
+        wrapped_at: Cell::new(None),
     }
 }
 
 impl Source {
+    /// The first step whose subproof's level wraps from `max_int` to `min_int` where tlapm reads
+    /// it: in `to_steps`, which compares the levels of the subproof's steps with it, or where the
+    /// steps after a step without a proof in the proof's list become its subproof
+    /// (proof/p_parser.ml:102-140, 172-216). A leaf proof's level is never compared, and
+    /// `to_proof` of no steps is `Omitted Implicit` (p_parser.ml:70-71). tla-front's levels don't
+    /// wrap, so its proof is not the one tlapm reads.
+    pub fn get_wrapped_step(&self) -> Option<Place> {
+        self.wrapped_at.get()
+    }
+
+    /// `currlv + 1` for the proof of the step at `head`, which `is_last` in its theorem's proof.
+    fn get_subproof_level(
+        &self,
+        level: i64,
+        proof: Option<&ast::Proof>,
+        is_last: bool,
+        head: &Locus,
+    ) -> i64 {
+        let is_read = match proof {
+            None => !is_last,
+            Some(proof) => matches!(proof.kind, ast::ProofKind::Steps { .. }),
+        };
+        if level == MAX_INT && is_read && self.wrapped_at.get().is_none() {
+            self.wrapped_at.set(Some(Place {
+                line: head.start_line,
+                column: head.start_column,
+            }));
+        }
+        succ(level)
+    }
+
     fn get_range_locus(&self, range: &ast::SourceRange) -> Locus {
         Locus {
             file: self.file.clone(),
@@ -566,7 +624,7 @@ impl Source {
         let modal = |is_box: bool| if is_box { Modal::Box } else { Modal::Dia };
         Ok(match &expression.kind {
             ast::ExpressionKind::Number { text, .. } => at_location(ExprCore::Num {
-                integer: text.to_string(),
+                integer: get_lexed_numeral(text),
                 fraction: String::new(),
             }),
             ast::ExpressionKind::Decimal { text } => {
@@ -992,8 +1050,10 @@ impl Source {
                                 },
                                 ast::Selector::Operand(ast::Operand::First) => Selector::Left,
                                 ast::Selector::Operand(ast::Operand::Last) => Selector::Right,
+                                // index.rs declines an index of 2^53 or more, which an f64 may
+                                // not hold exactly.
                                 ast::Selector::Operand(ast::Operand::Index(value)) => {
-                                    Selector::Number(*value as usize)
+                                    Selector::Number(*value as i64)
                                 }
                                 ast::Selector::Bound(args) => {
                                     Selector::Instance(self.convert_expressions(args, is_except)?)
@@ -1278,7 +1338,7 @@ impl Source {
         })
     }
 
-    fn get_step_number(&self, token: Option<&StepToken>, level: usize) -> StepNumber {
+    fn get_step_number(&self, token: Option<&StepToken>, level: i64) -> StepNumber {
         match token {
             Some(token) if !token.label.is_empty() => StepNumber::Named {
                 level,
@@ -1296,8 +1356,9 @@ impl Source {
     fn convert_proof(
         &self,
         proof: Option<&ast::Proof>,
-        level: usize,
+        level: i64,
         enclosing: Option<Locus>,
+        is_last: bool,
     ) -> Result<Proof> {
         let Some(proof) = proof else {
             return Ok(Proof {
@@ -1344,7 +1405,7 @@ impl Source {
                     .collect();
                 let step_level = match tokens.first() {
                     Some(Some(first)) if first.level != "*" && first.level != "+" => {
-                        first.level.parse().unwrap_or(usize::MAX)
+                        get_step_level(&first.level)
                     }
                     _ => level,
                 };
@@ -1363,8 +1424,12 @@ impl Source {
                 let number =
                     self.get_step_number(tokens.last().and_then(Option::as_ref), step_level);
                 let head = self.get_range_locus(&last.head);
-                let qed_proof =
-                    self.convert_proof(last.proof.as_deref(), step_level + 1, Some(head.clone()))?;
+                let qed_proof = self.convert_proof(
+                    last.proof.as_deref(),
+                    self.get_subproof_level(step_level, last.proof.as_deref(), is_last, &head),
+                    Some(head.clone()),
+                    is_last,
+                )?;
                 let qed_location = merge_loci(Some(&head), qed_proof.props.location.as_ref());
                 let location = converted.iter().fold(qed_location.clone(), |merged, step| {
                     merge_loci(merged.as_ref(), step.props.location.as_ref())
@@ -1394,15 +1459,18 @@ impl Source {
         )
     }
 
-    fn convert_step(
-        &self,
-        step: &ast::ProofStep,
-        number: StepNumber,
-        level: usize,
-    ) -> Result<Step> {
+    fn convert_step(&self, step: &ast::ProofStep, number: StepNumber, level: i64) -> Result<Step> {
         let head = self.get_range_locus(&step.head);
         let with_proof = |make: &dyn Fn(Proof) -> StepCore| -> Result<Step> {
-            let proof = self.convert_proof(step.proof.as_deref(), level + 1, Some(head.clone()))?;
+            // A QED step follows each other step.
+            let subproof_level =
+                self.get_subproof_level(level, step.proof.as_deref(), false, &head);
+            let proof = self.convert_proof(
+                step.proof.as_deref(),
+                subproof_level,
+                Some(head.clone()),
+                false,
+            )?;
             let location = merge_loci(Some(&head), proof.props.location.as_ref());
             Ok(Step {
                 core: make(proof),
@@ -1649,6 +1717,7 @@ impl Source {
                                 start_column: end.end_column,
                                 ..end
                             }),
+                            true,
                         )?,
                     },
                     location,
@@ -2094,7 +2163,9 @@ mod tests {
     fn selector(value: &Selector) -> Json {
         match value {
             Selector::Down => kind("Down", vec![]),
-            Selector::Number(index) => kind("Number", vec![("value", Some(number(*index)))]),
+            Selector::Number(index) => {
+                kind("Number", vec![("value", Some(Json::Number(*index as f64)))])
+            }
             Selector::Left => kind("Left", vec![]),
             Selector::Right => kind("Right", vec![]),
             Selector::At => kind("At", vec![]),
@@ -2260,14 +2331,17 @@ mod tests {
             } => kind(
                 "Named",
                 vec![
-                    ("level", Some(number(*level))),
+                    ("level", Some(Json::Number(*level as f64))),
                     ("label", Some(text(label))),
                     ("isAnonymous", Some(Json::Bool(*is_anonymous))),
                 ],
             ),
             StepNumber::Unnamed { level, id } => kind(
                 "Unnamed",
-                vec![("level", Some(number(*level))), ("id", Some(number(*id)))],
+                vec![
+                    ("level", Some(Json::Number(*level as f64))),
+                    ("id", Some(number(*id))),
+                ],
             ),
         }
     }
@@ -2616,6 +2690,28 @@ THEOREM 1 BY MODULE Naturals
                 "{name} {is_expanding}"
             );
         }
+    }
+
+    // alexer.mll:105-113: string_of_int (int_of_string ("0x" ^ digits)), and so on.
+    #[test]
+    fn writes_based_numerals_in_decimal() {
+        let cases = [
+            ("42", "42"),
+            ("007", "007"),
+            ("\\b1010", "10"),
+            ("\\o777", "511"),
+            ("\\hFf", "255"),
+            ("\\h3FFFFFFFFFFFFFFF", "4611686018427387903"),
+            ("\\h4000000000000000", "-4611686018427387904"),
+            ("\\h7FFFFFFFFFFFFFFF", "-1"),
+            // int_of_string fails here, which index.rs reports first.
+            ("\\h8000000000000000", "\\h8000000000000000"),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(get_lexed_numeral(text), expected, "{text}");
+        }
+        assert_eq!(get_step_level("012"), 12);
+        assert_eq!(get_step_level("4611686018427387903"), MAX_INT);
     }
 
     #[test]

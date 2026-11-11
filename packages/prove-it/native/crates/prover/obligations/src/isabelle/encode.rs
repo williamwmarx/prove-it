@@ -8,7 +8,7 @@ use crate::expression::{
     HypCore, Modal, Quantifier, Sequent, Visibility,
 };
 use crate::first_order::{
-    get_unprintable_error, pickle, print_fact, repeat_parsed, split_first_bound,
+    get_successors, get_unprintable_error, pickle, print_fact, split_first_bound,
 };
 use crate::printer::{Context, create_context, get_bound_name, pop_names, push_name};
 
@@ -124,14 +124,6 @@ fn get_header() -> Result<String> {
     }
     lines.push(String::new());
     Ok(lines.join("\n"))
-}
-
-fn get_successors(integer: &str) -> Result<String> {
-    Ok(format!(
-        "{}0{}",
-        repeat_parsed("succ[", integer)?,
-        repeat_parsed("]", integer)?
-    ))
 }
 
 /// thy_header.
@@ -627,7 +619,7 @@ impl Printer {
                 if !fraction.is_empty() {
                     return Err(ObligationError::unsupported("real constants"));
                 }
-                Ok(format!("({})", get_successors(integer)?))
+                Ok(format!("({})", get_successors("succ[", "]", integer)?))
             }
             ExprCore::At { .. } => Err(ObligationError::assert_failure()),
         }

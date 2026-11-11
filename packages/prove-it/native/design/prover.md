@@ -1233,14 +1233,74 @@ is next.
   - **Checks:** `scripts/prover-driver-differential.ts` gives 304 of 304 corpus modules the same
     under both drivers with decisions replayed from the record; `tests/unit/prove-driver.test.ts`
     holds the cases seven break-it rounds found.
-  - **Open:** three inputs where the Rust encoders emulate a JavaScript engine's exception, and
-    the TypeScript throws it, where both should do what tlapm does. They differ between the
-    drivers until the next PR makes the Rust follow tlapm:
-    - `\h`, `\o` and `\b` numerals in an SMT obligation (`BigInt` in `smt/rewrite.ts`);
-    - numerals large enough to reach a string length limit in the Zenon and Isabelle encodings
-      (`String.prototype.repeat`);
-    - proof-step levels past 2^53, or 2^32 in WebAssembly, where the Rust reads a `usize`.
-  - **Known TypeScript deviation:** an INSTANCE of a module inside its own instantiation
+  - **OCaml's ints:** tlapm reads numerals and step levels into OCaml ints, which are 63 bits
+    wide, and the Rust follows its source (lines at 5f5037f) where the TypeScript threw a
+    JavaScript engine's exception:
+    - `\b`, `\o` and `\h` numerals: tlapm's lexer writes them in decimal,
+      `string_of_int (int_of_string ("0x" ^ digits))` (alexer.mll:105-113), so every later stage
+      sees the decimal; `source.rs` converts them as it reads the AST, and the pragma reader as it
+      reads a pragma. `int_of_string` reads prefixed digits as unsigned up to 2^63 - 1 and wraps
+      them into the 63-bit ints (OCaml 5.1's runtime/ints.c:77-115, 139), so `\h4000000000000000`
+      is -4611686018427387904;
+    - proof-step levels: the lexer reads `<n>` with `int_of_string` (alexer.mll:93), and a
+      subproof's level is `currlv + 1` (proof/p_parser.ml:178-216), which wraps from max_int to
+      min_int. A level is an `i64`, and `ocaml::succ` wraps as OCaml's `+ 1` does;
+    - numerals in the SMT encoding, `int_of_string m` (encode/n_standardize.ml:246, 251), and in
+      the Zenon and Isabelle encodings, `uloop (int_of_string m)` (backend/zenon.ml:429-434,
+      backend/isabelle.ml:451-456).
+
+    Past OCaml's ints `int_of_string` raises `Failure "int_of_string"`:
+    - in the lexer, nothing catches it (alexer.mll:299-307 catches only its own `Error`), so tlapm
+      ends with `Failure("int_of_string")` where its parser reads that token. `alexer.rs` walks the
+      source as the lexer's rules do, pragmas included, to the `====` that closes the module, a TAB
+      or a character no rule reads, and `index.rs` reports the failure for a module that parses
+      and converts, or whose parse fails past the token. A parse that fails before the token
+      reports its error, unless the parser may have read ahead to it: the lexer is lazy and
+      `Pco.scan` exposes one token at a time (pco.ml:573-592), and the paths `attempt` and
+      `lookahead` give up and restore (pco.ml:454-541) stay within the module unit or step they
+      began in, so it reads no further than the second `==` after the failure outside LETs and
+      brackets, or the next THEOREM, LEMMA, PROPOSITION, COROLLARY, AXIOM, ASSUMPTION, `----` or
+      `====`; in a proof, whose DEFINE steps hold definitions, no further than one of those
+      keywords (`may_read_ahead`). A token within that reach, or a source conversion that fails,
+      which gives no place to compare, is declined;
+    - in an encoding, the backend reports it as not tried (backend/prep.ml:230-233, 315-318,
+      485-489), which a `TlaProverError` stands for: `zenon failed: int_of_string`.
+
+    A level wraps only past a step at max_int, and tlapm reads the wrapped level only where that
+    step's proof has steps, or it has none and steps follow it in its proof's list, which become
+    its subproof (p_parser.ml:102-140, 172-216); a leaf proof's level is never compared, and
+    `to_proof` of no steps is `Omitted Implicit` (p_parser.ml:70-71). tla-front's levels don't
+    wrap, so the Rust declines those after the parse, and a parse failure after a step that may be
+    at max_int (the highest level written before it, plus the steps between), as tla-front's
+    grouping may be why it fails; tlapm wraps while it parses the THEOREM, so a lexer failure after
+    such a step is declined too.
+
+    A selector's number, `Op!n`, is `nat`, `int_of_string` (tla_parser.ml:193-196,
+    e_parser.ml:476), where tla-front reads an f64. Where tla-front parses a selector of 2^53 or
+    more, which the f64 may not hold exactly and which may be past or wrap within OCaml's ints,
+    the Rust declines, checking each module as it loads it, before any conversion error. A source
+    conversion error may be one tlapm raises as it parses or after the whole load (as an extended
+    module's tuple declaration, which only tlapm's visitors meet, e_visit.ml:570-576): the Rust
+    goes on loading the modules the module names, and reports it where nothing else read errs or
+    warns, and declines where something does.
+
+    `uloop` isn't tail-recursive, and how many successors fit in tlapm's stack depends on OCaml's
+    stack and frame sizes, so the Rust writes up to 2^16 and declines past them. Of a negative int,
+    which a `\h` numeral wraps to, it never reaches 0 and allocates nothing as it recurses, so it
+    overflows any stack, and its `Stack_overflow` reaches tlapm's top level, as #308's does: a bug
+    in tlapm, "Stack overflow".
+
+    Declines are `ObligationError::NotNative`, which the driver ends the run with as a
+    `TlaUnsupportedError` whose message is `prove-it: not native yet: <reason>`; fallback.md lists
+    them under "The prover's declines".
+  - **Known TypeScript deviations:** the TypeScript keeps its JavaScript exceptions on these inputs
+    until it is deleted: `BigInt`'s SyntaxError on a `\b`, `\o` or `\h` numeral in an SMT
+    obligation, and arbitrary precision on a decimal past max_int there, where the Rust is not
+    tried with `int_of_string`; V8's `String.prototype.repeat` RangeErrors on numerals in the
+    Zenon and Isabelle encodings; `\b`, `\o` and `\h` numerals kept as written in printed
+    obligations, fingerprints and pragmas; and proof-step levels read as JavaScript numbers. The
+    unit tests check the Rust alone on these.
+  - **Known TypeScript deviation, too:** an INSTANCE of a module inside its own instantiation
     overflows the TypeScript's stack (a RangeError), where tlapm and the Rust report tlapm's bug
     "Stack overflow" (#308).
 

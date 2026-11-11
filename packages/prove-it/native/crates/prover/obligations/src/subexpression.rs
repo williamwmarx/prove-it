@@ -886,9 +886,13 @@ fn resolve_step(
                 "Expr.Deref.deref: !:",
             ))
         }
-        Selector::Number(value) => {
-            numbered(on_warning, *value, &format!("Cannot resolve !{value}"))
-        }
+        // deref_num asserts n > 0 (e_deref.ml:213); an index past usize is past any list.
+        Selector::Number(value) if *value <= 0 => Err(ObligationError::assert_failure()),
+        Selector::Number(value) => numbered(
+            on_warning,
+            usize::try_from(*value).unwrap_or(usize::MAX),
+            &format!("Cannot resolve !{value}"),
+        ),
         Selector::Left => numbered(on_warning, 1, "Cannot resolve !<<"),
         Selector::Right => numbered(on_warning, 2, "Cannot resolve !>>"),
         Selector::Instance(args) => {

@@ -683,3 +683,30 @@ The engine's search doesn't count TLC's cost model; the replay pass in `tla-trac
 (cli.md, "-coverage"). Counting in the engine was built (branch `engine-coverage`) and not adopted:
 TLC with coverage runs 20 to 35 times as long as the engine's search on record-heavy specs, so the
 times of TLC's report part way through can't be bounded from the engine's.
+
+## The prover's declines
+
+The Rust prover driver (`PROVE_IT_PROVER_DRIVER=rust`, prover.md P6a) declines where what tlapm
+does depends on more than its source. A decline is `ObligationError::NotNative`: the run ends,
+after the obligations settled before it, with a `TlaUnsupportedError` whose message is
+`prove-it: not native yet: <reason>`. Each comes from OCaml's 63-bit ints (prover.md, "OCaml's
+ints"), and each is an input no corpus module holds.
+
+| Reason | Where | Why tlapm's answer isn't known |
+|--------|-------|--------------------------------|
+| a numeral past OCaml's ints, which tlapm fails on, and a parse error that may come first | `index.rs` | The `Failure "int_of_string"` of tlapm's lexer comes first only where its parser reads that far, and a parse that fails within reach of the token (`may_read_ahead`) may have read ahead to it, on a path it gave up. |
+| a proof whose step level passes OCaml's max_int, where tlapm's wraps around and tla-front's doesn't | `index.rs` | tlapm reads a subproof's wrapped level where a step at max_int has steps under it, or none and steps after it; tla-front's levels don't wrap, so its proof, or its parse failure, isn't tlapm's. |
+| a selector's number of 2^53 or more, which tla-front reads as an f64 and tlapm as an OCaml int | `index.rs` | tla-front's f64 may not hold the number exactly, and tlapm's `nat` may fail on it or wrap it. |
+| an error tlapm may raise as it parses a module or after, beside another module's error or warning, whose order is unknown | `index.rs` | A source conversion error may be one tlapm raises as it parses or one it raises after the whole load; where another module's load errs or warns too, which comes first isn't known. |
+| a numeral past 65536 in a Zenon or Isabelle obligation, whose successors may overflow tlapm's stack, as OCaml's stack and frame sizes decide | `first_order.rs` | `uloop` takes a stack frame per successor, and how many fit depends on OCaml's stack and frame sizes. |
+
+These matched the TypeScript driver before only by chance: it wrote the successors up to V8's
+longest string, read the levels and numerals as JavaScript does, and reported a module's
+conversion error as it read the module.
+
+### The prover's known wrong outputs
+
+Where tla-front fails to parse a selector that tlapm's grammar takes, the Rust reports tla-front's
+parse error, as it did before, where tlapm's `nat` may meet a number past OCaml's ints first and
+end with `Failure("int_of_string")`: a parenthesised operator's, as `(a)!N`
+(e_parser.ml:936-955), or a fairness operator's, as `WF_v!N(A)`.
