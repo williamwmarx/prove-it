@@ -164,21 +164,24 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
         );
         return 1;
     }
-    // TLC also looks for the spec itself in the library directories.
-    let mut paths: Vec<String> = Vec::new();
-    for path in spec_paths.clone() {
-        let found = if output.host.is_file(Path::new(&path)) || Path::new(&path).is_absolute() {
-            path
+    // TLC also looks for the spec itself in the library directories. Each spec keeps the path it
+    // was given, which names where TLC writes its trace exploration spec.
+    let mut paths: Vec<(String, &str)> = Vec::new();
+    for given in &spec_paths {
+        let found = if output.host.is_file(Path::new(given)) || Path::new(given).is_absolute() {
+            given.clone()
         } else {
             java.libraries
                 .iter()
-                .map(|directory| Path::new(directory).join(&path))
+                .map(|directory| Path::new(directory).join(given))
                 .find(|candidate| output.host.is_file(candidate))
-                .map(|candidate| candidate.to_string_lossy().into_owned())
-                .unwrap_or(path)
+                .map_or_else(
+                    || given.clone(),
+                    |candidate| candidate.to_string_lossy().into_owned(),
+                )
         };
-        if !paths.contains(&found) {
-            paths.push(found);
+        if !paths.iter().any(|(path, _)| *path == found) {
+            paths.push((found, given));
         }
     }
     if paths.len() > 1 && !output.host.is_checking_several() {
@@ -188,7 +191,7 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
         );
     }
     let mut exit_codes = Vec::new();
-    for (index, (path, given)) in paths.iter().zip(&spec_paths).enumerate() {
+    for (index, (path, given)) in paths.iter().enumerate() {
         let mut printer = Printer::new(parsed.has("-tool"), !parsed.has("-nowarning"), output);
         if index > 0 {
             printer.line("");
@@ -200,8 +203,8 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             printer.line(&format!("Checking {name} with {stem}.cfg"));
         }
         // TLC names the trace exploration spec's directory by the path it was given, not where it
-        // found the spec.
-        let main_file = (path == given).then(|| given.strip_suffix(".tla").unwrap_or(given));
+        // found the spec, which may be a library directory.
+        let main_file = given.strip_suffix(".tla").unwrap_or(given);
         let exit_code = check_spec(path, main_file, &parsed, java, &mut printer);
         // The other specs are checked as after any spec the binary declines.
         exit_codes.push(match printer.trace_spec_decline.take() {
@@ -790,7 +793,7 @@ fn print_initial_states(printer: &mut Printer, generated: u64, distinct: u64) {
 
 fn check_spec(
     spec_path: &str,
-    main_file: Option<&str>,
+    main_file: &str,
     args: &Parsed,
     java: &Java,
     printer: &mut Printer,
@@ -889,7 +892,7 @@ fn check_spec(
         args,
         &config,
         is_trace_recorded(args, spec_path),
-        main_file.map(|main_file| {
+        Some({
             let (directory, _, name) = te_spec::get_files_place(main_file, started);
             format!("{directory}/{name}.bin")
         }),
@@ -1036,15 +1039,6 @@ fn check_spec(
         print_sany(printer, sany);
         printer.is_trace_recorded = is_trace_recorded(args, spec_path);
         if is_trace_spec_written(args, spec_path) {
-            if args.has("-teSpecOutDir") {
-                return report_not_native(printer, "-teSpecOutDir");
-            }
-            let Some(main_file) = main_file else {
-                return report_not_native(
-                    printer,
-                    "the trace exploration spec of a spec found in a library directory",
-                );
-            };
             printer.trace_spec = Some(TraceSpec::new(
                 main_file,
                 started,

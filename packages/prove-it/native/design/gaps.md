@@ -1123,9 +1123,10 @@ as Integers does.
 - **What still declines:** the trace file `_TLCTraceSilent` writes for a counterexample,
   `<Spec>_TTrace_<epoch>.bin`, which joins -dumpTrace's postconditions but which TLC gzips with
   Java's Deflater and writes with its own tokens of the strings; a date in a zone other than UTC,
-  whose name Java gives it; `-teSpecOutDir`; a spec found in a library directory; model values the
-  spec makes with TLCModelValue; and a trace printed that the binary doesn't record, as the
-  simulator's.
+  whose name Java gives it; `-teSpecOutDir`; a spec named by a path Java's `Path` would normalize,
+  such as `specs//M`; model values the spec makes with TLCModelValue; and a trace printed that the
+  binary doesn't record, as the simulator's. A spec found in a library directory is written as TLC
+  writes it, in the directory of the path it was given (`prove-it-cli/tests/spec_paths.rs`).
 - **The TypeScript interpreter** writes neither file, and in this mode it keeps Naturals' `>=`
   wording (`getTraceSpecArithmetic`). It is retired with the interpreter (fallback.md, S4).
 
