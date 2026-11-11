@@ -510,6 +510,9 @@ TLC's order:
 - where TLC has no next state, as it evaluates a prime, UNCHANGED's second operand, a subscript of
   `[A]_e` or `<<A>>_e`, or a prime inside ENABLED, it evaluates the argument again and keeps nothing
   (`Tool.evalAppl`, `s1 == null`), and so does the trace evaluator in a primed evaluation;
+- the unprimed side of UNCHANGED e, `[A]_e` and `<<A>>_e` TLC evaluates with an empty next state
+  (`Tool.verifyUnchanged`, `evalAppl`, `enabledUnchanged`), so a value is kept and found there
+  by an empty next state (`evaluate_before`);
 - a draw is kept apart, as before (`drawn`).
 
 `equals` fails for a set TLC can't normalize before it normalizes the other operand, as

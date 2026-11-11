@@ -483,6 +483,10 @@ pub struct Evaluator<'ir> {
     pub target: Option<Vec<Value>>,
     /// Whether a walk is ENABLED's, which TLC's `Tool#enabled` runs.
     pub(crate) is_enabling: bool,
+    /// Whether the evaluator evaluates the unprimed side of UNCHANGED e, `[A]_e` or `<<A>>_e`,
+    /// which TLC evaluates with an empty next state (`TLCState.Empty`), and so keys a kept value
+    /// by.
+    is_next_empty: bool,
     /// The function application the walk tests, and whether it walks the initial predicate:
     /// `getInitStates`, `getNextStates` and `enabled` word a non-function applied there apart.
     pub(crate) walked_application: Option<(NodeId, bool)>,
@@ -811,6 +815,7 @@ impl<'ir> Evaluator<'ir> {
             printed: Vec::new(),
             target: None,
             is_enabling: false,
+            is_next_empty: false,
             walked_application: None,
             call_stack: None,
             choices: Vec::new(),
@@ -1561,6 +1566,7 @@ impl<'ir> Evaluator<'ir> {
         let next = std::mem::replace(&mut self.next, vec![None; width]);
         let target = self.target.take();
         let is_enabling = std::mem::replace(&mut self.is_enabling, true);
+        let is_next_empty = std::mem::replace(&mut self.is_next_empty, false);
         let mut is_enabled = false;
         let walked = self.walk(action, context, false, &mut |_| {
             is_enabled = true;
@@ -1569,6 +1575,7 @@ impl<'ir> Evaluator<'ir> {
         self.next = next;
         self.target = target;
         self.is_enabling = is_enabling;
+        self.is_next_empty = is_next_empty;
         walked?;
         Ok(Value::Bool(is_enabled))
     }
@@ -2055,9 +2062,27 @@ impl<'ir> Evaluator<'ir> {
 
     // `e = e'`, the current side first, as `Tool.evalAppl` evaluates UNCHANGED and `[A]_e`.
     fn unchanged(&mut self, subscript: NodeId, context: &Context) -> Evaluated<Value> {
-        let now = self.evaluate(subscript, context)?;
+        let now = self.evaluate_before(subscript, context)?;
         let then = self.evaluate(subscript, &context.primed(true))?;
         Ok(Value::Bool(equals(&now, &then)?))
+    }
+
+    // The next state a kept value is keyed by: an empty one on the unprimed side of UNCHANGED.
+    fn keyed_next(&self) -> Vec<Option<Value>> {
+        if self.is_next_empty {
+            vec![None; self.next.len()]
+        } else {
+            self.next.clone()
+        }
+    }
+
+    /// The unprimed side of UNCHANGED e, `[A]_e` or `<<A>>_e`, which TLC evaluates with an empty
+    /// next state (`Tool.verifyUnchanged`, `evalAppl`, `enabledUnchanged`).
+    pub(crate) fn evaluate_before(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
+        let is_next_empty = std::mem::replace(&mut self.is_next_empty, true);
+        let value = self.evaluate(node, context);
+        self.is_next_empty = is_next_empty;
+        value
     }
 
     fn check_fields(&self, names: impl Iterator<Item = TextId>) -> Evaluated<()> {
@@ -2135,7 +2160,8 @@ impl<'ir> Evaluator<'ir> {
                 if let Some(kept) = kept
                     && let Some(kept) = &*kept.borrow()
                     && is_kept_state(&kept.current, &self.current, &self.ir.tlc_order) == Some(true)
-                    && is_kept_state(&kept.next, &self.next, &self.ir.tlc_order) == Some(true)
+                    && is_kept_state(&kept.next, &self.keyed_next(), &self.ir.tlc_order)
+                        == Some(true)
                     && kept.is_primed == is_primed
                     && kept.is_enabling == self.is_enabling
                 {
@@ -2154,7 +2180,7 @@ impl<'ir> Evaluator<'ir> {
                         is_primed,
                         is_enabling: self.is_enabling,
                         current: self.current.clone(),
-                        next: self.next.clone(),
+                        next: self.keyed_next(),
                         is_read: self.reads != reads,
                         is_captured: self.captures != captures,
                         value: value.clone(),

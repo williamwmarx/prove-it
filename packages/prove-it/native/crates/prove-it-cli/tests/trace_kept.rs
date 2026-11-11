@@ -92,13 +92,15 @@ fn applies_a_definition_built_lazy_in_each_successor_as_tlc_does() {
 }
 
 fn get_untimed(text: &str) -> String {
-    const DROPPED: [&str; 6] = [
+    const DROPPED: [&str; 8] = [
         "Picked up JAVA_TOOL_OPTIONS",
         "TLC2 Version",
         "Running breadth-first",
         "Parsing file",
         "Starting...",
         "Finished in",
+        "Warning: Please run the Java VM",
+        "(Use the -nowarning",
     ];
     text.lines()
         .filter(|line| !DROPPED.iter().any(|dropped| line.starts_with(dropped)))

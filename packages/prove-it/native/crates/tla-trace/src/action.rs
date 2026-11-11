@@ -483,7 +483,7 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::AngleAction { action, subscript } => {
                 let subscript = *subscript;
                 self.walk(*action, context, is_init, &mut |evaluator| {
-                    let now = evaluator.evaluate(subscript, context)?;
+                    let now = evaluator.evaluate_before(subscript, context)?;
                     // TLC's `Tool#enabled` names the fairness condition where A leaves a variable
                     // of v unassigned (`toUnspecifiedSubscriptError`), unlike TLC 1.7.4.
                     let after = evaluator
@@ -886,7 +886,7 @@ impl<'ir> Evaluator<'ir> {
         context: &Context,
         then: &mut Visit<'_, 'ir>,
     ) -> Evaluated<bool> {
-        let now = self.evaluate(expression, context)?;
+        let now = self.evaluate_before(expression, context)?;
         let after = self.evaluate(expression, &context.primed(true))?;
         if equals(&now, &after)? {
             then(self)
