@@ -1194,18 +1194,52 @@ C(n, ρ) ∧ n[ρ] true of (s, t(π)), and A is n[ρ] up to its names. (⇒) Whe
 from s takes the value v of S, as it takes every value, reaches n under ρ and, by the induction,
 generates t.
 
-So the bit must be set exactly where the walk is under ρ. The walker keeps the `\E`s whose bodies
-it compiles (`Compiler::binders`: the node, the bound's position, the slot its name takes), and a
-continuation compiled inside the body is compiled with them popped, since it continues the walk
-after the `\E` (`walk_exists`); a fresh walk, as ENABLED compiles, starts with none. A piece with
-pins wraps the walk of n in a test that each pinned slot holds its value (`Id` equality, which for
-these values is TLC's `equals`), and sets the bit only then. A walk through n elsewhere, or under
-another value, sets no bit, which it needs not: the path under ρ generates every t A holds of.
+So a walk through n must set the bit only where n is under ρ, and the walk under ρ must set it.
+A node is not one place in the walk: n sits in an operator's body, and every call of the operator
+walks it, with other arguments (`\E self \in S : P(self) \/ P(self + 1)`), from other operators
+(`Q(p) == P(p + 1)`), under an inner `\E` (`\E q \in S : P(q)`), from a LET, a RECURSIVE operator
+or an INSTANCE. A test of the slot of Next's `\E` is not a test of what n reads: on the walk of
+`P(self + 1)` with `self` = 1, Next's slot holds 1 while the `p` that `a(p)` reads is 2, and a(2)'s
+steps would answer `WF_vars(a(1))`. So the test is on the names n reads.
+
+The matcher records each name of Next's that a piece reads as a pinned value (`Read`): the name as
+n reads it, the value, the `\E` it was pinned at, and the arguments it was passed through from that
+`\E`, innermost first (the node of each argument, a name, at each call the match went into). The
+walker compiles n in a context that binds each name either to a slot (an `\E`, `\A` or set
+binding, or the parameter of a RECURSIVE operator, whose walk binds each parameter to a slot of its
+own), to an argument that TLA+ substitutes for the parameter (`Binding::Argument`, as calls of
+global and LET operators and INSTANCE substitutions bind them), or to something else.
+`get_read_slot` follows the name through arguments that are themselves names, each looked up in
+the argument's own context, to the slot the walk reads it from. At this place in the walk the name
+evaluates to exactly that slot's value: substituting a name for a parameter is reading what the
+name is bound to. Where it reaches anything else (`self + 1`, a constant, a LET value), the walk at
+this place sets no bit through n. Otherwise it wraps n in a test that each such slot holds its
+value (`Id` equality, which for these scalars is TLC's `equals`), and sets the bit only then.
+
+(⇐) A step gets the bit only from a walk through n with every name n reads that the matcher read
+as a pinned name equal to its value. n reads no other name of Next's from outside itself: a name
+of Next's the matcher found nowhere (a parameter whose argument isn't a pinned name, or a name it
+didn't pair) makes the match fail, a paired name stands for a bound of an `\E` inside the same
+operator body, over the same constant set, as the action's, and a name a piece only binds inside it
+is n's own. So the walk is a step of n[ρ], A's disjunct up to its names, at every place n is walked,
+whatever operator, argument, LET, recursion or INSTANCE reached it. A piece that reads no pinned
+name reads nothing that differs between the places, and is marked everywhere.
+
+(⇒) The walk the match read, from Next's root through the disjuncts, one-item conjunctions,
+definitions and calls with pinned names as arguments to n, has each read name bound, through those
+arguments, to the slot of the `\E` it was pinned at, which takes v, so its test passes where the
+walk is under ρ, and by the induction it generates every t with A(s, t). The atom answers from its
+bit only where that walk was compiled with its test (`is_piece_walked`): n compiled inside each
+`\E` the piece is pinned at (`Compiler::binders`, the `\E`s whose bodies the walker is compiling,
+which a continuation after an `\E` is compiled without, and a fresh walk, as ENABLED compiles,
+starts with none), with each read name reaching the slot of its `\E` through the same argument
+nodes the match passed it through. A walk at another place marks only what (⇐) allows, and
+another place that reached the same slot through the same arguments is the same place.
 
 The atom is evaluated where the action never reads a pinned name, where the `\E`'s set is one the
 matcher can't read (`\E self \in {p \in S : pc[p] # "Done"}`) or doesn't hold v, where v isn't a
 scalar, where an argument isn't a pinned name, and where the compiled walk never went through a
-piece inside its `\E`s. Under a CONSTRAINT, where the steps aren't labelled, StarkMutex's 45 atoms
+piece the way the match did. Under a CONSTRAINT, where the steps aren't labelled, StarkMutex's 45 atoms
 answer from 6 bytes of bits a step.
 
 *Tests against TLC at d8fb231* (`prove-it-cli/tests/processes`, each as it stands, where the labels
@@ -1220,7 +1254,12 @@ and over `a` and `b` StarkMutex's way; Next's `\E` over P, over the disjunction 
 twice; its set an interval, an enumeration, a constant, a definition, a union and a set of the
 state; and the fairness over the same set, a subset, and a superset with a value no `\E` takes.
 Weak is fair over the pieces and AliasWeak over copies `P(self) /\ TRUE` that are none, plain and
-under a CONSTRAINT: each run prints TLC's output beside it, at 1 and 4 workers.
+under a CONSTRAINT: each run prints TLC's output beside it, at 1 and 4 workers. The Share specs
+in `tests/processes` walk the operator around `a(1)` from more than one place: `P(self) \/
+P(self + 1)` (under WF, SF and an ACTION_CONSTRAINT), `Q(p) == P(p + 1)`, `P(2)`, an inner `\E q`,
+a second `\E` over `P(q + 1)`, a LET, a RECURSIVE operator, an INSTANCE, PlusCal's
+`help(self) == work((self % N) + 1)`, and `Q(p) == P(p)` beside or around `P(self)`, which still
+answer from the bits. Testing Next's `\E` slot instead printed a violation TLC doesn't on eleven.
 
 **Fallbacks** (evaluate as today). Fall back where:
 - the atom's action does not map exactly onto the split;

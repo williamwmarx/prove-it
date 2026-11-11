@@ -15,12 +15,13 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use tla_ir::{Bound, Index, NodeId, NodeKind, Param, Pattern, Resolution, ScopeBinding};
+use tla_ir::{Bound, Index, NodeId, NodeKind, Param, Pattern, Resolution, ScopeBinding, TextId};
 use tla_values::store::{FALSE, KIND_SET, Outcome, TRUE};
 use tla_values::{Bail, Id};
 
 use super::lazy::{Lazy, Reference};
 use super::nodes::assign_bound;
+use super::pieces::Pin;
 use super::predicate::{Leaf, Predicate, Reject, Test};
 use super::{
     Argument, Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition,
@@ -234,7 +235,7 @@ impl Known {
     }
 }
 
-// The slots of the bound names a piece's atom fixes, each with its value.
+// The slots of the names a piece reads that its atom fixes, each with its value.
 type Pins = Box<[(u32, Id)]>;
 
 /// The continuation a compile of a walk takes: given what is known on a path, the rest of the walk
@@ -1855,32 +1856,55 @@ impl<'a> Compiler<'a> {
             .walk_depth()
             .and_then(|()| self.walk_kind(node, context, options, known, then));
         self.depth -= 1;
-        // The bits a walk through the node sets, and those it sets where the bound names of the
-        // `\E`s around it the atoms fix have their values: each the slot it reads and the value.
+        // The bits a walk through the node sets, and those it sets where the names it reads that
+        // the atoms fix have their values: each the slot the name reads here and the value.
         let mut bits = 0u64;
         let mut pinned: Vec<(u64, Pins)> = Vec::new();
-        for piece in self.pieces.iter_mut().filter(|piece| piece.node == node) {
-            let slots: Option<Pins> = piece
-                .pins
+        let mut pieces = std::mem::take(&mut self.pieces);
+        for piece in pieces.iter_mut().filter(|piece| piece.node == node) {
+            // A name the walk doesn't read from a slot here, through arguments that are names,
+            // may be any value: the walk sets no bit through the node here.
+            let found: Option<Vec<_>> = piece
+                .reads
                 .iter()
-                .map(|pin| {
-                    self.binders
-                        .iter()
-                        .rev()
-                        .find(|&&(exists, bound, _)| exists == pin.exists && bound == pin.bound)
-                        .map(|&(_, _, slot)| (slot, pin.value))
-                })
+                .map(|read| self.get_read_slot(context, read.name))
                 .collect();
-            let Some(slots) = slots else {
+            let Some(found) = found else {
                 continue;
             };
-            piece.is_walked = true;
-            if slots.is_empty() {
+            let binder_slot = |pin: &Pin| {
+                self.binders
+                    .iter()
+                    .rev()
+                    .find(|&&(exists, bound, _)| exists == pin.exists && bound == pin.bound)
+                    .map(|&(_, _, slot)| slot)
+            };
+            // The walk through the node here is the one the match read: inside each `\E` the
+            // atom fixes, with each name read through the same arguments from its `\E`.
+            if piece.pins.iter().all(|pin| binder_slot(pin).is_some())
+                && piece
+                    .reads
+                    .iter()
+                    .zip(&found)
+                    .all(|(read, (slot, arguments))| {
+                        binder_slot(&read.pin) == Some(*slot) && *arguments == read.arguments
+                    })
+            {
+                piece.is_walked = true;
+            }
+            if found.is_empty() {
                 bits |= 1 << piece.bit;
             } else {
+                let slots = piece
+                    .reads
+                    .iter()
+                    .zip(&found)
+                    .map(|(read, &(slot, _))| (slot, read.pin.value))
+                    .collect();
                 pinned.push((1 << piece.bit, slots));
             }
         }
+        self.pieces = pieces;
         if bits == 0 && pinned.is_empty() {
             return result;
         }
@@ -1915,6 +1939,34 @@ impl<'a> Compiler<'a> {
             }
         }
         Ok(Some(wrapped))
+    }
+
+    // The slot a name reads where the walk compiles in `context`, through parameters whose arguments
+    // are names, and the nodes of those arguments, innermost first: none where it reads anything
+    // else, so that the walk may not know its value.
+    fn get_read_slot(&self, context: &Context, name: TextId) -> Option<(u32, Vec<NodeId>)> {
+        let mut arguments = Vec::new();
+        let mut scope = context.scope.clone();
+        let mut name = name;
+        loop {
+            let found = lookup(&scope, name)?;
+            match &found.binding {
+                Binding::Slot(slot) => return Some((*slot, arguments)),
+                Binding::Argument(argument) => {
+                    let (node, kind) = self.node(argument.expression);
+                    let NodeKind::Identifier(argument_name) = kind else {
+                        return None;
+                    };
+                    if !argument_name.is_local {
+                        return None;
+                    }
+                    arguments.push(node);
+                    name = argument_name.text;
+                    scope = super::argument_context(argument).scope;
+                }
+                _ => return None,
+            }
+        }
     }
 
     fn guard_step(

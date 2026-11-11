@@ -17,17 +17,29 @@ use tla_values::Id;
 use super::Compiler;
 
 /// A node of Next's walk an action atom is made of, with the position of the bit a walk through
-/// it sets on the step it takes, and the bounds of the `\E`s around it the action fixes.
+/// it sets on the step it takes, the bounds of the `\E`s around it the action fixes, and the
+/// names it reads as the values those stand for.
 pub(crate) struct Piece {
     pub(crate) node: NodeId,
     pub(crate) bit: u32,
     pub(crate) pins: Vec<Pin>,
-    /// Whether the compiled walk of Next goes through the node inside each of those `\E`s.
+    pub(crate) reads: Vec<Read>,
+    /// Whether the compiled walk of Next goes through the node inside each of those `\E`s, by
+    /// the calls the match went through.
     pub(crate) is_walked: bool,
 }
 
+/// A name a piece reads that stands for a bound of an `\E` the action fixes, with the value it
+/// must have, and the arguments the match read it through from the `\E`, innermost first: each
+/// the name of a parameter's argument at the call into the operator around the piece.
+pub(crate) struct Read {
+    pub(crate) name: TextId,
+    pub(crate) arguments: Vec<NodeId>,
+    pub(crate) pin: Pin,
+}
+
 /// A bound of an `\E` of Next, by the `\E`'s node and the bound's position, fixed to one value.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub(crate) struct Pin {
     pub(crate) exists: NodeId,
     pub(crate) bound: usize,
@@ -63,19 +75,38 @@ enum Scalar {
     Model(Vec<u16>),
 }
 
+// A name of Next's where the match is: the binder it stands for, and the arguments it was passed
+// through from the binder's `\E`, innermost first.
+#[derive(Clone)]
+struct NextName {
+    name: TextId,
+    binder: usize,
+    arguments: Vec<NodeId>,
+}
+
+// A pinned name a piece read, as `NextName`.
+#[derive(Clone, PartialEq)]
+struct Reading {
+    name: TextId,
+    binder: usize,
+    arguments: Vec<NodeId>,
+}
+
 struct Matching {
     binders: Vec<Binder>,
     // The names each side reads where the match is, innermost last.
     action: Vec<(TextId, Named)>,
-    next: Vec<(TextId, usize)>,
+    next: Vec<NextName>,
     // The pinned binders of the `\E`s of Next around where the match is.
     pinned: Vec<usize>,
-    pieces: Vec<(NodeId, Vec<usize>)>,
+    // The pinned names the expressions `is_same` has read so far, for the piece they make.
+    reads: Vec<Reading>,
+    pieces: Vec<(NodeId, Vec<usize>, Vec<Reading>)>,
 }
 
 impl Matching {
     fn add_piece(&mut self, node: NodeId) {
-        let piece = (node, self.pinned.clone());
+        let piece = (node, self.pinned.clone(), std::mem::take(&mut self.reads));
         if !self.pieces.contains(&piece) {
             self.pieces.push(piece);
         }
@@ -102,44 +133,63 @@ impl Compiler<'_> {
                 .collect(),
             next: Vec::new(),
             pinned: Vec::new(),
+            reads: Vec::new(),
             pieces: Vec::new(),
         };
         if !self.match_into(action, next, &mut matching) || matching.pieces.is_empty() {
             return false;
         }
         let mut pieces = Vec::with_capacity(matching.pieces.len());
-        for (node, pinned) in matching.pieces {
+        for (node, pinned, readings) in matching.pieces {
             let mut pins = Vec::with_capacity(pinned.len());
             for binder in pinned {
                 // A piece under an `\E` the action never read the name of would hold under
                 // every value of it.
-                let Binder::Pinned {
-                    exists,
-                    bound,
-                    value: Some(value),
-                    ..
-                } = matching.binders[binder]
-                else {
+                let Some(pin) = self.get_pin(&matching.binders[binder]) else {
                     return false;
                 };
-                let Ok(value) = self.intern_value(value) else {
+                pins.push(pin);
+            }
+            let mut reads = Vec::with_capacity(readings.len());
+            for reading in readings {
+                let Some(pin) = self.get_pin(&matching.binders[reading.binder]) else {
                     return false;
                 };
-                pins.push(Pin {
-                    exists,
-                    bound,
-                    value,
+                reads.push(Read {
+                    name: reading.name,
+                    arguments: reading.arguments,
+                    pin,
                 });
             }
             pieces.push(Piece {
                 node,
                 bit,
                 pins,
+                reads,
                 is_walked: false,
             });
         }
         self.pieces.extend(pieces);
         true
+    }
+
+    // The bound a pinned binder fixes and its value, interned.
+    fn get_pin(&mut self, binder: &Binder) -> Option<Pin> {
+        let Binder::Pinned {
+            exists,
+            bound,
+            value: Some(value),
+            ..
+        } = *binder
+        else {
+            return None;
+        };
+        let value = self.intern_value(value).ok()?;
+        Some(Pin {
+            exists,
+            bound,
+            value,
+        })
     }
 
     /// Whether the compiled walk went through every piece of the atom with the bit at `bit`
@@ -201,7 +251,11 @@ impl Compiler<'_> {
                     let binder = matching.binders.len();
                     matching.binders.push(Binder::Paired);
                     matching.action.push((action_name, Named::Binder(binder)));
-                    matching.next.push((next_name, binder));
+                    matching.next.push(NextName {
+                        name: next_name,
+                        binder,
+                        arguments: Vec::new(),
+                    });
                 }
                 let is_matched = self.match_into(*action_body, *next_body, matching);
                 matching.action.truncate(action_depth);
@@ -223,16 +277,23 @@ impl Compiler<'_> {
                     .iter()
                     .zip(args)
                     .filter_map(|(param, &argument)| {
-                        let NodeKind::Identifier(argument) = self.node(argument).1 else {
+                        let (argument, NodeKind::Identifier(name)) = self.node(argument) else {
                             return None;
                         };
-                        let &(_, binder) = matching
+                        let outer = matching
                             .next
                             .iter()
                             .rev()
-                            .find(|(name, _)| argument.is_local && *name == argument.text)?;
-                        matches!(matching.binders[binder], Binder::Pinned { .. })
-                            .then_some((param.name, binder))
+                            .find(|outer| name.is_local && outer.name == name.text)?;
+                        matches!(matching.binders[outer.binder], Binder::Pinned { .. }).then(|| {
+                            NextName {
+                                name: param.name,
+                                binder: outer.binder,
+                                arguments: std::iter::once(argument)
+                                    .chain(outer.arguments.iter().copied())
+                                    .collect(),
+                            }
+                        })
                     })
                     .collect();
                 let outer = std::mem::replace(&mut matching.next, names);
@@ -254,7 +315,11 @@ impl Compiler<'_> {
                         set: bound.set,
                         value: None,
                     });
-                    matching.next.push((name, binder));
+                    matching.next.push(NextName {
+                        name,
+                        binder,
+                        arguments: Vec::new(),
+                    });
                     matching.pinned.push(binder);
                     true
                 });
@@ -359,10 +424,11 @@ impl Compiler<'_> {
     // Whether two expressions are the same, as `is_same` reads them, undoing what it fixed where
     // they aren't.
     fn try_same(&self, action: NodeId, next: NodeId, matching: &mut Matching) -> bool {
-        let binders = matching.binders.clone();
+        let (binders, reads) = (matching.binders.clone(), matching.reads.len());
         let is_same = self.is_same(action, next, matching);
         if !is_same {
             matching.binders = binders;
+            matching.reads.truncate(reads);
         }
         is_same
     }
@@ -424,14 +490,20 @@ impl Compiler<'_> {
         if !action.is_local || !next.is_local {
             return false;
         }
-        let Some(&(_, binder)) = matching
+        let Some(reading) = matching
             .next
             .iter()
             .rev()
-            .find(|(name, _)| *name == next.text)
+            .find(|outer| outer.name == next.text)
+            .map(|outer| Reading {
+                name: outer.name,
+                binder: outer.binder,
+                arguments: outer.arguments.clone(),
+            })
         else {
             return false;
         };
+        let binder = reading.binder;
         let Some(&(_, named)) = matching
             .action
             .iter()
@@ -454,7 +526,7 @@ impl Compiler<'_> {
         else {
             return false;
         };
-        match *fixed {
+        let is_same = match *fixed {
             Some(fixed) => self.scalar(&self.ir.values.list[fixed as usize]) == Some(scalar),
             // The walk takes the value only where it is in the `\E`'s set.
             None if self.holds_scalar(*set, &scalar) == Some(true) => {
@@ -462,7 +534,13 @@ impl Compiler<'_> {
                 true
             }
             None => false,
+        };
+        // The piece's walk is under the value only where the name it reads has it, whatever
+        // way the walk reached the piece.
+        if is_same && !matching.reads.contains(&reading) {
+            matching.reads.push(reading);
         }
+        is_same
     }
 
     // A value that is an integer, string or model value.

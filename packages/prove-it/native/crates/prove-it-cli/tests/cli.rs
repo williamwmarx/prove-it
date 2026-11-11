@@ -3111,7 +3111,11 @@ fn answers_fairness_of_pieces_of_the_next_state_relation_as_tlc() {
 // the engine evaluates. Each is run as it stands, where the search labels its steps with TLC's
 // actions and an atom answers from those of its process, and under a CONSTRAINT, where the steps
 // aren't labelled and an atom answers from the walks through its process's actions under its
-// value. TLC's output on each at d8fb231 is beside it.
+// value. The Share specs reach an operator around the atom's action from more than one place:
+// with the same argument, with `self + 1` directly and through another operator, a constant, an
+// inner `\E`, a LET, a RECURSIVE operator, an INSTANCE (of `Inner`) and nested calls, under WF,
+// SF and an ACTION_CONSTRAINT, where only the walk whose name the action reads has its value may
+// mark a step. TLC's output on each at d8fb231 is beside it.
 #[test]
 fn answers_fairness_of_each_process_as_tlc() {
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -3126,7 +3130,25 @@ fn answers_fairness_of_each_process_as_tlc() {
         "PcalSet",
         "PcalSome",
         "PcalFallback",
+        "ShareOffset",
+        "ShareThrough",
+        "ShareInner",
+        "ShareConstant",
+        "ShareStrong",
+        "ShareAction",
+        "ShareSame",
+        "ShareNested",
+        "ShareNestedOffset",
+        "ShareSeparate",
+        "ShareLet",
+        "ShareRecursive",
+        "ShareProcess",
+        "ShareRing",
+        "ShareRingWork",
+        "ShareInstance",
+        "ShareInstanceArg",
     ];
+    let inner = std::fs::read_to_string(directory.join("Inner.tla")).expect("Inner");
     for name in names {
         let read = |file: String| std::fs::read_to_string(directory.join(file)).expect("a file");
         let spec = read(format!("{name}.tla"));
@@ -3138,6 +3160,10 @@ fn answers_fairness_of_each_process_as_tlc() {
             let tlc = read(format!("{name}{suffix}.txt"));
             for workers in ["1", "4"] {
                 let test = format!("processes-{name}{suffix}-{workers}");
+                let run = std::env::temp_dir()
+                    .join(format!("prove-it-cli-{test}-{}", std::process::id()));
+                std::fs::create_dir_all(&run).expect("a directory");
+                std::fs::write(run.join("Inner.tla"), &inner).expect("Inner");
                 let args = [
                     "-workers",
                     workers,
