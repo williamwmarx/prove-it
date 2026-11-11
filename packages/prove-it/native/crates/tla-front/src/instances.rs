@@ -157,19 +157,19 @@ pub fn rename_locals(
         })
     })
     .unwrap_or_else(|_| expression.clone());
-    match &mapped.kind {
+    let renamed = match &mapped.kind {
         ExpressionKind::Identifier { .. } | ExpressionKind::Apply { .. }
-            if mapped.is_locally_resolved() =>
+            if mapped.is_locally_resolved()
+                && !bound.contains(&mapped.reference().unwrap_or_default()) =>
         {
             let name = mapped.reference().unwrap_or_default();
-            if bound.contains(&name) {
-                return mapped;
-            }
             let renamed = names.get(&name).cloned().unwrap_or(name);
             with_reference(&mapped, renamed, None)
         }
         _ => mapped,
-    }
+    };
+    tables.carry_substitution(expression, &renamed);
+    renamed
 }
 
 type Map<'a> = dyn FnMut(&Expr, &[Name]) -> Result<Expr> + 'a;
@@ -865,6 +865,12 @@ impl<'a> Instantiator<'a> {
     }
 
     fn substitute(&self, expression: &Expr, mode: Mode, bound: &Bindings) -> Result<Expr> {
+        let substituted = self.substitute_node(expression, mode, bound)?;
+        self.tables.carry_substitution(expression, &substituted);
+        Ok(substituted)
+    }
+
+    fn substitute_node(&self, expression: &Expr, mode: Mode, bound: &Bindings) -> Result<Expr> {
         let instantiation = &self.instantiation;
         let params = &instantiation.params;
         let location = &expression.location;

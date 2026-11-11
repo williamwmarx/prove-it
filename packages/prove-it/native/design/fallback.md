@@ -276,9 +276,11 @@ of a temporal formula whose value isn't a boolean (`Liveness.astToLive`) with
 as `\b101`, or else the part's location. Where the part is an expression an INSTANCE puts in for
 a declaration of the module it instantiates, TLC's `SubstInNode` keeps the declaration's node and
 binds it to the expression's value (`Liveness.astToLive`), so TLC names the declaration where the
-instantiated module writes it, which the front end doesn't keep: that declines. A grid of 76 small
-specs (`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 536 of its 608 runs; 24
-decline for the constant evaluator's gaps, and 48 for a substituted declaration. Four name an
+instantiated module writes it, which the front end doesn't keep: that declines wherever the part
+is, or is within, a substitute or what the front end makes of one (a LET or IF it folds, an
+operator it calls, a substitute a later INSTANCE or a renaming copies). A grid of 82 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 536 of its 656 runs; 24 decline
+for the constant evaluator's gaps, and 96 for a substituted declaration. Four name an
 INSTANCE's definition before the INSTANCE, which SANY doesn't know there.
 
 Nothing reaches these liveness declines, so they stay declines until a test or a model does:

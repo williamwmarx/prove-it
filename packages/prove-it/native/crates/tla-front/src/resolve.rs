@@ -168,6 +168,14 @@ impl Tables {
             .insert(address(expression), expression.clone());
     }
 
+    /// Notes a copy of an expression an INSTANCE put in for a declaration as one too, as a later
+    /// INSTANCE or a renaming makes it.
+    pub fn carry_substitution(&self, source: &Expr, copy: &Expr) {
+        if self.is_substitution(source) {
+            self.add_substitution(copy);
+        }
+    }
+
     /// Whether an INSTANCE puts this expression in for a declaration, where TLC's `SubstInNode`
     /// keeps the declaration's node and binds it to the expression's value.
     pub fn is_substitution(&self, expression: &Expr) -> bool {
