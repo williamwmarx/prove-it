@@ -7,8 +7,7 @@ use tla_front::config::parse_config;
 use tla_front::environment::{Environment, EnvironmentOptions, create_environment};
 use tla_front::startup::{Read, Rule, get_startup_model};
 
-const MODULE_N: &str =
-    "---- MODULE N ----\nEXTENDS Naturals\nOp(x) == {n \\in Nat : n > x}\n====\n";
+const MODULE_N: &str = "---- MODULE N ----\nEXTENDS Naturals\nOp(x) == {n \\in Nat : n > x}\nH(G(_)) == G(1)\nPass(x(_)) == H(x)\n====\n";
 
 fn create(definitions: &str, config: &str) -> Environment {
     create_extending("Naturals, TLC", definitions, config)
@@ -211,5 +210,19 @@ fn reads_an_override_only_through_the_operator_its_module_defines() {
             "D"
         ),
         (Read::Operator, false, None)
+    );
+}
+
+// An argument in the place of a parameter that takes arguments is an `OpArgNode`, of level 0,
+// even one spelled as a variable: TLC computes D as it starts and sorts its set.
+#[test]
+fn counts_an_operator_parameter_passed_on_of_level_zero_whatever_its_spelling() {
+    assert_eq!(
+        decide(
+            "I == INSTANCE N\nD == <<{3, 1, 2}, I!Pass(LAMBDA k : k)>>",
+            "",
+            "D"
+        ),
+        (Read::Attempted, true, Some(Rule::Constant))
     );
 }

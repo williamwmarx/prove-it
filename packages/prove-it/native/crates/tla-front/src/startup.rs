@@ -254,10 +254,25 @@ impl LevelBound<'_> {
         args: &[Expr],
         expanding: &mut Vec<usize>,
     ) -> u8 {
+        // SANY makes an `OpArgNode` of an argument in the place of a parameter that takes
+        // arguments, whatever its spelling, which `getLevelBound` gives level 0.
+        let callee_params = (!expression.is_locally_resolved())
+            .then(|| expression.reference())
+            .flatten()
+            .and_then(|name| get_definition(&name, self.environment))
+            .and_then(|definition| match &definition.kind {
+                DefinitionKind::Operator { params, .. } => Some(params.clone()),
+                DefinitionKind::Function { .. } => None,
+            });
         let arguments = args
             .iter()
-            .map(|argument| {
-                if self.is_operator_argument(argument) {
+            .enumerate()
+            .map(|(position, argument)| {
+                let is_operator_place = callee_params
+                    .as_ref()
+                    .and_then(|params| params.get(position))
+                    .is_some_and(|param| param.arity > 0);
+                if is_operator_place || self.is_operator_argument(argument) {
                     0
                 } else {
                     self.get_level(argument, expanding)
