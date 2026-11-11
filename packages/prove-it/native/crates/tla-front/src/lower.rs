@@ -1016,6 +1016,7 @@ impl<'a> Lowering<'a> {
                 action,
                 subscript,
                 scope: self.get_scope_index(property.scope.as_ref()),
+                name: self.get_text(&property.name),
             });
         }
         let mut initial_predicates = Vec::new();
