@@ -686,11 +686,67 @@ fn get_constant_value(
     }
 }
 
-/// `formatValue` of the values TLC's configuration errors show, or `NotYet` for another.
-fn format_config_value(value: &ConfigValue) -> Result<String> {
+/// `Value#toString` of the values TLC's configuration errors show: a boolean, an integer, or a
+/// string, a model value or a set of them where TLC holds them as written, which `expression`, the
+/// definition TLC evaluated, or none for a configuration's value, writes as literals. `NotYet` for
+/// another value, such as an interval or a record, whose text depends on how TLC built it.
+fn format_config_value(
+    value: &ConfigValue,
+    expression: Option<&Expr>,
+    evaluator: Option<&Evaluator>,
+) -> Result<String> {
+    fn is_literal(expression: &Expr) -> bool {
+        match &expression.kind {
+            ExpressionKind::Number { .. } | ExpressionKind::String { .. } => true,
+            ExpressionKind::SetEnumeration(elements) => elements.iter().all(is_literal),
+            _ => false,
+        }
+    }
+    fn format(value: &ConfigValue) -> String {
+        match value {
+            ConfigValue::Boolean(value) => if *value { "TRUE" } else { "FALSE" }.to_owned(),
+            ConfigValue::Number(number) => format!("{number}"),
+            // `StringValue.PrintVersion`.
+            ConfigValue::String(text) => format!(
+                "\"{}\"",
+                text.chars()
+                    .map(|character| match character {
+                        '"' => "\\\"".to_owned(),
+                        '\\' => "\\\\".to_owned(),
+                        '\t' => "\\t".to_owned(),
+                        '\n' => "\\n".to_owned(),
+                        '\u{c}' => "\\f".to_owned(),
+                        '\r' => "\\r".to_owned(),
+                        _ => character.to_string(),
+                    })
+                    .collect::<String>()
+            ),
+            ConfigValue::ModelValue(name) => name.clone(),
+            ConfigValue::Set(elements) => format!(
+                "{{{}}}",
+                elements.iter().map(format).collect::<Vec<_>>().join(", ")
+            ),
+            ConfigValue::Record(_) => unreachable!("a record has no literal"),
+        }
+    }
+    fn is_plain(value: &ConfigValue) -> bool {
+        match value {
+            ConfigValue::Number(number) => number.fract() == 0.0,
+            ConfigValue::Set(elements) => elements.iter().all(is_plain),
+            ConfigValue::Record(_) => false,
+            _ => true,
+        }
+    }
     match value {
-        ConfigValue::Boolean(value) => Ok(if *value { "TRUE" } else { "FALSE" }.to_owned()),
-        ConfigValue::Number(number) if number.fract() == 0.0 => Ok(format!("{number}")),
+        ConfigValue::Boolean(_) => return Ok(format(value)),
+        ConfigValue::Number(number) if number.fract() == 0.0 => return Ok(format(value)),
+        _ => {}
+    }
+    match evaluator {
+        // `SetEnumValue#toString` normalizes the set first.
+        Some(evaluator) if is_plain(value) && expression.is_none_or(is_literal) => {
+            Ok(format(&evaluator.order.normalize(value)?))
+        }
         _ => Err(not_yet("a configuration error that shows a value")),
     }
 }
@@ -711,7 +767,7 @@ fn is_constant_true(
         ))),
         value => Err(FrontError::Config(format!(
             "The operator {name}, which equals {},\ncannot be used as a {usage}",
-            format_config_value(&value)?
+            format_config_value(&value, Some(&item.expression), Some(evaluator))?
         ))),
     }
 }
@@ -943,7 +999,7 @@ pub fn get_specification(
     )? {
         return Err(FrontError::Config(format!(
             "The value of {specification} is equal to {}",
-            format_config_value(&value)?
+            format_config_value(&value, Some(&definition.body), evaluator)?
         )));
     }
     let expansion = Expansion {
@@ -1114,7 +1170,11 @@ fn get_config_predicate<'a>(
         Some(ConfigValue::Boolean(true)) => Ok(None),
         Some(value) => Err(FrontError::Config(format!(
             "The {kind} of {name} is equal to {}",
-            format_config_value(&value)?
+            format_config_value(
+                &value,
+                definition.map(|definition| &definition.body),
+                evaluator
+            )?
         ))),
     }
 }
