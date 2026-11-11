@@ -302,6 +302,12 @@ it from one that printed something else. Each is outside the corpus:
 
 #### Known wrong outputs
 
+TLCExt's AssertError over a membership in a set of an overridden set evaluates to FALSE where TLC
+evaluates it to TRUE: `AssertError("Attempted to compare overridden value Nat with non-overridden
+value:\n{}", {} \in {Nat})`. The membership alone fails with TLC's text, so the message the engine
+compares with is another. `tests/unit/strings.test.ts` checks `tests/fixtures/strings/OverriddenSets`
+with the TypeScript check until the engine matches.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
