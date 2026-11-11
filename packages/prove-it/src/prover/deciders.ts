@@ -30,7 +30,7 @@ export const DECIDERS: Record<string, (text: string, options: DecideOptions) => 
 
 // The backends whose Rust port decides by default, each once it decides every recorded input as
 // the TypeScript backend does (design/prover.md, section 4).
-const RUST_BACKENDS = new Set<string>(["ls4", "isabelle"]);
+const RUST_BACKENDS = new Set<string>(["ls4"]);
 
 // Which port decides a backend's inputs: PROVE_IT_PROVER_<PROVER>, such as PROVE_IT_PROVER_ZENON,
 // for one backend, else PROVE_IT_PROVER for all, each "ts" or "rust", else the default.
