@@ -1070,3 +1070,43 @@ and then evaluates again at each progress point: a `PrintT` in one prints again 
 - **What removes it:** evaluating the expression at each progress point, as TLC does: printing
   what it prints, and, where it is FALSE, stopping with TLC's statistics, work left on the queue,
   and exit 10. It comes after -dump and -continue.
+
+## Action properties and -continue
+
+A property `[][A]_v` is an implied action that TLC checks on every step, the step to a state it
+has seen included (`Worker.doNextCheckImplied`). The engine checked it but declined a step that
+violated it, so the binary declined each such run.
+
+- **What the engine does:** it stops at the first action property a step violates
+  (`ViolationKind::ActionProperty`), with the counts TLC prints: the step's state counts as found
+  where it is new, since TLC adds it to its set before it checks the implied actions. The binary
+  prints `Action property <name> is violated.` with the trace and exits with 13, as TLC does. The
+  name is TLC's (`SpecProcessor.impliedActNameVec`): the configuration's name for a property that
+  is the `[][A]_v` alone, and where the conjunct is written for a conjunct of one. The IR carries
+  it (`ActionProperty::name`, IR version 15).
+- **Under a VIEW or symmetry** the search runs on one thread when there are action properties: a
+  thread waits to report an invariant a new state violates until no other thread found its key
+  first, but an action property is of the step, which violates it whichever thread found the key.
+- **-continue** (`TLCGlobals.continuation`): TLC reports each invariant an initial state
+  violates, the first invariant a later state violates, and the first action property a step
+  violates, each with its trace, keeps the state, and ends as a run without a violation, with
+  exit 0. The search runs on one thread, so it finds them in TLC's order, and hands each to
+  `Reporter::continued`, whose trace the binary rebuilds as it does a stop's.
+- **What still declines:** -continue with temporal properties, under SYMMETRY or a VIEW, and with
+  a POSTCONDITION, where TLC checks more than the binary reports; a -continue run that stops at
+  an error or a deadlock, which TLC then reports with other traces and exit codes; -continue on a
+  spec that prints or sets TLC's registers, whose prints TLC makes before each violation it
+  reports and whose registers it sets again as it rebuilds each trace; and -continue on a spec
+  that draws at random, whose traces TLC fails to recover as it goes on ("Failed to
+  recover the initial state from its fingerprint", exit 1, on its RandomElement and
+  RandomSubsetNext).
+
+## The tokens of a dumped trace
+
+- A `.bin` trace dump (`tla-trace`'s `TraceDump::to_tlc`, cli.md's "-dumpTrace") equals TLC's but
+  for the token each `UniqueString` carries, TLC's intern number of the text in that run, which no
+  other run reproduces. TLC's reader skips it and interns the characters again:
+  `_TLCTrace.ioDeserialize` reads with `ValueInputStream.read(Map)`, which calls `readExternal`
+  (ValueInputStream.java 110-111, 118), whose strings and record names go through
+  `UniqueString.readExternal` (UniqueString.java 336-342: the token and the slot skipped as
+  "invalid for the given internTbl"). The dump numbers each text in the order it first writes it.

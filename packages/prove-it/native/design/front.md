@@ -746,8 +746,9 @@ prover, the obligations or the public API imports it. Its parts:
 
 - The report itself (`report`, `generator`, `levels`, `linter`, `selectors`, `nodes`, `snapshot`):
   tla-front writes it byte-identically for TLC master, except where it declines.
-- `xml` and the `generator`, `nodes`, `selectors`, `builtins` and `levels` it needs: SANY's
-  XMLExporter, which tla-front doesn't write.
+- `xml`, SANY's XMLExporter: deleted once tla-front wrote it ("SANY's XMLExporter as built",
+  below). The `generator`, `nodes`, `selectors`, `builtins` and `levels` it read stay with the
+  report.
 - What the TypeScript front end, and so the interpreter, reads besides: `parse-error` and `lexer`
   (its syntax errors and the configuration's), `modules` (the standard modules' texts, from which
   `scripts/front-modules.ts` writes tla-front's), and `source` (the readings `src/tlc/order.ts`
@@ -760,7 +761,8 @@ side:
    the CLI calls (`src/cli/sany-text.ts`), keeping the TypeScript report where it declines.
    `scripts/sany-corpus.ts --recorded` holds the binary and the CLI to TLC's recorded output on
    SANY's corpus and on `tests/recursive-shapes`.
-2. SANY's XMLExporter in tla-front, held to recordings of TLC's.
+2. SANY's XMLExporter in tla-front, held to recordings of TLC's (done: `src/sany/xml.ts` is
+   deleted, and the CLI exports through the engine).
 3. `src/sany` deleted, with what the interpreter reads moved beside the TypeScript front end.
    `PROVE_IT_ENGINE=0` then needs the addon or the WebAssembly engine for SANY's report
    (fallback.md).
@@ -804,3 +806,61 @@ are an assumption the TypeScript checker words otherwise than TLC. So
 
 The addon writes the report on a 64 MiB thread, as the binary's run does: a formula nested a few
 hundred parentheses deep overflows the stack of the thread JavaScript calls on.
+
+## SANY's XMLExporter as built (`sany/`)
+
+tlapm and other tools read a module through `tla2sany.xml.XMLExporter`, which writes SANY's
+semantic graph: every node with SANY's UID, the level SANY's levelCheck gives it, and a
+definition's comments. tla-front's AST and resolution hold none of that, so `src/sany` ports the
+TypeScript emulation of SANY's graph literally, file for file, over the Rust AST (which mirrors
+`ast.ts`):
+
+| Rust | TypeScript | What it holds |
+|---|---|---|
+| `sany/nodes.rs` | `sany/nodes.ts` | the graph, an arena of nodes addressed by `NodeId`, each with its UID (`Node::uid`, a counter apart from the arena: SANY numbers nodes the graph never holds, such as its first set of builtins); SANY's `Context`, a `java.util.Hashtable` that enumerates as OpenJDK does |
+| `sany/source.rs` | `sany/source.ts` | token spans, the locations SANY gives what the AST leaves out, and pre-comments, sliced at each `(*` and `*)` as SANY's lexer ends a comment token |
+| `sany/builtins.rs` | `sany/builtins.ts` | `BuiltInOperators`, with their levels; a variadic builtin has no `params` and SANY's arity -1 (`OpDef::get_sany_arity`) |
+| `sany/selectors.rs` | `sany/selectors.ts` | `Generator.selectorToNode` |
+| `sany/generator/` | `sany/generator.ts` | `Generator`: the module loader and SANY's order, the UIDs (two sets of builtins, InAssumeDummyNode, four null nodes per module), expressions (`expressions.rs`), definitions, substitutions and instances (`definitions.rs`), proofs (`proofs.rs`) |
+| `sany/levels.rs` | `sany/levels.ts` | SANY's levelCheck of each node |
+| `sany/xml.rs` | `sany/xml.ts` | the writer with `-r`, `-u`, `-t`; the context of symbols in the order of `java.util.HashMap<Integer>` |
+| `sany/export.rs` | `cli/xml-exporter.ts` `exportXml` | the run: SANY's report, then the graph, level-checked, then the XML |
+
+TLC 1.7.4's exporter is retired and not ported, nor is `snapshot.ts` (the build's cache of the
+standard modules' graph): the Rust generates them on each run.
+
+What SANY prints is `report.rs`'s, run as XMLExporter runs SANY (`ReportOptions::is_xml_export`:
+no progress lines, no warnings, no PlusCal validation, no linting). The graph is built only for a
+spec the report accepts, and an error of the generator the report didn't print is `NotYet`, so the
+two can't disagree silently. Also `NotYet`: what XMLExporter prints with Java's stack traces (a
+DEFINE step a DEF clause names, which it can't export, and SANY's generator exception of
+E4294_Module), and a context whose HashMap would make a bucket a tree (9 UIDs in one bucket),
+whose order neither port follows. `prove-it-check`'s `xml_exporter.rs` takes XMLExporter's
+arguments and usage, and names a root module that no file holds as SimpleFilenameToStream does.
+
+Gates, run by Verification's Front End job (until the TypeScript exporter was deleted,
+`front-differential.ts sany-xml` also held the two exporters to each other on every module of the
+corpora: 2,362 of 2,367 matched and none differed):
+
+- `sany-corpus.ts --recorded` on `tests/conformance/sany-stdout/xml-*.json`, the real exporter at
+  d8fb231: with each of the five flag sets, 150 of SANY's 153 corpus specs print what it printed
+  and 3 decline (AssumeProveTest and LetInTest, which the front end declines, and E4294_Module);
+  8 of the 9 XML fixtures (DefineStep declines), and both `-I` fixtures. None differ. The
+  TypeScript exporter printed what it printed on 142. Porting it found that the parser gave the
+  subscript `B(A)` of `WF_B(A)(Act)` no range (FairnessTest), which SANY locates over its
+  arguments.
+
+Known approximation: `levels.rs` copies a source's level sets where `levels.ts` shares them
+(`shareLevels`, for OpArg, Label, Assume and NewSymb nodes); the two differ only if the source's
+sets grow after the copy, which no gate has shown.
+
+### The CLI calls the native exporter
+
+`prove-it-host`'s `sanyXml(root, source, fileName, flags, known)` runs `export_xml` on the
+`Sources` convention (`module:<name>`, as `sanyText`), through the addon and the WebAssembly
+engine (ABI 14). The JavaScript CLI's XMLExporter is native only: `src/sany/xml.ts` and TLC
+1.7.4's exporter are deleted, and where tla-front declines, the CLI prints `prove-it: not native
+yet: <reason>` and exits 1, as the binary does, and without an engine it fails as the CLI does
+elsewhere. TLC 1.7.4's XMLExporter (`-cp` its jar, or `-Dtla-ts.tlc=1.7.4`) declines. The rest
+of `src/sany` stays while the TypeScript report uses it (the CLI's fallback where tla-front
+declines SANY's report, TLC 1.7.4's report); the front end's session retires it.

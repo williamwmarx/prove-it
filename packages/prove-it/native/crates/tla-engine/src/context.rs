@@ -69,6 +69,8 @@ pub struct EngineContext {
     pub is_live_registered: bool,
     /// Whether each atom reads TLCGet("diameter").
     pub diameter_atoms: Vec<bool>,
+    /// Whether each atom reads TLCGet("level").
+    pub level_atoms: Vec<bool>,
     /// Whether an invariant may print, which the search prints among Next's prints.
     pub is_invariant_printing: bool,
     /// What TLC evaluates when it starts.
@@ -98,6 +100,15 @@ pub struct StartupSymmetry {
 /// interpreter answers it (`createLiveOracle` in `live.ts`).
 pub enum Atom {
     State(Eval),
+    /// A state predicate that reads TLCGet("level"), answered at the level of the state TLC adds
+    /// and of each state a step from it reaches, one past it (`Table`).
+    LevelState(Eval),
+    /// An action that reads TLCGet("level"), at the level of its step's first state, and of the
+    /// next one past it but for the stuttering step's. Its subscript doesn't read the level.
+    LevelAction {
+        action: Eval,
+        subscript: Option<Eval>,
+    },
     /// An action, false of a step that leaves the subscript unchanged, and the position of the
     /// ENABLED atom of its fairness: the checker asks about no step from a state where that is
     /// false.
@@ -235,6 +246,20 @@ pub fn first_failing_changed(
         {
             continue;
         }
+        if !holds(machine, &predicate.eval).map_err(|bail| (position, bail))? {
+            return Ok(Some(position));
+        }
+    }
+    Ok(None)
+}
+
+/// The first of the predicates that fails of the state, evaluating each: where a parent may
+/// violate one, as under `-continue`, none holds by its parent's.
+pub fn first_failing(
+    machine: &mut Machine<'_>,
+    predicates: &[Predicate],
+) -> Result<Option<usize>, (usize, Bail)> {
+    for (position, predicate) in predicates.iter().enumerate() {
         if !holds(machine, &predicate.eval).map_err(|bail| (position, bail))? {
             return Ok(Some(position));
         }
@@ -504,7 +529,7 @@ impl EngineContext {
                     }),
             )
             .collect::<Result<Vec<_>, CompileError>>()?;
-        for (owner, (root, has_repeated_effect)) in roots.into_iter().enumerate() {
+        for (owner, &(root, has_repeated_effect)) in roots.iter().enumerate() {
             if has_repeated_effect && can_print {
                 printed.insert(root);
                 conjuncts.add(root);
@@ -513,6 +538,24 @@ impl EngineContext {
             }
             invariant_owners.resize(conjuncts.found.len(), owner);
         }
+        // TLC checks each invariant whole in an initial state, and under -continue goes on past
+        // one violated, so each keeps the conjuncts it shares with an invariant before it.
+        let owned_conjuncts: Vec<(Conjunct, usize)> = roots
+            .iter()
+            .enumerate()
+            .flat_map(|(owner, &(root, _))| {
+                let mut owned = Conjuncts::new(ir);
+                if printed.contains(&root) {
+                    owned.add(root);
+                } else {
+                    owned.collect(root);
+                }
+                owned
+                    .found
+                    .into_iter()
+                    .map(move |conjunct| (conjunct, owner))
+            })
+            .collect();
         let invariant_conjuncts = conjuncts.found;
         let invariants = invariant_conjuncts
             .iter()
@@ -726,13 +769,21 @@ impl EngineContext {
         let is_live_printing = compiled.iter().any(|atom| atom.is_printing);
         let is_live_registered = compiled.iter().any(|atom| atom.uses_registers);
         let diameter_atoms = compiled.iter().map(|atom| atom.reads_diameter).collect();
-        let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
-        let (initial_invariants, initial_invariant_owners) = invariants
+        let level_atoms = compiled
             .iter()
-            .zip(&invariant_conjuncts)
-            .zip(&invariant_owners)
-            .filter(|((_, conjunct), _)| !init_conjuncts.contains(conjunct))
-            .map(|((compiled, _), &owner)| (compiled.eval.clone(), owner))
+            .map(|atom| matches!(atom.atom, Atom::LevelState(_) | Atom::LevelAction { .. }))
+            .collect();
+        let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
+        let (initial_invariants, initial_invariant_owners) = owned_conjuncts
+            .into_iter()
+            .filter(|(conjunct, _)| !init_conjuncts.contains(conjunct))
+            .map(|(conjunct, owner)| {
+                let position = invariant_conjuncts
+                    .iter()
+                    .position(|&found| found == conjunct)
+                    .expect("an invariant's conjunct the invariants hold");
+                (invariants[position].eval.clone(), owner)
+            })
             .unzip();
         // Under a VIEW TLC fingerprints the view's value alone, so a set TLC keeps lazy that a
         // variable holds stays as the spec built it, in an order the store doesn't keep.
@@ -769,6 +820,7 @@ impl EngineContext {
             is_live_printing,
             is_live_registered,
             diameter_atoms,
+            level_atoms,
             is_invariant_printing,
             startup,
         })
@@ -804,8 +856,8 @@ fn compile_live(
     scope: Option<Index>,
 ) -> Result<Compiled, String> {
     match compiler.compile_in_scope(node, scope) {
-        Ok(Some(compiled)) if compiled.reads_tlc_get() => {
-            Err("unsupported: TLCGet after the search".into())
+        Ok(Some(compiled)) if compiled.reads_distinct() => {
+            Err("unsupported: TLCGet(\"distinct\") after the search".into())
         }
         // TLC evaluates the atoms as it adds each state to the behavior graphs, in an order
         // the registers would tell.
@@ -827,6 +879,14 @@ fn compile_subscript(
     let compiled = compile_live(compiler, node, scope)?;
     if !compiled.footprint.primes.is_empty() {
         return Err("unsupported: a subscript that reads a primed variable".into());
+    }
+    if compiled.reads_level() {
+        return Err("unsupported: TLCGet(\"level\") in a subscript".into());
+    }
+    // TLC evaluates a subscript in both states of each step it checks, where the engine reads its
+    // value once for each state.
+    if compiled.is_printing() {
+        return Err("unsupported: a subscript that prints".into());
     }
     Ok(compiled)
 }
@@ -874,7 +934,11 @@ fn compile_atom(
             is_printing = compiled.is_printing();
             reads_diameter = compiled.reads_diameter();
             uses_registers = compiled.uses_registers();
-            Atom::State(compiled.eval)
+            if compiled.reads_level() {
+                Atom::LevelState(compiled.eval)
+            } else {
+                Atom::State(compiled.eval)
+            }
         }),
         AtomKind::Action { unchanged, enabled } => (|| {
             let subscript = match unchanged {
@@ -890,6 +954,12 @@ fn compile_atom(
                 action.reads_diameter() || subscript.as_ref().is_some_and(Compiled::reads_diameter);
             uses_registers =
                 action.uses_registers() || subscript.as_ref().is_some_and(Compiled::uses_registers);
+            if action.reads_level() {
+                return Ok(Atom::LevelAction {
+                    action: action.eval,
+                    subscript: subscript.map(|subscript| subscript.eval),
+                });
+            }
             Ok(Atom::Action {
                 is_next: !action.reads_search() && is_next(compiler, ir, atom),
                 piece: piece.filter(|_| !action.reads_search()),
@@ -900,6 +970,9 @@ fn compile_atom(
         })(),
         AtomKind::Enabled { actions } => {
             let run = match compiler.compile_enabled_in_scope(atom.expression, scope) {
+                Ok(Some(compiled)) if compiled.reads_level() => {
+                    Err("unsupported: TLCGet(\"level\") in ENABLED".to_string())
+                }
                 Ok(Some(compiled)) => {
                     is_printing = compiled.is_printing();
                     uses_registers = compiled.uses_registers();

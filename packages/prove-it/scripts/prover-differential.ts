@@ -5,6 +5,8 @@
 //     reproduces; --side rust with the native ones.
 //   --prover smt|z3|zenon|isabelle|ls4 and --filter text keep the inputs of one backend, or whose
 //     key, prover/digest, contains the text. --jobs n runs n workers. --verbose lists every difference.
+//   --update, with --side ts only, writes the answer of each input that differs into the record,
+//     keeping its step limit, for a TypeScript change that moves the search on the recorded limits.
 // "declined" counts the inputs the native backend doesn't decide yet, and isn't a failure.
 // An answer is "unstable" when the recording or the new decision stopped for a reason that is a
 // property of the runtime rather than of the search, a full heap or stack, and isn't compared.
@@ -16,31 +18,27 @@ import { isDeepStrictEqual } from "node:util";
 import { getNativeAddon } from "../src/engine/native";
 import { TlaProverError } from "../src/errors";
 import { decide } from "../src/prover/deciders";
-import type { Statistics, Verdict } from "../src/prover/verdict";
 import { CONFORMANCE_DIRECTORY, getOption, writeResults } from "./corpora";
 import { runModuleWorkers } from "./module-workers";
 import { printResults } from "./proof-records";
 import {
   getInputPath,
+  getUpdatedRecords,
+  type InputAnswer,
   type InputRecord,
   readInputRecords,
   useTypeScriptBackends,
+  writeInputRecords,
 } from "./prover-records";
 
 type Outcome = "same" | "differs" | "unstable" | "declined" | "crash";
-
-interface Answer {
-  verdict: Verdict;
-  statistics: Statistics;
-  error?: string;
-}
 
 interface Result {
   verdict: Outcome;
   prover: string;
   key: string;
-  expected?: Answer;
-  actual?: Answer;
+  expected?: InputAnswer;
+  actual?: InputAnswer;
   crash?: string;
   reason?: string;
 }
@@ -59,11 +57,14 @@ const RUNTIME_STOPS = new Set(["heap", "stack"]);
 const side = getOption("--side") ?? "ts";
 const prover = getOption("--prover");
 const filter = getOption("--filter");
+const isUpdating = process.argv.includes("--update");
+if (isUpdating && side !== "ts")
+  throw new Error("--update writes the TypeScript backends' answers, so it takes --side ts");
 
 useTypeScriptBackends();
 
 // The native backend's answer, which reads the input with no fallback, or why it declined.
-const decideNatively = (record: InputRecord, text: string): Answer | string => {
+const decideNatively = (record: InputRecord, text: string): InputAnswer | string => {
   const addon = getNativeAddon();
   if (typeof addon === "string") throw new Error(`no native engine: ${addon}`);
   const decision = addon.decide(record.prover, text, Infinity, record.stepLimit, undefined);
@@ -73,7 +74,7 @@ const decideNatively = (record: InputRecord, text: string): Answer | string => {
   return { verdict: decision.verdict, statistics: decision.statistics };
 };
 
-const decideOnSide = (record: InputRecord, text: string): Answer | string => {
+const decideOnSide = (record: InputRecord, text: string): InputAnswer | string => {
   if (side === "rust") return decideNatively(record, text);
   if (side !== "ts") throw new Error(`no ${side} side`);
   try {
@@ -85,7 +86,7 @@ const decideOnSide = (record: InputRecord, text: string): Answer | string => {
   }
 };
 
-const isRuntimeStop = (answer: Answer) => RUNTIME_STOPS.has(String(answer.statistics.stop));
+const isRuntimeStop = (answer: InputAnswer) => RUNTIME_STOPS.has(String(answer.statistics.stop));
 
 const getResult = (key: string, record: InputRecord): Result => {
   const expected = {
@@ -144,8 +145,19 @@ printResults(
       ? `crash ${result.key}: ${result.crash}`
       : `${result.verdict} ${result.key}: expected ${JSON.stringify(result.expected)}, got ${JSON.stringify(result.actual)}`,
 );
+// An update records the answers that differ, so only a crash or a lost worker fails it.
+if (isUpdating) {
+  const answers = new Map<string, InputAnswer>();
+  for (const result of results)
+    if (result.verdict === "differs" && result.actual !== undefined)
+      answers.set(result.key, result.actual);
+  writeInputRecords(getUpdatedRecords(records, answers));
+  console.log(`updated ${answers.size} records`);
+}
 if (
-  results.some((result) => result.verdict === "differs" || result.verdict === "crash") ||
+  results.some(
+    (result) => (result.verdict === "differs" && !isUpdating) || result.verdict === "crash",
+  ) ||
   missing > 0
 )
   process.exitCode = 1;

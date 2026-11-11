@@ -255,8 +255,9 @@ Here stage 1 changes the algorithm while keeping TLC's semantics. Today the TS e
 print the collision-probability line (`getStateFingerprints`), which costs 4–10% of engine models.
 TLC deduplicates **by FP64 fingerprint** in its FPSet.
 
-Rust keys the table on **TLC's 64-bit fingerprint**: FP64 with `-fp 0`, of the state in TLC's
-variable order, or of the VIEW value, or of the symmetry representative, as TLC fingerprints them.
+Rust keys the table on **TLC's 64-bit fingerprint**: FP64 with the polynomial `-fp` picks, of
+the state in TLC's variable order, or of the VIEW value, or of the symmetry representative, as TLC
+fingerprints them.
 
 ```rust
 pub struct FpSet {                       // stage 1: one shard; stage 2: 256 shards by the top 8 bits
@@ -295,8 +296,8 @@ in CI (6.7).
 ### 2.4 FP64
 
 `u64` arithmetic replaces the `high`/`low` halves of `src/tlc/fingerprint.ts`. The tables are
-built as `createByteModTable` builds them: the polynomial is `0x911498ae0e66bad6`, and the
-`ByteModTable` comes from powers x^64..x^71. Value tags are BOOL 0, INT 1, STRING 3, SET_ENUM 5,
+built as `createByteModTable` builds them: the polynomial is `0x911498ae0e66bad6` (`-fp 0`) or
+the one of `FP64.Polys` that `-fp` picks, and the `ByteModTable` comes from powers x^64..x^71. Value tags are BOOL 0, INT 1, STRING 3, SET_ENUM 5,
 FCN_RCD 9 and MODEL 21. A model value's token is `getStringRank + 1`. A string is extended by its
 UTF-16 length and then each code unit's low byte. *Measured:* the Rust port gives the same
 fingerprint as `getTlcFingerprint` for a sample of ints, `-2^31`, a string, a boolean, a set, a
@@ -2475,7 +2476,8 @@ front door that falls back to a JS process: nothing it meets is handed to JavaSc
 | `Print`, `PrintT` output during the search | `check.ts` `print` | the engine's `Reporter::print`, through the value printer |
 | Exit codes (`EXIT_STATUS`, `EXIT_CODES`) | `exit-codes.ts`, `cli/tlc.ts` | `prove-it-cli`: the same table |
 | Several specs in one run (`Checking X.tla with X.cfg`), the first non-zero exit code | `checkSpecs` | `prove-it-cli` |
-| `tlapm`, `tla2sany.xml.XMLExporter` | `cli/tlapm.ts`, `cli/xml-exporter.ts` | out of scope: the JS CLI keeps them until they have their own plan |
+| `tlapm` | `cli/tlapm.ts` | out of scope: the JS CLI keeps it until it has its own plan |
+| `tla2sany.xml.XMLExporter` (`-o`, `-t`, `-r`, `-u`, `-I`) | `cli/xml-exporter.ts` (arguments; the export is the engine's `sanyXml`) | `prove-it-check`'s `xml_exporter.rs` over `tla-front`'s `sany` module (design/front.md, "SANY's XMLExporter") |
 
 ### 13.2 Seams to the other stages
 

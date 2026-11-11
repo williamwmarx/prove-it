@@ -49,6 +49,34 @@ export const readInputRecords = (): Record<string, InputRecord> => {
   return JSON.parse(readFileSync(PROVER_INPUTS_PATH, "utf8"));
 };
 
+// The answer a decision gave to a recorded input, or the error it threw.
+export interface InputAnswer {
+  verdict: Verdict;
+  statistics: Statistics;
+  error?: string;
+}
+
+// The records with the given answers in place of the recorded ones, each input keeping its prover
+// and step limit, for a change that moves the search on the step limit it was recorded with.
+export const getUpdatedRecords = (
+  records: Record<string, InputRecord>,
+  answers: ReadonlyMap<string, InputAnswer>,
+) =>
+  Object.fromEntries(
+    Object.entries(records).map(([key, record]) => {
+      const answer = answers.get(key);
+      if (answer === undefined) return [key, record];
+      const updated: InputRecord = {
+        prover: record.prover,
+        ...(record.stepLimit !== undefined && { stepLimit: record.stepLimit }),
+        verdict: answer.verdict,
+        statistics: answer.statistics,
+        ...(answer.error !== undefined && { error: answer.error }),
+      };
+      return [key, updated];
+    }),
+  );
+
 // One input to a line, by key, so that a new recording's diff shows what changed.
 export const writeInputRecords = (records: Record<string, InputRecord>) =>
   writeFileSync(

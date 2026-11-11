@@ -7,7 +7,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { arch, availableParallelism, EOL, release, tmpdir, type } from "node:os";
+import { arch, availableParallelism, EOL, release, tmpdir, totalmem, type } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getHeapStatistics } from "node:v8";
@@ -26,6 +26,8 @@ import type {
   Violation,
 } from "../check";
 import { parseConfig } from "../config";
+import { getNativeAddon, loadWasmEngine, type NativeCheckSources } from "../engine/native";
+import { getEngineSetting, getEnvironmentSetting, reportEngine } from "../engine/settings";
 import {
   getErrorExitCode,
   getUnexpectedException,
@@ -917,13 +919,11 @@ const formatSanyErrors = (error: TlaSyntaxError, specName: string) => {
   return `${parseError}\nFatal errors while parsing TLA+ spec in file ${specName}\n\n${report}\n*** Errors: 1\n\n${report}\n\n\n`;
 };
 
-export const checkSpecs = async (args: string[], java: JavaProperties) => {
-  const parsed = CHECK_COMMAND.parse(args);
-  const inputs = getInputPaths(parsed.positionals);
-  const isConfigured = parsed.has("-config");
-  // Like TLC, a spec named without an extension is the .tla file of that name. A glob also matches
-  // modules that only other specs import, which have no configuration.
-  const specPaths = inputs
+// The specs the command line names: like TLC, a spec named without an extension is the .tla file
+// of that name. A glob also matches modules that only other specs import, which have no
+// configuration.
+const getSpecPaths = (parsed: ParsedArgs) =>
+  getInputPaths(parsed.positionals)
     .map((input) => ({
       ...input,
       path:
@@ -934,9 +934,129 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     .filter(
       (input) =>
         input.path.endsWith(".tla") &&
-        (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg"))),
+        (!input.isGlobbed ||
+          parsed.has("-config") ||
+          existsSync(input.path.replace(/\.tla$/, ".cfg"))),
     )
     .map((input) => input.path);
+
+// TLC also looks for the spec itself in the library directories.
+const findSpec = (path: string, java: JavaProperties) =>
+  existsSync(path) || isAbsolute(path)
+    ? path
+    : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
+
+// The zone TLC prints its dates in, as a POSIX TZ rule of the offset the process has now.
+const getZoneRule = () => {
+  const offset = -new Date().getTimezoneOffset();
+  const hours = Math.floor(Math.abs(offset) / 60);
+  const minutes = String(Math.abs(offset) % 60).padStart(2, "0");
+  return `<${offset < 0 ? "-" : "+"}${String(hours).padStart(2, "0")}${minutes}>${offset > 0 ? "-" : ""}${hours}:${minutes}`;
+};
+
+// The debug settings only the TypeScript check honours, which leave the command line to it:
+// PROVE_IT_STOP_AT tests its hand-over from the engine, the IR dump, the state log and the
+// fingerprint setting are written or checked there, and the memo, epoch, fingerprint and liveness
+// self-checks are the engine settings it passes, which the binary doesn't read.
+const TYPESCRIPT_SETTINGS = [
+  "PROVE_IT_STOP_AT",
+  "PROVE_IT_IR_DUMP",
+  "PROVE_IT_STATE_LOG",
+  "PROVE_IT_FINGERPRINT",
+  "PROVE_IT_MEMO",
+  "PROVE_IT_EPOCH_CHECK",
+  "PROVE_IT_FP_VERIFY",
+  "PROVE_IT_LIVE_CHECK",
+];
+
+// The check the native binary runs for the command line, run in-process: its exit code, once it
+// printed what the binary prints, or undefined where it declines the model or no engine loads, for
+// the TypeScript check to check it. The command line is TLC's as given, the Java launch's included;
+// `args` and `java` are what is left of it once the launch is read. What the check prints waits
+// until it is known not to decline, which it can do part way through the search, so that a model
+// it declines prints only once.
+export const checkNatively = async (
+  commandLine: string[],
+  args: string[],
+  java: JavaProperties,
+) => {
+  if (
+    getEngineSetting() === "0" ||
+    TYPESCRIPT_SETTINGS.some((name) => Boolean(getEnvironmentSetting(name)))
+  ) {
+    return undefined;
+  }
+  const startedAt = performance.now();
+  await loadWasmEngine();
+  const addon = getNativeAddon();
+  if (typeof addon === "string") return undefined;
+  const parsed = CHECK_COMMAND.parse(args);
+  const specPaths = [...new Set(getSpecPaths(parsed).map((path) => findSpec(path, java)))];
+  if (specPaths.length !== 1) return undefined;
+  const specPath = specPaths[0];
+  const directories = [dirname(specPath), ...java.libraries];
+  const loadModule = createModuleLoader(directories);
+  const describeFile = createFileDescriber(
+    specPath,
+    directories,
+    java,
+    parsed.get("-metadir")?.[0],
+    java.tlcVersion ?? "master",
+  );
+  const readKey = (key: string) => {
+    const [kind, ...rest] = key.split(":");
+    const name = rest.join(":");
+    if (kind === "text") return existsSync(name) ? readFileSync(name, "utf8") : undefined;
+    if (kind === "module") return loadModule(name);
+    if (kind === "class") {
+      const path = join(dirname(specPath), `${name}.class`);
+      return existsSync(path) ? new Uint8Array(readFileSync(path)) : undefined;
+    }
+    const [origin, ...moduleName] = rest;
+    return describeFile(moduleName.join(":"), origin as SanyModuleOrigin);
+  };
+  const variables = Object.entries(process.env).filter(
+    (entry): entry is [string, string] =>
+      entry[0].startsWith("PROVE_IT_") && entry[1] !== undefined,
+  );
+  const known = new Map<string, string | Uint8Array | undefined>();
+  const check = (): Exclude<NativeCheckSources, { kind: "needed" }> => {
+    const result = addon.checkSources(
+      commandLine,
+      [...known],
+      [
+        type(),
+        release(),
+        arch(),
+        availableParallelism(),
+        Math.floor(totalmem() / 1024 / 1024),
+        process.pid,
+        Date.now(),
+        getZoneRule(),
+        variables,
+      ],
+    );
+    if (result.kind !== "needed") return result;
+    result.keys.forEach((key) => known.set(key, readKey(key)));
+    return check();
+  };
+  const result = check();
+  if (result.kind === "declined") {
+    reportEngine(`native: checkSources declined: ${result.reason}`);
+    return undefined;
+  }
+  reportEngine(
+    `native: checkSources: exit ${result.exitCode} (${(performance.now() - startedAt).toFixed(2)} ms)`,
+  );
+  process.stdout.write(result.out);
+  process.stderr.write(result.err);
+  return result.exitCode;
+};
+
+export const checkSpecs = async (args: string[], java: JavaProperties) => {
+  const parsed = CHECK_COMMAND.parse(args);
+  const isConfigured = parsed.has("-config");
+  const specPaths = getSpecPaths(parsed);
   if (specPaths.length === 0) {
     console.error(USAGE);
     return 1;
@@ -945,12 +1065,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
-  // TLC also looks for the spec itself in the library directories.
-  const findSpec = (path: string) =>
-    existsSync(path) || isAbsolute(path)
-      ? path
-      : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
-  const paths = [...new Set(specPaths.map(findSpec))];
+  const paths = [...new Set(specPaths.map((path) => findSpec(path, java)))];
   // Each spec is checked as TLC would in a process of its own, so an error in one leaves the others
   // to report. The exit code is the first that is not success.
   const exitCodes: number[] = [];

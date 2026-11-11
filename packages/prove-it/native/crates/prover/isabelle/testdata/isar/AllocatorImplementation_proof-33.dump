@@ -1,0 +1,29 @@
+theory tlapm_e3fc79
+const isReal :: c = PredicateLogic.c
+const isa_slas_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_bksl_diva :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_perc_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isa_peri_peri_a :: [c,c] => c = (PredicateLogic.c => (PredicateLogic.c => PredicateLogic.c))
+const isInfinity :: c = PredicateLogic.c
+const isa_lbrk_rbrk_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+const isa_less_more_a :: [c] => c = (PredicateLogic.c => PredicateLogic.c)
+fixes a_CONSTANTunde_Clientsunde_a
+fixes a_CONSTANTunde_Resourcesunde_a
+fixes a_VARIABLEunde_unsatunde_a a_VARIABLEunde_unsatunde_a'
+fixes a_VARIABLEunde_allocunde_a a_VARIABLEunde_allocunde_a'
+fixes a_VARIABLEunde_schedunde_a a_VARIABLEunde_schedunde_a'
+fixes a_VARIABLEunde_requestsunde_a a_VARIABLEunde_requestsunde_a'
+fixes a_VARIABLEunde_holdingunde_a a_VARIABLEunde_holdingunde_a'
+fixes a_VARIABLEunde_networkunde_a a_VARIABLEunde_networkunde_a'
+fixes a_CONSTANTunde_Sunde_a
+assumes v'250: ((a_CONSTANTunde_IsFiniteSetunde_a ((a_CONSTANTunde_Sunde_a))))
+  = ('PredicateLogic.Trueprop (a_CONSTANTunde_IsFiniteSetunde_a a_CONSTANTunde_Sunde_a))
+fixes a_CONSTANTunde_ssunde_a
+assumes a_CONSTANTunde_ssunde_a_in: (a_CONSTANTunde_ssunde_a \\<in> ((SUBSET (a_CONSTANTunde_Sunde_a))))
+  = ('PredicateLogic.Trueprop (('SetTheory.in a_CONSTANTunde_ssunde_a) ('SetTheory.SUBSET a_CONSTANTunde_Sunde_a)))
+assumes v'256: ((\\<And> a_CONSTANTunde_gunde_a :: c. (\\<And> a_CONSTANTunde_hunde_a :: c. (\\<And> a_CONSTANTunde_Uunde_a :: c. a_CONSTANTunde_Uunde_a \\<in> ((a_CONSTANTunde_FiniteSubsetsOfunde_a ((a_CONSTANTunde_Sunde_a)))) \\<Longrightarrow> ((\\<forall> a_CONSTANTunde_Vunde_a \\<in> ((a_CONSTANTunde_SetLessThanunde_a ((a_CONSTANTunde_Uunde_a), ((a_CONSTANTunde_StrictSubsetOrderingunde_a ((a_CONSTANTunde_Sunde_a)))), ((a_CONSTANTunde_FiniteSubsetsOfunde_a ((a_CONSTANTunde_Sunde_a))))))) : (((fapply ((a_CONSTANTunde_gunde_a), (a_CONSTANTunde_Vunde_a))) = (fapply ((a_CONSTANTunde_hunde_a), (a_CONSTANTunde_Vunde_a)))))) \\<Longrightarrow> ((((a_CONSTANTunde_PermsRecunde_a ((a_CONSTANTunde_gunde_a), (a_CONSTANTunde_Uunde_a)))) = ((a_CONSTANTunde_PermsRecunde_a ((a_CONSTANTunde_hunde_a), (a_CONSTANTunde_Uunde_a)))))))))))
+  = ('Pure.all (%a_CONSTANTunde_gunde_a::PredicateLogic.c. ('Pure.all (%a_CONSTANTunde_hunde_a::PredicateLogic.c. ('Pure.all (%a_CONSTANTunde_Uunde_a::PredicateLogic.c. (('Pure.imp ('PredicateLogic.Trueprop (('SetTheory.in a_CONSTANTunde_Uunde_a) (a_CONSTANTunde_FiniteSubsetsOfunde_a a_CONSTANTunde_Sunde_a)))) (('Pure.imp ('PredicateLogic.Trueprop (('SetTheory.bAll (((a_CONSTANTunde_SetLessThanunde_a a_CONSTANTunde_Uunde_a) (a_CONSTANTunde_StrictSubsetOrderingunde_a a_CONSTANTunde_Sunde_a)) (a_CONSTANTunde_FiniteSubsetsOfunde_a a_CONSTANTunde_Sunde_a))) (%a_CONSTANTunde_Vunde_a. (('PredicateLogic.eq ((fapply a_CONSTANTunde_gunde_a) a_CONSTANTunde_Vunde_a)) ((fapply a_CONSTANTunde_hunde_a) a_CONSTANTunde_Vunde_a)))))) ('PredicateLogic.Trueprop (('PredicateLogic.eq ((a_CONSTANTunde_PermsRecunde_a a_CONSTANTunde_gunde_a) a_CONSTANTunde_Uunde_a)) ((a_CONSTANTunde_PermsRecunde_a a_CONSTANTunde_hunde_a) a_CONSTANTunde_Uunde_a)))))))))))
+shows (\\<forall>a_CONSTANTunde_gunde_a : (\\<forall>a_CONSTANTunde_hunde_a : (\\<forall> a_CONSTANTunde_xunde_a \\<in> ((a_CONSTANTunde_FiniteSubsetsOfunde_a ((a_CONSTANTunde_Sunde_a)))) : (((\\<forall> a_CONSTANTunde_yunde_a \\<in> ((a_CONSTANTunde_SetLessThanunde_a ((a_CONSTANTunde_xunde_a), ((a_CONSTANTunde_StrictSubsetOrderingunde_a ((a_CONSTANTunde_Sunde_a)))), ((a_CONSTANTunde_FiniteSubsetsOfunde_a ((a_CONSTANTunde_Sunde_a))))))) : (((fapply ((a_CONSTANTunde_gunde_a), (a_CONSTANTunde_yunde_a))) = (fapply ((a_CONSTANTunde_hunde_a), (a_CONSTANTunde_yunde_a)))))) \\<Rightarrow> ((((a_CONSTANTunde_PermsRecunde_a ((a_CONSTANTunde_gunde_a), (a_CONSTANTunde_xunde_a)))) = ((a_CONSTANTunde_PermsRecunde_a ((a_CONSTANTunde_hunde_a), (a_CONSTANTunde_xunde_a)))))))))))
+  = ('PredicateLogic.Trueprop ('PredicateLogic.All (%a_CONSTANTunde_gunde_a. ('PredicateLogic.All (%a_CONSTANTunde_hunde_a. (('SetTheory.bAll (a_CONSTANTunde_FiniteSubsetsOfunde_a a_CONSTANTunde_Sunde_a)) (%a_CONSTANTunde_xunde_a. (('PredicateLogic.imp (('SetTheory.bAll (((a_CONSTANTunde_SetLessThanunde_a a_CONSTANTunde_xunde_a) (a_CONSTANTunde_StrictSubsetOrderingunde_a a_CONSTANTunde_Sunde_a)) (a_CONSTANTunde_FiniteSubsetsOfunde_a a_CONSTANTunde_Sunde_a))) (%a_CONSTANTunde_yunde_a. (('PredicateLogic.eq ((fapply a_CONSTANTunde_gunde_a) a_CONSTANTunde_yunde_a)) ((fapply a_CONSTANTunde_hunde_a) a_CONSTANTunde_yunde_a))))) (('PredicateLogic.eq ((a_CONSTANTunde_PermsRecunde_a a_CONSTANTunde_gunde_a) a_CONSTANTunde_xunde_a)) ((a_CONSTANTunde_PermsRecunde_a a_CONSTANTunde_hunde_a) a_CONSTANTunde_xunde_a))))))))))
+using assms true
+method word:auto

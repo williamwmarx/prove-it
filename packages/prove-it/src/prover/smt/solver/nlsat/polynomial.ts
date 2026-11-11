@@ -20,6 +20,7 @@
 //   tie in about 1 of 300 levelwise and 1 of 3,000 explain programs, and no corpus trace yet.
 import { SmtInvariantError } from "../../../../errors";
 import { getGcd, Rational } from "../rational";
+import { NlsatLimit } from "./limit";
 import { UpolynomialManager } from "./upolynomial";
 import {
   DEFAULT_FACTOR_PARAMS,
@@ -347,7 +348,9 @@ export class PolynomialManager {
   readonly unit: Monomial;
   readonly zero: Polynomial;
   readonly one: Polynomial;
-  private um = new UpolynomialManager();
+  // m_limit: the solver's, once setLimit shares it.
+  limit = new NlsatLimit();
+  private um = new UpolynomialManager(null, this.limit);
   private som = new SomBuffer(this);
   private som2 = new SomBuffer(this);
   private cheap = new CheapSomBuffer(this);
@@ -356,6 +359,11 @@ export class PolynomialManager {
     this.unit = this.mkMonomial([], []);
     this.zero = this.mkPolynomialCore([], []);
     this.one = this.mkPolynomialCore([1n], [this.unit]);
+  }
+
+  setLimit(limit: NlsatLimit) {
+    this.limit = limit;
+    this.um.limit = limit;
   }
 
   // Monomials.
@@ -576,8 +584,10 @@ export class PolynomialManager {
   mul(first: Polynomial, second: Polynomial) {
     if (first.size === 0 || second.size === 0) return this.zero;
     this.som.reset();
-    for (let index = 0; index < first.size; index++)
+    for (let index = 0; index < first.size; index++) {
+      this.limit.checkpoint();
       this.som.addmul(first.as[index], first.ms[index], second);
+    }
     return this.som.mk();
   }
 
@@ -746,6 +756,7 @@ export class PolynomialManager {
     const divisorMonomial = divisor.ms[maxPos];
     const divisorCoeff = divisor.as[maxPos];
     while (true) {
+      this.limit.checkpoint();
       const remainderPos = remainder.getGradedLexMaxPos();
       if (remainderPos === -1) {
         remainder.reset();
@@ -800,6 +811,7 @@ export class PolynomialManager {
     let quotient = this.zero;
     let steps = 0;
     while (true) {
+      this.limit.checkpoint();
       const degR = this.degree(remainder, variable);
       if (degB > degR) {
         const exactSteps = degA - degB + 1;
@@ -813,6 +825,7 @@ export class PolynomialManager {
       this.som.reset();
       this.som2.reset();
       for (let index = 0; index < remainder.size; index++) {
+        if (remainder.size > 100 && index % 100 === 0) this.limit.checkpoint();
         const monomial = remainder.ms[index];
         const coeff = remainder.as[index];
         if (monomial.degreeOf(variable) === degR) {
@@ -896,6 +909,7 @@ export class PolynomialManager {
     let g = this.one;
     let h = this.one;
     while (true) {
+      this.limit.checkpoint();
       const delta = this.degree(ppU, variable) - this.degree(ppV, variable);
       const remainder = this.exactPseudoRemainder(ppU, ppV, variable);
       if (remainder.size === 0) {
@@ -958,6 +972,7 @@ export class PolynomialManager {
     }
     let product = this.exactDiv(primitive, square);
     for (let multiplicity = 1; !this.isConst(product); multiplicity++) {
+      this.limit.checkpoint();
       const next = this.gcd(product, square);
       const factor = this.exactDiv(product, next);
       if (!this.isConst(factor)) this.factorSqfPp(factor, variable, multiplicity, result);
@@ -1066,6 +1081,7 @@ export class PolynomialManager {
     for (let index = 0; index < polynomial.size; index++)
       if (index !== maxPos) rest.addTerm(polynomial.as[index], polynomial.ms[index]);
     while (true) {
+      this.limit.checkpoint();
       const restMax = rest.getGradedLexMaxPos();
       if (restMax === -1) {
         rest.reset();
@@ -1137,9 +1153,11 @@ export class PolynomialManager {
         this.divX(monomial, variable),
       );
     }
-    for (let step = 1; step <= degree; step++)
+    for (let step = 1; step <= degree; step++) {
+      this.limit.checkpoint();
       for (let power = degree - step; power <= degree - 1; power++)
         coeffs[power].addmulBuffer(value, this.unit, coeffs[power + 1]);
+    }
     this.som.reset();
     for (let power = 0; power <= degree; power++)
       this.som.addmulBuffer(1n, this.mkPower(variable, power), coeffs[power]);
@@ -1193,8 +1211,10 @@ export class PolynomialManager {
   private muladd(first: Polynomial, second: Polynomial, constant: bigint) {
     if (first.size === 0 || second.size === 0) return this.mkConst(constant);
     this.som.reset();
-    for (let index = 0; index < first.size; index++)
+    for (let index = 0; index < first.size; index++) {
+      this.limit.checkpoint();
       this.som.addmul(first.as[index], first.ms[index], second);
+    }
     this.som.addTerm(constant, this.unit);
     return this.som.mk();
   }
@@ -1271,6 +1291,7 @@ export class PolynomialManager {
     let g = this.one;
     let h = this.one;
     while (true) {
+      this.limit.checkpoint();
       const degreeA = this.degree(a, variable);
       const degreeB = this.degree(b, variable);
       const delta = degreeA - degreeB;
@@ -1322,9 +1343,11 @@ export class PolynomialManager {
       if (degMain <= 1) continue;
       for (const liftVar of allVars) {
         if (liftVar === mainVar) continue;
+        this.limit.checkpoint();
         const evalVars = allVars.filter((variable) => variable !== mainVar && variable !== liftVar);
         const maxCombos = evalVars.length === 0 ? 1 : 5;
         for (let combo = 0; combo < maxCombos; combo++) {
+          this.limit.checkpoint();
           const bivariate =
             evalVars.length === 0
               ? polynomial
@@ -1366,6 +1389,7 @@ export class PolynomialManager {
             for (const prime of FACTOR_PRIMES) {
               if (getGcd(prime, lcAtZero) !== 1n) continue;
               for (let split = 1; split <= Math.floor(factorCount / 2); split++) {
+                this.limit.checkpoint();
                 let h1 = univariateFs.factors[0];
                 for (let index = 1; index < split; index++)
                   h1 = this.um.mul(h1, univariateFs.factors[index]);
@@ -1441,7 +1465,7 @@ export class PolynomialManager {
     lc: bigint,
     prime: bigint,
   ) {
-    const zp = new UpolynomialManager(prime);
+    const zp = new UpolynomialManager(prime, this.limit);
     const f1 = zp.mkMonic(zp.set(h1));
     const f2 = zp.mkMonic(zp.set(h2));
     const ext = zp.extGcd(f1, f2);
@@ -1458,6 +1482,7 @@ export class PolynomialManager {
     f2Coeffs[0] = zp.mulConst(f2, zp.normalizeNumeral(lc));
     const lcInv = zp.inv(lc);
     for (let power = 1; power <= degY; power++) {
+      this.limit.checkpoint();
       let error = zp.set(qCoeffs[power]);
       for (let first = 0; first <= power; first++) {
         const second = power - first;
@@ -1614,6 +1639,7 @@ export class PolynomialManager {
     let result = ops.fromInteger(0n);
     let index = start;
     while (index < end) {
+      this.limit.checkpoint();
       const degree = polynomial.ms[index].degreeOf(x);
       if (degree === 0) {
         const below = this.maxSmallerThan(polynomial, index, end, x);

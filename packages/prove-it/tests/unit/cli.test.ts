@@ -797,12 +797,12 @@ const XML_EXPORT_FAILURES = [
       "ERROR: Failed to parse module.",
     ],
   ],
+  // XMLExporter prints this exception with Java's stack traces, of each node it was exporting
+  // (tests/conformance/sany-stdout/xml-fixtures-o.json), which tla-front declines to write.
   [
     "DefineStep.tla",
     1,
-    [
-      'Exception in thread "main" java.lang.IllegalArgumentException: unsupported kind: 37 in xml export',
-    ],
+    ["prove-it: not native yet: SANY's XMLExporter of the stack traces of XMLExporter's exception"],
   ],
   [
     "FormFeed.tla",
@@ -892,6 +892,26 @@ describe("the CLI prints SANY's report as tla-front writes it", () => {
 });
 
 describe("the CLI exports XML like SANY's XMLExporter", () => {
+  // SANY reads WF_B(A)(Act) with the subscript B(A), which the TypeScript front end rejects: the
+  // export comes from tla-front, through the native engine.
+  it("exports a spec only tla-front reads, as SANY's corpus FairnessTest", () => {
+    const directory = mkdtempSync(join(tmpdir(), "prove-it-xml-"));
+    copies.push(directory);
+    writeFileSync(
+      join(directory, "Fair.tla"),
+      "---- MODULE Fair ----\nVARIABLE x\nB(a) == a\nF == WF_B(x)(x' = x)\n====\n",
+    );
+    const result = spawnSync("bun", [CLI, "tla2sany.xml.XMLExporter", "-o", "-t", "Fair.tla"], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toStartWith(
+      '<?xml version="1.0" encoding="UTF-8" standalone="no"?><modules><RootModule>Fair</RootModule>',
+    );
+  });
+
   it.each(XML_EXPORT_FAILURES)("fails on %s", (file, code, lines) => {
     const result = exportXml([file]);
     expect(result.status).toBe(code);
@@ -953,86 +973,6 @@ describe("the CLI exports XML like SANY's XMLExporter", () => {
 
 // tla2tools-1.7.4.jar holds only the manifest of TLC 1.7.4's jar, which is all tla-ts reads of it.
 const JAR_174 = join(FIXTURES, "xml-export", "tla2tools-1.7.4.jar");
-
-const exportXml174 = (args: string[]) =>
-  runCliWith("xml-export", ["-cp", JAR_174, "tla2sany.xml.XMLExporter", ...args]);
-
-const getXmlExporterException = (exception: string, line: number) =>
-  `Exception in thread "main" ${exception}\n\tat tla2sany.xml.XMLExporter.main(XMLExporter.java:${line})\n`;
-
-// The expected output is what XMLExporter prints with TLC 1.7.4's tla2tools.jar.
-describe("the CLI exports XML like TLC 1.7.4's XMLExporter when its jar is on the class path", () => {
-  const standardModules = `jar:file:${pathToFileURL(JAR_174).pathname}!/tla2sany/StandardModules/`;
-
-  it("writes the XML on one line, after the modules SANY analyzes", () => {
-    const result = exportXml174(["-o", "Counted.tla"]);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe(
-      readFileSync(join(FIXTURES, "xml-export", "Counted.1.7.4.xml"), "utf8"),
-    );
-    expect(result.stderr).toBe(
-      "Semantic processing of module Naturals\nSemantic processing of module Counted\n",
-    );
-  });
-
-  it("writes the XML of a specification SANY finds errors in", () => {
-    const result = exportXml174(["-o", "Twice.tla"]);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("<RootModule>Twice</RootModule>");
-    expect(result.stderr).toMatch(/^Semantic processing of module Twice\nSemantic errors:\n/);
-  });
-
-  it.each([
-    [[], "at least one .tla file must be given", 59],
-    [["-t", "Counted.tla"], "Only one TLA file to check allowed!", 83],
-  ])("throws on the arguments %j", (args, message, line) => {
-    const result = exportXml174(args);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toBe(
-      getXmlExporterException(`java.lang.IllegalArgumentException: ${message}`, line),
-    );
-  });
-
-  it("names the last file it looked for of a module it cannot find", () => {
-    const directory = join(FIXTURES, "xml-export");
-    expect(exportXml174(["Missing.tla"])).toMatchObject({
-      status: 0,
-      stdout: "",
-      stderr: `File does not exist: /Missing.tla while looking in these directories: /, ${standardModules}\n`,
-    });
-    expect(exportXml174(["-I", "nested", "Missing.tla"]).stderr).toBe(
-      `File does not exist: ${directory}/nested/Missing.tla while looking in these directories: nested/, ${standardModules}\n`,
-    );
-  });
-
-  it("throws for a specification SANY aborts on, which it names once it parses the root module", () => {
-    const renamed = exportXml174(["-o", "Renamed.tla"]);
-    expect(renamed.status).toBe(1);
-    expect(renamed.stderr).toBe(
-      [
-        "",
-        "Fatal errors while parsing TLA+ spec in file Renamed.tla",
-        "",
-        "tla2sany.semantic.AbortException",
-        "*** Abort messages: 1",
-        "",
-        "Unknown location",
-        "",
-        "File name 'Renamed' does not match the name 'Other' of the top level module it contains.",
-        "",
-        "",
-        getXmlExporterException(
-          "tla2sany.xml.XMLExportingException: spec Other is malformed - does not have a root module",
-          110,
-        ),
-      ].join("\n"),
-    );
-    // Numbered has a string that TLC 1.7.4's lexer cannot read.
-    expect(exportXml174(["-o", "Numbered.tla"]).stderr).toContain(
-      "spec null is malformed - does not have a root module",
-    );
-  });
-});
 
 describe("the CLI checks a spec like TLC 1.7.4 when its jar is on the class path", () => {
   const check174 = (name: string) =>
@@ -1215,17 +1155,19 @@ describe("the CLI reproduces the TLC that -Dtla-ts.tlc names without a jar", () 
     );
   });
 
-  it("exports XML like TLC 1.7.4's XMLExporter", () => {
-    const result = runCliWith("xml-export", [
-      "-Dtla-ts.tlc=1.7.4",
-      "tla2sany.xml.XMLExporter",
-      "-o",
-      "Counted.tla",
-    ]);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe(
-      readFileSync(join(FIXTURES, "xml-export", "Counted.1.7.4.xml"), "utf8"),
-    );
+  // TLC 1.7.4's XMLExporter is retired: only master's is native.
+  it("declines TLC 1.7.4's XMLExporter", () => {
+    for (const args of [["-Dtla-ts.tlc=1.7.4"], ["-cp", JAR_174]]) {
+      const result = runCliWith("xml-export", [
+        ...args,
+        "tla2sany.xml.XMLExporter",
+        "-o",
+        "Counted.tla",
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("prove-it: not native yet: TLC 1.7.4\n");
+    }
   });
 
   it("takes the TLC it names over that of the jar", () => {

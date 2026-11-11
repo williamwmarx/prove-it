@@ -664,6 +664,7 @@ impl Decoder<'_> {
                     action: node(self)?,
                     subscript: node(self)?,
                     scope: self.optional_below(scope_count, "scope")?,
+                    name: self.text()?,
                 })
             })
             .collect::<Decoded<_>>()?;
@@ -838,6 +839,7 @@ impl Decoder<'_> {
             is_recording_graph,
             version,
             random_seed,
+            fingerprint_index: 0,
             atoms,
             live_formula,
             live_properties,

@@ -934,14 +934,28 @@ impl<'a> Lowering<'a> {
         )
         // `createLivenessChecker` runs inside `withUnexpectedException`.
         .map_err(crate::tlc_messages::with_unexpected_exception)
-        // TLC warns that a symmetry is dangerous for liveness as it starts the liveness checker,
-        // before it fails here, which the front end's failure doesn't print.
-        .map_err(|error| match error {
-            FrontError::NotYet(_) => error,
-            _ if config.symmetry.is_some() && is_warning_enabled => {
-                not_yet("a temporal property TLC rejects after it warns about the symmetry")
+        // TLC computes the symmetry before it starts the liveness checker, which warns that the
+        // symmetry is dangerous for liveness before it fails here.
+        .map_err(|error| match (error, &config.symmetry) {
+            (error @ FrontError::NotYet(_), _) => error,
+            (_, Some(name)) if !self.is_symmetry_quiet(name, is_warning_enabled) => not_yet(
+                "a temporal property TLC rejects after it computes a symmetry it may report on",
+            ),
+            // TLC computes the constant definitions as it starts, which may print before the
+            // warnings, which the front end doesn't follow: it declines a definition without
+            // parameters that may print.
+            (_, Some(_)) if is_warning_enabled && self.has_impure_constant_definition() => {
+                not_yet(
+                    "a temporal property TLC rejects after it warns about the symmetry, with a definition TLC may print as it starts",
+                )
             }
-            _ => error,
+            (error, symmetry) => FrontError::Warned(
+                (symmetry.is_some() && is_warning_enabled)
+                    .then(crate::model::get_liveness_symmetry_warning)
+                    .into_iter()
+                    .collect(),
+                Box::new(error),
+            ),
         })?;
         let init = self.write_root(init)?;
         let next = match &specification.next {
@@ -1000,6 +1014,7 @@ impl<'a> Lowering<'a> {
                 action,
                 subscript,
                 scope: self.get_scope_index(property.scope.as_ref()),
+                name: self.get_text(&property.name),
             });
         }
         let mut initial_predicates = Vec::new();
@@ -1063,6 +1078,7 @@ impl<'a> Lowering<'a> {
             version,
             // TLC's default seed.
             random_seed: self.random_seed,
+            fingerprint_index: 0,
             atoms,
             live_formula,
             live_properties,
@@ -1247,6 +1263,81 @@ impl<'a> Lowering<'a> {
             definition: index,
             permuted_sets,
         })
+    }
+
+    /// Whether a definition without parameters, which TLC may compute as it starts
+    /// (`processConstantDefns`), can print, assert, read the clock or choose at random.
+    fn has_impure_constant_definition(&self) -> bool {
+        self.environment.definitions.values().any(|definition| {
+            matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                && self
+                    .facts
+                    .is_impure_definition(definition, self.environment)
+        })
+    }
+
+    /// Whether TLC computes the symmetry without an error or a warning of its own
+    /// (`getSymmetryPerms`), as it does the permutations of a set of model values, or the union
+    /// of two such, which it warns about unless the sets are disjoint and hold two or more each.
+    fn is_symmetry_quiet(&self, name: &str, is_warning_enabled: bool) -> bool {
+        let Some(evaluator) = self.evaluator else {
+            return false;
+        };
+        let Some(definition) = self.environment.definitions.get(name) else {
+            return false;
+        };
+        if !matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+        {
+            return false;
+        }
+        // TLC computes the symmetry with the operators the names resolve to: one the model
+        // substitutes or the spec defines may compute anything.
+        let is_builtin = |name: &str| {
+            !self.environment.substitutions.contains_key(name)
+                && !self.environment.definitions.contains_key(name)
+        };
+        if !is_builtin("Permutations") || !is_builtin("\\cup") {
+            return false;
+        }
+        let get_permuted = |expression: &Expr| match &expression.kind {
+            ExpressionKind::Apply { args, .. }
+                if args.len() == 1 && expression.reference().as_deref() == Some("Permutations") =>
+            {
+                Some(args[0].clone())
+            }
+            _ => None,
+        };
+        let permuted = match (&definition.body.kind, get_permuted(&definition.body)) {
+            (_, Some(set)) => vec![set],
+            (ExpressionKind::Apply { args, .. }, None)
+                if definition.body.reference().as_deref() == Some("\\cup") =>
+            {
+                match args.iter().map(get_permuted).collect::<Option<Vec<_>>>() {
+                    Some(sets) => sets,
+                    None => return false,
+                }
+            }
+            _ => return false,
+        };
+        let mut elements = Vec::new();
+        for set in &permuted {
+            match evaluator.evaluate(set, None) {
+                Ok(ConfigValue::Set(set))
+                    if set
+                        .iter()
+                        .all(|element| matches!(element, ConfigValue::ModelValue(_)))
+                        && (!is_warning_enabled || set.len() > 1) =>
+                {
+                    elements.extend(set);
+                }
+                _ => return false,
+            }
+        }
+        !is_warning_enabled
+            || elements
+                .iter()
+                .enumerate()
+                .all(|(index, element)| !elements[..index].contains(element))
     }
 
     /// The liveness checker's atoms, formula and properties, as `lowerToIr` writes them: each atom

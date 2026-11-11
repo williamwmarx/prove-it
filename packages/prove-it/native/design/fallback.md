@@ -266,6 +266,16 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
 - uncounted branches;
 - every decline of atoms that read or set TLC's registers.
 
+#### Declines to win back
+
+A correctness fix can turn a run that matched TLC into a decline, where the engine can't yet tell
+it from one that printed something else. Each is outside the corpus and the tests:
+- a function constructor that binds a tuple pattern over a set of functions TLC built as
+  functions, applied at once (`[<<a, b>> \in {[k \in 1..2 |-> k]} |-> a][<<1, 2>>]`). TLC applies
+  the function without building it, so it never binds the pattern; the engine builds it and
+  declines the binding, since `ContextEnumerator` binds a tuple pattern only to a `TupleValue`
+  (#245).
+
 #### Every reason
 
 | Runs | Reason | Tests |
@@ -477,6 +487,40 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
 | 1 | the liveness checker declined: a late node TLC adds at another diameter | `unit/native-search.test.ts:1103` |
 | 1 | TLCGet, which the constant evaluator doesn't compute | `unit/check.test.ts:1034` |
 
+### After the CLI's flip (measured 2026-11-11)
+
+Measured at main 8165d917, after #224 flipped the CLI, with `bun scripts/run.ts check-log`:
+
+- 1,887 checks. 1,386 print TLC's output natively and 501 are not native yet. None answered
+  differently on one thread and four.
+- In TLC's default mode, which writes the trace exploration spec, 245 are native. The rest wait on
+  SANY's report of that spec, which the XML session owns with the other SANY reports.
+
+What the 501 decline at, grouped by the mechanism that would make them native. "Reasons" counts the
+distinct decline messages in the group.
+
+| Mechanism | Runs | Reasons | Owner |
+|---|---:|---:|---|
+| Values whose text depends on how TLC built them, and sets TLC keeps lazy | 82 | 12 | S1 (lazy-values, after the memo session's guard) |
+| A failure TLC words as a FingerprintException | 70 | 14 | fingerprint session |
+| TLC 1.7.4 | 63 | 1 | retired: declines until the TypeScript goes |
+| An assumption that fails to evaluate, evaluated again | 57 | 25 | front session |
+| Temporal properties and liveness | 50 | 19 | liveness session |
+| The engine stopping where TLC reports an error | 46 | 25 | memo session |
+| What the constant evaluator doesn't compute | 29 | 9 | front session |
+| Other failures evaluated again | 29 | 18 | memo session |
+| The engine declining an operator or builtin | 19 | 15 | memo session |
+| Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
+| `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
+| Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
+| SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
+| Rebuilding a trace through the builtin Trace | 4 | 1 | memo session |
+| The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, an ALIAS without a definition, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 9 | 7 | unassigned |
+
+The groups are checked in this order, so a decline counts once, in the first group that takes it.
+The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
+progress events for the library's `onProgress` (see "The public API afterwards").
+
 ### What uses it as the reference, and what replaces it
 
 | User | Replacement |
@@ -507,8 +551,7 @@ no full `tlc-stdout`. Recording them is deferred.
 - **S2. The interpreter-only features, built natively:** `-dump` (which `state-graph`'s tests also
   need), `-continue`, periodic configs and TLC 1.7.4's output, each after measuring how often the
   tests and the corpus use it; and `tla-live`'s declines, where a test or a model meets one. For
-  WebAssembly's stack, measure how many corpus models trap now, then choose a larger stack or
-  iterative recursion.
+  WebAssembly's stack, see the measurement below.
 - **S3. Tests on TLC's recordings,** recorded once with a recorder script.
 - **S4. Flip and delete.**
   - `check` loses the interpreter tier, `PROVE_IT_ENGINE=0` and `PROVE_IT_LIVE_CHECK`.
@@ -519,16 +562,62 @@ no full `tlc-stdout`. Recording them is deferred.
     `spec-description`, the rest of `tlc/`, and `engine/store`, `convert`, `fingerprint`,
     `native-store` and `ir`.
 
+### WebAssembly's stack (measured 2026-11-10)
+
+WebAssembly's frames are on the host's stack, so a deep recursion there traps where the addon's
+search thread doesn't.
+
+- **The corpus.** The 733 Conformance models were run with the engine as WebAssembly, three
+  ways: under Node with Parity's `--stack-size=8000`, under Node's default stack, and under Bun.
+  No model trapped in any of the three, and each tier matched the addon's run model by model.
+- **The depth.** `F(n) == IF n = 0 THEN 0 ELSE 1 + F(n - 1)` holds to about 15,000 calls under
+  Node with `--stack-size=8000`, 1,800 under Node's default stack, and 1,500 under Bun, which has
+  no flag to raise it. The addon recurses to the engine's bound of 20,000. TLC's JVM overflows
+  at a few hundred.
+- **The choice.** The engine as WebAssembly stops at 1,000 calls (`MAXIMUM_RECURSION`) and
+  declines the model, so that a recursion never traps there. A trap that a deeper frame still
+  causes declines too (`checkSources` in `wasm.ts`). A larger stack in a Worker, which Node alone
+  offers, is optional, and an explicit stack in the evaluator isn't worth its size.
+
+### The CLI flipped
+
+The CLI runs each TLC command line through `checkSources` first (`checkNatively` in
+`src/cli/tlc.ts`) and prints what the binary prints. Where the binary declines the model, where no
+engine loads, or with `PROVE_IT_ENGINE=0`, it checks the spec as before.
+
+What the check prints is held until the check ends. It can decline part way through the search:
+- a print the relay can't word;
+- a periodic configuration at its first check;
+- a trace or failure the trace evaluator can't rebuild;
+- the temporal properties at the end.
+
+A model the CLI then checks the old way prints only once. Streaming waits until those declines
+are few.
+
+TLC writes a trace exploration spec unless `-noGenerateSpecTE` says not to, and the binary
+doesn't yet write SANY's report of the spec TLC parses with it. So without that option, most runs
+still go the old way. The corpus and the differential pass it.
+
+What the CLI's runs declined at the flip (`bun test tests/unit` and the 733 corpus models, each
+run with and without `-noGenerateSpecTE`):
+
+| Kind | CLI test runs | Owner |
+|---|---:|---|
+| `java -cp …jar tlc2.TLC`: reading the version of a tla2tools.jar | 117 | the CLI (prove-it-check) |
+| SANY's report of the trace exploration spec | 64 test runs, 664 corpus runs | the front end |
+| TLC 1.7.4's output | 5 | retired: it declines until the TypeScript goes |
+| `-dump`, `-continue` | 7 | S2 |
+| the 518 of the library's `check` calls, by mechanism (above) | the rest | as staffed |
+
 ### The public API afterwards
 
 `check` and its option, progress, result and status types, `prove` and its types, `parseConfig`,
 and the errors stay. `parseModule` and `Module` are the front end's to decide.
 
 `Value`, `formatValue` and the values in `TraceStep` and `Violation` are the interpreter's classes.
-The proposal: a trace step carries each variable as TLC prints it, from the native printer, and as
-plain decoded data with no classes. `formatValue` is dropped, or becomes a thin native printer if a
-caller needs one. This breaks callers that hold `Value`s, so it waits for the owner. The exports
-don't change until then.
+The owner decided to break them: a trace step carries each variable as TLC prints it, from the
+native printer, and as plain decoded data with no classes. `Value` and `formatValue` go. That is its
+own change, after this one.
 
 ### What changes for users
 
@@ -537,5 +626,5 @@ don't change until then.
   - or `dist` lacks the engine.
   A browser keeps the WebAssembly engine.
 - A WebAssembly stack overflow becomes an error unless S2 lifts it first.
-- `-dump`, `-continue`, periodic configs and TLC 1.7.4 are checked natively.
+- `-dump`, `-continue` and periodic configs are checked natively. TLC 1.7.4's output is retired.
 - The library prints what the binary prints. Today they differ only where the library hands over.

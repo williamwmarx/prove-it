@@ -63,7 +63,7 @@ import {
 } from "../values";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 13;
+export const IR_VERSION = 15;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -146,6 +146,7 @@ const BUILTIN_LEVEL_CONSTANT = 2;
 const BUILTIN_LAZY = 4;
 const BUILTIN_TABLE = 8;
 const BUILTIN_NATURALS_GEQ = 16;
+const BUILTIN_NATURALS_METHOD = 32;
 
 const SCOPE_VALUE = 0;
 const SCOPE_THUNK = 1;
@@ -202,6 +203,7 @@ export interface IrProperties {
     action: Expression;
     subscript: Expression;
     scope: EvaluationScope | undefined;
+    name: string;
   }[];
   initialPredicates: { expression: Expression; scope: EvaluationScope | undefined; name: string }[];
 }
@@ -417,7 +419,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
         (builtin.isLevelConstant ? BUILTIN_LEVEL_CONSTANT : 0) |
         (builtin.isLazy ? BUILTIN_LAZY : 0) |
         (builtin.table ? BUILTIN_TABLE : 0) |
-        (builtin.isNaturalsGeq ? BUILTIN_NATURALS_GEQ : 0),
+        (builtin.isNaturalsGeq ? BUILTIN_NATURALS_GEQ : 0) |
+        (builtin.isNaturalsMethod ? BUILTIN_NATURALS_METHOD : 0),
     );
     if (builtin.table) {
       push(builtins, builtin.table.length);
@@ -851,6 +854,7 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, writeRoot(property.action));
     push(model, writeRoot(property.subscript));
     push(model, getScopeIndex(property.scope));
+    push(model, getText(property.name));
   }
   push(model, input.properties.initialPredicates.length);
   for (const predicate of input.properties.initialPredicates) {

@@ -61,6 +61,7 @@ version = "0.1.0"
 dependencies = [
  "prove-decide",
  "prove-isabelle",
+ "prove-obligations",
  "prove-ptl",
  "prove-smt",
  "prove-zenon",
@@ -81,6 +82,9 @@ version = "0.1.0"
 [[package]]
 name = "prove-obligations"
 version = "0.1.0"
+dependencies = [
+ "tla-front",
+]
 
 [[package]]
 name = "prove-ptl"
@@ -144,6 +148,7 @@ name = "tla-trace"
 version = "0.1.0"
 dependencies = [
  "tla-engine",
+ "tla-front",
  "tla-ir",
  "tla-values",
 ]
