@@ -541,6 +541,55 @@ impl Reporter for Relay<'_> {
         self.send_print(printed);
     }
 
+    // TLC warns about each invariant whose value at startup is TRUE as it reads the
+    // configuration, in its order, until it rejects a value (`processConfigInvariants`). It warns
+    // about the state-level properties among the properties, which a rejected value past them
+    // would follow.
+    fn startup_predicates(&mut self, holding: &[bool]) {
+        let ir = self.ir;
+        let is_past_properties =
+            ir.model
+                .startup
+                .predicates
+                .get(holding.len())
+                .is_some_and(|rejected| {
+                    matches!(
+                        &*ir.texts[rejected.kind as usize],
+                        "property" | "constraint" | "action constraint" | "possible"
+                    )
+                });
+        if is_past_properties
+            && self
+                .startup_messages
+                .iter()
+                .any(|message| message.code == code::STATE_LEVEL_PROPERTY)
+        {
+            self.is_declined = true;
+            let _ = self.sender.send(Event::Declined(
+                "a configuration error after the warnings about the state-level properties"
+                    .to_owned(),
+            ));
+            return;
+        }
+        let (invariants, rest): (Vec<_>, Vec<_>) = self
+            .startup_messages
+            .drain(..)
+            .partition(|message| message.code == code::CONSTANT_INVARIANT);
+        self.startup_messages = rest;
+        for message in invariants {
+            let is_warned = match message.predicate {
+                None => true,
+                Some(position) => match holding.get(position) {
+                    Some(holds) => *holds,
+                    None => break,
+                },
+            };
+            if is_warned {
+                let _ = self.sender.send(Event::StartupMessage(message));
+            }
+        }
+    }
+
     fn startup_done(&mut self) {
         let count = self.startup_worded.take().map(|worded| worded.len());
         if let Some(Some(texts)) = &self.startup_texts

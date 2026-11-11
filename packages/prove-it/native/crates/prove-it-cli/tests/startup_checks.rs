@@ -3,10 +3,10 @@
 //! computes and the conjuncts of the specification it drops, and a trace whose successor it fails
 //! to find again. Each directory of `tests/startup_checks` holds a spec with its configuration,
 //! which names it, the files beside it, `args`, options of TLC's command line to add, one a line,
-//! if any, and either `tlc.out`, TLC's exit code and output with `-fp 0 -nowarning
-//! -noGenerateSpecTE` but the lines that depend on the time or the machine, with the directory's
-//! path as `{directory}`, or `declined`, the reason the binary gives for a spec it leaves to TLC.
-//! Each runs on one thread and on four.
+//! if any, and either `tlc.out`, TLC's exit code and output with `-fp 0 -noGenerateSpecTE` but the
+//! lines that depend on the time or the machine, with the directory's path as `{directory}`, or
+//! `declined`, the reason the binary gives for a spec it leaves to TLC. Each runs on one thread and
+//! on four.
 
 use std::path::Path;
 use std::process::Command;
@@ -66,14 +66,7 @@ fn checks_models_at_startup_as_tlc() {
         let options = std::fs::read_to_string(source.join("args")).unwrap_or_default();
         for workers in ["1", "4"] {
             let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
-                .args([
-                    "-workers",
-                    workers,
-                    "-fp",
-                    "0",
-                    "-nowarning",
-                    "-noGenerateSpecTE",
-                ])
+                .args(["-workers", workers, "-fp", "0", "-noGenerateSpecTE"])
                 .args(options.lines())
                 .arg(&spec)
                 .current_dir(&directory)

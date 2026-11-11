@@ -156,6 +156,10 @@ pub trait Reporter {
     /// about once it has evaluated the symmetry (2300, `TLC_SYMMETRY_SET_TOO_SMALL`). The
     /// interpreter warned already where it handed the search over.
     fn symmetry_sets_too_small(&mut self, _names: &[String]) {}
+    /// Whether each of the IR's startup predicates TLC accepted evaluated to TRUE, which TLC warns
+    /// about for an invariant (2149, `TLC_INVARIANT_CONSTANT_LEVEL`): all of them, or those before
+    /// the one whose value it rejects, before [`SearchOutcome::ConfigError`].
+    fn startup_predicates(&mut self, _holding: &[bool]) {}
     /// TLC has evaluated the substitutes, the constant definitions and the symmetry, and prints
     /// what it prints itself before it checks the assumptions.
     fn startup_done(&mut self) {}
@@ -2449,6 +2453,8 @@ struct Started {
     printed: Vec<Prints>,
     /// The sets the symmetry permutes that TLC warns hold fewer than two elements, by name.
     small_sets: Vec<String>,
+    /// Whether each startup predicate evaluated to TRUE, up to the one whose value TLC rejects.
+    holding: Vec<bool>,
     group: Option<Group>,
     assumed: Vec<Prints>,
     violated: Option<String>,
@@ -2499,11 +2505,15 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         }
     }
     // `getConstantValue`: TLC keeps a definition that fails to evaluate as an operator.
+    let mut holding = Vec::with_capacity(startup.predicates.len());
     for (evaluate, form, kind, name) in &startup.predicates {
         let value = match evaluate(machine) {
             Ok(value) => value,
             Err(bail) if is_engine_limit(bail.0) => return Err(bail),
-            Err(_) => continue,
+            Err(_) => {
+                holding.push(false);
+                continue;
+            }
         };
         // The store forgets how TLC built some values, whose text then depends on it.
         let format = |machine: &Machine<'_>| {
@@ -2516,7 +2526,10 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
             }
         };
         let message = match form {
-            PredicateForm::Predicate if value == TRUE => continue,
+            PredicateForm::Predicate if value == TRUE => {
+                holding.push(true);
+                continue;
+            }
             PredicateForm::Predicate => {
                 format!("The {kind} of {name} is equal to {}", format(machine)?)
             }
@@ -2528,6 +2541,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         return Ok(Started {
             printed: take(machine),
             small_sets: Vec::new(),
+            holding,
             group: None,
             assumed: Vec::new(),
             violated: None,
@@ -2544,6 +2558,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
         return Ok(Started {
             printed: take(machine),
             small_sets: Vec::new(),
+            holding,
             group: None,
             assumed: Vec::new(),
             violated: None,
@@ -2562,6 +2577,7 @@ fn run_startup(machine: &mut Machine<'_>, startup: &Startup, is_native: bool) ->
     Ok(Started {
         printed,
         small_sets,
+        holding,
         group,
         assumed: take(machine),
         violated: assumed.violated,
@@ -2784,6 +2800,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     .for_each(|values| reporter.startup_print(&machine.store, values));
             };
             report(reporter, &started.printed);
+            reporter.startup_predicates(&started.holding);
             if let Some(message) = started.config_error {
                 return SearchOutcome::ConfigError { message };
             }

@@ -931,12 +931,25 @@ pub fn check_invariants(
     environment: &Environment,
     facts: &DefinitionFacts,
     evaluator: &Evaluator,
+    is_warning_enabled: bool,
 ) -> Result<Option<Vec<Name>>> {
     let analyzer = environment.create_level_analyzer(&[]);
     let mut constant_true = Vec::new();
     for name in &config.invariants {
+        // TLC warns about each invariant that is a TRUE constant as it reaches it, before an
+        // error in a later one.
+        let warned = |error| match error {
+            FrontError::Config(_) if is_warning_enabled && !constant_true.is_empty() => {
+                FrontError::Warned(
+                    crate::model::get_constant_invariant_warnings(&constant_true),
+                    Box::new(error),
+                )
+            }
+            error => error,
+        };
         let Some(definition) =
-            get_config_predicate("invariant", name, environment, facts, Some(evaluator))?
+            get_config_predicate("invariant", name, environment, facts, Some(evaluator))
+                .map_err(warned)?
         else {
             constant_true.push(Rc::from(name.as_str()));
             continue;
@@ -950,9 +963,9 @@ pub fn check_invariants(
             } else {
                 ""
             };
-            return Err(FrontError::Config(format!(
+            return Err(warned(FrontError::Config(format!(
                 "The invariant {name} is not a state predicate (one with no primes or temporal operators).{note}"
-            )));
+            ))));
         }
     }
     Ok((!evaluator.is_deferring()).then_some(constant_true))
