@@ -1059,7 +1059,15 @@ is next.
   on linux-x64-gnu from b736513 to fb96510: `prove-it-engine.node` 5,918,368 → 7,080,784 bytes,
   `prove-it-engine.wasm` 4,303,223 → 5,210,377, the `prove-it` binary 5,701,384, unchanged (it
   doesn't link the prover yet). Rust's Zenon peaks at 958 MB where the TypeScript's takes
-  1,416 MB on the input that reaches the memory limit.
+  1,416 MB on the input that reaches the memory limit. `conformance:prove` with Zenon in Rust and
+  in TypeScript: on every obligation both runs finished, the same status, but for two SMT
+  obligations that sit at Z3's time limit and `LamportMutex_proofs.tla` #388, which Rust's Zenon
+  proves inside tlapm's time limit and the TypeScript's doesn't. Its input
+  (`zenon/afc234afa4fc2a0a`) is `unknown` on both sides at the recorded step limit and `unsat` on
+  both with no limit, in the same 94,929 steps and the same statistics and proof. On the 4-core
+  container both runs lose a few large modules (`tcp_proof`, `BPConProof`, `CRDT_proof`) whose
+  workers the container's memory limit kills; alone, `CRDT_proof` gives the same statuses both
+  ways.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
