@@ -8,6 +8,7 @@ use std::io::{BufWriter, Write};
 use crate::host::Host;
 use crate::time::format_date;
 
+pub const GENERAL: u32 = 1000;
 pub const COMMAND_LINE_ERROR: u32 = 1102;
 pub const STARTING: u32 = 2185;
 pub const FINISHED: u32 = 2186;

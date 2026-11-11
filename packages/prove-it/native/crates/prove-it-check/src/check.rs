@@ -1767,6 +1767,15 @@ fn print_violation(
     };
     printer.print(heading_code, Level::Error, heading);
     print_states(printer, &trace, &labels);
+    // `printTraceAndStop` reports what `printTrace` throws on the successor it didn't find, and
+    // the run ends as after the trace.
+    if trace.is_successor_lost {
+        printer.print(
+            code::GENERAL,
+            Level::Error,
+            "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: Cannot read field \"state\" because \"currentStateInfo\" is null",
+        );
+    }
     // TLC rebuilds a violation's trace again for the counterexample the postconditions read,
     // so what that prints comes before what they print. TLC checks them on a lasso once it has
     // printed where the lasso closes (`LiveWorker.printTrace`).

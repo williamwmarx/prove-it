@@ -427,6 +427,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
             Trace {
                 states: Vec::new(),
                 trace_output: Vec::new(),
+                is_successor_lost: false,
             }
         } else {
             // An atom's state past the path is no state of the trace.
