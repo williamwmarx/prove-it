@@ -851,6 +851,13 @@ impl Parser {
         if self.is_tlapm_incomplete(&token) && self.is_standalone(token.line) {
             return Err(self.error_at("incomplete expression", token.line, token.column));
         }
+        if is_operator_alone && &*token.text == "\\X" {
+            return Err(self.error_at(
+                "\\X may not be used as an infix operator",
+                token.line,
+                token.column,
+            ));
+        }
         if is_operator_alone {
             self.index += 1;
             let reference = located(
