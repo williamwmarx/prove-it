@@ -3,8 +3,9 @@
 // run it, on one thread and with every level shared between four. Prints how many the binary
 // checks natively, and each reason it gives for the rest with the tests that reach it, as
 // native/design/fallback.md records them, with what of a check the log keeps, and how many it
-// checks natively in TLC's default mode, which generates the trace exploration spec. --log reads a
-// log a run wrote before instead of running the tests; --json writes each check with its answers.
+// checks natively in TLC's default mode, which generates the trace exploration spec. A check of TLC
+// 1.7.4 is counted apart, retired with the interpreter, and not run. --log reads a log a run wrote
+// before instead of running the tests; --json writes each check with its answers.
 // Usage: bun scripts/run.ts check-log [--binary path] [--log path] [--json path]
 
 import { spawn, spawnSync } from "node:child_process";
@@ -124,7 +125,6 @@ const getTest = (caller: string | undefined) => {
 // TLC's command line, but the spec, for a check's options: Java's properties, then TLC's options.
 const getOptions = (check: LoggedCheck) => [
   ...(check.systemProperties ?? []).map(([name, value]) => `-D${name}=${value}`),
-  ...(check.version === "1.7.4" ? ["-Dtla-ts.tlc=1.7.4"] : []),
   "tlc2.TLC",
   "-fp",
   "0",
@@ -167,6 +167,7 @@ for (const entry of entries) {
         entry.source,
         entry.config,
         getOptions(entry),
+        entry.version,
         entry.testLiveCheckAt,
         [...modules].sort(),
         [...classes].sort(),
@@ -246,7 +247,9 @@ const answer = async (run: Run): Promise<Answer> => {
   };
 };
 
-const pending = [...runs.values()];
+// The binary declines TLC 1.7.4, which leaves with the interpreter rather than becoming native.
+const retired = [...runs.values()].filter((run) => run.check.version === "1.7.4");
+const pending = [...runs.values()].filter((run) => run.check.version !== "1.7.4");
 const answers: Answer[] = [];
 const work = async () => {
   for (let run = pending.shift(); run; run = pending.shift()) answers.push(await answer(run));
@@ -272,6 +275,7 @@ for (const entry of declined) {
 console.log(
   `${answers.length} checks: ${answers.length - declined.length} native, ${declined.length} not native yet, ${differing.length} answered differently on 1 and 4 threads.`,
 );
+console.log(`${retired.length} more are TLC 1.7.4's, retired with the interpreter.`);
 console.log(
   `In TLC's default mode, which generates the trace exploration spec: ${answers.filter((entry) => isNative(entry.answers.default)).length} native.`,
 );

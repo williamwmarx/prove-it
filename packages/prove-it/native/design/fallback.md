@@ -232,27 +232,25 @@ Measured at main 6871cd2, with the log as this section gives it:
 
 #### Liveness
 
-310 of the checks have temporal properties: 204 are native and 106 are not. 43 of those 106 are the
-liveness part of this plan:
-- an atom of the temporal properties that may fail to evaluate (14), and a failure in a model with
-  temporal properties (3);
+Measured again at main 33b0d56, after #217, #239, #244, #253, #265 and #277, with `check-log`
+counting TLC 1.7.4's checks apart (63, retired with the interpreter): 286 of the other checks have
+temporal properties, 232 are native and 54 are not. 22 of those 54 are the liveness part of this
+plan, down from 43:
+- a failure in a model with temporal properties: an atom of the temporal properties that may fail
+  to evaluate (2), and SUBSET of a non-set evaluated again after Next fails (1);
 - the search's stops in a model with temporal properties: deadlock (3), an invariant (1), a
   division by zero (1);
 - a property TLC finds a tautology (3), or a constant part of a temporal formula that isn't a
   boolean (2);
-- printing where the native checker doesn't check the temporal properties (5);
-- a lasso the engine doesn't hand over (5), now native: the 2 of specs whose actions print, which
-  the rebuild labels by running the actions again, and the 3 that end in the first state of their
-  cycle;
-- an atom the engine doesn't answer (2);
-- a late node at another diameter, a step back into the cycle of a spec that prints, several states
-  under VIEW or SYMMETRY, and a lasso TLC fails to rebuild under a VIEW (1 each).
+- printing where the native checker doesn't check the temporal properties (5): prints it doesn't
+  place in TLC's order (2), a node that accepts every behavior, a predicate the engine leaves to the
+  interpreter, and steps from states it didn't store (1 each);
+- an atom the engine doesn't answer, a late node at another diameter, a step back into the cycle of
+  a spec that prints, and several states under VIEW or SYMMETRY (1 each).
 
-Of the other 63:
-- 29 decline on the command line (TLC 1.7.4, 25; `-dump`, 4);
-- 6 are the action property violated, for `-continue`'s native report;
-- the rest are constant evaluation, a constraint or VIEW that fails on a successor, and the
-  evaluator's other gaps.
+Of the other 32: constant evaluation (9), a constraint, a VIEW or an action property that fails on
+a successor (8), a power set too large to build (3), `-dump` (3), the builtin Trace and PrintT
+(2 each), and five more of the evaluator's and the front end's gaps (1 each).
 
 The corpus has no temporal decline: `differential --native-only` matches 1,460 of 1,466 runs, and
 the 6 known differences aren't about liveness.
@@ -543,7 +541,8 @@ distinct decline messages in the group.
 | The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 8 | 6 | unassigned |
 
 The groups are checked in this order, so a decline counts once, in the first group that takes it.
-The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
+The 1.7.4 runs leave with the TypeScript, and `check-log` now counts them apart, as retired with
+the interpreter, without running them. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
 
 #### Declines to win back
