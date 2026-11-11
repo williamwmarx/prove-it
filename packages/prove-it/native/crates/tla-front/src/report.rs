@@ -11,6 +11,7 @@ use crate::environment::{EnvironmentOptions, ModuleMessages, get_sany_messages};
 use crate::errors::{FrontError, SanyError};
 use crate::get_standard_module;
 use crate::hash::{FastMap, FastSet};
+use crate::lexer::{TokenKind, tokenize};
 use crate::linter::Linter;
 use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
@@ -100,12 +101,15 @@ const MAX_NESTING_DEPTH: usize = 1100;
 /// The deepest nesting of parentheses, brackets, braces and angle brackets in a module's text, a
 /// square bracket counting twice.
 fn get_nesting_depth(text: &str) -> usize {
-    let Ok(tokens) = crate::lexer::tokenize(text) else {
+    let Ok(tokens) = tokenize(text) else {
         return 0;
     };
     let mut depth = 0usize;
     let mut deepest = 0;
-    for token in &tokens {
+    for token in tokens
+        .iter()
+        .filter(|token| token.kind != TokenKind::String)
+    {
         match &*token.text {
             "(" | "{" | "<<" => depth += 1,
             "[" => depth += 2,

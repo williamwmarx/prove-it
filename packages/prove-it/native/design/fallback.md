@@ -73,8 +73,8 @@ replaced").
 
 Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
 2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a
-spec's paths and files, then 4,350 more, in TLC's default mode and with `-noGenerateSpecTE`) found the report wrong
-or declining for 2,112; each is a case of tla-front's `tests/sany-cases`, recorded in
+spec's paths and files, then 4,350 more, in TLC's default mode and with `-noGenerateSpecTE`) and review found the
+report wrong or declining for 2,113; each is a case of tla-front's `tests/sany-cases`, recorded in
 `sany-cases.json`, whose `case.json` gives the reason where the front end declines it. All print
 what TLC prints but these, which decline:
 - a module SANY's parser accepts and the front end's rejects (36 cases): a definition of the
