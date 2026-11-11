@@ -14,9 +14,10 @@
 // - A lemma literal of check_assignment is always linear, because the cell bounds are, so
 //   add_mul_def, which defines a fresh monomial column, is left out. A nonlinear literal would
 //   answer unknown.
-// - nlsat counts against the budget of a check only its own steps, not those of the polynomial and
-//   algebraic number managers, so a long search stops at a different point than Z3's. Like Z3's,
-//   it then throws, which ends the whole check as unknown.
+// - nlsat's polynomial and algebraic number managers count their steps in the calls that the port
+//   shares with Z3, but where the port computes the same result along other calls, such as
+//   eval_sign_at's first evaluation, it can take other steps, so a long search stops at a
+//   different point than Z3's. Like Z3's, it then throws, which ends the whole check as unknown.
 // - Transcendental functions are not supported, so none are registered with nlsat.
 //
 // Like the other helpers of nla (see the top of nla_core.rs), the solver's state is a field of
@@ -175,7 +176,7 @@ pub struct NraSolver {
 impl Default for NraSolver {
     fn default() -> NraSolver {
         NraSolver {
-            solver: NlsatSolver::new(None),
+            solver: NlsatSolver::new(None, None),
             values: Vec::new(),
             lp2nl: HashMap::new(),
         }
@@ -189,7 +190,7 @@ impl NraSolver {
 
     // The steps of the last check.
     pub fn steps(&self) -> u64 {
-        self.solver.steps
+        self.solver.steps()
     }
 
     // mk_definition: each included column as a polynomial in the included columns that are neither
@@ -222,7 +223,7 @@ impl NraSolver {
                         .expect("a monomial's factor is included with it");
                     definition = Some(match definition {
                         None => factor_definition,
-                        Some(definition) => solver.pm.mul(&definition, &factor_definition),
+                        Some(definition) => solver.pm.mul(&definition, &factor_definition)?,
                     });
                 }
                 definitions.push(Some(
@@ -258,7 +259,7 @@ impl NraSolver {
                         definitions[entry.0]
                             .as_ref()
                             .expect("a term's column is included with it"),
-                    );
+                    )?;
                     definition = Some(match definition {
                         None => scaled,
                         Some(definition) => solver.pm.add(&definition, &scaled),
@@ -284,7 +285,7 @@ impl NraSolver {
         lra: &LarSolver<'_>,
         constraint_index: usize,
         definitions: &Definitions,
-    ) -> u32 {
+    ) -> Result<u32, SmtError> {
         let solver = &mut self.solver;
         let constraint = &lra.constraints.constraints[constraint_index];
         let rhs = &constraint.rhs.x;
@@ -314,7 +315,7 @@ impl NraSolver {
                     .as_ref()
                     .expect("a constraint's column is included with it"),
                 &constant,
-            );
+            )?;
             polynomial = solver.pm.add(&polynomial, &product);
         }
         let kind = constraint.kind;
@@ -333,7 +334,7 @@ impl NraSolver {
             solver.mk_ineq_literal(ineq_kind, &[polynomial], &[false])
         };
         solver.mk_external_clause(&[literal], Some(constraint_index as u32));
-        literal
+        Ok(literal)
     }
 
     // check: nlsat's search on the constraints in the cone of influence, with every included column
@@ -345,9 +346,23 @@ impl NraSolver {
         max_conflicts: Option<u64>,
         budget: Option<u64>,
     ) -> Result<LBool, SmtError> {
+        let result = NraSolver::check_in_scope(nla, max_conflicts, budget)?;
+        // nla's check runs m_nra.check() inside scoped_limits, which pushes m_nra_lim as a child
+        // of its limit, and scoped_rlimit, which sets the budget (z3-5.3.3,
+        // src/math/lp/nla_core.cpp:1098-1103 and 1139-1145, src/util/rlimit.h:94-129). Both end
+        // with the check, so the model's arithmetic later counts against neither.
+        nla.core.nra.solver.limit.detach();
+        Ok(result)
+    }
+
+    fn check_in_scope(
+        nla: &mut Nla<'_, '_>,
+        max_conflicts: Option<u64>,
+        budget: Option<u64>,
+    ) -> Result<LBool, SmtError> {
         let cone = {
             let nra = &mut nla.core.nra;
-            nra.solver = NlsatSolver::new(budget);
+            nra.solver = NlsatSolver::new(Some(nla.limit), budget);
             nra.solver.max_conflicts = max_conflicts;
             nra.values.clear();
             nra.lp2nl.clear();
@@ -365,9 +380,9 @@ impl NraSolver {
                 continue;
             }
             core.nra
-                .add_constraint(lra, *constraint_index, &definitions);
+                .add_constraint(lra, *constraint_index, &definitions)?;
         }
-        let result = match core.nra.solver.check(Some(nla.limit)) {
+        let result = match core.nra.solver.check() {
             Err(SmtError::NlsatUnsupported(_)) => LBool::Undef,
             result => result?,
         };
@@ -514,7 +529,7 @@ impl NraSolver {
     fn get_clause(nla: &mut Nla<'_, '_>) -> Result<Option<AssignmentClause>, SmtError> {
         let cone = {
             let nra = &mut nla.core.nra;
-            nra.solver = NlsatSolver::new(None);
+            nra.solver = NlsatSolver::new(Some(nla.limit), None);
             nra.lp2nl.clear();
             get_cone_of_influence(nla)?
         };
@@ -529,14 +544,11 @@ impl NraSolver {
         for constraint_index in cone.constraints.iter() {
             let literal = core
                 .nra
-                .add_constraint(lra, *constraint_index, &definitions);
+                .add_constraint(lra, *constraint_index, &definitions)?;
             literal_constraints.insert(literal, *constraint_index);
         }
         let assignment: Vec<Option<Anum>> = values.into_iter().map(Some).collect();
-        let result = core
-            .nra
-            .solver
-            .check_assignment(&assignment, Some(nla.limit))?;
+        let result = core.nra.solver.check_assignment(&assignment)?;
         if result.0 != LBool::False {
             return Ok(None);
         }
@@ -546,8 +558,15 @@ impl NraSolver {
         }))
     }
 
-    // check_assignment
+    // check_assignment, which nla runs inside scoped_limits (z3-5.3.3,
+    // src/math/lp/nla_core.cpp:1052-1054, src/util/rlimit.h:122-129).
     pub fn check_assignment(nla: &mut Nla<'_, '_>) -> Result<LBool, SmtError> {
+        let result = NraSolver::check_assignment_in_scope(nla)?;
+        nla.core.nra.solver.limit.detach();
+        Ok(result)
+    }
+
+    fn check_assignment_in_scope(nla: &mut Nla<'_, '_>) -> Result<LBool, SmtError> {
         let clause = match NraSolver::get_clause(nla) {
             Err(SmtError::NlsatUnsupported(_)) => None,
             clause => clause?,
@@ -755,7 +774,7 @@ mod tests {
         );
         assert_eq!(fixture.core.lemmas.len(), 1);
         assert_eq!(show_lemmas(&fixture.core), ["[] {0,1}"]);
-        assert_eq!(fixture.core.nra.steps(), 10);
+        assert_eq!(fixture.core.nra.steps(), 32);
         assert!(fixture.core.lemmas[0].ineqs.is_empty());
         // TS sorts the indices as strings.
         let mut expl: Vec<usize> = fixture.core.lemmas[0].expl.iter().collect();
@@ -770,7 +789,7 @@ mod tests {
         fixture.with_nla(|nla| {
             assert_eq!(NraSolver::check(nla, None, None), Ok(LBool::True));
             assert!(nla.is_using_nra_model);
-            assert_eq!(nla.nra.steps(), 5);
+            assert_eq!(nla.nra.steps(), 121);
             let value = NraSolver::value(nla, x).unwrap();
             let am = nla.nra.am();
             assert_eq!(am.is_rational(&value), Ok(false));

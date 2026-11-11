@@ -24,6 +24,9 @@ pub(crate) const OVERFLOWING_SUBSET_BASE: usize = 31;
 pub(crate) const INFINITE_DOMAIN: &str = "enumerated [D -> R] with D infinite";
 pub(crate) const SUBSET_OVERFLOW: &str = "an overflow counting the elements of a power set";
 pub(crate) const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
+/// What streaming a [`Lazy::Kept`] that holds duplicates stops with.
+const KEPT_STREAMED: &str =
+    "unsupported: streaming a lazy set with duplicates TLC may have normalized at an earlier use";
 
 /// What a set expression's value is, as the interpreter builds it.
 pub(crate) type Reference = Arc<dyn Fn(&mut Machine<'_>) -> Outcome<Lazy> + Send + Sync>;
@@ -58,9 +61,39 @@ pub(crate) enum Lazy {
     /// `UNION S`, with S's elements the sets the engine holds, each enumerated as its normalized
     /// set.
     Union(Box<Lazy>),
+    /// A set that may stream duplicates, as TLC keeps it for later uses (`LazyValue`): a use
+    /// that sizes, compares or fingerprints it caches it as its normalized set
+    /// (`convertAndCache`), which the engine doesn't follow, so streaming it stops where it
+    /// streams an element twice.
+    Kept(Box<Lazy>),
 }
 
 impl Lazy {
+    /// Whether the set is one TLC may stream an element of twice: a UNION or `\cup` it keeps
+    /// lazy (`UnionValue`, `SetCupValue`), or a filter, `\cap` or `\` of a set it keeps lazy
+    /// (`SetPredValue`, `SetCapValue`, `SetDiffValue`), each enumerating what it is built of as
+    /// built. The other sets TLC keeps lazy stream none twice.
+    pub(crate) fn may_stream_duplicates(&self) -> bool {
+        matches!(
+            self,
+            Lazy::Union(_) | Lazy::Operation(..) | Lazy::Filtered(..) | Lazy::Kept(_)
+        )
+    }
+
+    /// Whether streaming the set yields an element twice.
+    pub(crate) fn streams_duplicates(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
+        let streamed = self.stream(machine)?;
+        has_duplicates(machine, &streamed)
+    }
+
+    /// The set as TLC keeps it for later uses.
+    pub(crate) fn kept(self) -> Lazy {
+        if matches!(self, Lazy::Kept(_)) || !self.may_stream_duplicates() {
+            return self;
+        }
+        Lazy::Kept(Box::new(self))
+    }
+
     fn is_enumerable(&self) -> bool {
         !matches!(self, Lazy::Infinite(_) | Lazy::Tested(_))
     }
@@ -74,6 +107,7 @@ impl Lazy {
             Lazy::FunctionSet(domain, range) => domain.is_infinite() || range.is_infinite(),
             Lazy::RecordSet(_, sets) | Lazy::Product(sets) => sets.iter().any(Lazy::is_infinite),
             Lazy::Operation(_, left, right) => left.is_infinite() || right.is_infinite(),
+            Lazy::Kept(kept) => kept.is_infinite(),
         }
     }
 
@@ -218,11 +252,12 @@ impl Lazy {
                 let choices = range.elements(machine, is_streamed)?;
                 let lists = vec![choices; keys.len()];
                 cartesian(&lists, |values| {
-                    if is_sorted {
-                        Ok(machine.store.function_of_sorted(&keys, values))
+                    let function = if is_sorted {
+                        machine.store.function_of_sorted(&keys, values)
                     } else {
-                        machine.store.function_of(&keys, values)
-                    }
+                        machine.store.function_of(&keys, values)?
+                    };
+                    Ok(machine.store.mark_built_as_function(function))
                 })
             }
             Lazy::RecordSet(keys, sets) => {
@@ -283,6 +318,16 @@ impl Lazy {
                     return Ok([left, right].concat());
                 }
                 sorted_union(machine, left, right)
+            }
+            Lazy::Kept(kept) => {
+                if !is_streamed {
+                    return kept.enumerate(machine);
+                }
+                let streamed = kept.stream(machine)?;
+                if has_duplicates(machine, &streamed)? {
+                    return Err(Bail(KEPT_STREAMED));
+                }
+                Ok(streamed)
             }
             Lazy::Operation(operator, left, right) => {
                 let is_left_enumerated = *operator == Operator::Difference || left.is_enumerable();
@@ -357,6 +402,7 @@ impl Lazy {
                 }
                 true
             }
+            Lazy::Kept(kept) => kept.is_empty(machine)?,
             Lazy::Tested(_) | Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
                 self.enumerate(machine)?.is_empty()
             }
@@ -409,6 +455,7 @@ impl Lazy {
                 sets.iter()
                     .try_fold(1u64, |size, set| bounded(size * set.size(machine)?))
             }
+            Lazy::Kept(kept) => kept.size(machine),
             Lazy::Filtered(..) | Lazy::Operation(..) | Lazy::Union(_) => {
                 let elements = self.enumerate(machine)?;
                 let set = machine.store.set_of(&elements)?;
@@ -528,6 +575,7 @@ impl Lazy {
             Lazy::Filtered(base, test) => {
                 Ok(base.contains(machine, element)? && test(machine, element)?)
             }
+            Lazy::Kept(kept) => kept.contains(machine, element),
             Lazy::Union(base) => {
                 if !base.is_enumerable() {
                     return Err(Bail("a membership in UNION of an infinite set"));
@@ -550,6 +598,11 @@ impl Lazy {
             }
         }
     }
+}
+
+fn has_duplicates(machine: &mut Machine<'_>, elements: &[Id]) -> Outcome<bool> {
+    let set = machine.store.set_of(elements)?;
+    Ok(machine.store.size_of(set) as usize != elements.len())
 }
 
 // The next combination of `indices.len()` positions below `length`, in lexicographic order.
@@ -668,6 +721,44 @@ mod tests {
         assert!(of_integers.stream(&mut machine).is_err());
         let infinite = Lazy::Union(Box::new(Lazy::Infinite("Nat")));
         assert!(infinite.enumerate(&mut machine).is_err());
+    }
+
+    // A set kept for later uses streams only where it streams no element twice, and a set that
+    // streams none twice isn't kept.
+    #[test]
+    fn streams_a_kept_set_only_without_duplicates() {
+        let program = Program::default();
+        let mut store = Store::new();
+        store.reset(std::iter::empty::<&[u16]>());
+        let mut machine = Machine::new(&program, store);
+        let integers: Vec<Id> = (1..=4)
+            .map(|value| machine.store.int(value).expect("an integer"))
+            .collect();
+        let [one, two, three, four] = integers[..] else {
+            panic!("four integers");
+        };
+        let mut union = |left: &[Id], right: &[Id]| {
+            let left = machine.store.set_of(left).expect("a set");
+            let right = machine.store.set_of(right).expect("a set");
+            let sets = machine.store.set_of(&[left, right]).expect("a set");
+            Lazy::Union(Box::new(Lazy::Set(sets))).kept()
+        };
+        let overlapping = union(&[one, two], &[two, three]);
+        let apart = union(&[one, two], &[three, four]);
+        assert!(matches!(overlapping, Lazy::Kept(_)));
+        assert!(overlapping.stream(&mut machine).is_err());
+        assert_eq!(
+            overlapping.enumerate(&mut machine).ok(),
+            Some(vec![one, two, three])
+        );
+        assert_eq!(
+            apart.stream(&mut machine).ok(),
+            Some(vec![one, two, three, four])
+        );
+        assert!(matches!(
+            Lazy::Subset(Box::new(Lazy::Set(EMPTY_SET))).kept(),
+            Lazy::Subset(_)
+        ));
     }
 
     // `SetOfFcnsValue.size` and its like: an empty part decides before a part TLC can't enumerate

@@ -1007,6 +1007,7 @@ export const checkNatively = async (
     const [kind, ...rest] = key.split(":");
     const name = rest.join(":");
     if (kind === "text") return existsSync(name) ? readFileSync(name, "utf8") : undefined;
+    if (kind === "bytes") return existsSync(name) ? new Uint8Array(readFileSync(name)) : undefined;
     if (kind === "module") return loadModule(name);
     if (kind === "class") {
       const path = join(dirname(specPath), `${name}.class`);
