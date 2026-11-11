@@ -18,7 +18,7 @@ import { getEngineVariables, isTypeScriptCheckAsked, reportEngine } from "./engi
 import { WebAssemblyStackError } from "./errors";
 import { checkUnlogged, logCheck } from "./parallel";
 
-export interface CheckOptions extends Omit<SearchOptions, "onProgress" | "systemProperties"> {
+export interface CheckOptions extends Omit<SearchOptions, "onProgress"> {
   // Reports the points of the search at which TLC prints a message. Only the TypeScript check
   // reports them as it goes, so the check takes this path where it's given.
   onProgress?: (progress: CheckProgress) => void;
@@ -70,7 +70,16 @@ const checkWithEngine = (options: CheckOptions) => {
   }
   const addon = getNativeAddon();
   if (typeof addon === "string") return undefined;
+  // The system properties go in front of TLC's class as a Java launch's -D, as the binary reads
+  // them.
+  const launch = options.systemProperties
+    ? [
+        ...[...options.systemProperties].map((property) => `-D${property[0]}=${property[1]}`),
+        "tlc2.TLC",
+      ]
+    : [];
   const args = [
+    ...launch,
     ...(options.isTraceRecorded ? [] : ["-noGenerateSpecTE"]),
     ...(options.seed === undefined ? [] : ["-seed", String(options.seed)]),
     ...(options.workers === undefined ? [] : ["-workers", String(options.workers)]),

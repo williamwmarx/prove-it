@@ -46,3 +46,34 @@ describe("check takes a ModelConfig as its configuration file", () => {
     );
   });
 });
+
+// The binary reads a Java launch's -D, as the library passes systemProperties: it checks a spec that
+// doesn't read them natively, and declines TLCGet of one that is set, where the TypeScript check
+// reads its value.
+describe("check takes systemProperties as a Java launch's -D", () => {
+  const getRun = (source: string) => {
+    const prints: string[] = [];
+    return check({
+      source,
+      config: "INIT Init\nNEXT Next",
+      systemProperties: new Map([["color", "blue"]]),
+      onPrint: (text) => prints.push(text),
+    }).then((result) => ({ status: result.status, prints }));
+  };
+
+  it("reads a property TLCGet names", async () => {
+    expect(
+      await getRun(
+        '---- MODULE P ----\nEXTENDS TLC\nVARIABLE x\nInit == PrintT(TLCGet("-Dcolor")) /\\ x = 0\nNext == UNCHANGED x\n====',
+      ),
+    ).toEqual({ status: "success", prints: ['"blue"'] });
+  });
+
+  it("checks a spec that reads none", async () => {
+    expect(
+      await getRun(
+        "---- MODULE Q ----\nEXTENDS TLC\nVARIABLE x\nInit == PrintT(1) /\\ x = 0\nNext == UNCHANGED x\n====",
+      ),
+    ).toEqual({ status: "success", prints: ["1"] });
+  });
+});
