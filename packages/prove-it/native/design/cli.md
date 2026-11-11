@@ -496,6 +496,8 @@ Declined, each with its reason:
   runs for this; the tests pin `num=1`, where the violation is in the last trace;
 - a failure evaluating the model, an incomplete state, an action property violated, an initial
   state outside a constraint or none;
+- a violation under `-continue`, after which TLC's simulator goes on generating traces
+  (`TLCGlobals.continuation`) and exits with 0;
 - a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS, or
   that holds a record of several fields where the store can't print it;
 - a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),

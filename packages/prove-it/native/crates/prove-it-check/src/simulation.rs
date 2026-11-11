@@ -88,6 +88,8 @@ pub struct Simulating<'s> {
     /// How TLC labels an initial state of a trace, where the front end knows.
     pub initial_label: Option<String>,
     pub workers: usize,
+    /// Whether `-continue` asks TLC's simulator to go on past a violation.
+    pub is_continued: bool,
     pub start: Instant,
 }
 
@@ -120,6 +122,7 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
         startup_messages,
         initial_label,
         workers,
+        is_continued,
         start,
     } = simulating;
     let settings = Settings {
@@ -247,6 +250,11 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
         print_finished(printer, start);
         return SUCCESS;
     };
+    // TLC's simulator reports the violation and goes on generating traces (`Simulator`'s
+    // `TLCGlobals.continuation`).
+    if is_continued {
+        return report_not_native(printer, "a simulation's violation under -continue");
+    }
     // TLC checks the initial states before it simulates, and reports one that violates an
     // invariant as the model checker does.
     if let ViolationKind::InitialInvariant(_) = violation.kind {

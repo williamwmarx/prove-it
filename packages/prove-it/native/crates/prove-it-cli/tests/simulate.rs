@@ -358,6 +358,33 @@ fn declines_what_races_tlcs_worker() {
     }
 }
 
+// TLC's simulator reports a violation under -continue and goes on generating traces, then exits
+// with 0, which the binary doesn't model.
+#[test]
+fn declines_a_violation_under_continue() {
+    let (output, directory) = run_named(
+        "simulate-continue",
+        "Viol",
+        (VIOL, INVARIANT_CONFIG),
+        &[
+            "-noTE",
+            "-seed",
+            "4",
+            "-simulate",
+            "num=1",
+            "-continue",
+            "Viol",
+        ],
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+    assert_eq!(output.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("a simulation's violation under -continue"),
+        "{error}"
+    );
+}
+
 // TLCGet("level") counts the stuttering steps, which the trace TLC prints drops.
 #[test]
 fn drops_the_stuttering_steps_as_tlc() {

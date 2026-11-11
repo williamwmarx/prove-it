@@ -917,6 +917,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             startup_messages: front.startup_messages,
             initial_label: front.initial_label,
             workers,
+            is_continued: args.has("-continue"),
             start,
         };
         return check_simulation(printer, &ir, simulating);
