@@ -383,20 +383,17 @@ impl<'ir> Relay<'ir> {
         ir: &'ir tla_ir::Ir,
         is_tool: bool,
         workers: usize,
-        is_periodic: bool,
-        coverage_countdown: Option<i32>,
-        is_dumped: bool,
         startup_messages: Vec<StartupMessage>,
     ) -> Self {
         Relay {
             sender,
             is_misprinted: false,
-            is_periodic,
+            is_periodic: false,
             is_periodic_reached: false,
-            coverage_countdown,
+            coverage_countdown: None,
             is_coverage_reached: false,
             is_declined: false,
-            is_dumped,
+            is_dumped: false,
             dumped: None,
             ir,
             is_tool,
@@ -1150,16 +1147,10 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     let (outcome, assumed_printed, dumped) = alongside(
         move || {
             let ir = ir_ref;
-            let mut relay = Relay::new(
-                sender,
-                ir,
-                is_tool,
-                workers,
-                is_periodic,
-                coverage::get_countdown(args),
-                is_dumped,
-                front.startup_messages,
-            );
+            let mut relay = Relay::new(sender, ir, is_tool, workers, front.startup_messages);
+            relay.is_periodic = is_periodic;
+            relay.coverage_countdown = coverage::get_countdown(args);
+            relay.is_dumped = is_dumped;
             let outcome = search(ir, &settings, &mut relay);
             (outcome, relay.assumed_printed, relay.dumped)
         },
