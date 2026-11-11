@@ -56,8 +56,6 @@ export interface Pipeline {
   salts: Counter;
   latestModules: Map<string, Mule>;
   onWarning: Warn;
-  // The modules an INSTANCE inside a LET or DEFINE is instantiating.
-  instantiating: Set<string>;
 }
 
 const lambdifyTheorem = (
@@ -405,25 +403,15 @@ export const expandInstance = (
       failure: "Module.Elab.anon#defns",
     });
   }
-  // Instantiating a module again inside its own instantiation reaches the same INSTANCE again,
-  // so tlapm recurses until its stack overflows, as it does on a module that extends itself.
-  if (pipeline.instantiating.has(name)) throw new TlapmBugError("Stack overflow");
-  pipeline.instantiating.add(name);
-  const units = (() => {
-    try {
-      return instantiate(
-        pipeline,
-        pipeline.latestModules,
-        scope,
-        definition.instance,
-        true,
-        definition.name,
-        definition.location,
-      );
-    } finally {
-      pipeline.instantiating.delete(name);
-    }
-  })();
+  const units = instantiate(
+    pipeline,
+    pipeline.latestModules,
+    scope,
+    definition.instance,
+    true,
+    definition.name,
+    definition.location,
+  );
   const definitions: Defn[] = [];
   let rest = units;
   while (rest.length > 0) {

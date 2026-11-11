@@ -286,7 +286,6 @@ export const getObligations = (
     simplify: createSimplifier(counter),
     salts: { value: 0 },
     latestModules: new Map(),
-    instantiating: new Set(),
     onWarning,
   };
   const order = schedule(modules).map((module) =>
