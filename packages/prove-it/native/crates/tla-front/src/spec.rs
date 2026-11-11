@@ -13,6 +13,7 @@ use crate::eval::Evaluator;
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
+use crate::standard_builtins::CORE_OPERATORS;
 use tla_ir::PredicateForm;
 
 /// `Scope`: a name bound to a value, an expression or an operator, in front of the scope it
@@ -1263,9 +1264,14 @@ pub fn check_search_config(
         {
             return Err(not_yet("a _PERIODIC the configuration assigns a value to"));
         }
-        // TLC finds a builtin among its definitions as the value its Java method gives, which it
-        // fails casting to a definition too.
-        if get_definition(name, environment).is_none() && environment.builtins.contains_key(&**name)
+        // TLC finds a module's builtin, or one of its constant values, among its definitions as
+        // the value it holds for it, which it fails casting to a definition too; an operator of
+        // the core language it doesn't hold there.
+        let is_core = CORE_OPERATORS.iter().any(|operator| operator.0 == &**name)
+            && !["TRUE", "FALSE", "BOOLEAN", "STRING"].contains(&&**name);
+        if get_definition(name, environment).is_none()
+            && environment.builtins.contains_key(&**name)
+            && !is_core
         {
             return Err(not_yet("a _PERIODIC that names a builtin operator"));
         }

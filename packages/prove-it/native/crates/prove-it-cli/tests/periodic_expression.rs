@@ -353,6 +353,25 @@ fn declines_a_periodic_naming_a_builtin() {
     }
 }
 
+// TLC holds no operator of the core language among its definitions, so a _PERIODIC naming one
+// isn't defined, as the binary reports.
+#[test]
+fn reports_a_periodic_naming_a_core_operator_as_undefined() {
+    let (output, directory) = run_spec_with(
+        "periodic-core",
+        &periodic_spec(PERIODIC_COUNTER, "TRUE"),
+        &PERIODIC_CONFIG.replace("_PERIODIC Periodic", "_PERIODIC SUBSET"),
+        &[],
+    );
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(151), "{text}");
+    assert!(
+        text.contains("Error: The periodic SUBSET specified in the configuration file\nis not defined in the specification.\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 // TLC reads a definition through an assignment qualified by a module, `Q = [Stop] FALSE`, which
 // the engine and the trace evaluator don't follow, and checks the temporal properties of the
 // current state space before it evaluates the expression: the search declines at its first
