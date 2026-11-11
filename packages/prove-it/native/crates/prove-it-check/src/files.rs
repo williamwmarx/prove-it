@@ -85,7 +85,8 @@ impl<'h> FileDescriber<'h> {
                     &self.host.current_dir().to_string_lossy(),
                     &found.to_string_lossy(),
                 );
-                if made == resolved {
+                // TLC 1.7.4 names the file by its real path alone.
+                if made == resolved || self.is_174 {
                     resolved
                 } else {
                     format!("{resolved} (file:{})", quote_uri_path(&made))

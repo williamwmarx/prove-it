@@ -156,3 +156,24 @@ it("declines -config without a value beside an option the binary declines", () =
     expect(run.stderr).toContain("TlaUnsupportedError: -config without a value");
     expect(run.stdout).not.toContain("Model checking completed");
   }));
+
+// TLC 1.7.4 names each file it parses by its real path alone, where master adds the URI of the
+// path its resolver made, here through `..`.
+it("names a file reached through .. by its real path alone as TLC 1.7.4", () =>
+  useDirectory("prove-it-174-dotdot-", (directory) => {
+    mkdirSync(join(directory, "sub"));
+    mkdirSync(join(directory, "w"));
+    writeFileSync(
+      join(directory, "sub", "Spec.tla"),
+      "---- MODULE Spec ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====\n",
+    );
+    writeFileSync(join(directory, "sub", "Other.cfg"), "INIT Init\nNEXT Next\n");
+    const run = spawnSync(
+      "bun",
+      [CLI, "-Dtla-ts.tlc=1.7.4", "tlc2.TLC", "-config", "Other", "../sub/Spec"],
+      { cwd: join(directory, "w"), encoding: "utf8" },
+    );
+    expect({ status: run.status, stderr: run.stderr }).toMatchObject({ status: 0 });
+    expect(run.stdout).toContain(`Parsing file ${join(directory, "sub", "Spec.tla")}\n`);
+    expect(run.stdout).not.toContain("(file:");
+  }));
