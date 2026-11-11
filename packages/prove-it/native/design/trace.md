@@ -490,38 +490,27 @@ sets").
 TLC binds each operator argument, and each definition of a LET in an expression, to a
 `LazyValue` (`getOpContext` binds every argument cachable at each call site in `Tool`, and
 `Tool.java:1856` a LET's definitions) that keeps its value once evaluated, for the states and
-control it evaluated it in (`LazyValue.getCachedValue`), and reuses it where each variable those
-states assigned holds an equal value still and the control is the same. A LET of an action or
-the initial predicate binds none (`Tool.java:482-487`, `937-941`).
+control it evaluated it in (`LazyValue.getCachedValue`). The trace evaluator evaluates an argument
+again at each use. That costs what TLC's keeping saves where an argument named twice is passed
+down a recursion: TransitiveClosure's first assumption takes 132 s where TLC takes 1.4 s.
 
-The trace evaluator keeps such a value only where reusing it can't differ from evaluating the
-argument again: while it checks an assumption (`Kept`, `Rebuilder::assuming`), where TLC
-evaluates with empty states and plain control throughout (`Tool.isValidAssumption`,
-`Tool.java:3627`); where evaluating it read no state, register or generator and printed nothing;
-and where its value holds no lazy function or set. Each later use gets a copy of it as
-evaluating it made it (`Snapshot`): each set and function TLC held as built then is a new object,
-unnormalized as it was, as the trace evaluator normalizes a set in some uses TLC doesn't, such as
-applying a function over it and UNION, and a shared object would carry that to later uses. The
-copy shares objects as the value did, and an object the evaluation found rather than made, one its
-context's bindings, the definitions kept or the constants hold, is that object again, as
-evaluating the argument again finds it. An
-argument used twice in a recursion is so evaluated once.
-
-That is narrower than TLC's cache, deliberately. TLC's depends on the states and control each
-`eval` call passes: an empty next state on the unprimed side of UNCHANGED and of a subscript, none
-at all under a prime, an empty one again on the primed side of `<<A>>_e` as a step and of UNCHANGED
-in ENABLED, each overwriting the one entry it holds; and what it keeps of an argument applied as a
-function first is the lazy function (`KeepLazy`), whose body it evaluates, and prints, at each
-application. Six rounds of inputs built to break a trace evaluator that followed more of it found
-a case each time, while main, which evaluates an argument again at each use, matched TLC on every
-one. A reuse tells what encloses it whether evaluating the argument built a lazy value holding
-the states, as evaluating it again would.
+Keeping the value as TLC does was tried and set aside. TLC's cache depends on the states and
+control each `eval` call passes (an empty next state on the unprimed side of UNCHANGED and of a
+subscript, none under a prime, an empty one again on the primed side of `<<A>>_e` as a step and of
+UNCHANGED in ENABLED, each overwriting the one entry it holds), on what it keeps of an argument
+applied as a function first (the lazy function, whose body it evaluates and prints at each
+application), and on the one object it keeps, which the trace evaluator normalizes in uses TLC
+doesn't (applying a function over a set, UNION). Nine rounds of inputs built to break a trace
+evaluator that kept values, each narrower than the last (down to assumptions only, effect-free
+evaluations only, and per-use copies sharing what the evaluation found), found a case each time
+where it printed another message than TLC, while evaluating again matched TLC on every one. The
+inputs that broke a version are in `prove-it-cli/tests/trace-kept/`, each with TLC's output. The
+way to TLC's time there is for the engine to check the assumption natively: it leaves
+TransitiveClosure's to the trace evaluator through the tuple-pattern decline of #245.
 
 A zero-arity definition TLC doesn't compute at startup is cached only where it read no state and
-built no lazy function or filter holding the states, so `D == [i \in Nat |-> x']` is applied in
-each successor's states. `prove-it-cli/tests/trace-kept/` holds the inputs of those rounds whose
-output this changes or could, each with TLC's output. Evaluating an argument again at each use
-made TransitiveClosure's first assumption take 154 s where TLC takes 1.4 s.
+built no lazy function or filter holding the states (`captures`), so `D == [i \in Nat |-> x']` is
+applied in each successor's states.
 
 ## Sets TLC holds unnormalized
 

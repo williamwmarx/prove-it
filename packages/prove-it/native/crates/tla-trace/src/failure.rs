@@ -209,11 +209,7 @@ impl<'ir> Rebuilder<'ir> {
         position: u32,
         is_tool: bool,
     ) -> Result<Assumption, Unsupported> {
-        self.assuming(|rebuilder| {
-            rebuilder.ranking_made_texts(|rebuilder| {
-                rebuilder.check_ranked_assumption(position, is_tool)
-            })
-        })
+        self.ranking_made_texts(|rebuilder| rebuilder.check_ranked_assumption(position, is_tool))
     }
 
     // TLC interns what the startup and the assumptions make as it makes them, which the
@@ -222,14 +218,6 @@ impl<'ir> Rebuilder<'ir> {
         self.evaluator().start_ranking();
         let result = check(self);
         self.evaluator().stop_ranking();
-        result
-    }
-
-    // An assumption, where an argument keeps its value once evaluated, as TLC's does there.
-    fn assuming<T>(&mut self, check: impl FnOnce(&mut Self) -> T) -> T {
-        self.evaluator().is_assuming = true;
-        let result = check(self);
-        self.evaluator().is_assuming = false;
         result
     }
 
@@ -328,11 +316,7 @@ impl<'ir> Rebuilder<'ir> {
         position: u32,
         is_tool: bool,
     ) -> Result<Failure, Unsupported> {
-        self.assuming(|rebuilder| {
-            rebuilder.ranking_made_texts(|rebuilder| {
-                rebuilder.evaluate_ranked_assumption(position, is_tool)
-            })
-        })
+        self.ranking_made_texts(|rebuilder| rebuilder.evaluate_ranked_assumption(position, is_tool))
     }
 
     fn evaluate_ranked_assumption(

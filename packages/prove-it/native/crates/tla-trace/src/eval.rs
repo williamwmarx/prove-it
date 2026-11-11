@@ -4,7 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -56,7 +56,6 @@ enum Binding {
         node: NodeId,
         context: Context,
         is_self: bool,
-        kept: Option<Kept>,
     },
     Operator(Rc<Operator>),
     /// A function a LET defines, which TLC keeps lazy: applied without being built. A recursive
@@ -66,24 +65,6 @@ enum Binding {
         context: Context,
         is_self: bool,
     },
-}
-
-/// The value of an argument or an expression's LET definition once evaluated, while the evaluator
-/// checks an assumption, where evaluating it read no state, register or generator and printed
-/// nothing, so that evaluating it again gives the same, as a copy for each use (`Snapshot`). TLC
-/// keeps it (`LazyValue`'s cache) for the states and control it evaluated it in, which in an
-/// assumption are the empty states and plain control throughout (`Tool.isValidAssumption`). Where
-/// evaluating it had an effect, TLC's keeping shows: what it keeps of a function applied first is
-/// the lazy function, whose body it evaluates again at each application (`KeepLazy`), so the trace
-/// evaluator evaluates such an argument again at each use, as before, as it does elsewhere. A LET
-/// of an action or the initial predicate binds none (`Tool#getNextStates`).
-type Kept = Rc<RefCell<Option<KeptValue>>>;
-
-struct KeptValue {
-    /// Whether evaluating it built a lazy value holding the states, which a reuse tells what
-    /// encloses it, as evaluating it again would.
-    is_captured: bool,
-    value: Snapshot,
 }
 
 pub struct Operator {
@@ -235,7 +216,6 @@ pub(crate) fn bound_expression(context: &Context, name: TextId) -> Option<(NodeI
             node,
             context: inner,
             is_self,
-            ..
         } => Some((*node, own_context(inner, &frame, *is_self))),
         Binding::Operator(operator) => match operator.body {
             Body::Node(node) => Some((
@@ -425,8 +405,8 @@ pub struct Evaluator<'ir> {
     pub next: Vec<Option<Value>>,
     /// How many times the evaluator read the state, so a definition that read none is cached.
     reads: u64,
-    /// How many lazy values the evaluator built that hold the states, to evaluate later in them:
-    /// a binding that built one keeps its value only for those states.
+    /// How many lazy functions and filters the evaluator built, each holding the states to
+    /// evaluate later in them: a definition that built one isn't the same value in other states.
     captures: u64,
     /// The value of each binding whose evaluation drew from the generator, by the address of the
     /// frame that binds it, which it keeps alive.
@@ -442,9 +422,6 @@ pub struct Evaluator<'ir> {
     pub target: Option<Vec<Value>>,
     /// Whether a walk is ENABLED's, which TLC's `Tool#enabled` runs.
     pub(crate) is_enabling: bool,
-    /// Whether the evaluator checks an assumption, where an argument keeps its value once
-    /// evaluated (`Kept`).
-    pub(crate) is_assuming: bool,
     /// The function application the walk tests, and whether it walks the initial predicate:
     /// `getInitStates`, `getNextStates` and `enabled` word a non-function applied there apart.
     pub(crate) walked_application: Option<(NodeId, bool)>,
@@ -773,7 +750,6 @@ impl<'ir> Evaluator<'ir> {
             printed: Vec::new(),
             target: None,
             is_enabling: false,
-            is_assuming: false,
             walked_application: None,
             call_stack: None,
             choices: Vec::new(),
@@ -1807,7 +1783,7 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let(definitions, context, true)?;
+                let inner = self.bind_let(definitions, context)?;
                 self.evaluate(*body, &inner)
             }
             NodeKind::Forall { bounds, body } => {
@@ -2023,39 +1999,6 @@ impl<'ir> Evaluator<'ir> {
         Ok(Value::Bool(equals(&now, &then)?))
     }
 
-    // The sets and functions an evaluation in the context can find rather than make: those its
-    // bindings hold, through the contexts of the operators, functions and arguments it binds, the
-    // definitions kept and the constants.
-    fn outside_objects(&self, context: &Context) -> HashSet<usize> {
-        let mut objects = HashSet::new();
-        let mut frames = HashSet::new();
-        let mut envs = vec![context.env.clone()];
-        if let Some(at) = &context.at {
-            add_objects(at, &mut objects);
-        }
-        while let Some(env) = envs.pop() {
-            let mut current = env.0;
-            while let Some(frame) = current {
-                if !frames.insert(Rc::as_ptr(&frame) as usize) {
-                    break;
-                }
-                match &frame.binding {
-                    Binding::Value(value) => add_objects(value, &mut objects),
-                    Binding::Thunk { context, .. } | Binding::Function { context, .. } => {
-                        envs.push(context.env.clone());
-                    }
-                    Binding::Operator(operator) => envs.push(operator.context.env.clone()),
-                }
-                current = frame.parent.0.clone();
-            }
-        }
-        self.cache
-            .values()
-            .chain(self.constants.iter().flatten())
-            .for_each(|value| add_objects(value, &mut objects));
-        objects
-    }
-
     fn check_fields(&self, names: impl Iterator<Item = TextId>) -> Evaluated<()> {
         let mut seen = Vec::new();
         for name in names {
@@ -2117,7 +2060,6 @@ impl<'ir> Evaluator<'ir> {
                 node,
                 context: bound,
                 is_self,
-                kept,
             } => {
                 // TLC keeps the value of an argument or a LET definition once it has evaluated
                 // it (`LazyValue`), so what it drew from the generator isn't drawn again.
@@ -2125,29 +2067,12 @@ impl<'ir> Evaluator<'ir> {
                 if let Some((_, value)) = self.drawn.get(&key) {
                     return Ok(value.clone());
                 }
-                let is_primed = context.is_primed || bound.is_primed;
-                let kept = kept.as_ref().filter(|_| self.is_assuming);
-                if let Some(kept) = kept
-                    && let Some(kept) = &*kept.borrow()
-                {
-                    self.captures += u64::from(kept.is_captured);
-                    return Ok(kept.value.value());
-                }
-                let inner = own_context(bound, frame, *is_self).primed(is_primed);
+                let inner = own_context(bound, frame, *is_self)
+                    .primed(context.is_primed || bound.is_primed);
                 let state = self.random.as_ref().map(JavaRandom::state);
-                let (reads, captures, printed) = (self.reads, self.captures, self.printed.len());
                 let value = self.evaluate(*node, &inner)?;
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
-                } else if let Some(kept) = kept
-                    && self.reads == reads
-                    && self.printed.len() == printed
-                    && let Some(snapshot) = Snapshot::of(&value, &self.outside_objects(&inner))
-                {
-                    *kept.borrow_mut() = Some(KeptValue {
-                        is_captured: self.captures != captures,
-                        value: snapshot,
-                    });
                 }
                 // TLC keeps the value it computes for a next state, as one object.
                 if frame.is_evaluated.replace(true) && !is_scalar(&value) {
@@ -2473,7 +2398,6 @@ impl<'ir> Evaluator<'ir> {
         &mut self,
         definitions: &[NodeId],
         context: &Context,
-        is_expression: bool,
     ) -> Evaluated<Context> {
         let mut inner = context.clone();
         for &node in definitions {
@@ -2494,7 +2418,6 @@ impl<'ir> Evaluator<'ir> {
                         node: definition.body,
                         context: inner.clone(),
                         is_self: false,
-                        kept: is_expression.then(Kept::default),
                     }
                 }
                 DefinitionForm::Operator(params) => Binding::Operator(Rc::new(Operator {
@@ -2533,7 +2456,6 @@ impl<'ir> Evaluator<'ir> {
                 node: *expression,
                 context: context_of(self, *scope)?,
                 is_self: *scope == Some(index),
-                kept: None,
             },
             ScopeBinding::Closure {
                 params,
@@ -2570,7 +2492,6 @@ impl<'ir> Evaluator<'ir> {
                             node,
                             context: bound,
                             is_self,
-                            ..
                         } => Some((
                             *node,
                             own_context(bound, &frame, *is_self)
@@ -2642,7 +2563,6 @@ impl<'ir> Evaluator<'ir> {
                     node: argument,
                     context: caller.clone(),
                     is_self: false,
-                    kept: Some(Kept::default()),
                 }
             };
             inner = inner.bind(param.name, binding);
@@ -3839,7 +3759,6 @@ impl<'ir> Evaluator<'ir> {
                     node,
                     context: bound,
                     is_self,
-                    ..
                 } => match self.kind(*node) {
                     NodeKind::FunctionConstruction {
                         is_recursive: true,
@@ -6196,165 +6115,6 @@ fn is_chosen(element: &Value, chosen: &Value) -> Option<bool> {
 }
 
 // Whether a value holds a set TLC can't normalize.
-// A kept value as evaluating it made it: each set and function with the order TLC built it in,
-// where TLC holds it so still, taken as it was kept, each object once however often the value holds
-// it. A later use normalizes the object it is given, as one TLC holds as built is normalized only
-// by the uses TLC normalizes it in; so each use gets a copy of its own (`Snapshot::value`), with
-// the same objects shared as in the value, as evaluating the argument again gives, while the work
-// of evaluating it is done once.
-struct Snapshot {
-    parts: Vec<Part>,
-}
-
-enum Part {
-    Value(Value),
-    Set {
-        elements: Vec<usize>,
-        written: Option<Vec<usize>>,
-    },
-    Function {
-        domain: Vec<usize>,
-        range: Vec<usize>,
-        class: Class,
-        written: Option<Vec<u32>>,
-        search: Search,
-        interval: Option<(i32, i32)>,
-    },
-}
-
-impl Snapshot {
-    // The value as it is now, or `None` for one holding a lazy value, whose sets aren't the
-    // evaluator's to copy.
-    fn of(value: &Value, outside: &HashSet<usize>) -> Option<Snapshot> {
-        let mut snapshot = Snapshot { parts: Vec::new() };
-        snapshot.part(value, outside, &mut HashMap::new())?;
-        Some(snapshot)
-    }
-
-    // The part for a value, the last one added being the root: each set and function once, by its
-    // address.
-    fn part(
-        &mut self,
-        value: &Value,
-        outside: &HashSet<usize>,
-        seen: &mut HashMap<usize, usize>,
-    ) -> Option<usize> {
-        let address = object_address(value);
-        // An object the evaluation found rather than made is the same object again.
-        if address.is_some_and(|address| outside.contains(&address)) {
-            self.parts.push(Part::Value(value.clone()));
-            return Some(self.parts.len() - 1);
-        }
-        if let Some(address) = address
-            && let Some(&index) = seen.get(&address)
-        {
-            return Some(index);
-        }
-        let mut all = |values: &[Value]| {
-            values
-                .iter()
-                .map(|value| self.part(value, outside, seen))
-                .collect::<Option<Vec<_>>>()
-        };
-        let part = match value {
-            Value::Set(elements) => {
-                let elements = all(elements)?;
-                let written = match unnormalized(value) {
-                    Some(written) => Some(all(&written)?),
-                    None => None,
-                };
-                Part::Set { elements, written }
-            }
-            Value::Function(function) => Part::Function {
-                domain: all(&function.domain)?,
-                range: all(&function.range)?,
-                class: function.class.get(),
-                written: function.written.borrow().clone(),
-                search: function.search.get(),
-                interval: function.interval,
-            },
-            Value::Lazy(_) | Value::Lambda(_) => return None,
-            other => Part::Value(other.clone()),
-        };
-        self.parts.push(part);
-        let index = self.parts.len() - 1;
-        if let Some(address) = address {
-            seen.insert(address, index);
-        }
-        Some(index)
-    }
-
-    fn value(&self) -> Value {
-        let mut made: Vec<Option<Value>> = Vec::with_capacity(self.parts.len());
-        for part in &self.parts {
-            let all = |indices: &[usize], made: &[Option<Value>]| -> Vec<Value> {
-                indices
-                    .iter()
-                    .map(|&index| made[index].clone().expect("a part made before"))
-                    .collect()
-            };
-            made.push(Some(match part {
-                Part::Value(value) => value.clone(),
-                Part::Set { elements, written } => {
-                    let set = Value::Set(Rc::new(all(elements, &made)));
-                    if let Some(written) = written {
-                        mark_unnormalized(&set, all(written, &made));
-                    }
-                    set
-                }
-                Part::Function {
-                    domain,
-                    range,
-                    class,
-                    written,
-                    search,
-                    interval,
-                } => Value::Function(Rc::new(Function {
-                    domain: all(domain, &made),
-                    range: all(range, &made),
-                    class: Cell::new(*class),
-                    written: RefCell::new(written.clone()),
-                    search: Cell::new(*search),
-                    interval: *interval,
-                })),
-            }));
-        }
-        made.pop().flatten().expect("the root")
-    }
-}
-
-// The address of a set or function, which a later use may normalize in place.
-fn object_address(value: &Value) -> Option<usize> {
-    match value {
-        Value::Set(elements) | Value::Unsorted(elements) => Some(Rc::as_ptr(elements) as usize),
-        Value::Function(function) => Some(Rc::as_ptr(function) as usize),
-        _ => None,
-    }
-}
-
-// Adds the address of each set and function the value holds, itself included.
-fn add_objects(value: &Value, objects: &mut HashSet<usize>) {
-    let Some(address) = object_address(value) else {
-        return;
-    };
-    if !objects.insert(address) {
-        return;
-    }
-    match value {
-        Value::Set(elements) | Value::Unsorted(elements) => {
-            elements
-                .iter()
-                .for_each(|element| add_objects(element, objects));
-        }
-        Value::Function(function) => function
-            .domain
-            .iter()
-            .chain(&function.range)
-            .for_each(|part| add_objects(part, objects)),
-        _ => {}
-    }
-}
-
 fn holds_unsorted(value: &Value) -> bool {
     match value {
         Value::Unsorted(_) => true,

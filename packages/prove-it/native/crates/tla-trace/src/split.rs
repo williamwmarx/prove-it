@@ -720,7 +720,7 @@ impl Splitter<'_, '_> {
     fn bind_let(&mut self, definitions: &[NodeId], place: &Place) -> Result<Place, Unsupported> {
         let context = self
             .evaluator
-            .bind_let(definitions, &place.context, false)
+            .bind_let(definitions, &place.context)
             .map_err(|error| {
                 Unsupported(format!("TLC's actions through a LET: {}", error.reason))
             })?;

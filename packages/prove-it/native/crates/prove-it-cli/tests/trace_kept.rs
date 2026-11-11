@@ -1,31 +1,12 @@
-//! The trace evaluator keeps an argument's value once evaluated while it checks an assumption, where
-//! evaluating it again would give the same, so an assumption the engine leaves to it costs what it
-//! costs TLC. Each spec in `trace-kept` is one that a trace evaluator keeping more got wrong, with
-//! TLC's output.
+//! The trace evaluator evaluates an operator's argument again at each use, where TLC keeps its value
+//! (`LazyValue`). Each spec here is one that a trace evaluator keeping values got wrong, with TLC's
+//! output, and the definitions it caches only where they are the same value in any states.
 
 mod common;
 
 use std::path::Path;
 
 use common::{run, run_spec, stderr, stdout};
-
-// The engine leaves the assumption to the trace evaluator: it binds a tuple pattern to a set of
-// functions. Each call names its argument twice, so evaluating an argument again at each use
-// would double the work at each of the 60 calls.
-#[test]
-fn checks_an_assumption_naming_each_argument_twice_as_tlc_does() {
-    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nRECURSIVE Doubled(_, _)\nDoubled(n, S) == IF n = 0 THEN S ELSE Doubled(n - 1, S \\cup S)\nASSUME {<<s, t>> \\in {f \\in [1..2 -> Doubled(60, {1})] : TRUE} : TRUE} # {}\n====\n";
-    let (output, directory) = run_spec("trace-kept", spec, "");
-    let text = stdout(&output);
-    assert_eq!(output.status.code(), Some(0), "{text}{}", stderr(&output));
-    assert!(
-        text.contains(
-            "Model checking completed. No error has been found.\n  Estimates of the probability that TLC did not check all reachable states\n  because two distinct states had the same fingerprint:\n  calculated (optimistic):  val = 0.0\n0 states generated, 0 distinct states found, 0 states left on queue.\nThe depth of the complete state graph search is 0.\n"
-        ),
-        "{text}"
-    );
-    std::fs::remove_dir_all(directory).expect("removed");
-}
 
 // An argument that builds a lazy function holds the states it was built in, so the walk keeps its
 // value only for those states: TLC's `LazyValue` keeps it per state, and each successor the walk
@@ -115,11 +96,10 @@ fn get_untimed(text: &str) -> String {
         .collect()
 }
 
-// Each spec in `trace-kept` passes through the trace evaluator a value that a kept argument could
-// get wrong: one passed through operators, a recursive one or a LAMBDA, held by a filter or a
-// CHOOSE, of x, x' or the level, and one that prints, draws or fails, in an assumption the engine
-// leaves to it. Each prints what TLC prints (`tlc.out`, recorded from TLC at d8fb231), on one
-// thread and on four.
+// Each spec in `trace-kept` is one that a version of the trace evaluator keeping an argument's value
+// printed another message for than TLC, in a replay, ENABLED, UNCHANGED, a subscript or an
+// assumption. Each prints what TLC prints (`tlc.out`, recorded from TLC at d8fb231), on one thread
+// and on four.
 #[test]
 fn keeps_an_argument_only_where_tlc_does() {
     let cases = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/trace-kept");
