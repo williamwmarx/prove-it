@@ -82,6 +82,12 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(dump.written.get("Counter.dump")).toBe(readTlcDump("Counter.dump"));
   });
 
+  it("lists the states it reached when an invariant fails", async () => {
+    const dump = await dumpFixture("water-jugs", "WaterJugs", { path: "WaterJugs.dump" });
+    expect(dump.result.status).toBe("invariant-violation");
+    expect(dump.written.get("WaterJugs.dump")).toBe(readTlcDump("WaterJugs.dump"));
+  });
+
   it("writes the stuttering steps of a liveness check like TLC 1.7.4, and plain edge labels", async () => {
     const options = { version: "1.7.4" } as const;
     const dot = await dumpFixture(

@@ -97,6 +97,8 @@ export type NativeCheckSources =
       out: string;
       err: string;
       outcome: NativeCheckOutcome | undefined;
+      // The path and text of each file the library's check wrote, such as -dump's.
+      files: [string, string][];
     }
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };

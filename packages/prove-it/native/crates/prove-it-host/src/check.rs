@@ -2,9 +2,9 @@
 //! `checkSources(args, known, machine)` checks the spec the TLC command line `args` names as the
 //! binary does, reading its files from what JavaScript knows (`sources`), and returns one of:
 //!
-//! - `{ kind: "checked", exitCode, out, err, outcome }`, what the binary prints to stdout and
-//!   stderr, its exit code, and what the check found where it searched, as the library reports it
-//!   (`get_outcome`);
+//! - `{ kind: "checked", exitCode, out, err, outcome, files }`, what the binary prints to stdout
+//!   and stderr, its exit code, what the check found where it searched, as the library reports it
+//!   (`get_outcome`), and the `[path, text]` of each file the library's check wrote;
 //! - `{ kind: "needed", keys }`, what the check reads that isn't known yet (`sources`). It asks for
 //!   everything before it searches, so a round never searches;
 //! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
@@ -22,6 +22,7 @@
 //! it reads each printed state's plain data, which the CLI doesn't, so only it has the check write
 //! them.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -47,6 +48,8 @@ struct SourcesHost {
     zone: Zone,
     variables: Vec<(String, String)>,
     is_library: bool,
+    /// The files the library's check wrote, such as `-dump`'s, by path, which JavaScript writes.
+    written: RefCell<Vec<(String, Vec<u8>)>>,
 }
 
 impl SourcesHost {
@@ -127,6 +130,20 @@ impl Host for SourcesHost {
 
     fn is_file_system(&self) -> bool {
         !self.is_library
+    }
+
+    fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
+        if !self.is_library {
+            return false;
+        }
+        let path = path.display().to_string();
+        let mut written = self.written.borrow_mut();
+        match written.iter_mut().find(|file| file.0 == path) {
+            Some(file) if is_appended => file.1.extend_from_slice(bytes),
+            Some(file) => file.1 = bytes.to_vec(),
+            None => written.push((path, bytes.to_vec())),
+        }
+        true
     }
 
     fn is_plain(&self) -> bool {
@@ -232,6 +249,7 @@ fn check(arguments: &[HostValue]) -> HookResult {
         zone: parse_rule(&get_text(zone, "the zone")?).map_or(Zone::UTC, Zone::from_rule),
         variables,
         is_library,
+        written: RefCell::default(),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let mut output = Output {
@@ -262,6 +280,21 @@ fn check(arguments: &[HostValue]) -> HookResult {
         ("out", HostValue::text(&String::from_utf8_lossy(&out))),
         ("err", HostValue::text(&err)),
         ("outcome", get_outcome(outcome)),
+        (
+            "files",
+            HostValue::Array(
+                host.written
+                    .take()
+                    .into_iter()
+                    .map(|(path, bytes)| {
+                        HostValue::Array(vec![
+                            HostValue::text(&path),
+                            HostValue::text(&String::from_utf8_lossy(&bytes)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
     ]))
 }
 
@@ -353,6 +386,7 @@ mod tests {
             zone: Zone::UTC,
             variables: Vec::new(),
             is_library: false,
+            written: RefCell::default(),
         };
         let first = host.now();
         std::thread::sleep(Duration::from_millis(5));
