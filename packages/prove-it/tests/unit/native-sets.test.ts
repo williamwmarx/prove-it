@@ -235,11 +235,32 @@ describe.if(ADDON !== undefined)("the native engine's lazy sets", () => {
     );
   });
 
-  it("leaves a set it has no order for to the interpreter", async () => {
-    // TLC streams the union in the UNION, duplicates and all, which the engine doesn't follow once
-    // it holds the union as an id, nor where a bound name may hold it.
+  // TLC sorts a set enumeration as it first enumerates it, which caches each element after the
+  // first as its normalized set (ValueVec.sort), and a UNION of it streams the first as built.
+  it("streams a UNION of sets TLC keeps lazy as TLC does", async () => {
     for (const set of [
       "UNION {(SUBSET {1}) \\cup SUBSET {2}}",
+      "UNION {UNION {0..2, {1}}, {7}}",
+      "UNION {{7}, UNION {0..2, {1}}}",
+      "UNION UNION (SUBSET {{1}, {1, 2}})",
+    ]) {
+      const body = [
+        "EXTENDS Naturals",
+        "VARIABLE x",
+        "Init == x = 0",
+        `Next == x' \\in ${set} \\/ \\E e \\in ${set} : x' = e`,
+      ];
+      expect([set, await compareWithInterpreter(body, CONFIG)]).toEqual([
+        set,
+        expect.arrayContaining([expect.stringMatching(COMPLETE)]),
+      ]);
+    }
+  });
+
+  it("leaves a set it has no order for to the interpreter", async () => {
+    // TLC streams the union in the UNION, duplicates and all, which the engine doesn't follow
+    // where a bound name may hold it.
+    for (const set of [
       "UNION {s : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",
       "UNION {[{1} -> s] : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",
       "UNION {IF s = {} THEN {} ELSE s : s \\in {(SUBSET {1}) \\cup SUBSET {2}}}",

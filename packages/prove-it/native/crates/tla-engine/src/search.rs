@@ -30,7 +30,7 @@ use crate::context::{
     holds_all, holds_all_changed,
 };
 use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atoms};
-use crate::machine::{Eval, Machine, Printed, Registers, Step, UNASSIGNED};
+use crate::machine::{Eval, Machine, Printed, Prints, Registers, Step, UNASSIGNED};
 use crate::symmetry::{
     Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
 };
@@ -147,11 +147,11 @@ pub trait Reporter {
     /// The check part way through the search found the properties hold so far.
     fn liveness_finished(&mut self) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
-    fn print(&mut self, store: &Store, values: &[Id]);
+    fn print(&mut self, store: &Store, prints: &Prints);
     /// What Print or PrintT printed while TLC started: as the substitutes and constant
     /// definitions were evaluated, before [`Reporter::startup_done`], then as the assumptions
     /// were. The interpreter printed it already where it handed the search over.
-    fn startup_print(&mut self, _store: &Store, _values: &[Id]) {}
+    fn startup_print(&mut self, _store: &Store, _prints: &Prints) {}
     /// The sets the symmetry permutes that hold fewer than two elements, by name, which TLC warns
     /// about once it has evaluated the symmetry (2300, `TLC_SYMMETRY_SET_TOO_SMALL`). The
     /// interpreter warned already where it handed the search over.
@@ -416,7 +416,7 @@ pub enum ViolationKind {
         loop_label: Option<u32>,
         /// What the atoms printed as TLC found the properties the lasso violates, once it had
         /// rebuilt the lasso: each print's values, ids of the violation's store.
-        printed: Vec<Vec<Id>>,
+        printed: Vec<Prints>,
         /// Whether the atoms read TLCGet("level"), which TLC reads of each state of the lasso it
         /// rebuilt at its position, as it names the properties the lasso violates: the caller
         /// names them so.
@@ -1816,7 +1816,7 @@ impl Reporter for Quiet {
     fn initial_states_progress(&mut self, _count: u64) {}
     fn initial_states(&mut self, _generated: u64, _distinct: u64) {}
     fn progress(&mut self, _generated: u64, _distinct: u64, _queued: u64, _depth: u64) {}
-    fn print(&mut self, _store: &Store, _values: &[Id]) {}
+    fn print(&mut self, _store: &Store, _prints: &Prints) {}
 }
 
 // The states a thread found in a level that weren't found before it, in the order it found them:
@@ -2442,11 +2442,11 @@ fn describe(error: CompileError) -> String {
 // symmetry, the symmetry's group and the sets it warns about, then what it printed as it evaluated
 // the assumptions, and the assumption it found false.
 struct Started {
-    printed: Vec<Vec<Id>>,
+    printed: Vec<Prints>,
     /// The sets the symmetry permutes that TLC warns hold fewer than two elements, by name.
     small_sets: Vec<String>,
     group: Option<Group>,
-    assumed: Vec<Vec<Id>>,
+    assumed: Vec<Prints>,
     violated: Option<String>,
     /// The assumption that failed to evaluate, by its position, and why.
     failed: Option<(u32, Bail)>,
@@ -2754,7 +2754,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
             ..
         }) if !settings.is_violation_reported => return SearchOutcome::Declined(reason.into()),
         Ok(started) => {
-            let report = |reporter: &mut dyn Reporter, printed: &[Vec<Id>]| {
+            let report = |reporter: &mut dyn Reporter, printed: &[Prints]| {
                 printed
                     .iter()
                     .for_each(|values| reporter.startup_print(&machine.store, values));
@@ -3782,7 +3782,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                             }
                         }
                     }
-                    let lasso_printed: Vec<Vec<Id>> = liveness
+                    let lasso_printed: Vec<Prints> = liveness
                         .events
                         .iter()
                         .skip_while(|&&event| event != Event::Lasso)
@@ -4957,7 +4957,7 @@ fn to_lasso(
     search: &Search<'_, States>,
     (path, loop_start): (&[u32], usize),
     actions: &[Option<u32>],
-    printed: Vec<Vec<Id>>,
+    printed: Vec<Prints>,
     counts: &Counts,
 ) -> Option<Box<Violation>> {
     // Under SYMMETRY or a VIEW the stored states aren't those TLC prints, and where the search
