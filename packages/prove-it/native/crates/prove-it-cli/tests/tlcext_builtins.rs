@@ -1,5 +1,5 @@
-//! TLCExt's operators that TLC evaluates as their TLA+ definitions or as Java methods, against TLC
-//! built at d8fb231.
+//! TLCExt's operators that TLC evaluates as their TLA+ definitions or as Java methods, and UNCHANGED
+//! in the initial predicate, which TLC evaluates as an expression, against TLC built at d8fb231.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -30,7 +30,7 @@ fn get_untimed_lines(text: &str) -> String {
 // level shared between four, or, where `<Name>.declined` holds what the binary says, declines as
 // it says.
 #[test]
-fn checks_tlcext_operators_as_tlc() {
+fn checks_tlcext_operators_and_unchanged_init_as_tlc() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/tlcext_builtins");
     let mut names: Vec<String> = std::fs::read_dir(&fixtures)
         .expect("the fixtures")

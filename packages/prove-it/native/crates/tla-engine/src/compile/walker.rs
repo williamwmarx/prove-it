@@ -2011,8 +2011,26 @@ impl<'a> Compiler<'a> {
                 self.walk(*body, &inner, options, known, then)
             }
             NodeKind::Unchanged(expression) => {
-                if is_init {
+                // TLC evaluates UNCHANGED e of the initial predicate as an expression: e in the
+                // state so far, then in no state (`OPCODE_unchanged`), where a variable e reads
+                // is undefined, which the native checker's trace evaluator words.
+                if is_init && !self.is_native {
                     return unsupported("UNCHANGED in the initial predicate");
+                }
+                if is_init {
+                    let expression = self.wrap_compile(|compiler| {
+                        compiler.compile(*expression, &context.without_print())
+                    })?;
+                    let is_reading = !expression.footprint.vars.is_empty();
+                    let evaluate = expression.eval;
+                    let rest = then(self, known)?;
+                    return Ok(Some(step(move |machine, on_complete| {
+                        evaluate(machine)?;
+                        if is_reading {
+                            return Err(Bail("UNCHANGED in the initial predicate of a variable"));
+                        }
+                        run_rest(&rest, machine, on_complete)
+                    })));
                 }
                 self.walk_unchanged(*expression, context, options, known, then)
             }
