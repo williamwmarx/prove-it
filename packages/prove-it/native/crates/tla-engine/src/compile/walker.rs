@@ -2722,8 +2722,12 @@ impl<'a> Compiler<'a> {
             self.compile_streamed(set, context)?
         };
         // The element of a set enumeration TLC leaves as built, which the variable holds as built
-        // where it is assigned it and a walk streams it (`Machine::held`).
-        let unsorted = unsorted.map(|unsorted| (unsorted, Arc::clone(&self.held_streams[index])));
+        // where it is assigned it and a walk streams it (`Machine::held`). ENABLED's rewritten
+        // variables lie past the spec's, which no state holds.
+        let unsorted = unsorted.and_then(|unsorted| {
+            let is_streamed = self.held_streams.get(index)?;
+            Some((unsorted, Arc::clone(is_streamed)))
+        });
         let guard = (state == EITHER).then(|| deferred(self.compile(guard, context)));
         let mut shared = Shared::new(then);
         let assigned = shared.call(self, &known.with(variable, SET))?;

@@ -466,3 +466,42 @@ fn streams_a_constant_the_initial_predicate_assigns_as_tlc_does_or_declines() {
     let differences = get_differences("lazy-initial", PLAIN, &cells);
     assert!(differences.is_empty(), "{}", differences.join("\n"));
 }
+
+// ENABLED walks an instantiated action over variables it rewrites past the spec's, which no state
+// holds: one bound to a set enumeration's lazy first element there compiles as any other. TLC
+// fails the action property on the second state; the engine leaves that failure to the fallback.
+#[test]
+fn walks_enabled_over_a_variable_bound_to_a_lazy_first_element() {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-cli-lazy-enabled-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    std::fs::write(
+        directory.join("Inner.tla"),
+        "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLES x, done\nInit == x = 0 /\\ done = FALSE\nStep == x' = 1 - x /\\ done' \\in {SUBSET {1}}\nNext == Step\nSpec == Init /\\ [][Next]_<<x, done>> /\\ WF_<<x, done>>(Next)\n====\n",
+    )
+    .expect("the instance");
+    std::fs::write(
+        directory.join("Outer.tla"),
+        "---- MODULE Outer ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nI == INSTANCE Inner WITH done <- (x > 5)\nISpec == I!Spec\n====\n",
+    )
+    .expect("the spec");
+    std::fs::write(
+        directory.join("Outer.cfg"),
+        "SPECIFICATION Spec\nPROPERTY ISpec\n",
+    )
+    .expect("the configuration");
+    for workers in ["1", "4"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+            .args(["-noTE", "-workers", workers, "Outer"])
+            .current_dir(&directory)
+            .output()
+            .expect("the binary runs");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{workers} workers: {stderr}");
+        assert!(
+            stderr.starts_with("prove-it: not native yet: "),
+            "{workers} workers: {stderr}"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("removed");
+}
