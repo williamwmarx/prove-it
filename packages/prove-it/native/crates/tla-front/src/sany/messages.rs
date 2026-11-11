@@ -11,15 +11,20 @@ use crate::errors::FrontError;
 use crate::errors::SanyError;
 use crate::sany::generator::{GenerationOptions, generate_sany_specification};
 use crate::sany::levels::{LevelCheck, check_module_levels};
+use crate::sany::linter::lint_sany_module;
 use crate::sany::nodes::{Graph, NodeId, SanyMessage, format_sany_location};
-use crate::sany::{GENERATOR_EXCEPTION, Result, UNLINKABLE, not_yet};
+use crate::sany::{GENERATOR_EXCEPTION, Result, UNLINKABLE, UNLINTED_MODULES, not_yet};
+
+/// The warnings of SANY's linter for the modules it lints, in order, where SANY lints them: SANY
+/// lints only a spec without errors.
+pub type Lints = Option<Vec<SanyError>>;
 
 /// What SANY's generator reports: each module's messages, or the index in the order of the
 /// module `Generator` throws on as it generates it.
 pub enum Generated {
-    Messages(Vec<ModuleMessages>),
+    Messages(Vec<ModuleMessages>, Lints),
     /// Messages one of which has a shape no recording shows: the first line of that one.
-    Unproven(Vec<ModuleMessages>, String),
+    Unproven(Vec<ModuleMessages>, Lints, String),
     /// A shape whose messages linking would give otherwise than SANY, and why.
     Declined(String),
     Exception(usize),
@@ -366,9 +371,29 @@ pub fn get_generator_messages(
             }
         })
         .collect();
+    let lints = if specification
+        .messages
+        .iter()
+        .all(|message| message.is_warning)
+    {
+        let mut lints = Vec::new();
+        for &module in &specification.modules {
+            let linted = specification
+                .graph
+                .node(module)
+                .symbol_name()
+                .is_some_and(|name| !UNLINTED_MODULES.contains(&&**name));
+            if linted {
+                lints.extend(lint_sany_module(&specification.graph, module)?);
+            }
+        }
+        Some(lints)
+    } else {
+        None
+    };
     Ok(match unproven {
-        Some(message) => Generated::Unproven(messages, message),
-        None => Generated::Messages(messages),
+        Some(message) => Generated::Unproven(messages, lints, message),
+        None => Generated::Messages(messages, lints),
     })
 }
 

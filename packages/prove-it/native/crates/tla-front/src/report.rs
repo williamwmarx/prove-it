@@ -16,6 +16,7 @@ use crate::parser::{extract_module, parse_sany_module};
 use crate::pcal::{PcalFatal, PcalSession, ValidationResult};
 use crate::recursive::check_recursive;
 use crate::sany::GENERATOR_EXCEPTION;
+use crate::sany::UNLINTED_MODULES;
 use crate::sany::generator::{ModuleDependencies, get_dependencies, get_proof_instances};
 use crate::sany::messages::{Generated, get_generator_messages};
 use crate::sany::source::get_unboxed_source;
@@ -88,19 +89,6 @@ pub struct ReportOptions<'a> {
     /// with no progress lines and no warnings, and neither validates PlusCal nor lints.
     pub is_xml_export: bool,
 }
-
-/// tla2sany.semantic.StandardModules: SANY lints the modules other than these.
-const UNLINTED_MODULES: &[&str] = &[
-    "FiniteSets",
-    "Sequences",
-    "Bags",
-    "Naturals",
-    "Integers",
-    "Reals",
-    "RealTime",
-    "Randomization",
-    "TLC",
-];
 
 struct Loaded {
     text: String,
@@ -1028,28 +1016,35 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     // printed only if they are the generator's. Where linking can't give them, the generator's
     // are, as the TypeScript report, its port, printed them.
     let (generated, unproven) = match generated {
-        Ok(Generated::Unproven(messages, message)) => (None, Some((messages, message))),
+        Ok(Generated::Unproven(messages, lints, message)) => {
+            (None, Some((messages, lints, message)))
+        }
         Ok(generated) => (Some(generated), None),
         Err(_) => (None, None),
     };
+    // Where linking gives the messages, the linter of its modules gives the warnings of SANY's.
     let messages = match generated {
         Some(generated) => generated,
         None => match (
             link_messages(loader, &order, undecided, is_user_module_added),
             unproven,
         ) {
-            (Ok(linked), Some((generated, message))) if generated != linked => {
+            (Ok(linked), Some((generated, _, message))) if generated != linked => {
                 return Err(not_yet(&format!(
                     "SANY's messages, which linking gives apart from SANY's generator, one of whose messages no recording shows: {message}"
                 )));
             }
-            (Ok(linked), _) => Generated::Messages(linked),
-            (Err(_), Some((generated, _))) => Generated::Messages(generated),
+            (Ok(_), Some((generated, lints, _))) | (Err(_), Some((generated, lints, _))) => {
+                Generated::Messages(generated, lints)
+            }
+            (Ok(linked), None) => Generated::Messages(linked, None),
             (Err(stop), None) => return Err(stop),
         },
     };
-    let messages = match messages {
-        Generated::Messages(messages) | Generated::Unproven(messages, _) => messages,
+    let (messages, lints) = match messages {
+        Generated::Messages(messages, lints) | Generated::Unproven(messages, lints, _) => {
+            (messages, lints)
+        }
         Generated::Declined(reason) => return Err(not_yet(&reason)),
         // SANY's generator throws on the root module, the last SANY analyzes.
         Generated::Exception(index) if index + 1 == order.len() => {
@@ -1105,16 +1100,22 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             .iter()
             .filter(|name| !UNLINTED_MODULES.contains(&&***name))
             .collect();
-        let modules: FastMap<Rc<str>, Rc<Module>> = loader
-            .modules
-            .iter()
-            .map(|(name, loaded)| (name.clone(), loaded.module.clone()))
-            .collect();
-        let linter = Linter::new(&modules);
-        let mut warnings = Vec::new();
-        for name in &linted {
-            warnings.extend(linter.lint_module(name)?);
-        }
+        let warnings = match lints {
+            Some(lints) => lints,
+            None => {
+                let modules: FastMap<Rc<str>, Rc<Module>> = loader
+                    .modules
+                    .iter()
+                    .map(|(name, loaded)| (name.clone(), loaded.module.clone()))
+                    .collect();
+                let linter = Linter::new(&modules);
+                let mut warnings = Vec::new();
+                for name in &linted {
+                    warnings.extend(linter.lint_module(name)?);
+                }
+                warnings
+            }
+        };
         for name in linted {
             loader.lines.push(format!("Linting of module {name}\n"));
         }

@@ -10,6 +10,7 @@ pub mod builtins;
 pub mod export;
 pub mod generator;
 pub mod levels;
+pub mod linter;
 pub mod messages;
 pub mod nodes;
 pub mod selectors;
@@ -29,6 +30,19 @@ pub fn not_yet<T>(reason: impl Into<String>) -> Result<T> {
 
 /// What starts the reason of a `NotYet` for a shape where linking would report otherwise than
 /// SANY too, so SANY's report declines rather than taking linking's messages.
+/// tla2sany.semantic.StandardModules: SANY lints the modules other than these.
+pub const UNLINTED_MODULES: &[&str] = &[
+    "FiniteSets",
+    "Sequences",
+    "Bags",
+    "Naturals",
+    "Integers",
+    "Reals",
+    "RealTime",
+    "Randomization",
+    "TLC",
+];
+
 pub const UNLINKABLE: &str = "SANY's report of ";
 
 /// The `NotYet` for a shape whose report neither the generator nor linking gives.
