@@ -14,29 +14,13 @@ export interface Decision {
   statistics: Statistics;
 }
 
-// The steps a backend has taken, each a point where it checks its limits. Past `limit` it gives up
-// as it does at the time limit. Scripts set a limit and no time limit, so that what a backend
-// decides doesn't depend on the machine; prove sets none.
-export interface Steps {
-  count: number;
-  readonly limit: number;
-}
-
 export interface DecideOptions {
   timeLimitMs: number;
   signal?: AbortSignal;
   // A cell over shared memory whose first element another thread sets to cancel the decision, as
   // the signal does where the decision can't see it: in a native backend, or a worker.
   cancel?: Int32Array;
-  steps?: Steps;
-  // Where the backend writes its statistics.
-  statistics?: Statistics;
 }
-
-export const createSteps = (limit = Infinity): Steps => ({ count: 0, limit });
-
-// Counts a step, and returns whether the budget is spent.
-export const isStepLimitReached = (steps: Steps) => ++steps.count > steps.limit;
 
 // The length and FNV-1a hash of a text's UTF-16 code units, to compare long outputs such as proofs.
 export const getTextDigest = (text: string) => {

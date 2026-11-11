@@ -102,6 +102,11 @@ pub struct MemoTable {
     // The slots probed past the home in this window of lookups.
     probes: u64,
     is_enabled: bool,
+    // Whether the table is a recursive definition's, which doesn't turn off once full and forgets
+    // what it holds then: a full table that took no more entries, or none at all, would make a
+    // recursion that reads a call twice exponential, at a room that depends on the threads. Its
+    // probation stands, which its first lookups decide on any number of threads.
+    is_kept: bool,
     is_direct: bool,
     is_clustered: bool,
     // Whether the table may cluster: it has two keys or more, and has never scattered.
@@ -142,6 +147,7 @@ impl MemoTable {
             hits: 0,
             probes: 0,
             is_enabled: true,
+            is_kept: false,
             is_direct: width == 1,
             is_clustered: false,
             can_cluster: width > 1,
@@ -149,6 +155,14 @@ impl MemoTable {
             maximum: MAXIMUM_ENTRIES,
             full_lookups: 0,
             full_hits: 0,
+        }
+    }
+
+    /// A table that doesn't turn off once full, and forgets what it holds then.
+    pub fn kept(width: usize) -> MemoTable {
+        MemoTable {
+            is_kept: true,
+            ..MemoTable::new(width)
         }
     }
 
@@ -293,7 +307,7 @@ impl MemoTable {
     // few of them hit.
     #[inline(always)]
     fn review_full(&mut self, is_hit: bool) {
-        if self.size < self.maximum {
+        if self.is_kept || self.size < self.maximum {
             return;
         }
         self.full_lookups += 1;
@@ -307,9 +321,25 @@ impl MemoTable {
         }
     }
 
+    // Whether the table takes another entry. A kept table that is full forgets what it holds.
+    fn has_room(&mut self) -> bool {
+        if self.is_kept && self.size >= self.maximum {
+            self.clear();
+        }
+        self.is_enabled && self.size < self.maximum
+    }
+
+    fn clear(&mut self) {
+        self.direct.fill(EMPTY);
+        self.packed.fill(EMPTY_PACKED);
+        self.wide.fill(EMPTY);
+        self.size = 0;
+        self.probes = 0;
+    }
+
     // Makes room for a new entry, or says the table takes no more.
     fn claim(&mut self) -> bool {
-        if !self.is_enabled || self.size >= self.maximum {
+        if !self.has_room() {
             return false;
         }
         if (self.size + 1) * 2 > self.capacity() {
@@ -409,7 +439,7 @@ impl MemoTable {
             .iter()
             .fold(self.largest.max(value), |largest, &key| largest.max(key));
         if self.is_direct {
-            if !self.is_enabled || self.size >= self.maximum {
+            if !self.has_room() {
                 return;
             }
             let key = keys[0];
@@ -654,6 +684,60 @@ mod tests {
                 "a hit every {hit_every} lookups"
             );
         }
+    }
+
+    // A recursion that reads each call twice, as `F[i-1]` in IsSimpleCycle, keyed by a candidate
+    // and the argument: a kept table that is full forgets what it holds rather than take no more,
+    // so each second read still hits, however many candidates fill it.
+    #[test]
+    fn a_full_kept_table_forgets_and_keeps_hitting() {
+        for width in 1..=6 {
+            let mut table = MemoTable::kept(width);
+            table.limit(100);
+            let keys = |candidate: u32, argument: u32| {
+                let mut keys = vec![candidate; width];
+                keys[width - 1] = candidate * 8 + argument;
+                keys
+            };
+            for candidate in 0..20_000u32 {
+                for argument in 1..=7u32 {
+                    assert_eq!(table.get(&keys(candidate, argument)), EMPTY);
+                    table.set(&keys(candidate, argument), argument);
+                    assert_eq!(
+                        table.get(&keys(candidate, argument)),
+                        argument,
+                        "width {width}, candidate {candidate}"
+                    );
+                }
+            }
+            assert!(table.is_enabled());
+            assert!(table.size() <= 100);
+            assert_eq!(table.hits() * 2, table.lookups());
+        }
+    }
+
+    #[test]
+    fn a_full_kept_table_never_turns_off() {
+        let mut table = MemoTable::kept(2);
+        table.limit(100);
+        for key in 0..4 * FULL_WINDOW as u32 {
+            assert_eq!(table.get(&[key, key]), EMPTY);
+            table.set(&[key, key], key);
+            assert_eq!(table.get(&[key, key]), key);
+        }
+        assert!(table.is_enabled());
+    }
+
+    // A recursive definition's table that rarely hits turns off at its probation, as any table
+    // does: that is decided by its first lookups, whatever the threads.
+    #[test]
+    fn a_kept_table_that_rarely_hits_turns_off() {
+        let mut table = MemoTable::kept(2);
+        for key in 0..PROBATION as u32 {
+            assert_eq!(table.get(&[key, key]), EMPTY);
+            table.set(&[key, key], key);
+        }
+        assert!(!table.is_enabled());
     }
 
     #[test]

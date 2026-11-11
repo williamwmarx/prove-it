@@ -336,7 +336,7 @@ That's all there is to it!
 
 <https://github.com/Z3Prover/z3>
 
-The SMT solver in `src/prover/smt/`, including its linear arithmetic (`lp/`) and nonlinear (`nlsat/`) components, is ported from Z3, and so is its Rust port in `native/crates/prover/smt/` (so far `src/util/` and the linear arithmetic, `src/lp/`).
+The SMT solver in `native/crates/prover/smt/`, including its linear arithmetic (`src/lp/`) and nonlinear (`src/nlsat/`) components, is ported from Z3, and keeps this licence in its `z3-license.txt`. The integers and rationals of `native/crates/prover/num/` follow Z3's.
 
 ```
 Z3
@@ -355,7 +355,7 @@ THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 <https://isabelle.in.tum.de>
 
-`src/prover/isabelle/` ports the parts of Isabelle that TLAPS proofs use: Pure, Isar, the blast prover and Isabelle/TLA+.
+`native/crates/prover/isabelle/` ports the parts of Isabelle that TLAPS proofs use: Pure, Isar, the blast prover and Isabelle/TLA+, and keeps this licence in its `LICENSE`, and tlapm's, for the Isabelle/TLA+ theories its logic data comes from, in its `LICENSE-tlapm`.
 
 ```
 ISABELLE COPYRIGHT NOTICE, LICENCE AND DISCLAIMER.

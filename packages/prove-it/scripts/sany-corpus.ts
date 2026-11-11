@@ -7,7 +7,7 @@
 // TLC runs live from the classpath of a tla2tools build (`--classpath`), and `--record` writes what
 // it prints to a file instead of running the binary. `--recorded` holds the binary to such a file
 // with no TLC, as Verification does with tests/conformance/sany-stdout; `--cli` holds the CLI of
-// dist/ to it too. Without `--tlaplus` or `--specs`, it reads the `sany` corpus that
+// dist/ to it too, and fails if the CLI loads no engine. Without `--tlaplus` or `--specs`, it reads the `sany` corpus that
 // fetch-corpora.ts fetches. `--main` names the class the jar runs, tlc2.TLC by default, such as
 // tla2sany.xml.XMLExporter, and `--arguments` the arguments every run takes before the spec's name,
 // TLC's below by default. `--names` runs only the specs it names, which may be in a directory of
@@ -73,6 +73,24 @@ const ARGUMENTS = getOption("--arguments")?.split(" ") ?? [
   "0",
 ];
 const names = getOption("--names")?.split(",");
+
+// Without an engine the CLI prints the TypeScript report, so `--cli` would measure that. Its
+// XMLExporter, which has no TypeScript fallback, fails then with the reason the engine didn't load.
+if (isCliChecked) {
+  const probeDirectory = mkdtempSync(join(tmpdir(), "sany-corpus-engine-"));
+  writeFileSync(join(probeDirectory, "M.tla"), "---- MODULE M ----\n====\n");
+  const probe = spawnSync("node", [cli, "tla2sany.xml.XMLExporter", "M"], {
+    cwd: probeDirectory,
+    encoding: "utf8",
+  });
+  rmSync(probeDirectory, { recursive: true, force: true });
+  if (probe.status !== 0) {
+    console.error(
+      `--cli needs the CLI to load the native engine, as an install does; set PROVE_IT_ENGINE_ADDON to the addon:\n${probe.stderr}${probe.stdout}`,
+    );
+    process.exit(1);
+  }
+}
 
 // What a run printed, with what differs between two runs of the same spec rewritten, and without
 // the JVM's note of the options it was given. TLC built as a directory of classes reads the

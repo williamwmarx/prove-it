@@ -4,8 +4,9 @@
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import { check, formatValue } from "../../src";
 import { getEngineThreads } from "../../src/engine/settings";
+import { checkParsed } from "../../src/parallel";
+import { formatValue } from "../../src/values";
 
 const settings = ["PROVE_IT_ENGINE", "PROVE_IT_WORKERS", "PROVE_IT_LIVE_CHECK"].map(
   (name) => [name, process.env[name]] as const,
@@ -43,7 +44,7 @@ const checkInEngine = async (body: string, config: string) => {
     }
   });
   try {
-    const result = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
+    const result = await checkParsed({ source: `---- MODULE M ----\n${body}\n====`, config });
     return { result, lines };
   } finally {
     spy.mockRestore();
@@ -677,7 +678,7 @@ describe("the engine", () => {
         }
       });
       try {
-        await check({
+        await checkParsed({
           source,
           config: "INIT Init\nNEXT Next",
           onProgress: (progress) => {
@@ -705,7 +706,7 @@ describe("the engine", () => {
       const { result, lines } = await checkInEngine(body, config);
       expect(lines).toEqual([expect.stringMatching(/handed over .*: values TLC can't compare$/)]);
       process.env.PROVE_IT_ENGINE = "0";
-      const reference = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
+      const reference = await checkParsed({ source: `---- MODULE M ----\n${body}\n====`, config });
       expect(result.status).toBe("error");
       expect(result.failure?.message).toBe(reference.failure?.message);
     }
@@ -740,7 +741,7 @@ describe("the engine", () => {
         expect.stringMatching(/handed over .*TLC can't compare|with a function$/),
       ]);
       process.env.PROVE_IT_ENGINE = "0";
-      const reference = await check({ source: `---- MODULE M ----\n${body}\n====`, config });
+      const reference = await checkParsed({ source: `---- MODULE M ----\n${body}\n====`, config });
       expect(result).toEqual(reference);
       expect(result.failure?.message).toContain(message);
     }
@@ -762,7 +763,7 @@ describe("the engine", () => {
     const values = ["3", '"s"', "{1}", "<<1>>", "[a |-> 1]", "[b |-> 1]", "M", "A_m"];
     const run = async (source: string, config: string) => {
       try {
-        const result = await check({ source, config, onPrint: () => {} });
+        const result = await checkParsed({ source, config, onPrint: () => {} });
         return [result.status, result.failure?.message];
       } catch (error) {
         return ["thrown", (error as Error).message];
@@ -804,9 +805,9 @@ describe("the engine", () => {
       const source = `---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == ${membership}\n====`;
       const config = "INIT Init\nNEXT Next\nINVARIANT Inv";
       delete process.env.PROVE_IT_ENGINE;
-      const result = await check({ source, config, onPrint: () => {} });
+      const result = await checkParsed({ source, config, onPrint: () => {} });
       process.env.PROVE_IT_ENGINE = "0";
-      const reference = await check({ source, config, onPrint: () => {} });
+      const reference = await checkParsed({ source, config, onPrint: () => {} });
       expect([membership, result.status, result.failure?.message]).toEqual([
         membership,
         reference.status,
@@ -984,7 +985,10 @@ describe("the engine's initial states", () => {
     };
     const run = async () => {
       const progress: string[] = [];
-      const result = await check({ ...options, onProgress: (event) => progress.push(event.kind) });
+      const result = await checkParsed({
+        ...options,
+        onProgress: (event) => progress.push(event.kind),
+      });
       return { result, progress };
     };
     delete process.env.PROVE_IT_ENGINE;
@@ -1008,9 +1012,9 @@ describe("the engine's answers to ENABLED", () => {
       if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
     });
     try {
-      const result = await check({ source, config, onPrint: () => {} });
+      const result = await checkParsed({ source, config, onPrint: () => {} });
       process.env.PROVE_IT_ENGINE = "0";
-      const reference = await check({ source, config, onPrint: () => {} });
+      const reference = await checkParsed({ source, config, onPrint: () => {} });
       expect(result).toEqual(reference);
       // The engine searched every state, rather than handing the search over.
       expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] found \d+ states/));
@@ -1146,7 +1150,7 @@ describe("the engine's hand-over to the interpreter part way through a search", 
     const source = ["---- MODULE M ----", ...lines, "===="].join("\n");
     const checkReporting = async () => {
       const reported: string[] = [];
-      const result = await check({
+      const result = await checkParsed({
         source,
         config,
         onPrint: (line) => reported.push(line),

@@ -492,6 +492,17 @@ export const compareValues = (left: Value, right: Value): number => {
 const modelValues = new Map<string, ModelValue>();
 
 // setStringOrder clears the model values, so each check ranks and creates its own.
+// What TLC prints, as null, for a variable a state leaves undefined: not the model value named
+// null, which a spec may declare, but one only this marks.
+export const UNDEFINED_VARIABLE: ModelValue = {
+  kind: "ModelValue",
+  name: "null",
+  type: undefined,
+  rank: -1,
+  hash: 0,
+  fingerprint: 0,
+};
+
 export const createModelValue = (name: string): ModelValue => {
   const known = modelValues.get(name);
   if (known) return known;

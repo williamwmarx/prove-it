@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { check, TlaError, TlaSyntaxError, TlaUnsupportedError } from "../src";
+import { TlaError, TlaSyntaxError, TlaUnsupportedError } from "../src";
+import { checkParsed } from "../src/parallel";
 import { formatProbability, getActualProbability } from "../src/tlc/summary";
 import { getLibraryModules, TLC_SEED } from "./corpora";
 
@@ -37,7 +38,7 @@ export const checkModel = async (
       `File name ${basename(specPath, ".tla")} does not match the name ${moduleName} of the top level module it contains`,
     );
   }
-  const result = await check({
+  const result = await checkParsed({
     isWarningEnabled,
     source,
     config: readFileSync(configPath, "utf8"),

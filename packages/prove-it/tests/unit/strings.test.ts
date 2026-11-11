@@ -2,13 +2,13 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check } from "../../src";
+import { checkParsed } from "../../src/parallel";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/strings");
 
 describe("STRING matches TLC's Strings class", () => {
   it("evaluates every assumption of the STRING fixture", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: readFileSync(join(DIRECTORY, "StringSet.tla"), "utf8"),
       config: readFileSync(join(DIRECTORY, "StringSet.cfg"), "utf8"),
     });
@@ -16,7 +16,7 @@ describe("STRING matches TLC's Strings class", () => {
   });
 
   it("compares Nat, Int, and Seq(S) like TLC's Java classes", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source: readFileSync(join(DIRECTORY, "OverriddenSets.tla"), "utf8"),
       config: readFileSync(join(DIRECTORY, "OverriddenSets.cfg"), "utf8"),
     });
@@ -24,7 +24,7 @@ describe("STRING matches TLC's Strings class", () => {
   });
 
   it("fails to compare STRING with another set instead of answering FALSE", async () => {
-    const result = await check({
+    const result = await checkParsed({
       source:
         "---- MODULE M ----\nVARIABLE x\nASSUME STRING # {}\nInit == x = 0\nNext == x' = x\n====",
       config: "INIT Init\nNEXT Next",

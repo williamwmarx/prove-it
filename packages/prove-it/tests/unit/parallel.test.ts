@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { checkParsed } from "../../src/parallel";
+
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
@@ -52,19 +54,20 @@ describe("check with workers matches TLC", () => {
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
       workers: 2,
     });
-    expect(result.failure?.message).toBe("The second argument of \\div is 0.");
-    expect(result.failure?.exitCode).toBe(75);
+    expect(result.status).toBe("error");
+    expect(result.violations.map((violation) => violation.headline)).toEqual([
+      "The second argument of \\div is 0.",
+    ]);
   });
 
   it("summarizes the outdegrees and the fingerprints of every worker like one worker", async () => {
-    const tlaTs = await loadPackage();
     const directory = join(import.meta.dirname, "../../benchmarks/queue");
     const options = {
       source: readFileSync(join(directory, "Queue.tla"), "utf8"),
       config: readFileSync(join(directory, "Queue.cfg"), "utf8"),
     };
-    const sequential = await checkWithThreads(tlaTs, options);
-    const parallel = await checkWithThreads(tlaTs, { ...options, workers: 3 });
+    const sequential = await checkParsed(options);
+    const parallel = await checkParsed({ ...options, workers: 3 });
     expect(parallel.fingerprintDistance).toBe(sequential.fingerprintDistance);
     expect(parallel.fingerprintDistance).toBeDefined();
     const getTotals = (outDegrees: number[] | undefined = []) => [
@@ -83,8 +86,8 @@ describe("check with workers matches TLC", () => {
       workers: 2,
     });
     expect(result.status).toBe("invariant-violation");
-    expect(result.violation?.name).toBe("Inv");
-    expect(result.violation?.trace).toHaveLength(3);
+    expect(result.violations[0]?.headline).toBe("Invariant Inv is violated.");
+    expect(result.violations[0]?.states).toHaveLength(3);
   });
 
   it("reports an action property violated in a level the workers expand", async () => {
@@ -105,7 +108,7 @@ describe("check with workers matches TLC", () => {
       workers: 4,
     });
     expect(result.status).not.toBe("success");
-    expect(result.violation?.name).toBe("Prop");
+    expect(result.violations[0]?.headline).toBe("Action property Prop is violated.");
     expect([result.generatedStates, result.distinctStates]).toEqual([32017, 32017]);
   });
 
@@ -177,16 +180,16 @@ describe("check with workers matches TLC", () => {
   it("reports the shortest invariant violation trace like one worker", async () => {
     const result = await checkFixtureInParallel("water-jugs", "WaterJugs", 4);
     expect(result.status).toBe("invariant-violation");
-    expect(result.violation?.name).toBe("GoalNotReached");
-    expect(result.violation?.trace).toHaveLength(7);
+    expect(result.violations[0]?.headline).toBe("Invariant GoalNotReached is violated.");
+    expect(result.violations[0]?.states).toHaveLength(7);
     expect(getCounts(result)).toEqual([73, 14, 7]);
   });
 
   it("reports deadlock with its trace like one worker", async () => {
     const result = await checkFixtureInParallel("counter", "Counter", 2);
     expect(result.status).toBe("deadlock");
-    expect(result.violation?.trace.map((step) => step.action)).toEqual([
-      undefined,
+    expect(result.violations[0]?.states.map((step) => step.label.split(" line ")[0])).toEqual([
+      "Initial predicate",
       "Increment",
       "Increment",
       "Increment",

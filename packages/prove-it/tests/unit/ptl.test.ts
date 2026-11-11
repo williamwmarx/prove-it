@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import { TlaProverError, TlaSyntaxError } from "../../src/errors";
+import { TlaProverError } from "../../src/errors";
 import { getObligations } from "../../src/obligations";
+import { decide } from "../../src/prover/deciders";
 import { encodeForBackend } from "../../src/prover/prove";
-import { decidePtl } from "../../src/prover/ptl/decide";
 
 const OPTIONS = { timeLimitMs: 10_000 };
 
@@ -30,7 +30,7 @@ const getInput = (theorem: string[]) => {
 };
 
 // tlapm proves exactly the obligations expected to be unsat.
-const getVerdict = (theorem: string[]) => decidePtl(getInput(theorem), OPTIONS);
+const getVerdict = (theorem: string[]) => decide("ls4", getInput(theorem), OPTIONS).verdict;
 
 const INDUCTION = [
   "THEOREM Spec => []Inv",
@@ -154,16 +154,5 @@ describe("PTL backend matches tlapm with LS4", () => {
         "  BY ExpandENABLED, PTL DEF Spec",
       ]),
     ).toThrow(TlaProverError);
-  });
-});
-
-describe("PTL decision", () => {
-  it("gives up once the signal aborts", () => {
-    const input = getInput(["THEOREM ASSUME x = 1 PROVE x = 1", "  BY PTL"]);
-    expect(decidePtl(input, { ...OPTIONS, signal: AbortSignal.abort() })).toBe("unknown");
-  });
-
-  it("rejects text that is not LS4 input", () => {
-    expect(() => decidePtl("not ((always h00000) ->", OPTIONS)).toThrow(TlaSyntaxError);
   });
 });

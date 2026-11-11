@@ -143,6 +143,12 @@ impl<'ir> Rebuilder<'ir> {
         Ok(())
     }
 
+    /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
+    /// over a set (`Violation::chosen`), ids of `store`, which TLC computed as it started.
+    pub fn set_chosen(&mut self, store: &Store, values: &[(u32, Id)]) {
+        self.evaluator.set_chosen(store, values);
+    }
+
     /// Takes the state of the generator where an invariant of the trace's last state stopped the
     /// search (`Violation::random`), which TLC goes on drawing from as it finds that state again.
     pub fn set_violation_random(&mut self, random: u64) {

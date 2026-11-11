@@ -17,8 +17,8 @@ use crate::compile::{Compiler, LEVEL_SLOT, NEXT_LEVEL_SLOT};
 use crate::context::{EngineContext, first_failing_changed, holds, holds_all, holds_all_changed};
 use crate::machine::{Machine, Registers, UNASSIGNED};
 use crate::search::{
-    Reporter, SearchOutcome, Settings, StopCounts, Violation, ViolationKind, describe,
-    is_engine_limit, report_printed, start, startup_values,
+    Reporter, SearchOutcome, Settings, StopCounts, Violation, ViolationKind, chosen_values,
+    describe, is_engine_limit, report_printed, start, startup_values,
 };
 
 // TLC reports its progress every minute (`TLCGlobals.progressInterval`).
@@ -149,7 +149,9 @@ pub fn simulate(
                     "unsupported: the startup's values of a violation's trace".into(),
                 );
             };
+            let chosen = chosen_values(&mut machine, &context);
             Some(Box::new(Violation {
+                chosen,
                 kind: stopped.kind,
                 states: stopped.states,
                 labels: stopped.labels,

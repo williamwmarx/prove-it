@@ -1,13 +1,14 @@
 import { describe, expect, it } from "bun:test";
 
-import { check, TlaError } from "../../src";
+import { TlaError } from "../../src";
 import { getErrorExitCode } from "../../src/errors";
+import { checkParsed } from "../../src/parallel";
 
 const STEP = "Init == x = 0\nNext == x < 2 /\\ x' = x + 1";
 
 const getFailureExitCode = async (definitions: string, config = "INIT Init\nNEXT Next") => {
   try {
-    const result = await check({
+    const result = await checkParsed({
       source: `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\nVARIABLE x\n${definitions}\n====`,
       config,
       onPrint: () => {},
@@ -119,7 +120,7 @@ describe("CLI exit codes match TLC", () => {
     const definitions = `Init == x = FALSE\nNext == x' \\in BOOLEAN\nSpec == Init /\\ [][Next]_x /\\ \\A i \\in 1..6 : \\A j \\in 1..6 : SF_x(Next)\nProp == <>[](x \\in BOOLEAN)`;
     const config = "SPECIFICATION Spec\nPROPERTY Prop";
     await expect(
-      check({
+      checkParsed({
         source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
         config,
       }),

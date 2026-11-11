@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { readLogLines } from "../../scripts/state-logs";
-import { check, type CheckOptions } from "../../src";
+import type { CheckOptions } from "../../src/check";
+import { checkParsed } from "../../src/parallel";
 import { createStateDecoder } from "../../src/transfer";
 import { formatState } from "../../src/values";
 
@@ -32,7 +33,7 @@ export const restoreSettings = () => {
 };
 
 interface Run {
-  result: Awaited<ReturnType<typeof check>>;
+  result: Awaited<ReturnType<typeof checkParsed>>;
   lines: string[];
   progress: string[];
   printed: string[];
@@ -55,7 +56,7 @@ export const run = async (
     if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
   });
   try {
-    const result = await check({
+    const result = await checkParsed({
       ...options,
       onPrint: (text) => printed.push(text),
       onProgress: (report) => {

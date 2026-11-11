@@ -6,7 +6,10 @@ use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 
 use crate::host::Host;
+use crate::outcome::{Outcome, Reported, ReportedState};
+use crate::plain::Variable;
 use crate::time::format_date;
+use crate::trace::format_variables;
 
 pub const COMMAND_LINE_ERROR: u32 = 1102;
 pub const STARTING: u32 = 2185;
@@ -63,11 +66,13 @@ pub enum Level {
 }
 
 /// Where a check writes: what TLC prints, and Prove It's own notes, such as that a model isn't
-/// native yet, which the binary writes to stdout and stderr; and the host it reads from.
+/// native yet, which the binary writes to stdout and stderr; the host it reads from; and the
+/// outcome it records as it prints, which the library reads.
 pub struct Output<'o> {
     pub out: &'o mut dyn Write,
     pub err: &'o mut dyn Write,
     pub host: &'o dyn Host,
+    pub outcome: Outcome,
 }
 
 /// Writes TLC's messages. MP.printWarning prints a warning once, which -nowarning drops, and
@@ -86,6 +91,7 @@ pub struct Printer<'o> {
     pub coverage: Option<Vec<tla_trace::CoverageMessage>>,
     /// Whether it printed a state of an error trace, which TLC records for that spec.
     pub is_trace_printed: bool,
+    pub outcome: &'o mut Outcome,
 }
 
 impl<'o> Printer<'o> {
@@ -100,6 +106,49 @@ impl<'o> Printer<'o> {
             is_trace_recorded: false,
             coverage: None,
             is_trace_printed: false,
+            outcome: &mut output.outcome,
+        }
+    }
+
+    /// The message TLC reports a violation or an error with, which the outcome records with the
+    /// states printed after it.
+    pub fn report(&mut self, code: u32, headline: &str) {
+        self.print(code, Level::Error, headline);
+        self.record(Reported {
+            code,
+            headline: headline.to_string(),
+            states: Vec::new(),
+            loop_start: None,
+        });
+    }
+
+    /// Keeps a violation or an error in the outcome, where its caller reads it (`Host::is_plain`).
+    pub fn record(&mut self, reported: Reported) {
+        if self.host.is_plain() {
+            self.outcome.violations.push(reported);
+        }
+    }
+
+    /// A state of the behavior TLC reports, at its position from 1.
+    pub fn state(&mut self, position: usize, label: &str, variables: Vec<Variable>) {
+        self.print(
+            STATE_PRINT_2,
+            Level::State,
+            &format!("{position}: <{label}>\n{}", format_variables(&variables)),
+        );
+        if let Some(reported) = self.outcome.violations.last_mut() {
+            reported.states.push(ReportedState {
+                label: label.to_string(),
+                variables,
+            });
+        }
+    }
+
+    /// A line the spec printed as TLC searched, which the outcome records where its caller reads it.
+    pub fn printed(&mut self, text: &str) {
+        self.line(text);
+        if self.host.is_plain() {
+            self.outcome.prints.push(text.to_string());
         }
     }
 

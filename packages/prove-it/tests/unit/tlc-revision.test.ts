@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check, formatValue, parseConfig } from "../../src";
+import { check, parseConfig } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-set");
 
@@ -32,8 +32,8 @@ describe("TLCGet revision and configuration match TLC", () => {
     expect(printed[0]).toMatch(/^"\d{4}\.\d{2}\.\d{2}\.\d{6}"$/);
     expect(printed[1]).toBe("0");
     expect(printed[2]).toMatch(/^"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,3}Z"$/);
-    expect(printed.slice(3, 4)).toEqual([formatValue("development")]);
+    expect(printed.slice(3, 4)).toEqual(['"development"']);
     expect(printed[4]).toMatch(/^\d+$/);
-    expect(printed[5]).toBe(formatValue("unknown"));
+    expect(printed[5]).toBe('"unknown"');
   });
 });

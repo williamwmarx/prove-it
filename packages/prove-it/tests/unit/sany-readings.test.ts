@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { check, parseModule } from "../../src";
+import { parseModule } from "../../src";
 import { parseConfig } from "../../src/config";
 import { createEnvironment } from "../../src/environment";
 import { checkParsed } from "../../src/parallel";
@@ -102,7 +102,7 @@ describe("SANY's readings", () => {
       };
       const result = isRead
         ? await checkParsed(options, sany.report.readings)
-        : await check(options);
+        : await checkParsed(options);
       return { result, lines };
     };
     const expected = await getResult(false);

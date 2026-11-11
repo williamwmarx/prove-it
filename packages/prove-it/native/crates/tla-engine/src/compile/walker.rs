@@ -24,8 +24,8 @@ use super::nodes::assign_bound;
 use super::predicate::{Leaf, Predicate, Reject, Test};
 use super::{
     Argument, Binding, CompileError, Compiled, Compiler, Compiling, Context, Definition,
-    DefinitionForm, Operator, OperatorBody, Root, SEARCH_SLOTS, Scope, bind, decline, eval, leaf,
-    lookup, unsupported,
+    DefinitionForm, Operator, OperatorBody, OperatorKey, Root, SEARCH_SLOTS, Scope, bind, decline,
+    eval, leaf, lookup, unsupported,
 };
 use crate::footprint::Footprint;
 use crate::machine::{Continue, Eval, Machine, Member, Step, UNASSIGNED};
@@ -639,9 +639,9 @@ pub(crate) struct WalkedFunction {
 /// applies the operator and the variables its arguments name, and the slots from its first
 /// parameter's to the last the walk binds.
 pub(crate) struct WalkedOperator {
-    key: usize,
+    key: OperatorKey,
     // The operator a LET defines, kept so its address isn't reused.
-    operator: Option<Rc<Operator>>,
+    _operator: Option<Rc<Operator>>,
     variables: Vec<Option<(u32, bool)>>,
     is_primed: bool,
     can_print: bool,
@@ -654,7 +654,7 @@ pub(crate) struct WalkedOperator {
 }
 
 struct RecursiveApplication {
-    key: usize,
+    key: OperatorKey,
     operator: Option<Rc<Operator>>,
     params: Vec<Param>,
     body: NodeId,
@@ -1203,7 +1203,7 @@ impl<'a> Compiler<'a> {
                 return None;
             };
             return operator.is_recursive.then(|| RecursiveApplication {
-                key: Rc::as_ptr(operator) as usize,
+                key: OperatorKey::local(operator),
                 operator: Some(Rc::clone(operator)),
                 params: operator.params.clone(),
                 body,
@@ -1220,7 +1220,7 @@ impl<'a> Compiler<'a> {
             return None;
         };
         (definition.flags & Definition::RECURSIVE != 0).then(|| RecursiveApplication {
-            key: definition_node as usize,
+            key: OperatorKey::Global(definition_node),
             operator: None,
             params: params.clone(),
             body: definition.body,
@@ -1324,10 +1324,6 @@ impl<'a> Compiler<'a> {
         }
         let is_walked = |walked: &&WalkedOperator, known: &Known| {
             walked.key == recursive.key
-                && match (&walked.operator, &recursive.operator) {
-                    (Some(walked), Some(operator)) => Rc::ptr_eq(walked, operator),
-                    (walked, operator) => walked.is_none() && operator.is_none(),
-                }
                 && walked.variables == variables
                 && walked.is_primed == recursive.base.is_primed
                 && walked.can_print == recursive.base.can_print
@@ -1388,7 +1384,7 @@ impl<'a> Compiler<'a> {
                 let walk = Arc::new(OnceLock::new());
                 self.walked_operators.push(WalkedOperator {
                     key: recursive.key,
-                    operator: recursive.operator.clone(),
+                    _operator: recursive.operator.clone(),
                     variables,
                     is_primed: recursive.base.is_primed,
                     can_print: recursive.base.can_print,
