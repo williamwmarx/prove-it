@@ -137,7 +137,7 @@ pub type GetInstance<'a> = Rc<dyn Fn(&Rc<Instance>) -> Result<InstancedModule> +
 pub type GetKey = Rc<dyn Fn(&Definition) -> Name>;
 
 /// A copy of a definition, kept so no other takes its address, and the INSTANCEs it is under.
-type InstanceCopy = (Rc<Definition>, Rc<[usize]>);
+type InstanceCopy = (Rc<Definition>, Rc<[usize]>, Rc<Definition>);
 
 /// A name that selects nothing, the arguments SANY analyzes before it, and the error it reports.
 type SelectionError = (Expr, Vec<Expr>, SanyError);
@@ -160,6 +160,8 @@ pub struct Tables {
     /// applies an operator put in for an operator declaration.
     substitutions: RefCell<FastMap<usize, (Expr, usize, bool)>>,
     instance_count: Cell<usize>,
+    /// The declaration each expression an INSTANCE puts in replaces.
+    substituted_declarations: RefCell<FastMap<usize, (Expr, Rc<Declaration>)>>,
     /// The copies INSTANCEs make of definitions, each with the INSTANCEs it is under.
     copies: RefCell<FastMap<usize, InstanceCopy>>,
 }
@@ -196,6 +198,26 @@ impl Tables {
         if let Some((instance, is_operator)) = carried {
             self.add_substitution(copy, instance, is_operator);
         }
+        let declaration = self.get_substituted_declaration(source);
+        if let Some(declaration) = declaration {
+            self.add_substituted_declaration(copy, &declaration);
+        }
+    }
+
+    /// Notes the declaration an expression an INSTANCE puts in replaces.
+    pub fn add_substituted_declaration(&self, expression: &Expr, declaration: &Rc<Declaration>) {
+        self.substituted_declarations.borrow_mut().insert(
+            address(expression),
+            (expression.clone(), declaration.clone()),
+        );
+    }
+
+    /// The declaration an expression an INSTANCE put in replaces.
+    pub fn get_substituted_declaration(&self, expression: &Expr) -> Option<Rc<Declaration>> {
+        self.substituted_declarations
+            .borrow()
+            .get(&address(expression))
+            .map(|(_, declaration)| declaration.clone())
     }
 
     /// Whether an INSTANCE puts this expression in for a declaration, where TLC's `SubstInNode`
@@ -222,9 +244,10 @@ impl Tables {
         let instances: Rc<[usize]> = std::iter::once(instance)
             .chain(self.get_copy_instances(source).iter().copied())
             .collect();
-        self.copies
-            .borrow_mut()
-            .insert(Rc::as_ptr(copy) as usize, (copy.clone(), instances));
+        self.copies.borrow_mut().insert(
+            Rc::as_ptr(copy) as usize,
+            (copy.clone(), instances, source.clone()),
+        );
     }
 
     /// The INSTANCEs whose substitutions a copy of a definition is under.
@@ -232,7 +255,24 @@ impl Tables {
         self.copies
             .borrow()
             .get(&(Rc::as_ptr(definition) as usize))
-            .map_or_else(|| Rc::from([]), |(_, instances)| instances.clone())
+            .map_or_else(|| Rc::from([]), |(_, instances, _)| instances.clone())
+    }
+
+    /// The definition a copy an INSTANCE made was copied from, through every INSTANCE it went
+    /// through, or the definition itself where no INSTANCE copied it.
+    pub fn get_original(&self, definition: &Rc<Definition>) -> Rc<Definition> {
+        let mut original = definition.clone();
+        loop {
+            let source = self
+                .copies
+                .borrow()
+                .get(&(Rc::as_ptr(&original) as usize))
+                .map(|(_, _, source)| source.clone());
+            match source {
+                Some(source) => original = source,
+                None => return original,
+            }
+        }
     }
 
     /// `getSourceName`.

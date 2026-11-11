@@ -487,6 +487,8 @@ pub type AddDefinition<'a> =
 pub struct Instantiation<'a> {
     pub params: Vec<OperatorParam>,
     pub substitutions: OrderedMap<Name, Expr>,
+    /// The constants the substitutions are for, by name.
+    pub constants: FastMap<Name, Rc<Declaration>>,
     pub variables: FastSet<Name>,
     pub get_definition: GetDefinition<'a>,
     pub is_parameterized: Box<dyn Fn(&str) -> bool + 'a>,
@@ -606,8 +608,13 @@ impl<'a> Instantiator<'a> {
     pub fn new(instantiation: Instantiation<'a>, tables: &'a Tables) -> Instantiator<'a> {
         let instance = tables.new_instance();
         let mut names = Vec::new();
-        for expression in instantiation.substitutions.values() {
+        for (name, expression) in instantiation.substitutions.iter() {
             tables.add_substitution(expression, instance, false);
+            // A LET's INSTANCE renames each substitution's name with the INSTANCE's suffix.
+            let declared = name.split('#').next().unwrap_or(name);
+            if let Some(declaration) = instantiation.constants.get(declared) {
+                tables.add_substituted_declaration(expression, declaration);
+            }
             get_free_names(expression, &FastSet::default(), tables, &mut names);
         }
         Instantiator {

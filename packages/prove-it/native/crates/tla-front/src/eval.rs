@@ -256,6 +256,33 @@ impl Evaluator<'_> {
         get_boolean(&self.evaluate(expression, scope)?)
     }
 
+    /// The definition a name has where nothing binds it locally. Where substitutions are
+    /// unbound, a copy an INSTANCE made of a definition the configuration overrides is the
+    /// override, as TLC overrides the definition's node, which the INSTANCE shares.
+    fn get_global_definition(&self, name: &str) -> Option<&Rc<Definition>> {
+        let environment = self.environment;
+        let definition = get_definition(name, environment)?;
+        if self.unbound.borrow().is_empty() {
+            return Some(definition);
+        }
+        let original = environment.tables.get_original(definition);
+        if Rc::ptr_eq(&original, definition) {
+            return Some(definition);
+        }
+        environment
+            .substitutions
+            .iter()
+            .find(|(key, _)| {
+                environment
+                    .definitions
+                    .get(*key)
+                    .is_some_and(|overridden| Rc::ptr_eq(overridden, &original))
+            })
+            .map_or(Some(definition), |(_, key)| {
+                environment.definitions.get(key)
+            })
+    }
+
     /// The value a name has where nothing binds it locally: a configuration's value, a
     /// definition's, or a builtin's.
     fn evaluate_global(&self, name: &str) -> Result<ConfigValue> {
@@ -266,7 +293,7 @@ impl Evaluator<'_> {
         if let Some(value) = environment.constants.get(name) {
             return Ok(value.clone());
         }
-        if let Some(definition) = get_definition(name, environment) {
+        if let Some(definition) = self.get_global_definition(name) {
             return match &definition.kind {
                 DefinitionKind::Operator { params, .. } if params.is_empty() => {
                     self.evaluate(&definition.body, None)
@@ -588,7 +615,27 @@ impl Evaluator<'_> {
                 .get_substituting_instance(expression)
                 .is_some_and(|instance| self.unbound.borrow().contains(&instance))
         {
-            return Err(FrontError::NotYet(UNBOUND.to_owned()));
+            // TLC's lookup falls back to the declaration's own value, which the configuration
+            // gives a constant of the root module and the modules it extends.
+            let root = self
+                .environment
+                .tables
+                .get_substituted_declaration(expression)
+                .filter(|declaration| {
+                    self.environment
+                        .root_constants
+                        .iter()
+                        .any(|constant| Rc::ptr_eq(constant, declaration))
+                });
+            return match root {
+                None => Err(FrontError::NotYet(UNBOUND.to_owned())),
+                Some(declaration) if declaration.arity == 0 => {
+                    self.evaluate_global(&declaration.name)
+                }
+                Some(_) => Err(not_yet(
+                    "an operator constant TLC reads past an INSTANCE's substitution",
+                )),
+            };
         }
         self.depth.set(self.depth.get() + 1);
         let value = self.evaluate_expression(expression, scope);
@@ -642,11 +689,13 @@ impl Evaluator<'_> {
                         _ => return Err(not_yet("an operator a scope doesn't bind")),
                     }
                 } else {
-                    match get_definition(&name, self.environment).map(|definition| &definition.kind)
+                    match self
+                        .get_global_definition(&name)
+                        .map(|definition| &definition.kind)
                     {
                         Some(DefinitionKind::Operator { params, .. }) => Some((
                             params.clone(),
-                            get_definition(&name, self.environment)
+                            self.get_global_definition(&name)
                                 .map(|definition| definition.body.clone())
                                 .expect("a definition"),
                             None,

@@ -283,11 +283,14 @@ label whole (`SpecProcessor.processConfigProps`). It unrolls a property's \A whe
 the sets in the property's context, which leaves unbound the substitutions of the INSTANCEs it went
 through to the \A (each `SubstInNode`'s, which it collects apart), and takes the \A whole where
 reading one fails; operator arguments are read lazily, LET definitions as they are read, and an
-INSTANCE the sets reach themselves binds its own substitutions. The front end evaluates the sets
+INSTANCE the sets reach themselves binds its own substitutions. A declaration the root module also
+has, through EXTENDS, isn't unbound there: TLC's lookup falls back to the value the configuration
+gives it, and the configuration's override of a definition holds for the INSTANCE's copy too, since
+both are the one node. The front end evaluates the sets
 so, with the substitutions of the INSTANCEs whose copies it expanded through left unbound, and
 declines a \A taken whole whose body fails, where TLC wraps the failure in
-`EC.TLC_LIVE_CANNOT_HANDLE_FORMULA`. A grid of 100 small specs
-(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 632 of its 800 runs; the others
+`EC.TLC_LIVE_CANNOT_HANDLE_FORMULA`. A grid of 104 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 664 of its 832 runs; the others
 decline, for the constant evaluator's gaps, a substituted declaration, such a \A, or a tautology
 after a state-level property, which TLC warns of first. Four name an
 INSTANCE's definition before the INSTANCE, which SANY doesn't know there.
