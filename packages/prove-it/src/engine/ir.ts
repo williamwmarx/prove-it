@@ -63,7 +63,7 @@ import {
 } from "../values";
 
 // The version of the layout below, which the decoder checks. Any change to it changes this.
-export const IR_VERSION = 15;
+export const IR_VERSION = 16;
 
 // "PIIR" read as a little-endian word.
 const MAGIC = 0x52494950;
@@ -989,6 +989,12 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, writeRoot(assumption.expression));
     push(model, getText(assumption.name));
   }
+  // The _PERIODIC definition, which the model ends with, named here as tla-front names it.
+  const periodic = config.periodic === undefined ? [] : [config.periodic];
+  const periodicWords = periodic.flatMap((name) => {
+    const definition = getDefinition(name, environment);
+    return [getText(name), definition ? getDefinitionIndex(definition) : -1];
+  });
 
   // Definitions and scopes reach more of each, in the order they are first met.
   for (let definition = 0, scope = 0; ;) {
@@ -1030,6 +1036,8 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     model,
     specificationRead.isRead && input.getSpecification ? getValue(input.getSpecification()) : -1,
   );
+  push(model, periodic.length);
+  for (const word of periodicWords) push(model, word);
 
   // --- the blob ---
 

@@ -506,14 +506,15 @@ fn is_register_name(key: &Value) -> bool {
 }
 
 /// The values a postcondition reads of the run: TLCGet("all:named"), TLCGet("stats") and TLCExt's
-/// CounterExample, built as TLC builds them.
+/// CounterExample, built as TLC builds them. The `_PERIODIC` expression reads the counts alone:
+/// the evaluator doesn't follow the rest as TLC gives them then.
 pub struct Runtime {
-    pub named: Value,
+    pub named: Option<Value>,
     pub stats: Value,
-    pub counter_example: Value,
+    pub counter_example: Option<Value>,
     /// Each `_POSSIBLE` predicate's count by name, totalled over the workers, as `_Counts` gives
     /// it.
-    pub possible_counts: Value,
+    pub possible_counts: Option<Value>,
 }
 
 const MAXIMUM_DEPTH: u32 = 10_000;
@@ -4317,7 +4318,10 @@ impl<'ir> Evaluator<'ir> {
                 let key = String::from_utf16_lossy(&key.units);
                 let runtime = self.runtime.as_ref().expect("the runtime");
                 match key.as_str() {
-                    "all:named" => runtime.named.clone(),
+                    "all:named" | "all" if runtime.named.is_none() => {
+                        return fail("TLC's registers outside a postcondition");
+                    }
+                    "all:named" => runtime.named.clone().expect("the registers"),
                     "all" => {
                         let (indices, values) = self
                             .registers
@@ -5111,11 +5115,10 @@ impl<'ir> Evaluator<'ir> {
             "_Counts" if self.runtime.is_some() => {
                 arity(0)?;
                 self.reads += 1;
-                self.runtime
-                    .as_ref()
-                    .expect("the runtime")
-                    .possible_counts
-                    .clone()
+                match &self.runtime.as_ref().expect("the runtime").possible_counts {
+                    Some(counts) => counts.clone(),
+                    None => return fail("_Counts outside a postcondition"),
+                }
             }
             "Trace" if self.trace.is_some() => {
                 arity(0)?;
@@ -5126,11 +5129,10 @@ impl<'ir> Evaluator<'ir> {
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;
                 self.reads += 1;
-                self.runtime
-                    .as_ref()
-                    .expect("the runtime")
-                    .counter_example
-                    .clone()
+                match &self.runtime.as_ref().expect("the runtime").counter_example {
+                    Some(counter_example) => counter_example.clone(),
+                    None => return fail("CounterExample outside a postcondition"),
+                }
             }
             // The states of a CounterExample as a sequence, each at its number
             // (`CounterExample.toTrace`).

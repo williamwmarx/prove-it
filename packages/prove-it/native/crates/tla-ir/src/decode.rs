@@ -814,6 +814,11 @@ impl Decoder<'_> {
             value if value >= 0 => Some(value as u32),
             other => return self.error(format!("TLCGet(\"spec\") value {other}")),
         };
+        let mut periodics = self.unprinted()?;
+        if periodics.len() > 1 {
+            return self.error(format!("{} periodic definitions", periodics.len()));
+        }
+        let periodic = periodics.pop();
         Ok(Model {
             init,
             next,
@@ -855,6 +860,7 @@ impl Decoder<'_> {
             instance_actions,
             instance_names,
             tlc_spec,
+            periodic,
         })
     }
 

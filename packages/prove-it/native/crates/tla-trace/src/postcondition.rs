@@ -105,33 +105,7 @@ impl Rebuilder<'_> {
             )
         };
         let int = |value: i64| i32::try_from(value).map(Value::Int);
-        let Ok(stats) = [
-            inputs.stats.queue,
-            inputs.stats.distinct,
-            inputs.stats.initial,
-            inputs.stats.generated,
-            inputs.stats.diameter,
-            inputs.stats.duration,
-        ]
-        .map(int)
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>() else {
-            return unsupported("reading counts past an int");
-        };
-        let stats = run(record(
-            [
-                "queue",
-                "distinct",
-                "initial",
-                "generated",
-                "diameter",
-                "duration",
-            ]
-            .into_iter()
-            .zip(stats)
-            .chain([("worker", Value::Int(0))])
-            .collect(),
-        ))?;
+        let stats = stats_record(evaluator, &inputs.stats)?;
         // The named registers, each the tuple of one worker's value: those TLCSet set, and each
         // `_POSSIBLE` count TLC took, by name.
         let counted: Vec<_> = inputs
@@ -178,10 +152,10 @@ impl Rebuilder<'_> {
         evaluator.level = 0;
         evaluator.printed.clear();
         evaluator.runtime = Some(Runtime {
-            named,
+            named: Some(named),
             stats,
-            counter_example,
-            possible_counts,
+            counter_example: Some(counter_example),
+            possible_counts: Some(possible_counts),
         });
         let result = evaluator.evaluate(body, &Context::default());
         evaluator.runtime = None;
@@ -369,6 +343,40 @@ impl Rebuilder<'_> {
             ("state", run(set_of(states))?),
         ]))
     }
+}
+
+/// TLCGet("stats") (`AbstractChecker.getStatistics`), as the main thread reads it: worker 0.
+pub(crate) fn stats_record(evaluator: &Evaluator<'_>, stats: &Stats) -> Result<Value, Unsupported> {
+    let Ok(counts) = [
+        stats.queue,
+        stats.distinct,
+        stats.initial,
+        stats.generated,
+        stats.diameter,
+        stats.duration,
+    ]
+    .map(|count| i32::try_from(count).map(Value::Int))
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>() else {
+        return Err(Unsupported(
+            "TLCGet(\"stats\") of counts past an int".into(),
+        ));
+    };
+    run(Value::record(
+        [
+            "queue",
+            "distinct",
+            "initial",
+            "generated",
+            "diameter",
+            "duration",
+        ]
+        .into_iter()
+        .zip(counts)
+        .chain([("worker", Value::Int(0))])
+        .map(|(name, value)| (evaluator.counterexample_field(name, false), value))
+        .collect(),
+    ))
 }
 
 // The parameters of the operator TLC splits an action from (`Action.getParameters`), with the
