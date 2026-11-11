@@ -1079,7 +1079,8 @@ error.
   configuration's predicates; and -dump of a search it stops. A function definition, which TLC
   fails comparing with FALSE, and a name the configuration assigns a value, a module's builtin or
   one of TLC's constant values (TRUE, BOOLEAN, ...), which TLC fails on as it starts, decline as
-  the binary starts; an operator of the core language TLC reports as not defined. At the first progress point, where TLC evaluates the
+  the binary starts; an operator of the core language, or a synonym (`<=`), TLC reports as not
+  defined. At the first progress point, where TLC evaluates the
   expression, the search declines a configuration with an assignment or substitution qualified by
   a module, which the evaluator doesn't follow, and temporal properties, whose check of the
   current state space TLC prints before the expression's.

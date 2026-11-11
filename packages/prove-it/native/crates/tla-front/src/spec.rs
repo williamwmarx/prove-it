@@ -14,6 +14,7 @@ use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
 use crate::standard_builtins::CORE_OPERATORS;
+use crate::tlc_data::SANY_OPERATOR_SYNONYMS;
 use tla_ir::PredicateForm;
 
 /// `Scope`: a name bound to a value, an expression or an operator, in front of the scope it
@@ -1269,9 +1270,14 @@ pub fn check_search_config(
         // the core language it doesn't hold there.
         let is_core = CORE_OPERATORS.iter().any(|operator| operator.0 == &**name)
             && !["TRUE", "FALSE", "BOOLEAN", "STRING"].contains(&&**name);
+        // TLC holds an operator by its first name only (`<=` is `\leq`'s synonym).
+        let is_synonym = SANY_OPERATOR_SYNONYMS
+            .iter()
+            .any(|synonyms| synonyms[1..].contains(&&**name));
         if get_definition(name, environment).is_none()
             && environment.builtins.contains_key(&**name)
             && !is_core
+            && !is_synonym
         {
             return Err(not_yet("a _PERIODIC that names a builtin operator"));
         }

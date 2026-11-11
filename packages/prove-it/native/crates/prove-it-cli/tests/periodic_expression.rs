@@ -357,19 +357,22 @@ fn declines_a_periodic_naming_a_builtin() {
 // isn't defined, as the binary reports.
 #[test]
 fn reports_a_periodic_naming_a_core_operator_as_undefined() {
-    let (output, directory) = run_spec_with(
-        "periodic-core",
-        &periodic_spec(PERIODIC_COUNTER, "TRUE"),
-        &PERIODIC_CONFIG.replace("_PERIODIC Periodic", "_PERIODIC SUBSET"),
-        &[],
-    );
-    let text = stdout(&output);
-    assert_eq!(output.status.code(), Some(151), "{text}");
-    assert!(
-        text.contains("Error: The periodic SUBSET specified in the configuration file\nis not defined in the specification.\n"),
-        "{text}"
-    );
-    std::fs::remove_dir_all(directory).expect("removed");
+    // TLC holds an operator by its first name only, so `<=`, `\\leq`'s synonym, isn't defined.
+    for name in ["SUBSET", "<="] {
+        let (output, directory) = run_spec_with(
+            "periodic-core",
+            &periodic_spec(PERIODIC_COUNTER, "TRUE"),
+            &PERIODIC_CONFIG.replace("_PERIODIC Periodic", &format!("_PERIODIC {name}")),
+            &[],
+        );
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(151), "{name}: {text}");
+        assert!(
+            text.contains(&format!("Error: The periodic {name} specified in the configuration file\nis not defined in the specification.\n")),
+            "{name}: {text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
 }
 
 // TLC reads a definition through an assignment qualified by a module, `Q = [Stop] FALSE`, which
