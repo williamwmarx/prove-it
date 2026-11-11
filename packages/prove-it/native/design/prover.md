@@ -536,7 +536,7 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 | `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps Zenon's `LICENSE` beside the code (the TypeScript Zenon, which kept it too, is deleted) |
 | `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
 | `prove-isabelle` | Isabelle2025's Pure, Isar, Provers (BSD-style, Cambridge/TUM), and Isabelle/TLA+'s theories and ML setup as tlapm ships them (BSD, tlapm's licence) | BSD-3-Clause-style | the Isabelle section, and the tlapm section for the logic data and `tla/`; `LICENSE` and `LICENSE-tlapm` move with the code |
-| `prove-ptl` | tlapm's PTL backend input; the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` ports | tlapm section |
+| `prove-ptl` | tlapm's PTL backend input; the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` ports | tlapm section (no section named the TypeScript decider, which is deleted) |
 | `prove-obligations` | tlapm (obligations, Prep, encoders, `.tlacache`, TLAPS.tla verbatim) | BSD-2-Clause-style (INRIA, Microsoft, Linux Foundation) | tlapm section |
 | `prove-obligations` (`format`, `marshal`, the `getHash` of `action`) | OCaml's `Format` (`stdlib/format.ml`), Marshal (`runtime/intern.c`, `extern.c`), `runtime/hash.c` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust files |
 
@@ -1084,6 +1084,17 @@ is next.
   port, say so, and label those results `decider: "rust"`. `conformance:zenon` compares the native
   Zenon with tlapm's recorded results and binary. The PTL and Isabelle deletions follow the same
   path.
+- P1 PTL, the TypeScript deleted (by the coordinator's decision, after Zenon's): `src/prover/ptl/`
+  is gone but `encode.ts`, which P5c owns. `tests/unit/ptl.test.ts` keeps the encoder's tests,
+  whose inputs the Rust PTL decides now; its two tests of the decider alone have counterparts in
+  `crates/prover/ptl/tests/ls4.rs`, which also pins the inputs of its other tests with the verdict
+  and steps the TypeScript gave. What the TypeScript decided stays as recorded expectations: the
+  297 LS4 inputs of `tests/conformance/prover-inputs.json` (`prover-differential --side rust
+  --prover ls4`, 297 same through the addon and through WebAssembly), and `deciders.test.ts` pins
+  its answer on its LS4 input (`unsat` in 5 steps). PTL is decided as Zenon is, by its Rust port
+  alone; text that isn't LS4 input is a `TlaProverError` with the message the TypeScript's
+  `TlaSyntaxError` gave, where the port used to decline it. `conformance:ptl` decides with the
+  native PTL. `THIRD_PARTY_NOTICES.md` named no path of the deleted decider.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
