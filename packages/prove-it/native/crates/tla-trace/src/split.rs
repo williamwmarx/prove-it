@@ -899,12 +899,9 @@ fn may_have_effect(evaluator: &Evaluator<'_>, node: NodeId, seen: &mut HashSet<N
                             "Print"
                                 | "PrintT"
                                 | "Assert"
-                                | "AssertEq"
                                 | "JavaTime"
                                 | "RandomElement"
                                 | "TLCGet"
-                                | "TLCGetOrDefault"
-                                | "TLCGetAndSet"
                                 | "TLCSet"
                         )
                 }

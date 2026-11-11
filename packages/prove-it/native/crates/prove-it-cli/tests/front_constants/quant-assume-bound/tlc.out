@@ -1,7 +1,0 @@
-exit 10
-Semantic processing of module M
-Linting of module M
-Error: Evaluating assumption line 3, col 8 to line 3, col 25 of module M failed.
-TLC encountered a non-enumerable quantifier bound
-1.
-1

@@ -1,4 +1,0 @@
-exit 151
-Semantic processing of module M
-Linting of module M
-Error: The property of C is equal to {b, a}

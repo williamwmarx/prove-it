@@ -616,55 +616,6 @@ impl Reporter for Relay<'_> {
         self.send_print(printed);
     }
 
-    // TLC warns about each invariant whose value at startup is TRUE as it reads the
-    // configuration, in its order, until it rejects a value (`processConfigInvariants`). It warns
-    // about the state-level properties among the properties, which a rejected value past them
-    // would follow.
-    fn startup_predicates(&mut self, holding: &[bool]) {
-        let ir = self.ir;
-        let is_past_properties =
-            ir.model
-                .startup
-                .predicates
-                .get(holding.len())
-                .is_some_and(|rejected| {
-                    matches!(
-                        &*ir.texts[rejected.kind as usize],
-                        "property" | "constraint" | "action constraint" | "possible"
-                    )
-                });
-        if is_past_properties
-            && self
-                .startup_messages
-                .iter()
-                .any(|message| message.code == code::STATE_LEVEL_PROPERTY)
-        {
-            self.is_declined = true;
-            let _ = self.sender.send(Event::Declined(
-                "a configuration error after the warnings about the state-level properties"
-                    .to_owned(),
-            ));
-            return;
-        }
-        let (invariants, rest): (Vec<_>, Vec<_>) = self
-            .startup_messages
-            .drain(..)
-            .partition(|message| message.code == code::CONSTANT_INVARIANT);
-        self.startup_messages = rest;
-        for message in invariants {
-            let is_warned = match message.predicate {
-                None => true,
-                Some(position) => match holding.get(position) {
-                    Some(holds) => *holds,
-                    None => break,
-                },
-            };
-            if is_warned {
-                let _ = self.sender.send(Event::StartupMessage(message));
-            }
-        }
-    }
-
     fn startup_done(&mut self) {
         let count = self.startup_worded.take().map(|worded| worded.len());
         if let Some(Some(texts)) = &self.startup_texts
@@ -1152,7 +1103,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             Some("-continue with a POSTCONDITION")
         } else if !dumps.is_empty() {
             Some("-continue with -dumpTrace")
-        } else if is_built_in(&["Print", "PrintT", "AssertEq", "TLCSet", "TLCGetAndSet"]) {
+        } else if is_built_in(&["Print", "PrintT", "TLCSet"]) {
             // TLC prints what the spec prints as it evaluates, before the violation it then
             // reports, and sets its registers again as it rebuilds each trace (`printTrace`),
             // which the search goes on reading.
@@ -1345,7 +1296,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         SearchOutcome::Declined(_)
             | SearchOutcome::AssumptionViolated { .. }
             | SearchOutcome::ConfigError { .. }
-            | SearchOutcome::StartupException { .. }
             | SearchOutcome::AssumptionFailed { .. }
     );
     // Under -continue TLC reports an error or a deadlock otherwise than it does without it, with
@@ -1592,13 +1542,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             return match FrontError::Config(message).get_coded(printer.is_tool) {
                 Some(coded) => print_coded_failure(printer, &coded, start),
                 None => report_not_native(printer, "a configuration error without TLC's code"),
-            };
-        }
-        SearchOutcome::StartupException { message } => {
-            let error = FrontError::Evaluation(format!("{UNEXPECTED_EXCEPTION}{message}"));
-            return match error.get_coded(printer.is_tool) {
-                Some(coded) => print_coded_failure(printer, &coded, start),
-                None => report_not_native(printer, "an exception without TLC's code"),
             };
         }
         // TLC reports a false assumption with no statistics, since it hasn't searched.
@@ -2065,12 +2008,10 @@ pub(crate) fn print_violation(
             else {
                 return Err(NOT_IN_IR);
             };
-            let is_printing = ir.builtins.iter().any(|builtin| {
-                matches!(
-                    &*ir.texts[builtin.name as usize],
-                    "Print" | "PrintT" | "AssertEq"
-                )
-            });
+            let is_printing = ir
+                .builtins
+                .iter()
+                .any(|builtin| matches!(&*ir.texts[builtin.name as usize], "Print" | "PrintT"));
             let is_warned = is_stuttering && is_cycle_constrained;
             if !is_stuttering && is_printing {
                 return Err("a step back into the cycle of a spec that prints");
@@ -2188,20 +2129,6 @@ pub(crate) fn print_violation(
     };
     printer.print(heading_code, Level::Error, heading);
     print_states(printer, &trace.states, &labels);
-    // `printTraceAndStop` reports what `printTrace` throws on the successor it didn't find, and
-    // the run ends as after the trace.
-    if trace.is_successor_lost {
-        if !trace.dumped.is_empty() {
-            return Ok(report_not_native(
-                printer,
-                "-dumpTrace of a trace whose successor TLC fails to find again",
-            ));
-        }
-        printer.report(
-            code::GENERAL,
-            "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.NullPointerException\n: Cannot read field \"state\" because \"currentStateInfo\" is null",
-        );
-    }
     // -dumpTrace's postconditions write their files as TLC checks them.
     if !write(printer.host, &trace.dumped) {
         return Ok(report_not_native(

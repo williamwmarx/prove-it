@@ -28,4 +28,17 @@ describe("proof obligations match tlapm", () => {
       "ASSUME NEW VARIABLE x\nPROVE  @ = x\n",
     ]);
   });
+
+  it("fails an INSTANCE inside its own instantiation as tlapm's stack overflow", () => {
+    const sources = [
+      "---- MODULE M ----\n---- MODULE Inner ----\nTHEOREM LET I == INSTANCE Inner IN TRUE\n====\nTHEOREM TRUE\n====\n",
+      "---- MODULE M ----\n---- MODULE P ----\nTHEOREM LET I == INSTANCE Q IN TRUE\n====\n---- MODULE Q ----\nTHEOREM LET J == INSTANCE P IN TRUE\n====\nTHEOREM TRUE\n====\n",
+      "---- MODULE M ----\nTHEOREM LET I == INSTANCE M IN TRUE\n====\n",
+    ];
+    for (const source of sources) {
+      expect(() => getObligations([{ file: "M.tla", source }], () => undefined)).toThrow(
+        expect.objectContaining({ name: "TlaProofError", exception: "Stack overflow" }),
+      );
+    }
+  });
 });

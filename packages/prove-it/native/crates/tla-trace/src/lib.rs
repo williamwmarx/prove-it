@@ -74,10 +74,6 @@ pub struct Trace {
     /// What TLC prints after the trace, as it rebuilds a violation's trace once more
     /// (`traceOutput`); for a trace of one state, what the initial predicate printed.
     pub trace_output: Vec<Vec<String>>,
-    /// Whether TLC failed to find the violating successor of the initial state again, where the
-    /// caller let it (`Rebuilder::keep_lost_successor`): the trace then holds the initial state,
-    /// and TLC fails with a NullPointerException as it prints the successor (`printTrace`).
-    pub is_successor_lost: bool,
 }
 
 pub struct TraceState {

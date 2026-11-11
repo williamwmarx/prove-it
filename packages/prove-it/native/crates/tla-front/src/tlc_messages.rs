@@ -192,12 +192,6 @@ pub fn get_coded_message(text: &str) -> Option<CodedMessage> {
         })
 }
 
-/// Whether TLC throws the failure an evaluation error's message words as an EvalException, which
-/// the handlers that catch a TLCRuntimeException let pass.
-pub fn is_eval_exception(message: &str) -> bool {
-    get_coded_message(message).is_some_and(|coded| coded.is_eval_exception)
-}
-
 /// `withUnexpectedException`: TLC reports an EvalException, or a RuntimeException without a
 /// message of its own, as an exception it didn't expect.
 pub fn with_unexpected_exception(error: FrontError) -> FrontError {
@@ -325,7 +319,7 @@ impl FrontError {
                 INVARIANT_VIOLATED_LEVEL => SAFETY_EVALUATION_FAILURE,
                 LIVE_FORMULA_TAUTOLOGY => LIVENESS_EVALUATION_FAILURE,
                 LIVE_CANNOT_HANDLE_FORMULA | LIVE_WRONG_FORMULA_FORMAT => GENERAL_ERROR,
-                _ if message.starts_with(crate::errors::UNEXPECTED_HEAD) => GENERAL_ERROR,
+                _ if message.starts_with(crate::errors::UNEXPECTED_EXCEPTION) => GENERAL_ERROR,
                 _ => exit_code,
             },
         })

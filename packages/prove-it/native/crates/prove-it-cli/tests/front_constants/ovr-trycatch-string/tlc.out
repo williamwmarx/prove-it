@@ -1,8 +1,0 @@
-exit 12
-Semantic processing of module P
-Linting of module P
-Loading K operator override from file:{directory}/P.class with signature: <Java Method: public static tlc2.value.impl.Value P.K()>.
-Computing initial states...
-Error: Invariant Inv is violated by the initial state:
-x = "a"
-

@@ -833,8 +833,6 @@ pub struct Compiler<'a> {
     pub is_lambda_built: bool,
     /// Whether TLCCache caches anything compiled whose value depends on what TLC evaluates first.
     pub is_cached: bool,
-    /// Whether anything compiled applies PickSuccessor, which reads the states TLC has seen.
-    pub is_picking: bool,
     /// Whether anything compiled applies TLCCache, whose cache is the machine's own, where TLC
     /// keeps one for every worker.
     pub is_tlc_cache_used: bool,
@@ -924,7 +922,6 @@ impl<'a> Compiler<'a> {
             simulation: None,
             is_lambda_built: false,
             is_cached: false,
-            is_picking: false,
             is_tlc_cache_used: false,
             scope_contexts: HashMap::new(),
             normalized_definitions: OnceCell::new(),
@@ -1338,9 +1335,8 @@ impl<'a> Compiler<'a> {
                     }
                     Resolution::Builtin(index) => match self.builtin_name(index) {
                         "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCEval" | "="
-                        | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCGetOrDefault"
-                        | "TLCGetAndSet" | "TLCFP" | "TLCCache" | "Assert" | "AssertEq"
-                        | "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize"
+                        | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCFP" | "TLCCache"
+                        | "Assert" | "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize"
                         | "ndJsonDeserialize" => true,
                         // TLC evaluates the operands, then builds the set, which the engine
                         // builds the same way unless an operand is a set TLC keeps lazy.
@@ -1381,11 +1377,9 @@ impl<'a> Compiler<'a> {
                         self.builtin_name(index),
                         "Print"
                             | "PrintT"
-                            | "AssertEq"
                             | "RandomElement"
                             | "RandomSubset"
                             | "TLCSet"
-                            | "TLCGetAndSet"
                             | "JsonSerialize"
                             | "ndJsonSerialize"
                             | "JsonDeserialize"
@@ -1433,12 +1427,10 @@ impl<'a> Compiler<'a> {
                         "\\cdot"
                             | "Print"
                             | "PrintT"
-                            | "AssertEq"
                             | "RandomElement"
                             | "RandomSubset"
                             | "TLCSet"
                             | "TLCGet"
-                            | "TLCGetOrDefault"
                             | "TLCGetAndSet"
                             | "TLCCache"
                             | "TLCDefer"

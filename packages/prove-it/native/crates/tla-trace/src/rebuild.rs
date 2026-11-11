@@ -30,8 +30,6 @@ pub struct Rebuilder<'ir> {
     violation_random: Option<u64>,
     /// TLC's set of fingerprints when the search stopped, sorted, where the caller gave it.
     pub(crate) fingerprints: Option<Vec<u64>>,
-    /// Whether a trace keeps a violating successor of the initial state TLC fails to find again.
-    is_lost_successor_kept: bool,
 }
 
 /// How TLC tells a candidate is the state it looks for: by its fingerprint, which is of the state,
@@ -48,16 +46,6 @@ enum Key {
 
 fn unsupported<T>(reason: impl Into<String>) -> Result<T, Unsupported> {
     Err(Unsupported(reason.into()))
-}
-
-/// Whether the spec prints or sets TLC's registers.
-fn is_effectful(ir: &Ir) -> bool {
-    ir.builtins.iter().any(|builtin| {
-        matches!(
-            &*ir.texts[builtin.name as usize],
-            "Print" | "PrintT" | "AssertEq" | "TLCSet" | "TLCGetAndSet"
-        )
-    })
 }
 
 impl<'ir> Rebuilder<'ir> {
@@ -127,7 +115,6 @@ impl<'ir> Rebuilder<'ir> {
             startup_random: JavaRandom::seeded(ir.model.random_seed).state(),
             violation_random: None,
             fingerprints: None,
-            is_lost_successor_kept: false,
         })
     }
 
@@ -166,13 +153,6 @@ impl<'ir> Rebuilder<'ir> {
     /// search (`Violation::random`), which TLC goes on drawing from as it finds that state again.
     pub fn set_violation_random(&mut self, random: u64) {
         self.violation_random = Some(random);
-    }
-
-    /// Lets a trace of an invariant violation of two states end at the initial state where TLC
-    /// fails to find the successor again from its generator, and the spec neither prints nor sets
-    /// a register: the trace is then `Trace::is_successor_lost`.
-    pub fn keep_lost_successor(&mut self) {
-        self.is_lost_successor_kept = true;
     }
 
     /// Takes TLC's registers as the search left them, which TLC's trace reads and sets again as
@@ -287,44 +267,48 @@ impl<'ir> Rebuilder<'ir> {
             return Ok(Trace {
                 states: Vec::new(),
                 trace_output: Vec::new(),
-                is_successor_lost: false,
             });
         };
         // TLC rebuilds a violation's trace once more after it has printed it, for the
         // counterexample its postconditions read: the spec prints again, as the registers then
         // are, and sets them again.
         let ir = self.evaluator.ir;
-        let again =
-            if !matches!(ending, Ending::Lasso) && first.rebuilt.len() > 1 && is_effectful(ir) {
-                // TLC's second rebuild resets the generator with the thread's current state set, so
-                // it draws from a seed this rebuild doesn't follow: what it prints or sets then isn't
-                // followed.
-                let is_drawing = ir.builtins.iter().any(|builtin| {
-                    matches!(
-                        &*ir.texts[builtin.name as usize],
-                        "RandomElement" | "RandomSubset"
-                    )
+        let is_effectful = ir.builtins.iter().any(|builtin| {
+            matches!(
+                &*ir.texts[builtin.name as usize],
+                "Print" | "PrintT" | "TLCSet"
+            )
+        });
+        let again = if !matches!(ending, Ending::Lasso) && first.rebuilt.len() > 1 && is_effectful {
+            // TLC's second rebuild resets the generator with the thread's current state set, so
+            // it draws from a seed this rebuild doesn't follow: what it prints or sets then isn't
+            // followed.
+            let is_drawing = ir.builtins.iter().any(|builtin| {
+                matches!(
+                    &*ir.texts[builtin.name as usize],
+                    "RandomElement" | "RandomSubset"
+                )
+            });
+            let registers = format!("{:?}", self.evaluator.registers);
+            let output: Option<Vec<Vec<String>>> = self
+                .rebuild_pass(store, states, actions, ending, false, false)?
+                .map(|pass| {
+                    pass.initial_output
+                        .into_iter()
+                        .chain(pass.outputs.into_iter().flatten())
+                        .collect()
                 });
-                let registers = format!("{:?}", self.evaluator.registers);
-                let output: Option<Vec<Vec<String>>> = self
-                    .rebuild_pass(store, states, actions, ending, false, false)?
-                    .map(|pass| {
-                        pass.initial_output
-                            .into_iter()
-                            .chain(pass.outputs.into_iter().flatten())
-                            .collect()
-                    });
-                let is_effective = output.as_ref().is_some_and(|output| !output.is_empty())
-                    || format!("{:?}", self.evaluator.registers) != registers;
-                if is_drawing && is_effective {
-                    return Err(Unsupported(
-                        "the second rebuild of a trace of a spec that draws at random".into(),
-                    ));
-                }
-                output
-            } else {
-                None
-            };
+            let is_effective = output.as_ref().is_some_and(|output| !output.is_empty())
+                || format!("{:?}", self.evaluator.registers) != registers;
+            if is_drawing && is_effective {
+                return Err(Unsupported(
+                    "the second rebuild of a trace of a spec that draws at random".into(),
+                ));
+            }
+            output
+        } else {
+            None
+        };
         Ok(compose(first, again, ending))
     }
 
@@ -350,7 +334,6 @@ impl<'ir> Rebuilder<'ir> {
             return Ok(Trace {
                 states: Vec::new(),
                 trace_output: Vec::new(),
-                is_successor_lost: false,
             });
         };
         if let (Some(last), Some(found)) = (rebuilt.rebuilt.last_mut(), held.rebuilt.pop()) {
@@ -390,7 +373,13 @@ impl<'ir> Rebuilder<'ir> {
         });
         // A random draw depends on every draw before it in the expansion, as what the spec prints
         // and the registers it sets do.
-        let is_printing = is_drawing || is_effectful(ir);
+        let is_printing = is_drawing
+            || ir.builtins.iter().any(|builtin| {
+                matches!(
+                    &*ir.texts[builtin.name as usize],
+                    "Print" | "PrintT" | "TLCSet"
+                )
+            });
         // TLC's worker seeds the draws of each expansion with the fingerprint of the state it
         // expands, which is of the state itself where TLC fingerprints no other key.
         let order: Vec<usize> = ir.tlc_order.iter().map(|&index| index as usize).collect();
@@ -482,8 +471,6 @@ impl<'ir> Rebuilder<'ir> {
                 .collect()
         };
         let mut steps: Vec<Option<u32>> = vec![None];
-        // Whether the walk of the step before drew from the generator.
-        let mut is_drawn = false;
         for (position, pair) in states.windows(2).enumerate() {
             // TLC recovers a state, and so fingerprints it, before it takes its step.
             settle_recovered(evaluator, &self.key, &rebuilt[position])?;
@@ -499,17 +486,12 @@ impl<'ir> Rebuilder<'ir> {
             // TLC finds the successor of an initial state it holds by its worker's generator as
             // the search left it, still seeded for that state (`TLCTrace.printTrace`,
             // `Tool.getState`, `TLCStateRandom.initialize`): where the search drew, the walk may
-            // find no such successor, and TLC fails. So it finds a violating state after others,
-            // unless the walk that recovered the state before it drew, which seeds the generator
-            // for the state it walks from.
-            let is_last_held = is_first && is_held && position + 2 == states.len() && !is_drawn;
-            evaluator.random = match violation_random {
-                Some(random) if is_initial_held || is_last_held => {
-                    Some(JavaRandom::from_state(random))
-                }
-                _ => seeded(pair[0])?,
+            // find no such successor, and TLC fails.
+            evaluator.random = if is_initial_held {
+                violation_random.map(JavaRandom::from_state)
+            } else {
+                seeded(pair[0])?
             };
-            let random = evaluator.random.as_ref().map(JavaRandom::state);
             let candidates = match actions.get(position).copied().flatten() {
                 Some(index) if !is_printing => match ir.model.actions.get(index as usize) {
                     Some(action) => vec![(action.expression, action.scope, Some(index))],
@@ -535,22 +517,8 @@ impl<'ir> Rebuilder<'ir> {
                     break;
                 }
             }
-            is_drawn = evaluator.random.as_ref().map(JavaRandom::state) != random;
             let Some(state) = found else {
-                if (is_initial_held || is_last_held) && is_drawing && violation_random.is_some() {
-                    // TLC prints the initial state it holds, and fails to print the successor it
-                    // didn't find, having checked nothing of it. After another state it stops.
-                    if is_initial_held && self.is_lost_successor_kept && !is_effectful(ir) {
-                        evaluator.random = None;
-                        evaluator.printed.clear();
-                        return Ok(Some(Pass {
-                            rebuilt,
-                            steps,
-                            initial_output,
-                            outputs,
-                            is_successor_lost: true,
-                        }));
-                    }
+                if is_initial_held && is_drawing && violation_random.is_some() {
                     return unsupported(
                         "a violating successor TLC fails to find again from its generator",
                     );
@@ -591,7 +559,6 @@ impl<'ir> Rebuilder<'ir> {
             steps,
             initial_output,
             outputs,
-            is_successor_lost: false,
         }))
     }
 }
@@ -603,8 +570,6 @@ struct Pass {
     steps: Vec<Option<u32>>,
     initial_output: Vec<Vec<String>>,
     outputs: Vec<Vec<Vec<String>>>,
-    /// Whether TLC fails to find the violating successor of the initial state again.
-    is_successor_lost: bool,
 }
 
 // What TLC's fingerprint of a recovered state sorts, as `settleRecoveredState` gives it: under
@@ -654,7 +619,6 @@ fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace
         steps,
         initial_output,
         outputs,
-        is_successor_lost,
     } = pass;
     let count = rebuilt.len();
     if count == 1 {
@@ -668,7 +632,6 @@ fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace
                 })
                 .collect(),
             trace_output: initial_output,
-            is_successor_lost,
         };
     }
     // The states TLC holds rather than rebuilds at the trace's end (`known` in `toTrace`).
@@ -713,7 +676,6 @@ fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace
     Trace {
         states,
         trace_output,
-        is_successor_lost,
     }
 }
 
@@ -1023,7 +985,6 @@ mod tests {
                 steps: vec![None; count],
                 initial_output: vec![print("i")],
                 outputs,
-                is_successor_lost: false,
             },
             None,
             ending,

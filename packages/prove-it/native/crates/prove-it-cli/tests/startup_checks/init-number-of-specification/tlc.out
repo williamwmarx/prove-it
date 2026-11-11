@@ -1,5 +1,0 @@
-exit 151
-Semantic processing of module M
-Linting of module M
-Error: The operator Init, which equals 1,
-cannot be used as a spec

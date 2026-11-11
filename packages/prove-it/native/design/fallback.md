@@ -474,32 +474,17 @@ distinct decline messages in the group.
 | TLC 1.7.4 | 63 | 1 | retired: declines until the TypeScript goes |
 | An assumption that fails to evaluate, evaluated again | 57 | 25 | front session |
 | Temporal properties and liveness | 50 | 19 | liveness session |
-| The engine stopping where TLC reports an error | 48 | 27 | memo session |
-| What the constant evaluator doesn't compute | 14 | 3 | front session |
+| The engine stopping where TLC reports an error | 46 | 25 | memo session |
+| What the constant evaluator doesn't compute | 29 | 9 | front session |
 | Other failures evaluated again | 29 | 18 | memo session |
-| The engine declining an operator or builtin | 14 | 11 | memo session |
+| The engine declining an operator or builtin | 19 | 15 | memo session |
 | Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
 | `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
-| Java overrides TLC loads with more than the shapes ported | 9 | 8 | unassigned |
+| Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
 | SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
-| The rest: a configuration substitute with effects, states TLC may take for the search's under VIEW or SYMMETRY, and a trace the search can't step | 4 | 3 | unassigned |
+| The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 8 | 6 | unassigned |
 
 The groups are checked in this order, so a decline counts once, in the first group that takes it.
-The constant evaluator's row and the Java overrides' row count what was left after the
-front-constants branch (measured 2026-11-11 from b8121dd3, 1,452 native before and 1,473 after):
-it made native the CHOOSE, division, equality, quantifier-bound and INIT or NEXT constant
-declines, and an annotated override and one that catches, and moved TLCGet("level") as a
-substitute to "a configuration substitute with effects" among the rest.
-The startup checks after it (measured 2026-11-11 from ee6736a4, 1,499 native before and 1,512
-after) made native the SYMMETRY definitions TLC fails on, the configuration error that shows a
-set, the successor TLC fails to find again from its generator, and the constant invariants TLC
-warns about, but one that overflows TLC's stack and one that fails as a set operation. The
-constant conjunct of the specification that draws at random moved to the engine's decline of
-RandomElement under a comparison.
-The TLCExt builtins after it (measured 2026-11-11 from 924d7cde, 1,478 native before and 1,482
-after) made native AssertEq, UNCHANGED in the initial predicate and PickSuccessor where TLC answers
-without asking, and moved TLCGetAndSet's run and the interactive PickSuccessor to the engine's
-stops.
 The 1.7.4 runs leave with the TypeScript, and `check-log` now counts them apart, as retired with
 the interpreter, without running them. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
@@ -532,31 +517,6 @@ SANY's report of RECURSIVE declarations is native from #266, which takes SANY's 
 its generator where linking declines. Measured with `check-log` at that PR's head 04c7267: none of
 the 4 runs declines; of 1,891 checks, 1,456 are native and 435 not native yet, with 0 answered
 differently on one thread and four, and 1,020 are native in TLC's default mode.
-
-### Java overrides that stay declined
-
-The front end reads the class TLC loads for a module and puts the constant each method returns in
-place of the operator. It skips a method annotated `@TLAPlusOperator` or `@Evaluation`, as
-`processModuleOverrides` does, unless a `tlc2.overrides.TLCOverrides` class beside the spec could
-list it, and runs a method that catches an exception up to its first return. These shapes stay
-declined for good, because what TLC does with them depends on the JVM, not on the class file:
-
-- **A static initializer, a field's initializer or a superclass.** Java runs them as TLC first
-  calls a method, and what they print or throw shows in TLC's output. A failure there is an
-  `ExceptionInInitializerError`, whose report holds the JDK's own stack frames.
-- **A value the method computes by calling the JDK,** such as `Integer.parseInt`, which the front
-  end would have to run as Java does.
-- **Several methods TLC reports.** `Class#getDeclaredMethods` lists them in the order HotSpot
-  allocated the symbols of their names, which changes with `-Xshare:off` on the same JDK, and TLC
-  prints a message for each in that order. Where two methods share a name, the one listed last
-  overrides the other. The binary declines a class whose methods print more than one message, or
-  that has methods of one name, wherever the order could change what TLC logs.
-
-A method whose name `TLARegistry.mapName` maps to an operator's, such as `Plus` to `+`, is declined
-for now, not for good: the standard modules whose classes register the names are those SANY
-parsed before the overriding module, which in TLC's default mode include the modules of the trace
-exploration spec. With `-noGenerateSpecTE` and no EXTENDS, TLC at d8fb231 loads `Plus` as `Plus`,
-and in the default mode it fails to match it as `+`.
 
 ### What uses it as the reference, and what replaces it
 

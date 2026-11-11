@@ -1,9 +1,0 @@
-exit 255
-Semantic processing of module Naturals
-Semantic processing of module Integers
-Semantic processing of module M
-Linting of module M
-Error: TLC cannot handle the temporal formula line 8, col 6 to line 8, col 27 of module M:
-TLC encountered a non-enumerable quantifier bound
-"ab".
-line 8, col 15 to line 8, col 15 of module M

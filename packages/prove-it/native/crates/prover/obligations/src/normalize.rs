@@ -50,6 +50,8 @@ struct Expander<'pipeline, 'sink, 'warn> {
     salts: &'pipeline Counter,
     latest_modules: &'pipeline HashMap<String, Rc<Mule>>,
     on_warning: &'pipeline RefCell<&'sink mut Warn<'warn>>,
+    // The modules an INSTANCE inside a LET or DEFINE is instantiating, innermost last.
+    instantiating: Vec<String>,
 }
 
 impl AnonymizerHost for Expander<'_, '_, '_> {
@@ -80,6 +82,7 @@ fn split<'pipeline, 'sink, 'warn>(
             salts: &pipeline.salts,
             latest_modules: &pipeline.latest_modules,
             on_warning: &pipeline.on_warning,
+            instantiating: Vec::new(),
         },
     )
 }
@@ -837,6 +840,12 @@ fn expand_instance_with(
             "Module.Elab.anon#defns",
         ));
     }
+    // Instantiating a module again inside its own instantiation reaches the same INSTANCE again,
+    // so tlapm recurses until its stack overflows, as it does on a module that extends itself.
+    if expander.instantiating.contains(module) {
+        return Err(ObligationError::bug("Stack overflow"));
+    }
+    expander.instantiating.push(module.clone());
     let units = instantiate(
         anonymizer,
         expander,
@@ -846,7 +855,9 @@ fn expand_instance_with(
         true,
         name,
         &definition.location,
-    )?;
+    );
+    expander.instantiating.pop();
+    let units = units?;
     let mut definitions = Vec::new();
     let mut rest = units;
     let mut position = 0;

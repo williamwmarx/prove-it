@@ -13,7 +13,6 @@ use crate::eval::Evaluator;
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
-use crate::tlc_messages::{is_eval_exception, with_unexpected_exception};
 use tla_ir::PredicateForm;
 
 /// `Scope`: a name bound to a value, an expression or an operator, in front of the scope it
@@ -378,27 +377,20 @@ impl Expansion<'_> {
                 let Some(evaluator) = self.evaluator else {
                     return Err(not_yet("a property's \\A that TLC unrolls"));
                 };
-                match evaluator.get_bindings(bounds, scope) {
-                    // `processConfigProps` leaves a \A whose sets fail with a TLCRuntimeException
-                    // to the liveness checker, and an EvalException escapes TLC's startup.
-                    Err(FrontError::Evaluation(message)) if !is_eval_exception(&message) => {}
-                    bindings => {
-                        let mut expanded = Vec::new();
-                        for binding in bindings.map_err(with_unexpected_exception)? {
-                            expanded.extend(self.expand(
-                                body,
-                                binding.as_ref(),
-                                expanding,
-                                is_substituted,
-                                Some(Rc::from(describe_range(body))),
-                            )?);
-                        }
-                        if expanded.is_empty() {
-                            return Err(not_yet("a property TLC finds a tautology"));
-                        }
-                        return Ok(expanded);
-                    }
+                let mut expanded = Vec::new();
+                for binding in evaluator.get_bindings(bounds, scope)? {
+                    expanded.extend(self.expand(
+                        body,
+                        binding.as_ref(),
+                        expanding,
+                        is_substituted,
+                        Some(Rc::from(describe_range(body))),
+                    )?);
                 }
+                if expanded.is_empty() {
+                    return Err(not_yet("a property TLC finds a tautology"));
+                }
+                return Ok(expanded);
             }
             _ => {}
         }
@@ -686,104 +678,32 @@ fn get_constant_value(
     }
 }
 
-/// `Value#toString` of the values TLC's configuration errors show: a boolean, an integer, or a
-/// string, a model value or a set of them where TLC holds them as written, which `expression`, the
-/// definition TLC evaluated, or none for a configuration's value, writes as literals. `NotYet` for
-/// another value, such as an interval or a record, whose text depends on how TLC built it.
-fn format_config_value(
-    value: &ConfigValue,
-    expression: Option<&Expr>,
-    evaluator: Option<&Evaluator>,
-) -> Result<String> {
-    fn is_literal(expression: &Expr) -> bool {
-        match &expression.kind {
-            ExpressionKind::Number { .. } | ExpressionKind::String { .. } => true,
-            ExpressionKind::SetEnumeration(elements) => elements.iter().all(is_literal),
-            _ => false,
-        }
-    }
-    fn format(value: &ConfigValue) -> String {
-        match value {
-            ConfigValue::Boolean(value) => if *value { "TRUE" } else { "FALSE" }.to_owned(),
-            ConfigValue::Number(number) => format!("{number}"),
-            // `StringValue.PrintVersion`.
-            ConfigValue::String(text) => format!(
-                "\"{}\"",
-                text.chars()
-                    .map(|character| match character {
-                        '"' => "\\\"".to_owned(),
-                        '\\' => "\\\\".to_owned(),
-                        '\t' => "\\t".to_owned(),
-                        '\n' => "\\n".to_owned(),
-                        '\u{c}' => "\\f".to_owned(),
-                        '\r' => "\\r".to_owned(),
-                        _ => character.to_string(),
-                    })
-                    .collect::<String>()
-            ),
-            ConfigValue::ModelValue(name) => name.clone(),
-            ConfigValue::Set(elements) => format!(
-                "{{{}}}",
-                elements.iter().map(format).collect::<Vec<_>>().join(", ")
-            ),
-            ConfigValue::Record(_) => unreachable!("a record has no literal"),
-        }
-    }
-    fn is_plain(value: &ConfigValue) -> bool {
-        match value {
-            ConfigValue::Number(number) => number.fract() == 0.0,
-            ConfigValue::Set(elements) => elements.iter().all(is_plain),
-            ConfigValue::Record(_) => false,
-            _ => true,
-        }
-    }
+/// `formatValue` of the values TLC's configuration errors show, or `NotYet` for another.
+fn format_config_value(value: &ConfigValue) -> Result<String> {
     match value {
-        ConfigValue::Boolean(_) => return Ok(format(value)),
-        ConfigValue::Number(number) if number.fract() == 0.0 => return Ok(format(value)),
-        _ => {}
-    }
-    match evaluator {
-        // `SetEnumValue#toString` normalizes the set first.
-        Some(evaluator) if is_plain(value) && expression.is_none_or(is_literal) => {
-            Ok(format(&evaluator.order.normalize(value)?))
-        }
+        ConfigValue::Boolean(value) => Ok(if *value { "TRUE" } else { "FALSE" }.to_owned()),
+        ConfigValue::Number(number) if number.fract() == 0.0 => Ok(format!("{number}")),
         _ => Err(not_yet("a configuration error that shows a value")),
     }
 }
 
 /// `isConstantTrue`, for a conjunct that is a constant name: TLC drops one that is TRUE, and
-/// rejects the spec for any other value. The engine's startup checks a conjunct of the
-/// specification the evaluator can't compute, which a definition of the root module names.
+/// rejects the spec for any other value.
 fn is_constant_true(
     name: &str,
     item: &Expanded,
     usage: &str,
-    environment: &Environment,
     evaluator: Option<&Evaluator>,
 ) -> Result<bool> {
     let evaluator = evaluator.ok_or_else(|| not_yet("a constant conjunct of the specification"))?;
-    let value = match evaluator.evaluate(&item.expression, item.scope.as_ref()) {
-        Err(FrontError::NotYet(_))
-            if usage == "spec"
-                && item.scope.is_none()
-                && !item.expression.is_locally_resolved()
-                && get_definition(name, environment).is_some_and(|definition| {
-                    matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
-                }) =>
-        {
-            evaluator.defer_conjunct(Rc::from(name));
-            return Ok(true);
-        }
-        value => value?,
-    };
-    match value {
+    match evaluator.evaluate(&item.expression, item.scope.as_ref())? {
         ConfigValue::Boolean(true) => Ok(true),
         ConfigValue::Boolean(false) => Err(FrontError::Config(format!(
             "The spec is trivially false because {name} is false."
         ))),
         value => Err(FrontError::Config(format!(
             "The operator {name}, which equals {},\ncannot be used as a {usage}",
-            format_config_value(&value, Some(&item.expression), Some(evaluator))?
+            format_config_value(&value)?
         ))),
     }
 }
@@ -797,7 +717,7 @@ fn get_config_definition(
     evaluator: Option<&Evaluator>,
 ) -> Result<()> {
     let definition = get_config_operator(kind, name, environment)?;
-    if get_constant_value(name, definition, environment, facts, evaluator, true)?.is_some() {
+    if get_constant_value(name, definition, environment, facts, evaluator, false)?.is_some() {
         return Err(FrontError::Config(format!(
             "The {kind} {name} cannot be a constant."
         )));
@@ -947,25 +867,12 @@ pub fn check_invariants(
     environment: &Environment,
     facts: &DefinitionFacts,
     evaluator: &Evaluator,
-    is_warning_enabled: bool,
 ) -> Result<Option<Vec<Name>>> {
     let analyzer = environment.create_level_analyzer(&[]);
     let mut constant_true = Vec::new();
     for name in &config.invariants {
-        // TLC warns about each invariant that is a TRUE constant as it reaches it, before an
-        // error in a later one.
-        let warned = |error| match error {
-            FrontError::Config(_) if is_warning_enabled && !constant_true.is_empty() => {
-                FrontError::Warned(
-                    crate::model::get_constant_invariant_warnings(&constant_true),
-                    Box::new(error),
-                )
-            }
-            error => error,
-        };
         let Some(definition) =
-            get_config_predicate("invariant", name, environment, facts, Some(evaluator))
-                .map_err(warned)?
+            get_config_predicate("invariant", name, environment, facts, Some(evaluator))?
         else {
             constant_true.push(Rc::from(name.as_str()));
             continue;
@@ -979,9 +886,9 @@ pub fn check_invariants(
             } else {
                 ""
             };
-            return Err(warned(FrontError::Config(format!(
+            return Err(FrontError::Config(format!(
                 "The invariant {name} is not a state predicate (one with no primes or temporal operators).{note}"
-            ))));
+            )));
         }
     }
     Ok((!evaluator.is_deferring()).then_some(constant_true))
@@ -999,7 +906,7 @@ pub fn get_specification(
         let operator = |name: &Option<String>, description: &str| {
             name.as_deref()
                 .map(|name| {
-                    get_config_definition(description, name, environment, facts, evaluator)
+                    get_config_definition(description, name, environment, facts, None)
                         .map(|()| create_identifier(name))
                 })
                 .transpose()
@@ -1028,7 +935,7 @@ pub fn get_specification(
     )? {
         return Err(FrontError::Config(format!(
             "The value of {specification} is equal to {}",
-            format_config_value(&value, Some(&definition.body), evaluator)?
+            format_config_value(&value)?
         )));
     }
     let expansion = Expansion {
@@ -1055,7 +962,7 @@ pub fn get_specification(
         match &item.expression.kind {
             ExpressionKind::Identifier { name, .. }
                 if level() == Level::Constant
-                    && is_constant_true(name, &item, "spec", environment, evaluator)? =>
+                    && is_constant_true(name, &item, "spec", evaluator)? =>
             {
                 continue;
             }
@@ -1199,11 +1106,7 @@ fn get_config_predicate<'a>(
         Some(ConfigValue::Boolean(true)) => Ok(None),
         Some(value) => Err(FrontError::Config(format!(
             "The {kind} of {name} is equal to {}",
-            format_config_value(
-                &value,
-                definition.map(|definition| &definition.body),
-                evaluator
-            )?
+            format_config_value(&value)?
         ))),
     }
 }
@@ -1263,7 +1166,7 @@ pub fn get_properties(
             let conjunct = &item.expression;
             if let ExpressionKind::Identifier { name, .. } = &conjunct.kind
                 && level(conjunct) == Level::Constant
-                && is_constant_true(name, &item, "property", environment, evaluator)?
+                && is_constant_true(name, &item, "property", evaluator)?
             {
                 continue;
             }
@@ -1398,7 +1301,6 @@ pub fn get_constant_predicates(
     config: &crate::config::ModelConfig,
     environment: &Environment,
     facts: &DefinitionFacts,
-    conjuncts: &[Name],
 ) -> Vec<(PredicateForm, &'static str, String, Rc<Definition>)> {
     let named = |form: PredicateForm, kind: &'static str, names: &[String]| {
         names
@@ -1427,11 +1329,9 @@ pub fn get_constant_predicates(
             std::slice::from_ref(name),
         ),
     };
-    let conjuncts: Vec<String> = conjuncts.iter().map(|name| name.to_string()).collect();
     [
         named(PredicateForm::Predicate, "invariant", &config.invariants),
         specification,
-        named(PredicateForm::Conjunct, "spec", &conjuncts),
         named(PredicateForm::Predicate, "property", &config.properties),
         named(PredicateForm::Predicate, "constraint", &config.constraints),
         named(

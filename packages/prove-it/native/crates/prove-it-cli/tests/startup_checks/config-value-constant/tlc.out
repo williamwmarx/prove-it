@@ -1,4 +1,0 @@
-exit 151
-Semantic processing of module M
-Linting of module M
-Error: The invariant of C is equal to {1, 2, 3}

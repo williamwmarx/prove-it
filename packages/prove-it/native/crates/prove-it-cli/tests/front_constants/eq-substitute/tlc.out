@@ -1,5 +1,0 @@
-exit 151
-Semantic processing of module M
-Linting of module M
-Error: The configuration file substitutes constant C with non-constant Foo - specifically: Attempted to check equality of integer 1 with non-integer:
-"a"

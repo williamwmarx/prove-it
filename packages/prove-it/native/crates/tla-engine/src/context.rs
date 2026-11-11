@@ -97,10 +97,6 @@ pub struct Startup {
 pub struct StartupSymmetry {
     pub definition: Eval,
     pub permuted_sets: Vec<(String, Option<Eval>)>,
-    /// The message `Tool.getSymmetryPerms` fails with on a body whose value's class the engine
-    /// knows: a number or a string, which isn't a set, or a set of them, whose elements aren't
-    /// functions.
-    pub failure: Option<&'static str>,
 }
 
 /// How the engine answers a liveness atom on its states, or why it can't, in which case the
@@ -467,26 +463,7 @@ impl EngineContext {
                         NodeKind::Definition(definition) => definition.body,
                         _ => unreachable!("a definition's node"),
                     };
-                    let is_literal = |node: NodeId| {
-                        matches!(
-                            ir.nodes.arena[node as usize].kind,
-                            NodeKind::Number(_) | NodeKind::String(_)
-                        )
-                    };
-                    let failure = match &ir.nodes.arena[body as usize].kind {
-                        NodeKind::Number(_) | NodeKind::String(_) => {
-                            Some("The symmetry operator must specify a set of functions.")
-                        }
-                        NodeKind::SetEnumeration(elements)
-                            if !elements.is_empty()
-                                && elements.iter().all(|&node| is_literal(node)) =>
-                        {
-                            Some("The symmetry values must be function records.")
-                        }
-                        _ => None,
-                    };
                     Ok::<_, CompileError>(StartupSymmetry {
-                        failure,
                         definition: compiler.compile_symmetry(body)?.eval,
                         permuted_sets: symmetry
                             .permuted_sets

@@ -11,7 +11,6 @@ use crate::plain::Variable;
 use crate::time::format_date;
 use crate::trace::format_variables;
 
-pub const GENERAL: u32 = 1000;
 pub const COMMAND_LINE_ERROR: u32 = 1102;
 pub const STARTING: u32 = 2185;
 pub const FINISHED: u32 = 2186;
@@ -53,9 +52,8 @@ pub const NO_SPECIFICATION_BUT_PROPERTY: u32 = 2257;
 pub const NO_FAIRNESS_BUT_PROPERTY: u32 = 2259;
 pub const COMPUTING_INIT_PROGRESS: u32 = 2269;
 pub const SYMMETRY_SET_TOO_SMALL: u32 = 2300;
-pub const CONSTANT_INVARIANT: u32 = 2149;
-pub const STATE_LEVEL_PROPERTY: u32 = 2255;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
+pub const GENERAL: u32 = 1000;
 pub const CONFIG_ID_REQUIRES_NO_ARG: u32 = 2228;
 pub const CONFIG_ID_MUST_NOT_BE_CONSTANT: u32 = 2233;
 

@@ -1,7 +1,0 @@
----- MODULE M ----
-EXTENDS Integers
-VARIABLE x
-Init == x = 0
-Next == UNCHANGED x
-Inv == [i \in {1} |-> 5] \in UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {UNION {[{1} -> Int]}}}}}}}}}}}}}}}}}}}}}}}}
-====

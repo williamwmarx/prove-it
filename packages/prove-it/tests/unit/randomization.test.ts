@@ -174,21 +174,3 @@ describe("random choices match TLC 1.7.4", () => {
     );
   });
 });
-
-describe("a violating successor TLC fails to draw again", () => {
-  it("reports TLC's exception after the initial state", async () => {
-    // TLC at d8fb231 with -seed 0 prints the initial state, then a NullPointerException.
-    const result = await check({
-      source:
-        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x, y\nInit == x = 0 /\\ y = 0\nNext == x' = RandomElement(0..1) /\\ y' = RandomElement(0..1)\nSpec == Init /\\ [][Next]_<<x,y>>\nInv == x = y\n====",
-      config: "SPECIFICATION Spec\nINVARIANT Inv",
-      seed: 0n,
-    });
-    expect(result.violations.map((violation) => [violation.code, violation.states.length])).toEqual(
-      [
-        [2110, 1],
-        [1000, 0],
-      ],
-    );
-  });
-});
