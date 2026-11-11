@@ -851,31 +851,33 @@ fn check_spec(
         Some([_]) => return report_not_native(printer, "-dump into the meta directory"),
         Some(_) => return report_not_native(printer, "-dump dot"),
     };
-    let config_path = match args.first("-config") {
-        Some(path) => Some(path.to_string()),
-        None => Some(match spec_path.strip_suffix(".tla") {
-            Some(stem) => format!("{stem}.cfg"),
-            None => spec_path.to_string(),
-        }),
+    // TLC names the configuration file by -config or the spec's name, then finds it as it finds a
+    // module (`ModelConfig`), and names it by that name when it finds none.
+    let config_name = match args.first("-config") {
+        Some(path) => format!("{}.cfg", path.strip_suffix(".cfg").unwrap_or(path)),
+        // TLC takes an absolute spec's directory for its user directory and the spec by its name.
+        None if Path::new(main_file).is_absolute() => format!("{}.cfg", file_name(main_file)),
+        None => format!("{main_file}.cfg"),
     };
-    if !config_path
-        .as_deref()
-        .is_some_and(|path| printer.host.is_file(Path::new(path)))
-    {
+    let directories = get_module_directories(main_file, &java.libraries);
+    let Some(config_path) = directories
+        .iter()
+        .map(|directory| Path::new(directory).join(&config_name))
+        .find(|path| printer.host.is_file(path))
+    else {
         printer.print(
             code::CONFIG_FILE_ERROR,
             Level::Error,
             &format!(
-                "TLC encountered the following error when trying to read the configuration file {}:\nFile not found.",
-                config_path.unwrap_or_default()
+                "TLC encountered the following error when trying to read the configuration file {config_name}:\nFile not found."
             ),
         );
         return CONFIG_PARSE_ERROR;
-    }
+    };
     let start = Instant::now();
     // TLC reads the configuration file before it parses the spec, and reports one it can't parse
     // as it reports a TlaConfigError (`printFailure`).
-    let config_text = config_path.and_then(|path| printer.host.read_text(Path::new(&path)));
+    let config_text = printer.host.read_text(&config_path);
     let parsed = config_text
         .as_deref()
         .map(|text| parse_config(text, TlcVersion::Master));
@@ -898,7 +900,6 @@ fn check_spec(
             te_spec::join_place(&directory, &format!("{name}.bin"))
         }),
     );
-    let directories = get_module_directories(main_file, &java.libraries);
     let front = match read_front(
         spec_path,
         config_text.as_deref().unwrap_or_default(),
