@@ -531,7 +531,7 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 
 | Crate | Derived from | Licence | `THIRD_PARTY_NOTICES.md` once it is Rust |
 |---|---|---|---|
-| `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`; `nlsat/` ports `src/nlsat` and `src/math/polynomial` of z3-5.3.3, limit checks included) | MIT | the Z3 section names `native/crates/prove-smt/`; `z3-license.txt` moves with the code |
+| `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`; `nlsat/` ports `src/nlsat` and `src/math/polynomial` of z3-5.3.3, limit checks included) | MIT | the Z3 section names `native/crates/prover/smt/`, which keeps `z3-license.txt` beside the code (the TypeScript solver, which kept it too, is deleted) |
 | `prove-num` | Z3's `rational`/`mpz` semantics, written fresh on JS `bigint`'s rules | MIT (Z3's where it follows `rational.ts`) | under the Z3 section |
 | `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps Zenon's `LICENSE` beside the code (the TypeScript Zenon, which kept it too, is deleted) |
 | `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
@@ -1084,6 +1084,28 @@ is next.
   port, say so, and label those results `decider: "rust"`. `conformance:zenon` compares the native
   Zenon with tlapm's recorded results and binary. The PTL and Isabelle deletions follow the same
   path.
+- P3 SMT, the TypeScript deleted (after the flip, f5b7bef, which made Rust decide `smt` and `z3`
+  by default): `src/prover/smt/solver/` is gone, `lp/`, `nlsat/` and `lp-trace.ts` with it, but
+  the encoders in `src/prover/smt/*.ts`, which P5c owns; so are its unit tests (`smt.test.ts`,
+  `smt-clause-store`, `smt-intervals`, `smt-pdd`, `smt-nlsat`, which run as Rust tests case for
+  case, and the lp trace's two), the scripts that read it (the `smt-*-tables.ts` and
+  `smt-*-reference.ts` writers, `nlsat-differential.ts`, `lp-trace.ts`), the errors only it threw
+  (`SmtParseError`, `SmtUnsupportedError`, `SmtCanceledError`, `SmtInvariantError`,
+  `NlsatUnsupportedError`, `PddMemoryOutError`; none was exported), and in Rust the lp call
+  trace (`lp::trace`, `lp::json`, `tests/lp_trace.rs`, `tests/lp_trace_diff.rs` and its fixture),
+  which only replayed the TypeScript's traces. `smt` and `z3` are Rust-only by the rule above.
+  What the TypeScript decided stays as recorded expectations: the 10,320 smt and 56 z3 inputs of
+  `prover-inputs.json`, the tables under `crates/prover/{num,smt}/tests/tables` (each directory's
+  `README.md` says which deleted script wrote which, at f5b7bef), `tests/fixtures/nlsat/
+  differential.json`, and `deciders.test.ts`'s pin of the TypeScript's answer on its SMT input,
+  as smt and as z3 (`unsat`, 14 instances, 4,626 steps, as `tables/decide.txt` has it).
+  `conformance:smt` compares the native decider with tlapm's recorded Z3 verdicts. A deviation
+  from Z3 (below) is now fixed in Rust alone, and the inputs it moves re-recorded with
+  `prover-differential --side ts --update`, which decides smt and z3 with the Rust port.
+  `prover-differential --side rust` gives 10,320 of 10,320 smt and 56 of 56 z3 inputs the same,
+  through the addon and through WebAssembly, none differing, unstable, declined or crashed. Under
+  WebAssembly, three workers, the most a worker's process held (its `VmHWM`, sampled every half
+  second) was 844 MB over the smt inputs and 1,637 MB over the z3 ones, well inside wasm32's 4 GB.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
