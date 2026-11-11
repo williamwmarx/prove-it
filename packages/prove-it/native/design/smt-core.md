@@ -153,7 +153,10 @@ group, integrated and tested before the next:
 
 ## 4. Handoff
 
-- P3a: done on branch `smt-foundation`.
-- P3c: wave 1 done on branch `smt-core` (the table in §1). Waves 2–4 next, in parallel.
-- P3c wave 5: `theory_lra*` done on branch `core-lra`. The kernel, E-matching, model and MBQI tests now run with the real theory and expect the TS numbers as they are; their scripts no longer patch the theory out.
-- `solver.ts` and `decide` done on branch `smt-decide`, with the theory's nlsat-model paths ported against `lp::nra_solver` (#247). `decide` answers every fixture and every case of `smt.test.ts` as the TS does, statistics included. Next: the gate of prover.md §4a on the decider corpus (`prover-differential --side rust --prover smt`), then the flip.
+- P3a (#229), P3c part 1 (#242) and part 2 (#252) are on main. Part 3 is the arithmetic theory, `solver` and `decide`: every fixture and every case of `smt.test.ts` as the TS does, statistics included, and the decider corpus (`prover-differential --side rust --prover smt`, prover.md §4a) the same on all 10,320 smt and 56 z3 inputs. The flip to Rust is its own commit.
+
+### TypeScript deviations from Z3
+
+Where the TS does what Z3 does not, the port mirrors the TS until the flip, so that the differential stays exact; each is then fixed on both sides, with the inputs it moves re-recorded.
+
+- `ast.ts`'s `declRefCounts` has no entry for a builtin declaration (the `div0`/`mod0` a model interprets), so `incDeclRef` makes it NaN and `decDeclRef` releases the declaration and its small id each time a model drops it. In Z3 the count is real and the declaration stays. It moves `getNumAsts`, which seeds MBQI's model completion (`ProtoModel.getSomeValue`), and so the search. The Rust mirrors it with `decl_ref_counts: Vec<Option<i32>>` (`None` is the NaN); regression input `smt/tests/inputs/builtin-decl-release.smt`. To fix after the flip: count from 0 on both sides, drop the `Option`, re-record.
