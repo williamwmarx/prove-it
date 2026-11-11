@@ -170,12 +170,14 @@ fn get_sany_error(message: &SanyMessage) -> SanyError {
 }
 
 /// The messages of each module of `order`, the order SANY analyzes the modules in, for the root
-/// module `root` of the text `source`: SANY level-checks a module only while no module so far has
-/// errors (`SANY.frontEndSemanticAnalysis`).
+/// module `root` of the text `source`, to whose EXTENDS TLC adds `root_extendees`: SANY
+/// level-checks a module only while no module so far has errors
+/// (`SANY.frontEndSemanticAnalysis`).
 pub fn get_generator_messages(
     root: &str,
     source: &str,
     load_module: &dyn Fn(&str) -> Option<String>,
+    root_extendees: &[&str],
     order: &[Name],
 ) -> Result<Generated> {
     let ends = RefCell::new(Vec::new());
@@ -191,7 +193,12 @@ pub fn get_generator_messages(
         &GenerationOptions {
             root_file_name: Some(Name::from(root)),
             root_file_path: None,
-            root_extendees: None,
+            root_extendees: (!root_extendees.is_empty()).then(|| {
+                root_extendees
+                    .iter()
+                    .map(|&name| Name::from(name))
+                    .collect()
+            }),
             on_module: Some(&check_levels),
         },
     );

@@ -830,9 +830,13 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     // them, as they do for the TypeScript report.
     let messages = linked.or_else(|linking| {
         let generated = match options.version {
-            TlcVersion::Master => {
-                get_generator_messages(&root, source, &|name| loader.read(name).0, &order)
-            }
+            TlcVersion::Master => get_generator_messages(
+                &root,
+                source,
+                &|name| loader.read(name).0,
+                options.root_extendees,
+                &order,
+            ),
             TlcVersion::V1_7_4 => Err(linking.clone()),
         };
         generated.map_err(|_| match linking {
