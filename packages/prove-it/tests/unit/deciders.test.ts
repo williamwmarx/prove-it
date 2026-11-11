@@ -117,23 +117,23 @@ describe("the Rust ports", () => {
     });
   });
 
-  it("decides PTL", () => {
-    expect(getAddon().decide("ls4", INPUTS[3][1], Infinity, undefined, undefined).kind).toBe(
-      "decided",
-    );
-  });
+  // Zenon's and PTL's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
+  it.each([INPUTS[1], INPUTS[3]])(
+    "decides %s in Rust whatever PROVE_IT_PROVER says",
+    (prover, text) => {
+      expect(useProver("ts", () => decide(prover, text, OPTIONS))).toMatchObject({
+        verdict: "unsat",
+        statistics: RECORDED[prover].statistics,
+      });
+    },
+  );
 
-  // Zenon's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
-  it("decides Zenon in Rust whatever PROVE_IT_PROVER says", () => {
-    expect(useProver("ts", () => decide("zenon", INPUTS[1][1], OPTIONS))).toMatchObject({
-      verdict: "unsat",
-      statistics: RECORDED.zenon.statistics,
-    });
-  });
-
-  // tlapm counts a Zenon that stops on its input as a failure.
-  it("fails on a malformed Zenon input", () => {
-    expect(() => decide("zenon", "$sig a", OPTIONS)).toThrow(TlaProverError);
+  // tlapm counts a Zenon or an LS4 that stops on its input as a failure.
+  it.each([
+    ["zenon", "$sig a"],
+    ["ls4", "not ((always h00000) ->"],
+  ])("fails on a malformed %s input", (prover, text) => {
+    expect(() => decide(prover, text, OPTIONS)).toThrow(TlaProverError);
   });
 
   it("declines a prover without a backend", () => {

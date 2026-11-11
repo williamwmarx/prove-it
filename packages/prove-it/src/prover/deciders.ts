@@ -5,7 +5,6 @@ import { getNativeAddon } from "../engine/native";
 import { getEnvironmentSetting, reportEngine } from "../engine/settings";
 import { EngineUnavailableError, SmtParseError, TlaProverError } from "../errors";
 import { decideIsabelle } from "./isabelle/decide";
-import { decidePtl } from "./ptl/decide";
 import { decideSmt } from "./smt/solver/solver";
 import { createSteps, type DecideOptions, type Decision, type Verdict } from "./verdict";
 
@@ -29,7 +28,6 @@ export const DECIDERS: Partial<Record<string, (text: string, options: DecideOpti
     smt: decideZ3,
     z3: decideZ3,
     isabelle: decideIsabelle,
-    ls4: decidePtl,
   };
 
 export const isBackend = (prover: string) => BACKENDS.includes(prover);
