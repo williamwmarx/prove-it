@@ -5009,6 +5009,56 @@ impl<'ir> Evaluator<'ir> {
                 self.set_register(key, value)?;
                 Value::Bool(true)
             }
+            // `TLCExt.tlcGetOrDefault`: the register's value, or the default where the key names
+            // none or none is set. TLCGetAndSet, TLA+ in TLCExt, then sets the register to
+            // Op(oldVal, val) and is oldVal. TLC reports a failure within TLCGetAndSet at the
+            // positions of its definition, which the IR doesn't hold.
+            "TLCGetOrDefault" | "TLCGetAndSet" => {
+                let is_set = name == "TLCGetAndSet";
+                arity(if is_set { 4 } else { 2 })?;
+                let unfollowed = |error| {
+                    if is_set {
+                        EvalError {
+                            reason: "a failure within TLCExt's TLCGetAndSet".into(),
+                            message: None,
+                        }
+                    } else {
+                        error
+                    }
+                };
+                let key = self.operand(&operands[0]).map_err(unfollowed)?;
+                let default = self
+                    .operand(&operands[operands.len() - 1])
+                    .map_err(unfollowed)?;
+                self.reads += 1;
+                self.register_reads += 1;
+                let old = match &key {
+                    Value::Int(index) if *index >= 0 => self
+                        .registers
+                        .numbered
+                        .get(*index as usize)
+                        .cloned()
+                        .flatten(),
+                    Value::Int(_) => return fail("TLCGetOrDefault of a negative number"),
+                    key if is_register_name(key) => self.get_named_register(key)?,
+                    _ => None,
+                }
+                .unwrap_or(default);
+                // Whether TLC's call stack gives the value a source, which words a failure that
+                // compares it, isn't followed.
+                if self.call_stack.is_some() && address(&old).is_some() {
+                    return fail("a value of TLCGetOrDefault a failure may name the source of");
+                }
+                if is_set {
+                    let operator = self.operand_operator(&operands[1]).map_err(unfollowed)?;
+                    let value = self.operand(&operands[2]).map_err(unfollowed)?;
+                    let new = self
+                        .call_with_values(&operator, &[old.clone(), value])
+                        .map_err(unfollowed)?;
+                    self.set_register(key, new).map_err(unfollowed)?;
+                }
+                old
+            }
             // `TLCExt.tlcFingerprint`: TLC's fingerprint of the value, as an int.
             "TLCFP" => {
                 arity(1)?;

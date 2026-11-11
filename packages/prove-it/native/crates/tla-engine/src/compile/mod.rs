@@ -1298,9 +1298,10 @@ impl<'a> Compiler<'a> {
                     }
                     Resolution::Builtin(index) => match self.builtin_name(index) {
                         "Print" | "PrintT" | "RandomElement" | "RandomSubset" | "TLCEval" | "="
-                        | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCFP" | "TLCCache"
-                        | "Assert" | "AssertEq" | "JsonSerialize" | "ndJsonSerialize"
-                        | "JsonDeserialize" | "ndJsonDeserialize" => true,
+                        | "#" | "~" | "=>" | "TLCSet" | "TLCGet" | "TLCGetOrDefault"
+                        | "TLCGetAndSet" | "TLCFP" | "TLCCache" | "Assert" | "AssertEq"
+                        | "JsonSerialize" | "ndJsonSerialize" | "JsonDeserialize"
+                        | "ndJsonDeserialize" => true,
                         // TLC evaluates the operands, then builds the set, which the engine
                         // builds the same way unless an operand is a set TLC keeps lazy.
                         "\\cup" | "\\cap" | "\\" | "UNION" => !args
@@ -1344,6 +1345,7 @@ impl<'a> Compiler<'a> {
                             | "RandomElement"
                             | "RandomSubset"
                             | "TLCSet"
+                            | "TLCGetAndSet"
                             | "JsonSerialize"
                             | "ndJsonSerialize"
                             | "JsonDeserialize"
@@ -1396,6 +1398,7 @@ impl<'a> Compiler<'a> {
                             | "RandomSubset"
                             | "TLCSet"
                             | "TLCGet"
+                            | "TLCGetOrDefault"
                             | "TLCGetAndSet"
                             | "TLCCache"
                             | "TLCDefer"

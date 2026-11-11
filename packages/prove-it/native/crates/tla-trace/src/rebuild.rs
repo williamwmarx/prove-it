@@ -235,7 +235,7 @@ impl<'ir> Rebuilder<'ir> {
         let is_effectful = ir.builtins.iter().any(|builtin| {
             matches!(
                 &*ir.texts[builtin.name as usize],
-                "Print" | "PrintT" | "AssertEq" | "TLCSet"
+                "Print" | "PrintT" | "AssertEq" | "TLCSet" | "TLCGetAndSet"
             )
         });
         let again = if !matches!(ending, Ending::Lasso) && first.rebuilt.len() > 1 && is_effectful {
@@ -336,7 +336,7 @@ impl<'ir> Rebuilder<'ir> {
             || ir.builtins.iter().any(|builtin| {
                 matches!(
                     &*ir.texts[builtin.name as usize],
-                    "Print" | "PrintT" | "AssertEq" | "TLCSet"
+                    "Print" | "PrintT" | "AssertEq" | "TLCSet" | "TLCGetAndSet"
                 )
             });
         // TLC's worker seeds the draws of each expansion with the fingerprint of the state it

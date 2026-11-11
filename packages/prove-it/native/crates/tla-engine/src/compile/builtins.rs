@@ -334,6 +334,9 @@ impl Compiler<'_> {
         if self.is_native && name == "TLCSet" {
             return self.compile_register(operands, context, true);
         }
+        if self.is_native && matches!(name, "TLCGetOrDefault" | "TLCGetAndSet") {
+            return self.compile_get_or_default(operands, context, name == "TLCGetAndSet");
+        }
         if self.is_native && name == "TLCFP" {
             return self.compile_tlc_fp(operands);
         }
@@ -1034,6 +1037,87 @@ impl Compiler<'_> {
                 footprint,
             )
         })
+    }
+
+    // TLCGetOrDefault(key, default), TLCExt's Java method, is the register's value, or the default
+    // where the key names no register or TLC hasn't set it. TLCGetAndSet(key, Op, val, default),
+    // which TLCExt defines in TLA+ as `LET oldVal == TLCGetOrDefault(key, defaultVal) IN CHOOSE v
+    // \in {oldVal} : TLCSet(key, Op(oldVal, val))`, then sets the register to Op(oldVal, val),
+    // and is oldVal. TLC evaluates its arguments lazily, which arguments without effects show
+    // nowhere but where one fails, within TLCExt's definition, so an argument that prints declines.
+    fn compile_get_or_default(
+        &mut self,
+        operands: &[Operand],
+        context: &Context,
+        is_set: bool,
+    ) -> Compiling<Compiled> {
+        if is_set && !context.can_print {
+            return unsupported("TLCGetAndSet");
+        }
+        let (operator, values) = match operands {
+            [key, default] if !is_set => (None, [key, default]),
+            [key, operator, value, default] if is_set => {
+                if !self.is_operator_argument(operator) {
+                    return unsupported("TLCGetAndSet of an argument that isn't an operator");
+                }
+                let operator = self.compile_applier(operator, context)?;
+                if operator.slots.len() != 2 {
+                    return unsupported("an operator applied to the wrong number of arguments");
+                }
+                let value = self.operand(&Operand {
+                    context: value.context.without_print(),
+                    ..value.clone()
+                })?;
+                (Some((operator, value)), [key, default])
+            }
+            _ => return unsupported("an operator applied to the wrong number of arguments"),
+        };
+        self.is_printing = true;
+        let [key, default] = values.map(|operand| Operand {
+            context: operand.context.without_print(),
+            ..operand.clone()
+        });
+        let (key, default) = (self.operand(&key)?, self.operand(&default)?);
+        let mut footprint = key
+            .footprint
+            .merge(&default.footprint)
+            .merge(&Footprint::slot(super::REGISTER_SLOT));
+        if let Some((operator, value)) = &operator {
+            footprint = footprint
+                .merge(&operator.footprint)
+                .merge(&value.footprint)
+                .merge(&Footprint::slot(super::PRINT_SLOT));
+        }
+        let (key, default) = (key.eval, default.eval);
+        let operator =
+            operator.map(|(operator, value)| (operator.slots, operator.body, value.eval));
+        Ok(leaf(
+            eval(move |machine| {
+                let key = key(machine)?;
+                let default = default(machine)?;
+                let old = match get_register_key(&machine.store, key) {
+                    Some(_) => get_register(machine, key).unwrap_or(default),
+                    None if machine.store.kind_of(key) == KIND_INT => {
+                        return Err(Bail("TLCGetOrDefault of a negative number"));
+                    }
+                    None => default,
+                };
+                let Some((slots, body, value)) = &operator else {
+                    return Ok(old);
+                };
+                let value = value(machine)?;
+                let saved = [slots[0], slots[1]].map(|slot| machine.locals[slot as usize]);
+                machine.locals[slots[0] as usize] = old;
+                machine.locals[slots[1] as usize] = value;
+                let new = body(machine);
+                for (&slot, saved) in slots.iter().zip(saved) {
+                    machine.locals[slot as usize] = saved;
+                }
+                set_register(machine, key, new?)?;
+                Ok(old)
+            }),
+            footprint,
+        ))
     }
 
     // TLCFP(v), TLC's fingerprint of v as a number: the low 32 bits of the fingerprint of a state

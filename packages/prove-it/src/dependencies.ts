@@ -68,6 +68,8 @@ const IMPURE_BUILTINS = new Set([
   "JavaTime",
   "RandomElement",
   "TLCGet",
+  "TLCGetOrDefault",
+  "TLCGetAndSet",
   "TLCSet",
 ]);
 

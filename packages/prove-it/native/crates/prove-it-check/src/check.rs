@@ -917,7 +917,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             Some("-continue under SYMMETRY or a VIEW")
         } else if !model.postconditions.is_empty() {
             Some("-continue with a POSTCONDITION")
-        } else if is_built_in(&["Print", "PrintT", "AssertEq", "TLCSet"]) {
+        } else if is_built_in(&["Print", "PrintT", "AssertEq", "TLCSet", "TLCGetAndSet"]) {
             // TLC prints what the spec prints as it evaluates, before the violation it then
             // reports, and sets its registers again as it rebuilds each trace (`printTrace`),
             // which the search goes on reading.
