@@ -1035,6 +1035,7 @@ impl Context {
         self.node_mut(r2).next = saved_next;
         let r1_class_size = self.node(r1).class_size;
         self.node_mut(r2).class_size += r1_class_size;
+        self.node_mut(r2).set_is_shared(None);
         Ok(())
     }
 
@@ -1133,6 +1134,7 @@ impl Context {
         let r2 = self.root(r1);
         let r1_class_size = self.node(r1).class_size;
         self.node_mut(r2).class_size -= r1_class_size;
+        self.node_mut(r2).set_is_shared(None);
         let saved_next = self.node(r1).next;
         let r2_next = self.node(r2).next;
         self.node_mut(r1).next = r2_next;
