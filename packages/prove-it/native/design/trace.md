@@ -495,16 +495,25 @@ binds none and is evaluated at each use (`Tool.java:482-487`, `937-941`), as is 
 substitution here.
 
 The trace evaluator keeps such a binding's value (`Binding::Thunk`'s `kept`) with what TLC's
-cache keeps it with, and reuses it only where TLC would:
+cache keeps it with, and reuses it only where TLC would (`LazyValue.getCachedValue`), checking in
+TLC's order:
 
+- each variable the current, then the next, state assigned when it was evaluated holds an equal
+  value still (`TLCState.isSubset`), compared in TLC's order of the variables (`Ir::tlc_order`) and
+  stopping at the first that differs. As `Objects.equals(value, kept)`: the same object is equal
+  untouched, otherwise the state's value is compared first, so normalized first, and a comparison
+  that fails ends the check. So a value kept in one disjunct of the initial predicate is evaluated
+  again in another whose partial state differs, and a set the comparison normalizes is normalized
+  as TLC's is;
 - the evaluation's control is the same: primed or not, and in ENABLED or not
   (`EvalControl.semanticallyEquivalent` ignores only KeepLazy, Init and Const);
-- each variable the current and next states assigned when it was evaluated holds an equal value
-  still (`TLCState.isSubset`, by `equals`; a comparison that fails counts as unequal). So a value
-  kept in one disjunct of the initial predicate is evaluated again in another whose partial state
-  differs, and one kept outside ENABLED again inside it, each giving a set TLC hasn't normalized
-  yet;
+- where TLC has no next state, as it evaluates a prime, UNCHANGED's second operand, a subscript of
+  `[A]_e` or `<<A>>_e`, or a prime inside ENABLED, it evaluates the argument again and keeps nothing
+  (`Tool.evalAppl`, `s1 == null`), and so does the trace evaluator in a primed evaluation;
 - a draw is kept apart, as before (`drawn`).
+
+`equals` fails for a set TLC can't normalize before it normalizes the other operand, as
+`SetEnumValue.equals` normalizes itself first.
 
 A reuse tells what encloses it whether evaluating it read the state or built a lazy value holding
 it, as evaluating it again would. What it printed, or read of a register, is kept with it, so it

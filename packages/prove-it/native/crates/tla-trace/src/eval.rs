@@ -69,9 +69,11 @@ enum Binding {
 }
 
 /// The value of an argument or an expression's LET definition once evaluated, which TLC keeps
-/// (`LazyValue`'s cache) and reuses where the evaluation's control is the same, primed and in
-/// ENABLED or not (`EvalControl.semanticallyEquivalent`), and each variable the states it was
-/// evaluated in assigned holds an equal value still (`TLCState.isSubset`). A LET of an action or the
+/// (`LazyValue`'s cache) and reuses where each variable the states it was evaluated in assigned
+/// holds an equal value still (`TLCState.isSubset`) and the evaluation's control is the same,
+/// primed and in ENABLED or not (`EvalControl.semanticallyEquivalent`), in that order. Where TLC
+/// has no next state, as it evaluates a prime, UNCHANGED's or a subscript's second operand, it
+/// evaluates the argument again and keeps nothing (`Tool.evalAppl`). A LET of an action or the
 /// initial predicate binds none (`Tool#getNextStates`).
 type Kept = Rc<std::cell::RefCell<Option<KeptValue>>>;
 
@@ -88,15 +90,41 @@ struct KeptValue {
     value: Value,
 }
 
-// Whether each variable `kept` assigns holds an equal value in `state` (`TLCState.isSubset`): a
-// comparison that fails counts as unequal.
-fn is_kept_state(kept: &[Option<Value>], state: &[Option<Value>]) -> bool {
-    kept.len() == state.len()
-        && kept.iter().zip(state).all(|pair| match pair {
-            (None, _) => true,
-            (Some(kept), Some(value)) => equals(kept, value).unwrap_or(false),
-            (Some(_), None) => false,
-        })
+// Whether each variable `kept` assigns holds an equal value in `state`, as `TLCState.isSubset`
+// asks `Objects.equals(value, kept)` in TLC's order of the variables (`order`), stopping at the
+// first that differs: the same object is equal untouched, and otherwise the state's value is
+// compared, and so normalized, first. A comparison that fails gives `None`, which TLC takes as a
+// reason not to reuse the value, comparing nothing further.
+fn is_kept_state(kept: &[Option<Value>], state: &[Option<Value>], order: &[i32]) -> Option<bool> {
+    for &position in order {
+        let Some(kept) = &kept[position as usize] else {
+            continue;
+        };
+        let Some(value) = &state[position as usize] else {
+            return Some(false);
+        };
+        if !is_same_object(value, kept) && !equals(value, kept).ok()? {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
+// Whether two values are the one object TLC holds, which `Objects.equals` finds equal without
+// asking either.
+fn is_same_object(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Str(left), Value::Str(right)) | (Value::Model(left), Value::Model(right)) => {
+            Rc::ptr_eq(left, right)
+        }
+        (Value::Set(left), Value::Set(right)) | (Value::Unsorted(left), Value::Unsorted(right)) => {
+            Rc::ptr_eq(left, right)
+        }
+        (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
+        (Value::Lazy(left), Value::Lazy(right)) => Rc::ptr_eq(left, right),
+        (Value::Lambda(left), Value::Lambda(right)) => Rc::ptr_eq(left, right),
+        _ => false,
+    }
 }
 
 pub struct Operator {
@@ -2102,12 +2130,14 @@ impl<'ir> Evaluator<'ir> {
                     return Ok(value.clone());
                 }
                 let is_primed = context.is_primed || bound.is_primed;
+                // TLC has no next state to key the value by where it evaluates a prime.
+                let kept = kept.as_ref().filter(|_| !is_primed);
                 if let Some(kept) = kept
                     && let Some(kept) = &*kept.borrow()
+                    && is_kept_state(&kept.current, &self.current, &self.ir.tlc_order) == Some(true)
+                    && is_kept_state(&kept.next, &self.next, &self.ir.tlc_order) == Some(true)
                     && kept.is_primed == is_primed
                     && kept.is_enabling == self.is_enabling
-                    && is_kept_state(&kept.current, &self.current)
-                    && is_kept_state(&kept.next, &self.next)
                 {
                     self.reads += u64::from(kept.is_read);
                     self.captures += u64::from(kept.is_captured);
