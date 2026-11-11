@@ -119,6 +119,104 @@ fn get_reached_children(
             ],
             _ => expression.children(),
         },
+        // TLC evaluates a junction's operands in order up to the first that decides it, and a
+        // CASE's guards in order up to the first that holds.
+        ExpressionKind::Junction {
+            is_and, operands, ..
+        } => {
+            let constant = |operand: &Expr| match evaluator
+                .map(|evaluator| evaluator.evaluate(operand, None))
+            {
+                Some(Ok(ConfigValue::Boolean(holds))) => Some(holds),
+                _ => None,
+            };
+            let decided = operands
+                .iter()
+                .position(|operand| constant(operand) == Some(!*is_and));
+            operands[..decided.map_or(operands.len(), |position| position + 1)].to_vec()
+        }
+        ExpressionKind::Case { arms, other } => {
+            let mut reached = Vec::new();
+            for arm in arms {
+                reached.push(arm.condition.clone());
+                match evaluator.map(|evaluator| evaluator.evaluate(&arm.condition, None)) {
+                    Some(Ok(ConfigValue::Boolean(true))) => {
+                        reached.push(arm.body.clone());
+                        return reached;
+                    }
+                    Some(Ok(ConfigValue::Boolean(false))) => {}
+                    _ => reached.push(arm.body.clone()),
+                }
+            }
+            reached.extend(other.iter().cloned());
+            reached
+        }
+        // TLC computes an implication's consequent only where the antecedent holds.
+        ExpressionKind::Apply { operator, args, .. }
+            if &**operator == "=>"
+                && args.len() == 2
+                && matches!(
+                    evaluator.map(|evaluator| evaluator.evaluate(&args[0], None)),
+                    Some(Ok(ConfigValue::Boolean(false)))
+                ) =>
+        {
+            vec![args[0].clone()]
+        }
+        // TLC computes the body of a binder over an empty set nowhere.
+        ExpressionKind::Quantified { bounds, .. }
+        | ExpressionKind::SetMap { bounds, .. }
+        | ExpressionKind::FunctionConstruction { bounds, .. }
+            if bounds.iter().any(|bound| {
+                matches!(
+                    evaluator.map(|evaluator| evaluator.evaluate(&bound.set, None)),
+                    Some(Ok(ConfigValue::Set(elements))) if elements.is_empty()
+                )
+            }) =>
+        {
+            bounds.iter().map(|bound| bound.set.clone()).collect()
+        }
+        ExpressionKind::SetFilter { bound, .. }
+            if matches!(
+                evaluator.map(|evaluator| evaluator.evaluate(&bound.set, None)),
+                Some(Ok(ConfigValue::Set(elements))) if elements.is_empty()
+            ) =>
+        {
+            vec![bound.set.clone()]
+        }
+        // TLC computes a LET's definition only where its body reads it.
+        ExpressionKind::Let {
+            definitions,
+            instances: None,
+            body,
+            ..
+        } => {
+            let mut reached = vec![body.clone()];
+            let mut is_reached = vec![false; definitions.len()];
+            let mut pending = vec![body.clone()];
+            while let Some(inner) = pending.pop() {
+                if let Some(reference) = inner.reference()
+                    && let Some(position) = definitions
+                        .iter()
+                        .position(|definition| definition.name == reference)
+                    && !is_reached[position]
+                {
+                    is_reached[position] = true;
+                    let definition = &definitions[position];
+                    let parts: Vec<Expr> = match &definition.kind {
+                        DefinitionKind::Function { bounds } => bounds
+                            .iter()
+                            .map(|bound| bound.set.clone())
+                            .chain([definition.body.clone()])
+                            .collect(),
+                        DefinitionKind::Operator { .. } => vec![definition.body.clone()],
+                    };
+                    reached.extend(parts.iter().cloned());
+                    pending.extend(parts);
+                }
+                pending.extend(inner.children());
+            }
+            reached
+        }
         ExpressionKind::Apply { args, .. } if !expression.is_locally_resolved() => {
             let callee = expression.reference().and_then(|name| {
                 let target = environment.substitutions.get(&name).unwrap_or(&name);
@@ -139,7 +237,11 @@ fn get_reached_children(
                 {
                     is_read_param[position] = true;
                 }
-                pending.extend(inner.children());
+                // An application within keeps its arguments, so a recursive operator ends.
+                pending.extend(match &inner.kind {
+                    ExpressionKind::Apply { .. } => inner.children(),
+                    _ => get_reached_children(&inner, environment, evaluator),
+                });
             }
             args.iter()
                 .enumerate()
@@ -1427,13 +1529,14 @@ impl<'a> Lowering<'a> {
     /// the assumptions that aren't axioms. SYMMETRY is `NotYet` before this.
     fn write_startup(&mut self, config: &crate::config::ModelConfig) -> Result<Startup> {
         let environment = self.environment;
+        let evaluator = self.evaluator;
         // TLC replaces an operator a TLCOverrides index names with its Java method, which the
         // front end doesn't run, and no longer computes it as it starts. It reads the method
         // where the model reads the operator, a constant the configuration substitutes it for
         // included, and where the ALIAS reads it as TLC prints a trace, where the run declines.
         for (identifier, arity) in &environment.index_overrides {
             let is_read_by = |name: &str, is_alias_traced| {
-                is_read(name, config, environment, None, is_alias_traced)
+                is_read(name, config, environment, evaluator, is_alias_traced)
             };
             let is_replaced = config.substitutions.iter().any(|substitution| {
                 *substitution.name == **identifier
@@ -1448,7 +1551,7 @@ impl<'a> Lowering<'a> {
                         DefinitionKind::Operator { params, .. } => params.len(),
                         DefinitionKind::Function { .. } => 0,
                     };
-                    defined_arity == *arity
+                    arity.is_none_or(|arity| defined_arity == arity)
                 });
             let is_alike = match definition {
                 Some(definition) => {
@@ -1496,6 +1599,35 @@ impl<'a> Lowering<'a> {
                 &registers,
                 self.evaluator,
             )
+        });
+        // TLC tells a predicate the configuration names is constant by where the registers'
+        // builtins are written, taken branch or not, and computes and warns of one as it starts;
+        // the front end's level counts them as state-level.
+        is_register_constant |= [
+            &config.invariants,
+            &config.properties,
+            &config.constraints,
+            &config.action_constraints,
+            &config.postconditions,
+            &config.possible,
+        ]
+        .into_iter()
+        .flatten()
+        .chain(
+            [
+                &config.init,
+                &config.next,
+                &config.specification,
+                &config.view,
+                &config.alias,
+            ]
+            .into_iter()
+            .flatten(),
+        )
+        .filter_map(|name| environment.definitions.get(name.as_str()))
+        .any(|definition| {
+            reaches_in(&definition.body, environment, &registers, None)
+                && !reaches_in(&definition.body, environment, &variables, None)
         });
         if is_register_constant {
             return Err(FrontError::NotYet(

@@ -583,6 +583,7 @@ fn get_returned_literal(
 pub const INDEX_CLASS: &str = "tlc2/overrides/TLCOverrides";
 const ACCESS_FINAL: u16 = 0x0010;
 const OPERATOR_ANNOTATION: &str = "Ltlc2/overrides/TLAPlusOperator;";
+const EVALUATION_ANNOTATION: &str = "Ltlc2/overrides/Evaluation;";
 
 // What an annotation's element gives: a string or a number, or a value the front end doesn't read.
 enum ElementValue {
@@ -769,11 +770,13 @@ fn get_listed_classes(pool: &[PoolEntry], code: &[u8]) -> Option<Vec<String>> {
 }
 
 /// The operators the `tlc2.overrides.TLCOverrides` index TLC loads replaces (`processSpec`), each
-/// as its module, its identifier and the method's arity, where TLC prints nothing of them and runs none of their
-/// Java: the index is a plain class whose `get` returns class literals, and each method of those
-/// classes annotated as an override is a `@TLAPlusOperator(warn = false)` TLC doesn't call as it
-/// loads it.
-pub fn get_index_overrides(load_class: &ClassLoader) -> Result<Vec<(String, String, usize)>> {
+/// as its module, its identifier and the method's arity where TLC checks it, where TLC prints
+/// nothing of them and runs none of their Java: the index is a plain class whose `get` returns class literals, and each method of those
+/// classes annotated as an override is a `@TLAPlusOperator(warn = false)` or an
+/// `@Evaluation(silent = true, warn = false)` TLC doesn't call as it loads it.
+pub fn get_index_overrides(
+    load_class: &ClassLoader,
+) -> Result<Vec<(String, String, Option<usize>)>> {
     let Some(bytes) = load_class(INDEX_CLASS) else {
         return Ok(Vec::new());
     };
@@ -831,23 +834,52 @@ pub fn get_index_overrides(load_class: &ClassLoader) -> Result<Vec<(String, Stri
                             _ => None,
                         })
                     };
-                    let is_silent = elements.iter().any(|(name, value)| {
-                        name == "warn" && matches!(value, ElementValue::Number(0))
-                    });
+                    let is_false = |wanted: &str| {
+                        elements.iter().any(|(name, value)| {
+                            name == wanted && matches!(value, ElementValue::Number(0))
+                        })
+                    };
+                    let is_true = |wanted: &str| {
+                        elements.iter().any(|(name, value)| {
+                            name == wanted && matches!(value, ElementValue::Number(1))
+                        })
+                    };
                     // TLC fails to look up a method it can't reach, and calls a final one without
                     // parameters as it loads it (`MethodValue.get`).
                     let is_run_as_loaded = class.access & ACCESS_PUBLIC == 0
                         || method.access & ACCESS_PUBLIC == 0
                         || method.access & ACCESS_FINAL != 0;
-                    match (get_text("module"), get_text("identifier")) {
-                        (Some(module), Some(identifier))
-                            if annotation == OPERATOR_ANNOTATION
-                                && is_silent
-                                && !is_run_as_loaded =>
-                        {
+                    // TLC rejects an evaluation of a name SANY builds in, which no identifier is.
+                    let is_identifier = |name: &str| {
+                        name.chars()
+                            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+                    };
+                    let module = get_text("module");
+                    match annotation.as_str() {
+                        // TLC prints nothing of an override that sets warn to false, and checks
+                        // the method's arity against the operator's.
+                        OPERATOR_ANNOTATION if is_false("warn") && !is_run_as_loaded => {
+                            let (Some(module), Some(identifier)) = (module, get_text("identifier"))
+                            else {
+                                return Err(unsupported());
+                            };
                             let end = method.descriptor.find(')').ok_or_else(unsupported)?;
                             let arity = get_type_names(&method.descriptor[1..end])?.len();
-                            overrides.push((module, identifier, arity));
+                            overrides.push((module, identifier, Some(arity)));
+                        }
+                        // An evaluation that is silent and sets warn to false prints nothing, and
+                        // TLC replaces the operator whatever its arity.
+                        EVALUATION_ANNOTATION
+                            if is_true("silent") && is_false("warn") && !is_run_as_loaded =>
+                        {
+                            let (Some(module), Some(definition)) = (module, get_text("definition"))
+                            else {
+                                return Err(unsupported());
+                            };
+                            if !is_identifier(&definition) {
+                                return Err(unsupported());
+                            }
+                            overrides.push((module, definition, None));
                         }
                         _ => return Err(unsupported()),
                     }

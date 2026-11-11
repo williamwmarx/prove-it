@@ -589,10 +589,13 @@ place of the operator. It skips a method annotated `@TLAPlusOperator` or `@Evalu
 `processModuleOverrides` does, unless a `tlc2.overrides.TLCOverrides` class beside the spec could
 list it, and runs a method that catches an exception up to its first return. It reads a
 `tlc2/overrides/TLCOverrides` index whose `get` returns class literals, and whose classes'
-overrides are `@TLAPlusOperator(warn = false)` methods TLC doesn't call as it loads them. The run
-declines where the model reads an operator one replaces, or where the operator's own definition
-prints or draws as TLC would have computed it at startup; where only the ALIAS reads it, the run
-declines as it prints a trace. These shapes stay
+overrides are `@TLAPlusOperator(warn = false)` or `@Evaluation(silent = true, warn = false)`
+methods TLC doesn't call as it loads them (a `final` one without parameters it calls). An override
+of a module the spec doesn't load, of a name the module doesn't define, or of an operator of
+another arity changes nothing. The run declines where the model reads an operator of the root
+module one replaces, where the operator's own definition prints or draws as TLC would have
+computed it at startup, and for any other module's operator one replaces; where only the ALIAS
+reads it, the run declines as it prints a trace. These shapes stay
 declined for good, because what TLC does with them depends on the JVM, not on the class file:
 
 - **A static initializer, a field's initializer or a superclass.** Java runs them as TLC first

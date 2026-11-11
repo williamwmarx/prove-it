@@ -93,8 +93,8 @@ pub struct Environment {
     /// starts.
     pub java_overrides: Vec<crate::java_overrides::JavaOverride>,
     /// The root module's operators the `TLCOverrides` index TLC loads replaces with Java methods,
-    /// each with the method's arity.
-    pub index_overrides: Vec<(Name, usize)>,
+    /// each with the method's arity where TLC checks it.
+    pub index_overrides: Vec<(Name, Option<usize>)>,
 }
 
 impl Environment {
@@ -2419,33 +2419,34 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     };
     let mut assumptions = Vec::new();
     add_assumptions(&linked_root, &mut Vec::new(), &mut assumptions);
-    // TLC skips an override of a module the spec doesn't load (`modSet.get`), or of a name the
-    // module doesn't define (`getOpDef`): one no module the spec loads defines.
-    let is_loaded = |module: &str| {
-        linker.linked_modules.borrow().contains_key(module)
-            || linker.nested_modules.borrow().contains_key(module)
-            || get_standard_modules(options.version)
-                .iter()
-                .any(|standard| standard.name == module)
-    };
-    let is_defined = |identifier: &str| {
-        let linked = linker.linked_modules.borrow();
-        let nested = linker.nested_modules.borrow();
-        linked
-            .values()
-            .chain(nested.values())
-            .any(|module| module.visible.contains_key(identifier))
-            || linker
-                .standard_exports
-                .borrow()
-                .values()
-                .any(|exports| exports.contains_key(identifier))
+    // TLC skips an override of a module the spec doesn't load (`modSet.get`), of a name the module
+    // doesn't define (`getOpDef`), and an operator override whose arity isn't the definition's.
+    let get_symbol = |module: &str, identifier: &str| {
+        let linked = linker.linked_modules.borrow().get(module).cloned();
+        let symbols = linked
+            .or_else(|| linker.nested_modules.borrow().get(module).cloned())
+            .map(|linked| linked.visible.clone())
+            .or_else(|| linker.standard_exports.borrow().get(module).cloned());
+        symbols.map(|symbols| symbols.get(identifier).cloned())
     };
     let mut index_overrides_kept = Vec::new();
     for (module, identifier, arity) in index_overrides {
         if module == *root.name {
             index_overrides_kept.push((Name::from(identifier), arity));
-        } else if is_loaded(&module) && is_defined(&identifier) {
+            continue;
+        }
+        let is_standard = get_standard_modules(options.version)
+            .iter()
+            .any(|standard| standard.name == module);
+        let is_skipped = match get_symbol(&module, &identifier) {
+            None => !is_standard,
+            Some(None) => true,
+            Some(Some(symbol)) => {
+                symbol.kind == SymbolKind::Definition
+                    && arity.is_some_and(|arity| arity != symbol.arity)
+            }
+        };
+        if !is_skipped {
             return Err(FrontError::NotYet(
                 "a TLCOverrides index of Java overrides of another module".into(),
             ));
