@@ -17,7 +17,7 @@ use crate::lower::{Lowering, RankedTexts};
 use crate::order::{TlcOrder, get_checker_strings, get_unique};
 use crate::spec::{
     Properties, Specification, check_invariants, check_search_config, create_identifier,
-    get_properties, get_specification,
+    get_definition, get_properties, get_specification,
 };
 use crate::values::ValueOrder;
 
@@ -367,13 +367,27 @@ fn lower_ranked(
                 .find(|action| action.name == init.name)
                 .map_or(&init.location, |action| &action.location);
             let range = location.range.as_ref()?;
-            let label = if &*init.name == UNNAMED_ACTION {
+            // TLC names the predicate by the definition the configuration substitutes for it,
+            // and one a named INSTANCE copies by the instance (`I!Init`), placing it there.
+            let name = environment
+                .substitutions
+                .get(&init.name)
+                .unwrap_or(&init.name);
+            let is_instanced = environment.instance_names.iter().any(|(key, instanced)| {
+                instanced.rsplit('!').next() == Some(&**name)
+                    && get_definition(key, &environment)
+                        .is_some_and(|copied| copied.body.location == init.location)
+            });
+            if is_instanced {
+                return None;
+            }
+            let label = if &**name == UNNAMED_ACTION {
                 format!("Initial predicate {}", format_range(range))
             } else {
-                format!("{} {}", init.name, format_range(range))
+                format!("{name} {}", format_range(range))
             };
             let action = tla_trace::InitialAction {
-                name: init.name.to_string(),
+                name: name.to_string(),
                 module: range.module.to_string(),
                 lines: [range.start, range.end]
                     .map(|position| [position.line as i32, position.column as i32])
