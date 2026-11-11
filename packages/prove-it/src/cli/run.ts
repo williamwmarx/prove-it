@@ -64,12 +64,13 @@ const run = async (args: string[]) => {
     );
   }
   if (launch.mainClass === "tla2sany.xml.XMLExporter") {
+    // TLC 1.7.4's XMLExporter is retired, and only master's is native.
+    if (launch.java.tlcVersion === "1.7.4") {
+      console.error("prove-it: not native yet: TLC 1.7.4");
+      return 1;
+    }
     const exporter = await import("./xml-exporter");
-    return reportErrors(() =>
-      launch.java.tlcVersion === "1.7.4"
-        ? exporter.exportXml174(launch.args, getToolsJar(launch.java))
-        : exporter.exportXml(launch.args),
-    );
+    return reportErrors(() => exporter.exportXml(launch.args));
   }
   console.error(
     `Error: tla-ts runs the Java classes ${JAVA_MAIN_CLASSES.join(" and ")}, not ${launch.mainClass}.`,
