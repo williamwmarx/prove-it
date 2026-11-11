@@ -399,12 +399,7 @@ generator as the search left it, still seeded for the state (`TLCTrace.printTrac
 TLC fails, and the rebuild is `Unsupported`. A model that draws walks each step
 through all of TLC's actions in order, as one that prints does. An operator's argument or a LET
 definition that drew keeps its value for the uses that follow, as TLC's `LazyValue` keeps it, so
-`T` in `Same(RandomSubset(1, S))` is one subset. An operator's argument, and a LET definition in an
-expression, keeps its value too where evaluating it read no state and printed nothing, as
-`LazyValue` keeps it (`getOpContext` binds every argument cachable, and `Tool.java:1856` a LET's
-definitions); a LET of an action or the initial predicate keeps none, as TLC binds no `LazyValue`
-there. Evaluating an argument again at each use made TransitiveClosure's first assumption take
-154 s where TLC takes 1.4 s. A negative count of a set enumeration or an
+`T` in `Same(RandomSubset(1, S))` is one subset. A negative count of a set enumeration or an
 interval fails as the Java method does making room for the subset. `Unsupported` covers:
 - draws under a VIEW or SYMMETRY, whose key the seed is the fingerprint of;
 - draws in the checks after the last step;
@@ -497,11 +492,8 @@ place only as it compares, enumerates, sizes, prints or fingerprints it. Until t
 searches it element by element, asking each element whether it equals the value
 (`ValueVec.search`), so the error and its wording can differ from a sorted search's. A failure
 replay records each set enumeration it builds, with its elements as written, in a registry keyed
-by the set's address (`mark_unnormalized` in `value.rs`). Each entry holds a weak reference to
-its set, which keeps the set's allocation, so that no other set takes its address while the entry
-lasts, but not the set: a set nothing else holds is dropped, and its entry with it each time the
-registry doubles. Holding the sets kept every set an assumption built, 5.7 GB for
-TransitiveClosure's first. `elements`, `compare`, `equals`, printing and settling
+by the set's address (`mark_unnormalized` in `value.rs`). Each entry holds its set, so that no
+other set takes a freed one's address. `elements`, `compare`, `equals`, printing and settling
 drop the entry, as TLC's `normalize` would. `\cap` and `\` of a recorded set test its elements
 as written and give a recorded set, as `SetEnumValue.cap` and `diff` keep `isNorm`. Not followed
 yet: `\cup` normalizes its left operand, where TLC's `cup` doesn't, and DOMAIN of a lambda over a
