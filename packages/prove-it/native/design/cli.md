@@ -433,6 +433,15 @@ Not native, where TLC writes what the binary doesn't model:
   print the call stack and writes the new states it finds then (`keepCallStack`);
 - a spec with no variables, and a state holding a value whose text depends on how TLC built it.
 
+## -continue
+
+Under `-continue` TLC reports each invariant and action property violated and goes on: the
+binary prints each as TLC does, without TLC's trace spec, which `-continue` turns off
+(`isTraceRecorded`), and ends with the statistics of a search without a violation and exit 0
+([gaps.md](gaps.md)). The search runs on one thread, whatever `-workers` says, so it finds the
+violations in the order TLC's worker finds them. Checked against TLC's ContinueTest,
+DoInitFunctorInvariantContinueTest and ContinueSuccessors, and the corpus run with `-continue`.
+
 ## -simulate
 
 `-simulate [num=N]` runs TLC's random simulation (`Simulator`, `SimulationWorker`) in the engine

@@ -250,6 +250,20 @@ pub fn first_failing_changed(
     Ok(None)
 }
 
+/// The first of the predicates that fails of the state, evaluating each: where a parent may
+/// violate one, as under `-continue`, none holds by its parent's.
+pub fn first_failing(
+    machine: &mut Machine<'_>,
+    predicates: &[Predicate],
+) -> Result<Option<usize>, (usize, Bail)> {
+    for (position, predicate) in predicates.iter().enumerate() {
+        if !holds(machine, &predicate.eval).map_err(|bail| (position, bail))? {
+            return Ok(Some(position));
+        }
+    }
+    Ok(None)
+}
+
 /// A conjunct the engine checks: a name the configuration gives, as an identifier of it, or an
 /// expression of the model.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -512,7 +526,7 @@ impl EngineContext {
                     }),
             )
             .collect::<Result<Vec<_>, CompileError>>()?;
-        for (owner, (root, has_repeated_effect)) in roots.into_iter().enumerate() {
+        for (owner, &(root, has_repeated_effect)) in roots.iter().enumerate() {
             if has_repeated_effect && can_print {
                 printed.insert(root);
                 conjuncts.add(root);
@@ -521,6 +535,24 @@ impl EngineContext {
             }
             invariant_owners.resize(conjuncts.found.len(), owner);
         }
+        // TLC checks each invariant whole in an initial state, and under -continue goes on past
+        // one violated, so each keeps the conjuncts it shares with an invariant before it.
+        let owned_conjuncts: Vec<(Conjunct, usize)> = roots
+            .iter()
+            .enumerate()
+            .flat_map(|(owner, &(root, _))| {
+                let mut owned = Conjuncts::new(ir);
+                if printed.contains(&root) {
+                    owned.add(root);
+                } else {
+                    owned.collect(root);
+                }
+                owned
+                    .found
+                    .into_iter()
+                    .map(move |conjunct| (conjunct, owner))
+            })
+            .collect();
         let invariant_conjuncts = conjuncts.found;
         let invariants = invariant_conjuncts
             .iter()
@@ -710,12 +742,16 @@ impl EngineContext {
             .map(|atom| matches!(atom.atom, Atom::LevelState(_) | Atom::LevelAction { .. }))
             .collect();
         let atoms = compiled.into_iter().map(|atom| atom.atom).collect();
-        let (initial_invariants, initial_invariant_owners) = invariants
-            .iter()
-            .zip(&invariant_conjuncts)
-            .zip(&invariant_owners)
-            .filter(|((_, conjunct), _)| !init_conjuncts.contains(conjunct))
-            .map(|((compiled, _), &owner)| (compiled.eval.clone(), owner))
+        let (initial_invariants, initial_invariant_owners) = owned_conjuncts
+            .into_iter()
+            .filter(|(conjunct, _)| !init_conjuncts.contains(conjunct))
+            .map(|(conjunct, owner)| {
+                let position = invariant_conjuncts
+                    .iter()
+                    .position(|&found| found == conjunct)
+                    .expect("an invariant's conjunct the invariants hold");
+                (invariants[position].eval.clone(), owner)
+            })
             .unzip();
         // Under a VIEW TLC fingerprints the view's value alone, so a set TLC keeps lazy that a
         // variable holds stays as the spec built it, in an order the store doesn't keep.
