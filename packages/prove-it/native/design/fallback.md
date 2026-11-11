@@ -532,6 +532,11 @@ The groups are checked in this order, so a decline counts once, in the first gro
 The 1.7.4 runs leave with the TypeScript. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
 
+SANY's report of RECURSIVE declarations is native from #266, which takes SANY's messages from
+its generator where linking declines. Measured with `check-log` at that PR's head 04c7267: none of
+the 4 runs declines; of 1,891 checks, 1,456 are native and 435 not native yet, with 0 answered
+differently on one thread and four, and 1,020 are native in TLC's default mode.
+
 ### What uses it as the reference, and what replaces it
 
 | User | Replacement |
