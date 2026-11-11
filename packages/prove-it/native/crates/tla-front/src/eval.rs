@@ -389,16 +389,20 @@ impl Evaluator<'_> {
         };
         let arity = args.len();
         Ok(match (get_canonical_name(name), arity) {
-            // TLCGetSet.TLCGetEval fails on the keys TLC's model checker holds before it exists.
+            // TLCGetSet.TLCGetEval fails on the keys and registers TLC's model checker holds
+            // before it exists, and reads the level of TLCState.Empty, the initial level.
             ("TLCGet", 1) if !self.is_started && self.version == TlcVersion::Master => {
-                match value(0)? {
-                    ConfigValue::String(key) if CHECKER_KEYS.contains(&key.as_str()) => {
-                        return Err(FrontError::Evaluation(format!(
-                            "Attempted to apply the operator overridden by the Java method\n{TLC_GET_EVAL},\nbut it produced the following error:\nTLCGet({key}) was undefined."
-                        )));
+                let key = match value(0)? {
+                    ConfigValue::String(key) if key == "level" => {
+                        return Ok(ConfigValue::Number(1.0));
                     }
+                    ConfigValue::String(key) if CHECKER_KEYS.contains(&key.as_str()) => key,
+                    ConfigValue::Number(index) if index >= 0.0 => index.to_string(),
                     _ => return Err(not_yet("TLCGet")),
-                }
+                };
+                return Err(FrontError::Evaluation(format!(
+                    "Attempted to apply the operator overridden by the Java method\n{TLC_GET_EVAL},\nbut it produced the following error:\nTLCGet({key}) was undefined."
+                )));
             }
             ("+", 2) => {
                 let (left, right) = integers()?;
