@@ -347,7 +347,9 @@ differs as it does without -dumpTrace.
   written twice is one `Rc` of the evaluator, as it is one Java object to TLC: a string literal is
   one object per node, a state's unchanged variable is its predecessor's. `model_values` are the
   configuration's in the order `ModelConfig.parse` makes them, whose positions TLC writes. The gzip
-  member has `GZIPOutputStream`'s header and stored deflate blocks.
+  member has `GZIPOutputStream`'s header and the deflate stream zlib writes at the default level
+  (`deflate.rs`); the tokens of its strings are the dump's own (gaps.md, "The tokens of a dumped
+  trace").
 - `TraceDump::to_json() -> Result<String, Unsupported>` is `Json.serialize`'s text, Gson's
   escaping included: records and functions in the order written until TLC sorts them, so a JSON
   dump after `to_tlc` writes them sorted, as TLC's does when `-dumpTrace tlc` comes first.

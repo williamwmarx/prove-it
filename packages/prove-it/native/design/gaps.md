@@ -1159,3 +1159,21 @@ violated it, so the binary declined each such run.
   (ValueInputStream.java 110-111, 118), whose strings and record names go through
   `UniqueString.readExternal` (UniqueString.java 336-342: the token and the slot skipped as
   "invalid for the given internTbl"). The dump numbers each text in the order it first writes it.
+- The rest of the file is TLC's byte for byte. `GZIPOutputStream` compresses with the JDK's
+  `Deflater` at its default level, which is zlib's level 6 with a raw 32K window and memory level 8;
+  `deflate.rs` ports zlib 1.3's `deflate_slow` and trees.c, and writes the 156 trace files of the
+  corpus recordings as TLC did (`tests/deflate` holds some of them). That is the stream of stock
+  zlib, unchanged at that level from 1.2.x to 1.3.x, which Oracle's and Temurin's JDKs bundle and
+  Ubuntu's links. A JDK built on zlib-ng or another fork of zlib writes another stream, as valid and
+  as readable, whose bytes no one stream can match.
+- What a token is: `InternTable` numbers each new text from 1 as TLC interns it, over the whole run.
+  Matching it needs every text TLC interns before it writes the trace, in its order, where the order
+  the binary ranks strings in (tla-front's `order.rs`) is only that of the texts a spec can compare.
+  A debug InternTable on the corpus shows what it leaves out: each module's header and separators as
+  written (`------ MODULE`, the dashes and equals signs whole); `$$_void`, which SANY interns at the
+  end of the first expression it parses (`Operator.VoidOperator` in `OperatorStack.finalReduce`);
+  each infix operator's name with a dot, interned as `OperatorStack.reduceStack` reduces an
+  expression with it (`Operators.getMixfix`), in every module SANY parses; the names of the public
+  static methods of each module's Java override, in the order `getDeclaredMethods` gives them,
+  which the JVM doesn't fix (`SpecProcessor.processModuleOverrides`); and the seed, the fingerprint
+  polynomial and TLC's install location that `createConfig` interns before RecordValue's names.
