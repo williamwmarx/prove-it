@@ -63,18 +63,23 @@ fn a_canceled_decision_is_unknown() {
     assert_eq!(decision.verdict, Verdict::Unknown);
 }
 
+/// tlapm counts an LS4 that stops on its input as a failure.
 #[test]
-fn declines_what_isnt_ls4_input() {
-    for text in [
-        "not ((always h00000) ->",
-        "p q",
-        "(p",
-        "p & ~",
-        "p \u{a0} q",
-        "p -> )",
+fn fails_on_what_isnt_ls4_input() {
+    for (text, message) in [
+        (
+            "not ((always h00000) ->",
+            "Expected a formula in LS4 input, found the end",
+        ),
+        ("p q", "Expected the end of LS4 input, found q"),
+        ("(p", "Expected ) in LS4 input, found the end"),
+        ("p & ~", "Expected a formula in LS4 input, found the end"),
+        ("p \u{a0} q", "Expected ASCII LS4 input"),
+        ("p -> )", "Expected a formula in LS4 input, found )"),
     ] {
-        assert!(
-            matches!(decide(text, None), Err(DecideError::Declined(_))),
+        assert_eq!(
+            decide(text, None),
+            Err(DecideError::Prover(message.into())),
             "{text}"
         );
     }
