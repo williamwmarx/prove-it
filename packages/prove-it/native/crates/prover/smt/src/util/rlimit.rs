@@ -49,6 +49,7 @@ impl StopReason {
 pub struct ResourceLimit {
     limits: Limits,
     stop_reason: Rc<Cell<Option<StopReason>>>,
+    time_checks: Rc<Cell<u64>>,
 }
 
 impl ResourceLimit {
@@ -56,6 +57,7 @@ impl ResourceLimit {
         ResourceLimit {
             limits: limits.clone(),
             stop_reason: Rc::new(Cell::new(None)),
+            time_checks: Rc::new(Cell::new(0)),
         }
     }
 
@@ -102,6 +104,26 @@ impl ResourceLimit {
         false
     }
 
+    /// Fails at the deadline or once the cancel cell is set, for loops that take no step, such as
+    /// building or simplifying a large term. It counts no step, so it moves no step count, and it
+    /// leaves a stop already made to the code that made it. It reads the clock on every 256th call.
+    pub fn check_time(&self) -> Result<(), SmtError> {
+        let calls = self.time_checks.get().wrapping_add(1);
+        self.time_checks.set(calls);
+        if calls & CLOCK_CHECK_MASK != 0 || self.stop_reason.get().is_some() {
+            return Ok(());
+        }
+        let stop_reason = if self.limits.is_past_deadline() {
+            StopReason::Time
+        } else if self.limits.is_canceled() {
+            StopReason::Signal
+        } else {
+            return Ok(());
+        };
+        self.stop_reason.set(Some(stop_reason));
+        Err(SmtError::Canceled)
+    }
+
     /// tactic::checkpoint: counts a step, and fails once the work is canceled.
     pub fn checkpoint(&self) -> Result<(), SmtError> {
         if self.inc() {
@@ -142,6 +164,20 @@ mod tests {
         assert!((1..256).all(|_| limit.inc()));
         assert!(!limit.inc());
         assert_eq!(limit.stop_reason(), Some(StopReason::Time));
+    }
+
+    #[test]
+    fn a_time_check_stops_at_the_deadline_without_a_step() {
+        let limits = Limits::new(-1.0, Some(1), None);
+        let limit = ResourceLimit::new(&limits);
+        assert!((1..256).all(|_| limit.check_time().is_ok()));
+        assert_eq!(limit.check_time(), Err(SmtError::Canceled));
+        assert_eq!(limit.stop_reason(), Some(StopReason::Time));
+        assert_eq!(limit.count(), 0);
+        let stepped = ResourceLimit::new(&limits);
+        assert!(!(0..2).all(|_| stepped.inc()));
+        assert!((0..512).all(|_| stepped.check_time().is_ok()));
+        assert_eq!(stepped.stop_reason(), Some(StopReason::Steps));
     }
 
     #[test]

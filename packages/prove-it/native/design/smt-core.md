@@ -132,6 +132,13 @@ and the forms it writes otherwise (a negative numeral is `(- 1)`, a chained equa
 parser keeps the TypeScript's reading of what lies outside, for the tests that run the solver on
 its own.
 
+**Limits.** Past the step limit, the deadline or the signal a decision is unknown with its `stop`.
+Some work takes no step: reading a script, splitting and simplifying the goal, expanding a
+distinct into the disequalities of every pair, multiplying out a product of sums. There the
+deadline and the signal are read without a step (`ResourceLimit::check_time`, on every 256th
+call), so a 1,000,000-wide `(not (or …))`, a distinct of 2,000 constants or a product of 2^15
+sums stops at the deadline, not after it, and moves no step count.
+
 **Size.** The core stops at `MAX_SIZE` (`rlimit.rs`, prover.md 3.6) with `stop=heap`: a count of
 the expressions, the goal's formulas, the e-graph's nodes and the instances found, read at the
 context's cancel checks and where the goal and the manager grow, so that a decision that grows

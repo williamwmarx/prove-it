@@ -1125,6 +1125,7 @@ impl ThRewriterCfg {
         let mut pairs: Vec<Expr> = Vec::new();
         for left in 0..args.len() {
             for right in left + 1..args.len() {
+                m.limit.check_time()?;
                 let eq = self.mk_eq(m, last_result, args[left], args[right])?;
                 pairs.push(self.mk_not(m, last_result, eq)?);
             }

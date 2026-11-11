@@ -4,6 +4,8 @@
 //! The goal keeps no manager, so its methods take it; its owner calls `forms.reset` where Z3's
 //! destructor would run.
 
+use std::collections::HashSet;
+
 use crate::core::ast::{AstManager, Expr, OP_AND, OP_NOT, OP_OR, SORT_BOOL};
 use crate::core::ref_vector::RefVector;
 use crate::util::error::SmtError;
@@ -34,6 +36,7 @@ impl Goal {
             self.is_inconsistent = true;
         }
         self.forms.push(m, form);
+        m.limit.check_time()?;
         m.limit.check_size(m.get_num_nodes() + self.forms.len())
     }
 
@@ -161,22 +164,25 @@ impl Goal {
         }
         let mut negatives = RefVector::new();
         let mut positives = RefVector::new();
+        let mut negative_set = HashSet::new();
+        let mut positive_set = HashSet::new();
         let mut kept = 0;
         for (index, form) in self.forms.items.clone().into_iter().enumerate() {
+            m.limit.check_time()?;
             if m.is_true(form) {
                 continue;
             }
             let is_negated = m.is_not(form);
             let atom = if is_negated { m.get_arg(form, 0) } else { form };
-            let (same, other) = if is_negated {
-                (&mut negatives, &positives)
+            let (same, same_set, other_set) = if is_negated {
+                (&mut negatives, &mut negative_set, &positive_set)
             } else {
-                (&mut positives, &negatives)
+                (&mut positives, &mut positive_set, &negative_set)
             };
-            if same.items.contains(&atom) {
+            if !same_set.insert(atom) {
                 continue;
             }
-            if other.items.contains(&atom) {
+            if other_set.contains(&atom) {
                 let false_expr = m.false_expr;
                 self.push_back(m, false_expr)?;
                 break;

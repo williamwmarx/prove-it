@@ -605,3 +605,51 @@ fn leaves_a_large_search_to_its_answer() {
              :weight 100)))(check-sat)";
     assert_eq!(decide(&text), Ok(Verdict::Sat));
 }
+
+// Terms that take no step to build or to simplify: a negated disjunction 10,000 wide, the distinct
+// of 1,000 constants and a product of 4,096 sums. Past the deadline, or once the signal is set,
+// each stops while it is read, at its first step, since the clock is read without a step too.
+#[test]
+fn stops_a_large_term_at_the_deadline_without_a_step() {
+    let declare = |count: usize, sort: &str| {
+        (0..count)
+            .map(|index| format!("(declare-fun smt__c{index} () {sort})\n"))
+            .collect::<String>()
+    };
+    let constants = |count: usize| {
+        (0..count)
+            .map(|index| format!(" smt__c{index}"))
+            .collect::<String>()
+    };
+    let product = (0..12).fold("(+ smt__c0 1)".to_string(), |term, _| {
+        format!("(* {term} {term})")
+    });
+    let scripts = [
+        format!(
+            "{}(assert (not (or{})))",
+            declare(10_000, "Bool"),
+            constants(10_000)
+        ),
+        format!(
+            "(declare-sort Idv 0)\n{}(assert (distinct{}))",
+            declare(1_000, "Idv"),
+            constants(1_000)
+        ),
+        format!("{}(assert (< {product} 0))", declare(1, "Int")),
+    ];
+    for script in scripts {
+        let text = format!("(set-logic UFNIA)\n{script}\n(check-sat)\n");
+        for (is_signaled, stop) in [(false, "time"), (true, "signal")] {
+            let decision = on_deep_stack(|| {
+                let limits = if is_signaled {
+                    Limits::new(f64::INFINITY, Some(STEP_LIMIT), Some(Arc::new(|| true)))
+                } else {
+                    Limits::new(-1.0, Some(STEP_LIMIT), None)
+                };
+                prove_smt::decide(&text, &limits)
+            })
+            .map(|decision| get_decision_text(&decision));
+            assert_eq!(decision, Ok(format!("unknown steps=1 stop={stop}")));
+        }
+    }
+}
