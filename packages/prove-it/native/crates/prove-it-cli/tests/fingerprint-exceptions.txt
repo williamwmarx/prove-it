@@ -4916,4 +4916,2029 @@ is element of
 {{}, {1}}
 1 states generated, 1 distinct states found, 1 states left on queue.
 The depth of the complete state graph search is 1.
+### Init == x = [k \in {1, 2} |-> k \div 0]: Next == x' = x
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = [k \in {1, 2} |-> k \div 0]
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: The second argument of \div is 0.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 39 in M
+1. Line 4, column 13 to line 4, column 39 in M
+2. Line 4, column 31 to line 4, column 38 in M
+
+
+Reason:
+The second argument of \div is 0.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: The second argument of \div is 0.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 39 in M
+1. Line 4, column 13 to line 4, column 39 in M
+2. Line 4, column 31 to line 4, column 38 in M
+
+
+Reason:
+The second argument of \div is 0.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### Init == x = [k \in {1, 2} |-> <<1, 2>>[k + 1]]: Next == x' = x
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = [k \in {1, 2} |-> <<1, 2>>[k + 1]]
+Next == x' = x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 46 in M
+1. Line 4, column 13 to line 4, column 46 in M
+2. Line 4, column 31 to line 4, column 45 in M
+3. Line 4, column 31 to line 4, column 38 in M
+
+
+Reason:
+Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 46 in M
+1. Line 4, column 13 to line 4, column 46 in M
+2. Line 4, column 31 to line 4, column 45 in M
+3. Line 4, column 31 to line 4, column 38 in M
+
+
+Reason:
+Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### Init == x = 0: Next == x' = [k \in 1..2 |-> k \div 0]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = [k \in 1..2 |-> k \div 0]
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 38 in M
+1. Line 5, column 14 to line 5, column 38 in M
+2. Line 5, column 30 to line 5, column 37 in M
+
+
+Reason:
+The second argument of \div is 0.
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 38 in M
+1. Line 5, column 14 to line 5, column 38 in M
+2. Line 5, column 30 to line 5, column 37 in M
+
+
+Reason:
+The second argument of \div is 0.
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = 0: Next == x' = [j \in {1} |-> [k \in {1, 2} |-> k \div 0]]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = [j \in {1} |-> [k \in {1, 2} |-> k \div 0]]
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 56 in M
+1. Line 5, column 14 to line 5, column 56 in M
+2. Line 5, column 29 to line 5, column 55 in M
+3. Line 5, column 47 to line 5, column 54 in M
+
+
+Reason:
+The second argument of \div is 0.
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 56 in M
+1. Line 5, column 14 to line 5, column 56 in M
+2. Line 5, column 29 to line 5, column 55 in M
+3. Line 5, column 47 to line 5, column 54 in M
+
+
+Reason:
+The second argument of \div is 0.
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = 0: Next == x' = [j \in {1}, k \in {1, 2} |-> k \div 0]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = [j \in {1}, k \in {1, 2} |-> k \div 0]
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 51 in M
+1. Line 5, column 14 to line 5, column 51 in M
+2. Line 5, column 43 to line 5, column 50 in M
+
+
+Reason:
+The second argument of \div is 0.
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 51 in M
+1. Line 5, column 14 to line 5, column 51 in M
+2. Line 5, column 43 to line 5, column 50 in M
+
+
+Reason:
+The second argument of \div is 0.
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = 0: Next == x' = [k \in {1, 2} |-> <<1, 2>>[k + 1]]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = [k \in {1, 2} |-> <<1, 2>>[k + 1]]
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 47 in M
+1. Line 5, column 14 to line 5, column 47 in M
+2. Line 5, column 32 to line 5, column 46 in M
+3. Line 5, column 32 to line 5, column 39 in M
+
+
+Reason:
+Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 47 in M
+1. Line 5, column 14 to line 5, column 47 in M
+2. Line 5, column 32 to line 5, column 46 in M
+3. Line 5, column 32 to line 5, column 39 in M
+
+
+Reason:
+Attempted to access index 3 of tuple
+<<1, 2>>
+which is out of bounds.
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = 0: Next == x' = [k \in Nat |-> k \div 0][1]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = [k \in Nat |-> k \div 0][1]
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 255
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 40 in M
+1. Line 5, column 14 to line 5, column 40 in M
+2. Line 5, column 29 to line 5, column 36 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 255
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 5, column 9 to line 5, column 40 in M
+1. Line 5, column 14 to line 5, column 40 in M
+2. Line 5, column 29 to line 5, column 36 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = 0: Next == x' = [a |-> 1][1]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = [a |-> 1][1]
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to access record by a non-string argument: 1
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 25 in M
+1. Line 5, column 14 to line 5, column 25 in M
+2. Line 5, column 14 to line 5, column 22 in M
+
+
+Reason:
+Attempted to access record by a non-string argument: 1
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to access record by a non-string argument: 1
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 25 in M
+1. Line 5, column 14 to line 5, column 25 in M
+2. Line 5, column 14 to line 5, column 22 in M
+
+
+Reason:
+Attempted to access record by a non-string argument: 1
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = 0: Next == x' = <<1, 2>>["a"]
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = <<1, 2>>["a"]
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to access tuple at a non integral index: "a"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 26 in M
+1. Line 5, column 14 to line 5, column 26 in M
+2. Line 5, column 14 to line 5, column 21 in M
+
+
+Reason:
+Attempted to access tuple at a non integral index: "a"
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to access tuple at a non integral index: "a"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 26 in M
+1. Line 5, column 14 to line 5, column 26 in M
+2. Line 5, column 14 to line 5, column 21 in M
+
+
+Reason:
+Attempted to access tuple at a non integral index: "a"
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x \in {n \in Nat : n > 2}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals
+VARIABLE x
+Init == x \in {n \in Nat : n > 2}
+Next == UNCHANGED x
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 33 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 33 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### ({<<1>>} \cup {2}) = {}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ ({<<1>>} \cup {2}) = {}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of the function <<1>> with the value:
+2
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 41 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 41 in M
+3. Line 5, column 20 to line 5, column 35 in M
+4. Line 5, column 20 to line 5, column 26 in M
+5. Line 5, column 21 to line 5, column 25 in M
+
+
+Reason:
+Attempted to check equality of the function <<1>> with the value:
+2
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of the function <<1>> with the value:
+2
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 41 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 41 in M
+3. Line 5, column 20 to line 5, column 35 in M
+4. Line 5, column 20 to line 5, column 26 in M
+5. Line 5, column 21 to line 5, column 25 in M
+
+
+Reason:
+Attempted to check equality of the function <<1>> with the value:
+2
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### ({[a |-> 1]} \cap {{1}}) = {}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ ({[a |-> 1]} \cap {{1}}) = {}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of the set {1} with the value:
+[a |-> 1]
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 47 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 47 in M
+3. Line 5, column 20 to line 5, column 41 in M
+4. Line 5, column 20 to line 5, column 30 in M
+5. Line 5, column 37 to line 5, column 41 in M
+6. Line 5, column 38 to line 5, column 40 in M
+
+
+Reason:
+Attempted to check equality of the set {1} with the value:
+[a |-> 1]
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of the set {1} with the value:
+[a |-> 1]
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 47 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 47 in M
+3. Line 5, column 20 to line 5, column 41 in M
+4. Line 5, column 20 to line 5, column 30 in M
+5. Line 5, column 37 to line 5, column 41 in M
+6. Line 5, column 38 to line 5, column 40 in M
+
+
+Reason:
+Attempted to check equality of the set {1} with the value:
+[a |-> 1]
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### 2 \in {<<1>>}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ 2 \in {<<1>>}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of the function <<1>> with the value:
+2
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 31 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 31 in M
+3. Line 5, column 25 to line 5, column 31 in M
+4. Line 5, column 26 to line 5, column 30 in M
+
+
+Reason:
+Attempted to check equality of the function <<1>> with the value:
+2
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of the function <<1>> with the value:
+2
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 31 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 31 in M
+3. Line 5, column 25 to line 5, column 31 in M
+4. Line 5, column 26 to line 5, column 30 in M
+
+
+Reason:
+Attempted to check equality of the function <<1>> with the value:
+2
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### {("a" :> 1), <<2>>} = {}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ {("a" :> 1), <<2>>} = {}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compare integer with non-integer:
+"a".
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 42 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 42 in M
+3. Line 5, column 19 to line 5, column 37 in M
+4. Line 5, column 32 to line 5, column 36 in M
+
+
+Reason:
+Attempted to compare integer with non-integer:
+"a".
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compare integer with non-integer:
+"a".
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 42 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 42 in M
+3. Line 5, column 19 to line 5, column 37 in M
+4. Line 5, column 32 to line 5, column 36 in M
+
+
+Reason:
+Attempted to compare integer with non-integer:
+"a".
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### ({<<1>>} \cap {2}) = {}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ ({<<1>>} \cap {2}) = {}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 2 with non-integer:
+<<1>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 41 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 41 in M
+3. Line 5, column 20 to line 5, column 35 in M
+4. Line 5, column 20 to line 5, column 26 in M
+5. Line 5, column 33 to line 5, column 35 in M
+
+
+Reason:
+Attempted to check equality of integer 2 with non-integer:
+<<1>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 2 with non-integer:
+<<1>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 41 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 41 in M
+3. Line 5, column 20 to line 5, column 35 in M
+4. Line 5, column 20 to line 5, column 26 in M
+5. Line 5, column 33 to line 5, column 35 in M
+
+
+Reason:
+Attempted to check equality of integer 2 with non-integer:
+<<1>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### ({<<1>>} \ {2}) = {}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ ({<<1>>} \ {2}) = {}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 2 with non-integer:
+<<1>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 38 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 38 in M
+3. Line 5, column 20 to line 5, column 32 in M
+4. Line 5, column 20 to line 5, column 26 in M
+5. Line 5, column 30 to line 5, column 32 in M
+
+
+Reason:
+Attempted to check equality of integer 2 with non-integer:
+<<1>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 2 with non-integer:
+<<1>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 38 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 38 in M
+3. Line 5, column 20 to line 5, column 32 in M
+4. Line 5, column 20 to line 5, column 26 in M
+5. Line 5, column 30 to line 5, column 32 in M
+
+
+Reason:
+Attempted to check equality of integer 2 with non-integer:
+<<1>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### ({2} \cup {<<1>>}) = {}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ ({2} \cup {<<1>>}) = {}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 2 with non-integer:
+<<1>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 41 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 41 in M
+3. Line 5, column 20 to line 5, column 35 in M
+4. Line 5, column 20 to line 5, column 22 in M
+
+
+Reason:
+Attempted to check equality of integer 2 with non-integer:
+<<1>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 2 with non-integer:
+<<1>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 41 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 41 in M
+3. Line 5, column 20 to line 5, column 35 in M
+4. Line 5, column 20 to line 5, column 22 in M
+
+
+Reason:
+Attempted to check equality of integer 2 with non-integer:
+<<1>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### ({<<1>>} \cup {<<2>>, 3}) = {}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ ({<<1>>} \cup {<<2>>, 3}) = {}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compare integer 3 with non-integer:
+<<2>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 48 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 48 in M
+3. Line 5, column 20 to line 5, column 42 in M
+4. Line 5, column 20 to line 5, column 26 in M
+5. Line 5, column 33 to line 5, column 42 in M
+
+
+Reason:
+Attempted to compare integer 3 with non-integer:
+<<2>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compare integer 3 with non-integer:
+<<2>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 48 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 48 in M
+3. Line 5, column 20 to line 5, column 42 in M
+4. Line 5, column 20 to line 5, column 26 in M
+5. Line 5, column 33 to line 5, column 42 in M
+
+
+Reason:
+Attempted to compare integer 3 with non-integer:
+<<2>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### <<{<<1>>, 2}>> = <<{}>>
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ <<{<<1>>, 2}>> = <<{}>>
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compare integer 2 with non-integer:
+<<1>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 41 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 41 in M
+3. Line 5, column 19 to line 5, column 32 in M
+4. Line 5, column 21 to line 5, column 30 in M
+
+
+Reason:
+Attempted to compare integer 2 with non-integer:
+<<1>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to compare integer 2 with non-integer:
+<<1>>
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 41 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 41 in M
+3. Line 5, column 19 to line 5, column 32 in M
+4. Line 5, column 21 to line 5, column 30 in M
+
+
+Reason:
+Attempted to compare integer 2 with non-integer:
+<<1>>
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### 2 \in {{<<1>>}}
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x' = x /\ 2 \in {{<<1>>}}
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of the set {<<1>>} with the value:
+2
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 33 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 33 in M
+3. Line 5, column 25 to line 5, column 33 in M
+4. Line 5, column 26 to line 5, column 32 in M
+
+
+Reason:
+Attempted to check equality of the set {<<1>>} with the value:
+2
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of the set {<<1>>} with the value:
+2
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 5, column 9 to line 5, column 33 in M
+1. Line 5, column 9 to line 5, column 14 in M
+2. Line 5, column 19 to line 5, column 33 in M
+3. Line 5, column 25 to line 5, column 33 in M
+4. Line 5, column 26 to line 5, column 32 in M
+
+
+Reason:
+Attempted to check equality of the set {<<1>>} with the value:
+2
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = [a |-> 1]: x = {}
+--- spec
+---- MODULE M ----
+EXTENDS TLC
+VARIABLE x
+Init == x = [a |-> 1]
+Next == UNCHANGED x
+Inv == x = {}
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to check equality of record:
+[a |-> 1]
+with non-record
+{}
+While working on the initial state:
+x = [a |-> 1]
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 21 in M
+1. Line 6, column 8 to line 6, column 13 in M
+2. Line 4, column 13 to line 4, column 21 in M
+
+
+Reason:
+Attempted to check equality of record:
+[a |-> 1]
+with non-record
+{}
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to check equality of record:
+[a |-> 1]
+with non-record
+{}
+While working on the initial state:
+x = [a |-> 1]
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 4, column 9 to line 4, column 21 in M
+1. Line 6, column 8 to line 6, column 13 in M
+2. Line 4, column 13 to line 4, column 21 in M
+
+
+Reason:
+Attempted to check equality of record:
+[a |-> 1]
+with non-record
+{}
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = "a" :> 1: x = {}
+--- spec
+---- MODULE M ----
+EXTENDS TLC
+VARIABLE x
+Init == x = "a" :> 1
+Next == UNCHANGED x
+Inv == x = {}
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to check equality of the function [a |-> 1] with the value:
+{}
+While working on the initial state:
+x = [a |-> 1]
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 20 in M
+1. Line 6, column 8 to line 6, column 13 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to check equality of the function [a |-> 1] with the value:
+{}
+While working on the initial state:
+x = [a |-> 1]
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 20 in M
+1. Line 6, column 8 to line 6, column 13 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = "a b" :> 1: x = {}
+--- spec
+---- MODULE M ----
+EXTENDS TLC
+VARIABLE x
+Init == x = "a b" :> 1
+Next == UNCHANGED x
+Inv == x = {}
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: Attempted to check equality of the function ("a b" :> 1) with the value:
+{}
+While working on the initial state:
+x = ("a b" :> 1)
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 22 in M
+1. Line 6, column 8 to line 6, column 13 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to check equality of the function ("a b" :> 1) with the value:
+{}
+While working on the initial state:
+x = ("a b" :> 1)
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 22 in M
+1. Line 6, column 8 to line 6, column 13 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = {n \in Nat : n > 1} /\ y = 0
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == x = {n \in Nat : n > 1} /\ y = 0
+Next == UNCHANGED <<x, y>>
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+While working on the initial state:
+/\ x = {n \in Nat : <expression line 4, col 26 to line 4, col 30 of module M> }
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 40 in M
+1. Line 4, column 9 to line 4, column 31 in M
+2. Line 4, column 36 to line 4, column 40 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+While working on the initial state:
+/\ x = {n \in Nat : <expression line 4, col 26 to line 4, col 30 of module M> }
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 40 in M
+1. Line 4, column 9 to line 4, column 31 in M
+2. Line 4, column 36 to line 4, column 40 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == x = {{n \in Nat : n > 1}} /\ y = 0
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == x = {{n \in Nat : n > 1}} /\ y = 0
+Next == UNCHANGED <<x, y>>
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+While working on the initial state:
+/\ x = {{n \in Nat : <expression line 4, col 27 to line 4, col 31 of module M> }}
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 4, col 13 to line 4, col 33 of module M
+
+Reason:
+Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+While working on the initial state:
+/\ x = {{n \in Nat : <expression line 4, col 27 to line 4, col 31 of module M> }}
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 4, col 13 to line 4, col 33 of module M
+
+Reason:
+Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == \/ (x = {n \in Nat : n > 1} /\ y = 0) \/ (x = 0 /\ y = 1)
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == \/ (x = {n \in Nat : n > 1} /\ y = 0) \/ (x = 0 /\ y = 1)
+Next == UNCHANGED <<x, y>>
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+While working on the initial state:
+/\ x = {n \in Nat : <expression line 4, col 30 to line 4, col 34 of module M> }
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 65 in M
+1. Line 4, column 12 to line 4, column 65 in M
+2. Line 4, column 13 to line 4, column 44 in M
+3. Line 4, column 13 to line 4, column 35 in M
+4. Line 4, column 40 to line 4, column 44 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+While working on the initial state:
+/\ x = {n \in Nat : <expression line 4, col 30 to line 4, col 34 of module M> }
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 65 in M
+1. Line 4, column 12 to line 4, column 65 in M
+2. Line 4, column 13 to line 4, column 44 in M
+3. Line 4, column 13 to line 4, column 35 in M
+4. Line 4, column 40 to line 4, column 44 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == \/ (x = {n \in Nat : n > 1} /\ y = 0) \/ (x = 0 /\ y = 1) with C == y = 0
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == \/ (x = {n \in Nat : n > 1} /\ y = 0) \/ (x = 0 /\ y = 1)
+Next == UNCHANGED <<x, y>>
+C == y = 0
+====
+--- config
+INIT Init
+NEXT Next
+CONSTRAINT C
+--- workers 1 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+While working on the initial state:
+/\ x = {n \in Nat : <expression line 4, col 30 to line 4, col 34 of module M> }
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 65 in M
+1. Line 4, column 12 to line 4, column 65 in M
+2. Line 4, column 13 to line 4, column 44 in M
+3. Line 4, column 13 to line 4, column 35 in M
+4. Line 4, column 40 to line 4, column 44 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Attempted to enumerate { x \in S : p(x) } when S:
+Nat
+is not enumerable
+While working on the initial state:
+/\ x = {n \in Nat : <expression line 4, col 30 to line 4, col 34 of module M> }
+/\ y = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 65 in M
+1. Line 4, column 12 to line 4, column 65 in M
+2. Line 4, column 13 to line 4, column 44 in M
+3. Line 4, column 13 to line 4, column 35 in M
+4. Line 4, column 40 to line 4, column 44 in M
+
+
+1 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == \/ (x = SUBSET (1..31) /\ y = 0) \/ (x = 0 /\ y = 1)
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == \/ (x = SUBSET (1..31) /\ y = 0) \/ (x = 0 /\ y = 1)
+Next == UNCHANGED <<x, y>>
+====
+--- config
+INIT Init
+NEXT Next
+--- workers 1 exit 75
+Error: Overflow when computing the number of elements in:
+SUBSET (1..31)
+While working on the initial state:
+/\ x = SUBSET (1..31)
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 4, col 17 to line 4, col 30 of module M
+
+Reason:
+Overflow when computing the number of elements in:
+SUBSET (1..31)
+2 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Overflow when computing the number of elements in:
+SUBSET (1..31)
+While working on the initial state:
+/\ x = SUBSET (1..31)
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 4, col 17 to line 4, col 30 of module M
+
+Reason:
+Overflow when computing the number of elements in:
+SUBSET (1..31)
+2 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == \/ (x = SUBSET (1..31) /\ y = 0) \/ (x = 0 /\ y = 1) with C == y \in {0, 1}
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == \/ (x = SUBSET (1..31) /\ y = 0) \/ (x = 0 /\ y = 1)
+Next == UNCHANGED <<x, y>>
+C == y \in {0, 1}
+====
+--- config
+INIT Init
+NEXT Next
+CONSTRAINT C
+--- workers 1 exit 75
+Error: Overflow when computing the number of elements in:
+SUBSET (1..31)
+While working on the initial state:
+/\ x = SUBSET (1..31)
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 4, col 17 to line 4, col 30 of module M
+
+Reason:
+Overflow when computing the number of elements in:
+SUBSET (1..31)
+2 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Overflow when computing the number of elements in:
+SUBSET (1..31)
+While working on the initial state:
+/\ x = SUBSET (1..31)
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 4, col 17 to line 4, col 30 of module M
+
+Reason:
+Overflow when computing the number of elements in:
+SUBSET (1..31)
+2 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Init == \/ (x = 0 /\ y = 1) \/ (x = SUBSET (1..31) /\ y = 0) with C == y = 0
+--- spec
+---- MODULE M ----
+EXTENDS Integers
+VARIABLES x, y
+Init == \/ (x = 0 /\ y = 1) \/ (x = SUBSET (1..31) /\ y = 0)
+Next == UNCHANGED <<x, y>>
+C == y = 0
+====
+--- config
+INIT Init
+NEXT Next
+CONSTRAINT C
+--- workers 1 exit 75
+Error: Overflow when computing the number of elements in:
+SUBSET (1..31)
+While working on the initial state:
+/\ x = SUBSET (1..31)
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 4, col 37 to line 4, col 50 of module M
+
+Reason:
+Overflow when computing the number of elements in:
+SUBSET (1..31)
+2 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: Overflow when computing the number of elements in:
+SUBSET (1..31)
+While working on the initial state:
+/\ x = SUBSET (1..31)
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0) line 4, col 37 to line 4, col 50 of module M
+
+Reason:
+Overflow when computing the number of elements in:
+SUBSET (1..31)
+2 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### Prop == <>(1 \div 0 = x)
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Spec == Init /\ [][Next]_x /\ WF_x(Next)
+Prop == <>(1 \div 0 = x)
+====
+--- config
+SPECIFICATION Spec
+PROPERTY Prop
+--- workers 1 exit 255
+Implied-temporal checking--satisfiability problem has 1 branches.
+Error: The second argument of \div is 0.
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 255
+Implied-temporal checking--satisfiability problem has 1 branches.
+Error: The second argument of \div is 0.
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### Prop == <>(Assert(x > 0, "no") /\ x = 2)
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Spec == Init /\ [][Next]_x /\ WF_x(Next)
+Prop == <>(Assert(x > 0, "no") /\ x = 2)
+====
+--- config
+SPECIFICATION Spec
+PROPERTY Prop
+--- workers 1 exit 255
+Implied-temporal checking--satisfiability problem has 1 branches.
+Error: The first argument of Assert evaluated to FALSE; the second argument was:
+"no"
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 255
+Implied-temporal checking--satisfiability problem has 1 branches.
+Error: The first argument of Assert evaluated to FALSE; the second argument was:
+"no"
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### Prop == <>(1 \div 0 = x) /\ <>(<<1>>[2] = x)
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Spec == Init /\ [][Next]_x /\ WF_x(Next)
+Prop == <>(1 \div 0 = x) /\ <>(<<1>>[2] = x)
+====
+--- config
+SPECIFICATION Spec
+PROPERTY Prop
+--- workers 1 exit 255
+Implied-temporal checking--satisfiability problem has 2 branches.
+Error: The second argument of \div is 0.
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 255
+Implied-temporal checking--satisfiability problem has 2 branches.
+Error: The second argument of \div is 0.
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### Prop == <>(x % 0 = 1) \/ <>(1 \div 0 = x)
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 2 /\ x' = x + 1
+Spec == Init /\ [][Next]_x /\ WF_x(Next)
+Prop == <>(x % 0 = 1) \/ <>(1 \div 0 = x)
+====
+--- config
+SPECIFICATION Spec
+PROPERTY Prop
+--- workers 1 exit 255
+Implied-temporal checking--satisfiability problem has 1 branches.
+Error: The second argument of % should be a positive number, but instead it is:
+0
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 255
+Implied-temporal checking--satisfiability problem has 1 branches.
+Error: The second argument of % should be a positive number, but instead it is:
+0
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### F[k \in {1}] == 1 \div (x - 1); Step == x' = (x + 1 + 0 * F[1]) % 3
+--- spec
+---- MODULE M ----
+EXTENDS Integers, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+F[k \in {1}] == 1 \div (x - 1)
+Step == x' = (x + 1 + 0 * F[1]) % 3
+====
+--- config
+INIT Init
+NEXT Step
+--- workers 1 exit 255
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Step line 7, col 9 to line 7, col 35 of module M>
+x = 1
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 9 to line 7, column 35 in M
+1. Line 7, column 14 to line 7, column 35 in M
+2. Line 7, column 15 to line 7, column 30 in M
+3. Line 7, column 23 to line 7, column 30 in M
+4. Line 7, column 27 to line 7, column 30 in M
+5. Line 6, column 17 to line 6, column 30 in M
+
+
+2 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+--- workers 4 exit 255
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Step line 7, col 9 to line 7, col 35 of module M>
+x = 1
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 9 to line 7, column 35 in M
+1. Line 7, column 14 to line 7, column 35 in M
+2. Line 7, column 15 to line 7, column 30 in M
+3. Line 7, column 23 to line 7, column 30 in M
+4. Line 7, column 27 to line 7, column 30 in M
+5. Line 6, column 17 to line 6, column 30 in M
+
+
+2 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.
+### F[k \in {1}] == 1 \div x; Inv == F[1] = 0
+--- spec
+---- MODULE M ----
+EXTENDS Integers, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+F[k \in {1}] == 1 \div x
+Inv == F[1] = 0
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 75
+Error: The second argument of \div is 0.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 7, column 8 to line 7, column 15 in M
+2. Line 7, column 8 to line 7, column 11 in M
+3. Line 6, column 17 to line 6, column 24 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 75
+Error: The second argument of \div is 0.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in M
+1. Line 7, column 8 to line 7, column 15 in M
+2. Line 7, column 8 to line 7, column 11 in M
+3. Line 6, column 17 to line 6, column 24 in M
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.
+### F[n \in 0..3] == IF n = 0 THEN 1 \div x ELSE F[n - 1]; Step == x' = F[3]
+--- spec
+---- MODULE M ----
+EXTENDS Integers, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+F[n \in 0..3] == IF n = 0 THEN 1 \div x ELSE F[n - 1]
+Step == x' = F[3]
+====
+--- config
+INIT Init
+NEXT Step
+--- workers 1 exit 255
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 9 to line 7, column 17 in M
+1. Line 7, column 14 to line 7, column 17 in M
+2. Line 6, column 18 to line 6, column 53 in M
+3. Line 6, column 46 to line 6, column 53 in M
+4. Line 6, column 18 to line 6, column 53 in M
+5. Line 6, column 46 to line 6, column 53 in M
+6. Line 6, column 18 to line 6, column 53 in M
+7. Line 6, column 46 to line 6, column 53 in M
+8. Line 6, column 18 to line 6, column 53 in M
+9. Line 6, column 32 to line 6, column 39 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+--- workers 4 exit 255
+Error: The second argument of \div is 0.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 9 to line 7, column 17 in M
+1. Line 7, column 14 to line 7, column 17 in M
+2. Line 6, column 18 to line 6, column 53 in M
+3. Line 6, column 46 to line 6, column 53 in M
+4. Line 6, column 18 to line 6, column 53 in M
+5. Line 6, column 46 to line 6, column 53 in M
+6. Line 6, column 18 to line 6, column 53 in M
+7. Line 6, column 46 to line 6, column 53 in M
+8. Line 6, column 18 to line 6, column 53 in M
+9. Line 6, column 32 to line 6, column 39 in M
+
+
+1 states generated, 1 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 1.
+### F[k \in {1}] == 1 \div 0; Start == x = F[1]
+--- spec
+---- MODULE M ----
+EXTENDS Integers, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+F[k \in {1}] == 1 \div 0
+Start == x = F[1]
+====
+--- config
+INIT Start
+NEXT Next
+--- workers 1 exit 75
+Error: The second argument of \div is 0.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 10 to line 7, column 17 in M
+1. Line 7, column 14 to line 7, column 17 in M
+2. Line 6, column 17 to line 6, column 24 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: The second argument of \div is 0.
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 10 to line 7, column 17 in M
+1. Line 7, column 14 to line 7, column 17 in M
+2. Line 6, column 17 to line 6, column 24 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### F[k \in {1}] == <<1>>[x + 2]; Start == x = 0 /\ F[1] = 1
+--- spec
+---- MODULE M ----
+EXTENDS Integers, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+F[k \in {1}] == <<1>>[x + 2]
+Start == x = 0 /\ F[1] = 1
+====
+--- config
+INIT Start
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to access index 2 of tuple
+<<1>>
+which is out of bounds.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 7, column 10 to line 7, column 26 in M
+1. Line 7, column 10 to line 7, column 14 in M
+2. Line 7, column 19 to line 7, column 26 in M
+3. Line 7, column 19 to line 7, column 22 in M
+4. Line 6, column 17 to line 6, column 28 in M
+5. Line 6, column 17 to line 6, column 21 in M
+
+
+Reason:
+Attempted to access index 2 of tuple
+<<1>>
+which is out of bounds.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to access index 2 of tuple
+<<1>>
+which is out of bounds.
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 7, column 10 to line 7, column 26 in M
+1. Line 7, column 10 to line 7, column 14 in M
+2. Line 7, column 19 to line 7, column 26 in M
+3. Line 7, column 19 to line 7, column 22 in M
+4. Line 6, column 17 to line 6, column 28 in M
+5. Line 6, column 17 to line 6, column 21 in M
+
+
+Reason:
+Attempted to access index 2 of tuple
+<<1>>
+which is out of bounds.
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### F[k \in {1}] == {1} \in x; Start == x = 0 /\ F[1]
+--- spec
+---- MODULE M ----
+EXTENDS Integers, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+F[k \in {1}] == {1} \in x
+Start == x = 0 /\ F[1]
+====
+--- config
+INIT Start
+NEXT Next
+--- workers 1 exit 75
+Error: Attempted to check if the value:
+{1}
+is an element of the integer 0
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 10 to line 7, column 22 in M
+1. Line 7, column 10 to line 7, column 14 in M
+2. Line 7, column 19 to line 7, column 22 in M
+3. Line 6, column 17 to line 6, column 25 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: Attempted to check if the value:
+{1}
+is an element of the integer 0
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 7, column 10 to line 7, column 22 in M
+1. Line 7, column 10 to line 7, column 14 in M
+2. Line 7, column 19 to line 7, column 22 in M
+3. Line 6, column 17 to line 6, column 25 in M
+
+
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+### G[k \in {1}] == x = 0; F == G; Start == F[1]
+--- spec
+---- MODULE M ----
+EXTENDS Integers, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+G[k \in {1}] == x = 0
+F == G
+Start == F[1]
+====
+--- config
+INIT Start
+NEXT Next
+--- workers 1 exit 75
+Error: In evaluation, the identifier x is either undefined or not an operator.
+line 6, col 17 to line 6, col 17 of module M
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 8, column 10 to line 8, column 13 in M
+1. Line 8, column 10 to line 8, column 10 in M
+2. Line 7, column 6 to line 7, column 6 in M
+3. Line 6, column 1 to line 6, column 21 in M
+4. Line 6, column 17 to line 6, column 21 in M
+5. Line 6, column 17 to line 6, column 17 in M
+
+
+Reason:
+In evaluation, the identifier x is either undefined or not an operator.
+line 6, col 17 to line 6, col 17 of module M
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
+--- workers 4 exit 75
+Error: In evaluation, the identifier x is either undefined or not an operator.
+line 6, col 17 to line 6, col 17 of module M
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 8, column 10 to line 8, column 13 in M
+1. Line 8, column 10 to line 8, column 10 in M
+2. Line 7, column 6 to line 7, column 6 in M
+3. Line 6, column 1 to line 6, column 21 in M
+4. Line 6, column 17 to line 6, column 21 in M
+5. Line 6, column 17 to line 6, column 17 in M
+
+
+Reason:
+In evaluation, the identifier x is either undefined or not an operator.
+line 6, col 17 to line 6, col 17 of module M
+0 states generated, 0 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 0.
 ### end
