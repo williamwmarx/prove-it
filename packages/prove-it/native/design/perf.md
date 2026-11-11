@@ -783,6 +783,45 @@ So shared caches and memory bandwidth don't explain the threaded search's extra 
 
 Neither was built.
 
+## Startup constants and the memo at any thread count
+
+EWD998ChanID_shiviz (7 nodes) reached Progress(5) quickly on 1–3 threads, but seemed to stall on 4.
+Two engine costs grew with the number of threads, and a shared level reported no progress until it ended. None of this holds any more.
+
+**Constants.**
+- TLC evaluates each constant-level definition of arity 0 once, at startup, and every worker reads that value (`SpecProcessor.processSpec`, SpecProcessor.java:202–207; `processConstantDefns`, 226–233 and 343–381; `evalConstantDefn` normalizes the value because "All workers share the value", 237–242).
+- The engine evaluates a pure definition of arity 0, such as RingOfNodes (a CHOOSE over 7^7 functions), on its first use and keeps the value in the machine's `onces`. Each worker started with none of them, so each chose RingOfNodes again.
+- And a value the store didn't hold was dropped by the worker's overlay at each level, so it was evaluated again at every level.
+- Now a worker takes the values the search's machine computed each time it lays its overlay. After a level, the search's machine imports the values the workers computed and it lacks.
+- A value computed once reads no state, and sharing is off wherever an evaluation could differ between threads: lazy functions, TLCCache, ToString's ranking, Print and the random draws. So each thread that computes one computes the same value, and which thread's is imported shows nowhere.
+
+**Recursive definitions.**
+- TLC doesn't cache the applications of a recursive function. A LET makes the function once per evaluation of the LET (`LazyValue`, Tool.java:1849–1860; `OPCODE_rfs`, 2354–2380), and `FcnLambdaValue.apply` evaluates the body anew each time (FcnLambdaValue.java:153–263).
+- So Utils' `IsSimpleCycle`, which reads `F[i-1]` twice, costs TLC 2^n − 1 bodies a call. The engine's memo table makes that n.
+- But each table took at most 2^22 / threads entries, refused more once full, and turned itself off when under half the lookups of a window then hit.
+- On 4 threads, F's table (keyed by the candidate and i) filled at 1,048,576 entries while RingOfNodes was being chosen. Every later call then missed, and the choice went from linear to exponential. On 3 threads the choice ended before the table filled.
+- Now the table of a recursive operator or function is kept (`MemoTable::kept`): it doesn't turn off once full, and when full it forgets what it holds and goes on. Entries for earlier candidates are dead anyway, so each call keeps its hits within any room that holds one call's entries. Memory stays as before.
+- Its probation stands: a table under 20% hits in its first 8,192 lookups turns off, which those lookups decide on any number of threads. Without it, GameOfLife's recursive definition, whose table rarely hits, took 2.95 s and 224 MB on one thread against 1.22 s and 47 MB. A recursion that reads a call twice hits about half the time, and keeps its table.
+- A value in a memo table is a function of its keys, and an evaluation that fails stores nothing, so clearing a table changes no value and no decline.
+
+**Progress.**
+- TLC's workers share one queue and never wait for a depth to end. Its main thread starts them, waits up to 3 s (AbstractChecker.java:451), then loops: `doPeriodicWork` and `runTLCContinueDoing` (AbstractChecker.java:466–488), which prints `printProgresStats` (ModelChecker.java:1013, 940–959) and waits `progressInterval` (ModelChecker.java:1035), 60 s by default (TLCGlobals.java:221–222).
+- So its first report comes about 3 s in and then every 60 s, at whatever depth the workers are.
+- The engine's one thread checks the clock every 256 states on that schedule. A shared level reported only at its end, so EWD998ChanID_shiviz's level of 860K states printed nothing for as long as it took.
+- Now the search's thread, while a shared level runs, waits for the threads or the next report, whichever comes first, and reports from counts each thread keeps of the level:
+  - states generated: before the level, plus each thread's;
+  - distinct: before the level, plus the most new states any one thread found, a count the merge can only exceed, so it never drops;
+  - left on the queue: distinct less the states expanded.
+- The timer only wakes the thread to report; it stops nothing. A periodic check of the temporal properties, which TLC makes with its report, still waits for the level's end, and the one-thread search is unchanged.
+- The relay flushes what it printed whenever the search has nothing more to say, as TLC prints each line as it goes, rather than at the first report.
+- PROVE_IT_TEST_PROGRESS_AT names a state: the thread that claims it waits until the search's thread has reported, so a test sees a report inside the level without a clock.
+
+**Tests.**
+- Two hooks bound the tests by work, not time, beside PROVE_IT_TEST_PROGRESS_AT:
+  - PROVE_IT_TEST_MEMO_ENTRIES sets the room the tables share.
+  - PROVE_IT_TEST_EVALUATIONS sets how many bodies of recursive definitions a search's machines may evaluate before it stops.
+- The tests in `prove-it-check`'s `check.rs` use the ewd998 example's IsSimpleCycle and RingOfNodes, and fail on the code before this change.
+
 ## Designs ready, not built
 
 ### Pruning `x' \in [S -> T]` by per-key constraints (MCabs)

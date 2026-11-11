@@ -35,8 +35,8 @@ describe("INSTANCE matches TLC", () => {
   it("reports violations through instantiated operators", async () => {
     const result = await checkInstances("Violation.cfg");
     expect(result.status).toBe("invariant-violation");
-    expect(result.violation?.name).toBe("Different");
-    expect(result.violation?.trace).toHaveLength(4);
+    expect(result.violations[0]?.headline).toBe("Invariant Different is violated.");
+    expect(result.violations[0]?.states).toHaveLength(4);
   });
 
   it("scopes LOCAL instances per module and overrides definitions shared by instances", async () => {
@@ -70,7 +70,7 @@ describe("INSTANCE matches TLC", () => {
   it("reports violations through LAMBDA substitutions", async () => {
     const result = await checkInstances("OperatorsViolation.cfg", "Operators");
     expect(result.status).toBe("invariant-violation");
-    expect(result.violation?.trace).toHaveLength(4);
+    expect(result.violations[0]?.states).toHaveLength(4);
     expect([result.generatedStates, result.distinctStates]).toEqual([37, 16]);
   });
 
@@ -83,7 +83,7 @@ describe("INSTANCE matches TLC", () => {
   it("reports violations through instances defined inside LET", async () => {
     const result = await checkInstances("LetInstancesViolation.cfg", "LetInstances");
     expect(result.status).toBe("invariant-violation");
-    expect(result.violation?.trace).toHaveLength(5);
+    expect(result.violations[0]?.states).toHaveLength(5);
     expect(result.distinctStates).toBe(11);
   });
 
@@ -96,7 +96,7 @@ describe("INSTANCE matches TLC", () => {
   it("reports violations of a specification taken from a parameterized instance", async () => {
     const result = await checkInstances("ParameterizedSpecViolation.cfg", "ParameterizedSpec");
     expect(result.status).toBe("invariant-violation");
-    expect(result.violation?.trace).toHaveLength(4);
+    expect(result.violations[0]?.states).toHaveLength(4);
     expect([result.generatedStates, result.distinctStates]).toEqual([4, 4]);
   });
 
@@ -122,7 +122,7 @@ describe("INSTANCE matches TLC", () => {
 
   it("reports violations through substitutions that bound names would capture", async () => {
     const result = await checkInstances("BindersViolation.cfg", "Binders");
-    expect([result.status, result.violation?.trace.length, result.distinctStates]).toEqual([
+    expect([result.status, result.violations[0]?.states.length, result.distinctStates]).toEqual([
       "invariant-violation",
       2,
       2,
@@ -143,7 +143,7 @@ describe("INSTANCE matches TLC", () => {
 
   it("instantiates parameterized modules inside LET", async () => {
     const result = await checkInstances("LetParameters.cfg", "LetParameters");
-    expect([result.status, result.violation?.trace.length, result.distinctStates]).toEqual([
+    expect([result.status, result.violations[0]?.states.length, result.distinctStates]).toEqual([
       "invariant-violation",
       4,
       4,

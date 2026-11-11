@@ -308,7 +308,7 @@ impl Context {
 mod tests {
     //! Quantified EUF problems that E-matching refutes without MBQI, internalized from hand-built
     //! expressions and searched. The expected results, conflicts, steps and instances are those
-    //! `scripts/smt-ematching-reference.ts` prints for the TypeScript kernel on the same
+    //! `scripts/smt-ematching-reference.ts` printed for the TypeScript kernel on the same
     //! expressions, made in the same order, with MBQI off.
 
     use prove_decide::Limits;

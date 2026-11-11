@@ -465,11 +465,14 @@ pub struct LevelContext<'a> {
     pub get_qualified_name: GetQualifiedName<'a>,
 }
 
+// A definition's levels, with the definition, kept so no other definition takes its address.
+type DefinitionLevels = (Rc<Definition>, Rc<OperatorLevels>);
+
 /// `createLevelAnalyzer`.
 pub struct LevelAnalyzer<'a> {
     context: LevelContext<'a>,
     tables: &'a Tables,
-    definition_levels: RefCell<FastMap<usize, Rc<OperatorLevels>>>,
+    definition_levels: RefCell<FastMap<usize, DefinitionLevels>>,
 }
 
 fn get_name(expression: &Expression) -> Name {
@@ -1485,7 +1488,7 @@ impl<'a> LevelAnalyzer<'a> {
     ) -> Result<Rc<OperatorLevels>> {
         let address = Rc::as_ptr(definition) as usize;
         if let Some(cached) = self.definition_levels.borrow().get(&address) {
-            return Ok(cached.clone());
+            return Ok(cached.1.clone());
         }
         let formals: Vec<Formal> = match &definition.kind {
             DefinitionKind::Operator { params, .. } => params
@@ -1500,16 +1503,19 @@ impl<'a> LevelAnalyzer<'a> {
         // A recursive reference reads the levels of a definition being analyzed as these.
         self.definition_levels.borrow_mut().insert(
             address,
-            Rc::new(OperatorLevels {
-                data: LevelData::default(),
-                name: definition.name.clone(),
-                max_levels: vec![TEMPORAL_LEVEL; formals.len()],
-                weights: vec![0; formals.len()],
-                min_max_levels: vec![Vec::new(); formals.len()],
-                conditions: FastSet::default(),
-                non_leibniz: FastSet::default(),
-                formals: formals.clone(),
-            }),
+            (
+                definition.clone(),
+                Rc::new(OperatorLevels {
+                    data: LevelData::default(),
+                    name: definition.name.clone(),
+                    max_levels: vec![TEMPORAL_LEVEL; formals.len()],
+                    weights: vec![0; formals.len()],
+                    min_max_levels: vec![Vec::new(); formals.len()],
+                    conditions: FastSet::default(),
+                    non_leibniz: FastSet::default(),
+                    formals: formals.clone(),
+                }),
+            ),
         );
         let body = match &definition.kind {
             DefinitionKind::Function { bounds } => Rc::new(Expression::new(
@@ -1524,7 +1530,7 @@ impl<'a> LevelAnalyzer<'a> {
         let levels = Rc::new(self.analyze_operator(&definition.name, formals, &body, scope)?);
         self.definition_levels
             .borrow_mut()
-            .insert(address, levels.clone());
+            .insert(address, (definition.clone(), levels.clone()));
         Ok(levels)
     }
 
@@ -1840,7 +1846,7 @@ fn check_recursive_arguments(module: &Module, analyzer: &LevelAnalyzer) -> Resul
                         .definition_levels
                         .borrow()
                         .get(&(Rc::as_ptr(&defined) as usize))
-                        .cloned()
+                        .map(|entry| entry.1.clone())
                 })
                 .flatten();
             recursive.push((defined, levels, true));

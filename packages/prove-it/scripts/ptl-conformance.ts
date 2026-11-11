@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { getNativeAddon } from "../src/engine/native";
 import { TlaUnsupportedError } from "../src/errors";
 import { encodeForBackend } from "../src/prover/prove";
-import { decidePtl } from "../src/prover/ptl/decide";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption } from "./corpora";
 import {
   getLs4Digest,
@@ -27,6 +27,9 @@ const listLs4Files = (directory: string): string[] =>
         .sort()
         .map((path) => join(directory, path))
     : [];
+
+const addon = getNativeAddon();
+if (typeof addon === "string") throw new Error(`no native engine: ${addon}`);
 
 const isVerbose = process.argv.includes("--verbose");
 const filter = getOption("--filter");
@@ -127,7 +130,16 @@ const decision = { agree: 0, disagree: 0, unknown: 0, timeout: 0, worstMs: 0, wo
 ].forEach((path) => {
   const expected = getLs4Verdict(readFileSync(`${path}.out`, "utf8"));
   const started = performance.now();
-  const actual = decidePtl(readFileSync(path, "utf8"), { timeLimitMs: TIME_LIMIT_MS });
+  const native = addon.decide(
+    "ls4",
+    readFileSync(path, "utf8"),
+    TIME_LIMIT_MS,
+    undefined,
+    undefined,
+  );
+  if (native.kind !== "decided")
+    throw new Error(`${path}: ${native.kind === "error" ? native.message : native.reason}`);
+  const actual = native.verdict;
   const elapsed = performance.now() - started;
   if (elapsed > decision.worstMs) Object.assign(decision, { worstMs: elapsed, worst: path });
   if (expected === "unknown") {

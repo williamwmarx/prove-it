@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check, formatValue, TlaConfigError, TlaSyntaxError } from "../../src";
+import { check, TlaConfigError, TlaSyntaxError } from "../../src";
 import { createSanyError } from "../../src/errors";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/modules");
@@ -37,8 +37,8 @@ describe("nested and trailing modules match TLC", () => {
   it("reports violations through a nested module's actions", async () => {
     const result = await checkNested("Violation.cfg");
     expect(result.status).toBe("invariant-violation");
-    expect(result.violation?.name).toBe("TooSmall");
-    expect(result.violation?.trace).toHaveLength(4);
+    expect(result.violations[0]?.headline).toBe("Invariant TooSmall is violated.");
+    expect(result.violations[0]?.states).toHaveLength(4);
   });
 
   it("overrides definitions of other modules but not of the root module for scoped overrides", async () => {
@@ -47,7 +47,7 @@ describe("nested and trailing modules match TLC", () => {
     );
     results.forEach((result) => {
       expect(result.status).toBe("invariant-violation");
-      expect(result.violation?.trace).toHaveLength(5);
+      expect(result.violations[0]?.states).toHaveLength(5);
       expect([result.generatedStates, result.distinctStates]).toEqual([5, 5]);
     });
   });
@@ -80,7 +80,9 @@ describe("nested modules match TLC's test models", () => {
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([21, 7, 1]);
     const violation = await checkFixture("Github687spec", "Github687specPrime.cfg");
     expect(violation.status).toBe("liveness-violation");
-    expect(violation.violation?.name).toBe("FalseAECheck");
+    expect(violation.violations[0]?.headline).toBe(
+      "Temporal property FalseAECheck was violated.\n",
+    );
   });
 });
 
@@ -94,8 +96,8 @@ describe("nested module scoping matches SANY", () => {
   it("substitutes into the nested modules of an instantiated module", async () => {
     const result = await checkFixture("Counters");
     expect(result.status).toBe("invariant-violation");
-    const trace = result.violation?.trace ?? [];
-    expect(trace.map((step) => [formatValue(step.state.a), formatValue(step.state.b)])).toEqual([
+    const trace = result.violations[0]?.states ?? [];
+    expect(trace.map((step) => [step.variables.a.text, step.variables.b.text])).toEqual([
       ["0", "0"],
       ["1", "0"],
       ["3", "0"],
@@ -173,7 +175,7 @@ describe("nested module scoping matches SANY", () => {
       version: "1.7.4",
     });
     expect(result.status).toBe("invariant-violation");
-    expect(Object.keys(result.violation?.trace[0].state ?? {})).toEqual(["bag", "f"]);
+    expect(Object.keys(result.violations[0]?.states[0].variables ?? {})).toEqual(["bag", "f"]);
   });
 
   it.each([

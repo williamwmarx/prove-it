@@ -1,4 +1,4 @@
-//! The rewriters against the TypeScript they port: `scripts/smt-rewriter-tables.ts` records a
+//! The rewriters against the TypeScript they port: `scripts/smt-rewriter-tables.ts` recorded a
 //! seeded sequence of operations on random terms with quantifiers and de Bruijn variables, with what
 //! each returned, the resource limit's step count and the number of ASTs, and this replays them:
 //! var_subst, the var shifters, the beta reducer, expr_safe_replace, ast_lt, ast_util and

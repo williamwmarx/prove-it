@@ -9,7 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use crate::clock::Instant;
@@ -32,7 +33,10 @@ use crate::context::{
 use crate::coverage::HyperLogLog;
 use crate::coverage::{Counted, Plan};
 use crate::live::{Diameters, LiveAnswers, LiveGraph, Table, UNKNOWN, answer_atoms};
-use crate::machine::{Eval, Machine, Printed, Prints, Registers, Step, UNASSIGNED};
+use crate::machine::{
+    EVALUATIONS_SPENT, Eval, Machine, Printed, Prints, Program, Registers, Step, UNASSIGNED,
+};
+use crate::memo::{EMPTY, MAXIMUM_ENTRIES};
 use crate::symmetry::{
     Canonicalizer, Group, NamedGroup, close_group, get_permutations, name_group,
 };
@@ -79,6 +83,15 @@ pub struct Settings {
     /// PROVE_IT_TEST_LIVE_CHECK_AT, for tests: the number of expanded states after which the
     /// search checks the temporal properties the first time, rather than after FIRST_PROGRESS.
     pub test_live_check_at: Option<usize>,
+    /// PROVE_IT_TEST_MEMO_ENTRIES, for tests: the room the memo tables of the search's machines
+    /// share, rather than MAXIMUM_ENTRIES, so that a small model fills them.
+    pub test_memo_entries: Option<usize>,
+    /// PROVE_IT_TEST_EVALUATIONS, for tests: how many bodies of recursive definitions the search's
+    /// machines may evaluate between them before it stops with EVALUATIONS_SPENT.
+    pub test_evaluations: Option<u64>,
+    /// PROVE_IT_TEST_PROGRESS_AT, for tests: the state whose claim by a thread of a shared level
+    /// has the search report its progress then, as it does on TLC's schedule.
+    pub test_progress_at: Option<usize>,
     /// Whether the search hands every state it found to [`Reporter::dumped`] as it ends, for
     /// `-dump`.
     pub is_dumped: bool,
@@ -92,6 +105,9 @@ pub struct Settings {
     /// `-coverage`: the tree of TLC's cost model, which the search counts into where it can
     /// count as TLC does, and hands to [`Reporter::counted`].
     pub coverage: Option<Arc<Plan>>,
+    /// Whether the Json module's operators may read and write the machine's files, which a host
+    /// that answers for the files itself, as the library does, doesn't let them.
+    pub is_file_system: bool,
 }
 
 /// See [`Settings::large_region_advice`].
@@ -124,10 +140,14 @@ impl Default for Settings {
             minimum_shared_level: MINIMUM_SHARED_LEVEL,
             is_liveness_periodic: false,
             test_live_check_at: None,
+            test_memo_entries: None,
+            test_evaluations: None,
+            test_progress_at: None,
             is_dumped: false,
             is_continued: false,
             large_region_advice: None,
             coverage: None,
+            is_file_system: true,
         }
     }
 }
@@ -201,6 +221,7 @@ pub struct ContinuedTrace<'s> {
     pub states: Vec<Vec<Id>>,
     pub store: &'s Store,
     pub startup: &'s [Id],
+    pub chosen: &'s [(u32, Id)],
     pub startup_random: u64,
     /// The state of the generator TLC's worker goes on drawing from as it finds the last state
     /// again; none for an initial state.
@@ -378,6 +399,9 @@ pub struct Violation {
     /// The value TLC computed at startup of each of the model's startup definitions, ids of
     /// `store`.
     pub startup: Vec<Id>,
+    /// The value the search computed of each constant definition whose body is a CHOOSE over a
+    /// set, by its position in the IR's definitions, ids of `store`, but those it fails to.
+    pub chosen: Vec<(u32, Id)>,
     /// The state of the generator the startup left (`JavaRandom::state`).
     pub startup_random: u64,
     /// The state of the generator where an invariant of the last state stopped the search, which
@@ -1030,8 +1054,10 @@ struct Search<'r, T, E = Dense> {
     is_distinct_read: bool,
     // `-continue`: report each invariant violated and go on.
     is_continued: bool,
-    // Under `-continue`, the values the startup definitions computed, once a trace needs them.
+    // Under `-continue`, the values the startup definitions computed, once a trace needs them,
+    // and then those the constant CHOOSEs computed.
     startup: Option<Vec<Id>>,
+    chosen: Vec<(u32, Id)>,
     generated: u64,
     initial_generated: u64,
     depth: u64,
@@ -1105,6 +1131,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             is_distinct_read,
             is_continued: false,
             startup: None,
+            chosen: Vec::new(),
             generated: 0,
             initial_generated: 0,
             depth: 0,
@@ -1424,12 +1451,14 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     ) -> Outcome<()> {
         if self.startup.is_none() {
             self.startup = Some(startup_values(machine, context)?);
+            self.chosen = chosen_values(machine, context);
         }
         self.reporter.continued(ContinuedTrace {
             kind,
             states,
             store: &machine.store,
             startup: self.startup.as_deref().unwrap_or_default(),
+            chosen: &self.chosen,
             startup_random: machine.startup_random,
             random,
             registers: &machine.registers,
@@ -1980,8 +2009,10 @@ struct Worker<'p> {
 }
 
 impl Worker<'_> {
-    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints) {
+    // Lays the worker's overlay on the store, with the values the store's machine computed once.
+    fn attach(&mut self, store: &Arc<Store>, fingerprints: &SharedFingerprints, onces: &[Id]) {
         self.machine.forget_from(self.bound);
+        self.machine.adopt_onces(onces);
         self.fingerprints
             .attach(fingerprints, store.value_count() as Id);
         if let Some(canonicalizer) = &mut self.canonicalizer {
@@ -2036,6 +2067,65 @@ struct Level {
     is_graph_bounded: bool,
     // PROVE_IT_STOP_AT: where the search stops, as if it failed there.
     stop_at: Option<usize>,
+    // PROVE_IT_TEST_PROGRESS_AT: the state whose claim has the search report its progress.
+    test_progress_at: Option<usize>,
+}
+
+// What a thread did of a level so far, which the search's thread reads to report its progress.
+#[derive(Default)]
+struct ThreadCounts {
+    generated: AtomicU64,
+    // The states it found that were new to it.
+    found: AtomicUsize,
+    expanded: AtomicUsize,
+}
+
+// How the threads of a level wake the search's thread, which waits for them to finish and
+// reports the progress meanwhile.
+#[derive(Default)]
+struct Signal {
+    state: Mutex<Signaled>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct Signaled {
+    finished: usize,
+    is_test_claimed: bool,
+    is_test_reported: bool,
+}
+
+impl Signal {
+    // A thread that panicked holds no lock, so what the lock guards is whole.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Signaled> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    // Holds the thread that claimed PROVE_IT_TEST_PROGRESS_AT's state until the search's thread
+    // reported, so that the report falls inside the level.
+    fn hold_for_report(&self) {
+        let mut state = self.lock();
+        state.is_test_claimed = true;
+        self.wake.notify_all();
+        while !state.is_test_reported {
+            state = self
+                .wake
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+}
+
+// Counts a thread finished when it returns or panics, so the search's thread stops waiting.
+struct Finishing<'s>(&'s Signal);
+
+impl Drop for Finishing<'_> {
+    fn drop(&mut self) {
+        self.0.lock().finished += 1;
+        self.0.wake.notify_all();
+    }
 }
 
 // A value on cache lines of its own, so that writing it doesn't move what threads read beside it.
@@ -2072,7 +2162,12 @@ struct Recording {
 
 // Expands runs of a level's states on a thread, until none are left before the first state not to
 // expand, recording where it stops if it stops.
-fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
+fn expand_claimed(
+    worker: &mut Worker<'_>,
+    shared: &Shared<'_>,
+    counts: &ThreadCounts,
+    signal: &Signal,
+) -> Expanded {
     let (before, level) = (shared.before, shared.level);
     let candidates = Candidates {
         before,
@@ -2104,10 +2199,17 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
     search.canonicalizer = worker.canonicalizer.take();
     let (mut claimed, mut successors) = (Vec::new(), Vec::new());
     let width = before.width;
+    let mut generated = 0;
     'claiming: loop {
         let start = level.cursor.fetch_add(level.chunk, Ordering::Relaxed);
         if start >= level.end || start >= level.stop.load(Ordering::Relaxed) {
             break;
+        }
+        if level
+            .test_progress_at
+            .is_some_and(|at| (start..start + level.chunk).contains(&at))
+        {
+            signal.hold_for_report();
         }
         claimed.push(Claimed {
             start,
@@ -2139,6 +2241,12 @@ fn expand_claimed(worker: &mut Worker<'_>, shared: &Shared<'_>) -> Expanded {
                     if let Some(graph) = &mut search.graph {
                         graph.edge_offsets.push(graph.edges.len() as u32);
                     }
+                    generated += search.successors;
+                    counts.generated.store(generated, Ordering::Relaxed);
+                    counts
+                        .found
+                        .store(search.states.parents.len(), Ordering::Relaxed);
+                    counts.expanded.store(successors.len(), Ordering::Relaxed);
                 }
                 Err(_) => {
                     level.stop.fetch_min(expanding, Ordering::Relaxed);
@@ -2171,6 +2279,7 @@ impl Search<'_, States> {
     // store's in the order of the step that first reached each, by parent and then by step, which
     // is the order TLC's one worker finds them in. Where a thread stops, the search stops at the
     // first state whose expansion stopped, with the states and counts found before it.
+    #[allow(clippy::too_many_arguments)]
     fn expand_level(
         &mut self,
         machine: &mut Machine<'_>,
@@ -2179,6 +2288,7 @@ impl Search<'_, States> {
         level: &Level,
         actions: Option<&[Step]>,
         out_degrees: &mut [u64; OUT_DEGREE_BUCKETS],
+        progress_at: Option<&mut Instant>,
     ) -> Outcome<()> {
         let shared = Shared {
             context,
@@ -2193,20 +2303,94 @@ impl Search<'_, States> {
         };
         let store = Arc::new(std::mem::take(&mut machine.store));
         let fingerprints = self.fingerprints.share();
+        let onces = &machine.onces;
+        let counts: Vec<Padded<ThreadCounts>> = workers
+            .iter()
+            .map(|_| Padded(ThreadCounts::default()))
+            .collect();
+        let signal = Signal::default();
+        let reporter = &mut *self.reporter;
+        let (generated, depth) = (self.generated, self.depth);
+        // TLC's progress as it reports it while its workers run on (`printProgresStats`): the
+        // states each thread found new to it count once, the most any thread found, so that the
+        // count never passes what the merge finds.
+        let report = |reporter: &mut dyn Reporter| {
+            let found = counts
+                .iter()
+                .map(|counts| counts.found.load(Ordering::Relaxed))
+                .max()
+                .unwrap_or(0);
+            let distinct = (level.end + found) as u64;
+            let expanded: usize = counts
+                .iter()
+                .map(|counts| counts.expanded.load(Ordering::Relaxed))
+                .sum();
+            reporter.progress(
+                generated
+                    + counts
+                        .iter()
+                        .map(|counts| counts.generated.load(Ordering::Relaxed))
+                        .sum::<u64>(),
+                distinct,
+                distinct - (level.start + expanded) as u64,
+                if found > 0 {
+                    depth.max(level.number + 1)
+                } else {
+                    depth
+                }
+                .max(1),
+            );
+        };
         let expanded: Vec<Expanded> = std::thread::scope(|scope| {
             let threads: Vec<_> = workers
                 .iter_mut()
-                .map(|worker| {
-                    let (shared, store, fingerprints) = (&shared, &store, &fingerprints);
+                .zip(&counts)
+                .map(|(worker, counts)| {
+                    let (shared, store, fingerprints, signal) =
+                        (&shared, &store, &fingerprints, &signal);
                     std::thread::Builder::new()
                         .stack_size(NESTING_STACK_BYTES)
                         .spawn_scoped(scope, move || {
-                            worker.attach(store, fingerprints);
-                            expand_claimed(worker, shared)
+                            let _finishing = Finishing(signal);
+                            worker.attach(store, fingerprints, onces);
+                            expand_claimed(worker, shared, counts, signal)
                         })
                         .expect("a thread for the search")
                 })
                 .collect();
+            // TLC reports its progress on a timer while its workers run, whatever their depth
+            // (AbstractChecker.runTLC, ModelChecker.runTLCContinueDoing). The timer only wakes
+            // this thread to report.
+            let mut progress_at = progress_at;
+            let mut state = signal.lock();
+            while state.finished < threads.len() {
+                if state.is_test_claimed && !state.is_test_reported {
+                    report(reporter);
+                    state.is_test_reported = true;
+                    signal.wake.notify_all();
+                    continue;
+                }
+                let now = Instant::now();
+                state = match progress_at.as_deref_mut() {
+                    Some(at) if now >= *at => {
+                        *at = now + PROGRESS_INTERVAL;
+                        report(reporter);
+                        state
+                    }
+                    Some(at) => {
+                        signal
+                            .wake
+                            .wait_timeout(state, *at - now)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .0
+                    }
+                    None => signal
+                        .wake
+                        .wait(state)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                };
+            }
+            drop(state);
             threads
                 .into_iter()
                 .map(|thread| {
@@ -2450,6 +2634,20 @@ impl Search<'_, States> {
                         machine.store.join_shape(join, id);
                     }
                     *found = ShapeJoin::default();
+                }
+            }
+        }
+        // The values the threads computed once that the store's machine has none of, for every
+        // thread to read from the next level on. Such a value reads no state and nothing the
+        // threads differ in, so each thread that computed one computed the same value, and which
+        // thread's is imported shows nowhere.
+        for worker in workers.iter_mut() {
+            let overlay = &worker.machine.store;
+            for (own, &computed) in machine.onces.iter_mut().zip(&worker.machine.onces) {
+                if *own == EMPTY && computed != EMPTY {
+                    *own = machine
+                        .store
+                        .import(overlay, computed, &mut worker.imported);
                 }
             }
         }
@@ -2700,6 +2898,16 @@ pub(crate) fn startup_values(
         .collect()
 }
 
+// The values the constant CHOOSEs computed, but those that fail, which reading them again
+// gives without effects.
+pub(crate) fn chosen_values(machine: &mut Machine<'_>, context: &EngineContext) -> Vec<(u32, Id)> {
+    context
+        .choices
+        .iter()
+        .filter_map(|(index, evaluate)| Some((*index, evaluate(machine).ok()?)))
+        .collect()
+}
+
 // The startup definitions' values as one row of shared states.
 fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<SharedStates> {
     let values = startup_values(machine, context)?;
@@ -2838,6 +3046,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     let mut compiler = Compiler::new(ir, &mut store, settings.compile);
     compiler.workers = settings.workers;
     compiler.is_native = settings.is_violation_reported;
+    compiler.is_file_system = settings.is_file_system;
     let mut context = match EngineContext::build(&mut compiler, ir) {
         Ok(context) => context,
         Err(error) => return SearchOutcome::Declined(describe(error)),
@@ -2927,8 +3136,13 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     } else {
         thread_count
     };
-    let program = compiler.finish();
+    let program = Program {
+        evaluation_budget: settings.test_evaluations,
+        ..compiler.finish()
+    };
     let mut machine = Machine::new(&program, store);
+    let memo_entries = settings.test_memo_entries.unwrap_or(MAXIMUM_ENTRIES);
+    machine.limit_memo(memo_entries);
     let group = match start(&mut machine, &context, settings, reporter) {
         Ok(group) => group,
         Err(outcome) => return *outcome,
@@ -3390,12 +3604,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                     if workers.is_empty() {
                         // The memo tables of the search's machine and its workers' share one
                         // machine's room, so that memory doesn't grow with the threads.
-                        machine.share_memo(thread_count);
+                        machine.limit_memo(memo_entries / thread_count);
                         workers = (0..thread_count)
                             .map(|_| Worker {
                                 machine: {
                                     let mut worker = Machine::new(&program, Store::new());
-                                    worker.share_memo(thread_count);
+                                    worker.limit_memo(memo_entries / thread_count);
                                     worker.assigned_shapes =
                                         machine.assigned_shapes.as_ref().map(|joins| {
                                             joins.iter().map(|_| ShapeJoin::default()).collect()
@@ -3428,7 +3642,10 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         check_deadlock: model.check_deadlock,
                         is_graph_bounded: is_graph_bounded.get(),
                         stop_at: settings.stop_at,
+                        test_progress_at: settings.test_progress_at,
                     };
+                    // A check of the temporal properties, which TLC makes as it reports its
+                    // progress, waits for the level's end.
                     let expanded = search.expand_level(
                         &mut machine,
                         &mut workers[..threads],
@@ -3436,10 +3653,16 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
                         &level,
                         actions.map(Vec::as_slice),
                         &mut out_degrees,
+                        (!is_periodic).then_some(&mut progress_at),
                     );
                     checkpoint_count = search.states.count();
                     checkpoint_generated = search.generated;
                     expanded?;
+                    // A thread that spent the budget stopped the level, which this thread would
+                    // end without the evaluations the thread made.
+                    if program.is_evaluation_budget_spent() {
+                        return Err(Bail(EVALUATIONS_SPENT));
+                    }
                     if search.reporter.is_cancelled() {
                         return Err(Bail(CANCELLED));
                     }
@@ -4700,6 +4923,7 @@ fn to_violation(
         .map_or(unlabelled, |labels| labels.into_iter().skip(1).collect())
     };
     let startup = startup_values(machine, context).ok()?;
+    let chosen = chosen_values(machine, context);
     let symmetry = search
         .canonicalizer
         .as_ref()
@@ -4733,6 +4957,7 @@ fn to_violation(
             counts: found.counts,
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
+            chosen,
             startup_random: machine.startup_random,
             random: found.random,
             symmetry,
@@ -5087,6 +5312,7 @@ fn to_accepted(
     }
     labels.remove(0);
     let startup = startup_values(machine, context).ok()?;
+    let chosen = chosen_values(machine, context);
     let graph = search.graph.as_ref()?;
     let state = state as usize;
     let sum = |counts: &[u32]| {
@@ -5113,6 +5339,7 @@ fn to_accepted(
         counts,
         store: std::mem::replace(&mut machine.store, Store::new()),
         startup,
+        chosen,
         startup_random: machine.startup_random,
         random: None,
         symmetry: None,
@@ -5152,6 +5379,7 @@ fn to_lasso(
         _ => (vec![None; path.len().saturating_sub(1)], None),
     };
     let startup = startup_values(machine, context).ok()?;
+    let chosen = chosen_values(machine, context);
     let symmetry = search
         .canonicalizer
         .as_ref()
@@ -5178,6 +5406,7 @@ fn to_lasso(
             },
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
+            chosen,
             startup_random: machine.startup_random,
             random: None,
             symmetry,

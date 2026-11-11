@@ -531,12 +531,12 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 
 | Crate | Derived from | Licence | `THIRD_PARTY_NOTICES.md` once it is Rust |
 |---|---|---|---|
-| `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`; `nlsat/` ports `src/nlsat` and `src/math/polynomial` of z3-5.3.3, limit checks included) | MIT | the Z3 section names `native/crates/prove-smt/`; `z3-license.txt` moves with the code |
+| `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`; `nlsat/` ports `src/nlsat` and `src/math/polynomial` of z3-5.3.3, limit checks included) | MIT | the Z3 section names `native/crates/prover/smt/`, which keeps `z3-license.txt` beside the code (the TypeScript solver, which kept it too, is deleted) |
 | `prove-num` | Z3's `rational`/`mpz` semantics, written fresh on JS `bigint`'s rules | MIT (Z3's where it follows `rational.ts`) | under the Z3 section |
 | `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps Zenon's `LICENSE` beside the code (the TypeScript Zenon, which kept it too, is deleted) |
 | `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
-| `prove-isabelle` | Isabelle2025's Pure, Isar, Provers (BSD-style, Cambridge/TUM), and Isabelle/TLA+'s theories and ML setup as tlapm ships them (BSD, tlapm's licence) | BSD-3-Clause-style | the Isabelle section, and the tlapm section for the logic data and `tla/`; `LICENSE` and `LICENSE-tlapm` move with the code |
-| `prove-ptl` | tlapm's PTL backend input; the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` ports | tlapm section |
+| `prove-isabelle` | Isabelle2025's Pure, Isar, Provers (BSD-style, Cambridge/TUM), and Isabelle/TLA+'s theories and ML setup as tlapm ships them (BSD, tlapm's licence) | BSD-3-Clause-style | the Isabelle section names the crate, which keeps `LICENSE` and `LICENSE-tlapm` beside the code (the TypeScript Isabelle, which kept them too, is deleted) |
+| `prove-ptl` | tlapm's PTL backend input; the decider is our own | MIT, tlapm's BSD for what `ptl/encode.ts` ports | tlapm section (no section named the TypeScript decider, which is deleted) |
 | `prove-obligations` | tlapm (obligations, Prep, encoders, `.tlacache`, TLAPS.tla verbatim) | BSD-2-Clause-style (INRIA, Microsoft, Linux Foundation) | tlapm section |
 | `prove-obligations` (`format`, `marshal`, the `getHash` of `action`) | OCaml's `Format` (`stdlib/format.ml`), Marshal (`runtime/intern.c`, `extern.c`), `runtime/hash.c` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust files |
 
@@ -1084,6 +1084,55 @@ is next.
   port, say so, and label those results `decider: "rust"`. `conformance:zenon` compares the native
   Zenon with tlapm's recorded results and binary. The PTL and Isabelle deletions follow the same
   path.
+- P1 PTL, the TypeScript deleted (by the coordinator's decision, after Zenon's): `src/prover/ptl/`
+  is gone but `encode.ts`, which P5c owns. `tests/unit/ptl.test.ts` keeps the encoder's tests,
+  whose inputs the Rust PTL decides now; its two tests of the decider alone have counterparts in
+  `crates/prover/ptl/tests/ls4.rs`, which also pins the inputs of its other tests with the verdict
+  and steps the TypeScript gave. What the TypeScript decided stays as recorded expectations: the
+  297 LS4 inputs of `tests/conformance/prover-inputs.json` (`prover-differential --side rust
+  --prover ls4`, 297 same through the addon and through WebAssembly), and `deciders.test.ts` pins
+  its answer on its LS4 input (`unsat` in 5 steps). PTL is decided as Zenon is, by its Rust port
+  alone; text that isn't LS4 input is a `TlaProverError` with the message the TypeScript's
+  `TlaSyntaxError` gave, where the port used to decline it. `conformance:ptl` decides with the
+  native PTL. `THIRD_PARTY_NOTICES.md` named no path of the deleted decider.
+- P4 Isabelle, the TypeScript deleted (by the coordinator's decision, with PTL's): `src/prover/
+  isabelle/` is gone but `encode.ts`, which P5c owns, with `tests/unit/isabelle.test.ts`, every
+  case of which `crates/prover/isabelle/src/decide.rs` tests, and `TlaIsabelleError`. The scripts
+  that read the TypeScript went with it, and what they wrote stays as frozen data:
+  `scripts/isabelle-expectations.ts` recorded the crate's `testdata/`, which nothing rewrites now,
+  and `scripts/isabelle-logic.ts`, with the `Export.thy` and `export.ML` it ran in tlapm's heap,
+  checked the exported net keys against the TypeScript's `keyOfTerm` and wrote `logic-data.ts`,
+  from which `data/logic.bin` and its digest were made. What the TypeScript decided stays as
+  recorded expectations: the 478 Isabelle inputs of `tests/conformance/prover-inputs.json`
+  (`prover-differential --side rust --prover isabelle`, 478 same through the addon and through
+  WebAssembly), the 42 runs of `testdata/decide.txt`, and `deciders.test.ts`'s pin of its answer
+  on its Isabelle input (`unsat` in 840 steps). Isabelle is decided as Zenon and PTL are, by its
+  Rust port alone; a theory that isn't ASCII, or an exception that escapes the port, is a
+  `TlaProverError`, where the port used to decline it. `conformance:isabelle` decides with the
+  native Isabelle under tlapm's 30 s, which the port enforces, so it needs no worker.
+  `THIRD_PARTY_NOTICES.md`'s Isabelle section names the crate in place of the TypeScript.
+- P3 SMT, the TypeScript deleted (after the flip, f5b7bef, which made Rust decide `smt` and `z3`
+  by default): `src/prover/smt/solver/` is gone, `lp/`, `nlsat/` and `lp-trace.ts` with it, but
+  the encoders in `src/prover/smt/*.ts`, which P5c owns; so are its unit tests (`smt.test.ts`,
+  `smt-clause-store`, `smt-intervals`, `smt-pdd`, `smt-nlsat`, which run as Rust tests case for
+  case, and the lp trace's two), the scripts that read it (the `smt-*-tables.ts` and
+  `smt-*-reference.ts` writers, `nlsat-differential.ts`, `lp-trace.ts`), the errors only it threw
+  (`SmtParseError`, `SmtUnsupportedError`, `SmtCanceledError`, `SmtInvariantError`,
+  `NlsatUnsupportedError`, `PddMemoryOutError`; none was exported), and in Rust the lp call
+  trace (`lp::trace`, `lp::json`, `tests/lp_trace.rs`, `tests/lp_trace_diff.rs` and its fixture),
+  which only replayed the TypeScript's traces. `smt` and `z3` are Rust-only by the rule above.
+  What the TypeScript decided stays as recorded expectations: the 10,320 smt and 56 z3 inputs of
+  `prover-inputs.json`, the tables under `crates/prover/{num,smt}/tests/tables` (each directory's
+  `README.md` says which deleted script wrote which, at f5b7bef), `tests/fixtures/nlsat/
+  differential.json`, and `deciders.test.ts`'s pin of the TypeScript's answer on its SMT input,
+  as smt and as z3 (`unsat`, 14 instances, 4,626 steps, as `tables/decide.txt` has it).
+  `conformance:smt` compares the native decider with tlapm's recorded Z3 verdicts. A deviation
+  from Z3 (below) is now fixed in Rust alone, and the inputs it moves re-recorded with
+  `prover-differential --side ts --update`, which decides smt and z3 with the Rust port.
+  `prover-differential --side rust` gives 10,320 of 10,320 smt and 56 of 56 z3 inputs the same,
+  through the addon and through WebAssembly, none differing, unstable, declined or crashed. Under
+  WebAssembly, three workers, the most a worker's process held (its `VmHWM`, sampled every half
+  second) was 844 MB over the smt inputs and 1,637 MB over the z3 ones, well inside wasm32's 4 GB.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
@@ -1154,7 +1203,6 @@ is next.
       bytes as the TypeScript re-saves them;
     - every encoded result, re-encoded at its stored date and version.
   - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
-
 ### TypeScript deviations from Z3
 
 Where a TypeScript back end does what the tool it ports does not, the Rust mirrors the TypeScript,
@@ -1227,8 +1275,8 @@ b1b794c, before the fix; Z3's are of the tag `z3-5.3.3`.
     smt/f57d6baf800a11d6 gives the record again. The fixed Rust gives the fixed TypeScript's answer
     on all 10,320, the four that move included. Of the tables, only `models.txt` moves: its `partial-theory` model, which
     interprets `div0`, now leaves the declaration to its application when it is released
-    (`asts=181`, was 180). `builtin-decl-release.smt` is replayed from `tables/decide-inputs.txt`,
-    which `scripts/smt-decide-reference.ts` writes.
+    (`asts=181`, was 180). `tests/inputs/builtin-decl-release.smt` is replayed in `tests/smt.rs`,
+    which pins the TypeScript's answer on it.
   - *Audit against Z3 5.3.3: neither side is Z3.* Z3 5.3.3 from PyPI (`z3-solver==5.3.3.0`), run as
     tlapm runs it (`-smt2 AUTO_CONFIG=false smt.MBQI=true`) with `rlimit` set to the record's step
     limit, and with `trace=true` to log its instances (each `[instance]` line, keyed through its

@@ -76,6 +76,10 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         is_violation_reported: false,
         is_liveness_periodic: liveness_periodic != 0,
         test_live_check_at: usize::try_from(test_live_check_at).ok(),
+        // Only the native checker's tests set these.
+        test_memo_entries: None,
+        test_evaluations: None,
+        test_progress_at: None,
         // The interpreter writes -dump itself.
         is_dumped: false,
         // The interpreter goes on past violations itself.
@@ -84,6 +88,8 @@ pub fn get_settings(words: &[i32], state_log: String) -> Result<Settings, String
         large_region_advice: None,
         // The addon prints no coverage report.
         coverage: None,
+        // The interpreter reads and writes the Json module's files.
+        is_file_system: false,
     })
 }
 

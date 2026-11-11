@@ -1212,7 +1212,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
     //! The code trees the compiler makes and grows, against those that
-    //! `scripts/smt-ematching-reference.ts` prints for the TypeScript compiler on the same
+    //! `scripts/smt-ematching-reference.ts` printed for the TypeScript compiler on the same
     //! patterns, made in the same order.
 
     use std::collections::HashMap;

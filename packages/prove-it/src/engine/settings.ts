@@ -26,6 +26,13 @@ export const getEnvironmentSetting = (name: string) => getEnvironment()?.[name];
 
 export const getEnvironmentFlag = (name: string) => getEnvironmentSetting(name) === "1";
 
+// The PROVE_IT_ settings, which the native check reads as the binary reads its environment.
+export const getEngineVariables = () =>
+  Object.entries(getEnvironment() ?? {}).filter(
+    (entry): entry is [string, string] =>
+      entry[0].startsWith("PROVE_IT_") && entry[1] !== undefined,
+  );
+
 // The state PROVE_IT_STOP_AT names, before whose expansion the engine's search stops, or -1.
 export const getStopAt = () => {
   const stopAt = Number(getEnvironment()?.PROVE_IT_STOP_AT ?? -1);
@@ -53,6 +60,26 @@ export const getMinimumSharedLevel = () => {
   const configured = Number(getEnvironment()?.PROVE_IT_SHARED_LEVEL ?? -1);
   return Number.isInteger(configured) && configured >= 0 ? configured : -1;
 };
+
+// The debug settings only the TypeScript check honours: PROVE_IT_STOP_AT tests its hand-over from
+// the engine, the IR dump, the state log and the fingerprint setting are written or checked there,
+// and the memo, epoch, fingerprint and liveness self-checks are the engine settings it passes,
+// which the native check doesn't read.
+const TYPESCRIPT_SETTINGS = [
+  "PROVE_IT_STOP_AT",
+  "PROVE_IT_IR_DUMP",
+  "PROVE_IT_STATE_LOG",
+  "PROVE_IT_FINGERPRINT",
+  "PROVE_IT_MEMO",
+  "PROVE_IT_EPOCH_CHECK",
+  "PROVE_IT_FP_VERIFY",
+  "PROVE_IT_LIVE_CHECK",
+];
+
+// Whether PROVE_IT_ENGINE=0 or a setting only the TypeScript check honours asks for it.
+export const isTypeScriptCheckAsked = () =>
+  getEngineSetting() === "0" ||
+  TYPESCRIPT_SETTINGS.some((name) => Boolean(getEnvironmentSetting(name)));
 
 // The file system and whether this is the main thread, on a host that has them. The debug logs
 // below are written only from the main thread, since a worker sees the same settings.
