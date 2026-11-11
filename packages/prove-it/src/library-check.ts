@@ -113,6 +113,8 @@ const checkWithEngine = (options: CheckOptions) => {
   // TypeScript check throws its error.
   if (result.outcome === undefined) return undefined;
   const print = options.onPrint ?? console.log;
+  // The TypeScript check prints SANY's warnings as it links the spec, where the caller didn't.
+  if (!options.isSanyReported) result.outcome.sanyWarnings.forEach((text) => print(text));
   result.outcome.prints.forEach((text) => print(text));
   return fromNativeOutcome(result.outcome);
 };
