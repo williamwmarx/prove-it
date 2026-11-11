@@ -804,11 +804,11 @@ fn decides_what_follows_a_reset_as_a_script_of_its_own() {
     }
 }
 
-// The step limit stands for tlapm's time limit, which is the whole script's: a reset starts the
-// count of the new manager again, not the budget. The prefix takes 3 steps, the solver's and one
-// per assertion.
+// The step limit stands for Z3's rlimit, which Z3 checks against the new manager's count after a
+// reset: what came before costs nothing. Z3 5.3.3 with rlimit=3000 answers unknown at
+// rlimit-count 3211 on Allocator-37, with 50 assertions and three resets before it and without.
 #[test]
-fn a_reset_keeps_the_step_limit_of_the_decision() {
+fn a_reset_starts_the_step_limit_again() {
     let text = read("Allocator-37.smt");
     let decide = |text: &str, step_limit: u64| {
         on_deep_stack(|| {
@@ -818,8 +818,9 @@ fn a_reset_keeps_the_step_limit_of_the_decision() {
     };
     let decision = decide(&text, 1000);
     assert_eq!(decision, Ok("unknown steps=1001 stop=steps".into()));
-    assert_eq!(
-        decide(&format!("(assert true)(assert true)(reset){text}"), 1003),
-        decision
+    let prefix = format!(
+        "(declare-const p Bool){}(reset)(reset)(reset)",
+        "(assert p)".repeat(50)
     );
+    assert_eq!(decide(&format!("{prefix}{text}"), 1000), decision);
 }

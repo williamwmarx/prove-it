@@ -122,8 +122,8 @@ sorts, matching neither Z3 nor any input tlapm writes) must reach `decide` as
 `DecideError::Declined`, so the TypeScript decides it; never as a verdict.
 
 **Reset.** `(reset)` is cmd_context::reset: the parser forgets the declarations, named terms and
-assertions and makes a new manager, whose resource limit counts from 0 while the decision's step
-limit and deadline stay (`smtlib_parser.rs`, `ResourceLimit::restart`). Z3 also forgets the logic,
+assertions and makes a new manager, whose resource limit counts from 0 and the step limit with it,
+as Z3 checks rlimit against the new count; the deadline stays (`smtlib_parser.rs`, `ResourceLimit::restart`). Z3 also forgets the logic,
 and with none set runs another solver than UFNIA's; the port runs UFNIA's on every script, with a
 logic set or not, after a reset as before. Push, pop, `(reset-assertions)`, check-sat-assuming and check-sat-using are unsupported.
 Where Z3 prints an error before the first check-sat the port fails with `DecideError::Prover`: a

@@ -87,6 +87,12 @@ impl Limits {
         self.0.steps.get()
     }
 
+    /// Counts the steps from 0 again, within the same step limit: Z3's reset makes a new manager,
+    /// whose resource limit counts from 0.
+    pub fn restart_steps(&self) {
+        self.0.steps.set(0);
+    }
+
     /// Counts a step, and returns whether the step limit is reached: `isStepLimitReached`.
     pub fn is_step_limit_reached(&self) -> bool {
         self.0.steps.set(self.0.steps.get() + 1);
