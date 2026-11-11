@@ -71,9 +71,9 @@ reports 24 (tests/report-cases/38), which the generator now writes. Where the ge
 such a spec, linking declines too ("SANY's messages of the standard modules with one of them
 replaced").
 
-Six adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
-2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, then 951 of a
-spec's paths and files, in TLC's default mode and with `-noGenerateSpecTE`) found the report wrong
+Seven adversarial runs against TLC at d8fb231 (about 1,440 runs of 620 specs, 680 more specs,
+2,149 runs of handwritten and corpus-mutated specs, 1,876 more inputs, 6,571 more, 951 of a
+spec's paths and files, then 4,350 more, in TLC's default mode and with `-noGenerateSpecTE`) found the report wrong
 or declining for 2,051; each is a case of tla-front's `tests/sany-cases`, recorded in
 `sany-cases.json`, whose `case.json` gives the reason where the front end declines it. All print
 what TLC prints but these, which decline:
@@ -93,21 +93,21 @@ what TLC prints but these, which decline:
 - a record field named like a definition whose value applies a recursive operator, on which
   SANY's linter overflows its stack (4 cases);
 - `@` as a DEF clause entry, which SANY reports as an unknown operator (2 cases);
+- a module nested in a module that its extender extends, which ParseUnit.handleExtensions lets
+  the extender's EXTENDS and INSTANCE name, and the front end looks for in a file;
 - LETs nested 100 deep in their definitions, where SANY's generator throws (1 case);
 - brackets nested so deep that SANY's parser may overflow Java's default stack: past 1,100,
   counting a square bracket twice, where Java overflows past about 1,500 parentheses, braces or
   angle brackets and 900 function constructors. Other forms nested as deep, such as IF or `\A`,
   are not counted, and may print where TLC overflows (1 case).
 
-The CLI and the binary also decline a file TLC finds but can't read, such as a module's file that
-is a directory; a spec named with `.tla` twice, which TLC strips once and SANY again, or in
-another case once TLC finds its configuration (`Spec.TLA`); a spec named `.tla`; and, launched as
-`tlc2.TLC`, a configuration file named as the spec or a glob, as the binary did. Linking declines a
-parameterized INSTANCE of a standard module, whose operators it gave no parameters
-(`I(p) == INSTANCE Integers` with `I(1)!Int`): main's binary printed that `I!Int` requires -1
-arguments. Where the binary declines, the CLI falls back to the TypeScript engine, which declines
-where its linking rejects a spec SANY's report accepts, such as `EXTENDS _JsonTrace`, which it
-printed as SANY's errors.
+Linking declines a parameterized INSTANCE of a standard module, whose operators it gave no
+parameters (`I(p) == INSTANCE Integers` with `I(1)!Int`): main's binary printed that `I!Int`
+requires -1 arguments. Where the binary declines, the CLI falls back to the TypeScript engine,
+which still prints that error after SANY's report, as it prints other errors its linking raises,
+such as for `EXTENDS _JsonTrace`, as SANY's. How TLC finds, reads and names a spec's files, which
+the last run probed, is TLC's resolver's, as main has it; what that run found there is for the
+resolver, not the report.
 
 TLC prints a character of a message outside ASCII as `?` under a locale that isn't UTF-8, where
 Prove It prints the character; the runs above compare under `C.UTF-8`. The CLI's own command line,
