@@ -1,0 +1,6 @@
+---- MODULE Spec ----
+EXTENDS SUFFICES, Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = x
+====
