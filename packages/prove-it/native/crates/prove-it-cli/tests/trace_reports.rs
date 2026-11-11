@@ -1,9 +1,9 @@
 //! What TLC reports as it prints a trace through the configuration's ALIAS, and of assumptions and
-//! postconditions: each spec of `tests/trace_reports` with its configuration, and with the command
-//! line's arguments in its `.args`, run through the binary as TLC's command line runs it. The
-//! binary prints what TLC built at d8fb231 prints (`<spec>.out`, the exit code then the output
-//! but the lines that hold times, versions, paths and seeds), or, where it doesn't follow TLC
-//! yet, declines with the reason in `<spec>.declined`.
+//! postconditions: each spec of `tests/trace_reports` with its configuration, the JSON file it
+//! reads and the command line's arguments in its `.args`, run through the binary as TLC's command
+//! line runs it. The binary prints what TLC built at d8fb231 prints (`<spec>.out`, the exit code
+//! then the output but the lines that hold times, versions, paths and seeds), or, where it doesn't
+//! follow TLC yet, declines with the reason in `<spec>.declined`.
 
 use std::path::Path;
 use std::process::Command;
@@ -39,12 +39,12 @@ fn reports_as_tlc() {
     std::fs::create_dir_all(&directory).expect("a directory");
     let mut differences = Vec::new();
     for name in &names {
-        for extension in ["tla", "cfg"] {
-            std::fs::copy(
-                fixtures.join(format!("{name}.{extension}")),
-                directory.join(format!("{name}.{extension}")),
-            )
-            .expect("a copy");
+        for extension in ["tla", "cfg", "json"] {
+            let source = fixtures.join(format!("{name}.{extension}"));
+            if source.exists() {
+                std::fs::copy(source, directory.join(format!("{name}.{extension}")))
+                    .expect("a copy");
+            }
         }
         let args =
             std::fs::read_to_string(fixtures.join(format!("{name}.args"))).unwrap_or_default();
