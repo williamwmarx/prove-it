@@ -67,7 +67,7 @@ pub(crate) fn compute(
         if let Some(range) = node.range {
             let name = &ir.texts[range.module as usize];
             if !sources.contains_key(&**name)
-                && let Some(text) = host.load_module(directories, name)
+                && let Ok(Some(text)) = host.load_module(directories, name)
             {
                 sources.insert(name.to_string(), text);
             }

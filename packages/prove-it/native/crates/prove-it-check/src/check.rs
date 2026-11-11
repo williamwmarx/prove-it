@@ -917,6 +917,7 @@ fn check_spec(
         !args.has("-nowarning"),
         &Files {
             spec: Path::new(spec_path),
+            main_file,
             directories: &directories,
             temporary: java.temporary_directory.as_deref(),
             metadir: args.first("-metadir"),

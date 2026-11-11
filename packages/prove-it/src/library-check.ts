@@ -84,7 +84,9 @@ const checkWithEngine = (options: CheckOptions) => {
           : kind === "class"
             ? options.loadClass?.(path)
             : // SANY's report names the file of each module it parses, which the result doesn't hold.
-              "";
+              kind === "file"
+              ? ""
+              : undefined;
   };
   const result = checkAllSources(
     addon,
