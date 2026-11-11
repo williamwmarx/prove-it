@@ -156,6 +156,9 @@ describe.each(STORES)("the engine's %s store", (_, store) => {
   });
 
   it("sorts a function's keys with their values", () => {
+    // The spec's strings, which TLC interned as it started.
+    setStringOrder(["a", "b", "c"]);
+    store.resetStore();
     const keys = [store.str("c"), store.str("a"), store.str("b")];
     expect(store.functionOf(keys, ints([3, 1, 2]))).toBe(
       store.functionOfSorted([store.str("a"), store.str("b"), store.str("c")], ints([1, 2, 3]), 3),
@@ -174,16 +177,17 @@ describe.each(STORES)("the engine's %s store", (_, store) => {
     expect(store.concatTuples(store.tupleOf([], 0), tuple)).toBe(tuple);
   });
 
-  it("orders strings by TLC's rank, ranked before unranked, and unranked by their text", () => {
+  it("orders strings by TLC's rank, ranked before unranked", () => {
     setStringOrder(["b", "a"]);
     store.resetStore();
     const [ranked, other, built, last] = ["a", "b", "zz", "c"].map(store.str);
     expect(Math.sign(store.compare(ranked, other))).toBe(1);
     expect(Math.sign(store.compare(other, built))).toBe(-1);
-    expect(Math.sign(store.compare(last, built))).toBe(-1);
-    expect(store.setOf([built, last, ranked, other])).toBe(
-      store.setOfSorted([other, ranked, last, built], 4),
+    // TLC orders two strings it made as it ran by when it made them, which the store doesn't know.
+    expect(() => store.compare(last, built)).toThrow(
+      new Bailout("an order of strings the search made"),
     );
+    expect(store.setOf([built, ranked, other])).toBe(store.setOfSorted([other, ranked, built], 3));
   });
 
   it("stops where TLC fails to compare, for the TypeScript store's reasons", () => {
@@ -282,6 +286,9 @@ describe.each(STORES)("the engine's %s store", (_, store) => {
   });
 
   it("answers a miss among records of several sizes, which TLC compares without failing", () => {
+    // The spec's strings, which TLC interned as it started.
+    setStringOrder(["abort", "commit", "from", "kind", "prepared"]);
+    store.resetStore();
     const kind = store.str("kind");
     const from = store.str("from");
     const messages = store.setOf([
