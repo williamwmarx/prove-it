@@ -3,8 +3,10 @@
 //! tlapm's fingerprints file. It writes no sharing, which OCaml reads the same. A port of
 //! `src/prover/tlapm/ocaml-marshal.ts`.
 //!
-//! A shared value read back is a copy of the value it refers to; the TypeScript hands out the same
-//! object, which nothing that reads it mutates, so the two are the same value.
+//! A shared value read back is the same block, by `Rc`, as the TypeScript hands out the same object:
+//! a small input that shares a block many times stays small once read.
+
+use std::rc::Rc;
 
 use crate::errors::{ObligationError, Result};
 
@@ -13,7 +15,7 @@ use crate::errors::{ObligationError, Result};
 pub enum MarshalValue {
     Int(i64),
     Text(String),
-    Block(MarshalBlock),
+    Block(Rc<MarshalBlock>),
     Float(f64),
 }
 
@@ -43,7 +45,7 @@ const PREFIX_SMALL_BLOCK: u8 = 0x80;
 const HEADER_SIZE: usize = 20;
 
 pub fn block(tag: u8, fields: Vec<MarshalValue>) -> MarshalValue {
-    MarshalValue::Block(MarshalBlock { tag, fields })
+    MarshalValue::Block(Rc::new(MarshalBlock { tag, fields }))
 }
 
 fn corrupted() -> ObligationError {

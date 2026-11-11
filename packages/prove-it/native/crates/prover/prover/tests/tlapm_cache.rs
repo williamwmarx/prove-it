@@ -154,3 +154,32 @@ fn reads_what_each_prover_concluded() {
 fn trusts_no_zenon_or_isabelle_result_of_other_versions_under_safefp() {
     assert_eq!(get_provers(true), ["smt"]);
 }
+
+// Thirty blocks, each holding its child twice, the second time by a shared reference: a DAG of
+// thirty nodes that reads back as one, not as a tree of 2^30.
+#[test]
+fn marshal_keeps_shared_blocks_shared() {
+    let mut data = vec![0xa0, 0x40, 0x40];
+    for level in 2..=30u8 {
+        data.insert(0, 0xa0);
+        data.extend([0x04, level - 1]);
+    }
+    let mut input = from_hex("8495a6be0000000000000000000000000000000000000000");
+    input.truncate(20);
+    input[4..8].copy_from_slice(&(data.len() as u32).to_be_bytes());
+    input.extend(&data);
+    let (mut value, _) = read_marshaled(&input, 0).expect("readable");
+    let mut depth = 0;
+    while let MarshalValue::Block(inner) = value {
+        let first = inner.fields[0].clone();
+        match (&first, &inner.fields[1]) {
+            (MarshalValue::Block(left), MarshalValue::Block(right)) => {
+                assert!(std::rc::Rc::ptr_eq(left, right), "shared at depth {depth}");
+            }
+            _ => assert_eq!(depth, 29),
+        }
+        value = first;
+        depth += 1;
+    }
+    assert_eq!(depth, 30);
+}
