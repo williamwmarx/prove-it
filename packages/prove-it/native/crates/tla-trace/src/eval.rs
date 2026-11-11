@@ -1946,9 +1946,10 @@ impl<'ir> Evaluator<'ir> {
         evaluator.startup_ranked.unwrap_or_default()
     }
 
-    /// Whether evaluating a definition may make a text `made_text` ranks, or draw from the
-    /// generator or set a register that a later startup definition reads: whether it reaches, as
-    /// written or through the definitions it names, an operator that does. Tail, SubSeq and `\o`
+    /// Whether evaluating a definition may make a text `made_text` ranks, build a record, or draw
+    /// from the generator or set a register that a later startup definition reads: whether it
+    /// reaches, as written or through the definitions it names, an operator that does. TLCGet
+    /// builds a record for "config", "spec" and "stats". Tail, SubSeq and `\o`
     /// of a tuple written in place make a tuple.
     fn may_rank_texts(&self, definition: NodeId) -> bool {
         let get_operator = |name: &Name| match name.resolution {
@@ -1973,14 +1974,17 @@ impl<'ir> Evaluator<'ir> {
                     };
                     (!is_tuple_made).then_some(name)
                 }
-                // A subexpression names what the walk doesn't follow.
-                NodeKind::Subexpression(_) => return true,
+                // A subexpression names what the walk doesn't follow, and TLC interns
+                // RecordValue's names as it builds its first record.
+                NodeKind::Subexpression(_) | NodeKind::Record(_) | NodeKind::RecordSet(_) => {
+                    return true;
+                }
                 _ => None,
             };
             if let Some(name) = name {
                 if let Some(
                     "Tail" | "\\o" | "SubSeq" | "ToString" | "RandomElement" | "RandomSubset"
-                    | "TLCSet",
+                    | "TLCSet" | "TLCGet",
                 ) = get_operator(name)
                 {
                     return true;
