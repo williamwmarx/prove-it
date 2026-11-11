@@ -471,7 +471,7 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let(definitions, context)?;
+                let inner = self.bind_let(definitions, context, false)?;
                 self.walk(*body, &inner, is_init, then)
             }
             NodeKind::Unchanged(expression) => {
