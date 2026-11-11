@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getNativeAddon } from "../../src/engine/native";
 import { TlaProverError } from "../../src/errors";
 import { decide } from "../../src/prover/deciders";
+import type { Decision } from "../../src/prover/verdict";
 
 const TESTS_DIRECTORY = join(import.meta.dirname, "..");
 
@@ -17,6 +18,23 @@ const INPUTS = [
   ["isabelle", read("fixtures/isabelle/AllocatorImplementation_proof-33.thy")],
   ["ls4", read("conformance/ptl/equivalence-of-boxes.ls4")],
 ] as const;
+
+// What the TypeScript decider answered on the Zenon input with no limits, before it was deleted, as
+// tests/fixtures/zenon/decisions.txt records it too.
+const RECORDED: Record<string, Decision> = {
+  zenon: {
+    verdict: "unsat",
+    timeUsedMs: 0,
+    statistics: {
+      steps: 1932,
+      nodesSearched: 2246,
+      maxBranchFormulas: 319,
+      proofNodes: 183,
+      formulasCreated: 13905,
+      proof: "25254:004ede84",
+    },
+  },
+};
 
 const OPTIONS = { timeLimitMs: Infinity };
 
@@ -66,7 +84,7 @@ describe("a malformed input", () => {
 });
 
 // Until a backend's port lands, the native engine declines its inputs and TypeScript decides them.
-// Where it decides, it must answer as TypeScript does.
+// Where it decides, it must answer as TypeScript does, until the TypeScript backend is deleted.
 describe("the Rust ports", () => {
   const getAddon = () => {
     const addon = getNativeAddon();
@@ -86,10 +104,11 @@ describe("the Rust ports", () => {
     }
   };
 
+  // A backend whose TypeScript is deleted decides as its TypeScript did, as it was recorded.
   it.each(INPUTS)("%s declines, or decides as TypeScript does", (prover, text) => {
     const native = getAddon().decide(prover, text, Infinity, undefined, undefined);
     if (native.kind === "declined") return;
-    const typescript = useProver("ts", () => decide(prover, text, OPTIONS));
+    const typescript = RECORDED[prover] ?? useProver("ts", () => decide(prover, text, OPTIONS));
     expect(native).toEqual({
       kind: "decided",
       verdict: typescript.verdict,
@@ -103,10 +122,17 @@ describe("the Rust ports", () => {
     );
   });
 
-  it("decides Zenon", () => {
-    expect(getAddon().decide("zenon", INPUTS[1][1], Infinity, undefined, undefined).kind).toBe(
-      "decided",
-    );
+  // Zenon's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
+  it("decides Zenon in Rust whatever PROVE_IT_PROVER says", () => {
+    expect(useProver("ts", () => decide("zenon", INPUTS[1][1], OPTIONS))).toMatchObject({
+      verdict: "unsat",
+      statistics: RECORDED.zenon.statistics,
+    });
+  });
+
+  // tlapm counts a Zenon that stops on its input as a failure.
+  it("fails on a malformed Zenon input", () => {
+    expect(() => decide("zenon", "$sig a", OPTIONS)).toThrow(TlaProverError);
   });
 
   it("declines a prover without a backend", () => {
