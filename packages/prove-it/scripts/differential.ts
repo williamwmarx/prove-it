@@ -240,7 +240,11 @@ const dumpWithTool = async (model: CorpusModel, command: string, args: string[])
         dumpPath,
         ...tlcArgs.slice(configIndex),
       ],
-      { cwd: model.directory, env: { ...process.env, JAVA_TOOL_OPTIONS: undefined }, stdio: "ignore" },
+      {
+        cwd: model.directory,
+        env: { ...process.env, JAVA_TOOL_OPTIONS: undefined },
+        stdio: "ignore",
+      },
     ).on("close", resolve),
   );
   const bytes = existsSync(dumpPath) ? readFileSync(dumpPath) : undefined;
