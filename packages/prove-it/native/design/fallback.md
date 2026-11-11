@@ -287,9 +287,10 @@ label whole, and unrolls a property's \A with the substitutions of the INSTANCEs
 left unbound, taking the \A whole where reading one fails (`SpecProcessor.processConfigProps`).
 The front end unrolls a \A as main does, with the substitutions bound, so it declines, as main
 does, a tautology or a constant part that isn't a boolean in a property where it unrolled a \A
-(see "Declines to win back"). A grid of 112 small specs
-(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 608 of its 896 runs; the others
-decline, for the constant evaluator's gaps, a substituted declaration, an unrolled \A, or a tautology
+(see "Declines to win back"). A grid of 113 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 608 of its 904 runs; the others
+decline, for the constant evaluator's gaps, a substituted declaration, an unrolled \A, a constant
+definition TLC may print as it starts before the error, or a tautology
 after a state-level property, which TLC warns of first. Four name an
 INSTANCE's definition before the INSTANCE, which SANY doesn't know there.
 
