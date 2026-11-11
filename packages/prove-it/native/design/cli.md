@@ -471,7 +471,8 @@ extends from: of the states, which the search keys its table on, seeds each stat
 measures the "actual fingerprints" estimate by, and which order the liveness checker's tables; of
 TLCFP's values and TLCCache's keys; and `TLCGet("config").fingerprint`. Each polynomial's table is
 built the first time it is used. Without `-fp`, TLC picks a polynomial at random, and the binary
-picks the first, as `-fp 0`.
+picks the first, as `-fp 0`: the "actual fingerprints" estimate it prints is then polynomial 0's,
+where TLC's varies from run to run.
 `seqfinal` is `final` with one worker for the liveness check (`LiveCheck.java:291`), so the two
 read alike.
 
@@ -584,7 +585,7 @@ the trace TLC rebuilds for a violation. It counts where TLC's cost model counts:
 `CostModelCreator` builds it over SANY-shaped expressions of the IR, the evaluation of
 `Tool.getInitStates`, `getNextStates` and `eval` with `LazyValue` caching and the cost model each
 value carries (enumerations and conversions count as secondary counts), and each variable's
-`HyperLogLog(10)` estimate of the values in the queued states, with `-fp`'s polynomial. The pass
+`HyperLogLog(10)` estimate of the values in the queued states, with `-fp`'s polynomial, or without `-fp` with each of TLC's. The pass
 returns the states it generated and found, which must agree with the engine's. It declines
 anything it doesn't follow exactly, and the run is then not native; it never prints a report TLC
 wouldn't. Each line was compared with TLC's at d8fb231.
@@ -622,10 +623,26 @@ Past 60 s the binary declines the report.
 `PROVE_IT_TEST_COVERAGE_CUT` sets the cut in seconds for tests, so they don't depend on the
 machine's speed.
 
-The cut rests on the pass being slower than TLC. Once the cost model is counted in the engine and
-the binary runs faster than TLC, a short native run no longer bounds TLC's: the PRs that move the
-counting into the engine must revisit the rule, scaling the cut by the measured ratio of native
-to TLC time or replacing it.
+The cut also ends before TLC's first report part way through, which comes 3 s after its workers
+start for `-coverage 0` and every 60 s after, at 3 + 60·N s for `-coverage N`
+(`AbstractChecker.runTLC`'s `wait(3000)`, then each progress report): the cut is the lesser of
+60 s and that time. Before, a `-coverage 0` run of a few seconds printed one report where TLC
+printed one part way through too. The bound is the binary's time, not TLC's, so a `-coverage 0`
+run the binary takes more than 3 s over declines even where TLC's search would end within 3 s.
+
+The cut rests on the pass being slower than TLC, which does TLC's value work. Counting in the engine
+was built and not adopted: on models full of records TLC with coverage runs 20 to 35 times as long
+as the engine's search, so no native time of the engine's bounds TLC's report part way through
+(branch `engine-coverage`, closed PR #307).
+
+Two more declines:
+- Under `-continue`, a run carried past a violation: TLC counts Init and Next again as it rebuilds
+  each violation's trace, which the pass doesn't, and where an initial state is violated the
+  binary printed no report where TLC prints one.
+- Without `-fp`, a report whose estimates differ by polynomial: TLC draws one of its 131 at
+  random (the banner's `fp`), and two values hashed to one register of its `HyperLogLog` change
+  the estimate, so its report differs from run to run. The pass keeps each variable's distinct
+  values and estimates them with every polynomial; the report is native only where all 131 agree.
 
 ### Sweep and performance
 
