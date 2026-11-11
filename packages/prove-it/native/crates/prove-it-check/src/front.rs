@@ -47,6 +47,9 @@ pub struct Front {
     pub startup_messages: Vec<StartupMessage>,
     /// How a simulation labels an initial state, where the front end knows.
     pub initial_label: Option<String>,
+    /// The initial predicate a simulation gives an initial state as its action, where the front
+    /// end knows.
+    pub initial_action: Option<tla_trace::InitialAction>,
 }
 
 /// The front as tla-front finds it: the model it lowers, or where TLC stops before the search, as
@@ -86,6 +89,7 @@ pub fn read_front(
             override_messages: Vec::new(),
             startup_messages: Vec::new(),
             initial_label: None,
+            initial_action: None,
         }));
     }
     let describe = host.get_file_describer(files);
@@ -124,6 +128,7 @@ pub fn read_front(
                 startup_messages: lowered.startup_messages?,
                 override_messages: lowered.override_messages,
                 initial_label: lowered.initial_label,
+                initial_action: lowered.initial_action,
             }));
         }
         Err(FrontError::NotYet(reason)) => return Err(reason),

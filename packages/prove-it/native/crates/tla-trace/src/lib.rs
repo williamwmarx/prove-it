@@ -44,7 +44,9 @@ pub use failure::{
     Assumption, Failure, FingerprintFailure, Incomplete, Replay, Site, format_call_stack,
 };
 pub use periodic::Periodic;
-pub use postcondition::{Checked, CounterExample, PostconditionInputs, Stats, Verdict};
+pub use postcondition::{
+    Checked, CounterExample, InitialAction, PostconditionInputs, Stats, Verdict,
+};
 pub use pretty::pretty_print;
 pub use print::{format_printed, format_value};
 pub use rebuild::Rebuilder;

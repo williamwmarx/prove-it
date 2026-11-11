@@ -714,12 +714,11 @@ Declined, each with its reason:
   (`TLCGlobals.continuation`) and exits with 0;
 - a trace the trace evaluator can't rebuild, such as one that drew at random under an ALIAS, or
   that holds a record of several fields where the store can't print it;
-- an ALIAS whose text shows the initial state's action in TLCExt's Trace: the simulation binds
-  Trace to records of its states with each state's action as `_action`, first
-  (`TLCExt.getTrace`). The trace evaluator gives each step its action's record
-  (`RecordValue(Action)`), as the postcondition's counterexample does, and the initial state two
-  records of that shape with different texts and numbers, and follows where each state's value
-  is the same under both;
+- an ALIAS that reads TLCExt's Trace where an action binds a parameter to a record of several
+  fields: the simulation binds Trace to records of its states with each state's action first, as
+  `_action` (`TLCExt.getTrace`), the initial predicate's for an initial state, and builds them anew
+  for each state it prints, which the trace evaluator follows; but TLC sorts such a parameter's
+  record, as it fingerprints it, at a point of the simulation the evaluator doesn't follow;
 - a temporal formula TLC's model checker rejects as it builds its liveness checker (a tautology),
   which the simulation builds only as it checks a trace.
 

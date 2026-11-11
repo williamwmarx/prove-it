@@ -1184,6 +1184,7 @@ fn check_spec(
             dumps: &dumps,
             startup_messages: front.startup_messages,
             initial_label: front.initial_label,
+            initial_action: front.initial_action,
             workers,
             is_continued: args.has("-continue"),
             start,
@@ -1613,6 +1614,7 @@ fn check_spec(
                         TraceChecks {
                             dumps: &dumps,
                             run: Some(&run),
+                            initial: None,
                         },
                         start,
                     )
@@ -1891,6 +1893,7 @@ fn check_spec(
                         TraceChecks {
                             dumps: &dumps,
                             run: rejected_postcondition.is_none().then_some(&run),
+                            initial: None,
                         },
                         start,
                     )
@@ -2064,6 +2067,7 @@ pub(crate) fn print_violation(
     let checked = postconditions.filter(|_| !ir.model.postconditions.is_empty());
     let checks = TraceChecks {
         run: checked,
+        initial: None,
         ..checks
     };
     let trace = match rebuild_trace(

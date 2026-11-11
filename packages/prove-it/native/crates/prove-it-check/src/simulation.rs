@@ -89,6 +89,8 @@ pub struct Simulating<'s> {
     pub startup_messages: Vec<StartupMessage>,
     /// How TLC labels an initial state of a trace, where the front end knows.
     pub initial_label: Option<String>,
+    /// The initial predicate TLC gives an initial state as its action, where the front end knows.
+    pub initial_action: Option<tla_trace::InitialAction>,
     pub workers: usize,
     /// Whether `-continue` asks TLC's simulator to go on past a violation.
     pub is_continued: bool,
@@ -126,6 +128,7 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
         dumps,
         startup_messages,
         initial_label,
+        initial_action,
         workers,
         is_continued,
         start,
@@ -274,7 +277,11 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
             config,
             violation,
             None,
-            TraceChecks { dumps, run: None },
+            TraceChecks {
+                dumps,
+                run: None,
+                initial: initial_action.as_ref(),
+            },
             start,
         )
         .unwrap_or_else(|why| {
@@ -314,7 +321,14 @@ pub fn check_simulation(printer: &mut Printer, ir: &tla_ir::Ir, simulating: Simu
         ),
         _ => return report_not_native(printer, "a simulation's violation of another kind"),
     };
-    let texts = match get_state_texts(ir, config, dumps, violation, printer.is_tool) {
+    let texts = match get_state_texts(
+        ir,
+        config,
+        dumps,
+        violation,
+        printer.is_tool,
+        initial_action.as_ref(),
+    ) {
         Ok(texts) => texts,
         Err(why) => return report_not_native(printer, &format!("a simulation's trace: {why}")),
     };
@@ -376,6 +390,7 @@ fn get_state_texts(
     dumps: &TraceDumps,
     violation: &Violation,
     is_tool: bool,
+    initial_action: Option<&tla_trace::InitialAction>,
 ) -> Result<Vec<String>, String> {
     let store = &violation.store;
     let is_held = config.alias.is_none()
@@ -411,7 +426,11 @@ fn get_state_texts(
     let trace = rebuild_trace(
         ir,
         violation,
-        TraceChecks { dumps, run: None },
+        TraceChecks {
+            dumps,
+            run: None,
+            initial: initial_action,
+        },
         is_tool,
         false,
     )?;

@@ -8,8 +8,8 @@ use tla_engine::search::{AcceptedTrace, ContinuedTrace, FinalRegisters, Violatio
 use tla_engine::symmetry::NamedGroup;
 use tla_ir::Ir;
 use tla_trace::{
-    Alias, CounterExample, Ending, PostconditionInputs, Rebuilder, Registers, Stats, Unsupported,
-    Value, Verdict, format_value,
+    Alias, CounterExample, Ending, InitialAction, PostconditionInputs, Rebuilder, Registers, Stats,
+    Unsupported, Value, Verdict, format_value,
 };
 use tla_values::{Id, Store};
 
@@ -47,6 +47,8 @@ pub struct PostconditionRun {
 pub struct TraceChecks<'a> {
     pub dumps: &'a TraceDumps,
     pub run: Option<&'a PostconditionRun>,
+    /// The initial predicate a simulation gives its trace's first state as its action.
+    pub initial: Option<&'a InitialAction>,
 }
 
 /// What TLC printed as it evaluated the postconditions, each print as one line, and the first one
@@ -81,6 +83,8 @@ struct Recorded<'v> {
     /// Whether a simulation took the trace: TLC's simulation prints each of its states through
     /// the ALIAS, a deadlocked initial state included (`SimulationWorker`'s `evalAlias`).
     is_simulated: bool,
+    /// The initial predicate a simulation gives its trace's first state as its action.
+    initial: Option<&'v InitialAction>,
 }
 
 impl<'v> From<&'v Violation> for Recorded<'v> {
@@ -94,6 +98,7 @@ impl<'v> From<&'v Violation> for Recorded<'v> {
             symmetry: violation.symmetry.as_ref(),
             registers: &violation.registers,
             is_simulated: violation.is_simulated,
+            initial: None,
         }
     }
 }
@@ -116,7 +121,10 @@ pub fn rebuild_trace(
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
-        &violation.into(),
+        &Recorded {
+            initial: checks.initial,
+            ..violation.into()
+        },
         &violation.kind,
         &violation.states,
         violation.labels.clone(),
@@ -164,6 +172,7 @@ pub fn rebuild_continued(
         symmetry: None,
         registers: trace.registers,
         is_simulated: false,
+        initial: None,
     };
     let labels = vec![None; trace.states.len().saturating_sub(1)];
     rebuild(
@@ -275,10 +284,13 @@ fn rebuild(
             // one included (`TLCTrace.printTrace`), but to none for an initial state and the
             // successor that violates, and in a lasso to those before each state of the path to
             // its cycle (`LiveWorker.printTrace`). For a violating initial state, the Java method
-            // gives the state alone (`TLCExt.getTrace`).
+            // gives the state alone (`TLCExt.getTrace`), and a simulation the states up to each
+            // (`SimulationWorker.getTrace`).
             let length = trace.states.len();
             let prefixes: Option<Vec<usize>> = match *kind {
-                ViolationKind::Invariant(_) | ViolationKind::ActionProperty(_) if length == 2 => {
+                ViolationKind::Invariant(_) | ViolationKind::ActionProperty(_)
+                    if length == 2 && !recorded.is_simulated =>
+                {
                     Some(vec![0; 2])
                 }
                 ViolationKind::Deadlock { .. }
@@ -302,6 +314,7 @@ fn rebuild(
                     prefixes.as_deref(),
                     writing.is_tool,
                     recorded.is_simulated,
+                    recorded.initial,
                 )?
             };
             // CounterExample closes a lasso with its step back into the cycle. TLC's record of a

@@ -489,7 +489,7 @@ fn evaluate(
         // TLC prints a state it was expanding alone, an initial one, as it is, and every other
         // trace through the ALIAS (`TLCTrace.printTrace`).
         let aliases = if stop.is_aliased && trace.states.len() > 1 {
-            rebuilder.alias(&trace, None, None, is_tool, false)?
+            rebuilder.alias(&trace, None, None, is_tool, false, None)?
         } else {
             None
         };

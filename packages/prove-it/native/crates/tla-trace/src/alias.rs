@@ -2,13 +2,15 @@
 //! alias evaluated at each state, with the state after it as the next state, and printed as the
 //! record it gives (`RecordValue.toState`).
 
-use crate::eval::{Evaluator, TracePrefix};
+use crate::eval::TracePrefix;
 use crate::failure::nested;
-use crate::postcondition::{action_parameters, action_record};
-use crate::print::{format_pretty, print_order, text_string};
+use crate::postcondition::{InitialAction, action_parameters, action_record, site_record};
+use crate::print::{print_order, text_string};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, EvalError, TlcMessage, Value};
 use crate::{Trace, Unsupported};
+use std::cell::RefCell;
+use std::rc::Rc;
 use tla_ir::{Definition, DefinitionForm};
 
 /// A state as TLC prints it through the ALIAS.
@@ -42,10 +44,8 @@ impl Rebuilder<'_> {
     /// TLC binds the builtin Trace at each position to the trace's first states, as many as
     /// `prefixes` says; with no `prefixes`, the alias isn't followed where it reads Trace. A
     /// simulation's records carry each state's action first, as an `_action` field
-    /// (`TLCExt.getTrace`): for each step TLC's record of its action, and for the initial state,
-    /// whose action is the initial predicate the IR doesn't hold, each of two stand-ins of the
-    /// record's shape; the alias is followed only where each state's value, or failure, is the
-    /// same under both.
+    /// (`TLCExt.getTrace`): for each step TLC's record of its action, and for the initial state
+    /// the record of the initial predicate, `initial`.
     pub fn alias(
         &mut self,
         trace: &Trace,
@@ -53,42 +53,19 @@ impl Rebuilder<'_> {
         prefixes: Option<&[usize]>,
         is_tool: bool,
         is_simulated: bool,
+        initial: Option<&InitialAction>,
     ) -> Result<Option<Vec<Alias>>, Unsupported> {
-        if !is_simulated || prefixes.is_none() {
-            return Ok(self
-                .alias_with(trace, cycle_start, prefixes, is_tool, None)?
-                .map(|evaluated| evaluated.aliases));
-        }
-        let mut evaluated = Vec::new();
-        for stand_in in [StandIn::First, StandIn::Second] {
-            evaluated.push(self.alias_with(
-                trace,
-                cycle_start,
-                prefixes,
-                is_tool,
-                Some(stand_in),
-            )?);
-        }
-        if evaluated[0].as_ref().map(|each| &each.texts)
-            != evaluated[1].as_ref().map(|each| &each.texts)
-        {
-            return unsupported("that reads the initial predicate of a simulation's Trace");
-        }
-        Ok(evaluated.swap_remove(0).map(|each| each.aliases))
-    }
-
-    fn alias_with(
-        &mut self,
-        trace: &Trace,
-        cycle_start: Option<usize>,
-        prefixes: Option<&[usize]>,
-        is_tool: bool,
-        action: Option<StandIn>,
-    ) -> Result<Option<Evaluated>, Unsupported> {
         let evaluator = self.evaluator();
         let ir = evaluator.ir;
         let Some(alias) = &ir.model.alias else {
             return Ok(None);
+        };
+        let initial = match (is_simulated && prefixes.is_some(), initial) {
+            (false, _) => None,
+            (true, Some(initial)) => Some(initial),
+            (true, None) => {
+                return unsupported("of a simulation whose initial predicate has no location");
+            }
         };
         let name = &ir.texts[alias.name as usize];
         let rejected = |text: String, code: u32| TlcMessage {
@@ -136,10 +113,16 @@ impl Rebuilder<'_> {
         // Each state as the record of its variables TLC binds Trace to, in the order of the
         // state's variables (`RecordValue(TLCState)`).
         let mut records = Vec::new();
+        // Whether a step's action binds a parameter to a record of several fields, which TLC
+        // sorts, as it fingerprints it, at a point of its simulation the trace evaluator doesn't
+        // follow.
+        let mut is_record_bound = false;
         for (position, state) in states.iter().enumerate().filter(|_| prefixes.is_some()) {
-            let action = match action {
+            let action = match initial {
                 None => None,
-                Some(stand_in) if position == 0 => Some(initial_stand_in(evaluator, stand_in)?),
+                Some(initial) if position == 0 => {
+                    Some(site_record(evaluator, initial, &[], false)?)
+                }
                 Some(_) => {
                     let Some(action) = state
                         .action
@@ -148,6 +131,7 @@ impl Rebuilder<'_> {
                         return unsupported("of a simulation's step whose action the trace lacks");
                     };
                     let bound = action_parameters(evaluator, action)?;
+                    is_record_bound |= bound.iter().any(|(_, value)| holds_record(value));
                     Some(action_record(evaluator, action, &bound, false)?)
                 }
             };
@@ -170,10 +154,8 @@ impl Rebuilder<'_> {
             }
             records.push(run(Value::record(fields))?);
         }
-        let records: std::rc::Rc<[Value]> = records.into();
+        let records: Rc<[Value]> = records.into();
         let mut aliases = Vec::with_capacity(states.len());
-        // Each state's value of the alias, or its failure, as text.
-        let mut texts = Vec::with_capacity(states.len());
         // TLC evaluates the alias of each state as it prints it, between its rebuilds of the
         // states, so an alias that uses the registers those rebuilds set reads them part way.
         let (reads, writes) = (evaluator.register_reads, evaluator.register_writes);
@@ -192,6 +174,7 @@ impl Rebuilder<'_> {
             evaluator.trace = prefixes.map(|prefixes| TracePrefix {
                 records: records.clone(),
                 length: prefixes[position],
+                built: RefCell::new(None),
             });
             // TLC prints an alias that fails with its message as a field of the state
             // (`_ALIASEvalError`, `Tool.evalAlias`).
@@ -203,11 +186,15 @@ impl Rebuilder<'_> {
                 }),
             };
             evaluator.next_level = None;
-            evaluator.trace = None;
-            texts.push(match &result {
-                Ok(value) => format_pretty(value),
-                Err(error) => format!("{:?}", error.message.as_ref().map(|message| &message.text)),
-            });
+            let is_trace_read = evaluator
+                .trace
+                .take()
+                .is_some_and(|prefix| prefix.built.borrow().is_some());
+            if is_record_bound && is_trace_read {
+                return unsupported(
+                    "that reads a simulation's Trace whose actions bind a parameter to a record",
+                );
+            }
             if !evaluator.printed.is_empty() {
                 return unsupported("that prints");
             }
@@ -281,40 +268,27 @@ impl Rebuilder<'_> {
                 _ => Alias::State,
             });
         }
-        Ok(Some(Evaluated { aliases, texts }))
+        Ok(Some(aliases))
     }
 }
 
-// Two records of the shape of TLC's record of an action, which no action of the IR gives, for the
-// initial predicate of a simulation's trace, which the IR doesn't hold.
-#[derive(Clone, Copy)]
-enum StandIn {
-    First,
-    Second,
-}
-
-fn initial_stand_in(evaluator: &Evaluator<'_>, stand_in: StandIn) -> Result<Value, Unsupported> {
-    let (name, number) = match stand_in {
-        StandIn::First => ("$a", 1),
-        StandIn::Second => ("$bb", 100_000),
-    };
-    let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
-    let field = |name: &str| evaluator.counterexample_field(name, false);
-    let location = run(Value::record(vec![
-        (field("beginLine"), Value::Int(number)),
-        (field("beginColumn"), Value::Int(number)),
-        (field("endLine"), Value::Int(number)),
-        (field("endColumn"), Value::Int(number)),
-        (field("module"), text(name)),
-    ]))?;
-    run(Value::record(vec![
-        (field("name"), text(name)),
-        (field("location"), location),
-    ]))
-}
-
-// Each state of a trace as the alias gives it, and its value of the alias, or its failure, as text.
-struct Evaluated {
-    aliases: Vec<Alias>,
-    texts: Vec<String>,
+// Whether a value holds a record of more than one field, or a function of strings TLC prints as
+// one.
+fn holds_record(value: &Value) -> bool {
+    match value {
+        Value::Function(function) => {
+            (function.domain.len() > 1
+                && function
+                    .domain
+                    .iter()
+                    .all(|key| matches!(key, Value::Str(_))))
+                || function
+                    .domain
+                    .iter()
+                    .chain(&function.range)
+                    .any(holds_record)
+        }
+        Value::Set(elements) => elements.iter().any(holds_record),
+        _ => false,
+    }
 }

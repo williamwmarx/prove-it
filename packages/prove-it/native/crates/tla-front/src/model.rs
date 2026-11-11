@@ -82,6 +82,9 @@ pub struct LoweredModel {
     /// `Initial predicate` and where an unnamed one is written. None where the front end can't
     /// tell.
     pub initial_label: Option<String>,
+    /// The initial predicate a simulation gives an initial state as its action, where the front
+    /// end can tell.
+    pub initial_action: Option<tla_trace::InitialAction>,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -356,20 +359,31 @@ fn lower_ranked(
         // specification, the engine stops where TLC would read it.
         let description = describe(&config, &environment, &facts, &evaluator).ok();
         // TLC places a definition an INSTANCE with substitutions copies at the INSTANCE.
-        let initial_label = description.as_ref().and_then(|description| {
+        let initial = description.as_ref().and_then(|description| {
             let init = description.inits.last()?;
             let location = environment
                 .instance_actions
                 .values()
                 .find(|action| action.name == init.name)
                 .map_or(&init.location, |action| &action.location);
-            let range = format_range(location.range.as_ref()?);
-            Some(if &*init.name == UNNAMED_ACTION {
-                format!("Initial predicate {range}")
+            let range = location.range.as_ref()?;
+            let label = if &*init.name == UNNAMED_ACTION {
+                format!("Initial predicate {}", format_range(range))
             } else {
-                format!("{} {range}", init.name)
-            })
+                format!("{} {}", init.name, format_range(range))
+            };
+            let action = tla_trace::InitialAction {
+                name: init.name.to_string(),
+                module: range.module.to_string(),
+                lines: [range.start, range.end]
+                    .map(|position| [position.line as i32, position.column as i32])
+                    .concat()
+                    .try_into()
+                    .ok()?,
+            };
+            Some((label, action))
         });
+        let (initial_label, initial_action) = initial.unzip();
         let ir = match description {
             Some(description) if options.is_spec_described && reads_spec(&ir) => {
                 tla_trace::add_spec(&ir, &to_spec_description(&ir, description)).unwrap_or(ir)
@@ -446,6 +460,7 @@ fn lower_ranked(
                     .map(|name| name.to_string())
                     .collect(),
                 initial_label,
+                initial_action,
             },
             startup,
         ))

@@ -4,7 +4,7 @@
 //! at the call site with their arguments evaluated where used, and functions TLC keeps lazy, a
 //! definition's or a LET's, are applied without building them.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -375,12 +375,15 @@ const APPLIED_NON_BOOLEAN: &str = "a function's value the walk tests that isn't 
 pub(crate) const PRIMED_UNASSIGNED: &str = "primed variable not assigned: ";
 
 /// The states the builtin Trace holds at a position of a trace: the first `length` of the
-/// trace's records. The records are shared between positions, and the tuple is built only when an
-/// ALIAS reads Trace, so an ALIAS that doesn't costs nothing per state.
+/// trace's records. TLC builds the records anew as it evaluates the alias of each state
+/// (`TLCExt.getTrace`), so one that an evaluation sorts stays as built for the next: the tuple of
+/// copies is `built` as the alias first reads Trace, so an ALIAS that doesn't costs nothing per
+/// state.
 #[derive(Clone)]
 pub struct TracePrefix {
-    pub records: std::rc::Rc<[Value]>,
+    pub records: Rc<[Value]>,
     pub length: usize,
+    pub built: RefCell<Option<Value>>,
 }
 
 pub struct Evaluator<'ir> {
@@ -5130,7 +5133,30 @@ impl<'ir> Evaluator<'ir> {
                 arity(0)?;
                 self.reads += 1;
                 let prefix = self.trace.as_ref().expect("the trace");
-                Value::tuple(prefix.records[..prefix.length].to_vec())
+                // The copies share the values of the state's variables and of the action's
+                // parameters, which TLC's records hold as they are.
+                let action: Vec<u16> = "_action".encode_utf16().collect();
+                prefix
+                    .built
+                    .borrow_mut()
+                    .get_or_insert_with(|| {
+                        Value::tuple(
+                            prefix.records[..prefix.length]
+                                .iter()
+                                .map(|record| {
+                                    built_anew(record, &|key, value| match key {
+                                        Value::Str(name) if *name.units == *action => {
+                                            built_anew(value, &|_, value| {
+                                                built_anew(value, &|_, value| value.clone())
+                                            })
+                                        }
+                                        _ => value.clone(),
+                                    })
+                                })
+                                .collect(),
+                        )
+                    })
+                    .clone()
             }
             "CounterExample" if self.runtime.is_some() => {
                 arity(0)?;
@@ -6145,6 +6171,26 @@ fn holds_unsorted(value: &Value) -> bool {
             .any(holds_unsorted),
         _ => false,
     }
+}
+
+// A copy of a function as TLC built it, with `field` giving the value at each key.
+fn built_anew(value: &Value, field: &dyn Fn(&Value, &Value) -> Value) -> Value {
+    let Value::Function(function) = value else {
+        return value.clone();
+    };
+    Value::Function(Rc::new(Function {
+        domain: function.domain.clone(),
+        range: function
+            .domain
+            .iter()
+            .zip(&function.range)
+            .map(|(key, value)| field(key, value))
+            .collect(),
+        class: Cell::new(function.class.get()),
+        written: RefCell::new(function.written.borrow().clone()),
+        search: Cell::new(function.search.get()),
+        interval: function.interval,
+    }))
 }
 
 #[cfg(test)]

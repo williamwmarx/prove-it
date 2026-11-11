@@ -75,7 +75,7 @@ impl Rebuilder<'_> {
         // liveness checker's lasso from the states.
         let aliases = match &inputs.counter_example {
             Some(counter_example) if counter_example.cycle.is_none() => {
-                self.alias(counter_example.trace, None, None, false, false)?
+                self.alias(counter_example.trace, None, None, false, false, None)?
             }
             _ => None,
         };
@@ -357,6 +357,39 @@ pub(crate) fn action_record(
     is_dumped: bool,
 ) -> Result<Value, Unsupported> {
     let ir = evaluator.ir;
+    let Some(range) = action.location else {
+        return unsupported("of an action without a location");
+    };
+    let site = InitialAction {
+        name: ir.texts[action.name as usize].to_string(),
+        module: ir.texts[range.module as usize].to_string(),
+        lines: [
+            range.start_line,
+            range.start_column,
+            range.end_line,
+            range.end_column,
+        ],
+    };
+    site_record(evaluator, &site, bound, is_dumped)
+}
+
+/// The initial predicate TLC's simulation gives each initial state as its action
+/// (`Tool.getInitStates`), as TLC's `Action` names it, and where it is written: its module and
+/// its first line and column, then its last.
+pub struct InitialAction {
+    pub name: String,
+    pub module: String,
+    pub lines: [i32; 4],
+}
+
+// TLC's record of an action named and placed as `site` says, with the values `bound` gives its
+// operator's parameters.
+pub(crate) fn site_record(
+    evaluator: &Evaluator<'_>,
+    site: &InitialAction,
+    bound: &[(&str, Value)],
+    is_dumped: bool,
+) -> Result<Value, Unsupported> {
     let text = |name: &str| Value::Str(evaluator.text_of(name.encode_utf16().collect()));
     let record = |fields: Vec<(&str, Value)>| {
         Value::record(
@@ -366,18 +399,15 @@ pub(crate) fn action_record(
                 .collect(),
         )
     };
-    let name = &ir.texts[action.name as usize];
-    let Some(range) = action.location else {
-        return unsupported("of an action without a location");
-    };
+    let [begin_line, begin_column, end_line, end_column] = site.lines;
     let location = run(record(vec![
-        ("beginLine", Value::Int(range.start_line)),
-        ("beginColumn", Value::Int(range.start_column)),
-        ("endLine", Value::Int(range.end_line)),
-        ("endColumn", Value::Int(range.end_column)),
-        ("module", text(&ir.texts[range.module as usize])),
+        ("beginLine", Value::Int(begin_line)),
+        ("beginColumn", Value::Int(begin_column)),
+        ("endLine", Value::Int(end_line)),
+        ("endColumn", Value::Int(end_column)),
+        ("module", text(&site.module)),
     ]))?;
-    let mut fields = vec![("name", text(name)), ("location", location)];
+    let mut fields = vec![("name", text(&site.name)), ("location", location)];
     // TLC adds the parameters bound to values, by name and in order.
     if !bound.is_empty() {
         // A dump writes a value TLC wrote before as a reference to it, and TLC binds a parameter
