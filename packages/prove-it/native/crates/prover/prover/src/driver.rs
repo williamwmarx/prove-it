@@ -137,8 +137,12 @@ struct Run<'a> {
     results: HashMap<String, HashMap<String, Attempt>>,
     // The CASE errors the SMT encoder has standardized so far.
     case_errors: usize,
-    // Whether an earlier obligation waits, which may still number CASE errors.
+    // Whether an earlier obligation waits, so that later reports wait for its.
     is_waiting: bool,
+    // Whether an earlier obligation that waits may still number CASE errors: one that waits before
+    // its methods, or for a decision with a method after it whose SMT encoding numbers one. An
+    // obligation whose encoding numbers one waits for it, as it starts from the count it leaves.
+    is_count_open: bool,
     waiting_fingerprints: Vec<String>,
     texts: HashMap<String, String>,
     requests: Vec<Request>,
@@ -200,6 +204,7 @@ impl Run<'_> {
         let methods = find_methods(&obligation.sequent, obligation.method.as_ref())?;
         let fingerprint = get_fingerprint(&obligation.sequent)?;
         if self.waiting_fingerprints.contains(&fingerprint) {
+            self.is_count_open = true;
             return Ok(Proving::Waiting);
         }
         let mut attempts: Vec<Attempt> = Vec::new();
@@ -249,7 +254,7 @@ impl Run<'_> {
             self.results.entry(fingerprint).or_default();
             return Ok(Proving::Settled(base(Status::Trivial)));
         }
-        for method in &methods.provers {
+        for (index, method) in methods.provers.iter().enumerate() {
             let prior = get_prior(&self.results, method);
             if let Some(prior) = prior.clone().filter(|prior| prior.attempt.is_proved) {
                 reuse(&mut attempts, prior);
@@ -298,7 +303,7 @@ impl Run<'_> {
                 continue;
             }
             let is_numbered = is_case_numbered(&method.prover, &sequent)?;
-            if is_numbered && self.is_waiting {
+            if is_numbered && self.is_count_open {
                 self.waiting_fingerprints.push(fingerprint);
                 return Ok(Proving::Waiting);
             }
@@ -319,6 +324,9 @@ impl Run<'_> {
                 Ok(text) => match self.get_answer(&method.prover, text, method.time_limit_ms)? {
                     Some(answer) => answer,
                     None => {
+                        for later in &methods.provers[index + 1..] {
+                            self.is_count_open |= is_case_numbered(&later.prover, &sequent)?;
+                        }
                         self.waiting_fingerprints.push(fingerprint);
                         return Ok(Proving::Waiting);
                     }
@@ -418,6 +426,7 @@ pub fn prove_obligations(
         results: HashMap::new(),
         case_errors: 0,
         is_waiting: false,
+        is_count_open: false,
         waiting_fingerprints: Vec::new(),
         texts: HashMap::new(),
         requests: Vec::new(),
