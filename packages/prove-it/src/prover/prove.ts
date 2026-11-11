@@ -2,12 +2,7 @@
 
 import { getNativeAddon, type NativeProve } from "../engine/native";
 import { getEnvironmentSetting, reportEngine } from "../engine/settings";
-import {
-  TlaProofError,
-  TlaProverError,
-  TlaSyntaxError,
-  TlaUnsupportedError,
-} from "../errors";
+import { TlaProofError, TlaProverError, TlaSyntaxError, TlaUnsupportedError } from "../errors";
 import { getObligations, type PrintedObligation } from "../obligations";
 import { type Expr, getChildren, type Hyp, mapHyp, type Sequent } from "../obligations/expression";
 import { formatObligation } from "../obligations/printer";
