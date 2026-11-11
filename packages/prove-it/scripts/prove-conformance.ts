@@ -17,14 +17,12 @@ import { availableParallelism } from "node:os";
 import { join } from "node:path";
 
 import { type ProofObligation, TlaError } from "../src";
-import type { PrintedObligation } from "../src/obligations";
-import { isBackend } from "../src/prover/deciders";
-import { findMethods, type Method } from "../src/prover/prep/methods";
-import { encodeForBackend } from "../src/prover/prove";
+import type { NativeMethod } from "../src/engine/native";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, writeResults } from "./corpora";
 import { runWithCpuLimit } from "./cpu-limit";
 import { tlaTs } from "./dist";
 import { runModuleWorkers } from "./module-workers";
+import { getObligationError } from "./native-prover";
 import {
   getModuleLoader,
   getModuleObligations,
@@ -123,32 +121,29 @@ const getVerdict = (expected: ObligationRecord, actual: ProofObligation | undefi
 
 // Decides the obligation again with the method of the prover tlapm proved it with, and returns the
 // proof if it comes within the method's limit in CPU time. The SMT encoder's CASE numbering only
-// names a symbol, so the input starts it from zero.
+// names a symbol, so the input starts it from zero. A prover without a backend has no encoder, so
+// the obligation has no input for it.
 const getCpuProof = async (
-  obligation: PrintedObligation,
-  method: Method,
+  path: string,
+  id: number,
+  method: NativeMethod,
 ): Promise<CpuProof | undefined> => {
-  if (!isBackend(method.prover)) return undefined;
-  try {
-    const text = encodeForBackend(obligation, method.prover, { caseErrors: 0 });
-    const run = await runWithCpuLimit(method.timeLimitMs, method.prover, text);
-    return run.verdict === "unsat" && run.cpuMilliseconds <= method.timeLimitMs
-      ? {
-          prover: method.prover,
-          wallMilliseconds: run.wallMilliseconds,
-          cpuMilliseconds: run.cpuMilliseconds,
-        }
-      : undefined;
-  } catch (error) {
-    if (error instanceof TlaError) return undefined;
-    throw error;
-  }
+  const text = getModuleObligations(path, [[id, method.prover]]).encodings[0];
+  if (text instanceof TlaError) return undefined;
+  const run = await runWithCpuLimit(method.timeLimitMs, method.prover, text);
+  return run.verdict === "unsat" && run.cpuMilliseconds <= method.timeLimitMs
+    ? {
+        prover: method.prover,
+        wallMilliseconds: run.wallMilliseconds,
+        cpuMilliseconds: run.cpuMilliseconds,
+      }
+    : undefined;
 };
 
 // Of the provers tlapm and tla-ts proved the obligation with, the first one the obligation's methods
 // try, as the other answered differently on it. A difference without one is in Prep.
 const getBackend = (
-  provers: Method[],
+  provers: NativeMethod[],
   expected: ObligationRecord,
   actual: ProofObligation | undefined,
 ) => {
@@ -201,7 +196,7 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
   });
   if (!results.some((result) => isDifference(result.verdict))) return results;
   const printed = new Map(
-    getModuleObligations(path).map((obligation) => [obligation.id, obligation]),
+    getModuleObligations(path).obligations.map((obligation) => [obligation.id, obligation]),
   );
   // The second runs go one at a time, so they don't share the core they are timed on.
   const withBackends: Result[] = [];
@@ -213,7 +208,8 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
     }
     const expected = record.obligations[index];
     const actual = byId.get(result.id);
-    const provers = findMethods(obligation).provers;
+    if (!Array.isArray(obligation.methods)) throw getObligationError(obligation.methods);
+    const provers = obligation.methods;
     const backend = getBackend(provers, expected, actual);
     // tla-ts not proving what tlapm's prover did may be a time-out.
     const method = provers.find((innerMethod) => innerMethod.prover === backend);
@@ -222,7 +218,7 @@ const proveModule = async (record: ModuleProofRecord): Promise<Result[]> => {
       expected.status === "proved" &&
       expected.prover === backend &&
       method
-        ? await getCpuProof(obligation, method)
+        ? await getCpuProof(path, obligation.id, method)
         : undefined;
     withBackends.push({ ...result, backend, ...(cpuProof ? { cpuProof } : {}) });
   }

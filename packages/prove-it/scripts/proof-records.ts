@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { getObligations } from "../src/obligations";
+import type { NativeObligation } from "../src/engine/native";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getLibraryModules, getOption } from "./corpora";
+import { getObligations } from "./native-prover";
 import { collapseWhitespace, getDigest } from "./tlapm-digest";
 
 export type BackendVerdict = "unsat" | "sat" | "unknown";
@@ -154,12 +155,33 @@ export const readModule = (path: string, name: string) => {
 
 export const getModuleLoader = (path: string) => (name: string) => readModule(path, name)?.source;
 
-// The obligations of a corpus module. A submodule reports its own obligations, before the module
-// that contains it.
-export const getModuleObligations = (path: string) =>
-  getObligations([{ file: path, source: readFileSync(path, "utf8") }], (name) =>
-    readModule(path, name),
-  ).flatMap((result) => result.obligations);
+// The obligations of a corpus module, and the text each backend receives for each [id, prover] of
+// encode. A submodule reports its own obligations, before the module that contains it.
+export const getModuleObligations = (path: string, encode: [number, string][] = []) =>
+  getObligations(path, readFileSync(path, "utf8"), (name) => readModule(path, name), encode);
+
+// The obligations of a corpus module by id, and the text prover receives for each of ids that the
+// module has an obligation for that isEncoded keeps, by id, or the error that stops it. The SMT
+// encoder counts its CASE errors across them, in the order of ids.
+export const getModuleEncodings = (
+  path: string,
+  ids: number[],
+  prover: string,
+  isEncoded = (_obligation: NativeObligation) => true,
+) => {
+  const obligations = new Map(
+    getModuleObligations(path).obligations.map((obligation) => [obligation.id, obligation]),
+  );
+  const encoded = ids.filter((id) => {
+    const obligation = obligations.get(id);
+    return obligation !== undefined && isEncoded(obligation);
+  });
+  const encodings = getModuleObligations(
+    path,
+    encoded.map((id): [number, string] => [id, prover]),
+  ).encodings;
+  return { obligations, encodings: new Map(encoded.map((id, index) => [id, encodings[index]])) };
+};
 
 // Prints how many results have each verdict, then the ones worth a look, all of them with
 // --verbose and otherwise the first 20.
