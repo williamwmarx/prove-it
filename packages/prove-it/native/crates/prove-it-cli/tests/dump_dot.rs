@@ -166,3 +166,20 @@ fn declines_a_dump_after_a_dump_dot() {
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
+
+// TLC copies the graph to the snapshot as it writes each state (`DotStateWriter.writeState`), so a
+// search that writes none leaves no snapshot.
+#[test]
+fn writes_no_snapshot_of_a_graph_without_states() {
+    let spec = "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x \\in {} /\\ y = 0\nNext == x' = x /\\ y' = y\n====\n";
+    let (output, directory) = run_spec_with(
+        "dot-empty-snapshot",
+        spec,
+        "INIT Init\nNEXT Next\n",
+        &["-fp", "0", "-dump", "dot,snapshot", "graph"],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert!(directory.join("graph.dot").exists());
+    assert!(!directory.join("graph_snapshot.dot").exists());
+    std::fs::remove_dir_all(directory).expect("removed");
+}
