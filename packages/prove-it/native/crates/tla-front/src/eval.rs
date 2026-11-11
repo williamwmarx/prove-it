@@ -363,6 +363,37 @@ impl Evaluator<'_> {
             .map_or(name, |target| &**target)
     }
 
+    /// `S.member(e)` of `e \in S`, which an integer, a string or a boolean S fails with both
+    /// values' texts.
+    fn is_element(
+        &self,
+        element: &ConfigValue,
+        set: &Expr,
+        scope: Option<&Rc<Scope>>,
+    ) -> Result<bool> {
+        let reason = match self.is_member(element, set, scope) {
+            Err(FrontError::NotYet(reason)) if self.get_infinite(set).is_none() => reason,
+            is_member => return is_member,
+        };
+        let value = self.evaluate(set, scope)?;
+        let kind = match &value {
+            ConfigValue::Number(_) => "integer",
+            ConfigValue::String(_) => "string",
+            ConfigValue::Boolean(_) => "boolean",
+            _ => return Err(FrontError::NotYet(reason)),
+        };
+        match (format_scalar(element), format_scalar(&value)) {
+            (Some(element), Some(value))
+                if element.len() <= MAXIMUM_PLAIN_TEXT && value.len() <= MAXIMUM_PLAIN_TEXT =>
+            {
+                Err(FrontError::Evaluation(format!(
+                    "Attempted to check if the value:\n{element}\nis an element of the {kind} {value}"
+                )))
+            }
+            _ => Err(FrontError::NotYet(reason)),
+        }
+    }
+
     fn is_member(
         &self,
         element: &ConfigValue,
@@ -388,11 +419,21 @@ impl Evaluator<'_> {
     }
 
     /// Each binding of the bounds to their sets' elements, the last bound outermost, as
-    /// `forEachBoundElement` visits them.
+    /// `forEachBoundElement` visits them, and as `Tool.contexts` enumerates them for a quantifier
+    /// or a set of the form {e : x \in S}.
     pub fn get_bindings(
         &self,
         bounds: &[Bound],
         scope: Option<&Rc<Scope>>,
+    ) -> Result<Vec<Option<Rc<Scope>>>> {
+        self.bind(bounds, scope, true)
+    }
+
+    fn bind(
+        &self,
+        bounds: &[Bound],
+        scope: Option<&Rc<Scope>>,
+        is_contexts: bool,
     ) -> Result<Vec<Option<Rc<Scope>>>> {
         let mut names = Vec::new();
         let mut sets = Vec::new();
@@ -401,7 +442,32 @@ impl Evaluator<'_> {
                 return Err(not_yet("a tuple of bound names"));
             };
             names.push(name.clone());
-            sets.push(self.get_set_elements(&bound.set, scope)?);
+            sets.push(match self.get_set_elements(&bound.set, scope) {
+                // `Tool.contexts` fails on a bound that isn't a set with the value's text and the
+                // bound's, a numeral's as it is written.
+                Err(FrontError::NotYet(reason))
+                    if is_contexts && self.version == TlcVersion::Master =>
+                {
+                    let value = self.evaluate(&bound.set, scope)?;
+                    let text = match &bound.set.kind {
+                        ExpressionKind::Number { text, .. }
+                            if text.chars().all(|character| character.is_ascii_digit()) =>
+                        {
+                            text.to_string()
+                        }
+                        _ => describe_range(&bound.set),
+                    };
+                    return Err(match format_scalar(&value) {
+                        Some(value) if value.len() <= MAXIMUM_PLAIN_TEXT => {
+                            FrontError::Evaluation(format!(
+                                "TLC encountered a non-enumerable quantifier bound\n{value}.\n{text}"
+                            ))
+                        }
+                        _ => FrontError::NotYet(reason),
+                    });
+                }
+                elements => elements?,
+            });
         }
         let mut bindings = Vec::new();
         fn visit(
@@ -540,8 +606,10 @@ impl Evaluator<'_> {
             }
             ("=", 2) => ConfigValue::Boolean(self.equals_operands(args, scope)?),
             ("/=", 2) => ConfigValue::Boolean(!self.equals_operands(args, scope)?),
-            ("\\in", 2) => ConfigValue::Boolean(self.is_member(&value(0)?, &args[1], scope)?),
-            ("\\notin", 2) => ConfigValue::Boolean(!self.is_member(&value(0)?, &args[1], scope)?),
+            ("\\in", 2) => ConfigValue::Boolean(self.is_element(&value(0)?, &args[1], scope)?),
+            ("\\notin", 2) => {
+                ConfigValue::Boolean(!self.is_element(&value(0)?, &args[1], scope)?)
+            }
             ("\\subseteq", 2) => {
                 let left = get_elements(value(0)?)?;
                 let mut is_subset = true;
@@ -803,7 +871,8 @@ impl Evaluator<'_> {
             }
             ExpressionKind::SetFilter { bound, predicate } => {
                 let mut kept = Vec::new();
-                for binding in self.get_bindings(std::slice::from_ref(bound), scope)? {
+                // TLC keeps {x \in S : P} lazy where S isn't a set.
+                for binding in self.bind(std::slice::from_ref(bound), scope, false)? {
                     if self.is_true(predicate, binding.as_ref())? {
                         let Some(node) = &binding else {
                             continue;

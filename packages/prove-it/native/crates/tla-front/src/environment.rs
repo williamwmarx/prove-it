@@ -2436,12 +2436,11 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
             match evaluator.evaluate(&definition.body, None) {
                 // TLC's SpecProcessor adds the message of a TLCRuntimeException, not an
                 // EvalException's.
-                Err(error @ FrontError::Evaluation(_)) => {
-                    let addendum = match &error {
-                        FrontError::Evaluation(message) if !is_eval_exception(&error) => {
-                            format!(" - specifically: {message}")
-                        }
-                        _ => String::new(),
+                Err(FrontError::Evaluation(message)) => {
+                    let addendum = if is_eval_exception(&message) {
+                        String::new()
+                    } else {
+                        format!(" - specifically: {message}")
                     };
                     return Err(FrontError::Config(format!(
                         "The configuration file substitutes constant {name} with non-constant {target}{addendum}"

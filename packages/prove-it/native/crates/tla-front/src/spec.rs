@@ -381,7 +381,7 @@ impl Expansion<'_> {
                 match evaluator.get_bindings(bounds, scope) {
                     // `processConfigProps` leaves a \A whose sets fail with a TLCRuntimeException
                     // to the liveness checker, and an EvalException escapes TLC's startup.
-                    Err(error @ FrontError::Evaluation(_)) if !is_eval_exception(&error) => {}
+                    Err(FrontError::Evaluation(message)) if !is_eval_exception(&message) => {}
                     bindings => {
                         let mut expanded = Vec::new();
                         for binding in bindings.map_err(with_unexpected_exception)? {

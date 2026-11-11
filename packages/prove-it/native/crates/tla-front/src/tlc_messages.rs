@@ -192,11 +192,10 @@ pub fn get_coded_message(text: &str) -> Option<CodedMessage> {
         })
 }
 
-/// Whether TLC throws the failure an evaluation error words as an EvalException, which the
-/// handlers that catch a TLCRuntimeException let pass.
-pub fn is_eval_exception(error: &FrontError) -> bool {
-    matches!(error, FrontError::Evaluation(message)
-        if get_coded_message(message).is_some_and(|coded| coded.is_eval_exception))
+/// Whether TLC throws the failure an evaluation error's message words as an EvalException, which
+/// the handlers that catch a TLCRuntimeException let pass.
+pub fn is_eval_exception(message: &str) -> bool {
+    get_coded_message(message).is_some_and(|coded| coded.is_eval_exception)
 }
 
 /// `withUnexpectedException`: TLC reports an EvalException, or a RuntimeException without a
