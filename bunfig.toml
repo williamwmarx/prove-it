@@ -91,9 +91,7 @@ ignorePatterns = [
 "no-unsafe-negation" = "error"
 "no-unsafe-optional-chaining" = "error"
 "no-unused-labels" = "error"
-# Off: it counts only reads through `this`, so it flags the fields that union-find code reads on
-# another node (src/prover/smt/solver/auf-solver.ts).
-"no-unused-private-class-members" = "off"
+"no-unused-private-class-members" = "error"
 "no-useless-assignment" = "error"
 "no-useless-backreference" = "error"
 "no-useless-catch" = "error"
