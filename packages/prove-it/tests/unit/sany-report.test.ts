@@ -1360,10 +1360,10 @@ Bad == ENABLED Inv
     expect(report.isFailed).toBe(true);
   });
 
-  // The replacement lacks operators that TLC and Sequences use, which SANY reports in messages
-  // no recording shows yet.
-  it("declines the modules that depend on a standard module the specification replaces", () => {
-    const decline = getDecline({
+  // The replacement lacks operators that TLC and Sequences use, which SANY reports
+  // (tla-front's tests/report-cases/38, recorded from TLC).
+  it("analyzes the modules that depend on a standard module the specification replaces", () => {
+    const report = getReport({
       Replaced: `---- MODULE Replaced ----
 EXTENDS Naturals, TLC
 ====
@@ -1373,8 +1373,6 @@ Nat == {0, 1, 2}
 ====
 `,
     });
-    expect(decline).toBe(
-      "SANY's report of SANY's messages of the standard modules with one of them replaced",
-    );
+    expect(report.isFailed).toBe(true);
   });
 });
