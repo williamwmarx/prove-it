@@ -389,6 +389,8 @@ pub struct Evaluator<'ir> {
     pub(crate) state_builtins: &'static [&'static str],
     /// Whether `can_read` bounds the level as TLC's `getLevelBound` does, for `may_reach_bound`.
     pub(crate) is_level_bound: bool,
+    /// What `may_reach_bound` found of each definition.
+    pub(crate) level_bounds: HashMap<NodeId, bool>,
     texts: Vec<Option<Rc<Text>>>,
     /// The value of each string literal, by its node.
     literals: HashMap<NodeId, Rc<Text>>,
@@ -735,6 +737,7 @@ impl<'ir> Evaluator<'ir> {
         Evaluator {
             state_builtins: &[],
             is_level_bound: false,
+            level_bounds: HashMap::new(),
             ir,
             texts: vec![None; ir.texts.len()],
             literals: HashMap::new(),
@@ -2390,8 +2393,7 @@ impl<'ir> Evaluator<'ir> {
         // TLC can't read then (`processConstantDefns`), whose value holds no state.
         if self.reads == reads
             && self.printed.len() == printed
-            && (self.captures == captures
-                || !self.may_reach_bound(node, &["TLCGet", "CounterExample", "_Counts"]))
+            && (self.captures == captures || !self.may_reach_bound(node))
         {
             // TLC computed the value of a definition that reads no state as it started, and
             // sorted it.

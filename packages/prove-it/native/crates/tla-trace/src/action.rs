@@ -198,16 +198,20 @@ impl<'ir> Evaluator<'ir> {
         reads
     }
 
-    /// Whether an expression may read the state or apply one of these builtins, as TLC bounds the
-    /// level of a definition it computes as it starts (`getLevelBound`).
-    pub(crate) fn may_reach_bound(
-        &mut self,
-        node: NodeId,
-        builtins: &'static [&'static str],
-    ) -> bool {
+    /// Whether a definition may read the state as TLC bounds its level when it starts
+    /// (`getLevelBound`), which it computes then where it reads none: a builtin of a level above
+    /// constant (`minLevel`) reads it.
+    pub(crate) fn may_reach_bound(&mut self, definition: NodeId) -> bool {
+        if let Some(&reads) = self.level_bounds.get(&definition) {
+            return reads;
+        }
         self.is_level_bound = true;
-        let reads = self.may_reach(node, builtins);
+        let reads = self.may_reach(
+            definition,
+            &["TLCGet", "CounterExample", "Trace", "_Counts"],
+        );
         self.is_level_bound = false;
+        self.level_bounds.insert(definition, reads);
         reads
     }
 
@@ -336,6 +340,21 @@ impl<'ir> Evaluator<'ir> {
             Resolution::Builtin(index) => self
                 .state_builtins
                 .contains(&&*self.ir.texts[self.ir.builtins[index as usize].name as usize]),
+            // TLC computes a 0-ary definition the configuration substitutes for a constant as it
+            // starts, and stops where that fails (`processConstantDefns`), so `getLevelBound` finds
+            // its value.
+            Resolution::Definition(index)
+                if self.is_level_bound
+                    && self
+                        .ir
+                        .model
+                        .startup
+                        .substitutes
+                        .iter()
+                        .any(|&(_, substitute)| substitute == index) =>
+            {
+                false
+            }
             Resolution::Definition(index) => self.can_read_state(
                 self.ir.definitions[index as usize],
                 &Context::default(),
