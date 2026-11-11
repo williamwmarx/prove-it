@@ -1263,6 +1263,12 @@ pub fn check_search_config(
         {
             return Err(not_yet("a _PERIODIC the configuration assigns a value to"));
         }
+        // TLC finds a builtin among its definitions as the value its Java method gives, which it
+        // fails casting to a definition too.
+        if get_definition(name, environment).is_none() && environment.builtins.contains_key(&**name)
+        {
+            return Err(not_yet("a _PERIODIC that names a builtin operator"));
+        }
         get_config_operator("periodic", name, environment)?;
     }
     for (index, name) in config.possible.iter().enumerate() {

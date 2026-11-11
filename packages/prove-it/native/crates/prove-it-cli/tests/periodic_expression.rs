@@ -332,6 +332,27 @@ fn declines_a_periodic_the_configuration_assigns_a_value_to() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// TLC finds a builtin among its definitions as the value of its Java method, which it fails casting
+// to a definition as it starts (a ClassCastException, exit 255).
+#[test]
+fn declines_a_periodic_naming_a_builtin() {
+    for name in ["Nat", "TRUE"] {
+        let (output, directory) = run_spec_with(
+            "periodic-builtin",
+            &periodic_spec(PERIODIC_COUNTER, "TRUE"),
+            &PERIODIC_CONFIG.replace("_PERIODIC Periodic", &format!("_PERIODIC {name}")),
+            &[],
+        );
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(1), "{name}: {text}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "prove-it: not native yet: a _PERIODIC that names a builtin operator\n"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 // TLC reads a definition through an assignment qualified by a module, `Q = [Stop] FALSE`, which
 // the engine and the trace evaluator don't follow, and checks the temporal properties of the
 // current state space before it evaluates the expression: the search declines at its first
