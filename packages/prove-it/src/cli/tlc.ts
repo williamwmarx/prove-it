@@ -550,13 +550,19 @@ const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
 };
 
 // Where TLC finds the files of the spec it was `given` on the command line, as the binary finds
-// them (prove-it-host's resolveFiles), throwing where the binary declines what TLC does.
-const createFileResolver = (commandLine: string[], given: string) => {
+// them (prove-it-host's resolveFiles), throwing where the binary declines what TLC does. The TLC
+// version the launch already read from its jar goes first as a property, so that no request reads
+// the jar again.
+const createFileResolver = (commandLine: string[], given: string, java: JavaProperties) => {
   const addon = getNativeAddon();
   if (typeof addon === "string") throw new EngineUnavailableError(addon, false);
   const known = new Map<string, string | Uint8Array | undefined>();
+  const resolvedLine =
+    java.tlcVersion === undefined
+      ? commandLine
+      : [`-Dtla-ts.tlc=${java.tlcVersion}`, ...commandLine];
   const resolveFile = (request: string) => {
-    const resolved = resolveAllFiles(addon, commandLine, given, request, readFileKey, known);
+    const resolved = resolveAllFiles(addon, resolvedLine, given, request, readFileKey, known);
     if (resolved.kind === "declined") throw new TlaUnsupportedError(resolved.reason);
     return resolved;
   };
@@ -631,7 +637,7 @@ const checkSpec = async (
   const version = printer.version;
   printWelcome(printer);
   printStartupBanner(printer, seed, workers);
-  const files = createFileResolver(commandLine, given);
+  const files = createFileResolver(commandLine, given, java);
   const spec = files.getSpec();
   if (spec.missingConfig !== undefined) {
     printer.print(
@@ -886,7 +892,10 @@ export const checkSpecs = async (
   await loadWasmEngine();
   const paths = [
     ...new Map(
-      specPaths.map((given) => [createFileResolver(commandLine, given).getSpec().path, given]),
+      specPaths.map((given) => [
+        createFileResolver(commandLine, given, java).getSpec().path,
+        given,
+      ]),
     ).entries(),
   ];
   // Each spec is checked as TLC would in a process of its own, so an error in one leaves the others

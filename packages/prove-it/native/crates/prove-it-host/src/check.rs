@@ -110,7 +110,8 @@ impl Host for SourcesHost {
         if self.is_library {
             return self.get(format!("text:{}", path.display()));
         }
-        String::from_utf8(self.read_bytes(path)?).ok()
+        // As the CLI read a file before, with readFileSync's UTF-8, and TLC reads text not in it.
+        Some(String::from_utf8_lossy(&self.read_bytes(path)?).into_owned())
     }
 
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>> {

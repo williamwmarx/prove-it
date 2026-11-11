@@ -20,7 +20,7 @@ use crate::jar::{get_standard_modules_url, get_tools_jar, is_174};
 /// one, the library path.
 pub fn get_module_directories(main_file: &str, libraries: &[String]) -> Vec<String> {
     match main_file.rfind('/') {
-        Some(end) if Path::new(main_file).is_absolute() => {
+        Some(end) if is_absolute(Path::new(main_file)) => {
             std::iter::once(main_file[..=end].to_string())
                 .chain(libraries.iter().cloned())
                 .collect()
@@ -77,7 +77,7 @@ pub fn find_config(
             }
         }
         // TLC takes an absolute spec's directory for its user directory and the spec by its name.
-        None if Path::new(main_file).is_absolute() => format!("{}.cfg", get_file_name(main_file)),
+        None if is_absolute(Path::new(main_file)) => format!("{}.cfg", get_file_name(main_file)),
         None => format!("{main_file}.cfg"),
     };
     let found = directories
@@ -138,7 +138,7 @@ fn find_file(host: &dyn Host, directories: &[&Path], file_name: &str) -> Option<
 pub fn get_missing_spec_message(host: &dyn Host, given: &str, libraries: &[String]) -> String {
     let current = host.current_dir();
     let main_file = given.strip_suffix(".tla").unwrap_or(given);
-    let (directory, file_name) = if Path::new(given).is_absolute() {
+    let (directory, file_name) = if is_absolute(Path::new(given)) {
         let end = given.rfind('/').unwrap_or_default();
         (
             if end == 0 { "/" } else { &given[..end] }.to_string(),
@@ -153,7 +153,7 @@ pub fn get_missing_spec_message(host: &dyn Host, given: &str, libraries: &[Strin
     // SimpleFilenameToStream looks for a relative spec named with a directory there alone, which it
     // names as Java's Path does.
     let directories = match given.rfind('/') {
-        Some(end) if !Path::new(given).is_absolute() => {
+        Some(end) if !is_absolute(Path::new(given)) => {
             let named = collapse_separators(&given[..end]);
             vec![if named.len() > 1 {
                 named.trim_end_matches('/').to_string()
@@ -180,8 +180,8 @@ pub fn get_missing_file_message_174(
 ) -> String {
     let current = host.current_dir();
     let spec_directory = &spec[..spec.rfind('/').map_or(0, |end| end + 1)];
-    let is_absolute = Path::new(spec).is_absolute();
-    let directories: Vec<String> = if !is_absolute && !spec_directory.is_empty() {
+    let is_spec_absolute = is_absolute(Path::new(spec));
+    let directories: Vec<String> = if !is_spec_absolute && !spec_directory.is_empty() {
         vec![spec_directory.to_string()]
     } else {
         libraries
@@ -197,7 +197,7 @@ pub fn get_missing_file_message_174(
     };
     let last = directories.last().map_or_else(
         || {
-            if is_absolute {
+            if is_spec_absolute {
                 spec_directory.to_string()
             } else {
                 String::new()
@@ -206,7 +206,7 @@ pub fn get_missing_file_message_174(
         Clone::clone,
     );
     let path = format!("{last}{file_name}");
-    let path = if Path::new(&path).is_absolute() {
+    let path = if is_absolute(Path::new(&path)) {
         path
     } else {
         format!("{}/{path}", current.display())
@@ -297,7 +297,7 @@ pub fn resolve_files(args: &[String], given: &str, request: &str, host: &dyn Hos
             ),
         });
         return Resolved::Spec {
-            name: if Path::new(main_file).is_absolute() {
+            name: if is_absolute(Path::new(main_file)) {
                 stem
             } else {
                 main_file.to_string()
@@ -365,11 +365,17 @@ fn collapse_separators(path: &str) -> String {
     collapsed
 }
 
+/// Whether a path is absolute, which std's `Path::is_absolute` says of no path on
+/// wasm32-unknown-unknown, where the paths JavaScript names are Unix's.
+pub fn is_absolute(path: &Path) -> bool {
+    path.is_absolute() || cfg!(target_arch = "wasm32") && path.has_root()
+}
+
 /// Java's `File.getAbsolutePath`: against the working directory, with repeated separators and a
 /// trailing one dropped, and `.` and `..` kept.
 pub fn get_java_absolute(current: &Path, path: &Path) -> String {
     let text = path.to_string_lossy();
-    let absolute = if path.is_absolute() {
+    let absolute = if is_absolute(path) {
         text.into_owned()
     } else {
         format!("{}/{text}", current.display())

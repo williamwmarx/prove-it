@@ -133,14 +133,11 @@ fn print_missing_root(
     includes: &[String],
 ) -> i32 {
     let user_directory = output.host.current_dir().to_string_lossy().into_owned();
-    let directories: String = includes
-        .iter()
-        .map(|include| format!("{include}, "))
-        .collect();
+    let directories = includes.join(", ");
     let fatal = format!("Unknown location\n\nCannot find source file for module {root}");
     let _ = write!(
         output.err,
-        "File does not exist: {user_directory}/./{file_name} while looking in these directories: {user_directory}, {directories}classpath:/tla2sany/StandardModules, classpath:/\n\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\nERROR: Failed to parse module.\n"
+        "File does not exist: {user_directory}/./{file_name} while looking in these directories: {user_directory}, {directories}, classpath:/tla2sany/StandardModules, classpath:/\n\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\nERROR: Failed to parse module.\n"
     );
     XML_EXPORT_SPEC_PARSING_FAILURE
 }

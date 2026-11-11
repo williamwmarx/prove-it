@@ -192,7 +192,7 @@ fn native_sany(
 ) -> Result<SanyText, FrontError> {
     let spec = Path::new(spec_path);
     // TLC gives SANY the spec as the command line names it, without .tla, unless it's absolute.
-    let file_name = if Path::new(main_file).is_absolute() {
+    let file_name = if crate::resolve::is_absolute(Path::new(main_file)) {
         spec.file_stem().and_then(|stem| stem.to_str())
     } else {
         Some(main_file)
