@@ -84,6 +84,8 @@ pub struct Printer<'o> {
     pub is_trace_recorded: bool,
     /// TLC's coverage report of the run, which comes before the statistics.
     pub coverage: Option<Vec<tla_trace::CoverageMessage>>,
+    /// Whether it printed a state of an error trace, which TLC records for that spec.
+    pub is_trace_printed: bool,
 }
 
 impl<'o> Printer<'o> {
@@ -97,6 +99,7 @@ impl<'o> Printer<'o> {
             host: output.host,
             is_trace_recorded: false,
             coverage: None,
+            is_trace_printed: false,
         }
     }
 
@@ -110,6 +113,7 @@ impl<'o> Printer<'o> {
         if is_warning && !self.is_warning_enabled {
             return;
         }
+        self.is_trace_printed |= level == Level::State;
         let message = if self.is_tool {
             format!(
                 "@!@!@STARTMSG {code}:{} @!@!@\n{text}\n@!@!@ENDMSG {code} @!@!@",
