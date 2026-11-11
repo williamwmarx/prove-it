@@ -119,8 +119,8 @@ describe("the Rust ports", () => {
     });
   });
 
-  // Zenon's and PTL's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
-  it.each([INPUTS[1], INPUTS[3]])(
+  // Zenon's, Isabelle's and PTL's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it.
+  it.each([INPUTS[1], INPUTS[2], INPUTS[3]])(
     "decides %s in Rust whatever PROVE_IT_PROVER says",
     (prover, text) => {
       expect(useProver("ts", () => decide(prover, text, OPTIONS))).toMatchObject({
@@ -130,9 +130,10 @@ describe("the Rust ports", () => {
     },
   );
 
-  // tlapm counts a Zenon or an LS4 that stops on its input as a failure.
+  // tlapm counts a Zenon, an Isabelle or an LS4 that stops on its input as a failure.
   it.each([
     ["zenon", "$sig a"],
+    ["isabelle", "theory \u{e9}"],
     ["ls4", "not ((always h00000) ->"],
   ])("fails on a malformed %s input", (prover, text) => {
     expect(() => decide(prover, text, OPTIONS)).toThrow(TlaProverError);
