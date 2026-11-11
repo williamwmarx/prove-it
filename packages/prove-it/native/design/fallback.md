@@ -316,6 +316,10 @@ found these on main, which the branch prints alike:
 | A `\*` comment in a configuration with lone carriage returns | a cfg whose lines end in CR alone | ends the comment at the CR | comments out the rest of the file |
 | An undefined INVARIANT after a printing constant definition | `D == PrintT("d")`, `INVARIANT Undef` | prints `"d"` first | doesn't |
 | An INVARIANT or a conjunct the configuration substitutes an action for | `C <- D`, `D == x' = x` | names D, or `TLC cannot handle this conjunct of the spec: …` | names C, or `TLC cannot handle the action-level conjunct …` |
+| A substitute for a definition before it in the module order, unread, defined in an EXTENDed module | `C` in an EXTENDed module, `D == PrintT("d")`, `C <- D` | prints `"d"` twice | once |
+| A LOCAL INSTANCE of a module with a printing constant definition | `LOCAL I == INSTANCE N`, `N` has `P == PrintT("p")` | prints twice | once |
+| A failing conjunct of the specification that is a TLCEval of a print | `Spec == TLCEval(PrintT(FALSE)) /\ Init /\ [][Next]_x` | prints `FALSE` once | prints it after the violation and the trace again |
+| A PROPERTY the configuration substitutes a TLCGet("level") predicate for | `C <- D`, `D == TLCGet("level") > 0`, `PROPERTY C` | no warning | warns of a state-level formula |
 | A predicate the configuration substitutes a TLCEval of TLCGet or of a state's Print for | `C <- D`, `D == TLCEval(Print(x, TRUE))` as an INVARIANT, a CONSTRAINT or a conjunct | TLC's message | another |
 
 The engine now declines the shapes that printed other counts here too: a constant definition
