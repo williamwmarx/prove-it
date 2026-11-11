@@ -27,13 +27,23 @@ pub(crate) fn get_countdown(args: &Parsed) -> Option<i32> {
     Some(minutes.wrapping_mul(60 * 1000) / (60 * 1000))
 }
 
+/// How long into its search TLC prints its first coverage report part way through, at the
+/// progress report `get_countdown` names: the first comes 3 s after the workers start, the
+/// others every 60 s (`AbstractChecker.runTLC`). A countdown below zero never reaches it.
+pub(crate) fn get_first_report(args: &Parsed) -> Duration {
+    match get_countdown(args) {
+        Some(countdown) if countdown >= 0 => Duration::from_secs(3 + 60 * countdown as u64),
+        _ => Duration::MAX,
+    }
+}
+
 /// TLC's report of a run, none where TLC prints none, or why the binary can't print it.
 pub(crate) fn compute(
     ir: &Ir,
     outcome: &SearchOutcome,
     host: &dyn Host,
     directories: &[&Path],
-    polynomial: usize,
+    polynomial: Option<usize>,
 ) -> Result<Vec<CoverageMessage>, String> {
     let counts = match outcome {
         SearchOutcome::Complete { counts, .. } => (counts.generated, counts.distinct),
@@ -119,5 +129,17 @@ mod tests {
         assert_eq!(get_countdown_of("71583"), Some(0));
         let args = Parsed::parse(&["Spec".to_string()], true).expect("options");
         assert_eq!(get_countdown(&args), None);
+    }
+
+    #[test]
+    fn times_tlcs_first_report_part_way_through() {
+        // 3 s after TLC's workers start for -coverage 0, then every 60 s.
+        let first = |minutes: &str| {
+            let args = ["-coverage", minutes, "Spec"].map(String::from);
+            get_first_report(&Parsed::parse(&args, true).expect("options"))
+        };
+        assert_eq!(first("0"), Duration::from_secs(3));
+        assert_eq!(first("1"), Duration::from_secs(63));
+        assert_eq!(first("71583"), Duration::from_secs(3));
     }
 }
