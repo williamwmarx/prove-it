@@ -19,10 +19,12 @@ pub enum Alias {
     State,
 }
 
-// TLC's messages of a configuration naming a definition that takes arguments, and what the spec
-// doesn't define (`EC.TLC_CONFIG_ID_REQUIRES_NO_ARG`, `EC.TLC_CONFIG_SPECIFIED_NOT_DEFINED`).
+// TLC's messages of a configuration naming a definition that takes arguments, what the spec
+// doesn't define, and a definition TLC computed as it started (`EC.TLC_CONFIG_ID_REQUIRES_NO_ARG`,
+// `EC.TLC_CONFIG_SPECIFIED_NOT_DEFINED`, `EC.TLC_CONFIG_ID_MUST_NOT_BE_CONSTANT`).
 const REQUIRES_NO_ARGUMENT: u32 = 2228;
 const SPECIFIED_NOT_DEFINED: u32 = 2229;
+const MUST_NOT_BE_CONSTANT: u32 = 2233;
 
 fn unsupported<T>(reason: &str) -> Result<T, Unsupported> {
     Err(Unsupported(format!("an ALIAS {reason}")))
@@ -56,25 +58,38 @@ impl Rebuilder<'_> {
             is_eval_exception: false,
         };
         // TLC finds the alias by its name as it evaluates it, and fails on a name it has no
-        // definition of and on a definition that takes arguments (`Spec.getAliasSpec`).
-        let body = match alias
+        // definition of, on a definition that takes arguments and on one it computed as it
+        // started (`Spec.getAliasSpec`).
+        let defined = alias
             .definition
-            .map(|index| evaluator.definition(ir.definitions[index as usize]))
-        {
+            .map(|index| (index, evaluator.definition(ir.definitions[index as usize])));
+        let body = match defined {
             None => Err(rejected(
                 format!(
                     "The alias {name} specified in the configuration file\nis not defined in the specification."
                 ),
                 SPECIFIED_NOT_DEFINED,
             )),
-            Some(Definition {
-                form: DefinitionForm::Operator(params),
-                ..
-            }) if !params.is_empty() => Err(rejected(
+            Some((
+                _,
+                Definition {
+                    form: DefinitionForm::Operator(params),
+                    ..
+                },
+            )) if !params.is_empty() => Err(rejected(
                 format!("TLC requires alias not to take any argument, but one was given: {name}"),
                 REQUIRES_NO_ARGUMENT,
             )),
-            Some(definition) => Ok(definition.body),
+            Some((index, definition)) => {
+                if Rebuilder::new(ir)?.is_computed_at_startup(index)? {
+                    Err(rejected(
+                        format!("The alias {name} cannot be a constant."),
+                        MUST_NOT_BE_CONSTANT,
+                    ))
+                } else {
+                    Ok(definition.body)
+                }
+            }
         };
         let context = run(evaluator.scope_context(ir.model.scope))?;
         let states = &trace.states;

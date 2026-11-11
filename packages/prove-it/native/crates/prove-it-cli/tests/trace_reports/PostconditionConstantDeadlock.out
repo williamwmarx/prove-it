@@ -1,0 +1,18 @@
+exit 11
+Semantic processing of module Naturals
+Semantic processing of module PostconditionConstantDeadlock
+Linting of module PostconditionConstantDeadlock
+Computing initial states...
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module PostconditionConstantDeadlock>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 27 of module PostconditionConstantDeadlock>
+x = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

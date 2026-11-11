@@ -32,7 +32,7 @@ use crate::trace::{
 use crate::xml_exporter::run_xml_exporter;
 use tla_front::TlcVersion;
 use tla_front::config::{ModelConfig, parse_config};
-use tla_front::errors::FrontError;
+use tla_front::errors::{FrontError, UNEXPECTED_EXCEPTION};
 use tla_front::model::StartupMessage;
 use tla_front::tlc_messages::CodedError;
 use tla_trace::{Rebuilder, Site, Unsupported, pretty_print};
@@ -847,27 +847,6 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     if is_alias_undefined_unsure {
         return report_not_native(printer, "an ALIAS that names a constant");
     }
-    // TLC rejects a POSTCONDITION or an ALIAS it computed as it started (`Spec.getAlias`,
-    // `getPostConditionSpecs`), which the binary doesn't report: it declines one that may be.
-    // An ALIAS whose definition takes arguments TLC doesn't compute: the rebuild of the trace
-    // reports how TLC rejects it.
-    let takes_arguments = |definition: u32| {
-        matches!(
-            &ir.nodes.arena[ir.definitions[definition as usize] as usize].kind,
-            tla_ir::NodeKind::Definition(tla_ir::Definition {
-                form: tla_ir::DefinitionForm::Operator(params),
-                ..
-            }) if !params.is_empty()
-        )
-    };
-    let definitions: Vec<u32> = (ir.model.postconditions.iter())
-        .filter_map(|postcondition| postcondition.definition)
-        .chain(
-            (ir.model.alias.as_ref())
-                .and_then(|alias| alias.definition)
-                .filter(|&definition| !takes_arguments(definition)),
-        )
-        .collect();
     // TLC names a postcondition with where its definition's body is written.
     let is_postcondition_unplaced = ir.model.postconditions.iter().any(|postcondition| {
         postcondition.definition.is_none_or(|definition| {
@@ -882,17 +861,55 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
     if is_postcondition_unplaced {
         return report_not_native(printer, "a POSTCONDITION without a place in the source");
     }
-    if !definitions.is_empty() {
-        let is_precomputed = Rebuilder::new(&ir).map_or(true, |mut rebuilder| {
-            definitions
-                .iter()
-                .any(|&definition| rebuilder.is_precomputed(definition))
-        });
-        if is_precomputed {
-            return report_not_native(
-                printer,
-                "a POSTCONDITION or an ALIAS TLC may compute as it starts",
-            );
+    // TLC rejects the ALIAS as it prints each state, and the POSTCONDITIONs as it is to check
+    // them, where one takes arguments or is a definition it computed as it started
+    // (`Spec.getAliasSpec`, `getPostConditionSpecs`). The rebuild of a trace reports the ALIAS;
+    // the binary declines where it can't tell whether TLC computed one.
+    let takes_arguments = |definition: u32| {
+        matches!(
+            &ir.nodes.arena[ir.definitions[definition as usize] as usize].kind,
+            tla_ir::NodeKind::Definition(tla_ir::Definition {
+                form: tla_ir::DefinitionForm::Operator(params),
+                ..
+            }) if !params.is_empty()
+        )
+    };
+    let is_computed_at_startup = |definition: u32| {
+        Rebuilder::new(&ir).and_then(|mut rebuilder| rebuilder.is_computed_at_startup(definition))
+    };
+    let alias_definition = (ir.model.alias.as_ref())
+        .and_then(|alias| alias.definition)
+        .filter(|&definition| !takes_arguments(definition));
+    if alias_definition.is_some_and(|definition| is_computed_at_startup(definition).is_err()) {
+        return report_not_native(printer, "an ALIAS TLC may compute as it starts");
+    }
+    let mut rejected_postcondition = None;
+    for postcondition in &ir.model.postconditions {
+        let Some(definition) = postcondition.definition else {
+            continue;
+        };
+        let name = &ir.texts[postcondition.name as usize];
+        if takes_arguments(definition) {
+            rejected_postcondition = Some((
+                format!(
+                    "TLC requires post condition not to take any argument, but one was given: {name}"
+                ),
+                code::CONFIG_ID_REQUIRES_NO_ARG,
+            ));
+            break;
+        }
+        match is_computed_at_startup(definition) {
+            Ok(false) => {}
+            Ok(true) => {
+                rejected_postcondition = Some((
+                    format!("The post condition {name} cannot be a constant."),
+                    code::CONFIG_ID_MUST_NOT_BE_CONSTANT,
+                ));
+                break;
+            }
+            Err(_) => {
+                return report_not_native(printer, "a POSTCONDITION TLC may compute as it starts");
+            }
         }
     }
     if let Some(sany) = &front.sany {
@@ -1168,6 +1185,36 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                     "a _POSSIBLE predicate the search didn't witness",
                 );
             }
+            // TLC fails on a POSTCONDITION it rejects as it is to check them, with an unexpected
+            // exception, and then reports the statistics (`ModelChecker.modelCheck`).
+            if let Some((text, code)) = &rejected_postcondition {
+                if liveness.is_some() || !config.possible.is_empty() || is_continued {
+                    return report_not_native(
+                        printer,
+                        "a POSTCONDITION TLC rejects after temporal properties, _POSSIBLE or \
+                         under -continue",
+                    );
+                }
+                let message = if printer.is_tool {
+                    format!("@!@!@STARTMSG {code}:0 @!@!@\n{text}\n@!@!@ENDMSG {code} @!@!@")
+                } else {
+                    text.clone()
+                };
+                printer.print(
+                    code::GENERAL,
+                    Level::Error,
+                    &format!("{UNEXPECTED_EXCEPTION}{message}"),
+                );
+                let statistics = Statistics {
+                    generated: counts.generated,
+                    distinct: counts.distinct,
+                    queued: counts.queued,
+                    depth: counts.depth,
+                };
+                print_statistics(printer, &statistics, start);
+                print_finished(printer, start);
+                return crate::failure::ERROR;
+            }
             if let Some(liveness) = liveness {
                 // TLC stops at a node that accepts every behavior as it searches, so it checks
                 // nothing once the search is done.
@@ -1318,6 +1365,20 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             ..
         } => {
             let printed = match violation.kind {
+                // TLC's worker fails on a POSTCONDITION it rejects as it is to check it on the
+                // trace of a safety violation, after printing the trace, and reports nothing more
+                // (`Worker.doPostCondition`). Elsewhere the binary doesn't follow TLC.
+                _ if rejected_postcondition.is_some()
+                    && (!config.possible.is_empty()
+                        || !matches!(
+                            violation.kind,
+                            ViolationKind::Invariant(_)
+                                | ViolationKind::ActionProperty(_)
+                                | ViolationKind::Deadlock { .. }
+                        )) =>
+                {
+                    Err("a POSTCONDITION TLC rejects".to_string())
+                }
                 // TLC stops with no statistics, before it would search.
                 ViolationKind::NoNextState => {
                     printer.print(
@@ -1432,8 +1493,16 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                         initial_generated,
                         start,
                     );
-                    print_violation(printer, &ir, &config, &violation, None, Some(&run), start)
-                        .map_err(str::to_string)
+                    print_violation(
+                        printer,
+                        &ir,
+                        &config,
+                        &violation,
+                        None,
+                        rejected_postcondition.is_none().then_some(&run),
+                        start,
+                    )
+                    .map_err(str::to_string)
                 }
             };
             return printed.unwrap_or_else(|why| {
