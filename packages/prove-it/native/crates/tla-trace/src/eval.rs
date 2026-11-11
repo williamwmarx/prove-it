@@ -4821,8 +4821,9 @@ impl<'ir> Evaluator<'ir> {
                 let units: Box<[u16]> = format_value(&value).encode_utf16().collect();
                 Value::Str(self.made_text(units))
             }
-            // TLC's empty bag is the empty function (`Bags.EmptyBag`).
-            "EmptyBag" => {
+            // TLC's empty bag is the empty function (`Bags.EmptyBag`), of a user's module named
+            // Bags too.
+            "EmptyBag" | "EmptyBag@Bags" => {
                 arity(0)?;
                 Value::function(Vec::new(), Vec::new(), Class::Plain)
             }

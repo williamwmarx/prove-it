@@ -233,7 +233,9 @@ impl Compiler<'_> {
             "Nat" => Self::infinite_set("Nat", NAT, "enumerated Nat"),
             "Int" => Self::infinite_set("Int", INT, "enumerated Int"),
             "STRING" => Self::infinite_set("STRING", STRINGS, "enumerated STRING"),
-            "EmptyBag" => super::constant(EMPTY_TUPLE),
+            // TLC's Bags class overrides a user's module named Bags too, whose definition the
+            // front end keys as `EmptyBag@Bags`.
+            "EmptyBag" | "EmptyBag@Bags" => super::constant(EMPTY_TUPLE),
             name => {
                 return decline(format!(
                     "the builtin {name}, whose value the interpreter computes"
