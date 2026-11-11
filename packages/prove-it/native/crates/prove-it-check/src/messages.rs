@@ -120,7 +120,12 @@ impl<'o> Printer<'o> {
             Level::State,
             &format!("{position}: <{label}>\n{}", format_variables(&variables)),
         );
-        if let Some(reported) = self.outcome.violations.last_mut() {
+        if let Some(reported) = self
+            .outcome
+            .violations
+            .last_mut()
+            .filter(|_| self.host.is_plain())
+        {
             reported.states.push(ReportedState {
                 label: label.to_string(),
                 variables,
@@ -128,10 +133,12 @@ impl<'o> Printer<'o> {
         }
     }
 
-    /// A line the spec printed as TLC searched, which the outcome records.
+    /// A line the spec printed as TLC searched, which the outcome records where its caller reads it.
     pub fn printed(&mut self, text: &str) {
         self.line(text);
-        self.outcome.prints.push(text.to_string());
+        if self.host.is_plain() {
+            self.outcome.prints.push(text.to_string());
+        }
     }
 
     /// The date and time now, as TLC prints them.

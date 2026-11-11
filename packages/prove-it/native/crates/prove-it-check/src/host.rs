@@ -81,8 +81,9 @@ pub trait Host {
     fn is_file_system(&self) -> bool {
         true
     }
-    /// Whether the check writes each printed state's variables as plain data too, which only the
-    /// library's check reads (`Outcome`).
+    /// Whether the caller reads the outcome (`Outcome`), as only the library's check does: then the
+    /// check keeps the spec's prints and each printed state, with its variables as plain data too.
+    /// Otherwise it keeps neither, so that a search that prints much holds none of it.
     fn is_plain(&self) -> bool {
         false
     }
