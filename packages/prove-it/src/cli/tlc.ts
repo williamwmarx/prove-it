@@ -46,6 +46,7 @@ import { getTlcFingerprint } from "../tlc/fingerprint";
 import {
   getFailureHeadline,
   getInitialViolationHeadline,
+  getMessageHeadline,
   getViolationHeadline,
   isInitialViolation,
 } from "../tlc/headlines";
@@ -457,14 +458,9 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
     print(headline.code, MESSAGE_LEVEL.error, headline.text);
     printTraceOutput(printer, failure.trace[0]?.output);
     printTrace(printer, failure.trace);
-    const traceFailure = failure.traceFailure;
-    if (traceFailure) {
-      print(
-        traceFailure.code,
-        MESSAGE_LEVEL.error,
-        printer.isTool ? traceFailure.toolMessage : traceFailure.message,
-      );
-    }
+    const traceFailure =
+      failure.traceFailure && getMessageHeadline(failure.traceFailure, printer.isTool);
+    if (traceFailure) print(traceFailure.code, MESSAGE_LEVEL.error, traceFailure.text);
     printTraceOutput(printer, failure.traceOutput);
     const postcondition = failure.postcondition;
     if (postcondition?.counts) console.log(postcondition.counts);

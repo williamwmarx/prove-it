@@ -216,6 +216,40 @@ describe("check's result", () => {
     ]);
   });
 
+  // TLC at d8fb231 reports the overflow, the behavior, and then the Assert that fails as it
+  // rebuilds the trace, as the CLI prints them. The native check declines the model, so the
+  // TypeScript check reports it.
+  it("reports what fails as TLC rebuilds a failure's trace, after the trace", async () => {
+    const lines: string[] = [];
+    process.env.PROVE_IT_ENGINE = "debug";
+    const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
+      if (typeof message === "string") lines.push(message);
+    });
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
+      config: "INIT Init\nNEXT Next",
+    }).finally(() => spy.mockRestore());
+    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: check declined: /));
+    expect([result.status, result.violations]).toEqual([
+      "error",
+      [
+        {
+          code: 1000,
+          headline:
+            "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Overflow when computing the number of elements in:\nSUBSET (1..31)",
+          states: [{ label: "Initial predicate", variables: { x: { text: "0", value: 0 } } }],
+        },
+        {
+          code: 1000,
+          headline:
+            'TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a tlc2.tool.EvalException\n: The first argument of Assert evaluated to FALSE; the second argument was:\n"boom"',
+          states: [],
+        },
+      ],
+    ]);
+  });
+
   it("reports where a lasso's cycle starts", async () => {
     const run = await runBoth(
       [

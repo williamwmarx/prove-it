@@ -2,7 +2,7 @@ import type { CheckStatus, EvaluationFailure, InitialStateViolation, Violation }
 import { TlaEvaluationError, UNEXPECTED_EXCEPTION } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { formatState } from "../values";
-import { formatInnerMessage, MESSAGE_CODE } from "./messages";
+import { type FailureMessage, formatInnerMessage, MESSAGE_CODE } from "./messages";
 import type { TlcVersion } from "./version";
 
 // The message TLC reports a violation or an error with: its code and its text.
@@ -90,8 +90,14 @@ export const getViolationHeadline = (
 // The message TLC reports a failure with: on an initial state, with the state, which TLC prints as
 // it reports the error, so a state it can't print fails outside the checker, which TLC reports as
 // an exception it did not expect.
+// A message TLC words one way with -tool and another without, as TLC prints it.
+export const getMessageHeadline = (message: FailureMessage, isTool: boolean): Headline => ({
+  code: message.code,
+  text: isTool ? message.toolMessage : message.message,
+});
+
 export const getFailureHeadline = (failure: EvaluationFailure, isTool: boolean): Headline => {
-  const message = isTool ? failure.toolMessage : failure.message;
+  const message = getMessageHeadline(failure, isTool).text;
   const initialState = failure.initialState;
   if (!initialState) return { code: failure.code, text: message };
   const state = (() => {
