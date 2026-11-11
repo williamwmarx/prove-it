@@ -88,4 +88,62 @@ Model checking completed. No error has been found.
 2 states generated, 1 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 1.
 The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+### ring violation
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, Sequences, FiniteSets, TLC
+CONSTANT Node
+VARIABLE count, ring
+Range(f) == {f[x] : x \in DOMAIN f}
+IsSimpleCycle(S, r) ==
+  LET F[i \in 1..Cardinality(S)] ==
+        IF i = 1 THEN << CHOOSE s \in S : TRUE >>
+        ELSE LET seq == F[i-1]
+                 head == Head(seq)
+             IN << r[head] >> \o F[i-1]
+  IN Range(F[Cardinality(S)]) = S
+RingOfNodes == CHOOSE r \in [Node -> Node] : IsSimpleCycle(Node, r)
+Init == count = 0 /\ ring = RingOfNodes
+Next == count' = count + 1 /\ ring' = ring
+Inv == count < 2
+====
+--- config
+CONSTANT Node = {n1, n2, n3, n4, n5, n6}
+INIT Init
+NEXT Next
+INVARIANT Inv
+--- workers 1 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ ring = (n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+/\ count = 0
+
+State 2: <Next line 15, col 9 to line 15, col 42 of module M>
+/\ ring = (n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+/\ count = 1
+
+State 3: <Next line 15, col 9 to line 15, col 42 of module M>
+/\ ring = (n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+/\ count = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+--- workers 4 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ ring = (n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+/\ count = 0
+
+State 2: <Next line 15, col 9 to line 15, col 42 of module M>
+/\ ring = (n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+/\ count = 1
+
+State 3: <Next line 15, col 9 to line 15, col 42 of module M>
+/\ ring = (n1 :> n2 @@ n2 :> n3 @@ n3 :> n4 @@ n4 :> n5 @@ n5 :> n6 @@ n6 :> n1)
+/\ count = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
 ### end

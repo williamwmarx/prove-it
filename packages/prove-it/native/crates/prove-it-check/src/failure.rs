@@ -413,6 +413,7 @@ fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, is_tool: bool) -> Result<Report, Stri
                 &violation.startup,
                 violation.startup_random,
             )?;
+            rebuilder.set_chosen(&violation.store, &violation.chosen);
             if let Some(group) = &violation.symmetry {
                 rebuilder.set_symmetry(group);
             }

@@ -1,7 +1,8 @@
 // Records what TLC prints for the cells the binary's test `startup_texts` runs: models whose
 // constant definitions TLC computes as it starts, one of them a CHOOSE that takes TLC seconds
 // and makes no string, as the ring of nodes of tlaplus/Examples' EWD998ChanID does, beside ones
-// that make strings TLC orders by when it made them. Each cell runs at -workers 1 and 4 and
+// that make strings TLC orders by when it made them, and one whose invariant fails a few steps
+// in, whose trace reads the ring TLC computed as it started. Each cell runs at -workers 1 and 4 and
 // writes TLC's exit code and its output without the lines that differ from run to run, which the
 // test drops from the binary's too.
 // Usage: TLA2TOOLS_JAR=path bun scripts/record-startup-texts.ts
@@ -44,6 +45,12 @@ interface Cell {
   config: string;
 }
 
+interface Behavior {
+  variables: string;
+  definitions: string[];
+  config: string[];
+}
+
 // EWD998ChanID's RingOfNodes, with Utils' IsSimpleCycle and Functions' Range, over six nodes.
 const RING = [
   "Range(f) == {f[x] : x \\in DOMAIN f}",
@@ -62,25 +69,48 @@ const RING = [
 const BEFORE = 'Before == {"b" \\o "x", "a" \\o "x"}';
 const AFTER = 'After == {"d" \\o "x", "c" \\o "x"}';
 
-const getCell = (name: string, definitions: string[], prints: string[]) => ({
+// The ring, kept from the initial state on.
+const KEPT: Behavior = {
+  variables: "ring",
+  definitions: ["Init == ring = RingOfNodes", "Next == ring' = ring"],
+  config: [],
+};
+
+// The ring beside a counter whose invariant fails at the third state.
+const COUNTED: Behavior = {
+  variables: "count, ring",
+  definitions: [
+    "Init == count = 0 /\\ ring = RingOfNodes",
+    "Next == count' = count + 1 /\\ ring' = ring",
+    "Inv == count < 2",
+  ],
+  config: ["INVARIANT Inv"],
+};
+
+const getCell = (name: string, definitions: string[], prints: string[], behavior = KEPT) => ({
   name,
   spec: [
     "---- MODULE M ----",
     "EXTENDS Naturals, Sequences, FiniteSets, TLC",
     "CONSTANT Node",
-    "VARIABLE ring",
+    `VARIABLE ${behavior.variables}`,
     ...definitions,
     ...prints.map((print) => `ASSUME PrintT(${print})`),
-    "Init == ring = RingOfNodes",
-    "Next == ring' = ring",
+    ...behavior.definitions,
     "====",
   ].join("\n"),
-  config: "CONSTANT Node = {n1, n2, n3, n4, n5, n6}\nINIT Init\nNEXT Next",
+  config: [
+    "CONSTANT Node = {n1, n2, n3, n4, n5, n6}",
+    "INIT Init",
+    "NEXT Next",
+    ...behavior.config,
+  ].join("\n"),
 });
 
 const cells: Cell[] = [
   getCell("ring", RING, ["RingOfNodes"]),
   getCell("ring between strings", [BEFORE, ...RING, AFTER], ["RingOfNodes", "Before", "After"]),
+  getCell("ring violation", RING, [], COUNTED),
 ];
 
 const record = (cell: Cell, workers: number) => {

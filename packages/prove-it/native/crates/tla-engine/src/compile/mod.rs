@@ -1936,6 +1936,32 @@ impl<'a> Compiler<'a> {
         Ok(compiled)
     }
 
+    /// The constant definitions the search compiled whose body is a CHOOSE over a set, by
+    /// position in the IR's definitions: TLC computes each as it starts
+    /// (`processConstantDefns`), which may search the set long, and the trace's rebuild finds
+    /// the element the search's value names instead.
+    pub(crate) fn get_constant_choices(&self) -> Vec<(Index, Eval)> {
+        self.ir
+            .definitions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &node)| {
+                let definition = self.definition(node);
+                if !matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+                    || !matches!(
+                        self.node(definition.body).1,
+                        NodeKind::Choose { set: Some(_), .. }
+                    )
+                {
+                    return None;
+                }
+                let (_, compiled) = self.definition_cache.get(&node)?.iter().flatten().next()?;
+                (compiled.is_constant && compiled.footprint.width() == 0)
+                    .then(|| (index as Index, compiled.eval.clone()))
+            })
+            .collect()
+    }
+
     fn cache_definition(
         &mut self,
         node: NodeId,

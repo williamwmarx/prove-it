@@ -374,6 +374,9 @@ pub struct Evaluator<'ir> {
     constants: Vec<Option<Value>>,
     /// Zero-arity definitions that read nothing of the state, evaluated once, as TLC does.
     cache: HashMap<(NodeId, bool), Value>,
+    /// The value the search computed of each constant definition whose body is a CHOOSE over a
+    /// set, and whose evaluation has no effect but its value, by its node (`set_chosen`).
+    chosen: HashMap<NodeId, Value>,
     /// The current state's values, and the next state's: `None` until assigned.
     pub current: Vec<Option<Value>>,
     pub next: Vec<Option<Value>>,
@@ -682,6 +685,7 @@ impl<'ir> Evaluator<'ir> {
             startup_ranked: None,
             constants: vec![None; ir.values.list.len()],
             cache: HashMap::new(),
+            chosen: HashMap::new(),
             current: vec![None; width],
             next: vec![None; width],
             reads: 0,
@@ -2185,6 +2189,51 @@ impl<'ir> Evaluator<'ir> {
         Ok(())
     }
 
+    /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
+    /// over a set (`Violation::chosen`), ids of `store` by position in the IR's definitions, for
+    /// those whose evaluation has no effect but its value: neither reading the state or TLC's
+    /// search, nor printing, drawing or reading or writing a file. Each is the element of the
+    /// set TLC computed as it started (`processConstantDefns`), which the rebuild finds without
+    /// testing the elements before it.
+    pub fn set_chosen(&mut self, store: &Store, values: &[(u32, Id)]) {
+        for &(index, id) in values {
+            let node = self.ir.definitions[index as usize];
+            if self.may_reach(node, EFFECTS) {
+                continue;
+            }
+            if let Ok(value) = from_store(store, id) {
+                self.chosen.insert(node, value);
+            }
+        }
+    }
+
+    // A definition's body, or, for a CHOOSE whose value the search computed, the element of its
+    // set that is that value, which is the first that satisfies the predicate. TLC evaluates the
+    // set, and the predicate of each element up to that one, which only gives its value. An
+    // element the walk can't tell from that value, or one that holds a part the predicate may
+    // change as TLC evaluates it, leaves the body evaluated as written.
+    fn evaluate_definition(
+        &mut self,
+        node: NodeId,
+        body: NodeId,
+        context: &Context,
+    ) -> Evaluated<Value> {
+        if let NodeKind::Choose { set: Some(set), .. } = self.kind(body)
+            && let Some(chosen) = self.chosen.get(&node).cloned()
+            && let Ok(set) = self.evaluate(*set, context)
+            && let Ok(elements) = elements(&set)
+        {
+            for element in elements.iter() {
+                match is_chosen(element, &chosen) {
+                    Some(true) => return Ok(element.clone()),
+                    Some(false) => {}
+                    None => break,
+                }
+            }
+        }
+        self.evaluate(body, context)
+    }
+
     pub(crate) fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let definition = self.definition(node);
         let key = (node, context.is_primed);
@@ -2213,7 +2262,7 @@ impl<'ir> Evaluator<'ir> {
             && self.is_precomputed(node)
         {
             let call_stack = self.call_stack.take();
-            let computed = self.evaluate(definition.body, &context.global());
+            let computed = self.evaluate_definition(node, definition.body, &context.global());
             self.call_stack = call_stack;
             if let Ok(value) = computed
                 && self.reads == reads
@@ -2238,7 +2287,7 @@ impl<'ir> Evaluator<'ir> {
                 })?
             }
             DefinitionForm::Operator(params) if params.is_empty() => {
-                self.evaluate(definition.body, &context.global())?
+                self.evaluate_definition(node, definition.body, &context.global())?
             }
             DefinitionForm::Operator(_) => return fail("an operator used as a value"),
         };
@@ -5863,6 +5912,65 @@ fn sub_bags(bounds: &[(Value, i32)]) -> Evaluated<Value> {
         });
     }
     set_of(values)
+}
+
+/// The builtins whose evaluation has an effect besides its value, or reads what TLC's search
+/// sets: a constant definition that may reach one takes no value from the search's.
+const EFFECTS: &[&str] = &[
+    "TLCGet",
+    "TLCSet",
+    "CounterExample",
+    "_Counts",
+    "Print",
+    "PrintT",
+    "RandomElement",
+    "RandomSubset",
+    "JavaTime",
+    "JsonSerialize",
+    "ndJsonSerialize",
+    "JsonDeserialize",
+    "ndJsonDeserialize",
+    "Serialize",
+    "Deserialize",
+    "IOExec",
+    "IOEnvExec",
+    "IOExecTemplate",
+    "IOEnvExecTemplate",
+    "IOEnv",
+];
+
+// Whether an element of a set is the value the search chose, by a walk that changes neither:
+// `None` where the walk can't tell, or where the element is that value but holds a part that
+// evaluating the predicate may change, such as a function's written order or a function TLC
+// keeps lazy, which TLC's normalizing of what it computes at startup leaves as it is. A
+// function's domain and a set are in TLC's order in both.
+fn is_chosen(element: &Value, chosen: &Value) -> Option<bool> {
+    let are_chosen = |elements: &[Value], chosen: &[Value]| {
+        if elements.len() != chosen.len() {
+            return Some(false);
+        }
+        for (element, chosen) in elements.iter().zip(chosen) {
+            if !is_chosen(element, chosen)? {
+                return Some(false);
+            }
+        }
+        Some(true)
+    };
+    match (element, chosen) {
+        (Value::Bool(element), Value::Bool(chosen)) => Some(element == chosen),
+        (Value::Int(element), Value::Int(chosen)) => Some(element == chosen),
+        (Value::Str(element), Value::Str(chosen))
+        | (Value::Model(element), Value::Model(chosen)) => Some(element.units == chosen.units),
+        (Value::Set(element), Value::Set(chosen)) => are_chosen(element, chosen),
+        (Value::Function(element), Value::Function(chosen)) => {
+            let is_same = are_chosen(&element.domain, &chosen.domain)?
+                && are_chosen(&element.range, &chosen.range)?;
+            let is_settled =
+                element.written.borrow().is_none() && element.class.get() != Class::Lambda;
+            (!is_same || is_settled).then_some(is_same)
+        }
+        _ => None,
+    }
 }
 
 // Whether a value holds a set TLC can't normalize.

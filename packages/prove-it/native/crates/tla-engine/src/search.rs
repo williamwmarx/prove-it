@@ -189,6 +189,7 @@ pub struct ContinuedTrace<'s> {
     pub states: Vec<Vec<Id>>,
     pub store: &'s Store,
     pub startup: &'s [Id],
+    pub chosen: &'s [(u32, Id)],
     pub startup_random: u64,
     /// The state of the generator TLC's worker goes on drawing from as it finds the last state
     /// again; none for an initial state.
@@ -365,6 +366,9 @@ pub struct Violation {
     /// The value TLC computed at startup of each of the model's startup definitions, ids of
     /// `store`.
     pub startup: Vec<Id>,
+    /// The value the search computed of each constant definition whose body is a CHOOSE over a
+    /// set, by its position in the IR's definitions, ids of `store`, but those it fails to.
+    pub chosen: Vec<(u32, Id)>,
     /// The state of the generator the startup left (`JavaRandom::state`).
     pub startup_random: u64,
     /// The state of the generator where an invariant of the last state stopped the search, which
@@ -1017,8 +1021,10 @@ struct Search<'r, T, E = Dense> {
     is_distinct_read: bool,
     // `-continue`: report each invariant violated and go on.
     is_continued: bool,
-    // Under `-continue`, the values the startup definitions computed, once a trace needs them.
+    // Under `-continue`, the values the startup definitions computed, once a trace needs them,
+    // and then those the constant CHOOSEs computed.
     startup: Option<Vec<Id>>,
+    chosen: Vec<(u32, Id)>,
     generated: u64,
     initial_generated: u64,
     depth: u64,
@@ -1081,6 +1087,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
             is_distinct_read,
             is_continued: false,
             startup: None,
+            chosen: Vec::new(),
             generated: 0,
             initial_generated: 0,
             depth: 0,
@@ -1399,12 +1406,14 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
     ) -> Outcome<()> {
         if self.startup.is_none() {
             self.startup = Some(startup_values(machine, context)?);
+            self.chosen = chosen_values(machine, context);
         }
         self.reporter.continued(ContinuedTrace {
             kind,
             states,
             store: &machine.store,
             startup: self.startup.as_deref().unwrap_or_default(),
+            chosen: &self.chosen,
             startup_random: machine.startup_random,
             random,
             registers: &machine.registers,
@@ -2658,6 +2667,16 @@ fn startup_values(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome
         .definitions
         .iter()
         .map(|evaluate| evaluate(machine))
+        .collect()
+}
+
+// The values the constant CHOOSEs computed, but those that fail, which reading them again
+// gives without effects.
+fn chosen_values(machine: &mut Machine<'_>, context: &EngineContext) -> Vec<(u32, Id)> {
+    context
+        .choices
+        .iter()
+        .filter_map(|(index, evaluate)| Some((*index, evaluate(machine).ok()?)))
         .collect()
 }
 
@@ -4599,6 +4618,7 @@ fn to_violation(
         .map_or(unlabelled, |labels| labels.into_iter().skip(1).collect())
     };
     let startup = startup_values(machine, context).ok()?;
+    let chosen = chosen_values(machine, context);
     let symmetry = search
         .canonicalizer
         .as_ref()
@@ -4632,6 +4652,7 @@ fn to_violation(
             counts: found.counts,
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
+            chosen,
             startup_random: machine.startup_random,
             random: found.random,
             symmetry,
@@ -4986,6 +5007,7 @@ fn to_accepted(
     }
     labels.remove(0);
     let startup = startup_values(machine, context).ok()?;
+    let chosen = chosen_values(machine, context);
     let graph = search.graph.as_ref()?;
     let state = state as usize;
     let sum = |counts: &[u32]| {
@@ -5012,6 +5034,7 @@ fn to_accepted(
         counts,
         store: std::mem::replace(&mut machine.store, Store::new()),
         startup,
+        chosen,
         startup_random: machine.startup_random,
         random: None,
         symmetry: None,
@@ -5051,6 +5074,7 @@ fn to_lasso(
         _ => (vec![None; path.len().saturating_sub(1)], None),
     };
     let startup = startup_values(machine, context).ok()?;
+    let chosen = chosen_values(machine, context);
     let symmetry = search
         .canonicalizer
         .as_ref()
@@ -5077,6 +5101,7 @@ fn to_lasso(
             },
             store: std::mem::replace(&mut machine.store, Store::new()),
             startup,
+            chosen,
             startup_random: machine.startup_random,
             random: None,
             symmetry,
