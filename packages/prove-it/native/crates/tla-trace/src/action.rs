@@ -198,6 +198,23 @@ impl<'ir> Evaluator<'ir> {
         reads
     }
 
+    /// Whether a definition may read the state as TLC bounds its level when it starts
+    /// (`getLevelBound`), which it computes then where it reads none: a builtin of a level above
+    /// constant (`minLevel`) reads it.
+    pub(crate) fn may_reach_bound(&mut self, definition: NodeId) -> bool {
+        if let Some(&reads) = self.level_bounds.get(&definition) {
+            return reads;
+        }
+        self.is_level_bound = true;
+        let reads = self.may_reach(
+            definition,
+            &["TLCGet", "CounterExample", "Trace", "_Counts"],
+        );
+        self.is_level_bound = false;
+        self.level_bounds.insert(definition, reads);
+        reads
+    }
+
     /// Whether an expression may read the state, as `getLevel` finds it above constant level.
     pub(crate) fn can_read(&self, node: NodeId, context: &Context) -> bool {
         self.can_read_state(node, context, &mut HashSet::new())
@@ -224,6 +241,16 @@ impl<'ir> Evaluator<'ir> {
             | NodeKind::Decimal(_)
             | NodeKind::String(_)
             | NodeKind::ExceptAt => false,
+            // `getLevelBound` gives an operator passed as an argument level 0, whatever it reads:
+            // a LAMBDA, or a name of an operator with parameters, which no other place holds.
+            NodeKind::Lambda { .. } | NodeKind::OperatorReference(_) if self.is_level_bound => {
+                false
+            }
+            NodeKind::Identifier(name)
+                if self.is_level_bound && self.is_operator(name, context) =>
+            {
+                false
+            }
             NodeKind::Identifier(name) | NodeKind::OperatorReference(name) => {
                 self.can_name_read_state(name, context, visited)
             }
@@ -299,6 +326,27 @@ impl<'ir> Evaluator<'ir> {
         }
     }
 
+    // Whether a name names an operator with parameters: a definition or a builtin.
+    fn is_operator(&self, name: &Name, context: &Context) -> bool {
+        if name.is_local {
+            return bound_expression(context, name.text).is_some_and(|(node, _)| {
+                matches!(
+                    self.kind(node),
+                    NodeKind::Definition(definition)
+                        if matches!(&definition.form, DefinitionForm::Operator(params) if !params.is_empty())
+                )
+            });
+        }
+        match name.resolution {
+            Resolution::Definition(index) => matches!(
+                &self.definition(self.ir.definitions[index as usize]).form,
+                DefinitionForm::Operator(params) if !params.is_empty()
+            ),
+            Resolution::Builtin(index) => self.ir.builtins[index as usize].arity > 0,
+            _ => false,
+        }
+    }
+
     // Whether a name may read the state: a variable, a definition whose body may, or a LET
     // definition or operator argument whose expression may in the scope that binds it.
     fn can_name_read_state(
@@ -319,6 +367,21 @@ impl<'ir> Evaluator<'ir> {
             Resolution::Builtin(index) => self
                 .state_builtins
                 .contains(&&*self.ir.texts[self.ir.builtins[index as usize].name as usize]),
+            // TLC computes a 0-ary definition the configuration substitutes for a constant as it
+            // starts, and stops where that fails (`processConstantDefns`), so `getLevelBound` finds
+            // its value.
+            Resolution::Definition(index)
+                if self.is_level_bound
+                    && self
+                        .ir
+                        .model
+                        .startup
+                        .substitutes
+                        .iter()
+                        .any(|&(_, substitute)| substitute == index) =>
+            {
+                false
+            }
             Resolution::Definition(index) => self.can_read_state(
                 self.ir.definitions[index as usize],
                 &Context::default(),

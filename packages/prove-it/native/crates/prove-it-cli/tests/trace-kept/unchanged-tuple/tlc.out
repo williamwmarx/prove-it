@@ -1,0 +1,41 @@
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Finished computing initial states: 1 distinct state generated
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: Attempted to check equality of integer 3 with non-integer:
+"a"
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 1
+/\ y = 0
+
+State 2: <Next line 6, col 9 to line 6, col 51 of module M>
+/\ x = 2
+/\ y = 0
+
+Error: TLC was unable to fingerprint.
+
+Fingerprint Stack Trace:
+0. Line 6, column 9 to line 6, column 51 in M
+1. Line 6, column 9 to line 6, column 18 in M
+2. Line 6, column 23 to line 6, column 51 in M
+3. Line 6, column 33 to line 6, column 51 in M
+4. Line 6, column 35 to line 6, column 35 in M
+5. Line 6, column 38 to line 6, column 49 in M
+6. Line 5, column 9 to line 5, column 54 in M
+7. Line 5, column 36 to line 5, column 44 in M
+8. Line 6, column 40 to line 6, column 48 in M
+
+
+Reason:
+Attempted to check equality of integer 3 with non-integer:
+"a"
+2 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.

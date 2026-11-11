@@ -485,6 +485,40 @@ prints the state, part way through its lazy first rebuild, so an ALIAS that uses
 where a rebuild set one isn't native ("an ALIAS that uses registers the rebuild of the trace
 sets").
 
+## Arguments TLC keeps
+
+TLC binds each operator argument, and each definition of a LET in an expression, to a
+`LazyValue` (`getOpContext` binds every argument cachable at each call site in `Tool`, and
+`Tool.java:1856` a LET's definitions) that keeps its value once evaluated, for the states and
+control it evaluated it in (`LazyValue.getCachedValue`). The trace evaluator evaluates an argument
+again at each use. That costs what TLC's keeping saves where an argument named twice is passed
+down a recursion: TransitiveClosure's first assumption takes 132 s where TLC takes 1.4 s.
+
+Keeping the value as TLC does was tried and set aside. TLC's cache depends on the states and
+control each `eval` call passes (an empty next state on the unprimed side of UNCHANGED and of a
+subscript, none under a prime, an empty one again on the primed side of `<<A>>_e` as a step and of
+UNCHANGED in ENABLED, each overwriting the one entry it holds), on what it keeps of an argument
+applied as a function first (the lazy function, whose body it evaluates and prints at each
+application), and on the one object it keeps, which the trace evaluator normalizes in uses TLC
+doesn't (applying a function over a set, UNION). Nine rounds of inputs built to break a trace
+evaluator that kept values, each narrower than the last (down to assumptions only, effect-free
+evaluations only, and per-use copies sharing what the evaluation found), found a case each time
+where it printed another message than TLC, while evaluating again matched TLC on every one. The
+inputs that broke a version are in `prove-it-cli/tests/trace-kept/`, each with TLC's output. The
+way to TLC's time there is for the engine to check the assumption natively: it leaves
+TransitiveClosure's to the trace evaluator through the tuple-pattern decline of #245.
+
+A zero-arity definition is cached only where it read no state and, if it built a lazy function or
+filter holding the states (`captures`), only where TLC computes it as it starts
+(`processConstantDefns`, which TLCSet doesn't stop), so `D == [i \in Nat |-> x']` is applied in
+each successor's states. That is where `getLevelBound` finds it of constant level, which
+`may_reach_bound` follows: a builtin of a level above constant (TLCGet, CounterExample, Trace,
+`_Counts`) reads the state; an operator passed as an argument, a LAMBDA or the name of an operator
+with parameters, reads none, whatever its body reads; and so does a 0-ary definition the
+configuration substitutes for a constant, whose value TLC computed as it started.
+`may_reach_bound` keeps its answer for each definition, which a definition evaluated again at each
+use asks each time.
+
 ## Sets TLC holds unnormalized
 
 TLC builds a set enumeration as written (`SetEnumValue` with `isNorm` false) and normalizes it in
@@ -492,8 +526,11 @@ place only as it compares, enumerates, sizes, prints or fingerprints it. Until t
 searches it element by element, asking each element whether it equals the value
 (`ValueVec.search`), so the error and its wording can differ from a sorted search's. A failure
 replay records each set enumeration it builds, with its elements as written, in a registry keyed
-by the set's address (`mark_unnormalized` in `value.rs`). Each entry holds its set, so that no
-other set takes a freed one's address. `elements`, `compare`, `equals`, printing and settling
+by the set's address (`mark_unnormalized` in `value.rs`). Each entry holds a weak reference to
+its set, which keeps the set's allocation, so that no other set takes its address while the entry
+lasts, but not the set: a set nothing else holds is dropped, and its entry with it each time the
+registry doubles. Holding the sets kept every set an assumption built, 5.7 GB for
+TransitiveClosure's first. `elements`, `compare`, `equals`, printing and settling
 drop the entry, as TLC's `normalize` would. `\cap` and `\` of a recorded set test its elements
 as written and give a recorded set, as `SetEnumValue.cap` and `diff` keep `isNorm`. Not followed
 yet: `\cup` normalizes its left operand, where TLC's `cup` doesn't, and DOMAIN of a lambda over a

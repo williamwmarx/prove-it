@@ -585,10 +585,10 @@ rw pull 1 => 1:2:4160119819 | false steps=2304 asts=640
 release kernel => - steps=2304 asts=609
 release tactic => - steps=2304 asts=576
 release pull => - steps=2304 asts=561
-release kpull => - steps=2304 asts=531
-release elim => - steps=2304 asts=515
-release-der => - steps=2304 asts=515
-refs => 712 550315822 3829911215 steps=2304 asts=515
+release kpull => - steps=2304 asts=526
+release elim => - steps=2304 asts=510
+release-der => - steps=2304 asts=510
+refs => 712 158599974 2859498375 steps=2304 asts=510
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -1159,13 +1159,13 @@ reset kpull => - steps=5402 asts=537
 der 101 => 101:118:1337770703 | #325:291951184 steps=5402 asts=537
 rw kernel 4 => 4:24:2676585958 | p steps=5403 asts=537
 rw kernel 60 => 314:266:3060782736 | (+ (/ -611.0 49.0) (* -14.0 r) (* (/ -278.0 49.0) s) (* (/ -12.0 7.0) (* s s))) steps=5473 asts=590
-release kernel => - steps=5473 asts=546
-release tactic => - steps=5473 asts=546
-release pull => - steps=5473 asts=492
-release kpull => - steps=5473 asts=492
-release elim => - steps=5473 asts=452
-release-der => - steps=5473 asts=452
-refs => 715 953331461 352486459 steps=5473 asts=452
+release kernel => - steps=5473 asts=537
+release tactic => - steps=5473 asts=537
+release pull => - steps=5473 asts=480
+release kpull => - steps=5473 asts=480
+release elim => - steps=5473 asts=439
+release-der => - steps=5473 asts=439
+refs => 715 2525080860 4081675079 steps=5473 asts=439
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -1954,12 +1954,12 @@ rw kernel 74 => 1:2:4160119819 | false steps=1933 asts=442
 elim-and kpull 1 => - steps=1933 asts=437
 rw tactic 442 => 509:239:1527704426 | (* (/ 2.0 7.0) (* r (+ (* (/ -2.0 3.0) r) (h -2.0)))) steps=1951 asts=444
 release kernel => - steps=1951 asts=444
-release tactic => - steps=1951 asts=417
-release pull => - steps=1951 asts=417
-release kpull => - steps=1951 asts=417
-release elim => - steps=1951 asts=406
-release-der => - steps=1951 asts=406
-refs => 510 1532196058 2325628128 steps=1951 asts=406
+release tactic => - steps=1951 asts=413
+release pull => - steps=1951 asts=413
+release kpull => - steps=1951 asts=413
+release elim => - steps=1951 asts=402
+release-der => - steps=1951 asts=402
+refs => 510 2873545127 1781461470 steps=1951 asts=402
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -2415,13 +2415,13 @@ rw pull 262 => 321:127:3851282208 | (not (= (k d) (ite (g z z) x 6))) steps=875 
 der 319 => 319:122:2390716165 | (exists (2) (distinct (:var 0) (:var 0) (:var 0))) steps=875 asts=463
 rw kernel 38 => 240:274:70580521 | (not (>= (+ (mod x 6) (div x (div y 3)) (f (* x y)) (* -1 (to_int (* (/ 4.0 3.0) r))) (* -1 (* x z (mod x -6))) (* y z (mod x -6))) 0)) steps=923 asts=480
 rw tactic 6 => 6:26:432115295 | x steps=924 asts=480
-release kernel => - steps=924 asts=433
-release tactic => - steps=924 asts=420
-release pull => - steps=924 asts=401
-release kpull => - steps=924 asts=401
-release elim => - steps=924 asts=401
-release-der => - steps=924 asts=401
-refs => 395 2553621427 2762336906 steps=924 asts=401
+release kernel => - steps=924 asts=426
+release tactic => - steps=924 asts=413
+release pull => - steps=924 asts=387
+release kpull => - steps=924 asts=387
+release elim => - steps=924 asts=387
+release-der => - steps=924 asts=387
+refs => 395 606853292 1282261757 steps=924 asts=387
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -3171,11 +3171,11 @@ der 176 => 176:135:732405002 | (exists (1) (not (xor false (distinct (ite p c d)
 rw elim 165 => 228:165:1193704349 | (not (<= (h (/ (* (* s (/ -1180591620717411303424.0 7.0) s) 1.0) (/ -3.0 2.0))) (/ 1.0 2.0))) steps=428 asts=354
 release kernel => - steps=428 asts=348
 release tactic => - steps=428 asts=342
-release pull => - steps=428 asts=341
-release kpull => - steps=428 asts=335
-release elim => - steps=428 asts=326
-release-der => - steps=428 asts=326
-refs => 229 1974277453 2043428774 steps=428 asts=326
+release pull => - steps=428 asts=338
+release kpull => - steps=428 asts=332
+release elim => - steps=428 asts=319
+release-der => - steps=428 asts=319
+refs => 229 3171823711 1158549544 steps=428 asts=319
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -3636,13 +3636,13 @@ int -2 => 53:66:3509451711 | -2 steps=1107 asts=405
 app 18 53,314 1 => 315:224:3899481757 | (* -2 (f (f 0))) steps=1107 asts=406
 hold 315 => 2 steps=1107 asts=406
 end -1 => - steps=1107 asts=403
-release kernel => - steps=1107 asts=401
-release tactic => - steps=1107 asts=396
-release pull => - steps=1107 asts=375
-release kpull => - steps=1107 asts=375
-release elim => - steps=1107 asts=375
-release-der => - steps=1107 asts=375
-refs => 316 2519356057 319026880 steps=1107 asts=375
+release kernel => - steps=1107 asts=399
+release tactic => - steps=1107 asts=394
+release pull => - steps=1107 asts=373
+release kpull => - steps=1107 asts=373
+release elim => - steps=1107 asts=373
+release-der => - steps=1107 asts=373
+refs => 316 3016100120 131058304 steps=1107 asts=373
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -4164,11 +4164,11 @@ rw kpull 110 => 315:327:2735990988 | (* (/ 2.0 3.0) (ite (= (k U!val!2) 0) (/ 7.
 rw kernel 6 => 6:26:432115295 | x steps=1926 asts=531
 release kernel => - steps=1926 asts=519
 release tactic => - steps=1926 asts=486
-release pull => - steps=1926 asts=486
-release kpull => - steps=1926 asts=455
-release elim => - steps=1926 asts=435
-release-der => - steps=1926 asts=435
-refs => 448 3072483018 3380653287 steps=1926 asts=435
+release pull => - steps=1926 asts=481
+release kpull => - steps=1926 asts=450
+release elim => - steps=1926 asts=422
+release-der => - steps=1926 asts=422
+refs => 448 905637588 609508739 steps=1926 asts=422
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -4612,11 +4612,11 @@ rw elim 330 => 460:359:3784749906 | #2009:680320108 steps=1651 asts=572
 reset tactic => - steps=1651 asts=563
 release kernel => - steps=1651 asts=563
 release tactic => - steps=1651 asts=563
-release pull => - steps=1651 asts=517
-release kpull => - steps=1651 asts=483
-release elim => - steps=1651 asts=412
-release-der => - steps=1651 asts=412
-refs => 461 273314841 719726160 steps=1651 asts=412
+release pull => - steps=1651 asts=506
+release kpull => - steps=1651 asts=472
+release elim => - steps=1651 asts=401
+release-der => - steps=1651 asts=401
+refs => 461 390881402 675850382 steps=1651 asts=401
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -5008,9 +5008,9 @@ release kernel => - steps=998 asts=394
 release tactic => - steps=998 asts=389
 release pull => - steps=998 asts=378
 release kpull => - steps=998 asts=343
-release elim => - steps=998 asts=343
-release-der => - steps=998 asts=343
-refs => 310 2119205268 1244931772 steps=998 asts=343
+release elim => - steps=998 asts=335
+release-der => - steps=998 asts=335
+refs => 310 3875086544 3258319890 steps=998 asts=335
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -5430,9 +5430,9 @@ release kernel => - steps=897 asts=448
 release tactic => - steps=897 asts=448
 release pull => - steps=897 asts=443
 release kpull => - steps=897 asts=386
-release elim => - steps=897 asts=372
-release-der => - steps=897 asts=372
-refs => 340 2399786683 397202829 steps=897 asts=372
+release elim => - steps=897 asts=362
+release-der => - steps=897 asts=362
+refs => 340 1420562049 3308562052 steps=897 asts=362
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -5902,10 +5902,10 @@ mk-app-core pull 13 315,315 0 => 1:2:4160119819 | false steps=1113 asts=456
 release kernel => - steps=1113 asts=456
 release tactic => - steps=1113 asts=456
 release pull => - steps=1113 asts=388
-release kpull => - steps=1113 asts=379
-release elim => - steps=1113 asts=379
-release-der => - steps=1113 asts=379
-refs => 455 1169200333 1368870042 steps=1113 asts=379
+release kpull => - steps=1113 asts=375
+release elim => - steps=1113 asts=375
+release-der => - steps=1113 asts=375
+refs => 455 1256728319 2751182888 steps=1113 asts=375
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -6224,9 +6224,9 @@ release kernel => - steps=412 asts=266
 release tactic => - steps=412 asts=266
 release pull => - steps=412 asts=266
 release kpull => - steps=412 asts=266
-release elim => - steps=412 asts=260
-release-der => - steps=412 asts=260
-refs => 161 737920873 1231539565 steps=412 asts=260
+release elim => - steps=412 asts=259
+release-der => - steps=412 asts=259
+refs => 161 2573134237 3033620245 steps=412 asts=259
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -6616,10 +6616,10 @@ end -1 => - steps=1997 asts=394
 release kernel => - steps=1997 asts=389
 release tactic => - steps=1997 asts=378
 release pull => - steps=1997 asts=363
-release kpull => - steps=1997 asts=359
-release elim => - steps=1997 asts=349
-release-der => - steps=1997 asts=346
-refs => 313 936039344 3290280716 steps=1997 asts=346
+release kpull => - steps=1997 asts=357
+release elim => - steps=1997 asts=344
+release-der => - steps=1997 asts=341
+refs => 313 1595342808 3273762662 steps=1997 asts=341
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -8024,10 +8024,10 @@ der 111 => 111:123:1086736636 | (forall (2) (forall (1) (g (f (:var 0)) (- (abs 
 release kernel => - steps=1230 asts=398
 release tactic => - steps=1230 asts=398
 release pull => - steps=1230 asts=398
-release kpull => - steps=1230 asts=354
-release elim => - steps=1230 asts=354
-release-der => - steps=1230 asts=354
-refs => 355 1498791238 2248742704 steps=1230 asts=354
+release kpull => - steps=1230 asts=352
+release elim => - steps=1230 asts=352
+release-der => - steps=1230 asts=352
+refs => 355 1147800999 4087166555 steps=1230 asts=352
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167
@@ -8436,10 +8436,10 @@ rw elim 2 => 2:22:33528765 | c steps=1516 asts=433
 release kernel => - steps=1516 asts=430
 release tactic => - steps=1516 asts=417
 release pull => - steps=1516 asts=417
-release kpull => - steps=1516 asts=415
-release elim => - steps=1516 asts=359
-release-der => - steps=1516 asts=359
-refs => 342 2831677508 937352470 steps=1516 asts=359
+release kpull => - steps=1516 asts=408
+release elim => - steps=1516 asts=349
+release-der => - steps=1516 asts=349
+refs => 342 889086504 918260573 steps=1516 asts=349
 episode 20000 => - steps=0 asts=165
 sort U => 3 steps=0 asts=166
 decl f 1 1 => 30 steps=0 asts=167

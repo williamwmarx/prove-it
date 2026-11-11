@@ -1159,7 +1159,7 @@ parse => check-sat=1 incremental=6 n=5 ids=976359080 | #415:2057023419 steps=131
 ufnia => inconsistent=0 n=4 ids=3351467906 | (= a 0) ; q ; p ; (P v) steps=360 asts=270
 assert-goal => 4 steps=366 asts=270
 reduce => inconsistent=0 n=4 ids=3351467906 | (= a 0) ; q ; p ; (P v) steps=396 asts=270
-refs => 124 438083867 3309824571 steps=396 asts=270
+refs => 124 438083867 1606791330 steps=396 asts=270
 run stages => - steps=0 asts=165
 parse => n=5 ids=3185519476 | #415:2057023419 steps=0 asts=244
 goal => inconsistent=0 n=5 ids=3185519476 | #415:2057023419 steps=0 asts=244
@@ -1259,7 +1259,7 @@ parse => check-sat=1 incremental=5 n=5 ids=3966142363 | #316:3553862017 steps=14
 ufnia => inconsistent=0 n=4 ids=3928491446 | (= 0 (f 1)) ; (= a 0) ; r ; (not (= (ite q (f 0) (+ (* -1 c) b)) (f (mod (f b) 2)))) steps=631 asts=265
 assert-goal => 4 steps=656 asts=266
 reduce => inconsistent=0 n=4 ids=2753780835 | (= (f 1) 0) ; (= a 0) ; r ; (not (= (ite q (f 0) (+ (* -1 c) b)) (f (mod (f b) 2)))) steps=781 asts=266
-refs => 134 3631716523 1093854705 steps=781 asts=266
+refs => 134 3631716523 3843032646 steps=781 asts=266
 run stages => - steps=0 asts=165
 parse => n=5 ids=4292577637 | #316:3553862017 steps=0 asts=228
 goal => inconsistent=0 n=5 ids=4292577637 | #316:3553862017 steps=0 asts=228
@@ -2031,7 +2031,7 @@ parse => check-sat=1 incremental=2 n=3 ids=2452741027 | #177:1634431274 steps=49
 ufnia => inconsistent=0 n=2 ids=1300177667 | r ; (g 0 (f (f 5))) steps=134 asts=219
 assert-goal => 2 steps=141 asts=219
 reduce => inconsistent=0 n=2 ids=1300177667 | r ; (g 0 (f (f 5))) steps=176 asts=219
-refs => 48 3187156810 1036225074 steps=176 asts=219
+refs => 48 3187156810 1086557931 steps=176 asts=219
 run stages => - steps=0 asts=165
 parse => n=3 ids=765298981 | #177:1634431274 steps=0 asts=216
 goal => inconsistent=0 n=3 ids=765298981 | #177:1634431274 steps=0 asts=216
@@ -2152,11 +2152,11 @@ rereduce => inconsistent=0 n=3 ids=3639362540 | #202:3427076551 steps=1132 asts=
 refs => 166 270541893 4231400155 steps=1132 asts=299
 random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun b () Int) (declare-fun c () Int) (declare-fun p () Bool) (declare-fun q () Bool) (declare-fun r () Bool) (declare-fun u () U) (declare-fun v () U) (declare-fun f (Int) Int) (declare-fun g (Int Int) Bool) (declare-fun h (U) Int) (declare-fun k (Int) U) (declare-fun P (U) Bool) (assert (exists ((x0 Int) (x1 U) (x2 U)) (! (and q (<= (+ x0 (ite r 0 3)) 0) (>= (* 2 x0) (* 2 a))) :qid q3))) (assert (forall ((x3 Int) (x4 Int) (x5 Bool)) (! (or (not (= x3 (f x4))) (not (= x4 (+ x3 1))) (not (= x4 (ite r 0 3))) (not (= x4 0)) (not (= x5 (P (k 1)))) false) :qid q1))) (assert (exists ((x6 Bool) (x7 Int)) (! (and x6 (ite (= b c) (= x6 (> a a)) (= x6 q))) :qid q4))) (assert (< (* (f 1) (- 2)) a)) (check-sat)
 run pipeline => - steps=0 asts=165
-parse => check-sat=1 incremental=5 n=4 ids=110687438 | #357:599335747 steps=155 asts=267
-ufnia => inconsistent=0 n=5 ids=1196119700 | (exists (1) (and (>= (* 2 (:var 0)) (* 2 a)) (<= (+ (:var 0) (ite r 0 3)) 0))) ; (or (not r) (not (= -1 (f 0)))) ; (not (= b c)) ; (not (<= a (* -2 (f 1)))) ; q steps=604 asts=276
-assert-goal => 5 steps=643 asts=286
-reduce => inconsistent=0 n=6 ids=2816290311 | (<= (+ a (* -1 x0!0)) 0) ; (<= (+ (ite r 0 3) x0!0) 0) ; (or (not r) (not (= (f 0) -1))) ; (not (= b c)) ; (not (<= (+ a (* 2 (f 1))) 0)) ; q steps=888 asts=286
-refs => 171 2513338039 479726937 steps=888 asts=286
+parse => check-sat=1 incremental=5 n=4 ids=2166874555 | #357:599335747 steps=155 asts=266
+ufnia => inconsistent=0 n=5 ids=317670367 | (exists (1) (and (>= (* 2 (:var 0)) (* 2 a)) (<= (+ (:var 0) (ite r 0 3)) 0))) ; (or (not r) (not (= -1 (f 0)))) ; (not (= b c)) ; (not (<= a (* -2 (f 1)))) ; q steps=604 asts=275
+assert-goal => 5 steps=643 asts=285
+reduce => inconsistent=0 n=6 ids=1500479594 | (<= (+ a (* -1 x0!0)) 0) ; (<= (+ (ite r 0 3) x0!0) 0) ; (or (not r) (not (= (f 0) -1))) ; (not (= b c)) ; (not (<= (+ a (* 2 (f 1))) 0)) ; q steps=888 asts=285
+refs => 171 2695714362 2482633810 steps=888 asts=285
 run stages => - steps=0 asts=165
 parse => n=4 ids=3949606344 | #357:599335747 steps=0 asts=235
 goal => inconsistent=0 n=4 ids=3949606344 | #357:599335747 steps=0 asts=235
@@ -2167,14 +2167,14 @@ release-goal => - steps=229 asts=235
 refs => 95 273480946 589975957 steps=229 asts=235
 run asserted => - steps=0 asts=165
 parse => n=4 ids=3949606344 | #357:599335747 steps=0 asts=235
-assert => 5 steps=150 asts=267
-reduce => inconsistent=0 n=6 ids=2811014631 | #173:2426053165 steps=464 asts=261
-push-assert => 7 steps=492 asts=270
-push-reduce => inconsistent=0 n=1 ids=1349448321 | (forall (1) (or (not (<= (+ (ite r 0 3) (:var 0)) 0)) (not (<= (+ a (* -1 (:var 0))) 0)))) steps=649 asts=275
-pop => 6 inconsistent=0 steps=649 asts=264
-reassert => 7 steps=661 asts=269
-rereduce => inconsistent=0 n=0 ids=2166136261 |  steps=666 asts=264
-refs => 155 485383954 1635447024 steps=666 asts=264
+assert => 5 steps=150 asts=266
+reduce => inconsistent=0 n=6 ids=632112036 | #173:2426053165 steps=464 asts=260
+push-assert => 7 steps=492 asts=269
+push-reduce => inconsistent=0 n=1 ids=3951435279 | (forall (1) (or (not (<= (+ (ite r 0 3) (:var 0)) 0)) (not (<= (+ a (* -1 (:var 0))) 0)))) steps=649 asts=274
+pop => 6 inconsistent=0 steps=649 asts=263
+reassert => 7 steps=661 asts=268
+rereduce => inconsistent=0 n=0 ids=2166136261 |  steps=666 asts=263
+refs => 155 3344145011 1508536353 steps=666 asts=263
 random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun b () Int) (declare-fun c () Int) (declare-fun p () Bool) (declare-fun q () Bool) (declare-fun r () Bool) (declare-fun u () U) (declare-fun v () U) (declare-fun f (Int) Int) (declare-fun g (Int Int) Bool) (declare-fun h (U) Int) (declare-fun k (Int) U) (declare-fun P (U) Bool) (assert (exists ((x0 Int) (x1 U)) (and (forall ((x2 Int) (x3 Bool) (x4 Int)) (! (or (not (= (+ (* 1 x2) x0) (- x0 x0))) (forall ((x5 U)) p)) :pattern ((f x2)))) (ite true (= x0 (h u)) (= x0 (- c)))))) (assert (forall ((x6 Int) (x7 Int) (x8 Int)) (! (or (not (ite (g 1 b) (= x6 (h u)) (= x6 (- 1 c)))) (not (<= (+ x7 (mod 5 2)) (+ a b))) (not (>= (* 2 x7) (+ 5 c))) (= u v)) :pattern ((f x6))))) (check-sat)
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=2 n=2 ids=4142961793 | #324:1488629360 steps=137 asts=261
@@ -2276,10 +2276,10 @@ refs => 137 2471764268 3989763028 steps=739 asts=266
 random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun b () Int) (declare-fun c () Int) (declare-fun p () Bool) (declare-fun q () Bool) (declare-fun r () Bool) (declare-fun u () U) (declare-fun v () U) (declare-fun f (Int) Int) (declare-fun g (Int Int) Bool) (declare-fun h (U) Int) (declare-fun k (Int) U) (declare-fun P (U) Bool) (assert (forall ((x0 Int)) (or (not (ite (P (k 0)) (= x0 (+ 0 a)) (= x0 (* 2 c)))) (= (- (h v)) (* (mod x0 3) a))))) (assert (forall ((x1 Int)) (< x1 (- (f x1) (* x1 x1))))) (assert (= b 2)) (assert (ite (g b a) (not true) (exists ((x2 U) (x3 Int) (x4 Int)) (and p (= x2 (k b)) (<= 2 x3) (<= x3 2) (not (= x4 a)))))) (check-sat)
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=5 n=4 ids=2124355040 | #315:883612343 steps=115 asts=252
-ufnia => inconsistent=0 n=5 ids=3335263192 | #264:3605858640 steps=663 asts=277
-assert-goal => 5 steps=712 asts=285
-reduce => inconsistent=0 n=5 ids=4050959960 | #278:1286541988 steps=1072 asts=288
-refs => 126 2899035208 2348526255 steps=1072 asts=288
+ufnia => inconsistent=0 n=5 ids=847067994 | #264:3605858640 steps=663 asts=275
+assert-goal => 5 steps=712 asts=283
+reduce => inconsistent=0 n=5 ids=998379376 | #278:1286541988 steps=1072 asts=286
+refs => 126 379892646 658059981 steps=1072 asts=286
 run stages => - steps=0 asts=165
 parse => n=4 ids=3342903060 | #315:883612343 steps=0 asts=228
 goal => inconsistent=0 n=4 ids=3342903060 | #315:883612343 steps=0 asts=228
@@ -2951,7 +2951,7 @@ random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun 
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=3 n=6 ids=526002954 | #357:2198734596 steps=58 asts=248
 ufnia => inconsistent=1 n=1 ids=2490084418 | false steps=93 asts=248
-refs => 69 1519702177 639859523 steps=93 asts=248
+refs => 69 1519702177 4258703192 steps=93 asts=248
 run stages => - steps=0 asts=165
 parse => n=6 ids=3784352721 | #357:2198734596 steps=0 asts=239
 goal => inconsistent=0 n=7 ids=3103834820 | #353:637576141 steps=0 asts=239
@@ -3026,7 +3026,7 @@ parse => check-sat=1 incremental=2 n=3 ids=3169823138 | (forall (2) (or (not (= 
 ufnia => inconsistent=0 n=2 ids=4142404521 | (= a b) ; (not (<= 5 (+ (f b) (* -1 a)))) steps=114 asts=216
 assert-goal => 2 steps=126 asts=216
 reduce => inconsistent=0 n=2 ids=3860357607 | (= a b) ; (not (<= (+ a (* -1 (f a))) -5)) steps=198 asts=221
-refs => 46 353935834 43841482 steps=198 asts=221
+refs => 46 353935834 3456825039 steps=198 asts=221
 run stages => - steps=0 asts=165
 parse => n=3 ids=4265611198 | (forall (2) (or (not (= (* (mod b 2) (h (:var 0))) (:var 1))) true)) ; (= a b) ; (> 5 (- (f b) a)) steps=0 asts=199
 goal => inconsistent=0 n=3 ids=4265611198 | (forall (2) (or (not (= (* (mod b 2) (h (:var 0))) (:var 1))) true)) ; (= a b) ; (> 5 (- (f b) a)) steps=0 asts=199
@@ -3884,8 +3884,8 @@ run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=3 n=3 ids=4138398540 | #418:397766970 steps=168 asts=295
 ufnia => inconsistent=0 n=3 ids=385513469 | #212:2324080971 steps=864 asts=318
 assert-goal => 3 steps=916 asts=322
-reduce => inconsistent=0 n=5 ids=52351558 | #239:2132038580 steps=1297 asts=333
-refs => 238 1787193785 3655390246 steps=1297 asts=333
+reduce => inconsistent=0 n=4 ids=2296749176 | #223:1811027925 steps=1297 asts=331
+refs => 235 1679814920 679149851 steps=1297 asts=331
 run stages => - steps=0 asts=165
 parse => n=3 ids=605541518 | #418:397766970 steps=0 asts=253
 goal => inconsistent=0 n=3 ids=605541518 | #418:397766970 steps=0 asts=253
@@ -3902,8 +3902,8 @@ push-assert => 7 steps=843 asts=309
 push-reduce => inconsistent=0 n=2 ids=2775176060 | (= (+ (* 2 (f 5)) (* 2 b) (f -2) (* -1 x0!1)) -2) ; (not (= (+ (f b) (f x0!1) x0!1) -3)) steps=1074 asts=313
 pop => 6 inconsistent=0 steps=1074 asts=299
 reassert => 7 steps=1108 asts=302
-rereduce => inconsistent=0 n=3 ids=3055345632 | (or (g a a) (not p)) ; (or (g a a) (not q)) ; (or p q (forall (1) (or p (not (<= (:var 0) 2)) (not (>= (+ (* 2 (:var 0)) (* -1 (h u))) 0))))) steps=1315 asts=303
-refs => 219 3608853530 2921162333 steps=1315 asts=303
+rereduce => inconsistent=0 n=2 ids=4081336456 | (or (not (or p q)) (g a a)) ; (or p q (forall (1) (or p (not (<= (:var 0) 2)) (not (>= (+ (* 2 (:var 0)) (* -1 (h u))) 0))))) steps=1315 asts=305
+refs => 219 3222483426 3627109210 steps=1315 asts=305
 random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun b () Int) (declare-fun c () Int) (declare-fun p () Bool) (declare-fun q () Bool) (declare-fun r () Bool) (declare-fun u () U) (declare-fun v () U) (declare-fun f (Int) Int) (declare-fun g (Int Int) Bool) (declare-fun h (U) Int) (declare-fun k (Int) U) (declare-fun P (U) Bool) (assert (forall ((x0 Int) (x1 Bool)) (! (or (not (= x0 b)) (not (ite (exists ((x2 Int) (x3 Int)) (and p (not (= x2 1)) (ite (> 1 2) (= x3 (ite p 1 a)) (= x3 (ite true b 1))))) (= x1 (= b 3)) (= x1 (not false)))) (<= x0 (+ x0 x0))) :pattern ((f x0))))) (assert (or (= (k 0) (k a)) (= (* 3 5) (* 2 b)))) (check-sat)
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=2 n=2 ids=1492848790 | #284:3510839732 steps=115 asts=241
@@ -4079,7 +4079,7 @@ parse => check-sat=1 incremental=6 n=6 ids=2755850652 | #226:42806161 steps=94 a
 ufnia => inconsistent=0 n=4 ids=1029906661 | (>= c 2) ; (>= (* 6 c) a) ; (not (<= (* a (+ (* 3 c) a)) (* 2 (* c a (f 3) (+ (* 3 c) a))))) ; r steps=333 asts=262
 assert-goal => 4 steps=386 asts=271
 reduce => inconsistent=0 n=6 ids=2269919897 | #206:2487688581 steps=636 asts=275
-refs => 128 1675426555 3574623037 steps=636 asts=275
+refs => 128 1675426555 1802388892 steps=636 asts=275
 run stages => - steps=0 asts=165
 parse => n=6 ids=2678323999 | #226:42806161 steps=0 asts=210
 goal => inconsistent=0 n=6 ids=2678323999 | #226:42806161 steps=0 asts=210
@@ -4152,7 +4152,7 @@ parse => check-sat=1 incremental=3 n=3 ids=50732319 | r ; (exists (2) (and (not 
 ufnia => inconsistent=0 n=4 ids=2204865019 | r ; (<= c 0) ; (not (<= b 3)) ; (= -4 (f -3)) steps=362 asts=239
 assert-goal => 4 steps=373 asts=242
 reduce => inconsistent=0 n=4 ids=2462035149 | r ; (<= c 0) ; (not (<= b 3)) ; (= (f -3) -4) steps=428 asts=242
-refs => 86 2082243271 3164828108 steps=428 asts=242
+refs => 86 2082243271 4082173119 steps=428 asts=242
 run stages => - steps=0 asts=165
 parse => n=3 ids=50732319 | r ; (exists (2) (and (not (> c 0)) (= (:var 1) (f (:var 0))) (= (:var 0) (+ (:var 1) 1)) (ite (> b 3) (= (:var 0) (- 3)) (= (:var 0) (+ b b))))) ; (> b 3) steps=0 asts=206
 goal => inconsistent=0 n=3 ids=50732319 | r ; (exists (2) (and (not (> c 0)) (= (:var 1) (f (:var 0))) (= (:var 0) (+ (:var 1) 1)) (ite (> b 3) (= (:var 0) (- 3)) (= (:var 0) (+ b b))))) ; (> b 3) steps=0 asts=206
@@ -4686,7 +4686,7 @@ random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun 
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=8 n=7 ids=1294215364 | #451:1448518258 steps=301 asts=301
 ufnia => inconsistent=1 n=1 ids=2490084418 | false steps=1053 asts=310
-refs => 199 107651738 631843739 steps=1053 asts=310
+refs => 199 107651738 3910411754 steps=1053 asts=310
 run stages => - steps=0 asts=165
 parse => n=7 ids=3477582743 | #451:1448518258 steps=0 asts=242
 goal => inconsistent=0 n=7 ids=3477582743 | #451:1448518258 steps=0 asts=242
@@ -5400,7 +5400,7 @@ random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun 
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=2 n=3 ids=1549200959 | #299:874315966 steps=135 asts=249
 ufnia => inconsistent=1 n=1 ids=2490084418 | false steps=266 asts=249
-refs => 87 385246961 2690049838 steps=266 asts=249
+refs => 87 385246961 2407082347 steps=266 asts=249
 run stages => - steps=0 asts=165
 parse => n=3 ids=3654680812 | #299:874315966 steps=0 asts=219
 goal => inconsistent=0 n=3 ids=3654680812 | #299:874315966 steps=0 asts=219
@@ -5737,10 +5737,10 @@ refs => 68 1724240313 1165163720 steps=106 asts=239
 random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun b () Int) (declare-fun c () Int) (declare-fun p () Bool) (declare-fun q () Bool) (declare-fun r () Bool) (declare-fun u () U) (declare-fun v () U) (declare-fun f (Int) Int) (declare-fun g (Int Int) Bool) (declare-fun h (U) Int) (declare-fun k (Int) U) (declare-fun P (U) Bool) (assert (exists ((x0 Int) (x1 Int)) (and true (= (ite (<= (mod 1 2) (mod 1 2)) b c) x0)))) (assert (forall ((x2 Int)) (or (not (= (* (* 3 1) (* (- 2) (* 5 b))) x2)) (forall ((x3 Bool) (x4 Int) (x5 Int)) (or (not (= (+ (* (- 1) x5) (h (k a))) (* 3 x2))) (not (not x3))))))) (assert r) (assert p) (assert (ite (exists ((x6 Int) (x7 Int) (x8 Int)) (and true (= (+ (* 1 x6) 3) a) (<= (+ x7 (mod b 3)) a) (>= (* 2 x7) 2) (= x8 x7) (= x8 3))) (< 2 b) false)) (assert q) (check-sat)
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=6 n=6 ids=3178743367 | #411:2100573490 steps=199 asts=283
-ufnia => inconsistent=0 n=6 ids=2327896268 | (forall (1) (not (= (+ (* -1 (:var 0)) (h (k a))) (* -90 b)))) ; r ; p ; (<= (mod b 3) (+ -3 a)) ; q ; (not (<= b 2)) steps=579 asts=294
-assert-goal => 6 steps=608 asts=301
-reduce => inconsistent=0 n=6 ids=2270875620 | (forall (1) (not (= (+ (* 90 b) (* -1 (:var 0)) (h (k a))) 0))) ; r ; p ; (>= (+ a (* -1 (mod b 3))) 3) ; q ; (not (<= b 2)) steps=828 asts=303
-refs => 198 2320190661 65306990 steps=828 asts=303
+ufnia => inconsistent=0 n=6 ids=2327896268 | (forall (1) (not (= (+ (* -1 (:var 0)) (h (k a))) (* -90 b)))) ; r ; p ; (<= (mod b 3) (+ -3 a)) ; q ; (not (<= b 2)) steps=579 asts=293
+assert-goal => 6 steps=608 asts=300
+reduce => inconsistent=0 n=6 ids=1713952392 | (forall (1) (not (= (+ (* 90 b) (* -1 (:var 0)) (h (k a))) 0))) ; r ; p ; (>= (+ a (* -1 (mod b 3))) 3) ; q ; (not (<= b 2)) steps=828 asts=302
+refs => 198 152880710 1372366627 steps=828 asts=302
 run stages => - steps=0 asts=165
 parse => n=6 ids=3553221115 | #411:2100573490 steps=0 asts=242
 goal => inconsistent=0 n=6 ids=3553221115 | #411:2100573490 steps=0 asts=242
@@ -6249,7 +6249,7 @@ parse => check-sat=1 incremental=7 n=7 ids=3261819422 | #339:1921765888 steps=20
 ufnia => inconsistent=0 n=7 ids=1218330807 | #227:3539472039 steps=894 asts=317
 assert-goal => 7 steps=957 asts=335
 reduce => inconsistent=0 n=7 ids=4057618459 | #249:2834983119 steps=1462 asts=336
-refs => 213 1843778492 1761343918 steps=1462 asts=336
+refs => 213 1843778492 147533577 steps=1462 asts=336
 run stages => - steps=0 asts=165
 parse => n=7 ids=2471783270 | #339:1921765888 steps=0 asts=234
 goal => inconsistent=0 n=7 ids=2471783270 | #339:1921765888 steps=0 asts=234
@@ -6762,7 +6762,7 @@ parse => check-sat=1 incremental=4 n=3 ids=3385760342 | #546:1466394482 steps=26
 ufnia => inconsistent=0 n=5 ids=2123868884 | #382:936841181 steps=1386 asts=348
 assert-goal => 5 steps=1464 asts=364
 reduce => inconsistent=0 n=10 ids=155108210 | #376:3235271935 steps=2046 asts=382
-refs => 328 1541124078 2287432658 steps=2046 asts=382
+refs => 328 1541124078 938066035 steps=2046 asts=382
 run stages => - steps=0 asts=165
 parse => n=3 ids=2222241682 | #546:1466394482 steps=0 asts=255
 goal => inconsistent=0 n=3 ids=2222241682 | #546:1466394482 steps=0 asts=255
@@ -7544,7 +7544,7 @@ parse => check-sat=1 incremental=2 n=2 ids=2266684778 | #281:3047420692 steps=13
 ufnia => inconsistent=0 n=2 ids=1303141709 | #169:1880383099 steps=689 asts=287
 assert-goal => 2 steps=729 asts=292
 reduce => inconsistent=0 n=2 ids=1797501174 | #175:116356269 steps=1028 asts=294
-refs => 167 2974955066 3721741603 steps=1028 asts=294
+refs => 167 2974955066 1995346566 steps=1028 asts=294
 run stages => - steps=0 asts=165
 parse => n=2 ids=2528692411 | #281:3047420692 steps=0 asts=225
 goal => inconsistent=0 n=2 ids=2528692411 | #281:3047420692 steps=0 asts=225
@@ -7644,7 +7644,7 @@ parse => check-sat=1 incremental=4 n=5 ids=4169581288 | #756:1033040434 steps=29
 ufnia => inconsistent=0 n=4 ids=2974235997 | #257:1789642511 steps=1203 asts=338
 assert-goal => 4 steps=1267 asts=343
 reduce => inconsistent=0 n=7 ids=3492677873 | #239:3524978662 steps=1684 asts=359
-refs => 253 994800187 810060958 steps=1684 asts=359
+refs => 253 994800187 918202225 steps=1684 asts=359
 run stages => - steps=0 asts=165
 parse => n=5 ids=3459090548 | #756:1033040434 steps=0 asts=278
 goal => inconsistent=0 n=4 ids=1113417584 | #749:1679411639 steps=0 asts=278
@@ -7763,7 +7763,7 @@ random (set-logic UFNIA) (declare-sort U 0) (declare-fun a () Int) (declare-fun 
 run pipeline => - steps=0 asts=165
 parse => check-sat=1 incremental=2 n=2 ids=2117214554 | (exists (3) (and (= (f c) (:var 0)) (= (+ (* 1 (:var 0)) (f (+ 1 2))) (ite (= c 0) (f 0) (ite true 5 2))))) ; (< (* (- 1) b) (- 0 b)) steps=73 asts=224
 ufnia => inconsistent=1 n=1 ids=2490084418 | false steps=141 asts=224
-refs => 56 2797528729 3952300065 steps=141 asts=224
+refs => 56 2797528729 3508984016 steps=141 asts=224
 run stages => - steps=0 asts=165
 parse => n=2 ids=626897988 | (exists (3) (and (= (f c) (:var 0)) (= (+ (* 1 (:var 0)) (f (+ 1 2))) (ite (= c 0) (f 0) (ite true 5 2))))) ; (< (* (- 1) b) (- 0 b)) steps=0 asts=209
 goal => inconsistent=0 n=2 ids=626897988 | (exists (3) (and (= (f c) (:var 0)) (= (+ (* 1 (:var 0)) (f (+ 1 2))) (ite (= c 0) (f 0) (ite true 5 2))))) ; (< (* (- 1) b) (- 0 b)) steps=0 asts=209
@@ -7961,7 +7961,7 @@ parse => check-sat=1 incremental=5 n=5 ids=2311238900 | #259:2957180516 steps=10
 ufnia => inconsistent=0 n=5 ids=186273419 | (P (k 1)) ; p ; (exists (1) (P (k (:var 0)))) ; (not (<= (mod c 3) 0)) ; (not (<= 1 a)) steps=431 asts=258
 assert-goal => 5 steps=456 asts=258
 reduce => inconsistent=0 n=5 ids=3752598111 | (P (k 1)) ; p ; (P (k x5!0)) ; (not (<= (mod c 3) 0)) ; (not (>= a 1)) steps=587 asts=262
-refs => 111 1070893251 2225575839 steps=587 asts=262
+refs => 111 1070893251 3525122508 steps=587 asts=262
 run stages => - steps=0 asts=165
 parse => n=5 ids=2180334412 | #259:2957180516 steps=0 asts=228
 goal => inconsistent=0 n=5 ids=2180334412 | #259:2957180516 steps=0 asts=228

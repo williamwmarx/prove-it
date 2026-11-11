@@ -18,3 +18,9 @@ f5b7bef, before it was deleted, by the now-deleted scripts that wrote them:
 
 They are frozen expected data. Nothing rewrites them now: a change to a line is a change to the
 solver's behaviour.
+
+The lines of `nnf.txt`, `rewriter.txt`, `tactics.txt`, `th-rewriter.txt` and `models.txt` that four
+later fixes move (`flatten_clauses`'s shared disjunction, `false`'s value in the model, a released
+rewriter's last result and the root's `is_shared` answer, `native/design/prover.md`) were printed by
+the same scripts at f5b7bef with the same fixes made to the TypeScript; the other tables print as
+before with them.
