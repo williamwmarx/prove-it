@@ -1,0 +1,139 @@
+# Which definitions TLC computes at startup
+
+Sources: TLC d8fb231 (SpecProcessor.processSpec, processConstants, processConstantDefns,
+processModuleOverrides, processModelConstraints; SymbolNodeValueLookupProvider.getLevelBound), and
+the notes from the liveness-atoms and fingerprint sessions.
+
+## The single decision
+
+For each definition, once the cfg is applied, TLC holds two separate facts. Every reader needs one
+of them, and today each reader works them out again:
+
+- **Read**: what evaluating the name gives. One of:
+  - **Held(v)**: one value, computed or given before the search;
+  - **Lazy**: the body, evaluated at each read in that read's state;
+  - **Decline(reason)**: the value comes from Java we don't run (`processModuleOverrides`).
+- **Defns**: what `defns.get(name)` holds, Value or Operator. The cfg-facing checks read this:
+  - `getAliasSpec` and `getPostConditionSpecs` reject a Value ("cannot be a constant");
+  - `processModelConstraints` drops a name only where `defns(name)` is TRUE;
+  - `getConstantValue` evaluates the cfg's predicates.
+
+The two facts differ exactly where the branches have accreted rules:
+
+- **Literal body** (fingerprint's LITERAL): `processConstants` gives the literal a tool object, so
+  `lookup(D)` gives the value and Read is Held. `processConstantDefns` then skips D because it isn't
+  an OpDefNode, so Defns stays Operator. That is why `ALIAS D` is accepted.
+- **Substitute for a declared constant, `C <- D`**: the first loop of `processConstantDefns` sets
+  D's tool object, so Read is Held at any level. It never does `defns.put`, so Defns stays Operator
+  (round 15's s3: TLC accepts `ALIAS D`).
+- **Substitute for a definition, `X <- D`**: the second loop reaches D through X's tool object,
+  evaluates it, and does `defns.put`, so both facts become Value.
+- **0-ary OpDefNode of a module with `processConstantDefns()`** (not instantiated with parameters),
+  not given a value by the cfg and not vetoed: TLC evaluates it if `getLevelBound(body) == 0`, and
+  both facts become Value. `getLevelBound` differs from SANY's level in several ways:
+  - an operator argument (a LAMBDA, or an operator passed by name) is level 0;
+  - a name whose UniqueString has a varLoc is level 1;
+  - builtins count at their Java `minLevel`;
+  - a definition already Held counts as 0, so the processing order matters;
+  - a LET counts every definition in it;
+  - an INSTANCE substitution counts at its value's level.
+- **INSTANCE copies with parameters** are never computed. Each `#n` copy is its own definition.
+- **A computation that fails** is swallowed, and Read becomes Lazy. A failing `C <- D` with level
+  bound above 0 instead stops the run with `TLC_CONFIG_SUBSTITUTION_NON_CONSTANT`.
+
+Whether a definition is attempted is static. Whether the attempt succeeds is known only at startup.
+
+## Where it is computed
+
+- **Front end lowering**, after the cfg is bound, because only there are modules, copies, overrides
+  and cfg seen together. It decides for each definition whether TLC attempts it, in what order, and
+  under which rule. It also decides Defns, and decides Decline for Java overrides. It ports
+  `getLevelBound` over the AST, including the varLoc rule.
+- **Engine startup** evaluates every attempted definition once, in that order, with no state, and
+  keeps the results in one table that the workers and tla-trace share:
+  - a variable read fails as TLC's does;
+  - `TLCGet("level")` reads the startup level;
+  - a lazy value built at startup applies its body later with no state, as `FcnLambdaValue` does
+    over `TLCState.Empty`;
+  - the result is deep-normalized;
+  - a failure makes Read Lazy.
+- **tla-trace** reads the IR and that table. It asks no level questions of its own.
+
+## The IR
+
+- `startup.attempted: Vec<Attempt>`, in TLC's order:
+  `Attempt { definition, rule: Substitute{constant} | DefinitionSubstitute | Constant }`.
+- A per-definition two-bit field for the static part of Read (Held literal / Attempted / Lazy /
+  Decline) and one bit for Defns.
+
+These replace `Definition::NORMALIZED`, `startup.substitutes` and `startup.definitions`, and the
+proposed `READ_DECLINED`, `LITERAL` and `UNPROCESSED`. The IR version goes up.
+
+## Rules it replaces
+
+- **tla-trace:**
+  - `is_precomputed`;
+  - `may_reach_bound`, with its LAMBDA, by-name, substitute and varLoc rules (my unmerged
+    getVarLoc branch included);
+  - the `captures` rule;
+  - `Rebuilder::is_computed_at_startup`, now a read of Defns.
+- **Engine:**
+  - the lazy bail in `compile_startup_definition`;
+  - `once` computing a definition at its first use, in that use's state.
+- **Front end:**
+  - `NORMALIZED`, which comes from SANY's level;
+  - `is_held_literal`;
+  - the READ_DECLINED marking;
+  - the TRUE-bound constraint rule, now a read of Defns.
+- **The dropped action-constraint commits** (lazy substitutes through EXCEPT/LET, the substitute
+  declines, the copy declines): the model now covers them.
+
+## Order to land, each its own PR, gate and adversarial round
+
+1. **Front end computes the decision and emits it beside the old flags.** No reader changes.
+   Report every definition in the corpus and the tests where the new decision differs from
+   `NORMALIZED`, LITERAL or READ_DECLINED. Each difference must be a known wrong output; record any
+   new one. Gate: the engine-ir goldens and both differentials unchanged.
+2. **tla-trace and the cfg-facing checks read Read and Defns.** Their own rules are deleted.
+   Regression set: the trace-kept and startup-level fixtures, all of rounds 1-15, constant-alias's
+   jar cases, and atoms' adv8 cases (a) and (c).
+3. **The engine evaluates attempted definitions at startup with no state.** Regression set: m1-m7
+   and l7 (now right), the 34 inputs from rounds 11-13 that matched before and must still match,
+   atoms' case (b), and the engine-ir goldens. Depot benchmark before and after.
+4. **Delete the old flags and lists.**
+
+## Step 1, as built
+
+`tla-front/src/startup.rs` computes the static part: `get_startup_model` gives each definition's
+Read (Literal, Attempted or Operator), whether `defns` holds its computed value, and the
+attempts in order with their rule. `front-dump startup` reports it against `NORMALIZED` over a
+list of models; `tests/startup.rs` holds each rule on a small spec. Nothing reads it yet.
+
+TLC reads an operator a Java method overrides through the method, of the method's `minLevel`, and
+never walks its definition. `tla-front/src/tlc_overrides.tsv` lists them, as
+`scripts/tlc-overrides/TlcOverrides.java` reads them from the jar by reflection: the public static
+methods of the `tlc2.module` classes named after a module (by `TLARegistry.mapName`), and every
+`@TLAPlusOperator` and `@Evaluation`, CommunityModules' in `tlc2.overrides` among them. Those of a
+level above constant are TLCGet, CounterExample, Trace, PickSuccessor, `_Counts`, `_TLCState`, and
+IOUtils' IOExec, IOEnvExec and their templates. Only the root module's variables give a name a
+location, so only their spelling makes a name state-level.
+
+Over the corpus (733 models) every difference from `NORMALIZED` is of a kind the model explains:
+192 literal bodies and 155 substitutes for constants, where only Defns differs, and 23 definitions
+TLC attempts that the front end marks state-level for their Java builtins (the trace specs' JSON
+reads, RandomSubset) or for an action inside an operator argument (an attempt that fails). Over
+the adversarial rounds of `design/trace.md` (914 models), the differences are the operator-argument
+and TLCSet shapes of rounds 10 to 13 (116, attempted where `NORMALIZED` isn't), which give main's
+wrong verdicts, and the names spelled as variables of rounds 14 to 16 (96, operators where
+`NORMALIZED` is).
+
+Still approximate: the order of the attempts is the substitutes, then the definitions in
+`startup_definitions`' order, where TLC goes module by module with each module's substitutes
+before its definitions; and a definition another one reaches counts as computed only by its own
+level, where TLC counts a held value as level 0 whether or not it reaches the state.
+
+## Asks
+
+- **constant-alias:** land LITERAL as it is. Step 2 then folds it into Defns.
+- **atoms:** send the adv8 and rerun cases as files once step 1 starts.
+- **front-constants (#292):** READ_DECLINED stays until step 2.
