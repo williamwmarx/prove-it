@@ -1,4 +1,5 @@
-// Runs Z3 5.3.3, the version the TypeScript SMT solver ports, on each smt and z3 input
+// Runs Z3 5.3.3, the version the TypeScript SMT solver ports, or with --version another, such as
+// 4.8.9, the one tlapm's build bundles (deps/z3/Makefile), on each smt and z3 input
 // prover-inputs.ts wrote, as tlapm runs it, under the time limit prove sent the input with, and
 // compares its verdict with the TypeScript's recorded one. The record shows the Rust port equals
 // the TypeScript; this shows how far the TypeScript is from Z3. Citations are to tlapm at ff40755.
@@ -16,13 +17,13 @@
 //     statistics, rlimit-count and quant-instantiations, after the verdict; neither changes the
 //     search.
 //   --z3 path names the binary, z3 on the PATH by default. The script fails unless it runs Z3
-//     5.3.3, and records the binary's SHA-256 with the results.
+//     5.3.3, or the version --version names, and records the binary's SHA-256 with the results.
 //   --prover smt|z3 and --filter text keep the inputs of one prover, or whose key contains the
 //     text. --jobs n runs n Z3s at once.
 //   --retry scale runs Z3 again, with scale times the time limit, on each input of the last run
 //     that the TypeScript proves and Z3 doesn't, to tell a time limit from a real divergence.
-// Each run is kept in .z3-parity.jsonl as it ends, and a run that finds the journal goes on from
-// it. The results are in .z3-parity.json.
+// Each run is kept in .z3-parity-<version>.jsonl as it ends, and a run that finds the journal goes
+// on from it. The results are in .z3-parity-<version>.json.
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -66,10 +67,10 @@ interface Run extends Z3Run {
   sha256: string;
 }
 
-const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".z3-parity.json");
-const JOURNAL_PATH = join(CONFORMANCE_DIRECTORY, ".z3-parity.jsonl");
+const VERSION = getOption("--version") ?? "5.3.3";
 
-const VERSION = "5.3.3";
+const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, `.z3-parity-${VERSION}.json`);
+const JOURNAL_PATH = join(CONFORMANCE_DIRECTORY, `.z3-parity-${VERSION}.jsonl`);
 
 // Params.wait, the seconds tlapm's scheduler waits before it first looks at a prover's time limit.
 const WAIT_SECONDS = 3;

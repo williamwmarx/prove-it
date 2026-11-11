@@ -1373,7 +1373,9 @@ limit prove sent the input with (5 s for all but 24 inputs; 2 have an `rlimit` b
 limit), which prover-inputs now writes to
 `.prover-inputs/time-limits.json`. The script's header cites tlapm's source for each part of the
 invocation. It fails unless the binary is Z3 5.3.3, records the binary's SHA-256 (`f6aa070c…6470`,
-the binary of the `z3-solver` 5.3.3.0 wheel), journals each run, and writes `.z3-parity.json`.
+the binary of the `z3-solver` 5.3.3.0 wheel), journals each run, and writes
+`.z3-parity-5.3.3.json`. `--version 4.8.9` runs the Z3 tlapm's build bundles (`deps/z3/Makefile`)
+instead, into `.z3-parity-4.8.9.json`.
 
 On the TypeScript's record of `main` at b830769, and on the record recalibrated on the Rust decider
 with causes 1 to 4 below fixed (a692935):
