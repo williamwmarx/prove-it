@@ -64,9 +64,12 @@ const IMPURE_BUILTINS = new Set([
   "Print",
   "PrintT",
   "Assert",
+  "AssertEq",
   "JavaTime",
   "RandomElement",
   "TLCGet",
+  "TLCGetOrDefault",
+  "TLCGetAndSet",
   "TLCSet",
 ]);
 

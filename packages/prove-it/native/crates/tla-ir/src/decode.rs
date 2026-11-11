@@ -758,6 +758,7 @@ impl Decoder<'_> {
                     0 => PredicateForm::Predicate,
                     1 => PredicateForm::Definition,
                     2 => PredicateForm::Specification,
+                    3 => PredicateForm::Conjunct,
                     other => return self.error(format!("predicate form {other}")),
                 };
                 Ok(StartupPredicate {

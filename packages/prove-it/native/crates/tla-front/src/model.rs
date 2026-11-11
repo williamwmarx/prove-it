@@ -63,6 +63,10 @@ pub struct StartupMessage {
     pub code: u32,
     pub is_warning: bool,
     pub text: String,
+    /// The position among the IR's startup predicates of the invariant TLC warns about only where
+    /// the value the engine computes for it at startup is TRUE; none for a message TLC prints
+    /// whatever the startup computes.
+    pub predicate: Option<usize>,
 }
 
 /// A model's IR, and what TLC prints as it starts the model besides SANY's report and what the
@@ -249,9 +253,25 @@ fn lower_ranked(
         .collect();
     let evaluator = Evaluator::new(&environment, ValueOrder { ranks: &ranks }, version, true);
     let lowered = (|| {
-        let constant_invariants = check_invariants(&config, &environment, &facts, &evaluator)?;
+        let constant_invariants = check_invariants(
+            &config,
+            &environment,
+            &facts,
+            &evaluator,
+            options.is_warning_enabled,
+        )?;
+        // TLC reads the specification after it warns about the invariants.
         let specification =
-            get_specification(&config, &environment, &facts, version, Some(&evaluator))?;
+            get_specification(&config, &environment, &facts, version, Some(&evaluator)).map_err(
+                |error| match (error, &constant_invariants) {
+                    (error @ FrontError::Config(_), Some(names))
+                        if options.is_warning_enabled && !names.is_empty() =>
+                    {
+                        FrontError::Warned(get_constant_invariant_warnings(names), Box::new(error))
+                    }
+                    (error, _) => error,
+                },
+            )?;
         let properties = get_properties(&config, &environment, &facts, version, Some(&evaluator))?;
         // `getTlcOrder`: the variables in TLC's order of declarations.
         let position = |index: &i32| {
@@ -277,8 +297,16 @@ fn lower_ranked(
             TlcVersion::V1_7_4 => "1.7.4",
             TlcVersion::Master => "master",
         });
-        // `createSearch`'s checks of the configuration.
-        let is_checking_behaviors = !config.invariants.is_empty()
+        // `processSpec`'s checks of the configuration, which count the invariants it keeps: not
+        // those that are TRUE constants.
+        let is_invariant_kept = match &constant_invariants {
+            Some(constant_true) => config
+                .invariants
+                .iter()
+                .any(|name| !constant_true.iter().any(|constant| **constant == **name)),
+            None => !config.invariants.is_empty(),
+        };
+        let is_checking_behaviors = is_invariant_kept
             || !properties.invariants.is_empty()
             || !properties.action_properties.is_empty()
             || !properties.liveness.is_empty();
@@ -335,7 +363,11 @@ fn lower_ranked(
                     FrontError::Warned(warnings, error) if options.is_warning_enabled => {
                         FrontError::Warned(
                             get_search_warnings(
-                                constant_invariants.as_deref().unwrap_or_default(),
+                                &constant_invariants
+                                    .iter()
+                                    .flatten()
+                                    .map(|name| (name.clone(), None))
+                                    .collect::<Vec<_>>(),
                                 &properties.state_level,
                             )
                             .into_iter()
@@ -373,28 +405,23 @@ fn lower_ranked(
             }
             _ => ir,
         };
-        // Under -nowarning TLC prints none of its warnings, so an invariant the engine checks at
-        // startup, which may be a constant TLC warns about, matters only without it.
-        let warnings = if options.is_warning_enabled {
-            constant_invariants
-                .as_ref()
-                .map(|constant_invariants| (&constant_invariants[..], &properties.state_level[..]))
-                .ok_or_else(|| {
-                    "a constant invariant the engine checks, which TLC may warn about".to_owned()
-                })
-        } else {
-            Ok((&[][..], &[][..]))
-        };
-        let startup_messages = warnings.and_then(|(constant_invariants, state_level)| {
-            get_startup_messages(
-                &config,
-                constant_invariants,
-                state_level,
-                branches,
-                version,
-                options.is_warning_enabled,
+        // Under -nowarning TLC prints none of its warnings.
+        let (constant_invariants, state_level) = if options.is_warning_enabled {
+            (
+                get_constant_invariants(&config, &environment, &facts),
+                &properties.state_level[..],
             )
-        });
+        } else {
+            (Vec::new(), &[][..])
+        };
+        let startup_messages = get_startup_messages(
+            &config,
+            &constant_invariants,
+            state_level,
+            branches,
+            version,
+            options.is_warning_enabled,
+        );
         let override_messages = get_override_messages(&environment, sources.directory)
             .map(|messages| {
                 // -nowarning drops a method that matches no operator.
@@ -466,6 +493,7 @@ fn get_override_messages(
             Ok(StartupMessage {
                 code: if java_override.is_matched { 2168 } else { 2400 },
                 is_warning: !java_override.is_matched,
+                predicate: None,
                 text: format!(
                     "{} {} operator override from file:{path} with signature: <Java Method: {}>.",
                     if java_override.is_matched {
@@ -487,7 +515,7 @@ fn get_override_messages(
 // every warning (`createMessagePrinter`); the front end gives no warnings under -nowarning.
 fn get_startup_messages(
     config: &crate::config::ModelConfig,
-    constant_invariants: &[Rc<str>],
+    constant_invariants: &[(Rc<str>, Option<usize>)],
     state_level_properties: &[Rc<str>],
     branches: Option<usize>,
     version: TlcVersion,
@@ -509,6 +537,7 @@ fn get_startup_messages(
         messages.push(StartupMessage {
             code: 2212,
             is_warning: false,
+            predicate: None,
             text: format!(
                 "Implied-temporal checking--satisfiability problem has {branches} branches."
             ),
@@ -517,19 +546,50 @@ fn get_startup_messages(
     Ok(messages)
 }
 
+// The invariants TLC may warn are constants that are TRUE (`processConfigInvariants`), in the
+// configuration's order: each the configuration gives TRUE, and each the engine's startup
+// computes, with its position among the IR's startup predicates.
+fn get_constant_invariants(
+    config: &crate::config::ModelConfig,
+    environment: &crate::environment::Environment,
+    facts: &crate::dependencies::DefinitionFacts,
+) -> Vec<(Rc<str>, Option<usize>)> {
+    // The invariants come first among the startup predicates, before the conjuncts of the
+    // specification.
+    let predicates = crate::spec::get_constant_predicates(config, environment, facts, &[]);
+    config
+        .invariants
+        .iter()
+        .filter_map(|name| {
+            let predicate = predicates
+                .iter()
+                .position(|(_, kind, predicate, _)| *kind == "invariant" && predicate == name);
+            let is_given = environment.constants.contains_key(name.as_str());
+            (is_given || predicate.is_some()).then(|| (Rc::from(name.as_str()), predicate))
+        })
+        .collect()
+}
+
+/// TLC's warnings about invariants that are TRUE constants, by name.
+pub(crate) fn get_constant_invariant_warnings(names: &[Rc<str>]) -> Vec<StartupMessage> {
+    let names: Vec<_> = names.iter().map(|name| (name.clone(), None)).collect();
+    get_search_warnings(&names, &[])
+}
+
 // `createSearch`'s warnings about the invariants and the properties.
 fn get_search_warnings(
-    constant_invariants: &[Rc<str>],
+    constant_invariants: &[(Rc<str>, Option<usize>)],
     state_level_properties: &[Rc<str>],
 ) -> Vec<StartupMessage> {
     let warning = |code: u32, text: String| StartupMessage {
         code,
         is_warning: true,
         text,
+        predicate: None,
     };
     constant_invariants
         .iter()
-        .map(|name| warning(2149, format!("The invariant {name} is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.")))
+        .map(|(name, predicate)| StartupMessage { predicate: *predicate, ..warning(2149, format!("The invariant {name} is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.")) })
         .chain(state_level_properties.iter().map(|name| warning(2255, format!("The formula {name} is a state-level formula, but it was used as a PROPERTY (or PROPERTIES), where a temporal formula is typically expected. State-level formulas used as PROPERTY or PROPERTIES are only checked in the initial state. To verify that the formula {name} holds in all states of every behavior, use INVARIANT {name} instead. Alternatively, applying the \"always\" temporal operator ([]) to the state-level formula {name} changes it into a temporal formula, asserting that {name} holds in all states of every behavior. See https://explain.tlapl.us/invariants-and-properties for additional details."))))
         .collect()
 }
@@ -540,6 +600,7 @@ pub fn get_liveness_symmetry_warning() -> StartupMessage {
     StartupMessage {
         code: 2279,
         is_warning: true,
+        predicate: None,
         text: "Declaring symmetry during liveness checking is dangerous. It might cause TLC to miss violations of the stated liveness properties. Please check liveness without symmetry defined.".to_owned(),
     }
 }

@@ -1,0 +1,13 @@
+exit 76
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Warning: The invariant A is a constant-level formula (i.e., it contains no variables, primes, or temporal operators) and evaluates to TRUE. To assert constant-level formulas in your spec, use ASSUME ConstInv. If you optionally want to give the assumption a name, write ASSUME YourAssumption == ConstInv instead. See https://explain.tlapl.us/assumptions-and-invariants for additional details.
+(Use the -nowarning option to disable this warning.)
+Error: The invariant L is not a state predicate (one with no primes or temporal operators).
+Note that a bug can cause TLC to incorrectly report this error.
+If you believe your TLA+ or PlusCal specification to be correct,
+please check if this bug described in LevelNode.java starting at line 590ff affects you.

@@ -1,0 +1,33 @@
+exit 12
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module M
+Linting of module M
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ x = 0
+/\ y = 0
+
+State 2: <Next line 5, col 12 to line 5, col 40 of module M>
+/\ x = 1
+/\ y = 0
+
+State 3: <Next line 5, col 12 to line 5, col 40 of module M>
+/\ x = 2
+/\ y = 0
+
+State 4: <Next line 5, col 12 to line 5, col 40 of module M>
+/\ x = 3
+/\ y = 0
+
+State 5: <Next line 6, col 12 to line 6, col 54 of module M>
+/\ x = 4
+/\ y = 3
+
+5 states generated, 5 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 5.

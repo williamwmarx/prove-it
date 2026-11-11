@@ -1,0 +1,4 @@
+exit 151
+Semantic processing of module M
+Linting of module M
+Error: The configuration file did not specify the next state predicate.
