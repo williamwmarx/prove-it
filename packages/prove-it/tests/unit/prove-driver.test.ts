@@ -385,13 +385,19 @@ describe("the Rust driver", () => {
   });
 
   // An INSTANCE that instantiates its own module again would recurse until the stack overflows.
+  // The TypeScript overflows its stack here, where tlapm and the Rust report a bug in tlapm.
   it("throws tlapm's bug for an INSTANCE of a module inside itself", async () => {
-    await expectSame({
+    const run = await proveWithDriver("rust", {
       options: {
         source:
           "---- MODULE M ----\n---- MODULE Inner ----\nTHEOREM LET I == INSTANCE Inner IN TRUE\n====\nTHEOREM TRUE\n====\n",
       },
       decide: byProver({}),
+    });
+    expect(run.error).toEqual({
+      class: "TlapmBugError",
+      name: "TlaProofError",
+      message: "Oops, this seems to be a bug in TLAPM.",
     });
   });
 

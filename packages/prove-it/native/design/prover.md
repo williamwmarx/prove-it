@@ -1234,6 +1234,9 @@ is next.
     - numerals large enough to reach a string length limit in the Zenon and Isabelle encodings
       (`String.prototype.repeat`);
     - proof-step levels past 2^53, or 2^32 in WebAssembly, where the Rust reads a `usize`.
+  - **Known TypeScript deviation:** an INSTANCE of a module inside its own instantiation
+    overflows the TypeScript's stack (a RangeError), where tlapm and the Rust report tlapm's bug
+    "Stack overflow" (#308).
 ### TypeScript deviations from Z3
 
 Where a TypeScript back end does what the tool it ports does not, the Rust mirrors the TypeScript,
