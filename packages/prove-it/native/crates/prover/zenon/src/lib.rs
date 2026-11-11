@@ -26,7 +26,7 @@ pub mod tla;
 
 use prove_decide::{DecideError, Decision, Limits, Statistic, Verdict};
 
-/// A malformed input or a failure that stops Zenon: `TlaZenonError`.
+/// A malformed input, or a failure that stops Zenon.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ZenonError(pub String);
 
@@ -36,10 +36,11 @@ impl ZenonError {
     }
 }
 
-/// Zenon's verdict on a .znn file, with the statistics `decideZenon` reports, in its order. Input
-/// that isn't a valid .znn file is declined, so that the TypeScript reports it with its own error.
+/// Zenon's verdict on a .znn file, with its statistics in the order the differential's record
+/// keeps them. Input that isn't a valid .znn file, or that stops Zenon with an error, is a prover
+/// error, which tlapm counts as a failure.
 pub fn decide(text: &str, limits: &Limits) -> Result<Decision, DecideError> {
-    let run = decide::run_zenon(text, limits).map_err(|error| DecideError::Declined(error.0))?;
+    let run = decide::run_zenon(text, limits).map_err(|error| DecideError::Prover(error.0))?;
     let mut statistics = vec![
         ("steps", Statistic::Count(limits.steps())),
         ("nodesSearched", Statistic::Count(run.nodes_searched)),
