@@ -518,6 +518,17 @@ impl<'ir> Evaluator<'ir> {
                 })
             }
             NodeKind::Label { body, .. } => self.walk(*body, context, is_init, then),
+            // `getInitStates` takes no literal for a relation, and words the node as SANY prints
+            // it: a numeral as it is written, a string by where it is.
+            NodeKind::Number(_) | NodeKind::String(_) if is_init && !self.is_enabling => {
+                let Some(written) = self.describe_node(node) else {
+                    return fail("a literal initial predicate written otherwise");
+                };
+                fail_runtime(
+                    "a literal initial predicate",
+                    format!("The init state relation is not a boolean expression.\n{written}"),
+                )
+            }
             NodeKind::FunctionApplication { function, args } if args.len() == 1 => {
                 let Some((bound, body, base)) = self.walked_function(*function, context)? else {
                     return self.applied(node, context, is_init, then);
@@ -559,8 +570,25 @@ impl<'ir> Evaluator<'ir> {
                 self.walk(body, &inner, is_init, then)
             }
             NodeKind::FunctionApplication { .. } => self.applied(node, context, is_init, then),
-            NodeKind::Identifier(_) => match self.resolve_action(node, context)? {
+            NodeKind::Identifier(name) => match self.resolve_action(node, context)? {
                 Some((body, inner)) => self.walk(body, &inner, is_init, then),
+                // TLC walks the body of the definition the configuration names as its initial
+                // predicate, a literal too.
+                None if is_init && node == self.ir.model.init && !name.is_local => {
+                    let body = match name.resolution {
+                        Resolution::Definition(index) => {
+                            Some(self.definition(self.ir.definitions[index as usize]).body)
+                        }
+                        _ => None,
+                    }
+                    .filter(|&body| {
+                        matches!(self.kind(body), NodeKind::Number(_) | NodeKind::String(_))
+                    });
+                    match body {
+                        Some(body) => self.walk(body, context, is_init, then),
+                        None => self.guard(node, context, is_init, then),
+                    }
+                }
                 None => self.guard(node, context, is_init, then),
             },
             NodeKind::Apply { name, args } => {
