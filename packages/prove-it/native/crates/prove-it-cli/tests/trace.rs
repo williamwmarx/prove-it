@@ -163,7 +163,7 @@ fn writes_the_spec_after_an_error_after_a_behavior_where_tlc_records_the_trace()
 }
 
 #[test]
-fn declines_a_module_of_the_users_that_the_trace_exploration_spec_uses() {
+fn reports_a_module_of_the_users_that_the_trace_exploration_spec_uses() {
     // SANY analyzes the modules TLC adds for the trace exploration spec with the spec's, so a
     // TLCExt beside the spec that fails its analysis fails TLC's run, though the spec doesn't use
     // it (TLC at d8fb231 reports "Unknown operator: `Unknown'." in TLCExt, then _TLCTrace's own).
@@ -195,7 +195,8 @@ fn declines_a_module_of_the_users_that_the_trace_exploration_spec_uses() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        text.contains("not native yet: SANY's report of a module of the user's that the trace exploration spec uses"),
+        text.contains("Semantic processing of module TLCExt\nSemantic errors:\n\n*** Errors: 1\n\nline 2, col 8 to line 2, col 14 of module TLCExt\n\nUnknown operator: `Unknown'.\n")
+            && text.contains("Parsing or semantic analysis failed."),
         "{text}"
     );
     std::fs::remove_dir_all(directory).expect("removed");
