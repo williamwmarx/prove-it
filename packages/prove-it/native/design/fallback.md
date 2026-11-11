@@ -283,6 +283,21 @@ it from one that printed something else. Each is outside the corpus:
   `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
   `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
   first position where the stream differs from the normalized set, not where the stream starts.
+- a configuration substitute for a definition that draws at random, `C <- D` with
+  `D == RandomElement({1})`, read once or more anywhere TLC computes it: in an ASSUME (under
+  `Cardinality`, `CHOOSE`, `ENABLED`, `IF`, `LAMBDA`, a LET with parameters, a quantifier's
+  argument, a recursive operator or function, `SUBSET`, `UNION`), in Init, Next, an INSTANCE, a
+  constant definition, a POSTCONDITION or a PROPERTY, with or without `-tool`, and one TLC
+  computes only as it starts (`D` before `C`, or a printing definition between them). TLC holds
+  `C` as `D`'s definition and draws again at each read and as it starts, which moves its
+  generator; the engine holds one value. Main printed what TLC prints only because nothing after
+  draws from the generator; with a later draw the two differ. 36 specs of #292's adversarial
+  rounds 2 to 4 matched on main and decline now: `A-{acons,cons,indirect,indirectCons}-cX-rand`,
+  `F-{act,assume,cons,prop}-c1-randB`, `F-post-c1-rand{,B}`,
+  `A-rand-{assume,def,inNext,post}-CD`, `A-rand-{def,none}-{CmidD,DC}` and
+  `A-{cardinal,choose,enabled,ifBrConst,init,inst,lambda,letPar,quantArg,recDom,recOp,subset,union}-rnd`
+  (`init`, `inst`, `quantArg` and `recDom` also with `-tool`), and `J-prop-rnd`. To win them
+  back, count TLC's draws: once as it starts where it computes `C`, and once at each read.
 
 #### Known wrong outputs
 
@@ -572,7 +587,12 @@ differently on one thread and four, and 1,020 are native in TLC's default mode.
 The front end reads the class TLC loads for a module and puts the constant each method returns in
 place of the operator. It skips a method annotated `@TLAPlusOperator` or `@Evaluation`, as
 `processModuleOverrides` does, unless a `tlc2.overrides.TLCOverrides` class beside the spec could
-list it, and runs a method that catches an exception up to its first return. These shapes stay
+list it, and runs a method that catches an exception up to its first return. It reads a
+`tlc2/overrides/TLCOverrides` index whose `get` returns class literals, and whose classes'
+overrides are `@TLAPlusOperator(warn = false)` methods TLC doesn't call as it loads them. The run
+declines where the model reads an operator one replaces, or where the operator's own definition
+prints or draws as TLC would have computed it at startup; where only the ALIAS reads it, the run
+declines as it prints a trace. These shapes stay
 declined for good, because what TLC does with them depends on the JVM, not on the class file:
 
 - **A static initializer, a field's initializer or a superclass.** Java runs them as TLC first

@@ -217,18 +217,8 @@ fn get_class_name(pool: &[PoolEntry], index: u16) -> Result<String> {
     Ok(get_entry(pool, get_entry(pool, index)?.first)?.text.clone())
 }
 
-// The public static methods of a class file and their bytecode, in the order of the class file.
-fn read_class_file(bytes: &[u8], has_index: bool) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
-    let mut reader = Reader { bytes, offset: 0 };
-    if reader.u32()? != CLASS_MAGIC {
-        return Err(not_yet("a module override that isn't a class file"));
-    }
-    reader.u16()?;
-    if reader.u16()? > MAXIMUM_MAJOR_VERSION {
-        return Err(not_yet(
-            "a Java class file of a version the front end doesn't read",
-        ));
-    }
+// A class file's constant pool (JVM specification, section 4.4).
+fn read_pool(reader: &mut Reader) -> Result<Vec<PoolEntry>> {
     let pool_size = reader.u16()?;
     let mut pool = vec![PoolEntry::default(); pool_size as usize];
     let mut index = 1;
@@ -273,6 +263,22 @@ fn read_class_file(bytes: &[u8], has_index: bool) -> Result<(Vec<PoolEntry>, Vec
         pool[index as usize] = entry;
         index += 1;
     }
+    Ok(pool)
+}
+
+// The public static methods of a class file and their bytecode, in the order of the class file.
+fn read_class_file(bytes: &[u8], has_index: bool) -> Result<(Vec<PoolEntry>, Vec<JavaMethod>)> {
+    let mut reader = Reader { bytes, offset: 0 };
+    if reader.u32()? != CLASS_MAGIC {
+        return Err(not_yet("a module override that isn't a class file"));
+    }
+    reader.u16()?;
+    if reader.u16()? > MAXIMUM_MAJOR_VERSION {
+        return Err(not_yet(
+            "a Java class file of a version the front end doesn't read",
+        ));
+    }
+    let pool = read_pool(&mut reader)?;
     // Java runs a class's static initializer, its fields' and its superclasses', before it calls
     // an override, which the front end doesn't run: it reads only a plain class with none.
     if reader.u16()? & UNPLAIN_CLASS != 0 {
@@ -571,6 +577,285 @@ fn get_returned_literal(
         }
     }
     Err(unsupported())
+}
+
+/// The package path of the index class TLC loads (`TLAClass.loadClass`).
+pub const INDEX_CLASS: &str = "tlc2/overrides/TLCOverrides";
+const ACCESS_FINAL: u16 = 0x0010;
+const OPERATOR_ANNOTATION: &str = "Ltlc2/overrides/TLAPlusOperator;";
+
+// What an annotation's element gives: a string or a number, or a value the front end doesn't read.
+enum ElementValue {
+    Text(String),
+    Number(i32),
+    Other,
+}
+
+// A method of a class TLC reads through a TLCOverrides index: its access flags, its name and
+// descriptor, its bytecode, and each runtime-visible annotation's type with its elements.
+struct IndexedMethod {
+    access: u16,
+    name: String,
+    descriptor: String,
+    code: Option<Vec<u8>>,
+    annotations: Vec<(String, Vec<(String, ElementValue)>)>,
+}
+
+fn read_element_value(reader: &mut Reader, pool: &[PoolEntry]) -> Result<ElementValue> {
+    let tag = reader.u8()?;
+    Ok(match tag {
+        b's' => ElementValue::Text(get_entry(pool, reader.u16()?)?.text.clone()),
+        b'Z' | b'I' | b'B' | b'C' | b'S' => {
+            ElementValue::Number(get_entry(pool, reader.u16()?)?.value)
+        }
+        b'e' => {
+            reader.u32()?;
+            ElementValue::Other
+        }
+        b'@' => {
+            read_annotation(reader)?;
+            ElementValue::Other
+        }
+        b'[' => {
+            for _ in 0..reader.u16()? {
+                read_element_value(reader, pool)?;
+            }
+            ElementValue::Other
+        }
+        _ => {
+            reader.u16()?;
+            ElementValue::Other
+        }
+    })
+}
+
+// A plain class with no superclass, as TLC reads it through a TLCOverrides index.
+struct IndexedClass {
+    pool: Vec<PoolEntry>,
+    access: u16,
+    interfaces: Vec<String>,
+    has_fields: bool,
+    methods: Vec<IndexedMethod>,
+}
+
+fn read_indexed_class(bytes: &[u8]) -> Result<IndexedClass> {
+    let mut reader = Reader { bytes, offset: 0 };
+    if reader.u32()? != CLASS_MAGIC {
+        return Err(not_yet(
+            "a TLCOverrides index that lists a class that isn't a class file",
+        ));
+    }
+    reader.u16()?;
+    if reader.u16()? > MAXIMUM_MAJOR_VERSION {
+        return Err(not_yet(
+            "a Java class file of a version the front end doesn't read",
+        ));
+    }
+    let pool = read_pool(&mut reader)?;
+    let access = reader.u16()?;
+    if access & UNPLAIN_CLASS != 0 {
+        return Err(not_yet(
+            "a TLCOverrides index of a class that isn't a plain class",
+        ));
+    }
+    reader.u16()?;
+    if get_class_name(&pool, reader.u16()?)? != "java/lang/Object" {
+        return Err(not_yet("a TLCOverrides index of a class with a superclass"));
+    }
+    let mut interfaces = Vec::new();
+    for _ in 0..reader.u16()? {
+        interfaces.push(get_class_name(&pool, reader.u16()?)?);
+    }
+    let field_count = reader.u16()?;
+    for _ in 0..field_count {
+        reader.bytes(6)?;
+        for _ in 0..reader.u16()? {
+            reader.u16()?;
+            let length = reader.u32()? as usize;
+            reader.bytes(length)?;
+        }
+    }
+    let mut methods = Vec::new();
+    for _ in 0..reader.u16()? {
+        let access = reader.u16()?;
+        let name = get_entry(&pool, reader.u16()?)?.text.clone();
+        let descriptor = get_entry(&pool, reader.u16()?)?.text.clone();
+        let mut code = None;
+        let mut annotations = Vec::new();
+        for _ in 0..reader.u16()? {
+            let attribute = get_entry(&pool, reader.u16()?)?.text.clone();
+            let length = reader.u32()? as usize;
+            let mut body = Reader {
+                bytes: reader.bytes(length)?,
+                offset: 0,
+            };
+            if attribute == "RuntimeVisibleAnnotations" {
+                for _ in 0..body.u16()? {
+                    let annotation = get_entry(&pool, body.u16()?)?.text.clone();
+                    let mut elements = Vec::new();
+                    for _ in 0..body.u16()? {
+                        let element = get_entry(&pool, body.u16()?)?.text.clone();
+                        elements.push((element, read_element_value(&mut body, &pool)?));
+                    }
+                    annotations.push((annotation, elements));
+                }
+            } else if attribute == "Code" {
+                body.bytes(4)?;
+                let length = body.u32()? as usize;
+                code = Some(body.bytes(length)?.to_vec());
+            }
+        }
+        methods.push(IndexedMethod {
+            access,
+            name,
+            descriptor,
+            code,
+            annotations,
+        });
+    }
+    Ok(IndexedClass {
+        pool,
+        access,
+        interfaces,
+        has_fields: field_count > 0,
+        methods,
+    })
+}
+
+// The number an instruction pushes and the instruction after it, where it pushes a small one.
+fn read_pushed(code: &[u8], at: usize) -> Option<(i32, usize)> {
+    match *code.get(at)? {
+        opcode @ 0x03..=0x08 => Some((i32::from(opcode) - 3, at + 1)),
+        0x10 => Some((i32::from(*code.get(at + 1)? as i8), at + 2)),
+        0x11 => Some((
+            i32::from(i16::from_be_bytes([*code.get(at + 1)?, *code.get(at + 2)?])),
+            at + 3,
+        )),
+        _ => None,
+    }
+}
+
+// The classes an index's `get` returns, where its bytecode is an array of class literals it
+// returns as it builds it: `return new Class[] { A.class, ... };`.
+fn get_listed_classes(pool: &[PoolEntry], code: &[u8]) -> Option<Vec<String>> {
+    let (count, mut at) = read_pushed(code, 0)?;
+    let index = |at: usize| u16::from_be_bytes([code[at], code[at + 1]]);
+    if code.get(at) != Some(&0xbd)
+        || code.len() < at + 3
+        || get_class_name(pool, index(at + 1)).ok()? != "java/lang/Class"
+    {
+        return None;
+    }
+    at += 3;
+    let mut classes = Vec::new();
+    for position in 0..count {
+        if code.get(at) != Some(&0x59) {
+            return None;
+        }
+        let (pushed, after) = read_pushed(code, at + 1)?;
+        let (constant, after) = match code.get(after)? {
+            0x12 => (u16::from(*code.get(after + 1)?), after + 2),
+            0x13 if code.len() >= after + 3 => (index(after + 1), after + 3),
+            _ => return None,
+        };
+        let entry = get_entry(pool, constant).ok()?;
+        if pushed != position || entry.tag != CLASS || code.get(after) != Some(&0x53) {
+            return None;
+        }
+        classes.push(get_entry(pool, entry.first).ok()?.text.clone());
+        at = after + 1;
+    }
+    (code[at..] == [0xb0]).then_some(classes)
+}
+
+/// The operators the `tlc2.overrides.TLCOverrides` index TLC loads replaces (`processSpec`), each
+/// as its module, its identifier and the method's arity, where TLC prints nothing of them and runs none of their
+/// Java: the index is a plain class whose `get` returns class literals, and each method of those
+/// classes annotated as an override is a `@TLAPlusOperator(warn = false)` TLC doesn't call as it
+/// loads it.
+pub fn get_index_overrides(load_class: &ClassLoader) -> Result<Vec<(String, String, usize)>> {
+    let Some(bytes) = load_class(INDEX_CLASS) else {
+        return Ok(Vec::new());
+    };
+    let unsupported = || not_yet("a TLCOverrides index of Java overrides");
+    let index = read_indexed_class(&bytes)?;
+    let pool = &index.pool;
+    let is_constructor_plain = |method: &IndexedMethod| {
+        method.descriptor == "()V"
+            && method.access & ACCESS_PUBLIC != 0
+            && method.code.as_deref().is_some_and(|code| {
+                code.len() == 5
+                    && code[0] == 0x2a
+                    && code[1] == 0xb7
+                    && code[4] == 0xb1
+                    && get_member(pool, u16::from_be_bytes([code[2], code[3]])).is_ok_and(
+                        |(class, member)| class == "java/lang/Object" && member == "<init>()V",
+                    )
+            })
+    };
+    let listed = match &index.methods[..] {
+        [first, second]
+            if index.interfaces == ["tlc2/overrides/ITLCOverrides"] && !index.has_fields =>
+        {
+            let (constructor, get) = if first.name == "<init>" {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            let is_get = get.name == "get"
+                && get.descriptor == "()[Ljava/lang/Class;"
+                && get.access & ACCESS_PUBLIC != 0
+                && get.access & ACCESS_STATIC == 0;
+            if constructor.name != "<init>" || !is_constructor_plain(constructor) || !is_get {
+                return Err(unsupported());
+            }
+            get.code
+                .as_deref()
+                .and_then(|code| get_listed_classes(pool, code))
+                .ok_or_else(unsupported)?
+        }
+        _ => return Err(unsupported()),
+    };
+    let mut overrides = Vec::new();
+    for class in listed {
+        let bytes = load_class(&class).ok_or_else(unsupported)?;
+        let class = read_indexed_class(&bytes)?;
+        for method in &class.methods {
+            for (annotation, elements) in &method.annotations {
+                if SKIPPING_ANNOTATIONS.contains(&annotation.as_str())
+                    || annotation == "Ltlc2/overrides/TLAPlusCallable;"
+                {
+                    let get_text = |wanted: &str| {
+                        elements.iter().find_map(|(name, value)| match value {
+                            ElementValue::Text(text) if name == wanted => Some(text.clone()),
+                            _ => None,
+                        })
+                    };
+                    let is_silent = elements.iter().any(|(name, value)| {
+                        name == "warn" && matches!(value, ElementValue::Number(0))
+                    });
+                    // TLC fails to look up a method it can't reach, and calls a final one without
+                    // parameters as it loads it (`MethodValue.get`).
+                    let is_run_as_loaded = class.access & ACCESS_PUBLIC == 0
+                        || method.access & ACCESS_PUBLIC == 0
+                        || method.access & ACCESS_FINAL != 0;
+                    match (get_text("module"), get_text("identifier")) {
+                        (Some(module), Some(identifier))
+                            if annotation == OPERATOR_ANNOTATION
+                                && is_silent
+                                && !is_run_as_loaded =>
+                        {
+                            let end = method.descriptor.find(')').ok_or_else(unsupported)?;
+                            let arity = get_type_names(&method.descriptor[1..end])?.len();
+                            overrides.push((module, identifier, arity));
+                        }
+                        _ => return Err(unsupported()),
+                    }
+                }
+            }
+        }
+    }
+    Ok(overrides)
 }
 
 /// Whether TLC finds a `tlc2.overrides.TLCOverrides` index beside the spec or on the class path,

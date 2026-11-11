@@ -99,9 +99,11 @@ impl<'v> From<&'v Violation> for Recorded<'v> {
 
 /// How a rebuilt trace's states are written: with -tool's messages, and with plain data.
 #[derive(Clone, Copy)]
-struct Writing {
-    is_tool: bool,
-    is_plain: bool,
+pub struct Writing<'a> {
+    pub is_tool: bool,
+    pub is_plain: bool,
+    /// Why a trace printed through the ALIAS declines, where it does.
+    pub alias_decline: Option<&'a str>,
 }
 
 /// The violation's trace, or why `tla-trace` can't rebuild it. The evaluator recurses with the
@@ -110,8 +112,7 @@ pub fn rebuild_trace(
     ir: &Ir,
     violation: &Violation,
     checks: TraceChecks,
-    is_tool: bool,
-    is_plain: bool,
+    writing: Writing<'_>,
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
@@ -120,7 +121,7 @@ pub fn rebuild_trace(
         &violation.states,
         violation.labels.clone(),
         Some(checks),
-        Writing { is_tool, is_plain },
+        writing,
     )
 }
 
@@ -129,8 +130,7 @@ pub fn rebuild_accepted(
     ir: &Ir,
     violation: &Violation,
     accepted: &AcceptedTrace,
-    is_tool: bool,
-    is_plain: bool,
+    writing: Writing<'_>,
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
@@ -141,7 +141,7 @@ pub fn rebuild_accepted(
         &accepted.states,
         vec![None; accepted.states.len().saturating_sub(1)],
         None,
-        Writing { is_tool, is_plain },
+        writing,
     )
 }
 
@@ -151,8 +151,7 @@ pub fn rebuild_continued(
     ir: &Ir,
     trace: &ContinuedTrace<'_>,
     kind: &ViolationKind,
-    is_tool: bool,
-    is_plain: bool,
+    writing: Writing<'_>,
 ) -> Result<PrintedTrace, String> {
     let recorded = Recorded {
         store: trace.store,
@@ -164,15 +163,7 @@ pub fn rebuild_continued(
         registers: trace.registers,
     };
     let labels = vec![None; trace.states.len().saturating_sub(1)];
-    rebuild(
-        ir,
-        &recorded,
-        kind,
-        &trace.states,
-        labels,
-        None,
-        Writing { is_tool, is_plain },
-    )
+    rebuild(ir, &recorded, kind, &trace.states, labels, None, writing)
 }
 
 fn rebuild(
@@ -182,7 +173,7 @@ fn rebuild(
     states: &[Vec<Id>],
     mut labels: Vec<Option<u32>>,
     checks: Option<TraceChecks>,
-    writing: Writing,
+    writing: Writing<'_>,
 ) -> Result<PrintedTrace, String> {
     let dumps = checks.map(|checks| checks.dumps);
     let postconditions = checks.and_then(|checks| checks.run);
@@ -297,6 +288,13 @@ fn rebuild(
                 ),
                 _ => None,
             };
+            // TLC computes again, as it prints each state, a name the IR holds the value of.
+            if let Some(reason) = writing
+                .alias_decline
+                .filter(|_| !is_alone || postconditions.is_some())
+            {
+                return Err(Unsupported(reason.to_owned()));
+            }
             let aliases = if is_alone {
                 None
             } else {

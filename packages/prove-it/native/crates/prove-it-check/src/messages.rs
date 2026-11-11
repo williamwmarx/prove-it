@@ -97,12 +97,23 @@ pub struct Printer<'o> {
     pub recorded_trace: RecordedTrace,
     /// Why the run declines, where it can't write the spec TLC writes.
     pub trace_spec_decline: Option<String>,
+    /// Why a trace printed through the ALIAS declines, where it does.
+    pub alias_decline: Option<String>,
     /// TLC's coverage report of the run, which comes before the statistics.
     pub coverage: Option<Vec<tla_trace::CoverageMessage>>,
     pub outcome: &'o mut Outcome,
 }
 
 impl<'o> Printer<'o> {
+    /// How the run writes a rebuilt trace's states.
+    pub fn writing(&self) -> crate::trace::Writing<'_> {
+        crate::trace::Writing {
+            is_tool: self.is_tool,
+            is_plain: self.host.is_plain(),
+            alias_decline: self.alias_decline.as_deref(),
+        }
+    }
+
     pub fn new(is_tool: bool, is_warning_enabled: bool, output: &'o mut Output<'_>) -> Self {
         Self {
             is_tool,
@@ -115,6 +126,7 @@ impl<'o> Printer<'o> {
             trace_spec: None,
             recorded_trace: RecordedTrace::default(),
             trace_spec_decline: None,
+            alias_decline: None,
             coverage: None,
             outcome: &mut output.outcome,
         }

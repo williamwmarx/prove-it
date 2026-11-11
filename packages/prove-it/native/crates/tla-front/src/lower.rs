@@ -99,6 +99,58 @@ fn reaches_shown_effect(
     reaches_effect(definition, environment, cached, &SHOWN_EFFECTS, false)
 }
 
+/// The children of an expression its evaluation may reach: TLC computes the branch a constant IF
+/// takes alone, and an operator's argument only where the operator reads its parameter
+/// (`LazyValue`), which the evaluator follows where it can compute the condition.
+fn get_reached_children(
+    expression: &Expr,
+    environment: &Environment,
+    evaluator: Option<&crate::eval::Evaluator>,
+) -> Vec<Expr> {
+    match &expression.kind {
+        ExpressionKind::If {
+            condition,
+            consequent,
+            alternative,
+        } => match evaluator.map(|evaluator| evaluator.evaluate(condition, None)) {
+            Some(Ok(ConfigValue::Boolean(holds))) => vec![
+                condition.clone(),
+                if holds { consequent } else { alternative }.clone(),
+            ],
+            _ => expression.children(),
+        },
+        ExpressionKind::Apply { args, .. } if !expression.is_locally_resolved() => {
+            let callee = expression.reference().and_then(|name| {
+                let target = environment.substitutions.get(&name).unwrap_or(&name);
+                environment.definitions.get(target).cloned()
+            });
+            let Some(callee) = callee else {
+                return expression.children();
+            };
+            let DefinitionKind::Operator { params, .. } = &callee.kind else {
+                return expression.children();
+            };
+            let mut is_read_param = vec![false; params.len()];
+            let mut pending = vec![callee.body.clone()];
+            while let Some(inner) = pending.pop() {
+                if inner.is_locally_resolved()
+                    && let Some(reference) = inner.reference()
+                    && let Some(position) = params.iter().position(|param| param.name == reference)
+                {
+                    is_read_param[position] = true;
+                }
+                pending.extend(inner.children());
+            }
+            args.iter()
+                .enumerate()
+                .filter(|(position, _)| is_read_param.get(*position).is_none_or(|is_read| *is_read))
+                .map(|(_, argument)| argument.clone())
+                .collect()
+        }
+        _ => expression.children(),
+    }
+}
+
 /// Whether a definition reaches one of these builtins, past `cached`, and, with
 /// `is_past_kept`, outside a TLCEval, whose value TLC keeps.
 fn reaches_effect(
@@ -132,14 +184,72 @@ fn reaches_effect(
         {
             continue;
         }
-        pending.extend(expression.children());
+        pending.extend(get_reached_children(&expression, environment, None));
     }
     false
 }
 
 /// Whether the model reads a definition by its name: the configuration names it, or a
-/// definition or an assumption refers to it.
-fn is_read(name: &str, config: &crate::config::ModelConfig, environment: &Environment) -> bool {
+/// definition or an assumption refers to it where its evaluation may reach. With
+/// `is_alias_traced`, the ALIAS, which TLC evaluates only as it prints a trace, reads nothing,
+/// where nothing else reads it.
+fn is_read(
+    name: &str,
+    config: &crate::config::ModelConfig,
+    environment: &Environment,
+    evaluator: Option<&crate::eval::Evaluator>,
+    is_alias_traced: bool,
+) -> bool {
+    // The ALIAS, where no other part of the model or of the configuration names it.
+    let alias = config
+        .alias
+        .as_deref()
+        .filter(|_| is_alias_traced)
+        .filter(|alias| {
+            let is_named = [
+                &config.invariants,
+                &config.properties,
+                &config.constraints,
+                &config.action_constraints,
+                &config.postconditions,
+                &config.possible,
+            ]
+            .into_iter()
+            .flatten()
+            .chain(
+                [
+                    &config.init,
+                    &config.next,
+                    &config.specification,
+                    &config.symmetry,
+                    &config.view,
+                ]
+                .into_iter()
+                .flatten(),
+            )
+            .any(|named| named == alias);
+            let mut pending: Vec<Expr> = environment
+                .definitions
+                .iter()
+                .filter(|(key, _)| &***key != *alias)
+                .map(|(_, definition)| definition.body.clone())
+                .chain(
+                    environment
+                        .assumptions
+                        .iter()
+                        .map(|assumption| assumption.expression.clone()),
+                )
+                .collect();
+            let mut is_referred = false;
+            while let Some(expression) = pending.pop() {
+                is_referred |= !expression.is_locally_resolved()
+                    && expression
+                        .reference()
+                        .is_some_and(|reference| &*reference == *alias);
+                pending.extend(expression.children());
+            }
+            !is_named && !is_referred
+        });
     let named = [
         &config.invariants,
         &config.properties,
@@ -157,18 +267,19 @@ fn is_read(name: &str, config: &crate::config::ModelConfig, environment: &Enviro
             &config.specification,
             &config.symmetry,
             &config.view,
-            &config.alias,
             &config.periodic,
             &config.rl_reward,
         ]
         .into_iter()
         .flatten(),
     )
+    .chain(config.alias.iter().filter(|_| alias.is_none()))
     .any(|named| named == name);
     let mut pending: Vec<Expr> = environment
         .definitions
-        .values()
-        .map(|definition| definition.body.clone())
+        .iter()
+        .filter(|(key, _)| alias.is_none_or(|alias| &***key != alias))
+        .map(|(_, definition)| definition.body.clone())
         .chain(
             environment
                 .assumptions
@@ -182,13 +293,18 @@ fn is_read(name: &str, config: &crate::config::ModelConfig, environment: &Enviro
             && expression
                 .reference()
                 .is_some_and(|reference| &*reference == name);
-        pending.extend(expression.children());
+        pending.extend(get_reached_children(&expression, environment, evaluator));
     }
     named || is_referred
 }
 
 /// Whether an expression reaches one of these builtins, through the definitions it applies.
-fn reaches_in(expression: &Expr, environment: &Environment, builtins: &[&str]) -> bool {
+fn reaches_in(
+    expression: &Expr,
+    environment: &Environment,
+    builtins: &[&str],
+    evaluator: Option<&crate::eval::Evaluator>,
+) -> bool {
     let mut seen = FastSet::default();
     let mut pending = vec![expression.clone()];
     while let Some(expression) = pending.pop() {
@@ -206,7 +322,7 @@ fn reaches_in(expression: &Expr, environment: &Environment, builtins: &[&str]) -
                 pending.push(callee.body.clone());
             }
         }
-        pending.extend(expression.children());
+        pending.extend(get_reached_children(&expression, environment, evaluator));
     }
     false
 }
@@ -226,7 +342,7 @@ fn passes_effect(expression: &Expr, environment: &Environment, builtins: &[&str]
             if let Some(callee) = environment.definitions.get(target) {
                 if args
                     .iter()
-                    .any(|argument| reaches_in(argument, environment, builtins))
+                    .any(|argument| reaches_in(argument, environment, builtins, None))
                 {
                     return true;
                 }
@@ -317,6 +433,9 @@ pub struct Lowering<'a> {
     /// The evaluator of the constant parts of the liveness formula, without which they stay
     /// `NotYet`.
     pub evaluator: Option<&'a crate::eval::Evaluator<'a>>,
+    /// Why a trace printed through the ALIAS declines: the ALIAS reads a name a configuration
+    /// substitute with effects replaces, which TLC computes again as it prints each state.
+    pub alias_decline: Option<String>,
     /// The constant definitions TLC computes and deep-normalizes at startup, by address.
     normalized: FastSet<usize>,
     facts: DefinitionFacts,
@@ -354,6 +473,7 @@ impl<'a> Lowering<'a> {
         Lowering {
             branches: None,
             random_seed: 0,
+            alias_decline: None,
             normalized: environment
                 .startup_definitions
                 .iter()
@@ -1307,6 +1427,48 @@ impl<'a> Lowering<'a> {
     /// the assumptions that aren't axioms. SYMMETRY is `NotYet` before this.
     fn write_startup(&mut self, config: &crate::config::ModelConfig) -> Result<Startup> {
         let environment = self.environment;
+        // TLC replaces an operator a TLCOverrides index names with its Java method, which the
+        // front end doesn't run, and no longer computes it as it starts. It reads the method
+        // where the model reads the operator, a constant the configuration substitutes it for
+        // included, and where the ALIAS reads it as TLC prints a trace, where the run declines.
+        for (identifier, arity) in &environment.index_overrides {
+            let is_read_by = |name: &str, is_alias_traced| {
+                is_read(name, config, environment, None, is_alias_traced)
+            };
+            let is_replaced = config.substitutions.iter().any(|substitution| {
+                *substitution.name == **identifier
+                    || *substitution.target == **identifier && is_read_by(&substitution.name, false)
+            });
+            // TLC skips a method whose arity isn't the operator's.
+            let definition = environment
+                .definitions
+                .get(identifier)
+                .filter(|definition| {
+                    let defined_arity = match &definition.kind {
+                        DefinitionKind::Operator { params, .. } => params.len(),
+                        DefinitionKind::Function { .. } => 0,
+                    };
+                    defined_arity == *arity
+                });
+            let is_alike = match definition {
+                Some(definition) => {
+                    !is_replaced
+                        && !is_read_by(identifier, true)
+                        && !reaches_shown_effect(definition, environment, None)
+                }
+                None => !environment.builtins.contains_key(identifier),
+            };
+            if !is_alike {
+                return Err(FrontError::NotYet(format!(
+                    "a TLCOverrides index's Java override of {identifier}"
+                )));
+            }
+            if definition.is_some() && is_read_by(identifier, false) {
+                self.alias_decline = Some(format!(
+                    "an ALIAS that reads {identifier}, which a TLCOverrides index's Java method replaces"
+                ));
+            }
+        }
         // TLC computes a constant definition or an assumption that reads or sets TLCExt's
         // registers once as it starts (`TLCGetOrDefault` has no minimum level), and warns of a
         // constant invariant that does; the engine computes them where the model reads them.
@@ -1319,17 +1481,22 @@ impl<'a> Lowering<'a> {
         let mut is_register_constant = false;
         for definition in environment.definitions.values() {
             is_register_constant |= matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
-                && reaches_in(&definition.body, environment, &registers)
-                && (is_read(&definition.name, config, environment)
+                && reaches_in(&definition.body, environment, &registers, self.evaluator)
+                && (is_read(&definition.name, config, environment, self.evaluator, false)
                     || environment.substitutions.iter().any(|(name, target)| {
-                        *target == definition.name && is_read(name, config, environment)
+                        *target == definition.name
+                            && is_read(name, config, environment, self.evaluator, false)
                     }))
-                && !reaches_in(&definition.body, environment, &variables);
+                && !reaches_in(&definition.body, environment, &variables, None);
         }
-        is_register_constant |= environment
-            .assumptions
-            .iter()
-            .any(|assumption| reaches_in(&assumption.expression, environment, &registers));
+        is_register_constant |= environment.assumptions.iter().any(|assumption| {
+            reaches_in(
+                &assumption.expression,
+                environment,
+                &registers,
+                self.evaluator,
+            )
+        });
         if is_register_constant {
             return Err(FrontError::NotYet(
                 "a constant definition or an assumption that reads TLCExt's registers".into(),
@@ -1440,7 +1607,18 @@ impl<'a> Lowering<'a> {
                     _ if if is_evaluated_once {
                         is_read_under_binder(name, environment)
                     } else {
-                        is_read(name, config, environment)
+                        // A name only the ALIAS reads, TLC computes again only as it prints a
+                        // trace, where the run declines.
+                        let is_read_outside_alias =
+                            is_read(name, config, environment, self.evaluator, true);
+                        if !is_read_outside_alias
+                            && is_read(name, config, environment, self.evaluator, false)
+                        {
+                            self.alias_decline = Some(format!(
+                                "an ALIAS that reads a configuration substitute with effects: {name} <- {target}"
+                            ));
+                        }
+                        is_read_outside_alias
                     } =>
                     {
                         false

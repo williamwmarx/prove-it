@@ -92,6 +92,9 @@ pub struct Environment {
     /// The methods of the Java class that overrides a module's operators, which TLC reports as it
     /// starts.
     pub java_overrides: Vec<crate::java_overrides::JavaOverride>,
+    /// The root module's operators the `TLCOverrides` index TLC loads replaces with Java methods,
+    /// each with the method's arity.
+    pub index_overrides: Vec<(Name, usize)>,
 }
 
 impl Environment {
@@ -2042,16 +2045,13 @@ pub fn get_sany_messages(
 /// Links the spec's modules as `createEnvironment` does for a spec without a model
 /// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
 pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
-    // TLC loads the overrides a `tlc2.overrides.TLCOverrides` index at its package's path lists
-    // from any class, which the front end doesn't read. Its class loader finds no index by the
-    // class's name alone (`TLAClass.loadClass`).
-    if let Some(load) = options.load_class
-        && load("tlc2/overrides/TLCOverrides").is_some()
-    {
-        return Err(FrontError::NotYet(
-            "a TLCOverrides index of Java overrides".into(),
-        ));
-    }
+    // TLC loads the overrides a `tlc2.overrides.TLCOverrides` index at its package's path lists,
+    // which the front end reads only for the root module's operators. Its class loader finds no
+    // index by the class's name alone (`TLAClass.loadClass`).
+    let index_overrides = match options.load_class {
+        Some(load) => crate::java_overrides::get_index_overrides(load)?,
+        None => Vec::new(),
+    };
     let parsed = Rc::new(parse_module_tokens(
         options.source,
         &tokenize(options.source)?,
@@ -2419,6 +2419,38 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
     };
     let mut assumptions = Vec::new();
     add_assumptions(&linked_root, &mut Vec::new(), &mut assumptions);
+    // TLC skips an override of a module the spec doesn't load (`modSet.get`), or of a name the
+    // module doesn't define (`getOpDef`): one no module the spec loads defines.
+    let is_loaded = |module: &str| {
+        linker.linked_modules.borrow().contains_key(module)
+            || linker.nested_modules.borrow().contains_key(module)
+            || get_standard_modules(options.version)
+                .iter()
+                .any(|standard| standard.name == module)
+    };
+    let is_defined = |identifier: &str| {
+        let linked = linker.linked_modules.borrow();
+        let nested = linker.nested_modules.borrow();
+        linked
+            .values()
+            .chain(nested.values())
+            .any(|module| module.visible.contains_key(identifier))
+            || linker
+                .standard_exports
+                .borrow()
+                .values()
+                .any(|exports| exports.contains_key(identifier))
+    };
+    let mut index_overrides_kept = Vec::new();
+    for (module, identifier, arity) in index_overrides {
+        if module == *root.name {
+            index_overrides_kept.push((Name::from(identifier), arity));
+        } else if is_loaded(&module) && is_defined(&identifier) {
+            return Err(FrontError::NotYet(
+                "a TLCOverrides index of Java overrides of another module".into(),
+            ));
+        }
+    }
     let environment = Environment {
         startup_definitions,
         assumptions,
@@ -2438,6 +2470,7 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         instance_names: linker.instance_names.take(),
         printed,
         java_overrides: linker.java_overrides.take(),
+        index_overrides: index_overrides_kept,
     };
     // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
     // the level bound it computes is above constant. The bound counts the operators that TLC's

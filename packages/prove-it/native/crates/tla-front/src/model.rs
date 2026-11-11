@@ -86,6 +86,9 @@ pub struct LoweredModel {
     /// `Initial predicate` and where an unnamed one is written. None where the front end can't
     /// tell.
     pub initial_label: Option<String>,
+    /// Why a trace printed through the ALIAS declines, where the IR holds a value TLC computes
+    /// again as it prints each state.
+    pub alias_decline: Option<String>,
 }
 
 /// The encoded IR of the model the configuration describes, without TLC's actions, which the
@@ -385,6 +388,7 @@ fn lower_ranked(
                 })?
         };
         let branches = lowering.branches;
+        let alias_decline = lowering.alias_decline.take();
         let (ir, startup) = lowering.finish_indexing(model)?;
         // TLCGet("spec"), where an expression reads it; where the front end can't describe the
         // specification, the engine stops where TLC would read it.
@@ -475,6 +479,7 @@ fn lower_ranked(
                     .map(|name| name.to_string())
                     .collect(),
                 initial_label,
+                alias_decline,
             },
             startup,
         ))

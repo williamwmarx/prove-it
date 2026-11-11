@@ -23,8 +23,8 @@ pub(crate) const FAILURE_SPEC_EVAL: i32 = 75;
 pub(crate) const ERROR: i32 = 255;
 use crate::plain::Variable;
 use crate::trace::{
-    PostconditionRun, Postconditions, check, format_print, format_texts, get_field_variables,
-    get_partial_variables, get_state_variables, state_values,
+    PostconditionRun, Postconditions, Writing, check, format_print, format_texts,
+    get_field_variables, get_partial_variables, get_state_variables, state_values,
 };
 
 /// Where the search stopped on an error: the path to the state it was expanding, as ids of
@@ -115,7 +115,7 @@ pub fn print_failure(
             "an incomplete initial state the trace exploration spec's postcondition reads".into(),
         );
     }
-    let report = evaluate(ir, stop, printer.is_tool, printer.host.is_plain())?;
+    let report = evaluate(ir, stop, printer.writing())?;
     let failure = &report.failure;
     if stop.replayed.is_some() && failure.fingerprint.is_some() {
         return Err("a state TLC fails to fingerprint with an ALIAS or a POSTCONDITION".into());
@@ -416,12 +416,9 @@ pub fn print_assumption_failure(
 }
 
 // Evaluates the failure again and rebuilds the trace.
-fn evaluate(
-    ir: &Ir,
-    stop: &ErrorStop<'_>,
-    is_tool: bool,
-    is_plain: bool,
-) -> Result<Report, String> {
+fn evaluate(ir: &Ir, stop: &ErrorStop<'_>, writing: Writing<'_>) -> Result<Report, String> {
+    let is_tool = writing.is_tool;
+    let is_plain = writing.is_plain;
     evaluate_on_search_stack(|| {
         let mut rebuilder = Rebuilder::new(ir)?;
         rebuilder.set_fingerprints(stop.fingerprints);
@@ -493,6 +490,13 @@ fn evaluate(
             .collect();
         // TLC prints a state it was expanding alone, an initial one, as it is, and every other
         // trace through the ALIAS (`TLCTrace.printTrace`).
+        // TLC computes again, as it prints each state, a name the IR holds the value of.
+        if let Some(reason) = writing
+            .alias_decline
+            .filter(|_| stop.is_aliased && trace.states.len() > 1 || stop.postconditions.is_some())
+        {
+            return Err(Unsupported(reason.to_owned()));
+        }
         let aliases = if stop.is_aliased && trace.states.len() > 1 {
             rebuilder.alias(&trace, None, None, is_tool)?
         } else {
