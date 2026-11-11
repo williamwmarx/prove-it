@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 
 import { TlaError, TlaProverError } from "../src/errors";
-import { BACKENDS, decide, hasTypeScriptDecider } from "../src/prover/deciders";
+import { decide } from "../src/prover/deciders";
 import { proveObligations } from "../src/prover/prove";
 import type { Decision } from "../src/prover/verdict";
 import { CORPORA_DIRECTORY, getOption } from "./corpora";
@@ -41,12 +41,9 @@ import {
   PROVER_INPUTS_PATH,
   readInputRecords,
   TIME_LIMITS_PATH,
-  useTypeScriptBackends,
   writeInputRecords,
 } from "./prover-records";
 import { getDigest } from "./tlapm-digest";
-
-useTypeScriptBackends();
 
 const isRecording = process.argv.includes("--record");
 
@@ -76,12 +73,6 @@ const record = (prover: string, text: string, timeLimitMs: number): InputRecord 
     return { prover, verdict: "unknown", statistics: {}, error: error.message };
   }
 };
-
-// A backend without a TypeScript decider, as every backend now is, is recorded from its Rust port.
-if (isRecording)
-  BACKENDS.filter((backend) => !hasTypeScriptDecider(backend)).forEach((backend) =>
-    console.log(`${backend} has no TypeScript decider: its Rust port's answers are recorded`),
-  );
 
 const RECORDING_PATH = join(PROVER_INPUTS_DIRECTORY, "recording.jsonl");
 
