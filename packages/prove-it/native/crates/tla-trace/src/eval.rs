@@ -65,9 +65,47 @@ enum Binding {
 }
 
 /// The value of an argument or an expression's LET definition once evaluated, primed or not, which
-/// TLC keeps (`LazyValue`'s cache) where evaluating it read no state, drew nothing and printed
-/// nothing. A LET of an action or the initial predicate binds none (`Tool#getNextStates`).
-type Kept = Rc<std::cell::RefCell<Option<(bool, Value)>>>;
+/// TLC keeps for the states it evaluated it in (`LazyValue`'s cache): here where evaluating it read
+/// no state, drew nothing and printed nothing, and, where it built a lazy value that holds the
+/// states, only for those states. A LET of an action or the initial predicate binds none
+/// (`Tool#getNextStates`).
+type Kept = Rc<std::cell::RefCell<Option<KeptValue>>>;
+
+/// A kept value, whether primed, and the states a lazy value in it holds, which it is kept for.
+struct KeptValue {
+    is_primed: bool,
+    states: Option<States>,
+    value: Value,
+}
+
+/// The current state's values and the next state's.
+type States = (Vec<Option<Value>>, Vec<Option<Value>>);
+
+// Whether two states hold the same values: the same scalars and the same shared values, as a
+// state's values are cloned from it. Any other pair counts as different, so the value is evaluated
+// again.
+fn is_same_state(left: &[Option<Value>], right: &[Option<Value>]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|pair| match pair {
+            (None, None) => true,
+            (Some(left), Some(right)) => match (left, right) {
+                (Value::Bool(left), Value::Bool(right)) => left == right,
+                (Value::Int(left), Value::Int(right)) => left == right,
+                (Value::Interval(low, high), Value::Interval(other_low, other_high)) => {
+                    low == other_low && high == other_high
+                }
+                (Value::Str(left), Value::Str(right))
+                | (Value::Model(left), Value::Model(right)) => Rc::ptr_eq(left, right),
+                (Value::Set(left), Value::Set(right))
+                | (Value::Unsorted(left), Value::Unsorted(right)) => Rc::ptr_eq(left, right),
+                (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
+                (Value::Lazy(left), Value::Lazy(right)) => Rc::ptr_eq(left, right),
+                (Value::Lambda(left), Value::Lambda(right)) => Rc::ptr_eq(left, right),
+                _ => false,
+            },
+            _ => false,
+        })
+}
 
 pub struct Operator {
     params: Vec<Param>,
@@ -386,6 +424,9 @@ pub struct Evaluator<'ir> {
     pub next: Vec<Option<Value>>,
     /// How many times the evaluator read the state, so a definition that read none is cached.
     reads: u64,
+    /// How many lazy values the evaluator built that hold the states, to evaluate later in them:
+    /// a binding that built one keeps its value only for those states.
+    captures: u64,
     /// The value of each binding whose evaluation drew from the generator, by the address of the
     /// frame that binds it, which it keeps alive.
     drawn: HashMap<usize, (Rc<Frame>, Value)>,
@@ -692,6 +733,7 @@ impl<'ir> Evaluator<'ir> {
             current: vec![None; width],
             next: vec![None; width],
             reads: 0,
+            captures: 0,
             drawn: HashMap::new(),
             level: 0,
             next_level: None,
@@ -1802,6 +1844,7 @@ impl<'ir> Evaluator<'ir> {
                     } else {
                         None
                     };
+                    self.captures += 1;
                     let predicate = Predicate {
                         pattern: bound.pattern.clone(),
                         body: *predicate,
@@ -2000,14 +2043,17 @@ impl<'ir> Evaluator<'ir> {
                 }
                 let is_primed = context.is_primed || bound.is_primed;
                 if let Some(kept) = kept
-                    && let Some((was_primed, value)) = &*kept.borrow()
-                    && *was_primed == is_primed
+                    && let Some(kept) = &*kept.borrow()
+                    && kept.is_primed == is_primed
+                    && kept.states.as_ref().is_none_or(|(current, next)| {
+                        is_same_state(current, &self.current) && is_same_state(next, &self.next)
+                    })
                 {
-                    return Ok(value.clone());
+                    return Ok(kept.value.clone());
                 }
                 let inner = own_context(bound, frame, *is_self).primed(is_primed);
                 let state = self.random.as_ref().map(JavaRandom::state);
-                let (reads, printed) = (self.reads, self.printed.len());
+                let (reads, captures, printed) = (self.reads, self.captures, self.printed.len());
                 let value = self.evaluate(*node, &inner)?;
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
@@ -2015,7 +2061,12 @@ impl<'ir> Evaluator<'ir> {
                     && self.reads == reads
                     && self.printed.len() == printed
                 {
-                    *kept.borrow_mut() = Some((is_primed, value.clone()));
+                    *kept.borrow_mut() = Some(KeptValue {
+                        is_primed,
+                        states: (self.captures != captures)
+                            .then(|| (self.current.clone(), self.next.clone())),
+                        value: value.clone(),
+                    });
                 }
                 Ok(value)
             }
@@ -3094,6 +3145,7 @@ impl<'ir> Evaluator<'ir> {
                     format!("[{} \\in ", self.name(name)),
                     format!(" |-> <expression {}>]", self.describe_range(body)),
                 );
+                self.captures += 1;
                 return Ok(Value::Lambda(Rc::new(Lambda {
                     name,
                     domain: set,
