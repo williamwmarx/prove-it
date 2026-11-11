@@ -2042,6 +2042,16 @@ pub fn get_sany_messages(
 /// Links the spec's modules as `createEnvironment` does for a spec without a model
 /// (`isUnconfigured`) that SANY accepted (`isSanyAccepted`), so it runs no level checks.
 pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
+    // TLC loads the overrides a `tlc2.overrides.TLCOverrides` index at its package's path lists
+    // from any class, which the front end doesn't read. Its class loader finds no index by the
+    // class's name alone (`TLAClass.loadClass`).
+    if let Some(load) = options.load_class
+        && load("tlc2/overrides/TLCOverrides").is_some()
+    {
+        return Err(FrontError::NotYet(
+            "a TLCOverrides index of Java overrides".into(),
+        ));
+    }
     let parsed = Rc::new(parse_module_tokens(
         options.source,
         &tokenize(options.source)?,

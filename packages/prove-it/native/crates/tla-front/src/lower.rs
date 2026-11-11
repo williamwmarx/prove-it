@@ -187,6 +187,68 @@ fn is_read(name: &str, config: &crate::config::ModelConfig, environment: &Enviro
     named || is_referred
 }
 
+/// Whether an expression reaches one of these builtins, through the definitions it applies.
+fn reaches_in(expression: &Expr, environment: &Environment, builtins: &[&str]) -> bool {
+    let mut seen = FastSet::default();
+    let mut pending = vec![expression.clone()];
+    while let Some(expression) = pending.pop() {
+        if let Some(name) = expression.reference()
+            && !expression.is_locally_resolved()
+        {
+            // TLCExt defines these in TLA+ too.
+            if builtins.contains(&&*name) {
+                return true;
+            }
+            let target = environment.substitutions.get(&name).unwrap_or(&name);
+            if let Some(callee) = environment.definitions.get(target)
+                && seen.insert(Rc::as_ptr(callee) as usize)
+            {
+                pending.push(callee.body.clone());
+            }
+        }
+        pending.extend(expression.children());
+    }
+    false
+}
+
+/// Whether an assumption passes an operator with parameters an argument that reaches one of
+/// these builtins: the engine evaluates the argument where the operator reads it, which TLC
+/// evaluates once.
+fn passes_effect(expression: &Expr, environment: &Environment, builtins: &[&str]) -> bool {
+    let mut seen = FastSet::default();
+    let mut pending = vec![expression.clone()];
+    while let Some(expression) = pending.pop() {
+        if let ExpressionKind::Apply { args, .. } = &expression.kind
+            && let Some(name) = expression.reference()
+            && !expression.is_locally_resolved()
+        {
+            let target = environment.substitutions.get(&name).unwrap_or(&name);
+            if let Some(callee) = environment.definitions.get(target) {
+                if args
+                    .iter()
+                    .any(|argument| reaches_in(argument, environment, builtins))
+                {
+                    return true;
+                }
+                if seen.insert(Rc::as_ptr(callee) as usize) {
+                    pending.push(callee.body.clone());
+                }
+            }
+        } else if let Some(name) = expression.reference()
+            && !expression.is_locally_resolved()
+        {
+            let target = environment.substitutions.get(&name).unwrap_or(&name);
+            if let Some(callee) = environment.definitions.get(target)
+                && seen.insert(Rc::as_ptr(callee) as usize)
+            {
+                pending.push(callee.body.clone());
+            }
+        }
+        pending.extend(expression.children());
+    }
+    false
+}
+
 /// Whether a definition or an assumption reads a name where names are bound: in an operator with
 /// parameters, a function, or a quantifier, a set map or filter, a function, a CHOOSE or a LAMBDA.
 fn is_read_under_binder(name: &str, environment: &Environment) -> bool {
@@ -1245,14 +1307,51 @@ impl<'a> Lowering<'a> {
     /// the assumptions that aren't axioms. SYMMETRY is `NotYet` before this.
     fn write_startup(&mut self, config: &crate::config::ModelConfig) -> Result<Startup> {
         let environment = self.environment;
+        // TLC computes a constant definition or an assumption that reads or sets TLCExt's
+        // registers once as it starts (`TLCGetOrDefault` has no minimum level), and warns of a
+        // constant invariant that does; the engine computes them where the model reads them.
+        let registers = ["TLCGetOrDefault", "TLCGetAndSet"];
+        let analyzer = environment.create_level_analyzer(&["TLCGet", "Trace", "CounterExample"]);
+        let mut is_register_constant = false;
+        for definition in environment.definitions.values() {
+            is_register_constant |= matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
+                && reaches_in(&definition.body, environment, &registers)
+                && (is_read(&definition.name, config, environment)
+                    || environment.substitutions.iter().any(|(name, target)| {
+                        *target == definition.name && is_read(name, config, environment)
+                    }))
+                && analyzer
+                    .analyze_definition(definition, &crate::levels::Scope::default())?
+                    .data
+                    .level
+                    == 0;
+        }
+        is_register_constant |= environment
+            .assumptions
+            .iter()
+            .any(|assumption| reaches_in(&assumption.expression, environment, &registers));
+        if is_register_constant {
+            return Err(FrontError::NotYet(
+                "a constant definition or an assumption that reads TLCExt's registers".into(),
+            ));
+        }
+        if environment
+            .assumptions
+            .iter()
+            .any(|assumption| passes_effect(&assumption.expression, environment, &["AssertEq"]))
+        {
+            return Err(FrontError::NotYet(
+                "an assumption that passes an operator an argument with AssertEq".into(),
+            ));
+        }
         // TLC computes the constant definitions of a module without parameters a named INSTANCE
         // copies again as the copies (`processConstantDefns`), which repeats their effects. It
-        // computes none of a module an INSTANCE gives parameters to.
+        // computes none of a module an INSTANCE gives parameters to, and keeps a TLCEval's value.
         for (key, copy) in environment.instance_names.iter() {
             if let Some(definition) = environment.definitions.get(key)
                 && !environment.is_substituted(definition)
                 && is_startup_definition(definition, environment, &self.facts)
-                && reaches_shown_effect(definition, environment, None)
+                && reaches_effect(definition, environment, None, &SHOWN_EFFECTS, true)
             {
                 return Err(FrontError::NotYet(format!(
                     "a constant definition with effects of a module an INSTANCE copies: {copy}"

@@ -573,21 +573,25 @@ fn get_returned_literal(
     Err(unsupported())
 }
 
+/// Whether TLC finds a `tlc2.overrides.TLCOverrides` index beside the spec or on the class path,
+/// named as the class or at its package's path (`TLAClass.loadClass`).
+pub fn has_index(load_class: &ClassLoader) -> bool {
+    ["tlc2.overrides.TLCOverrides", "tlc2/overrides/TLCOverrides"]
+        .iter()
+        .any(|name| load_class(name).is_some())
+}
+
 /// `overrideDefinitions`: TLC loads a class named after each module and replaces each operator of
 /// the module that the root module sees with the public static method of the same name and
 /// arity. It reports whether each method matched an operator. TLC also loads the overrides a
-/// `tlc2.overrides.TLCOverrides` index class lists, from beside the spec as from the class path,
-/// named as the class or at its package's path (`TLAClass.loadClass`).
+/// `tlc2.overrides.TLCOverrides` index class lists (`has_index`).
 pub fn override_definitions(
     module: &Rc<Module>,
     bytes: &[u8],
     is_root: bool,
     load_class: &ClassLoader,
 ) -> Result<(Rc<Module>, Vec<JavaOverride>)> {
-    let has_index = ["tlc2.overrides.TLCOverrides", "tlc2/overrides/TLCOverrides"]
-        .iter()
-        .any(|name| load_class(name).is_some());
-    let (pool, methods) = read_class_file(bytes, has_index)?;
+    let (pool, methods) = read_class_file(bytes, has_index(load_class))?;
     let get_arity = |name: &str| {
         module
             .definitions
