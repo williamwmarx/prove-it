@@ -558,15 +558,17 @@ const RESETS: [(&str, &str); 20] = [
 ];
 
 // The port answers what Z3 answers to the first check-sat. Where Z3 prints an error before it,
-// which tlapm counts as a failure, the port fails with DecideError::Prover. Push and pop are outside the subset the port supports.
+// which tlapm counts as a failure, the port fails with DecideError::Prover. Push, pop and
+// reset-assertions are outside the subset the port supports.
 fn assert_answers_as_z3(scripts: &[(&str, &str)]) {
     for (script, z3) in scripts {
         let decision = decide_with(script, None);
-        if script.contains("(push") {
-            assert_eq!(
-                decision.map(|decision| get_decision_text(&decision)),
-                Ok("unknown stop=unsupported steps=1".into()),
-                "{script}"
+        if script.contains("(push") || script.contains("(reset-assertions") {
+            let text = decision.map(|decision| get_decision_text(&decision));
+            assert!(
+                text.as_ref()
+                    .is_ok_and(|text| text.starts_with("unknown stop=unsupported ")),
+                "{script}: {text:?}"
             );
             continue;
         }
@@ -596,7 +598,10 @@ fn resets_as_z3_does() {
 
 /// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
 /// 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 15] = [
+const COMMAND_ERRORS: [(&str, &str); 18] = [
+    ("(assert false)(exit)(check-sat)", ""),
+    ("(assert false)(check-sat)(exit)", "unsat"),
+    ("(assert false)(reset-assertions)(check-sat)", "sat"),
     (
         "(assert true)(set-option :produce-unsat-cores true)(check-sat)",
         "(error \"line 1 column 47: error setting ':produce-unsat-cores', option value cannot be \

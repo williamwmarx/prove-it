@@ -987,7 +987,9 @@ pub fn parse_smtlib(
                 has_check_sat = true;
                 break;
             }
-            "push" | "pop" | "define-fun" | "define-sort" => {
+            // Z3 reads no further.
+            "exit" => break,
+            "push" | "pop" | "define-fun" | "define-sort" | "reset-assertions" => {
                 return Err(SmtError::Unsupported(format!(
                     "the command {name} is not supported"
                 )));
