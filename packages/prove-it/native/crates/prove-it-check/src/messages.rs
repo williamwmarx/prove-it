@@ -114,12 +114,19 @@ impl<'o> Printer<'o> {
     /// states printed after it.
     pub fn report(&mut self, code: u32, headline: &str) {
         self.print(code, Level::Error, headline);
-        self.outcome.violations.push(Reported {
+        self.record(Reported {
             code,
             headline: headline.to_string(),
             states: Vec::new(),
             loop_start: None,
         });
+    }
+
+    /// Keeps a violation or an error in the outcome, where its caller reads it (`Host::is_plain`).
+    pub fn record(&mut self, reported: Reported) {
+        if self.host.is_plain() {
+            self.outcome.violations.push(reported);
+        }
     }
 
     /// A state of the behavior TLC reports, at its position from 1.
@@ -129,12 +136,7 @@ impl<'o> Printer<'o> {
             Level::State,
             &format!("{position}: <{label}>\n{}", format_variables(&variables)),
         );
-        if let Some(reported) = self
-            .outcome
-            .violations
-            .last_mut()
-            .filter(|_| self.host.is_plain())
-        {
+        if let Some(reported) = self.outcome.violations.last_mut() {
             reported.states.push(ReportedState {
                 label: label.to_string(),
                 variables,

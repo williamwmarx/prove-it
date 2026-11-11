@@ -180,3 +180,28 @@ fn keeps_the_prints_only_for_the_library() {
         assert_eq!(kept.len(), prints, "{is_library}");
     }
 }
+
+// With -continue, TLC reports each initial state that violates an invariant and goes on; the CLI
+// reads only what is printed, so the check keeps the violations only for the library.
+#[test]
+fn keeps_the_continued_violations_only_for_the_library() {
+    let spec = "---- MODULE Many ----\nEXTENDS Naturals\nVARIABLE x\nInit == x \\in 1..3\nNext == UNCHANGED x\nInv == x > 3\n====\n";
+    let read = |key: &str| match key {
+        "text:/specs/Many.tla" => Some(spec.to_owned()),
+        "text:/specs/Many.cfg" => Some("INIT Init\nNEXT Next\nINVARIANT Inv\n".to_owned()),
+        _ => key.strip_prefix("file:").map(|_| String::new()),
+    };
+    for (is_library, kept) in [(false, 0), (true, 3)] {
+        let (result, _) = check_on(
+            &["-noGenerateSpecTE", "-continue", "/specs/Many.tla"],
+            is_library,
+            read,
+        );
+        let out = text(&get(&result, "out"));
+        assert_eq!(out.matches("Invariant Inv is violated").count(), 3, "{out}");
+        let HostValue::Array(violations) = get(&get(&result, "outcome"), "violations") else {
+            panic!("no violations: {result:?}");
+        };
+        assert_eq!(violations.len(), kept, "{is_library}: {out}");
+    }
+}
