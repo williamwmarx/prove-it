@@ -12,7 +12,9 @@
 //!   configuration (`checkSources`);
 //! - `class:<name>`, the Java override TLC loads for a module, as a Uint8Array (`checkSources`);
 //! - `bytes:<path>`, the bytes of a file the command line names, such as the tla2tools.jar on a
-//!   Java launch's class path, as a Uint8Array (`checkSources`).
+//!   Java launch's class path, as a Uint8Array (`checkSources`);
+//! - `decide:<key>`, a backend's answer to a decision `prove` asks for, with its text, by the key it
+//!   gives it (`prove`).
 //!
 //! An export that reads something else names it by a key of a new kind, which this list gains.
 
@@ -86,6 +88,24 @@ impl Sources {
         }
     }
 
+    /// The keys JavaScript answered that start with `prefix`, with their texts, in key order.
+    pub fn get_answered_with(&self, prefix: &str) -> Vec<(String, Option<String>)> {
+        let mut answered: Vec<_> = self
+            .known
+            .iter()
+            .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(key, value)| {
+                let text = match value {
+                    Some(Known::Text(text)) => Some(text.clone()),
+                    _ => None,
+                };
+                (key.clone(), text)
+            })
+            .collect();
+        answered.sort();
+        answered
+    }
+
     fn get_known(&self, key: String) -> Option<Known> {
         let value = self.known.get(&key).cloned();
         if value.is_none() {
@@ -101,8 +121,8 @@ impl Sources {
 
     /// `{ kind: "needed", keys }` where the export read a key that isn't known, in place of its
     /// result.
-    pub fn get_needed(self) -> Option<HostValue> {
-        let needed = self.needed.into_inner();
+    pub fn get_needed(&self) -> Option<HostValue> {
+        let needed = self.needed.borrow();
         (!needed.is_empty()).then(|| {
             HostValue::Object(vec![
                 ("kind", HostValue::text("needed")),
