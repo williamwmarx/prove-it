@@ -38,20 +38,36 @@ pub fn is_174(host: &dyn Host, jar: &str) -> Result<bool, String> {
     Ok(tag == Some("v1.7.4"))
 }
 
-/// `jar:file:<absolute path>!/tla2sany/StandardModules/`, with the path encoded as Node's
-/// `pathToFileURL` encodes it.
+/// `jar:file:<absolute path>!/tla2sany/StandardModules/`, with the path written and encoded as
+/// Node's `pathToFileURL` writes the pathname.
 pub fn get_standard_modules_url(jar: &Path) -> String {
-    let path = jar.display().to_string();
-    let encoded: String = path
-        .bytes()
+    format!(
+        "jar:file:{}!/tla2sany/StandardModules/",
+        get_url_path(&jar.display().to_string(), cfg!(windows))
+    )
+}
+
+// A path as a file URL's pathname: on Windows with forward slashes, a drive's path from the root
+// (`C:\work` as `/C:/work`), then percent-encoded.
+fn get_url_path(path: &str, is_windows: bool) -> String {
+    let path = if is_windows {
+        let slashed = path.replace('\\', "/");
+        if slashed.starts_with('/') {
+            slashed
+        } else {
+            format!("/{slashed}")
+        }
+    } else {
+        path.to_owned()
+    };
+    path.bytes()
         .map(|byte| match byte {
             b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' => char::from(byte).to_string(),
             b'/' | b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b'-' | b'.'
             | b':' | b';' | b'=' | b'@' | b'_' => char::from(byte).to_string(),
             _ => format!("%{byte:02X}"),
         })
-        .collect();
-    format!("jar:file:{encoded}!/tla2sany/StandardModules/")
+        .collect()
 }
 
 #[cfg(test)]
@@ -76,7 +92,9 @@ mod tests {
     #[test]
     fn names_the_jar_and_its_standard_modules_as_the_typescript_cli_does() {
         assert_eq!(
-            get_tools_jar("classes:lib/tla2tools.jar:other.jar"),
+            get_tools_jar(&format!(
+                "classes{PATH_DELIMITER}lib/tla2tools.jar{PATH_DELIMITER}other.jar"
+            )),
             Some("lib/tla2tools.jar")
         );
         assert_eq!(get_tools_jar("classes"), None);
@@ -86,6 +104,11 @@ mod tests {
                 "/a b/%#?[]^|~\"<>`{}\\\u{e9}/x!$&'()*+,-.:;=@_.jar"
             )),
             "jar:file:/a%20b/%25%23%3F%5B%5D%5E%7C%7E%22%3C%3E%60%7B%7D%5C%C3%A9/x!$&'()*+,-.:;=@_.jar!/tla2sany/StandardModules/"
+        );
+        // What it writes of a Windows path.
+        assert_eq!(
+            get_url_path(r"C:\work dir\tla2tools.jar", true),
+            "/C:/work%20dir/tla2tools.jar"
         );
     }
 }
