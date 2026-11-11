@@ -539,6 +539,14 @@ mod tests {
         assert_eq!(launch.main_class, "tlc2.TLC");
         assert_eq!(launch.args, strings(&["-tool", "Spec"]));
         assert_eq!(launch.java.libraries, strings(&["/a", "/b"]));
+        let last = get_java_launch(&strings(&[
+            &libraries,
+            "-DTLA-Library=/c",
+            "tlc2.TLC",
+            "Spec",
+        ]))
+        .expect("a launch");
+        assert_eq!(last.java.libraries, strings(&["/c"]));
         assert_eq!(launch.java.unmodelled_property, None);
         assert_eq!(get_java_launch(&strings(&["Spec.tla", "-tool"])), None);
         let properties = get_java_launch(&strings(&[
