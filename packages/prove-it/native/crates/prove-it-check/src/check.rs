@@ -388,20 +388,17 @@ impl<'ir> Relay<'ir> {
         is_tool: bool,
         is_plain: bool,
         workers: usize,
-        is_periodic: bool,
-        coverage_countdown: Option<i32>,
-        is_dumped: bool,
         startup_messages: Vec<StartupMessage>,
     ) -> Self {
         Relay {
             sender,
             is_misprinted: false,
-            is_periodic,
+            is_periodic: false,
             is_periodic_reached: false,
-            coverage_countdown,
+            coverage_countdown: None,
             is_coverage_reached: false,
             is_declined: false,
-            is_dumped,
+            is_dumped: false,
             dumped: None,
             ir,
             is_tool,
@@ -1175,11 +1172,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 is_tool,
                 is_plain,
                 workers,
-                is_periodic,
-                coverage::get_countdown(args),
-                is_dumped,
                 front.startup_messages,
             );
+            relay.is_periodic = is_periodic;
+            relay.is_dumped = is_dumped;
+            relay.coverage_countdown = coverage::get_countdown(args);
             let outcome = search(ir, &settings, &mut relay);
             (outcome, relay.assumed_printed, relay.dumped)
         },
@@ -1548,6 +1545,11 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
                 // TLC's worker fails on a POSTCONDITION it rejects as it is to check it on the
                 // trace of a safety violation, after printing the trace, and reports nothing more
                 // (`Worker.doPostCondition`). Elsewhere the binary doesn't follow TLC.
+                // TLC rejects the configuration's postconditions as it collects them all, before
+                // it evaluates any, so -dumpTrace's write nothing (`Spec.getPostConditionSpecs`).
+                _ if rejected_postcondition.is_some() && !dumps.is_empty() => {
+                    Err("-dumpTrace with a POSTCONDITION TLC rejects".to_string())
+                }
                 _ if rejected_postcondition.is_some()
                     && (!config.possible.is_empty()
                         || !matches!(
