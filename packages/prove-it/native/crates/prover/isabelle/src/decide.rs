@@ -51,7 +51,7 @@ fn is_proved(text: &str) -> Res<bool> {
 /// decideIsabelle: unsat when the proof proves the statement, unknown when it fails or gives up.
 pub fn decide(text: &str, limits: &Limits) -> Result<Decision, DecideError> {
     if !text.is_ascii() {
-        return Err(DecideError::Declined(
+        return Err(DecideError::Prover(
             "Isabelle's port reads ASCII theories only".into(),
         ));
     }
@@ -71,10 +71,10 @@ pub fn decide(text: &str, limits: &Limits) -> Result<Decision, DecideError> {
                 "Isabelle's proof recursed deeper than WebAssembly's stack allows".into(),
             ));
         }
-        // The TypeScript rethrows anything else; here only a local exception that escaped its
-        // handler can, which is a bug of the port.
+        // Only a local exception that escaped its handler can be anything else, which is a bug
+        // of the port and a failure, as an Isabelle that breaks down is to tlapm.
         Err(error) => {
-            return Err(DecideError::Declined(format!(
+            return Err(DecideError::Prover(format!(
                 "Isabelle's port let an internal exception escape: {error:?}"
             )));
         }
@@ -291,13 +291,16 @@ mod tests {
         }
     }
 
+    // tlapm counts an Isabelle that stops on its input as a failure.
     #[test]
-    fn declines_a_theory_that_is_not_ascii() {
+    fn fails_on_a_theory_that_is_not_ascii() {
         let limits = Limits::new(f64::INFINITY, None, None);
-        assert!(matches!(
+        assert_eq!(
             decide("theory \u{e9}", &limits),
-            Err(DecideError::Declined(_))
-        ));
+            Err(DecideError::Prover(
+                "Isabelle's port reads ASCII theories only".into()
+            ))
+        );
     }
 
     /// The decider differential on the fixtures: the TypeScript's verdict and statistics under a
