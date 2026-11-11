@@ -1,12 +1,12 @@
+export type { CheckStatus } from "./check";
 export type {
-  CheckOptions,
   CheckProgress,
   CheckResult,
-  CheckStatus,
-  EvaluationFailure,
+  PlainValue,
   TraceStep,
+  TraceVariable,
   Violation,
-} from "./check";
+} from "./check-result";
 export { parseConfig } from "./config";
 export type { ConfigValue, ConstantAssignment, ModelConfig, Substitution } from "./config";
 export {
@@ -17,7 +17,8 @@ export {
   TlaSyntaxError,
   TlaUnsupportedError,
 } from "./errors";
-export { check } from "./parallel";
+export { check } from "./library-check";
+export type { CheckOptions } from "./library-check";
 export { parseModule } from "./parser";
 export { prove } from "./prover/prove";
 export type {
@@ -30,5 +31,3 @@ export type {
   UnprovedObligation,
 } from "./prover/prove";
 export type { Module } from "./ast";
-export { formatValue } from "./values";
-export type { Value } from "./values";

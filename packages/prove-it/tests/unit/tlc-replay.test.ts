@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { check } from "../../src";
 import type { Expression } from "../../src/ast";
+import { checkParsed } from "../../src/parallel";
 import type { TlcVersion } from "../../src/tlc/version";
 
 const HEADER = [
@@ -25,7 +25,7 @@ const formatCallStack = (expressions: Expression[] | undefined) =>
     });
 
 const checkSpec = (definitions: string, config: string, version?: TlcVersion) =>
-  check({
+  checkParsed({
     source: `---- MODULE M ----\n${HEADER}\n${definitions}\n====`,
     config,
     version,

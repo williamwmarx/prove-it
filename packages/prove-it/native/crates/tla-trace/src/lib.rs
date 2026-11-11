@@ -47,7 +47,7 @@ pub use print::{format_printed, format_value};
 pub use rebuild::Rebuilder;
 pub use split::{Described, SpecDescription, add_actions, add_spec};
 pub use value::RECORD_VALUE_FIELDS;
-pub use value::Value;
+pub use value::{Class, Text, Value};
 
 /// Where the evaluator can't follow TLC yet: the caller reports `not native yet: <reason>`.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -355,7 +355,7 @@ THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 <https://isabelle.in.tum.de>
 
-`src/prover/isabelle/` ports the parts of Isabelle that TLAPS proofs use: Pure, Isar, the blast prover and Isabelle/TLA+.
+`native/crates/prover/isabelle/` ports the parts of Isabelle that TLAPS proofs use: Pure, Isar, the blast prover and Isabelle/TLA+, and keeps this licence in its `LICENSE`, and tlapm's, for the Isabelle/TLA+ theories its logic data comes from, in its `LICENSE-tlapm`.
 
 ```
 ISABELLE COPYRIGHT NOTICE, LICENCE AND DISCLAIMER.

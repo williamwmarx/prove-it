@@ -28,10 +28,13 @@ const SMT_RECORDED: Decision = {
 };
 
 // What the TypeScript deciders answered on their inputs with no limits, before they were deleted,
-// Zenon's as tests/fixtures/zenon/decisions.txt records it too.
+// as tests/fixtures/zenon/decisions.txt and prove-isabelle's testdata/decide.txt record Zenon's and
+// Isabelle's too.
 const RECORDED: Record<string, Decision> = {
   smt: SMT_RECORDED,
   z3: SMT_RECORDED,
+  isabelle: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 840 } },
+  ls4: { verdict: "unsat", timeUsedMs: 0, statistics: { steps: 5 } },
   zenon: {
     verdict: "unsat",
     timeUsedMs: 0,
@@ -126,27 +129,25 @@ describe("the Rust ports", () => {
     });
   });
 
-  it("decides PTL", () => {
-    expect(getAddon().decide("ls4", INPUTS[3][1], Infinity, undefined, undefined).kind).toBe(
-      "decided",
-    );
-  });
+  // Every backend's TypeScript is deleted, so PROVE_IT_PROVER doesn't reach it. Z3 is sent the SMT
+  // input.
+  it.each([...INPUTS, ["z3", INPUTS[0][1]] as const])(
+    "decides %s in Rust whatever PROVE_IT_PROVER says",
+    (prover, text) => {
+      expect(useProver("ts", () => decide(prover, text, OPTIONS))).toMatchObject({
+        verdict: "unsat",
+        statistics: RECORDED[prover].statistics,
+      });
+    },
+  );
 
-  // Their TypeScript is deleted, so PROVE_IT_PROVER doesn't reach them. Z3 is sent the SMT input.
+  // tlapm counts a Zenon, an Isabelle or an LS4 that stops on its input as a failure.
   it.each([
-    ["zenon", INPUTS[1][1]],
-    ["smt", INPUTS[0][1]],
-    ["z3", INPUTS[0][1]],
-  ])("decides %s in Rust whatever PROVE_IT_PROVER says", (prover, text) => {
-    expect(useProver("ts", () => decide(prover, text, OPTIONS))).toMatchObject({
-      verdict: "unsat",
-      statistics: RECORDED[prover].statistics,
-    });
-  });
-
-  // tlapm counts a Zenon that stops on its input as a failure.
-  it("fails on a malformed Zenon input", () => {
-    expect(() => decide("zenon", "$sig a", OPTIONS)).toThrow(TlaProverError);
+    ["zenon", "$sig a"],
+    ["isabelle", "theory \u{e9}"],
+    ["ls4", "not ((always h00000) ->"],
+  ])("fails on a malformed %s input", (prover, text) => {
+    expect(() => decide(prover, text, OPTIONS)).toThrow(TlaProverError);
   });
 
   it("declines a prover without a backend", () => {

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import { check } from "../../src";
+import { checkParsed } from "../../src/parallel";
 
 const checkInit = (init: string) =>
-  check({
+  checkParsed({
     source: `---- MODULE M ----\nEXTENDS RealTime, Toolbox\nVARIABLE x\nInit == x = 0 /\\ now = 0 /\\ ${init}\nNext == UNCHANGED <<x, now>>\n====`,
     config: "INIT Init\nNEXT Next",
   });

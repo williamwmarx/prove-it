@@ -4,8 +4,6 @@
 import { getNativeAddon } from "../engine/native";
 import { getEnvironmentSetting, reportEngine } from "../engine/settings";
 import { EngineUnavailableError, TlaProverError } from "../errors";
-import { decideIsabelle } from "./isabelle/decide";
-import { decidePtl } from "./ptl/decide";
 import { createSteps, type DecideOptions, type Decision, type Verdict } from "./verdict";
 
 // The backends prove decides with, by the prover of the method that selects them.
@@ -14,10 +12,7 @@ export const BACKENDS: readonly string[] = ["smt", "z3", "zenon", "isabelle", "l
 // The backends whose TypeScript decider is still kept. The others are decided by their Rust port
 // alone.
 export const DECIDERS: Partial<Record<string, (text: string, options: DecideOptions) => Verdict>> =
-  {
-    isabelle: decideIsabelle,
-    ls4: decidePtl,
-  };
+  {};
 
 export const isBackend = (prover: string) => BACKENDS.includes(prover);
 
