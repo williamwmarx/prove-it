@@ -1,0 +1,5 @@
+{
+ "root": "Lonely",
+ "version": "1.7.4",
+ "test": "aborts without a location on a module it cannot find"
+}
