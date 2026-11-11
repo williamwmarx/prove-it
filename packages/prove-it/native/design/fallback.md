@@ -286,6 +286,33 @@ it from one that printed something else. Each is outside the corpus:
 
 #### Known wrong outputs
 
+These print another verdict or message than TLC, outside the corpus and the tests:
+- **A definition TLC computes as it starts through an operator argument.** `getLevelBound` gives an
+  operator passed as an argument level 0 whatever it reads, so TLC computes `D == Apply(G)`, with
+  `G(k) == k + TLCGet("level")` and `Apply(F(_)) == [n \in 1..3 |-> F(n)]`, as it starts, without a
+  state, and applies the function it built with none. The engine evaluates D in each state: with
+  `Inv == x >= 0 /\ D[1] # 3` and `Next == x < 4 /\ x' = x + 1`, TLC deadlocks (exit 11) where
+  the engine finds Inv violated (exit 12); with `G(k) == k + x` over `Nat`, TLC fails reading x
+  (exit 76). A decline of every such definition that evaluates without a state also declines the
+  runs that never apply what reads the state, which match TLC; the fix is the engine computing
+  them as TLC does.
+- **A set an ALIAS or a postcondition tests as TLC built it.** TLC searches a set enumeration it
+  hasn't normalized element by element, so `"a" \in {3, 1, 2}` fails on 3 first, in
+  `_ALIASEvalError` and in "Evaluating postcondition ... failed". The evaluator follows that only
+  in a failure's replay, whose call stack also tells where TLC normalized the set first (an
+  argument TLC keeps, sized by `Cardinality`, then searched); the ALIAS and the postconditions
+  name the sorted set's element.
+- **A definition reaching a name spelled as a variable.** `getLevelBound` asks a name's
+  `UniqueString` whether it is a variable, so TLC doesn't compute `D == <<{3, 1, 2}, I!Op(1)>>` as
+  it starts where N's `Op(x) == {n \in Nat : n > x}` has a parameter spelled as M's variable x,
+  and holds `{3, 1, 2}` as written: `"a" \in D[1]` fails on 3 first. The replay computes D as TLC
+  computes a constant definition, sorted, and fails on 1. TLC computes it so where the
+  configuration substitutes D for a constant (`C <- D`), whatever its level, and the IR doesn't
+  say which definitions the configuration substitutes.
+- **SANY's report of a label without its parameter.** A reference `E!lab` to
+  `E == {n \in Nat : lab:: n > 1}` reports one error more than SANY, "Unknown operator: `n'". The
+  branch that deletes the TypeScript SANY report declines it.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
