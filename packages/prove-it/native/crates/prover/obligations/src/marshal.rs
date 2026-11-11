@@ -44,6 +44,13 @@ const PREFIX_SMALL_BLOCK: u8 = 0x80;
 
 const HEADER_SIZE: usize = 20;
 
+// How deep blocks may nest. intern.c reads with its own stack and has no bound; the TypeScript recurses
+// until JavaScript's stack runs out. Deeper input is corrupt here rather than a stack overflow,
+// which in Rust aborts the process; the bound also keeps dropping and comparing a value within a
+// 2 MB thread's stack in a debug build. The deepest nesting in tlapm's files is a hash bucket's
+// chain, a few fingerprints long.
+const MAX_DEPTH: usize = 256;
+
 pub fn block(tag: u8, fields: Vec<MarshalValue>) -> MarshalValue {
     MarshalValue::Block(Rc::new(MarshalBlock { tag, fields }))
 }
@@ -59,6 +66,7 @@ struct Reader<'b> {
     position: usize,
     end: usize,
     objects: Vec<Option<MarshalValue>>,
+    depth: usize,
 }
 
 impl Reader<'_> {
@@ -84,6 +92,10 @@ impl Reader<'_> {
     }
 
     fn read_block(&mut self, tag: u8, size: usize) -> Result<MarshalValue> {
+        if self.depth == MAX_DEPTH {
+            return Err(corrupted());
+        }
+        self.depth += 1;
         // A block is numbered when it starts and complete once its fields are read; a shared
         // reference to it from inside itself cannot occur in what extern.c writes without cycles.
         let index = self.objects.len();
@@ -94,6 +106,7 @@ impl Reader<'_> {
         for _ in 0..size {
             fields.push(self.read()?);
         }
+        self.depth -= 1;
         let value = block(tag, fields);
         if size > 0 {
             self.objects[index] = Some(value.clone());
@@ -181,6 +194,7 @@ pub fn read_marshaled(bytes: &[u8], offset: usize) -> Result<(MarshalValue, usiz
         position: offset + HEADER_SIZE,
         end,
         objects: Vec::new(),
+        depth: 0,
     };
     Ok((reader.read()?, end))
 }

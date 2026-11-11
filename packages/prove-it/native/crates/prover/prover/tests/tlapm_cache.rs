@@ -183,3 +183,26 @@ fn marshal_keeps_shared_blocks_shared() {
     }
     assert_eq!(depth, 30);
 }
+
+fn nested(depth: usize) -> Vec<u8> {
+    let mut input = from_hex("8495a6be0000000000000000000000000000000000000000");
+    input.truncate(20);
+    input[4..8].copy_from_slice(&(depth as u32 + 1).to_be_bytes());
+    input.extend(std::iter::repeat_n(0x90, depth));
+    input.push(0x40);
+    input
+}
+
+// Blocks nested 256 deep read, compare and drop within a test thread's stack; deeper ones
+// are corrupt, not a stack overflow.
+#[test]
+fn marshal_bounds_how_deep_blocks_nest() {
+    let input = nested(256);
+    let (value, _) = read_marshaled(&input, 0).expect("readable");
+    let (again, _) = read_marshaled(&input, 0).expect("readable");
+    assert!(value == again);
+    drop(value);
+    for depth in [257, 50_000] {
+        assert!(read_marshaled(&nested(depth), 0).is_err(), "{depth}");
+    }
+}
