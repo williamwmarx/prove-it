@@ -1124,7 +1124,7 @@ search ends. That is what the induction leans on when it says the walk evaluated
 without failing.
 
 **Plan (ii), as built.**
-- `Compiler::match_pieces` (`compile/pieces.rs`) reads the atom's action and Next side by side as
+- `Compiler::add_pieces` (`compile/pieces.rs`) reads the atom's action and Next side by side as
   above. Two expressions are the same where they are the same node outside any bound name, the
   same number or string, or the same global operator, builtin, constant or variable applied to
   arguments that are the same, a bound name standing for the one of Next's it was paired with.
@@ -1133,16 +1133,94 @@ without failing.
   so `WF_x(A)` over a disjunct `A` of Next matches it. The matcher asks for no other conjunct beside a piece, though a conjunct at the top of
   Next holds of every step the search keeps, so it couldn't change an answer; context inside a
   disjunct or under a bound value can, which `(G /\ A) \/ B` tests.
-- `EngineContext::build` matches each action atom before it compiles Next (at most eight, a bit
+- `EngineContext::build` matches each action atom before it compiles Next (at most 64, a bit
   each), and the walker wraps the walk of each matched node so that it sets the atom's bit on
   `Machine::piece_bits` while it runs. The pipelined search checks a successor one step later,
-  so the bits wait with it (`pending_pieces`).
-- `Graph::pieces` keeps a byte per step, next to `labels`, and the threads' merge copies it over
-  the same steps, only where an atom is matched and there is no VIEW or SYMMETRY.
+  so the bits wait with it (`pending_pieces`). Once Next is compiled, an atom keeps its bit only
+  where the walk went through each of its pieces (`Compiler::is_piece_walked`): a piece the
+  compiled walk never wraps would leave the bit unset on steps A holds of.
+- `Graph::pieces` keeps `piece_width` bytes per step, (n + 7) / 8 for n answered atoms, next to
+  `labels`, and the threads' merge copies them over the same steps, only where an atom is matched
+  and there is no VIEW or SYMMETRY. A run with no matched atom keeps nothing per step.
 - `answer_atoms` answers such an atom on a step whose subscript changed with whether any step from
   the same state to the same successor has the bit, under plan (i)'s guard, on both paths.
-- StarkMutex's fairness, `\A self \in ProcSet : WF_vars(p(self))`, matches nothing yet: each atom
-  is the action under one value of `self`, which no `\E` of Next pairs with.
+
+**Plan (ii) from TLC's actions.** Where the search labels its steps with TLC's actions (some
+ENABLED atom splits into some of them, `tla_trace::add_actions`), the pieces are off, and an action
+atom of a fairness answers from the labels, as "The claim" above first planned. TLC builds the
+action and the ENABLED of `WF_e(A)` and `SF_e(A)` from the same body and context
+(`new LNStateEnabled(body, con, subs, false)` and `new LNAction(body, con, subs, false)`,
+`Liveness.java:497-514`), so the positions `find_enabled_actions` found for the ENABLED are A's
+split into TLC's actions: each the same expression in an equal scope as one of Next's
+(`getActions`, `Tool.java:273-410`: disjunctions, `\E` over sets evaluated as TLC starts, operator
+applications with their arguments' values bound, LET and labels). `get_split` takes them where
+the ENABLED atom is `<<A>>_v` of the same node in the same scope; `Taken::of` answers every step
+where they are all of TLC's actions (A ≡ Next, as plan (i)), and otherwise whether some step from
+the state to the successor has one of their labels. The labelled search walks each of TLC's actions
+exhaustively, so the claim's induction holds of each split action as of a piece, under plan (i)'s
+guard, with A reading nothing of the search and passing `is_walk_repeatable`. Where the search
+couldn't compile TLC's actions it walks Next unlabelled, and the atom is evaluated. StarkMutex runs
+this way: each of its 45 atoms answers from the labels of its process's action.
+
+**Plan (ii) under one value.** TLC expands `\A self \in S : WF_v(p(self))` into one formula per
+element of S, each in a context binding `self` to it (`Liveness.java:336-366`: `tool.contexts`
+enumerates S, then `astToLive(tool, body, con1)`), and `LNAction.eval` evaluates the subscript and
+then the body in that context (`LNAction.java:66-85`). The front end keeps the context as the
+atom's scope, a chain of `ScopeBinding::Value`s below the model's (`get_bound_values`). So each atom
+is `p(self)` under one value v of `self`, which no `\E` of Next pairs with: PlusCal writes
+`Next == (\E self \in S : p(self)) \/ ...`, StarkMutex `\E self \in 1..N : i(self)` with
+`i(self) == in1(self) \/ ...` and fairness over each `in1(self)`. Matching adds:
+- an `\E` of Next whose bound names the action doesn't pair: each name is *pinned* once the action
+  reads, where Next reads it, a name its scope binds to a value v that is an integer, string or
+  model value, and the `\E`'s set is one the matcher reads without evaluating anything and that
+  holds v: a declared constant, an interval of numbers and constants, an enumeration of those, a
+  union of these, or a definition of one without effects (`holds_scalar`). The piece is (n, ρ)
+  with ρ(name) = v: the choice of v from S is in C(n, ρ), and the walk makes it, since S is the
+  same value at every state and holds v. A name pinned twice must be read as the same value; a
+  pinned name the piece's atom never reads matches nothing, since the piece would hold under every
+  value of it.
+- on Next's side alone, an application of a global operator that isn't recursive: the walk goes
+  into its body with each parameter bound to its argument, so a parameter whose argument is a
+  pinned name stands for the same value. A parameter whose argument is anything else, a paired
+  name included, matches nothing: from another call site it may stand for a value outside the
+  paired set, where a pinned name's value is checked as the walk takes it (below).
+- a disjunction of Next, into one disjunct (the choice is in C(n, ρ)); an action that is a
+  disjunction takes each of its disjuncts from pieces of its own.
+
+The claim's induction carries over with the pinned names fixed: the context between Next's root
+and n is made of disjuncts chosen, one-item conjunctions, operator bodies, and values chosen, none
+of which is a guard. (⇐) A path through n with each pinned name equal to its value has
+C(n, ρ) ∧ n[ρ] true of (s, t(π)), and A is n[ρ] up to its names. (⇒) Where A(s, t) is TRUE, the walk
+from s takes the value v of S, as it takes every value, reaches n under ρ and, by the induction,
+generates t.
+
+So the bit must be set exactly where the walk is under ρ. The walker keeps the `\E`s whose bodies
+it compiles (`Compiler::binders`: the node, the bound's position, the slot its name takes), and a
+continuation compiled inside the body is compiled with them popped, since it continues the walk
+after the `\E` (`walk_exists`); a fresh walk, as ENABLED compiles, starts with none. A piece with
+pins wraps the walk of n in a test that each pinned slot holds its value (`Id` equality, which for
+these values is TLC's `equals`), and sets the bit only then. A walk through n elsewhere, or under
+another value, sets no bit, which it needs not: the path under ρ generates every t A holds of.
+
+The atom is evaluated where the action never reads a pinned name, where the `\E`'s set is one the
+matcher can't read (`\E self \in {p \in S : pc[p] # "Done"}`) or doesn't hold v, where v isn't a
+scalar, where an argument isn't a pinned name, and where the compiled walk never went through a
+piece inside its `\E`s. Under a CONSTRAINT, where the steps aren't labelled, StarkMutex's 45 atoms
+answer from 6 bytes of bits a step.
+
+*Tests against TLC at d8fb231* (`prove-it-cli/tests/processes`, each as it stands, where the labels
+answer, and under `CONSTRAINT Always`, where the bits do, at one and four workers): PlusCal's
+`fair process` over an interval, two process sets with WF on both, `fair+` (SF), a process waiting
+on a guard, model values, a constant set under a definition of it, WF on some processes and on an
+action that is no process's, and a Next whose `\E` is over a set of the state. They fail where
+the pinned test is dropped (the bit set under any value), where the bits or the labels' answers
+are inverted, and where an atom answers from any label. The grid `prove-it-cli/tests/process-grid`
+has 216 specs: fairness over a process `P(self) == a(self) \/ b(self)`, under WF and SF, over `a`,
+and over `a` and `b` StarkMutex's way; Next's `\E` over P, over the disjunction written out, and
+twice; its set an interval, an enumeration, a constant, a definition, a union and a set of the
+state; and the fairness over the same set, a subset, and a superset with a value no `\E` takes.
+Weak is fair over the pieces and AliasWeak over copies `P(self) /\ TRUE` that are none, plain and
+under a CONSTRAINT: each run prints TLC's output beside it, at 1 and 4 workers.
 
 **Fallbacks** (evaluate as today). Fall back where:
 - the atom's action does not map exactly onto the split;

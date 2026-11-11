@@ -234,6 +234,9 @@ impl Known {
     }
 }
 
+// The slots of the bound names a piece's atom fixes, each with its value.
+type Pins = Box<[(u32, Id)]>;
+
 /// The continuation a compile of a walk takes: given what is known on a path, the rest of the walk
 /// after it. It may be asked for several paths, so callers that branch share it through
 /// [`Shared`].
@@ -1819,8 +1822,10 @@ impl<'a> Compiler<'a> {
     ) -> Compiling<Step> {
         // ENABLED compiles a walk of its own inside another's.
         let outer = std::mem::replace(&mut self.specialisations, 0);
+        let binders = std::mem::take(&mut self.binders);
         let step = self.compile_step_from(node, context, options, &Known::start());
         self.specialisations = outer;
+        self.binders = binders;
         step
     }
 
@@ -1850,12 +1855,33 @@ impl<'a> Compiler<'a> {
             .walk_depth()
             .and_then(|()| self.walk_kind(node, context, options, known, then));
         self.depth -= 1;
-        let bits = self
-            .pieces
-            .iter()
-            .filter(|piece| piece.0 == node)
-            .fold(0, |bits, piece| bits | piece.1);
-        if bits == 0 {
+        // The bits a walk through the node sets, and those it sets where the bound names of the
+        // `\E`s around it the atoms fix have their values: each the slot it reads and the value.
+        let mut bits = 0u64;
+        let mut pinned: Vec<(u64, Pins)> = Vec::new();
+        for piece in self.pieces.iter_mut().filter(|piece| piece.node == node) {
+            let slots: Option<Pins> = piece
+                .pins
+                .iter()
+                .map(|pin| {
+                    self.binders
+                        .iter()
+                        .rev()
+                        .find(|&&(exists, bound, _)| exists == pin.exists && bound == pin.bound)
+                        .map(|&(_, _, slot)| (slot, pin.value))
+                })
+                .collect();
+            let Some(slots) = slots else {
+                continue;
+            };
+            piece.is_walked = true;
+            if slots.is_empty() {
+                bits |= 1 << piece.bit;
+            } else {
+                pinned.push((1 << piece.bit, slots));
+            }
+        }
+        if bits == 0 && pinned.is_empty() {
             return result;
         }
         // A walk through a piece of an action atom marks the steps it takes as the action's.
@@ -1863,7 +1889,16 @@ impl<'a> Compiler<'a> {
         let address = rest.as_ref().map(step_address);
         let wrapped = step(move |machine, on_complete| {
             let outer = machine.piece_bits;
-            machine.piece_bits |= bits;
+            let mut set = bits;
+            for (bit, slots) in &pinned {
+                if slots
+                    .iter()
+                    .all(|&(slot, value)| machine.locals[slot as usize] == value)
+                {
+                    set |= bit;
+                }
+            }
+            machine.piece_bits |= set;
             let result = run_rest(&rest, machine, on_complete);
             machine.piece_bits = outer;
             result
@@ -1920,28 +1955,10 @@ impl<'a> Compiler<'a> {
                 self.walk_disjunction(operands, context, options, known, then)
             }
             NodeKind::Exists { bounds, body } => {
-                let mut inner = context.clone();
-                let mut levels = Vec::new();
-                for bound in bounds {
-                    let set = self.compile(bound.set, &inner)?;
-                    let unsorted = set.unsorted_first.clone();
-                    let set = self.order(set, bound.set, &inner, false)?;
-                    let binder = self.bind_bound(&bound.pattern, &inner);
-                    if let (Some(unsorted), false) = (unsorted, binder.tuple) {
-                        self.unsorted_slots.insert(binder.slots[0], unsorted);
-                    }
-                    inner = binder.context;
-                    levels.push((set, binder.slots, binder.tuple));
-                }
-                let body = self.walk(*body, &inner, options, known, then)?;
-                let reject = match (&levels[..], &body) {
-                    ([(_, slots, false)], Some(step)) => self
-                        .first_guards
-                        .get(&step_address(step))
-                        .and_then(|(_, predicate)| Reject::of(predicate, slots[0])),
-                    _ => None,
-                };
-                Ok(Some(exists_step(levels, body, reject)))
+                let depth = self.binders.len();
+                let walked = self.walk_exists(node, bounds, *body, context, options, known, then);
+                self.binders.truncate(depth);
+                walked
             }
             NodeKind::Forall { bounds, body } => {
                 if !self.is_walked_body(*body, context, is_init)? {
@@ -2215,6 +2232,55 @@ impl<'a> Compiler<'a> {
             }
             _ => self.guard_step(node, context, known, then),
         }
+    }
+
+    // The walk of an `\E`, its bound names each taking each value of its set, inside which the
+    // `\E` is one of `binders` to the pieces in its body but not to the walk after it.
+    #[allow(clippy::too_many_arguments)]
+    fn walk_exists(
+        &mut self,
+        node: NodeId,
+        bounds: &[Bound],
+        body: NodeId,
+        context: &Context,
+        options: WalkOptions,
+        known: &Known,
+        then: &mut Then<'_, 'a>,
+    ) -> Compiling<Rest> {
+        let exists = self.node(node).0;
+        let depth = self.binders.len();
+        let mut inner = context.clone();
+        let mut levels = Vec::new();
+        for (position, bound) in bounds.iter().enumerate() {
+            let set = self.compile(bound.set, &inner)?;
+            let unsorted = set.unsorted_first.clone();
+            let set = self.order(set, bound.set, &inner, false)?;
+            let binder = self.bind_bound(&bound.pattern, &inner);
+            if let (Some(unsorted), false) = (unsorted, binder.tuple) {
+                self.unsorted_slots.insert(binder.slots[0], unsorted);
+            }
+            if !binder.tuple {
+                self.binders.push((exists, position, binder.slots[0]));
+            }
+            inner = binder.context;
+            levels.push((set, binder.slots, binder.tuple));
+        }
+        let mut then = |compiler: &mut Compiler<'a>, known: &Known| {
+            let inside = compiler.binders.split_off(depth);
+            let rest = then(compiler, known);
+            compiler.binders.extend(inside);
+            rest
+        };
+        let body = self.walk(body, &inner, options, known, &mut then)?;
+
+        let reject = match (&levels[..], &body) {
+            ([(_, slots, false)], Some(step)) => self
+                .first_guards
+                .get(&step_address(step))
+                .and_then(|(_, predicate)| Reject::of(predicate, slots[0])),
+            _ => None,
+        };
+        Ok(Some(exists_step(levels, body, reject)))
     }
 
     fn walk_disjunction(
