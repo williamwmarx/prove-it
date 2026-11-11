@@ -95,6 +95,35 @@ fn prints_a_value_as_tlc_built_it_where_the_spec_writes_it() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// TLC sorts the elements a set enumeration writes, which normalizes a record it then drops as a
+// duplicate, so the record left prints with its fields in TLC's order: that of the field names'
+// first appearance, here yy's. The texts are those TLC prints for these specs.
+#[test]
+fn prints_a_record_a_set_enumeration_wrote_twice_as_tlc_normalized_it() {
+    let record = "[zz |-> 2, yy |-> 1]";
+    for copies in [2, 3] {
+        let set = vec![record; copies].join(", ");
+        let spec = format!(
+            "---- MODULE Duplicates ----\nEXTENDS TLC\nASSUME PrintT([yy |-> 1, zz |-> 2])\nASSUME PrintT(ToString({{{set}}}))\n====\n"
+        );
+        let directory = std::env::temp_dir().join(format!(
+            "prove-it-cli-duplicates-{}-{copies}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        std::fs::write(directory.join("Duplicates.tla"), spec).expect("the spec");
+        std::fs::write(directory.join("Duplicates.cfg"), "").expect("the configuration");
+        let output = run(&directory, &["-noGenerateSpecTE", "Duplicates"]);
+        let text = stdout(&output);
+        assert!(
+            text.contains("\n[yy |-> 1, zz |-> 2]\n\"{[yy |-> 1, zz |-> 2]}\"\n"),
+            "{copies}: {text}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
 #[test]
 fn streams_a_union_of_sets_tlc_keeps_lazy_as_tlc_does() {
     // TLC sorts a set enumeration as it first enumerates it, which caches each element after the

@@ -191,8 +191,10 @@ pub enum Construction {
     Held,
     /// `a..b` (`IntervalValue`), which prints as `1..3`, or `{}` where empty.
     Interval,
-    /// `{e1, …, en}` (`SetEnumValue`) whose elements are built alike.
-    Set(Box<Construction>),
+    /// `{e1, …, en}` (`SetEnumValue`) whose elements are built alike, with how many elements
+    /// it writes where that may be more than it holds: TLC sorts the elements written, which
+    /// compares, and so normalizes, a duplicate the set then drops.
+    Set(Box<Construction>, Option<u32>),
     /// `<<e1, …, en>>`.
     Tuple(Vec<Construction>),
     /// `[f1 |-> e1, …]` (`RecordValue`): its fields in the order written, each with how its
@@ -213,7 +215,7 @@ impl Construction {
     pub fn of_elements(&self) -> Option<&Construction> {
         match self {
             Construction::Interval => Some(&Construction::Held),
-            Construction::Set(element) => Some(element),
+            Construction::Set(element, _) => Some(element),
             _ => None,
         }
     }
@@ -276,8 +278,12 @@ fn write_normalized(
     let write = |out: &mut Vec<u16>, id: Id, construction: &Construction| {
         write_normalized(store, id, construction, normalized, out)
     };
-    // The elements of a set of two or more, which TLC sorted.
-    let element_normalized = if normalized == Normalized::No && size > 1 {
+    // The elements of a set of two or more written, which TLC sorted.
+    let written = match construction {
+        Construction::Set(_, Some(written)) => *written,
+        _ => size,
+    };
+    let element_normalized = if normalized == Normalized::No && written > 1 {
         Normalized::Maybe
     } else {
         normalized
@@ -303,7 +309,7 @@ fn write_normalized(
             }
             true
         }
-        Construction::Set(element) => {
+        Construction::Set(element, _) => {
             kind == KIND_SET
                 && join(out, set, &mut |out, index| {
                     write_element(out, store.element_at(id, index), element)
@@ -421,7 +427,7 @@ fn write_normalized(
                     write_element(
                         out,
                         store.element_at(id, index),
-                        &Construction::Set(Box::new(element.clone())),
+                        &Construction::Set(Box::new(element.clone()), None),
                     )
                 });
             }
@@ -672,7 +678,7 @@ mod tests {
         };
         let interval = store.set_of(&integers[1..]).expect("a set");
         let pair = store.set_of(&integers[1..3]).expect("a set");
-        let set = |inner: Construction| Construction::Set(Box::new(inner));
+        let set = |inner: Construction| Construction::Set(Box::new(inner), None);
         assert_eq!(
             write(&store, interval, &Construction::Interval, false).as_deref(),
             Some("1..3")

@@ -692,9 +692,9 @@ impl Compiler<'_> {
                 let constructions: Vec<Construction> = elements.iter().map(of).collect();
                 match constructions.split_first() {
                     Some((first, rest)) if rest.iter().all(|other| other == first) => {
-                        Construction::Set(Box::new(first.clone()))
+                        Construction::Set(Box::new(first.clone()), Some(elements.len() as u32))
                     }
-                    None => Construction::Set(Box::new(Construction::Held)),
+                    None => Construction::Set(Box::new(Construction::Held), Some(0)),
                     _ => Construction::Held,
                 }
             }
