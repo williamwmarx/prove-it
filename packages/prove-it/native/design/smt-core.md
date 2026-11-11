@@ -132,28 +132,44 @@ UFNIA's; the port runs UFNIA's on every script, with a logic set or not, after a
 assertion are counted, but the step limit is not checked until the assertions are taken
 (`ResourceLimit::set_step_limit_suspended`).
 
-**Commands.** The port reads a script as Z3 reads it, a command at a time, up to the first
-check-sat or `(exit)`, and answers what Z3 answers to that check-sat. A reference to a `:named`
-term expands to the term. Push, pop, `(reset-assertions)`, check-sat-assuming and check-sat-using
-are unsupported (unknown, `stop=unsupported`). Where Z3 prints an error before the first check-sat,
-which tlapm counts as a failure, the port fails with `DecideError::Prover` in these cases: a
-syntax error, an unknown name or sort, a malformed or second set-logic, set-logic after an
-assertion, `:produce-proofs`, `:produce-unsat-cores` or `:produce-unsat-assumptions` after one,
-`(exit)` with arguments, `(reset)` with arguments, naming a term with free variables, and eval,
-get-model, get-value, get-assignment, get-proof, get-unsat-core and get-unsat-assumptions.
+**Commands.** Z3 4.8.9, which tlapm bundles, decides where its front end and 5.3.3's differ; the
+tests that record such a case (`tests/smt.rs`) say so. The port reads a script as Z3 reads it, a
+command at a time, up to the first check-sat or `(exit)`, and answers what Z3 answers to that
+check-sat. A quoted symbol names what the plain one does but is never a keyword, a numeral, a
+string or a parenthesis. An annotation's attributes are read in order, as consume_attributes
+reads them: each `:named` names the term, and a reference to the name, also in a pattern,
+expands to it; as in 4.8.9's cmd_context::mk_app, a name shadows a declared constant whatever its
+sort (5.3.3 picks by sort). Push, pop, `(reset-assertions)`, check-sat-assuming, check-sat with
+arguments and check-sat-using are unsupported (unknown, `stop=unsupported`).
+
+Where Z3 prints an error before the first check-sat, which tlapm counts as a failure, the port
+fails with `DecideError::Prover` in these cases: a syntax error; an unknown name or sort; an
+ill-sorted application, Bool and Int in one equality included (4.8.9's join); set-logic with
+other than one symbol, a second time, or once a declaration or assertion made 4.8.9's manager;
+`:produce-proofs`, `:produce-unsat-cores`, `:produce-unsat-assumptions`, `:produce-assertions`,
+`:interactive-mode` or `:global-declarations` after that (4.8.9's check_not_initialized); assert,
+exit or reset with extra arguments; an attribute that is not a keyword, `:weight`, `:qid`,
+`:skolemid`, `:pattern` or `:no-pattern` outside a quantifier's body, a name that is not a symbol,
+and naming a term with free variables; and eval, get-model, get-value, get-assignment, get-proof,
+get-unsat-core and get-unsat-assumptions.
 
 Z3's other errors before the first check-sat are not ported, and on them the port answers where
 Z3 prints the error and then answers (`tests/smt.rs` records none of them):
 - declarations: a name declared twice with the same signature, a sort declared twice, an
-  ambiguous overloaded constant, a `:named` name already in use, a builtin redeclared;
-- options: any other option set after the manager is made (`:produce-assertions`,
-  `:interactive-mode`, `:global-declarations`), a value of the wrong kind (`:produce-proofs foo`),
-  and an unknown parameter; options Z3 accepts are ignored, including those that change its search
-  (`:smt.mbqi false`, `:rlimit`);
+  ambiguous overloaded constant, a `:named` name already in use or declared after, a builtin
+  redeclared;
+- options: a value of the wrong kind (`:produce-proofs foo`) and an unknown parameter; options Z3
+  accepts are ignored, including those that change its search (`:smt.mbqi false`, `:rlimit`);
 - get-assertions, which Z3 refuses outside interactive mode;
 - the sorts and theories a logic allows (`(set-logic QF_UF)` refuses `Int`, `UFNIA` refuses
   `Real`);
 - an unknown command, for which Z3 prints `unsupported` and reads on, as the port reads on.
+
+Two more differences answer as Z3 does, at another cost: `:lblpos` and `:lblneg` labels are
+dropped where Z3 wraps the term in a label, and a distinct of more than two terms becomes the
+disequalities of every pair, where Z3 keeps it and, past 32 terms, asserts it through a fresh
+function onto distinct values (`assert_distinct`, in 4.8.9 and 5.3.3 alike): a distinct of 1,000
+constants takes 21 million steps where Z3 takes milliseconds.
 
 **Size.** The core stops at `MAX_SIZE` (`rlimit.rs`, prover.md 3.6) with `stop=heap`: a count of
 the expressions, the goal's formulas, the e-graph's nodes and the instances found, read at the
@@ -200,5 +216,10 @@ group, integrated and tested before the next:
 ### Deviations from Z3
 
 Where the TS does what Z3 does not, the port mirrors the TS, so that the differential stayed exact. With the TS deleted, each is fixed in Rust alone, with the inputs it moves re-recorded (`prover-differential --side ts --update`, which decides smt and z3 with the Rust port).
+
+- The parser table (`tests/tables/parser.txt`) records two TypeScript readings Z3 does not make,
+  corrected with Z3's reading of quoted symbols and attributes: `(! q :named n1 :named n2)` named
+  the term n1 only, and `(assert |(|)` read `|(|` as a parenthesis. The two lines now hold the
+  Rust's reading, as does the message for a `:named` without a name.
 
 - A model's hold on a builtin declaration (`div0`, `mod0`): `ast.ts`'s `incDeclRef` and `decDeclRef` counted it in `declRefCounts`, which had no entry for it, so the count was NaN and each time a model dropped the declaration it was released and its small id freed, while its applications, counted under its signature, still held it. Z3 counts an application's and a model's references on the one `func_decl`, and keeps it. It moves the small ids later declarations get, and so MBQI's search and, under the step limit, verdicts. The Rust mirrors it with `decl_ref_counts: Vec<Option<i32>>` (`None` is the NaN); regression input `smt/tests/inputs/builtin-decl-release.smt`. The evidence (TS, Rust and Z3 lines), the verdict it changes and the inputs it moves are in prover.md's Handoff, "Deviations from Z3". A fix on both sides that counted a model's hold under the declaration's signature (ea83e9c) was reverted: it is Z3's counting but not Z3's search. Run against Z3 5.3.3 (its traced instances against the TS's, by Z3's ids), neither the NaN nor the fix is Z3: the NaN makes all of Z3's instances on smt/0c812b0a8aa1347b where the fix leaves Z3 at the 1,255th, and the fix keeps to Z3 longer on a50910e8b0798813. The search moves through the small ids `div0` and `mod0` give back to the LIFO free list, not through `getNumAsts`. Z3's runs behave as if no model holds the declarations when the model checker pops its aux scope, where the TS's aux context still holds its last counterexample's model; releasing it before the pop gives Z3's stream on every input that tells them apart. Z3's source, as read, keeps that model too, so the change waits for the line in Z3 that releases it; prover.md's Handoff has the runs and lines.
