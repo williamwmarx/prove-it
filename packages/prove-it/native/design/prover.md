@@ -531,7 +531,7 @@ from the PR that ports them, and drops the TS paths in the PR that deletes them.
 
 | Crate | Derived from | Licence | `THIRD_PARTY_NOTICES.md` once it is Rust |
 |---|---|---|---|
-| `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`) | MIT | the Z3 section names `native/crates/prove-smt/`; `z3-license.txt` moves with the code |
+| `prove-smt` | Z3 (`src/smt`, `src/ast`, `src/math/lp`, `src/nlsat`, `src/util`; `nlsat/` ports `src/nlsat` and `src/math/polynomial` of z3-5.3.3, limit checks included) | MIT | the Z3 section names `native/crates/prove-smt/`; `z3-license.txt` moves with the code |
 | `prove-num` | Z3's `rational`/`mpz` semantics, written fresh on JS `bigint`'s rules | MIT (Z3's where it follows `rational.ts`) | under the Z3 section |
 | `prove-zenon` | Zenon as tlapm ships it, with its TLA+ extension | BSD-3-Clause-style (INRIA) | the Zenon section names the crate; the crate keeps the `LICENSE` beside the code, as `src/prover/zenon/LICENSE` |
 | `prove-zenon` (`ocaml` module) | OCaml's `Hashtbl.hash` (`runtime/hash.c`), `List.sort`/`List.stable_sort` | LGPL-2.1-only with OCaml's linking exception | the OCaml section lists the Rust file |
@@ -1032,7 +1032,7 @@ is next.
 
   | Prover | Inputs | unsat | sat | unknown at the step limit | other unknown |
   |---|---|---|---|---|---|
-  | `smt` | 10,320 | 9,993 | 13 | 312 | 2 |
+  | `smt` | 10,320 | 9,986 | 13 | 319 | 2 |
   | `z3` | 56 | 50 | 1 | 5 | — |
   | `zenon` | 949 | 796 | — | 102 | 48 exhausted, 3 memory limit |
   | `isabelle` | 478 | 371 | — | 44 (`Interrupt`) | 63 |
@@ -1041,6 +1041,10 @@ is next.
   None stopped for a runtime limit (`unstable`), and none threw. Decided again by the TypeScript
   under the recorded step limits and no time limit (`prover-differential --side ts`), all 12,100
   give the recorded verdict and statistics, so the record reproduces.
+  Porting Z3's limit checks in nlsat's polynomial managers (z3-5.3.3) moved 10 `smt` inputs:
+  7 that were unsat now reach their recorded step limit, and 3 at the step limit changed their
+  statistics; they were re-recorded with `prover-differential --side ts --update`, which keeps
+  each input's step limit.
 - P1, PTL (#231): `prove-ptl` gives the reference LS4's verdict on the 26 formulas of
   `tests/conformance/ptl`, and on the 297 LS4 inputs of the record the TypeScript's verdict and
   step count on every one (297 same, 0 differs, declined or crash). Rust decides PTL by default.
@@ -1102,3 +1106,19 @@ is next.
   encoder half of the differential (every method's text and the fingerprint, by `prover/digest`
   against `prover-inputs.json`); then the `prove_obligations` boundary of 3.2, agreed with the
   prover lead first.
+- P6b part 1, tlapm's state: `prove-obligations::marshal` ports `ocaml-marshal.ts` (LGPL, in its
+  own file and in the notices' OCaml section), and `prove-it-prover::tlapm_cache` ports
+  `cache.ts`: `load_fingerprints`, `KnownResults::new`, `KnownResults::save`, and `save_history`.
+  - **Caller-supplied inputs:** the caller passes in the package version string
+    (`tla-ts <version>`) and the local time, since `std` has no time zone. The TypeScript reads
+    both itself.
+  - **Results:** each result keeps the field it was loaded from. That stands in for the
+    TypeScript's maps keyed by object identity.
+  - **Tests:** `tests/tlapm_cache.rs` ports `tlapm-cache.test.ts`. It also checks fixtures that
+    `scripts/tlapm-cache-fixtures.ts` records from the TypeScript:
+    - marshal round trips byte for byte, covering every code, the size boundaries and OCaml's
+      sharing codes;
+    - files `prove-it tlapm` wrote, with and without `--nofp`, which load and re-save to the same
+      bytes as the TypeScript re-saves them;
+    - every encoded result, re-encoded at its stored date and version.
+  - **Next:** P6a/P6b part 2 wires it into the driver and the CLI.
