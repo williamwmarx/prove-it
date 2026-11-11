@@ -470,7 +470,11 @@ impl ModuleGenerator<'_> {
                 .module(instancee)
                 .expect("a module")
                 .context
-                .get_symbol(&resolve_synonym(&substitution.name))
+                .get_symbol(
+                    &target_index.map_or(resolve_synonym(&substitution.name), |index| {
+                        crate::ast::Name::from(get_token_source(&file, index))
+                    }),
+                )
                 .filter(|&target| matches!(self.spec.graph.kind(target), NodeKind::OpDecl(_)));
             let Some(target) = target else {
                 let (error_location, identifier) = match target_index {
