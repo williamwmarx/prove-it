@@ -795,6 +795,11 @@ fn compile_subscript(
     if !compiled.footprint.primes.is_empty() {
         return Err("unsupported: a subscript that reads a primed variable".into());
     }
+    // TLC evaluates a subscript in both states of each step it checks, where the engine reads its
+    // value once for each state.
+    if compiled.is_printing() {
+        return Err("unsupported: a subscript that prints".into());
+    }
     Ok(compiled)
 }
 
