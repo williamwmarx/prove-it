@@ -5,7 +5,9 @@
 use crate::errors::{ObligationError, Result};
 use crate::expression::Sequent;
 use crate::index::PrintedObligation;
-use crate::isabelle::encode::{IsabelleProof, encode_isabelle, encode_isabelle_theory};
+use crate::isabelle::encode::{
+    IsabelleProof, encode_isabelle, join_isabelle_theory, write_isabelle_proof,
+};
 use crate::prep::action::process_obligation;
 use crate::prep::methods::{Method, find_methods};
 use crate::prep::normalize::{flatten, normalize_expand};
@@ -121,7 +123,10 @@ pub struct ProofAttempt {
 }
 
 /// The theory of the proofs Isabelle found, from each obligation's attempts (its report's) in
-/// order. tlapm also writes Zenon's proofs there.
+/// order. tlapm also writes Zenon's proofs there. The TypeScript makes every proof's sequent
+/// before it writes any; this writes each as it makes it and keeps only its lines, which fails
+/// the same way, since a sequent's error comes first and writing depends on the proof alone, but
+/// holds no sequent: a module's thousands of them can take gigabytes.
 pub fn encode_proof_theory(
     name: &str,
     attempts: &[Vec<ProofAttempt>],
@@ -136,7 +141,7 @@ pub fn encode_proof_theory(
             let obligation = obligations
                 .get(index)
                 .ok_or_else(ObligationError::assert_failure)?;
-            proofs.push(IsabelleProof {
+            proofs.push(write_isabelle_proof(&IsabelleProof {
                 id: obligation.id,
                 sequent: ship_first_order(&normalize_expand(
                     &obligation.sequent,
@@ -144,8 +149,8 @@ pub fn encode_proof_theory(
                     None,
                 )?)?,
                 tactic: attempt.method.tactic.clone().unwrap_or("auto".to_owned()),
-            });
+            }));
         }
     }
-    encode_isabelle_theory(name, &proofs)
+    join_isabelle_theory(name, proofs)
 }
