@@ -897,6 +897,12 @@ fn check_spec(
     }
     // TLC opens the file before it reads the configuration, and names it with a suffix of .dump,
     // or .dot for a graph, unless it has one. It writes a graph's header then.
+    // TLC keeps writing a graph once any -dump asks for one, into the file of the last -dump.
+    if dump.is_some_and(|dump| dump.len() == 1)
+        && args.get_all("-dump").any(|values| values.len() == 2)
+    {
+        return report_not_native(printer, "-dump after -dump dot");
+    }
     let (file, dot) = match dump {
         None => (None, None),
         Some([file]) => (Some(file), None),
