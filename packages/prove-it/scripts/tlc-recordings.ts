@@ -4,7 +4,7 @@
 // library modules, so a recording goes stale, and is recorded again, when any of them changes.
 
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -22,16 +22,57 @@ export interface TlcRecording {
   exitCode: number;
   stdout: string;
   stderr: string;
+  // The trace exploration files the run wrote, by name: a .tla as its text, a .bin in base64.
+  files?: Record<string, string>;
 }
 
-export type OutputMode = "default" | "tool";
+// "te" is TLC's own default, which records the trace for its trace exploration spec: at a
+// counterexample TLC writes <Spec>_TTrace_<epoch>.bin, and for a trace of two states or more
+// <Spec>_TTrace_<epoch>.tla, beside the spec. Only the native binary is compared in it.
+export type OutputMode = "default" | "tool" | "te";
 
 export const OUTPUT_MODES: OutputMode[] = ["default", "tool"];
+
+export const RECORDED_MODES: OutputMode[] = [...OUTPUT_MODES, "te"];
 
 // The tlaplus/tlaplus commit TLC is built from, as .depot/workflows/benchmark.yml pins it.
 export const TLC_COMMIT = "d8fb231de4e4b5d02c1b2ed1ac759c086f694021";
 
 export const TLC_STDOUT_DIRECTORY = join(CONFORMANCE_DIRECTORY, "tlc-stdout");
+
+const TRACE_FILE = /_TTrace_\d+\.(tla|bin)$/;
+
+const getTraceFileNames = (directory: string) =>
+  readdirSync(directory).filter((name) => TRACE_FILE.test(name));
+
+// TLC names the trace exploration files by the second its run started, so runs in one directory
+// take turns, and each takes the files it wrote: those that weren't there when it started.
+const directoryTurns = new Map<string, Promise<unknown>>();
+
+export const runTakingTraceFiles = <T>(
+  directory: string,
+  run: () => Promise<T>,
+): Promise<{ result: T; files: Record<string, string> }> => {
+  const turn = (directoryTurns.get(directory) ?? Promise.resolve()).then(async () => {
+    const existing = new Set(getTraceFileNames(directory));
+    const result = await run();
+    const files: Record<string, string> = {};
+    for (const name of getTraceFileNames(directory).sort()) {
+      if (existing.has(name)) continue;
+      const path = join(directory, name);
+      files[name] = name.endsWith(".bin")
+        ? readFileSync(path).toString("base64")
+        : readFileSync(path, "utf8");
+      rmSync(path);
+    }
+    return { result, files };
+  });
+  directoryTurns.set(
+    directory,
+    turn.catch(() => undefined),
+  );
+  return turn;
+};
 
 // The command line after `java ... tlc2.TLC` that the recordings, and Prove It in the
 // differential, run a model with.
@@ -49,7 +90,7 @@ export const getTlcArguments = (
   "0",
   "-lncheck",
   "final",
-  "-noGenerateSpecTE",
+  ...(mode === "te" ? [] : ["-noGenerateSpecTE"]),
   ...(mode === "tool" ? ["-tool"] : []),
   "-metadir",
   metadataDirectory,
