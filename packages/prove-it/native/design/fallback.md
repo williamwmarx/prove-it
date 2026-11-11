@@ -302,7 +302,15 @@ found these on main, which the branch prints alike:
 | A failing conjunct of the specification that is an operator applied to arguments, or an inline LET or LAMBDA | `P(n) == n = 1 /\ Assert(FALSE, "x")`, `Spec == P(1) /\ Init /\ [][Next]_x` | the frames of the body TLC inlines | adds the application's frames first |
 | A SYMMETRY definition that prints | `Sym == Print("sym", Permutations(S))` | `The sets "sym", and S have been defined…` | `The sets , and S …` |
 | A POSTCONDITION that sets a register | `Post == PrintT(IF TLCSet("exit", FALSE) THEN 1 ELSE 0)` | prints `1` once, then `The post condition Post cannot be a constant.` | prints `1` twice and passes |
-| An ALIAS the configuration substitutes a TRUE definition for | `D == TRUE`, `CONSTANT C <- D`, `ALIAS C` | plain states | `_ALIASEvalError = "The alias C cannot be a constant."` (fixed on the ALIAS branch, alias-trace-fixes) |
+| An ALIAS the configuration substitutes a constant definition for | `D == TRUE` (or a record, a set, a tuple, `-1`, a LET), `CONSTANT C <- D`, `ALIAS C` | the alias's value | `_ALIASEvalError = "The alias C cannot be a constant."` (the TRUE case is fixed on the ALIAS branch, alias-trace-fixes) |
+| A configuration substitute scoped to the root module | `CONSTANT C <- [M] E` in the cfg of module M | applies it | ignores it, with another verdict |
+| A failing configuration substitute scoped to an instanced module (`<-[Inner]`) | `C <- [Inner] E`, `E == 1 \div 0 = 1`, read through `INSTANCE Inner` | the INSTANCE frame, then the substitute's | the replaced definition's frame |
+| A conjunct of the specification the configuration substitutes a FALSE operator with arguments for | `P <- Q`, `Spec == P(0) /\ Init /\ [][Next]_x` | `The spec is trivially false because FALSE is false.` | passes with 0 states |
+| A PROPERTY the configuration substitutes an empty `\A` for | `C <- D`, `D == \A i \in {} : FALSE`, `PROPERTY C` | `Temporal formula is a tautology` | passes |
+| A violated invariant of an instance inside a PROPERTY | `PROPERTY Prop`, `Prop == [](I!IInv)` | `Invariant I!IInv is violated.` | `Invariant IInv is violated.` |
+| An INVARIANT the configuration substitutes a temporal formula for | `INVARIANT C`, `C <- D`, `D == [](x > 0)` | names D, or fails at run time where another invariant reads C | names C, or fails as it starts |
+| A tuple or a lexing error in a configuration's value | `CONSTANT K = <<"a">>`, an unclosed string | a lexical error | a parse error, or another position |
+| A string where the configuration names a definition | `INVARIANT "a\\b"`, `K <- "a\\b"` | quotes the string | doesn't |
 
 The engine now declines the shapes that printed other counts here too: a constant definition
 normalized elsewhere, then streamed (`C == UNION {1..2, 2..3}`, `Init == s = C /\ x = 0`,
