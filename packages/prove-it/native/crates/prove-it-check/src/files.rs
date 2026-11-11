@@ -14,6 +14,9 @@ const STRING_VALUE: u8 = 3;
 
 pub struct FileDescriber {
     spec: PathBuf,
+    /// The spec's path as TLC's resolver finds it, absolute but not normalized.
+    located_spec: PathBuf,
+    /// The directories TLC's resolver searches, absolute but not normalized.
     directories: Vec<PathBuf>,
     temporary: PathBuf,
     metadir: Option<PathBuf>,
@@ -26,12 +29,24 @@ impl FileDescriber {
     /// The temporary directory is the JVM's `java.io.tmpdir` where the launch sets it.
     pub fn new(files: &Files) -> FileDescriber {
         let spec = resolve(files.spec);
-        let mut directories = vec![spec.parent().map(Path::to_path_buf).unwrap_or_default()];
-        directories.extend(files.libraries.iter().map(PathBuf::from));
+        let working = std::env::current_dir().unwrap_or_default();
+        let locate = |path: &Path| {
+            if path == Path::new(".") {
+                working.clone()
+            } else {
+                working.join(path)
+            }
+        };
+        let directories = files
+            .get_module_directories()
+            .into_iter()
+            .map(locate)
+            .collect();
         let temporary = files
             .temporary
             .map_or_else(std::env::temp_dir, PathBuf::from);
         FileDescriber {
+            located_spec: locate(files.spec),
             spec,
             directories,
             temporary: std::fs::canonicalize(&temporary).unwrap_or_else(|_| resolve(&temporary)),
@@ -52,13 +67,26 @@ impl FileDescriber {
                 .to_string()
         };
         match origin {
+            // ParseUnit.parseFile names the file by its real path, and by the URL TLC's resolver
+            // found it at where that path differs, as it does through a symbolic link, `.` or `..`.
             ModuleOrigin::File => {
-                let found = self
-                    .directories
-                    .iter()
-                    .map(|directory| directory.join(&file_name))
-                    .find(|path| path.exists());
-                real(found.as_deref().unwrap_or(&self.spec))
+                let is_root = self.spec.file_stem().and_then(|stem| stem.to_str()) == Some(name);
+                let located = (!is_root)
+                    .then(|| {
+                        self.directories
+                            .iter()
+                            .map(|directory| directory.join(&file_name))
+                            .find(|path| path.exists())
+                    })
+                    .flatten()
+                    .unwrap_or_else(|| self.located_spec.clone());
+                let real_path = real(&located);
+                let url_path = located.display().to_string();
+                if url_path == real_path {
+                    real_path
+                } else {
+                    format!("{real_path} (file:{})", quote_uri_path(&url_path))
+                }
             }
             // TLC 1.7.4 copies a standard module into the temporary directory itself.
             _ if self.is_174 => self.temporary.join(&file_name).display().to_string(),
@@ -110,6 +138,20 @@ fn temporary_name(contents: &str) -> String {
         fingerprint = polynomial.extend_byte(fingerprint, (*unit & 0xff) as u8);
     }
     fingerprint.to_string()
+}
+
+/// A path as `java.net.URI` writes it, which quotes the ASCII characters a URI's path can't hold.
+fn quote_uri_path(path: &str) -> String {
+    path.chars()
+        .map(|character| match character {
+            ' ' | '"' | '<' | '>' | '\\' | '^' | '`' | '{' | '|' | '}' | '%' | '#' | '?' | '['
+            | ']' => {
+                format!("%{:02X}", character as u32)
+            }
+            character if character.is_ascii_control() => format!("%{:02X}", character as u32),
+            character => character.to_string(),
+        })
+        .collect()
 }
 
 /// Node's `path.resolve`: absolute, with `.` and `..` resolved by name, not through links.

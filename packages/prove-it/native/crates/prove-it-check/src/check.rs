@@ -20,7 +20,7 @@ use crate::coverage;
 use crate::dump_trace::{TraceDumps, is_writable, write};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
-use crate::host::{Files, Host};
+use crate::host::{Files, Host, get_module_directories};
 use crate::jar::{get_tools_jar, is_174};
 use crate::messages::{self as code, Level, Output, Printer};
 use crate::outcome::{Counts, Reported, ReportedState};
@@ -1331,10 +1331,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
         _ => {}
     }
     if args.has("-coverage") {
-        let directory = Path::new(spec_path).parent().unwrap_or(Path::new("."));
-        let directories: Vec<&Path> = std::iter::once(directory)
-            .chain(java.libraries.iter().map(Path::new))
-            .collect();
+        let directories = get_module_directories(Path::new(spec_path), &java.libraries);
         match coverage::compute(&ir, &outcome, printer.host, &directories, fingerprint_index) {
             Ok(messages) => printer.coverage = Some(messages),
             Err(why) => return report_not_native(printer, &why),

@@ -34,6 +34,19 @@ export const getInputPaths = (paths: string[]): InputPath[] =>
 export const findModuleFile = (directories: string[], name: string) =>
   directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
 
+// The directories TLC.java's resolver has SANY look for a module's file in, in order, absolute but
+// not normalized: where the spec's path names a directory, TLC gives SANY that directory as its
+// only library, after the working directory, or the spec's directory where the path is absolute;
+// otherwise the working directory and then TLA-Library's.
+export const getModuleDirectories = (specPath: string, libraries: string[]) => {
+  const separator = specPath.lastIndexOf("/");
+  const working = process.cwd();
+  if (separator === -1) return [working, ...libraries];
+  const directory = specPath.slice(0, separator) || "/";
+  if (isAbsolute(specPath)) return [directory, directory];
+  return [working, directory === "." ? working : `${working}/${directory}`];
+};
+
 export const createModuleLoader = (directories: string[]) => (name: string) => {
   const path = findModuleFile(directories, name);
   return path === undefined ? undefined : readFileSync(path, "utf8");
@@ -44,6 +57,17 @@ export const printMissingFile = (userDirectory: string, fileName: string, direct
   console.error(
     `File does not exist: ${userDirectory}/${fileName} while looking in these directories: ${userDirectory}, ${directories.join(", ")}, classpath:/tla2sany/StandardModules, classpath:/`,
   );
+
+// A path as java.net.URI writes it, which quotes the ASCII characters a URI's path can't hold.
+export const quoteUriPath = (path: string) =>
+  [...path]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code < 0x20 || code === 0x7f || ' "<>\\^`{|}%#?[]'.includes(character)
+        ? `%${code.toString(16).toUpperCase().padStart(2, "0")}`
+        : character;
+    })
+    .join("");
 
 export const getStandardModulesUrl = (jar: string) =>
   `jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/`;

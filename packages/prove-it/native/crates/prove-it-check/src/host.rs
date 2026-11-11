@@ -38,6 +38,29 @@ pub struct Files<'a> {
     pub root_extendees: &'a [&'a str],
 }
 
+impl Files<'_> {
+    pub fn get_module_directories(&self) -> Vec<&Path> {
+        get_module_directories(self.spec, self.libraries)
+    }
+}
+
+/// The directories SANY looks for a module's file in, in order (TLC.java's resolver): where the
+/// spec's path names a directory, TLC gives SANY that directory as its only library, after the
+/// working directory, or the spec's directory where the path is absolute; otherwise the working
+/// directory and then TLA-Library's.
+pub fn get_module_directories<'p>(spec: &'p Path, libraries: &'p [String]) -> Vec<&'p Path> {
+    match spec
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        Some(directory) if spec.is_absolute() => vec![directory, directory],
+        Some(directory) => vec![Path::new("."), directory],
+        None => std::iter::once(Path::new("."))
+            .chain(libraries.iter().map(Path::new))
+            .collect(),
+    }
+}
+
 /// The path TLC prints for the file it parses a module from, by the module's name and origin.
 pub type FileDescription<'h> = Box<dyn Fn(&str, ModuleOrigin) -> String + 'h>;
 

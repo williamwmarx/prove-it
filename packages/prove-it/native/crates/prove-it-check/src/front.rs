@@ -61,9 +61,7 @@ pub fn read_front(
 ) -> Result<Read, String> {
     let spec = Path::new(spec_path);
     let directory = spec.parent().unwrap_or(Path::new("."));
-    let directories: Vec<&Path> = std::iter::once(directory)
-        .chain(files.libraries.iter().map(Path::new))
-        .collect();
+    let directories = files.get_module_directories();
     let load_module = |name: &str| host.load_module(&directories, name);
     let load_class = |name: &str| host.load_class(directory, name);
     let source = host.read_text(spec);

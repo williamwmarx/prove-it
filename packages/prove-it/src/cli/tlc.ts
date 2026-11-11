@@ -75,12 +75,14 @@ import {
   createModuleLoader,
   findModuleFile,
   getInputPaths,
+  getModuleDirectories,
   getStandardModulesUrl,
   getToolsJar,
   type JavaProperties,
   printError,
   printMissingFile,
   printMissingFile174,
+  quoteUriPath,
   reportErrors,
   reportMissingModules174,
   toLibraryPath,
@@ -538,9 +540,22 @@ export const createFileDescriber = (
   const temporaryDirectory = existsSync(temporary) ? realpathSync(temporary) : resolve(temporary);
   const libraryDirectory = join(temporaryDirectory, `tlc-${getTemporaryName(resolve(specPath))}`);
   const jar = getToolsJar(java);
+  const locatedSpec = isAbsolute(specPath) ? specPath : `${process.cwd()}/${specPath}`;
+  const rootName = basename(specPath, ".tla");
   return (name: string, origin: SanyModuleOrigin) => {
     const fileName = `${name}.tla`;
-    if (origin === "file") return realpathSync(findModuleFile(directories, name) ?? specPath);
+    // ParseUnit.parseFile names the file by its real path, and by the URL TLC's resolver found it
+    // at where that path differs, as it does through a symbolic link, `.` or `..`.
+    if (origin === "file") {
+      if (version === "1.7.4") return realpathSync(findModuleFile(directories, name) ?? specPath);
+      const located =
+        (name === rootName
+          ? undefined
+          : directories.map((directory) => `${directory}/${fileName}`).find(existsSync)) ??
+        locatedSpec;
+      const real = realpathSync(located);
+      return located === real ? real : `${real} (file:${quoteUriPath(located)})`;
+    }
     // TLC 1.7.4 copies a standard module into the temporary directory itself.
     if (version === "1.7.4") return join(temporaryDirectory, fileName);
     // FileUtil.createTempFile copies a module from the root module's file into the -metadir.
@@ -703,7 +718,10 @@ const checkSpec = async (
   if (config instanceof TlaConfigError) return printFailure(config);
   if (args.has("-deadlock")) config.checkDeadlock = false;
   const directory = dirname(specPath);
-  const directories = [directory, ...java.libraries];
+  const directories =
+    version === "1.7.4"
+      ? [directory, ...java.libraries]
+      : getModuleDirectories(specPath, java.libraries);
   const loadModule = createModuleLoader(directories);
   const isRecorded = isTraceRecorded(args, version);
   if (printer.isTool) {
@@ -881,7 +899,10 @@ export const checkNatively = async (
   const specPaths = [...new Set(getSpecPaths(parsed).map((path) => findSpec(path, java)))];
   if (specPaths.length !== 1) return undefined;
   const specPath = specPaths[0];
-  const directories = [dirname(specPath), ...java.libraries];
+  const directories =
+    java.tlcVersion === "1.7.4"
+      ? [dirname(specPath), ...java.libraries]
+      : getModuleDirectories(specPath, java.libraries);
   const loadModule = createModuleLoader(directories);
   const describeFile = createFileDescriber(
     specPath,
