@@ -11,8 +11,12 @@ const MODULE_N: &str =
     "---- MODULE N ----\nEXTENDS Naturals\nOp(x) == {n \\in Nat : n > x}\n====\n";
 
 fn create(definitions: &str, config: &str) -> Environment {
+    create_extending("Naturals, TLC", definitions, config)
+}
+
+fn create_extending(extends: &str, definitions: &str, config: &str) -> Environment {
     let source = format!(
-        "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT C\nVARIABLE x\n{definitions}\nInit == x = 0\nNext == x' = x\n====\n"
+        "---- MODULE M ----\nEXTENDS {extends}\nCONSTANT C\nVARIABLE x\n{definitions}\nInit == x = 0\nNext == x' = x\n====\n"
     );
     let config = parse_config(
         &format!("CONSTANT C = 1\nINIT Init\nNEXT Next\n{config}"),
@@ -34,8 +38,11 @@ fn create(definitions: &str, config: &str) -> Environment {
 // The read of the definition named `name`, with whether `defns` holds its value and the rule TLC
 // attempts it by.
 fn decide(definitions: &str, config: &str, name: &str) -> (Read, bool, Option<Rule>) {
-    let environment = create(definitions, config);
-    let model = get_startup_model(&environment);
+    decide_in(&create(definitions, config), name)
+}
+
+fn decide_in(environment: &Environment, name: &str) -> (Read, bool, Option<Rule>) {
+    let model = get_startup_model(environment);
     let definition = environment
         .definitions
         .get(name)
@@ -168,6 +175,41 @@ fn attempts_the_definition_another_definition_is_substituted_by() {
 fn leaves_a_definition_the_configuration_gives_a_value() {
     assert_eq!(
         decide("D == {3, 1, 2}", "CONSTANT D = 4\n", "D"),
+        (Read::Operator, false, None)
+    );
+}
+
+// TLC sets a Java method on the body of the operator the module of its class defines, which no
+// operator of another module spelled the same reads (`processModuleOverrides`, `lookup`).
+#[test]
+fn reads_an_override_only_through_the_operator_its_module_defines() {
+    let print = "Print(a, b) == x\nD == <<{3, 1, 2}, Print(1, 2)>>";
+    assert_eq!(
+        decide_in(
+            &create_extending("Naturals", &format!("J == INSTANCE TLC\n{print}"), ""),
+            "D"
+        ),
+        (Read::Operator, false, None)
+    );
+    assert_eq!(
+        decide_in(&create_extending("Naturals", print, ""), "D"),
+        (Read::Operator, false, None)
+    );
+    // TLC's own Print, extended, is a method of level 0.
+    assert_eq!(
+        decide("D == <<{3, 1, 2}, Print(1, 2)>>", "", "D"),
+        (Read::Attempted, true, Some(Rule::Constant))
+    );
+    // TLC's TLCGet through a named instance of its module is the method, of level 1.
+    assert_eq!(
+        decide_in(
+            &create_extending(
+                "Naturals",
+                "J == INSTANCE TLC\nD == J!TLCGet(\"level\")",
+                ""
+            ),
+            "D"
+        ),
         (Read::Operator, false, None)
     );
 }

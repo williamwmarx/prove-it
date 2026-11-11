@@ -15,27 +15,45 @@ use crate::spec::get_definition;
 /// TLC's Java overrides of TLA+ operators, by module: each operator with its level (`minLevel`).
 const TLC_OVERRIDES: &str = include_str!("tlc_overrides.tsv");
 
-/// The level of the Java method TLC reads `name` through instead of its definition, where a
-/// module of the spec has one (`processModuleOverrides`).
-fn get_override_level(environment: &Environment, name: &str) -> Option<u8> {
+// TLC's overrides as (module, operator, level).
+fn get_overrides() -> impl Iterator<Item = (&'static str, &'static str, u8)> {
     TLC_OVERRIDES
         .lines()
         .filter(|line| !line.starts_with('#'))
         .filter_map(|line| {
             let mut fields = line.split('\t');
-            Some((fields.next()?, fields.next()?, fields.next()?))
+            Some((fields.next()?, fields.next()?, fields.next()?.parse().ok()?))
         })
-        // A standard module the front end implements is no module it links, but gives the
-        // operator as a builtin.
-        .find(|&(module, operator, _)| {
-            operator == name
-                && (environment.builtins.contains_key(name)
-                    || environment
-                        .module_names
-                        .iter()
-                        .any(|linked| &**linked == module))
-        })
-        .and_then(|(_, _, level)| level.parse().ok())
+}
+
+/// The level of the Java method TLC reads each overridden definition through instead of its
+/// body, by the body's address: TLC sets the method on the body of the operator the module of
+/// the class defines (`processModuleOverrides`), which a lookup finds there, and on no other
+/// operator spelled the same.
+fn get_overridden_bodies(environment: &Environment) -> FastMap<usize, u8> {
+    let mut bodies = FastMap::default();
+    for (module, operator, level) in get_overrides() {
+        for linked in environment
+            .modules
+            .iter()
+            .filter(|linked| &*linked.name == module)
+        {
+            for definition in &linked.definitions {
+                if &*definition.name == operator {
+                    bodies.insert(Rc::as_ptr(&definition.body) as usize, level);
+                }
+            }
+        }
+    }
+    bodies
+}
+
+/// The level of the Java method of a builtin, an operator of a standard module the front end
+/// implements, which no definition of the spec can be.
+fn get_builtin_override_level(name: &str) -> Option<u8> {
+    get_overrides()
+        .find(|&(_, operator, _)| operator == name)
+        .map(|(_, _, level)| level)
 }
 
 /// What a read of a definition gives.
@@ -102,7 +120,10 @@ fn is_literal(expression: &Expr) -> bool {
 
 /// TLC's startup decision for the model of `environment`.
 pub fn get_startup_model(environment: &Environment) -> StartupModel {
-    let bound = LevelBound { environment };
+    let bound = LevelBound {
+        environment,
+        overridden: get_overridden_bodies(environment),
+    };
     let mut model = StartupModel {
         attempted: Vec::new(),
         reads: FastMap::default(),
@@ -175,6 +196,7 @@ pub fn get_startup_model(environment: &Environment) -> StartupModel {
 /// `SymbolNodeValueLookupProvider.getLevelBound` over the AST.
 struct LevelBound<'a> {
     environment: &'a Environment,
+    overridden: FastMap<usize, u8>,
 }
 
 impl LevelBound<'_> {
@@ -257,14 +279,15 @@ impl LevelBound<'_> {
         if self.environment.constants.contains_key(&name) {
             return arguments;
         }
-        // TLC reads an operator a Java method overrides through the method, of its level, and
-        // never its definition.
-        if let Some(level) = get_override_level(self.environment, &name)
-            .or_else(|| get_override_level(self.environment, written))
-        {
-            return arguments.max(level);
-        }
         if let Some(definition) = get_definition(&name, self.environment) {
+            // TLC reads an operator a Java method overrides through the method, of its level,
+            // and never its body.
+            if let Some(&level) = self
+                .overridden
+                .get(&(Rc::as_ptr(&definition.body) as usize))
+            {
+                return arguments.max(level);
+            }
             if expanding.contains(&key(definition)) {
                 return arguments;
             }
@@ -272,6 +295,9 @@ impl LevelBound<'_> {
             let level = self.get_definition_level_in(definition, expanding);
             expanding.pop();
             return arguments.max(level);
+        }
+        if self.environment.builtins.contains_key(&name) {
+            return arguments.max(get_builtin_override_level(&name).unwrap_or(0));
         }
         arguments
     }

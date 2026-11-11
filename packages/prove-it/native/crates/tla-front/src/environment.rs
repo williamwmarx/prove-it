@@ -88,8 +88,8 @@ pub struct Environment {
     /// The methods of the Java class that overrides a module's operators, which TLC reports as it
     /// starts.
     pub java_overrides: Vec<crate::java_overrides::JavaOverride>,
-    /// The names of the modules the spec links, in the order it links them.
-    pub module_names: Vec<Name>,
+    /// The modules the spec links, in the order it links them.
+    pub modules: Vec<Rc<Module>>,
 }
 
 impl Environment {
@@ -2385,11 +2385,11 @@ pub fn create_environment(options: &EnvironmentOptions) -> Result<Environment> {
         instance_names: linker.instance_names.take(),
         printed,
         java_overrides: linker.java_overrides.take(),
-        module_names: linker
+        modules: linker
             .link_order
             .borrow()
             .iter()
-            .map(|linked| linked.module.name.clone())
+            .map(|linked| linked.module.clone())
             .collect(),
     };
     // TLC evaluates a substitute for a constant at startup and rejects it only when that fails and
