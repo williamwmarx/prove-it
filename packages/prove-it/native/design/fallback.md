@@ -258,6 +258,16 @@ gap. TLC prints every state, then stutters at the cycle's first state, and so do
 A grid of 160 small specs (`prove-it-cli/tests/lasso-grid`) prints what TLC prints on all 640 runs:
 one thread and four, checking the properties periodically and at the end.
 
+A property TLC finds a tautology, and a constant part of a temporal formula that isn't a boolean,
+are native. TLC stops at a property's \A over the empty set as it unrolls the properties
+(`SpecProcessor.processConfigProps`), and at a formula whose negation has no solution
+(`ModelChecker.modelCheckImpl`), with `EC.TLC_LIVE_FORMULA_TAUTOLOGY`. It stops at a constant part
+of a temporal formula whose value isn't a boolean (`Liveness.astToLive`) with
+`EC.TLC_EXPECTED_VALUE`, which names the part by `SemanticNode.toString`: a numeral's image, such
+as `\b101`, or else the part's location. A grid of 64 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 488 of its 512 runs, and the
+other 24 decline for the constant evaluator's gaps.
+
 Nothing reaches these liveness declines, so they stay declines until a test or a model does:
 - an accepting node under SYMMETRY or a VIEW;
 - an unexpanded graph;

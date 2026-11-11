@@ -10,7 +10,7 @@ use crate::ast::*;
 use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
-use crate::errors::{FrontError, describe_range};
+use crate::errors::{FrontError, TAUTOLOGY, describe_range};
 use crate::eval::Evaluator;
 use crate::resolve::Result;
 use crate::spec::{
@@ -157,9 +157,15 @@ impl Converter<'_> {
                 let reason = "a constant part of a temporal formula";
                 return match self.evaluate_boolean(expression, scope, reason)? {
                     Some(value) => Ok(Rc::new(Live::Boolean(value))),
-                    None => Err(not_yet(
-                        "a constant part of a temporal formula that isn't a boolean",
-                    )),
+                    // `EC.TLC_EXPECTED_VALUE` names the formula by its `toString`: a numeral's
+                    // image, or else the formula's location.
+                    None => Err(FrontError::Evaluation(format!(
+                        "TLC expected a boolean value, but did not find one. {}",
+                        match &expression.kind {
+                            ExpressionKind::Number { text, .. } => text.to_string(),
+                            _ => describe_range(expression),
+                        }
+                    ))),
                 };
             }
             Level::Variable => Live::State {
@@ -514,9 +520,7 @@ fn order_atoms(formula: &Rc<Live>) -> Result<(Vec<Rc<Live>>, usize)> {
     let mut terms = Vec::new();
     write_terms(formula, &mut atoms, &mut ids, &mut terms);
     let order = tla_live::atom_order(&terms).map_err(|declined| match &*declined.0 {
-        "a tautology" => FrontError::Evaluation(
-            "Temporal formula is a tautology (its negation is unsatisfiable).".to_owned(),
-        ),
+        "a tautology" => FrontError::Evaluation(TAUTOLOGY.to_owned()),
         "a temporal formula too large in disjunctive normal form" => FrontError::Evaluation(
             "TLC cannot handle the temporal formula because it exceeds the maximum supported size in disjunctive normal form.".to_owned(),
         ),

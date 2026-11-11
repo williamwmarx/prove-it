@@ -53,6 +53,11 @@ impl SyntaxError {
     }
 }
 
+/// `EC.TLC_LIVE_FORMULA_TAUTOLOGY`, which TLC raises for a property's \A over the empty set
+/// (`SpecProcessor.processConfigProps`) and for a formula without a solution
+/// (`ModelChecker.modelCheckImpl`).
+pub const TAUTOLOGY: &str = "Temporal formula is a tautology (its negation is unsatisfiable).";
+
 /// How TLC begins its report of a RuntimeException it didn't expect (`UNEXPECTED_EXCEPTION`).
 pub const UNEXPECTED_EXCEPTION: &str = "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ";
 

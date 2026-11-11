@@ -8,7 +8,7 @@ use crate::ast::*;
 use crate::config::ConfigValue;
 use crate::dependencies::{DefinitionFacts, Level};
 use crate::environment::Environment;
-use crate::errors::{FrontError, describe_range};
+use crate::errors::{FrontError, TAUTOLOGY, describe_range};
 use crate::eval::Evaluator;
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
@@ -388,7 +388,7 @@ impl Expansion<'_> {
                     )?);
                 }
                 if expanded.is_empty() {
-                    return Err(not_yet("a property TLC finds a tautology"));
+                    return Err(FrontError::Evaluation(TAUTOLOGY.to_owned()));
                 }
                 return Ok(expanded);
             }
