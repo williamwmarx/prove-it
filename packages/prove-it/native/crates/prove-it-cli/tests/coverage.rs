@@ -127,6 +127,36 @@ fn reports_coverage_of_a_run_that_ends_as_tlc() {
 }
 
 #[test]
+fn reports_coverage_the_engine_counts_as_tlc() {
+    // Sets an expression builds and enumerates: a quantifier's, CHOOSE's, x' \in S's, a
+    // function's domain and S \cup T's T, which count what they enumerate as secondary counts.
+    assert_as_tlc("Built");
+}
+
+#[test]
+fn counts_coverage_in_the_engine_as_the_replay_does() {
+    // The engine's search counts these, and the replay counts them again to compare.
+    for name in ["Counter", "Built"] {
+        let output = run_with(
+            &format!("compare-{name}"),
+            name,
+            &[],
+            &[("PROVE_IT_TEST_COVERAGE_COMPARE", "1")],
+        );
+        let errors = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            errors, "coverage compare: engine counted\ncoverage compare: same\n",
+            "{name}"
+        );
+        assert_eq!(
+            get_normalized(&String::from_utf8_lossy(&output.stdout)),
+            get_expected(&format!("{name}.txt")),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn reports_coverage_of_a_violation_and_its_lazy_sets_as_tlc() {
     // SUBSET, [S -> T] and a filter, which count what they enumerate as secondary counts.
     assert_as_tlc("Sets");

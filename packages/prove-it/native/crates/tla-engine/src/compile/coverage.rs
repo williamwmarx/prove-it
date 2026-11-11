@@ -915,14 +915,18 @@ impl Compiler<'_> {
                 decline("a membership in a set TLC may keep lazy")
             };
         }
-        // `S \cup T` enumerates T into its cost model, or is T where S is empty.
-        if matches!(
-            builtin,
-            "Cardinality" | "\\cap" | "\\intersect" | "\\" | "\\subseteq" | "\\cup" | "\\union"
-        ) && args
-            .iter()
-            .all(|&arg| self.tag_of(arg, context) != Tag::Unknown)
-        {
+        // `S \cup T` enumerates T into its cost model where S isn't empty, and is T where it is
+        // (`guard_union`); `S \subseteq T` enumerates S.
+        let tags: Vec<Tag> = args.iter().map(|&arg| self.tag_of(arg, context)).collect();
+        let is_followed = match builtin {
+            "\\cup" | "\\union" => tags[1] != Tag::Unknown,
+            "\\subseteq" => matches!(tags[0], Tag::Deep | Tag::Shallow) && tags[1] != Tag::Unknown,
+            "Cardinality" | "\\cap" | "\\intersect" | "\\" => {
+                tags.iter().all(|&tag| tag != Tag::Unknown)
+            }
+            _ => false,
+        };
+        if is_followed {
             return Ok(());
         }
         decline(format!("the builtin {builtin}"))
