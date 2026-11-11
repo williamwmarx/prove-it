@@ -195,7 +195,7 @@ pub struct Machine<'p> {
     pub(crate) is_before_initial_state: bool,
     /// With `-coverage`, what the counting variant counted into each wrapper of TLC's cost model,
     /// and the lazy values it keeps (`compile/coverage.rs`); empty otherwise.
-    pub(crate) coverage: Coverage,
+    pub(crate) coverage: Box<Coverage>,
 }
 
 /// What the counting variant of compiled code counts as it runs: each wrapper's count and
@@ -317,7 +317,7 @@ impl<'p> Machine<'p> {
             lazy_functions: Vec::new(),
             held: vec![None; program.width],
             is_before_initial_state: false,
-            coverage: Coverage::default(),
+            coverage: Box::default(),
         }
     }
 

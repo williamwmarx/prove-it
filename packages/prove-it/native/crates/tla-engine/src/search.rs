@@ -1104,7 +1104,7 @@ struct Search<'r, T, E = Dense> {
     // Whether TLCSet("exit", TRUE) ran in an invariant, where the search follows it.
     is_exit_followed: bool,
     // With -coverage, what the counting variant counts besides what its code counts.
-    coverage: Option<SearchCoverage>,
+    coverage: Option<Box<SearchCoverage>>,
 }
 
 // What the search counts of TLC's cost model as it adds each successor (`Worker.addElement`):
@@ -1114,6 +1114,32 @@ struct SearchCoverage {
     plan: Arc<Plan>,
     values: Vec<HyperLogLog>,
     cells: usize,
+}
+
+// Out of line and cold, so that a search without -coverage keeps its successor path as it was.
+impl SearchCoverage {
+    #[cold]
+    #[inline(never)]
+    fn count_step(&self, machine: &mut Machine<'_>, action: u32) {
+        machine.count(self.plan.actions[action as usize]);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn count_new_state(
+        &mut self,
+        machine: &mut Machine<'_>,
+        action: u32,
+        successor: &[Id],
+    ) -> Outcome<()> {
+        let root = self.plan.actions[action as usize];
+        machine.coverage.secondary[root as usize] += 1;
+        for (estimate, &value) in self.values.iter_mut().zip(successor) {
+            let fingerprint = machine.fingerprints.get_value(&machine.store, value)?;
+            estimate.add(machine.fingerprints.of_state(&[fingerprint]));
+        }
+        Ok(())
+    }
 }
 
 impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
@@ -1530,7 +1556,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         self.successors += 1;
         self.generated += 1;
         if let Some(counting) = &self.coverage {
-            machine.count(counting.plan.actions[self.action as usize]);
+            counting.count_step(machine, self.action);
         }
         self.successor.clear();
         self.successor.extend_from_slice(machine.next());
@@ -1580,12 +1606,7 @@ impl<'r, T: Reached, E: Entries> Search<'r, T, E> {
         if is_new {
             self.set_distinct(machine, self.states.count() + 1)?;
             if let Some(counting) = &mut self.coverage {
-                let root = counting.plan.actions[self.action as usize];
-                machine.coverage.secondary[root as usize] += 1;
-                for (estimate, &value) in counting.values.iter_mut().zip(&self.successor) {
-                    let fingerprint = machine.fingerprints.get_value(&machine.store, value)?;
-                    estimate.add(machine.fingerprints.of_state(&[fingerprint]));
-                }
+                counting.count_new_state(machine, self.action, &self.successor)?;
             }
         }
         self.check_exit_followed(machine)?;
@@ -3197,7 +3218,7 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         machine.coverage.counts = vec![0; counting.plan.tree.wrappers.len()];
         machine.coverage.secondary = vec![0; counting.plan.tree.wrappers.len()];
         machine.coverage.cells = vec![Default::default(); counting.cells];
-        search.coverage = Some(counting);
+        search.coverage = Some(Box::new(counting));
     }
     search.possible = vec![-1; context.possible.len()];
     search.canonicalizer = canonicalizer;
