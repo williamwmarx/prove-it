@@ -1074,11 +1074,16 @@ is next.
   expectations the Rust is tested against: the 949 Zenon inputs of `tests/conformance/
   prover-inputs.json` (`prover-differential --side rust --prover zenon`) and the 103 fixture runs
   of `tests/fixtures/zenon/decisions.txt` (`crates/prover/zenon/tests/zenon.rs`), which nothing
-  rewrites now. Zenon is Rust-only in `deciders.ts`: `PROVE_IT_PROVER` doesn't switch it, an
-  aborted signal answers `unknown`, a malformed input is a `TlaProverError` (failed, as tlapm
-  counts it), and where no engine loads `decide` throws `EngineUnavailableError`, as `check` does.
-  `prover-inputs --record` and `prover-differential --side ts` decide Zenon in Rust.
-  `conformance:zenon` compares the native Zenon with tlapm's recorded results and binary.
+  rewrites now; `deciders.test.ts` pins the TypeScript's answer on its Zenon input, through the
+  addon and through WebAssembly. In `deciders.ts` a backend without a TypeScript decider is
+  decided by its Rust port alone: `PROVE_IT_PROVER` doesn't switch it, an aborted signal answers
+  `unknown`, an input the port can't read, or declines, is a `TlaProverError` (failed, as tlapm
+  counts it; the Rust Zenon declines nothing now), and where no engine loads, the WebAssembly
+  module included, `decide` throws `EngineUnavailableError`, as `check` does. `prover-inputs
+  --record` and `prover-differential --side ts` and `--update` decide such a backend with its Rust
+  port, say so, and label those results `decider: "rust"`. `conformance:zenon` compares the native
+  Zenon with tlapm's recorded results and binary. The PTL and Isabelle deletions follow the same
+  path.
 - P3b-lp (`prove-smt` module `lp`): every file of `smt/solver/lp/` is ported, `nra-solver.ts`
   included, on top of the nlsat port. nlsat steps on the same `ResourceLimit` as in the
   TypeScript, `nla.limit`. The architecture, written at the top of `lar_solver.rs` and
