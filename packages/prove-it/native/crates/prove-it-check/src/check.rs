@@ -27,7 +27,7 @@ use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
 use crate::jar::{get_tools_jar, is_174};
 use crate::messages::{self as code, Level, Output, Printer};
-use crate::outcome::{Counts, Reported, ReportedState};
+use crate::outcome::{Counts, Reported, ReportedState, Thrown};
 use crate::resolve::{Config, find_config, find_spec, get_module_directories};
 use crate::simulation::{Simulating, check_simulation, get_simulation, print_banner};
 use crate::stack::{alongside, on_search_stack};
@@ -1131,6 +1131,7 @@ fn check_spec(
             }
         }
     }
+    let is_sany_warned = front.is_sany_warned;
     if let Some(sany) = &front.sany {
         print_sany(printer, sany);
         printer.is_trace_recorded = is_trace_recorded(args, spec_path, printer.host.platform());
@@ -1756,11 +1757,12 @@ fn check_spec(
                 // TLC stops with no statistics, before it would search, as at an error the
                 // library throws, so the outcome has no status.
                 ViolationKind::NoNextState => {
-                    printer.print(
-                        code::NO_NEXT_ACTION,
-                        Level::Error,
-                        "No next state actions defined to generate successor states from.",
-                    );
+                    let message =
+                        "No next state actions defined to generate successor states from.";
+                    printer.print(code::NO_NEXT_ACTION, Level::Error, message);
+                    if !is_sany_warned {
+                        printer.set_thrown(Some(Thrown::Evaluation(message.to_owned())));
+                    }
                     print_finished(printer, start);
                     Ok(NO_NEXT_ACTION)
                 }
@@ -2782,6 +2784,7 @@ fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) 
         print_finished(printer, start);
         return SPEC_PARSE_ERROR;
     }
+    printer.set_thrown(failure.thrown.clone());
     print_sany(printer, &failure.sany);
     for warning in &failure.warnings {
         print_startup_message(printer, warning);

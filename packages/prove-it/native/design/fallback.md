@@ -964,10 +964,26 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
   `checkSources` returns it as `outcome` (ABI 16): the status, the counts of TLC's statistics, what
   the spec printed, and each violation or error TLC reports, as its message's code and text with
   the states TLC prints after it. A state carries each variable as TLC prints it and as plain data.
-- Where the native check declines, stops before it searches (a spec or configuration TLC rejects,
-  which the TypeScript check throws for), or the options ask for what only the TypeScript check
-  does (`onProgress`, `onPause`, `dump`, `systemProperties`, a `ModelConfig`, TLC 1.7.4), the
-  TypeScript check runs and its result converts (`src/check-result.ts`).
+- Where the native check stops before it searches, at a spec or configuration TLC rejects,
+  `checkSources` returns the error the TypeScript check throws for it as `thrown` (ABI 26), and
+  the library throws it: a `TlaSyntaxError` with SANY's report (`createSanyError`), a
+  `TlaConfigError` with the message of tla-front's config error, which keeps `errors.ts`'s, or a
+  `TlaEvaluationError` for a temporal formula TLC can't check or a spec with no next-state action.
+  SANY's report holds the errors of the first module with errors and the warnings so far, which
+  the TypeScript check throws. The library leaves the error to the TypeScript check where the two
+  may differ:
+  - a fatal error of SANY's parsing phase, as the TypeScript check loads modules as it links them;
+  - a module with a literal TLC can't hold, which the TypeScript check rejects as it loads it;
+  - the arity of an instance's substitution, and a module defined twice, which it words its own
+    way or doesn't report;
+  - other evaluation errors, which it throws as its subclasses or not at all;
+  - a stop after SANY or the spec printed, and a configuration or evaluation error in a spec that
+    may print as TLC computes its constants (one that names `Print`, `PrintT`, TLCExt or IOUtils,
+    or loads a Java override), which it prints first.
+- Where the native check declines, stops before it searches without `thrown`, or the options ask
+  for what only the TypeScript check does (`onProgress`, `onPause`, `dump`, `systemProperties`, a
+  `ModelConfig`, TLC 1.7.4), the TypeScript check runs and its result converts
+  (`src/check-result.ts`).
 - `Value` and `formatValue` are no longer exported.
 - A set or function TLC keeps lazy is `{"@lazy": text}`, with TLC's `toString` of it, which the
   trace printer writes exactly as it writes the states (`tests/fixtures/plain-lazy` pins it against
@@ -978,7 +994,9 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
 
 Of the 387 calls of the library's `check` in `bun run test` at the change, 199 ran natively. Of
 the 188 others, 114 stopped before the search, 44 were declined and 30 asked for the TypeScript
-check. The tests of the interpreter's own results run `checkParsed`, the TypeScript check.
+check. The tests of the interpreter's own results run `checkParsed`, the TypeScript check. With
+`thrown`, 104 of the 115 calls at 9cd662c6 that stop before the search throw the TypeScript check's
+error natively, and 11 leave it to the TypeScript check.
 
 ### What changes for users
 

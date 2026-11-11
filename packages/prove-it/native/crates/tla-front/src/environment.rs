@@ -296,7 +296,7 @@ fn get_substitutions(instances: &[Rc<Instance>]) -> Vec<Expr> {
         .collect()
 }
 
-fn reject_module_literals(module: &Module) -> Result<()> {
+pub(crate) fn reject_module_literals(module: &Module) -> Result<()> {
     let mut expressions: Vec<Expr> = Vec::new();
     for definition in &module.definitions {
         if let DefinitionKind::Function { bounds } = &definition.kind {

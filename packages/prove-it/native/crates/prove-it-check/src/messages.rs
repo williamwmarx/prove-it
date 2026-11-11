@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 
 use crate::host::Host;
-use crate::outcome::{Outcome, Reported, ReportedState};
+use crate::outcome::{Outcome, Reported, ReportedState, Thrown};
 use crate::plain::Variable;
 use crate::te_spec::{RecordedTrace, TraceSpec};
 use crate::time::{format_date, format_java_date};
@@ -136,6 +136,14 @@ impl<'o> Printer<'o> {
     pub fn record(&mut self, reported: Reported) {
         if self.host.is_plain() {
             self.outcome.violations.push(reported);
+        }
+    }
+
+    /// Keeps the error the library throws where TLC stops before it searches, where its caller reads
+    /// it (`Host::is_plain`).
+    pub fn set_thrown(&mut self, thrown: Option<Thrown>) {
+        if self.host.is_plain() {
+            self.outcome.thrown = thrown;
         }
     }
 
