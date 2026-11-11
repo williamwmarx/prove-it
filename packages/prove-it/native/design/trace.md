@@ -501,7 +501,10 @@ evaluates with empty states and plain control throughout (`Tool.isValidAssumptio
 and where its value holds no lazy function or set. Each later use gets a copy of it as
 evaluating it made it (`Snapshot`): each set and function TLC held as built then is a new object,
 unnormalized as it was, as the trace evaluator normalizes a set in some uses TLC doesn't, such as
-applying a function over it and UNION, and a shared object would carry that to later uses. An
+applying a function over it and UNION, and a shared object would carry that to later uses. The
+copy shares objects as the value did, and an object the evaluation found rather than made, one its
+context's bindings, the definitions kept or the constants hold, is that object again, as
+evaluating the argument again finds it. An
 argument used twice in a recursion is so evaluated once.
 
 That is narrower than TLC's cache, deliberately. TLC's depends on the states and control each

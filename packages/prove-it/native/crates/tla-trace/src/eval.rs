@@ -2023,6 +2023,39 @@ impl<'ir> Evaluator<'ir> {
         Ok(Value::Bool(equals(&now, &then)?))
     }
 
+    // The sets and functions an evaluation in the context can find rather than make: those its
+    // bindings hold, through the contexts of the operators, functions and arguments it binds, the
+    // definitions kept and the constants.
+    fn outside_objects(&self, context: &Context) -> HashSet<usize> {
+        let mut objects = HashSet::new();
+        let mut frames = HashSet::new();
+        let mut envs = vec![context.env.clone()];
+        if let Some(at) = &context.at {
+            add_objects(at, &mut objects);
+        }
+        while let Some(env) = envs.pop() {
+            let mut current = env.0;
+            while let Some(frame) = current {
+                if !frames.insert(Rc::as_ptr(&frame) as usize) {
+                    break;
+                }
+                match &frame.binding {
+                    Binding::Value(value) => add_objects(value, &mut objects),
+                    Binding::Thunk { context, .. } | Binding::Function { context, .. } => {
+                        envs.push(context.env.clone());
+                    }
+                    Binding::Operator(operator) => envs.push(operator.context.env.clone()),
+                }
+                current = frame.parent.0.clone();
+            }
+        }
+        self.cache
+            .values()
+            .chain(self.constants.iter().flatten())
+            .for_each(|value| add_objects(value, &mut objects));
+        objects
+    }
+
     fn check_fields(&self, names: impl Iterator<Item = TextId>) -> Evaluated<()> {
         let mut seen = Vec::new();
         for name in names {
@@ -2109,7 +2142,7 @@ impl<'ir> Evaluator<'ir> {
                 } else if let Some(kept) = kept
                     && self.reads == reads
                     && self.printed.len() == printed
-                    && let Some(snapshot) = Snapshot::of(&value)
+                    && let Some(snapshot) = Snapshot::of(&value, &self.outside_objects(&inner))
                 {
                     *kept.borrow_mut() = Some(KeptValue {
                         is_captured: self.captures != captures,
@@ -6192,20 +6225,26 @@ enum Part {
 impl Snapshot {
     // The value as it is now, or `None` for one holding a lazy value, whose sets aren't the
     // evaluator's to copy.
-    fn of(value: &Value) -> Option<Snapshot> {
+    fn of(value: &Value, outside: &HashSet<usize>) -> Option<Snapshot> {
         let mut snapshot = Snapshot { parts: Vec::new() };
-        snapshot.part(value, &mut HashMap::new())?;
+        snapshot.part(value, outside, &mut HashMap::new())?;
         Some(snapshot)
     }
 
     // The part for a value, the last one added being the root: each set and function once, by its
     // address.
-    fn part(&mut self, value: &Value, seen: &mut HashMap<usize, usize>) -> Option<usize> {
-        let address = match value {
-            Value::Set(elements) => Some(Rc::as_ptr(elements) as usize),
-            Value::Function(function) => Some(Rc::as_ptr(function) as usize),
-            _ => None,
-        };
+    fn part(
+        &mut self,
+        value: &Value,
+        outside: &HashSet<usize>,
+        seen: &mut HashMap<usize, usize>,
+    ) -> Option<usize> {
+        let address = object_address(value);
+        // An object the evaluation found rather than made is the same object again.
+        if address.is_some_and(|address| outside.contains(&address)) {
+            self.parts.push(Part::Value(value.clone()));
+            return Some(self.parts.len() - 1);
+        }
         if let Some(address) = address
             && let Some(&index) = seen.get(&address)
         {
@@ -6214,7 +6253,7 @@ impl Snapshot {
         let mut all = |values: &[Value]| {
             values
                 .iter()
-                .map(|value| self.part(value, seen))
+                .map(|value| self.part(value, outside, seen))
                 .collect::<Option<Vec<_>>>()
         };
         let part = match value {
@@ -6281,6 +6320,38 @@ impl Snapshot {
             }));
         }
         made.pop().flatten().expect("the root")
+    }
+}
+
+// The address of a set or function, which a later use may normalize in place.
+fn object_address(value: &Value) -> Option<usize> {
+    match value {
+        Value::Set(elements) | Value::Unsorted(elements) => Some(Rc::as_ptr(elements) as usize),
+        Value::Function(function) => Some(Rc::as_ptr(function) as usize),
+        _ => None,
+    }
+}
+
+// Adds the address of each set and function the value holds, itself included.
+fn add_objects(value: &Value, objects: &mut HashSet<usize>) {
+    let Some(address) = object_address(value) else {
+        return;
+    };
+    if !objects.insert(address) {
+        return;
+    }
+    match value {
+        Value::Set(elements) | Value::Unsorted(elements) => {
+            elements
+                .iter()
+                .for_each(|element| add_objects(element, objects));
+        }
+        Value::Function(function) => function
+            .domain
+            .iter()
+            .chain(&function.range)
+            .for_each(|part| add_objects(part, objects)),
+        _ => {}
     }
 }
 
