@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check, formatValue } from "../../src";
+import { check } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/randomization");
 
@@ -27,7 +27,9 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
       3,
       3,
     ]);
-    expect(result.violation?.trace.map((step) => [step.state.x, step.state.y])).toEqual([
+    expect(
+      result.violations[0]?.states.map((step) => [step.variables.x.value, step.variables.y.value]),
+    ).toEqual([
       [0, 0],
       [1, 1],
       [0, 1],
@@ -39,10 +41,10 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     // TLC labels a step as it rebuilds the trace, with the generator reseeded for each state.
     for (const seed of [0n, 4n]) {
       const result = await checkWithSeed("RandomElementXandY", seed);
-      expect(result.violation?.trace.map((step) => step.label)).toEqual([
-        undefined,
+      expect(result.violations[0]?.states.map((step) => step.label)).toEqual([
+        "Initial predicate",
         ...Array.from(
-          { length: (result.violation?.trace.length ?? 1) - 1 },
+          { length: (result.violations[0]?.states.length ?? 1) - 1 },
           () => "Next line 9, col 9 to line 10, col 35 of module RandomElementXandY",
         ),
       ]);
@@ -56,7 +58,7 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
       932,
       855,
     ]);
-    expect(result.violation?.trace.map((step) => step.state.x)).toEqual([
+    expect(result.violations[0]?.states.map((step) => step.variables.x.value)).toEqual([
       843, 920, 483, 173, 590, 104, 785, 463, 443, 151, 767,
     ]);
   });
@@ -68,7 +70,7 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
       67291,
       7729,
     ]);
-    expect(result.violation?.trace.map((step) => step.state.x)).toEqual([
+    expect(result.violations[0]?.states.map((step) => step.variables.x.value)).toEqual([
       23, 26, 18, 29, 189, 19, 92, 250, 41, 52, 78,
     ]);
   });
@@ -85,13 +87,13 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
         8009,
         8009,
       ]);
-      const initial = result.violation?.trace[0].state;
-      expect([initial?.x, initial?.y]).toEqual([x, y]);
-      expect(
-        [initial?.p, initial?.q].map((tuple) =>
-          typeof tuple === "object" && tuple.kind === "Function" ? tuple.range : undefined,
-        ),
-      ).toEqual([p, q]);
+      const initial = result.violations[0]?.states[0].variables;
+      expect([initial?.x.value, initial?.y.value, initial?.p.value, initial?.q.value]).toEqual([
+        x,
+        y,
+        p,
+        q,
+      ]);
     },
   );
 
@@ -120,7 +122,7 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
 
   it("reseeds from the tokens TLC interns model values with", async () => {
     const result = await checkWithSeed("RandomModelValue", 1n);
-    expect(result.violation?.trace.map((step) => formatValue(step.state.owner))).toEqual([
+    expect(result.violations[0]?.states.map((step) => step.variables.owner.text)).toEqual([
       "p1",
       "p3",
       "p2",
@@ -133,14 +135,14 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
 
   it("draws again each time an operator with parameters calls RandomElement", async () => {
     const result = await checkWithSeed("RandomOperator", 1n);
-    expect(result.violation?.trace.map((step) => step.state.alpha)).toEqual([
+    expect(result.violations[0]?.states.map((step) => step.variables.alpha.value)).toEqual([
       0, 80, 94, 100, 32, 12, 34,
     ]);
   });
 
   it("draws again at each reference to a LET definition in an action", async () => {
     const result = await checkWithSeed("RandomLet", 1n);
-    expect(result.violation?.trace.map((step) => step.state.alpha)).toEqual([
+    expect(result.violations[0]?.states.map((step) => step.variables.alpha.value)).toEqual([
       0, 100, 77, 50, 66, 68, 12,
     ]);
   });
@@ -165,8 +167,9 @@ describe("random choices match TLC 1.7.4", () => {
       seed: 4n,
       version: "1.7.4",
     });
-    expect(result.failure?.trace.map((step) => step.state.x)).toEqual([39]);
-    expect(result.failure?.message).toMatch(
+    expect(result.status).toBe("error");
+    expect(result.violations[0]?.states.map((step) => step.variables.x.value)).toEqual([39]);
+    expect(result.violations[0]?.headline).toMatch(
       /RandomSubset\(tlc2\.value\.impl\.Value,tlc2\.value\.impl\.Value\),\nbut it produced the following error:\nAttempted to construct a set with too many elements \(>1000000\)\.$/,
     );
   });

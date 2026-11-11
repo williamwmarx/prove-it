@@ -14,6 +14,7 @@ use tla_trace::{
 use tla_values::{Id, Store};
 
 use crate::dump_trace::{DumpedFile, TraceDumps};
+use crate::plain::{Variable, to_plain};
 use crate::stack::on_search_stack;
 use tla_trace::pretty_print;
 
@@ -56,10 +57,11 @@ pub struct Postconditions {
 }
 
 pub struct PrintedState {
-    pub text: String,
     /// Each variable's text in TLC's order of the variables, as TLC records the state for its
     /// trace exploration spec, whatever the ALIAS prints.
     pub values: Vec<Option<String>>,
+    /// The variables as TLC prints the state, through the ALIAS where the configuration has one.
+    pub variables: Vec<Variable>,
     /// The position in the model's actions of the action that took the step to the state, as
     /// TLC finds it.
     pub action: Option<u32>,
@@ -71,6 +73,7 @@ pub struct PrintedState {
 struct Recorded<'v> {
     store: &'v Store,
     startup: &'v [Id],
+    chosen: &'v [(u32, Id)],
     startup_random: u64,
     random: Option<u64>,
     symmetry: Option<&'v NamedGroup>,
@@ -82,12 +85,20 @@ impl<'v> From<&'v Violation> for Recorded<'v> {
         Recorded {
             store: &violation.store,
             startup: &violation.startup,
+            chosen: &violation.chosen,
             startup_random: violation.startup_random,
             random: violation.random,
             symmetry: violation.symmetry.as_ref(),
             registers: &violation.registers,
         }
     }
+}
+
+/// How a rebuilt trace's states are written: with -tool's messages, and with plain data.
+#[derive(Clone, Copy)]
+struct Writing {
+    is_tool: bool,
+    is_plain: bool,
 }
 
 /// The violation's trace, or why `tla-trace` can't rebuild it. The evaluator recurses with the
@@ -97,6 +108,7 @@ pub fn rebuild_trace(
     violation: &Violation,
     checks: TraceChecks,
     is_tool: bool,
+    is_plain: bool,
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
@@ -105,7 +117,7 @@ pub fn rebuild_trace(
         &violation.states,
         violation.labels.clone(),
         Some(checks),
-        is_tool,
+        Writing { is_tool, is_plain },
     )
 }
 
@@ -115,6 +127,7 @@ pub fn rebuild_accepted(
     violation: &Violation,
     accepted: &AcceptedTrace,
     is_tool: bool,
+    is_plain: bool,
 ) -> Result<PrintedTrace, String> {
     rebuild(
         ir,
@@ -125,7 +138,7 @@ pub fn rebuild_accepted(
         &accepted.states,
         vec![None; accepted.states.len().saturating_sub(1)],
         None,
-        is_tool,
+        Writing { is_tool, is_plain },
     )
 }
 
@@ -136,17 +149,27 @@ pub fn rebuild_continued(
     trace: &ContinuedTrace<'_>,
     kind: &ViolationKind,
     is_tool: bool,
+    is_plain: bool,
 ) -> Result<PrintedTrace, String> {
     let recorded = Recorded {
         store: trace.store,
         startup: trace.startup,
+        chosen: trace.chosen,
         startup_random: trace.startup_random,
         random: trace.random,
         symmetry: None,
         registers: trace.registers,
     };
     let labels = vec![None; trace.states.len().saturating_sub(1)];
-    rebuild(ir, &recorded, kind, &trace.states, labels, None, is_tool)
+    rebuild(
+        ir,
+        &recorded,
+        kind,
+        &trace.states,
+        labels,
+        None,
+        Writing { is_tool, is_plain },
+    )
 }
 
 fn rebuild(
@@ -156,7 +179,7 @@ fn rebuild(
     states: &[Vec<Id>],
     mut labels: Vec<Option<u32>>,
     checks: Option<TraceChecks>,
-    is_tool: bool,
+    writing: Writing,
 ) -> Result<PrintedTrace, String> {
     let dumps = checks.map(|checks| checks.dumps);
     let postconditions = checks.and_then(|checks| checks.run);
@@ -212,6 +235,7 @@ fn rebuild(
         // TLC prints each state through the ALIAS, when there is one.
         let rebuilt = Rebuilder::new(ir).and_then(|mut rebuilder| {
             rebuilder.set_startup(recorded.store, recorded.startup, recorded.startup_random)?;
+            rebuilder.set_chosen(recorded.store, recorded.chosen);
             if let Some(random) = recorded.random {
                 rebuilder.set_violation_random(random);
             }
@@ -265,7 +289,7 @@ fn rebuild(
             let aliases = if is_alone {
                 None
             } else {
-                rebuilder.alias(&trace, cycle_start, prefixes.as_deref(), is_tool)?
+                rebuilder.alias(&trace, cycle_start, prefixes.as_deref(), writing.is_tool)?
             };
             // CounterExample closes a lasso with its step back into the cycle. TLC's record of a
             // stuttering lasso, one whose cycle ends in its first state, closes it by the action
@@ -340,13 +364,14 @@ fn rebuild(
                         .iter()
                         .enumerate()
                         .map(|(position, state)| PrintedState {
-                            text: match aliases.as_ref().map(|aliases| &aliases[position]) {
-                                Some(Alias::Record(fields)) => format_fields(
+                            variables: match aliases.as_ref().map(|aliases| &aliases[position]) {
+                                Some(Alias::Record(fields)) => get_field_variables(
                                     fields
                                         .iter()
                                         .map(|(name, value)| (name.as_str(), Some(value))),
+                                    writing.is_plain,
                                 ),
-                                _ => format_state(ir, &state.values),
+                                _ => get_state_variables(ir, &state.values, writing.is_plain),
                             },
                             values: state_values(
                                 ir,
@@ -500,9 +525,10 @@ pub(crate) fn format_print(texts: &[String]) -> String {
         .join("  ")
 }
 
-/// A state's values, in the engine's order of the variables, as TLC prints the state.
-pub(crate) fn format_state(ir: &Ir, values: &[Value]) -> String {
-    format_partial_state(ir, &values.iter().map(Some).collect::<Vec<_>>())
+/// A state's values, in the engine's order of the variables, as TLC prints the state, with their
+/// plain data where `is_plain`.
+pub(crate) fn get_state_variables(ir: &Ir, values: &[Value], is_plain: bool) -> Vec<Variable> {
+    get_partial_variables(ir, &values.iter().map(Some).collect::<Vec<_>>(), is_plain)
 }
 
 /// A state's variables' texts in TLC's order of the variables, `None` for one unassigned.
@@ -514,13 +540,20 @@ pub(crate) fn state_values(ir: &Ir, values: &[Option<&Value>]) -> Vec<Option<Str
 }
 
 /// A state some of whose variables are unassigned, which TLC prints as null.
-pub(crate) fn format_partial_state(ir: &Ir, values: &[Option<&Value>]) -> String {
-    format_fields(ir.tlc_order.iter().map(|&position| {
-        (
-            ir.texts[ir.variables[position as usize] as usize].as_ref(),
-            values[position as usize],
-        )
-    }))
+pub(crate) fn get_partial_variables(
+    ir: &Ir,
+    values: &[Option<&Value>],
+    is_plain: bool,
+) -> Vec<Variable> {
+    get_field_variables(
+        ir.tlc_order.iter().map(|&position| {
+            (
+                ir.texts[ir.variables[position as usize] as usize].as_ref(),
+                values[position as usize],
+            )
+        }),
+        is_plain,
+    )
 }
 
 /// A state whose values are the texts TLC prints for them, in the IR's order of the variables.
@@ -538,17 +571,29 @@ pub(crate) fn format_texts(ir: &Ir, texts: &[String]) -> String {
     text
 }
 
-/// Named values as TLC prints a state (`TLCStateMut.toString`): a line each, as a conjunction when
+/// Named values as TLC prints them in a state, null where unassigned, and their plain data, which
+/// only the library's check asks for: else `null`, which nothing reads.
+pub(crate) fn get_field_variables<'v>(
+    fields: impl Iterator<Item = (&'v str, Option<&'v Value>)>,
+    is_plain: bool,
+) -> Vec<Variable> {
+    fields
+        .map(|(name, value)| Variable {
+            name: name.to_string(),
+            text: value.map_or_else(|| "null".to_string(), |value| pretty(&format_value(value))),
+            data: value
+                .filter(|_| is_plain)
+                .map_or_else(|| "null".to_string(), to_plain),
+        })
+        .collect()
+}
+
+/// A state as TLC prints it (`TLCStateMut.toString`): a line per variable, as a conjunction when
 /// there are several.
-pub(crate) fn format_fields<'v>(
-    fields: impl ExactSizeIterator<Item = (&'v str, Option<&'v Value>)>,
-) -> String {
-    let is_conjunction = fields.len() > 1;
-    let mut text = String::new();
-    for (name, value) in fields {
-        let conjunct = if is_conjunction { "/\\ " } else { "" };
-        let value = value.map_or_else(|| "null".to_string(), |value| pretty(&format_value(value)));
-        text.push_str(&format!("{conjunct}{name} = {value}\n"));
-    }
-    text
+pub(crate) fn format_variables(variables: &[Variable]) -> String {
+    let conjunct = if variables.len() > 1 { "/\\ " } else { "" };
+    variables
+        .iter()
+        .map(|variable| format!("{conjunct}{} = {}\n", variable.name, variable.text))
+        .collect()
 }

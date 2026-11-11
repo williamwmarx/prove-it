@@ -670,6 +670,20 @@ struct FixedPoint {
     dependents: RefCell<Vec<Dependent>>,
 }
 
+/// A recursive operator: a global one by its definition's node, or one a LET defines by the
+/// address of its binding, which the operator's entries keep alive so the address isn't reused.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum OperatorKey {
+    Global(NodeId),
+    Local(usize),
+}
+
+impl OperatorKey {
+    fn local(operator: &Rc<Operator>) -> Self {
+        Self::Local(Rc::as_ptr(operator) as usize)
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Dependent {
     Definition {
@@ -678,7 +692,7 @@ enum Dependent {
         entry: u64,
     },
     Operator {
-        key: usize,
+        key: OperatorKey,
         index: usize,
         entry: u64,
     },
@@ -727,8 +741,7 @@ impl RecursiveFunction {
 }
 
 type Entries<T> = [Option<T>; 2];
-// A recursive operator's entries, keyed by the operator binding, which the entry keeps alive so
-// its address isn't reused, or by the definition's node.
+// A recursive operator's entries, with the LET operator its key names, kept alive.
 type OperatorEntries = (Option<Rc<Operator>>, Entries<Rc<RecursiveOperator>>);
 // A recursive function's entries, keyed by its definition and the scope that binds it.
 type FunctionEntries = (Option<Rc<Scope>>, Entries<Rc<RecursiveFunction>>);
@@ -746,7 +759,7 @@ pub struct Compiler<'a> {
     // The definitions TLC evaluates once at startup, each compiled to read the value it computed
     // then, once compiled.
     startup_definitions: HashMap<NodeId, Option<Compiled>>,
-    recursive_operators: HashMap<usize, OperatorEntries>,
+    recursive_operators: HashMap<OperatorKey, OperatorEntries>,
     recursive_functions: HashMap<(NodeId, usize), FunctionEntries>,
     /// For each global recursive function, the scope that binds its name to it, so that a body
     /// naming it locally, as an instance's copy of it does, reaches the same function.
@@ -808,6 +821,8 @@ pub struct Compiler<'a> {
     /// take a search over with, such as TLC's registers, and otherwise declines it as the
     /// TypeScript engine does.
     pub is_native: bool,
+    /// Whether the Json module's operators may read and write files (`Settings::is_file_system`).
+    pub is_file_system: bool,
     /// How many workers TLC runs with (`-workers`), which TLCGet("config") reports.
     pub workers: usize,
     /// The simulation TLC runs (`-simulate`) rather than a search: its actions then print as they
@@ -902,6 +917,7 @@ impl<'a> Compiler<'a> {
                 .collect(),
             unsorted_slots: HashMap::new(),
             is_native: false,
+            is_file_system: true,
             workers: 1,
             simulation: None,
             is_lambda_built: false,
@@ -1940,6 +1956,32 @@ impl<'a> Compiler<'a> {
         Ok(compiled)
     }
 
+    /// The constant definitions the search compiled whose body is a CHOOSE over a set, by
+    /// position in the IR's definitions: TLC computes each as it starts
+    /// (`processConstantDefns`), which may search the set long, and the trace's rebuild finds
+    /// the element the search's value names instead.
+    pub(crate) fn get_constant_choices(&self) -> Vec<(Index, Eval)> {
+        self.ir
+            .definitions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &node)| {
+                let definition = self.definition(node);
+                if !matches!(&definition.form, DefinitionForm::Operator(params) if params.is_empty())
+                    || !matches!(
+                        self.node(definition.body).1,
+                        NodeKind::Choose { set: Some(_), .. }
+                    )
+                {
+                    return None;
+                }
+                let (_, compiled) = self.definition_cache.get(&node)?.iter().flatten().next()?;
+                (compiled.is_constant && compiled.footprint.width() == 0)
+                    .then(|| (index as Index, compiled.eval.clone()))
+            })
+            .collect()
+    }
+
     fn cache_definition(
         &mut self,
         node: NodeId,
@@ -2545,7 +2587,7 @@ impl<'a> Compiler<'a> {
                     params.clone(),
                     OperatorBody::Node(definition.body),
                     None,
-                    *node as usize,
+                    OperatorKey::Global(*node),
                     None,
                 )
             }
@@ -2553,8 +2595,7 @@ impl<'a> Compiler<'a> {
                 operator.params.clone(),
                 operator.body,
                 Some(operator_context(operator)),
-                // A node id never reaches the address of an allocation.
-                Rc::as_ptr(operator) as usize,
+                OperatorKey::local(operator),
                 Some(Rc::clone(operator)),
             ),
         };
@@ -2651,7 +2692,7 @@ impl<'a> Compiler<'a> {
     #[allow(clippy::too_many_arguments)]
     fn compile_recursive_operator(
         &mut self,
-        key: usize,
+        key: OperatorKey,
         local: Option<Rc<Operator>>,
         global: Option<NodeId>,
         params: &[Param],
@@ -2735,7 +2776,7 @@ impl<'a> Compiler<'a> {
         Ok(created)
     }
 
-    fn forget_operator(&mut self, key: usize, index: usize, entry: u64) {
+    fn forget_operator(&mut self, key: OperatorKey, index: usize, entry: u64) {
         if let Some((_, entries)) = self.recursive_operators.get_mut(&key)
             && entries[index].as_ref().map(|known| known.entry) == Some(entry)
         {
@@ -3230,4 +3271,15 @@ pub(crate) fn call_recursive_element(
     machine.locals[slot as usize] = saved.0;
     machine.locals[element_slot as usize] = saved.1;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_a_global_and_a_local_operator_apart() {
+        let keys = HashSet::from([OperatorKey::Global(7), OperatorKey::Local(7)]);
+        assert_eq!(keys.len(), 2);
+    }
 }

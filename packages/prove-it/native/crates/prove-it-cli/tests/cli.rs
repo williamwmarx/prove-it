@@ -552,6 +552,32 @@ fn checks_a_model_tla_front_lowers() {
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
+// The binary prints an interval in a trace as TLC does, as `1..n`, and never builds its elements:
+// only the library's check writes a state's plain data.
+#[test]
+fn prints_a_huge_interval_in_a_trace_without_its_elements() {
+    let directory = std::env::temp_dir().join(format!("prove-it-cli-huge-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    let spec = "---- MODULE Huge ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, big |-> 1..1000000000]\n====\n";
+    for (file, contents) in [
+        ("Huge.tla", spec),
+        (
+            "Huge.cfg",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\n",
+        ),
+    ] {
+        std::fs::write(directory.join(file), contents).expect("a file");
+    }
+    let output = run(&directory, &["-noTE", "Huge"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    assert!(
+        text.contains("State 2: <Next line 5, col 9 to line 5, col 18 of module Huge>\n/\\ x = 1\n/\\ big = 1..1000000000\n"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
 #[test]
 fn reports_a_postcondition_that_is_false() {
     let directory = std::env::temp_dir().join(format!("prove-it-cli-post-{}", std::process::id()));

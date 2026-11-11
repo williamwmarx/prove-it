@@ -17,7 +17,6 @@ const WORKER_ENTRIES = [
   "src/parallel-worker.ts",
   "src/prover/prove-worker.ts",
   "scripts/check-model.ts",
-  "scripts/isabelle-conformance-worker.ts",
 ];
 
 const name = process.argv[2];

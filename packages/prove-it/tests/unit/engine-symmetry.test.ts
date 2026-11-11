@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 
-import { check } from "../../src";
+import { checkParsed } from "../../src/parallel";
 
 const setting = process.env.PROVE_IT_ENGINE;
 
@@ -22,9 +22,9 @@ const checkBoth = async (body: string, config: string) => {
     if (typeof message === "string" && message.startsWith("[engine] ")) lines.push(message);
   });
   try {
-    const result = await check({ source, config, onPrint: () => {} });
+    const result = await checkParsed({ source, config, onPrint: () => {} });
     process.env.PROVE_IT_ENGINE = "0";
-    const reference = await check({ source, config, onPrint: () => {} });
+    const reference = await checkParsed({ source, config, onPrint: () => {} });
     expect(result).toEqual(reference);
     return { result, lines };
   } finally {

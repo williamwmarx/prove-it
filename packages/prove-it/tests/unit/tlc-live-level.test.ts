@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check, formatValue } from "../../src";
+import { check } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-live-level");
 
@@ -24,6 +24,10 @@ it.each(["ReachesThree", "StepsUp", "LevelsAtMostTwo", "LevelsFromOne"])(
 it('finds the behavior where TLCGet("level") never reaches 4', async () => {
   const result = await checkProperty("ReachesFour");
   expect(result.status).toBe("liveness-violation");
-  expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual(["0", "1", "2"]);
-  expect(result.violation?.loopStart).toBe(0);
+  expect(result.violations[0]?.states.map((step) => step.variables.x.text)).toEqual([
+    "0",
+    "1",
+    "2",
+  ]);
+  expect(result.violations[0]?.loopStart).toBe(0);
 });

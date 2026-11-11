@@ -56,6 +56,7 @@ enum Binding {
         node: NodeId,
         context: Context,
         is_self: bool,
+        kept: Option<Kept>,
     },
     Operator(Rc<Operator>),
     /// A function a LET defines, which TLC keeps lazy: applied without being built. A recursive
@@ -66,6 +67,11 @@ enum Binding {
         is_self: bool,
     },
 }
+
+/// The value of an argument or an expression's LET definition once evaluated, primed or not, which
+/// TLC keeps (`LazyValue`'s cache) where evaluating it read no state, drew nothing and printed
+/// nothing. A LET of an action or the initial predicate binds none (`Tool#getNextStates`).
+type Kept = Rc<std::cell::RefCell<Option<(bool, Value)>>>;
 
 pub struct Operator {
     params: Vec<Param>,
@@ -216,6 +222,7 @@ pub(crate) fn bound_expression(context: &Context, name: TextId) -> Option<(NodeI
             node,
             context: inner,
             is_self,
+            ..
         } => Some((*node, own_context(inner, &frame, *is_self))),
         Binding::Operator(operator) => match operator.body {
             Body::Node(node) => Some((
@@ -292,6 +299,15 @@ impl CallStack {
     /// The node that built a value with a source.
     pub(crate) fn source(&self, value: &Value) -> Option<NodeId> {
         self.sourced.get(&address(value)?).map(|&(node, _)| node)
+    }
+
+    // Gives a value the replay built the node that built it as its source, unless it has one.
+    fn give_source(&mut self, value: &Value, node: NodeId) {
+        if let Some(address) = address(value) {
+            self.sourced
+                .entry(address)
+                .or_insert_with(|| (node, value.clone()));
+        }
     }
 }
 
@@ -388,6 +404,9 @@ pub struct Evaluator<'ir> {
     constants: Vec<Option<Value>>,
     /// Zero-arity definitions that read nothing of the state, evaluated once, as TLC does.
     cache: HashMap<(NodeId, bool), Value>,
+    /// The value the search computed of each constant definition whose body is a CHOOSE over a
+    /// set, and whose evaluation has no effect but its value, by its node (`set_chosen`).
+    chosen: HashMap<NodeId, Value>,
     /// The current state's values, and the next state's: `None` until assigned.
     pub current: Vec<Option<Value>>,
     pub next: Vec<Option<Value>>,
@@ -502,6 +521,26 @@ const MAXIMUM_DEPTH: u32 = 10_000;
 /// The stack an evaluation's nesting may use: half the stack the search's threads have, which
 /// leaves room for the frames between one nesting and the next.
 const MAXIMUM_STACK_BYTES: usize = 128 * 1024 * 1024;
+
+thread_local! {
+    static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    // Where the outermost nesting's frame is, which the stack grows from.
+    static BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The depth and base outside a nesting, which it restores however it ends, as where a reused
+/// thread catches a panic.
+struct Nesting {
+    depth: u32,
+    base: usize,
+}
+
+impl Drop for Nesting {
+    fn drop(&mut self) {
+        DEPTH.set(self.depth);
+        BASE.set(self.base);
+    }
+}
 
 /// `EC.TLC_MODULE_TLCGET_UNDEFINED`, `EC.TLC_MODULE_ARGUMENT_ERROR` and
 /// `EC.TLC_MODULE_ONE_ARGUMENT_ERROR`.
@@ -704,6 +743,7 @@ impl<'ir> Evaluator<'ir> {
             startup_ranked: None,
             constants: vec![None; ir.values.list.len()],
             cache: HashMap::new(),
+            chosen: HashMap::new(),
             current: vec![None; width],
             next: vec![None; width],
             reads: 0,
@@ -1195,14 +1235,8 @@ impl<'ir> Evaluator<'ir> {
             // `CallStackTool.eval` returns a copy of a `SetPredValue`, which has no source.
             let is_copied =
                 matches!(value, Value::Lazy(lazy) if matches!(**lazy, Lazy::Filter(..)));
-            if is_sourced
-                && !is_copied
-                && let Some(address) = address(value)
-            {
-                stack
-                    .sourced
-                    .entry(address)
-                    .or_insert_with(|| (node, value.clone()));
+            if is_sourced && !is_copied {
+                stack.give_source(value, node);
             }
             stack.values.insert(node, value.clone());
         }
@@ -1752,7 +1786,7 @@ impl<'ir> Evaluator<'ir> {
             NodeKind::Let {
                 definitions, body, ..
             } => {
-                let inner = self.bind_let(definitions, context)?;
+                let inner = self.bind_let(definitions, context, true)?;
                 self.evaluate(*body, &inner)
             }
             NodeKind::Forall { bounds, body } => {
@@ -2028,6 +2062,7 @@ impl<'ir> Evaluator<'ir> {
                 node,
                 context: bound,
                 is_self,
+                kept,
             } => {
                 // TLC keeps the value of an argument or a LET definition once it has evaluated
                 // it (`LazyValue`), so what it drew from the generator isn't drawn again.
@@ -2035,12 +2070,24 @@ impl<'ir> Evaluator<'ir> {
                 if let Some((_, value)) = self.drawn.get(&key) {
                     return Ok(value.clone());
                 }
-                let inner = own_context(bound, frame, *is_self)
-                    .primed(context.is_primed || bound.is_primed);
+                let is_primed = context.is_primed || bound.is_primed;
+                if let Some(kept) = kept
+                    && let Some((was_primed, value)) = &*kept.borrow()
+                    && *was_primed == is_primed
+                {
+                    return Ok(value.clone());
+                }
+                let inner = own_context(bound, frame, *is_self).primed(is_primed);
                 let state = self.random.as_ref().map(JavaRandom::state);
+                let (reads, printed) = (self.reads, self.printed.len());
                 let value = self.evaluate(*node, &inner)?;
                 if self.random.as_ref().map(JavaRandom::state) != state {
                     self.drawn.insert(key, (Rc::clone(frame), value.clone()));
+                } else if let Some(kept) = kept
+                    && self.reads == reads
+                    && self.printed.len() == printed
+                {
+                    *kept.borrow_mut() = Some((is_primed, value.clone()));
                 }
                 // TLC keeps the value it computes for a next state, as one object.
                 if frame.is_evaluated.replace(true) && !is_scalar(&value) {
@@ -2248,6 +2295,51 @@ impl<'ir> Evaluator<'ir> {
         Ok(())
     }
 
+    /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
+    /// over a set (`Violation::chosen`), ids of `store` by position in the IR's definitions, for
+    /// those whose evaluation has no effect but its value: neither reading the state or TLC's
+    /// search, nor printing, drawing or reading or writing a file. Each is the element of the
+    /// set TLC computed as it started (`processConstantDefns`), which the rebuild finds without
+    /// testing the elements before it.
+    pub fn set_chosen(&mut self, store: &Store, values: &[(u32, Id)]) {
+        for &(index, id) in values {
+            let node = self.ir.definitions[index as usize];
+            if self.may_reach(node, EFFECTS) {
+                continue;
+            }
+            if let Ok(value) = from_store(store, id) {
+                self.chosen.insert(node, value);
+            }
+        }
+    }
+
+    // A definition's body, or, for a CHOOSE whose value the search computed, the element of its
+    // set that is that value, which is the first that satisfies the predicate. TLC evaluates the
+    // set, and the predicate of each element up to that one, which only gives its value. An
+    // element the walk can't tell from that value, or one that holds a part the predicate may
+    // change as TLC evaluates it, leaves the body evaluated as written.
+    fn evaluate_definition(
+        &mut self,
+        node: NodeId,
+        body: NodeId,
+        context: &Context,
+    ) -> Evaluated<Value> {
+        if let NodeKind::Choose { set: Some(set), .. } = self.kind(body)
+            && let Some(chosen) = self.chosen.get(&node).cloned()
+            && let Ok(set) = self.evaluate(*set, context)
+            && let Ok(elements) = elements(&set)
+        {
+            for element in elements.iter() {
+                match is_chosen(element, &chosen) {
+                    Some(true) => return Ok(element.clone()),
+                    Some(false) => {}
+                    None => break,
+                }
+            }
+        }
+        self.evaluate(body, context)
+    }
+
     pub(crate) fn definition_value(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
         let definition = self.definition(node);
         let key = (node, context.is_primed);
@@ -2276,7 +2368,7 @@ impl<'ir> Evaluator<'ir> {
             && self.is_precomputed(node)
         {
             let call_stack = self.call_stack.take();
-            let computed = self.evaluate(definition.body, &context.global());
+            let computed = self.evaluate_definition(node, definition.body, &context.global());
             self.call_stack = call_stack;
             if let Ok(value) = computed
                 && self.reads == reads
@@ -2301,7 +2393,7 @@ impl<'ir> Evaluator<'ir> {
                 })?
             }
             DefinitionForm::Operator(params) if params.is_empty() => {
-                self.evaluate(definition.body, &context.global())?
+                self.evaluate_definition(node, definition.body, &context.global())?
             }
             DefinitionForm::Operator(_) => return fail("an operator used as a value"),
         };
@@ -2320,6 +2412,7 @@ impl<'ir> Evaluator<'ir> {
         &mut self,
         definitions: &[NodeId],
         context: &Context,
+        is_expression: bool,
     ) -> Evaluated<Context> {
         let mut inner = context.clone();
         for &node in definitions {
@@ -2340,6 +2433,7 @@ impl<'ir> Evaluator<'ir> {
                         node: definition.body,
                         context: inner.clone(),
                         is_self: false,
+                        kept: is_expression.then(Kept::default),
                     }
                 }
                 DefinitionForm::Operator(params) => Binding::Operator(Rc::new(Operator {
@@ -2378,6 +2472,7 @@ impl<'ir> Evaluator<'ir> {
                 node: *expression,
                 context: context_of(self, *scope)?,
                 is_self: *scope == Some(index),
+                kept: None,
             },
             ScopeBinding::Closure {
                 params,
@@ -2414,6 +2509,7 @@ impl<'ir> Evaluator<'ir> {
                             node,
                             context: bound,
                             is_self,
+                            ..
                         } => Some((
                             *node,
                             own_context(bound, &frame, *is_self)
@@ -2485,6 +2581,7 @@ impl<'ir> Evaluator<'ir> {
                     node: argument,
                     context: caller.clone(),
                     is_self: false,
+                    kept: Some(Kept::default()),
                 }
             };
             inner = inner.bind(param.name, binding);
@@ -2942,26 +3039,22 @@ impl<'ir> Evaluator<'ir> {
     }
 
     fn nested<T>(&mut self, work: impl FnOnce(&mut Self) -> Evaluated<T>) -> Evaluated<T> {
-        thread_local! {
-            static DEPTH: Cell<u32> = const { Cell::new(0) };
-            // Where the outermost nesting's frame is, which the stack grows from.
-            static BASE: Cell<usize> = const { Cell::new(0) };
-        }
-        let depth = DEPTH.get();
+        let outer = Nesting {
+            depth: DEPTH.get(),
+            base: BASE.get(),
+        };
         // How deep the frames are depends on the build, so the stack the nesting uses is bounded
         // too, by its distance from the outermost frame.
         let frame = 0u8;
         let here = std::ptr::addr_of!(frame) as usize;
-        if depth == 0 {
+        if outer.depth == 0 {
             BASE.set(here);
         }
-        if depth > MAXIMUM_DEPTH || BASE.get().abs_diff(here) > MAXIMUM_STACK_BYTES {
+        if outer.depth > MAXIMUM_DEPTH || BASE.get().abs_diff(here) > MAXIMUM_STACK_BYTES {
             return fail("recursion too deep");
         }
-        DEPTH.set(depth + 1);
-        let result = work(self);
-        DEPTH.set(depth);
-        result
+        DEPTH.set(outer.depth + 1);
+        work(self)
     }
 
     // --- bound names ---
@@ -3684,6 +3777,7 @@ impl<'ir> Evaluator<'ir> {
                     node,
                     context: bound,
                     is_self,
+                    ..
                 } => match self.kind(*node) {
                     NodeKind::FunctionConstruction {
                         is_recursive: true,
@@ -5980,6 +6074,65 @@ fn sub_bags(bounds: &[(Value, i32)]) -> Evaluated<Value> {
     set_of(values)
 }
 
+/// The builtins whose evaluation has an effect besides its value, or reads what TLC's search
+/// sets: a constant definition that may reach one takes no value from the search's.
+const EFFECTS: &[&str] = &[
+    "TLCGet",
+    "TLCSet",
+    "CounterExample",
+    "_Counts",
+    "Print",
+    "PrintT",
+    "RandomElement",
+    "RandomSubset",
+    "JavaTime",
+    "JsonSerialize",
+    "ndJsonSerialize",
+    "JsonDeserialize",
+    "ndJsonDeserialize",
+    "Serialize",
+    "Deserialize",
+    "IOExec",
+    "IOEnvExec",
+    "IOExecTemplate",
+    "IOEnvExecTemplate",
+    "IOEnv",
+];
+
+// Whether an element of a set is the value the search chose, by a walk that changes neither:
+// `None` where the walk can't tell, or where the element is that value but holds a part that
+// evaluating the predicate may change, such as a function's written order or a function TLC
+// keeps lazy, which TLC's normalizing of what it computes at startup leaves as it is. A
+// function's domain and a set are in TLC's order in both.
+fn is_chosen(element: &Value, chosen: &Value) -> Option<bool> {
+    let are_chosen = |elements: &[Value], chosen: &[Value]| {
+        if elements.len() != chosen.len() {
+            return Some(false);
+        }
+        for (element, chosen) in elements.iter().zip(chosen) {
+            if !is_chosen(element, chosen)? {
+                return Some(false);
+            }
+        }
+        Some(true)
+    };
+    match (element, chosen) {
+        (Value::Bool(element), Value::Bool(chosen)) => Some(element == chosen),
+        (Value::Int(element), Value::Int(chosen)) => Some(element == chosen),
+        (Value::Str(element), Value::Str(chosen))
+        | (Value::Model(element), Value::Model(chosen)) => Some(element.units == chosen.units),
+        (Value::Set(element), Value::Set(chosen)) => are_chosen(element, chosen),
+        (Value::Function(element), Value::Function(chosen)) => {
+            let is_same = are_chosen(&element.domain, &chosen.domain)?
+                && are_chosen(&element.range, &chosen.range)?;
+            let is_settled =
+                element.written.borrow().is_none() && element.class.get() != Class::Lambda;
+            (!is_same || is_settled).then_some(is_same)
+        }
+        _ => None,
+    }
+}
+
 // Whether a value holds a set TLC can't normalize.
 fn holds_unsorted(value: &Value) -> bool {
     match value {
@@ -5997,6 +6150,26 @@ fn holds_unsorted(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A value the replay gave a source and then dropped keeps its address, so the next value the
+    // allocator makes can't take its source, whichever allocator it is.
+    #[test]
+    fn keeps_the_values_it_gives_a_source() {
+        let mut stack = CallStack::default();
+        let elements = Rc::new(vec![Value::Int(1)]);
+        let kept = Rc::downgrade(&elements);
+        stack.give_source(&Value::Set(elements), 7);
+        assert!(
+            kept.upgrade().is_some(),
+            "the call stack keeps the value it gave a source"
+        );
+        let other = Value::Set(Rc::new(vec![Value::Int(2)]));
+        assert_eq!(stack.source(&other), None);
+        assert_eq!(
+            stack.source(&Value::Set(kept.upgrade().expect("kept"))),
+            Some(7)
+        );
+    }
 
     fn lazy(lazy: Lazy) -> Value {
         Value::Lazy(Rc::new(lazy))
@@ -6017,5 +6190,24 @@ mod tests {
         assert!(is_finite(&lazy(Lazy::Product(vec![nat(), empty()]))).expect("finite"));
         assert!(is_finite(&lazy(Lazy::Seq(empty()))).expect("finite"));
         assert!(!is_finite(&lazy(Lazy::Seq(one()))).expect("infinite"));
+    }
+
+    #[test]
+    fn restores_the_nesting_after_a_caught_panic() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/conformance/ir/tlc/tlatools/org.lamport.tlatools/test-model/suite/etest14.ir"
+        ))
+        .expect("a golden IR");
+        let ir = tla_ir::decode(&bytes).expect("an IR that decodes");
+        let mut evaluator = Evaluator::new(&ir);
+        let outside = (DEPTH.get(), BASE.get());
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            evaluator.nested(|evaluator| {
+                evaluator.nested(|_| -> Evaluated<()> { panic!("a panic in a nesting") })
+            })
+        }));
+        assert!(caught.is_err());
+        assert_eq!((DEPTH.get(), BASE.get()), outside);
     }
 }

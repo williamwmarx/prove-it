@@ -10,7 +10,7 @@ Prove It checks TLA+ specs and TLAPS proofs without the JVM. It is a drop-in for
 
 TLC, SANY and tlapm define correct. Before implementing anything, read their source (`tlaplus/tlaplus`, at the commit `TLC_COMMIT` names in `.depot/workflows/benchmark.yml`) and run the real tool on the spec. Never work from memory of TLA+ semantics.
 
-Output either matches the reference byte for byte or the binary declines with `prove-it: not native yet: <reason>`. Something that matches today must never become a decline. `native/design/fallback.md` lists every decline and every known wrong output; keep it true.
+Output either matches the reference byte for byte or the binary declines with `prove-it: not native yet: <reason>`. Something that matches today must never become a decline, unless it matched only by chance; such a run declines and is listed under "Declines to win back" in `native/design/fallback.md`. `native/design/fallback.md` lists every decline and every known wrong output; keep it true.
 
 ## Principles
 

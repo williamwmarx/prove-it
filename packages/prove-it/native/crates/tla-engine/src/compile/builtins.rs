@@ -740,6 +740,9 @@ impl Compiler<'_> {
         operands: &[Operand],
         context: &Context,
     ) -> Compiling<Compiled> {
+        if !self.is_file_system {
+            return decline(format!("{name}, whose file the host reads and writes"));
+        }
         let is_written = name.ends_with("Serialize");
         let is_ordered = is_written
             || self.ir.builtins.iter().any(|builtin| {
