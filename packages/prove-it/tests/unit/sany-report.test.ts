@@ -585,7 +585,9 @@ Prime == PrimeTest(')
     expect(report.text).toContain("*** Errors: 1\n");
     expect(report.text).not.toContain("Level error in applying operator $SF");
     // TLC 1.7.4's SANY reports the level error too, which tla-front doesn't write.
-    expect(getDecline(modules, { version: "1.7.4" })).toBe("SANY's report of TLC 1.7.4's semantic errors");
+    expect(getDecline(modules, { version: "1.7.4" })).toBe(
+      "SANY's report of TLC 1.7.4's semantic errors",
+    );
   });
 
   // The argument exceeds both the operator's level and its operator argument's, which SANY files

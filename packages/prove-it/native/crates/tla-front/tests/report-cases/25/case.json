@@ -1,5 +1,5 @@
 {
- "root": "Empty",
- "version": "master",
- "test": "reports \"THEOREM TRUE BY\" with nothing after its keyword as SANY does"
+  "root": "Empty",
+  "version": "master",
+  "test": "reports \"THEOREM TRUE BY\" with nothing after its keyword as SANY does"
 }

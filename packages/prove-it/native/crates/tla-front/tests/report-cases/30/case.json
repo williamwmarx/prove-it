@@ -1,5 +1,5 @@
 {
- "root": "Defs",
- "version": "master",
- "test": "reads a DEF clause entry that isn't a name as SANY reads its syntax node"
+  "root": "Defs",
+  "version": "master",
+  "test": "reads a DEF clause entry that isn't a name as SANY reads its syntax node"
 }
