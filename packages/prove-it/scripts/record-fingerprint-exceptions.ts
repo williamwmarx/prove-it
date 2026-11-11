@@ -5,10 +5,9 @@
 // TLC builds them and applications of tuples and records, failures in a value TLC gives no source,
 // comparisons TLC can't make in the next-state relation or of an initial state's value with a set,
 // initial states that hold values TLC can't fingerprint, temporal properties that fail on the
-// initial state with an EvalException, function definitions that fail as TLC builds them, and
-// ALIAS values TLC can't print. Each cell runs at -workers 1 and 4 and writes TLC's exit code and
-// its output without the lines that differ from run to run, which the test drops from the
-// binary's too.
+// initial state with an EvalException, and function definitions that fail as TLC builds them. Each
+// cell runs at -workers 1 and 4 and writes TLC's exit code and its output without the lines that
+// differ from run to run, which the test drops from the binary's too.
 // Usage: TLA2TOOLS_JAR=path bun scripts/record-fingerprint-exceptions.ts
 // TLA2TOOLS_JAR is a classpath for java -cp: a tla2tools.jar, or a build's classes and libraries.
 
@@ -302,30 +301,6 @@ const functionDefinitions: Cell[] = [
   config,
 }));
 
-// ALIAS values TLC normalizes as it prints a trace's states, where a set it can't normalize stops
-// the trace with its unexpected-exception report.
-const aliases: Cell[] = [
-  "{1, TRUE}",
-  "SUBSET {1, TRUE}",
-  "{1, 2}",
-  "SUBSET {1, 2}",
-  "{1, TRUE} \\cup {2}",
-  "{2} \\cup {1, TRUE}",
-].map((value) => ({
-  name: `Alias == [x |-> x, v |-> ${value}]`,
-  spec: [
-    "---- MODULE M ----",
-    "EXTENDS Naturals",
-    "VARIABLE x",
-    "Init == x = 0",
-    "Next == x' = x + 1",
-    "Inv == x < 1",
-    `Alias == [x |-> x, v |-> ${value}]`,
-    "====",
-  ].join("\n"),
-  config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
-}));
-
 const record = (cell: Cell, workers: number) => {
   const directory = mkdtempSync(join(tmpdir(), "prove-it-fingerprint-"));
   writeFileSync(join(directory, "M.tla"), `${cell.spec}\n`);
@@ -369,7 +344,6 @@ const blocks = [
   ...initialStates,
   ...initialAtoms,
   ...functionDefinitions,
-  ...aliases,
 ].flatMap((cell) => [
   `### ${cell.name}`,
   "--- spec",

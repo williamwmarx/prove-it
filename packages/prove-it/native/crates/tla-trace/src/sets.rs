@@ -833,21 +833,19 @@ fn is_empty_reducible(value: &Value) -> bool {
 /// the right one after an empty left one, and a lazy left one before an empty right one, as
 /// `combineReducible` does; otherwise it enumerates the union.
 pub fn union(left: &Value, right: &Value) -> Evaluated<Value> {
-    // A set TLC holds unnormalized is a set enumeration, `Reducible` as `Tool`'s OPCODE_cup tests.
-    let is_enumerated = |set: &Value| is_reducible(set) || matches!(set, Value::Unsorted(_));
     if is_empty_reducible(left) {
         return Ok(right.clone());
     }
-    if is_empty_reducible(right) && !is_enumerated(left) {
+    if is_empty_reducible(right) && !is_reducible(left) {
         return Ok(left.clone());
     }
     // `cup` of a set enumeration or an interval enumerates another set enumeration, which
     // normalizes it.
-    if let (true, Value::Unsorted(values)) = (is_enumerated(left), right) {
+    if let (true, Value::Unsorted(values)) = (is_reducible(left), right) {
         return Err(unsorted_failure(values));
     }
     // `Tool`'s OPCODE_cup: a reducible operand's `cup`, the other's lazy union otherwise.
-    match (is_enumerated(left), is_enumerated(right)) {
+    match (is_reducible(left), is_reducible(right)) {
         // `cup` of a set enumeration or an interval: its elements as it holds them, then each of
         // the other's that its own `member` finds it lacks, a set TLC holds unnormalized.
         (true, true) => {
