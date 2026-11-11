@@ -191,6 +191,31 @@ describe("check's result", () => {
     ]);
   });
 
+  // TLC at d8fb231 reports the violation, fails to print its first state, whose ALIAS holds a set
+  // it can't normalize, and reports the exception with no states. The native check prints the
+  // whole trace, which isn't TLC's, so only the TypeScript check, which onProgress asks for, is
+  // checked here until the trace printer follows TLC.
+  it("reports the exception TLC raises printing a state, after the states it printed", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, v |-> {1, TRUE}]\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+      onProgress: () => {},
+    });
+    expect([result.status, result.violations]).toEqual([
+      "invariant-violation",
+      [
+        { code: 2110, headline: "Invariant Inv is violated.", states: [] },
+        {
+          code: 1000,
+          headline:
+            "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compare boolean TRUE with non-boolean:\n1",
+          states: [],
+        },
+      ],
+    ]);
+  });
+
   it("reports where a lasso's cycle starts", async () => {
     const run = await runBoth(
       [

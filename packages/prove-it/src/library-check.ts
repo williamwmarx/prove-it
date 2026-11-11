@@ -128,14 +128,14 @@ const checkWithInterpreter = async (options: CheckOptions) => {
       onProgress || options.isContinued
         ? (progress) => {
             if (progress.kind !== "violation") return onProgress?.(progress);
-            const violation = toContinuedViolation(
+            const reported = toContinuedViolation(
               progress.status,
               progress.violation,
               isTool,
               version,
             );
-            continued.push(violation);
-            onProgress?.({ kind: "violation", status: progress.status, violation });
+            continued.push(...reported);
+            onProgress?.({ kind: "violation", status: progress.status, violation: reported[0] });
           }
         : undefined,
   });

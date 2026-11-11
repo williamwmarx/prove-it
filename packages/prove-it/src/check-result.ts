@@ -10,6 +10,7 @@ import type {
   Violation as SearchViolation,
 } from "./check";
 import type { NativeCheckOutcome } from "./engine/native";
+import { TlaEvaluationError, UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "./errors";
 import { prettyPrint } from "./pretty-print";
 import {
   getFailureHeadline,
@@ -17,6 +18,7 @@ import {
   type Headline,
   isInitialViolation,
 } from "./tlc/headlines";
+import { formatInnerMessage, isEvalException, MESSAGE_CODE } from "./tlc/messages";
 import type { TlcVersion } from "./tlc/version";
 import { formatValue, toFiniteFunction, UNDEFINED_VARIABLE, type Value } from "./values";
 
@@ -167,22 +169,64 @@ const toPlain = (value: Value, budget: Budget): PlainValue | null => {
 
 const toPlainValue = (value: Value) => toPlain(value, { remaining: MAXIMUM_PLAIN_ELEMENTS });
 
-const toTraceStep = (step: SearchStep): TraceStep => ({
-  label: step.label ?? step.action ?? "Initial predicate",
-  variables: Object.fromEntries(
-    Object.entries(step.state).map(([name, value]) => [
-      name,
-      { text: prettyPrint(formatValue(value)), value: toPlainValue(value) },
-    ]),
-  ),
-});
+// A step as TLC prints it, or the error TLC raises printing it: TLC normalizes each value it prints,
+// which fails for a set whose elements it can't compare.
+const toTraceStep = (step: SearchStep): TraceStep | TlaEvaluationError => {
+  try {
+    return {
+      label: step.label ?? step.action ?? "Initial predicate",
+      variables: Object.fromEntries(
+        Object.entries(step.state).map(([name, value]) => [
+          name,
+          { text: prettyPrint(formatValue(value)), value: toPlainValue(value) },
+        ]),
+      ),
+    };
+  } catch (error) {
+    if (!(error instanceof TlaEvaluationError)) throw error;
+    return error;
+  }
+};
 
-const toViolation = (headline: Headline, steps: SearchStep[], loopStart?: number): Violation => ({
-  code: headline.code,
-  headline: headline.text,
-  states: steps.map(toTraceStep),
-  ...(loopStart !== undefined && { loopStart }),
-});
+// What TLC reports of a violation and its behavior: the violation with its states, or, where TLC
+// fails to print a state, the states before it and then the exception TLC reports, after which it
+// reports nothing more.
+const toViolation = (
+  headline: Headline,
+  steps: SearchStep[],
+  isTool: boolean,
+  loopStart?: number,
+): Violation[] => {
+  const states = steps.map(toTraceStep);
+  const failed = states.findIndex((state) => state instanceof TlaEvaluationError);
+  const error = states[failed];
+  const printed = states.slice(0, failed === -1 ? states.length : failed);
+  return [
+    {
+      code: headline.code,
+      headline: headline.text,
+      states: printed.filter((state): state is TraceStep => !(state instanceof TlaEvaluationError)),
+      ...(loopStart !== undefined && { loopStart }),
+    },
+    ...(error instanceof TlaEvaluationError
+      ? [
+          {
+            code: MESSAGE_CODE.general,
+            headline: formatInnerMessage(
+              MESSAGE_CODE.general,
+              `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
+              isTool,
+            ),
+            states: [],
+          },
+        ]
+      : []),
+  ];
+};
+
+// What TLC reports, in order, of each violation: once TLC fails to print one, nothing after it.
+const toReported = (reports: Violation[][]) =>
+  reports.slice(0, reports.findIndex((report) => report.length > 1) + 1 || reports.length).flat();
 
 // What the interpreter's violation reports, as TLC prints it: the violation, then a postcondition
 // TLC checks after it, which fails.
@@ -202,23 +246,25 @@ const getReported = (
           toViolation(
             headline,
             violation.trace,
+            isTool,
             status === "property-violation" ? undefined : violation.loopStart,
           ),
         ]
       : []),
     ...(postcondition
-      ? [toViolation({ code: postcondition.code, text: postcondition.message }, [])]
+      ? [toViolation({ code: postcondition.code, text: postcondition.message }, [], isTool)]
       : []),
   ];
 };
 
-// The interpreter's violation, as -continue reports it.
+// The interpreter's violation, as -continue reports it, and the exception TLC reports where it
+// fails to print the violation's trace.
 export const toContinuedViolation = (
   status: CheckStatus,
   violation: SearchViolation,
   isTool: boolean,
   version: TlcVersion,
-) => getReported(status, violation, isTool, version)[0];
+) => toReported(getReported(status, violation, isTool, version).slice(0, 1));
 
 // The interpreter's result, converted.
 export const fromSearchResult = (
@@ -232,12 +278,13 @@ export const fromSearchResult = (
   const additional = result.additionalViolation;
   const reported = failure
     ? [
-        toViolation(getFailureHeadline(failure, isTool), failure.trace),
+        toViolation(getFailureHeadline(failure, isTool), failure.trace, isTool),
         ...(failure.postcondition
           ? [
               toViolation(
                 { code: failure.postcondition.code, text: failure.postcondition.message },
                 [],
+                isTool,
               ),
             ]
           : []),
@@ -256,7 +303,7 @@ export const fromSearchResult = (
     (violation !== undefined && isInitialViolation(result.status, violation));
   return {
     status: result.status,
-    violations: [...continued, ...reported],
+    violations: [...continued, ...toReported(reported)],
     generatedStates: isWithoutStatistics ? 0 : result.generatedStates,
     distinctStates: isWithoutStatistics ? 0 : result.distinctStates,
     queuedStates: isWithoutStatistics ? 0 : result.queuedStates,
