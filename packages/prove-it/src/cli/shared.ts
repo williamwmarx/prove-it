@@ -43,9 +43,7 @@ export class UnreadableModuleError extends Error {
 }
 
 export const createModuleLoader = (directories: string[]) => (name: string) => {
-  const entry = directories
-    .map((directory) => join(directory, `${name}.tla`))
-    .find(existsSync);
+  const entry = directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
   if (entry === undefined) return undefined;
   try {
     return readFileSync(entry, "utf8");
