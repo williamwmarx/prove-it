@@ -4754,6 +4754,23 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  // A mutation of tests/fixtures/counter/Counter.tla, recorded with TLC at d8fb231: an ASSUME
+  // that ends a definition's conjunction list primes a variable.
+  it("rejects an assumption above constant level, at the assumption, like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "------------------------------ MODULE Counter ------------------------------\nEXTENDS Naturals\n\nCONSTANT Limit\n\nVARIABLE count\n\nInit == count = 0\n\nIncrement == /\\ count < Limit\n        ASSUME       /\\ count' = count + 1\n\nNext == Increment\n=============================================================================\n",
+        config: "CONSTANT Limit = 3\nINIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSemanticError(
+        "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
+        { module: "Counter", start: { line: 11, column: 9 }, end: { line: 11, column: 42 } },
+      ),
+    );
+  });
+
   it("rejects an argument above the level an instantiated operator allows, naming it like SANY", async () => {
     await expect(
       check({
