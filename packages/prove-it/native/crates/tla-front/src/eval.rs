@@ -714,7 +714,10 @@ impl Evaluator<'_> {
                         return Ok(element);
                     }
                 }
-                Err(not_yet("a CHOOSE no element of which satisfies"))
+                Err(FrontError::Evaluation(format!(
+                    "Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\n{}",
+                    describe_range(expression)
+                )))
             }
             ExpressionKind::SetEnumeration(elements) => {
                 let elements = elements

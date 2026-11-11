@@ -13,6 +13,7 @@ use crate::eval::Evaluator;
 use crate::instances::map_children;
 use crate::levels::{self, ACTION_LEVEL};
 use crate::resolve::{Result, Tables};
+use crate::tlc_messages::is_eval_exception;
 use tla_ir::PredicateForm;
 
 /// `Scope`: a name bound to a value, an expression or an operator, in front of the scope it
@@ -377,20 +378,27 @@ impl Expansion<'_> {
                 let Some(evaluator) = self.evaluator else {
                     return Err(not_yet("a property's \\A that TLC unrolls"));
                 };
-                let mut expanded = Vec::new();
-                for binding in evaluator.get_bindings(bounds, scope)? {
-                    expanded.extend(self.expand(
-                        body,
-                        binding.as_ref(),
-                        expanding,
-                        is_substituted,
-                        Some(Rc::from(describe_range(body))),
-                    )?);
+                match evaluator.get_bindings(bounds, scope) {
+                    // `processConfigProps` leaves a \A whose sets fail with a TLCRuntimeException
+                    // to the liveness checker.
+                    Err(error @ FrontError::Evaluation(_)) if !is_eval_exception(&error) => {}
+                    bindings => {
+                        let mut expanded = Vec::new();
+                        for binding in bindings? {
+                            expanded.extend(self.expand(
+                                body,
+                                binding.as_ref(),
+                                expanding,
+                                is_substituted,
+                                Some(Rc::from(describe_range(body))),
+                            )?);
+                        }
+                        if expanded.is_empty() {
+                            return Err(not_yet("a property TLC finds a tautology"));
+                        }
+                        return Ok(expanded);
+                    }
                 }
-                if expanded.is_empty() {
-                    return Err(not_yet("a property TLC finds a tautology"));
-                }
-                return Ok(expanded);
             }
             _ => {}
         }
