@@ -979,6 +979,16 @@ pub fn parse_smtlib(
             // cmd_context::set_logic. The solver is UFNIA's whatever the logic.
             "set-logic" => {
                 let logic = parser.expect_symbol(list.get(1).copied())?;
+                if list.len() > 2 {
+                    return Err(SmtError::Parse(
+                        "invalid command, too many arguments".into(),
+                    ));
+                }
+                if logic.starts_with('"') {
+                    return Err(SmtError::Parse(
+                        "invalid command argument, symbol expected".into(),
+                    ));
+                }
                 if has_logic {
                     return Err(SmtError::Parse("the logic has already been set".into()));
                 }
@@ -1004,7 +1014,13 @@ pub fn parse_smtlib(
                 ));
             }
             // Before the first check-sat there is no model, proof or core to get.
-            "get-model" | "get-value" | "get-assignment" | "get-proof" | "get-unsat-core" => {
+            "get-model"
+            | "get-value"
+            | "get-assignment"
+            | "get-proof"
+            | "get-unsat-core"
+            | "get-unsat-assumptions"
+            | "eval" => {
                 return Err(SmtError::Parse(format!("{name} has nothing to get")));
             }
             "check-sat" => {

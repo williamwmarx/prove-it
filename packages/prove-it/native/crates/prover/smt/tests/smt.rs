@@ -606,7 +606,37 @@ fn resets_as_z3_does() {
 
 /// Commands Z3 refuses before the first check-sat, and their neighbours it accepts, with what Z3
 /// 5.3.3 prints, run as above.
-const COMMAND_ERRORS: [(&str, &str); 26] = [
+const COMMAND_ERRORS: [(&str, &str); 33] = [
+    (
+        "(set-logic UFNIA extra)(assert false)(check-sat)",
+        "(error \"line 1 column 18: invalid command, too many arguments\")\nunsat",
+    ),
+    (
+        "(set-logic \"UFNIA\")(assert false)(check-sat)",
+        "(error \"line 1 column 12: invalid command argument, symbol expected\")\nunsat",
+    ),
+    (
+        "(set-logic)(assert false)(check-sat)",
+        "(error \"line 1 column 11: invalid command, argument(s) missing\")\nunsat",
+    ),
+    (
+        "(eval true)(assert false)(check-sat)",
+        "(error \"line 1 column 11: model is not available\")\nunsat",
+    ),
+    (
+        "(declare-const x Int)(eval x)(check-sat)",
+        "(error \"line 1 column 29: model is not available\")\nsat",
+    ),
+    (
+        "(get-unsat-assumptions)(assert false)(check-sat)",
+        "(error \"line 1 column 23: unsat assumptions construction is not enabled, use command \
+         (set-option :produce-unsat-assumptions true)\")\nunsat",
+    ),
+    (
+        "(set-option :produce-unsat-assumptions true)(get-unsat-assumptions)(assert false)\
+         (check-sat)",
+        "(error \"line 1 column 67: unsat assumptions is not available\")\nunsat",
+    ),
     (
         "(assert false)(exit 1)(check-sat)",
         "(error \"line 1 column 21: invalid command, too many arguments\")\nunsat",
