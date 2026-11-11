@@ -1,0 +1,4 @@
+---- MODULE A ----
+CONSTANT c
+THEOREM T == ASSUME NEW STATE s PROVE c = s
+====
