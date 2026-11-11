@@ -13,6 +13,7 @@ use tla_values::store::{Outcome, ShapeJoin};
 use tla_values::{Bail, Id, Store};
 
 use crate::compile::Lambda;
+use crate::compile::lazy::Lazy;
 use crate::memo::{EMPTY, EPOCH_KEYS, EpochCache, MAXIMUM_ENTRIES, MemoTable};
 use tla_values::random::JavaRandom;
 
@@ -153,6 +154,11 @@ pub struct Machine<'p> {
     pub(crate) fingerprints: Fingerprints,
     /// The functions TLC keeps lazy that the machine built, which the store's ids of them number.
     pub(crate) lazy_functions: Vec<Lambda>,
+    /// For each variable the walk assigned a set TLC may stream an element of twice: the value
+    /// assigned, and the set as TLC built it, or None where the engine has no reference of it.
+    /// TLC binds the set as built until it fingerprints the state the walk completes, which
+    /// caches it as its normalized set (`Tool.getInitStates`, `Tool.getNextStates`).
+    pub(crate) held: Vec<Option<(Id, Option<Lazy>)>>,
 }
 
 /// TLC's registers (`IdThread`'s local values and named registers): the value TLCSet stored under
@@ -208,6 +214,7 @@ impl<'p> Machine<'p> {
             tlc_caches: HashMap::new(),
             fingerprints: Fingerprints::new(program.polynomial()),
             lazy_functions: Vec::new(),
+            held: vec![None; program.width],
         }
     }
 

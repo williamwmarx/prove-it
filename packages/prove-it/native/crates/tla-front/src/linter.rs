@@ -151,7 +151,7 @@ impl<'a> Linter<'a> {
         if let Some(definition) = module
             .definitions
             .iter()
-            .find(|definition| is_named(&definition.name) && (is_own || !definition.is_local))
+            .find(|definition| is_named(&definition.name) && (is_own || !definition.is_hidden()))
         {
             return Ok(Some(Meaning::Defined {
                 definition: definition.clone(),

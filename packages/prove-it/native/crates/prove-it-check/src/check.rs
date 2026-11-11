@@ -17,6 +17,7 @@ use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
+use crate::jar::{get_tools_jar, is_174};
 use crate::messages::{self as code, Level, Output, Printer};
 use crate::stack::{alongside, on_search_stack};
 use crate::summary::{
@@ -70,11 +71,19 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
     if args.first().is_some_and(|arg| arg == "tlapm") {
         return not_native(output, "tlapm");
     }
-    let Some(launch) = get_java_launch(args) else {
+    let Some(mut launch) = get_java_launch(args) else {
         return check_specs(args, &Java::default(), false, output);
     };
-    if launch.java.class_path.is_some() {
-        return not_native(output, "reading the version of a tla2tools.jar");
+    // Without -Dtla-ts.tlc, the jar on the class path picks the TLC to reproduce.
+    let jar = launch.java.class_path.as_deref().and_then(get_tools_jar);
+    if let (None, Some(jar)) = (launch.java.tlc_version, jar) {
+        launch.java.tlc_version = match is_174(output.host, jar) {
+            Ok(true) => Some(TlcVersion::V1_7_4),
+            Ok(false) => Some(TlcVersion::Master),
+            Err(reason) => {
+                return not_native(output, &format!("the version of {jar}: {reason}"));
+            }
+        };
     }
     match launch.main_class.as_str() {
         "tlc2.TLC" => match &launch.java.unmodelled_property {
@@ -84,7 +93,9 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
         "tla2sany.xml.XMLExporter" => match &launch.java.unmodelled_property {
             Some(property) => not_native(output, &format!("the system property {property}")),
             // TLC 1.7.4's XMLExporter is retired, and only master's is ported.
-            None if launch.java.is_174 => not_native(output, "TLC 1.7.4"),
+            None if launch.java.tlc_version == Some(TlcVersion::V1_7_4) => {
+                not_native(output, "TLC 1.7.4")
+            }
             None => run_xml_exporter(&launch.args, output)
                 .unwrap_or_else(|reason| not_native(output, &reason)),
         },
@@ -112,7 +123,7 @@ fn file_name(path: &str) -> String {
 
 // With `is_tlc` the command line is `tlc2.TLC`'s, which names one module.
 fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'_>) -> i32 {
-    if java.is_174 {
+    if java.tlc_version == Some(TlcVersion::V1_7_4) {
         return not_native(output, "TLC 1.7.4");
     }
     let parsed = match Parsed::parse(args, is_tlc) {
@@ -783,6 +794,7 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             libraries: &java.libraries,
             temporary: java.temporary_directory.as_deref(),
             metadir: args.first("-metadir"),
+            jar: java.class_path.as_deref().and_then(get_tools_jar),
             is_174: false,
             is_trace_recorded: is_trace_recorded(args),
         },
