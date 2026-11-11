@@ -638,7 +638,7 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
   `-lncheck`, `-tool`, `-nowarning` and `-continue` from its options. The Json module's operators
   decline there, since the library answers for files through `readFile` and `writeFile`.
 - The check records what it found as it prints (`prove-it-check`'s `outcome.rs`), and
-  `checkSources` returns it as `outcome` (ABI 13): the status, the counts of TLC's statistics, what
+  `checkSources` returns it as `outcome` (ABI 16): the status, the counts of TLC's statistics, what
   the spec printed, and each violation or error TLC reports, as its message's code and text with
   the states TLC prints after it. A state carries each variable as TLC prints it and as plain data.
 - Where the native check declines, stops before it searches (a spec or configuration TLC rejects,
