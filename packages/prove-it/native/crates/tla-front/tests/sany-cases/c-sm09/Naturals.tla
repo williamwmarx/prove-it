@@ -1,0 +1,6 @@
+---- MODULE Naturals ----
+THEOREM TRUE
+<1>a. TRUE OBVIOUS
+<1>a. TRUE OBVIOUS
+<1> QED OBVIOUS
+====

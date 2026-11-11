@@ -1,0 +1,4 @@
+---- MODULE Spec ----
+THEOREM TRUE
+PROOF BY
+====

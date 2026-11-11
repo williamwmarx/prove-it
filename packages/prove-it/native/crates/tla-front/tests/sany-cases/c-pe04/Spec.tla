@@ -1,0 +1,5 @@
+---- MODULE Spec ----
+EXTENDS J
+THEOREM TRUE
+BY
+====

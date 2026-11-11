@@ -553,7 +553,12 @@ pub fn selector_to_node<G: SelectorGenerator>(
                         ));
                     }
                 } else {
-                    let Some(node) = walk.node else {
+                    // An absent node is the null SANY's generator returns for an expression it
+                    // reported an error in.
+                    let Some(node) = walk
+                        .node
+                        .filter(|&node| !generator.graph().node(node).is_absent())
+                    else {
                         return Ok(generator.add_error(
                             item_location(walk.index),
                             "Subexpression selection failed, probably due to an error in the selected expression.".to_owned(),
