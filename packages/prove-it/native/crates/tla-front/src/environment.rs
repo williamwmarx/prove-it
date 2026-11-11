@@ -1165,7 +1165,7 @@ impl Linker<'_> {
                 continue;
             }
             visible.insert(definition.name.clone(), symbol.clone());
-            if !definition.is_local {
+            if !definition.is_hidden() {
                 exported.insert(definition.name.clone(), symbol);
             }
         }
