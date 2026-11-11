@@ -3,10 +3,10 @@
 //! fail in the initial or next states, which TLC reports with the FingerprintException of its
 //! replay, initial states that hold values TLC fails to fingerprint, temporal properties whose atoms
 //! fail on the initial state, function definitions that fail as TLC builds them, memberships whose
-//! comparison fails in a set nested in the one tested, and constant definitions TLC can't normalize
-//! at startup. Each cell must print what TLC printed, byte for
-//! byte, with TLC's exit code, at -workers 1 and 4, or be one the binary declines and that
-//! `DECLINED` lists.
+//! comparison fails in a set nested in the one tested, constant definitions TLC can't normalize at
+//! startup, and ALIAS values TLC can't print. Each cell must print what TLC printed, byte for byte,
+//! with TLC's exit code, at -workers 1 and 4, or be one the binary declines and that `DECLINED`
+//! lists.
 //!
 //! TLC's output is recorded by `scripts/record-fingerprint-exceptions.ts` from TLC at the commit
 //! the recordings pin; to check it, run that script with TLA2TOOLS_JAR set and diff the file.
@@ -28,6 +28,10 @@ const DECLINED: &[&str] = &[
     "Init == x = [a |-> 1]: x = {}",
     "Init == x = \"a\" :> 1: x = {}",
     "Init == x = \"a b\" :> 1: x = {}",
+    // An ALIAS value that holds a set TLC can't normalize, which stops TLC's trace as it prints the
+    // state with its unexpected-exception report, which the binary doesn't print yet.
+    "Alias == [x |-> x, v |-> {1, TRUE}]",
+    "Alias == [x |-> x, v |-> SUBSET {1, TRUE}]",
 ];
 
 // The lines that differ from run to run or between TLC and the binary, as the script drops them.
@@ -103,7 +107,7 @@ fn directory(index: usize, cell: &Cell) -> PathBuf {
 #[test]
 fn fingerprint_exceptions() {
     let cells = parse(RECORDED);
-    assert_eq!(cells.len(), 134, "the recorded cells");
+    assert_eq!(cells.len(), 138, "the recorded cells");
     for (index, cell) in cells.iter().enumerate() {
         let directory = directory(index, cell);
         for (workers, exit, expected) in &cell.expected {
