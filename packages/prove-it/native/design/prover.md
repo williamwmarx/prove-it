@@ -1102,8 +1102,9 @@ is next.
     inputs, 117M trace lines in total) all 10,376 traces are the same. The TypeScript's traced
     answers all equal the record. Run with `bun scripts/run.ts lp-trace --jobs 4` in batches by
     `--filter smt/0` … `smt/f`, `z3/`, replaying and deleting each batch: the traces take 5.8 GB.
-  - **Next:** P3c's theory-lra glue, which calls lp exactly as the trace does, and the
-    decider differential once `core` calls `lp`.
+  - **The glue:** P3c's theory_lra, instrumented on a local branch to write the same trace, made
+    the TypeScript's lp calls call for call on all 10,320 smt inputs of the corpus. That Rust
+    recorder was not kept, as the TypeScript SMT goes after the flip.
 - P5a tlapm parse mode: `tla-front`'s `Mode::Tlapm` and `parse_tlapm_module` (#226), held equal to
   `parseTlapmModule` by `front-differential.ts tlapm-ast` (2,367 of 2,367 corpus modules, every
   mutation), the other modes byte-identical to before.
