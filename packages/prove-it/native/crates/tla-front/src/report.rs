@@ -147,6 +147,9 @@ struct Loader<'a> {
     /// Whether SANY's semantic analysis found errors.
     is_failed: bool,
     exception: Option<String>,
+    /// Where SANY reads the root module from: its file, or its standard modules where no file
+    /// holds it.
+    root_origin: ModuleOrigin,
 }
 impl Loader<'_> {
     fn get_dependencies(&self, name: &str) -> Rc<ModuleDependencies> {
@@ -620,6 +623,25 @@ pub fn get_sany_text_of(
     source: &str,
     options: &ReportOptions,
 ) -> std::result::Result<SanyText, FrontError> {
+    get_root_text(root, source, ModuleOrigin::File, options)
+}
+
+/// What SANY prints for a spec whose root module no file holds but SANY's standard modules do, or
+/// `None` where they don't hold it.
+pub fn get_standard_root_text(
+    root: &str,
+    options: &ReportOptions,
+) -> Option<std::result::Result<SanyText, FrontError>> {
+    let source = get_standard_module(root, options.version)?;
+    Some(get_root_text(root, source, ModuleOrigin::Standard, options))
+}
+
+fn get_root_text(
+    root: &str,
+    source: &str,
+    root_origin: ModuleOrigin,
+    options: &ReportOptions,
+) -> std::result::Result<SanyText, FrontError> {
     let root: Rc<str> = Rc::from(root);
     let mut loader = Loader {
         options,
@@ -633,6 +655,7 @@ pub fn get_sany_text_of(
         is_parse_reported: false,
         is_failed: false,
         exception: None,
+        root_origin,
     };
     let name = options.file_name.unwrap_or(&root);
     match write_sany_text(&mut loader, &root) {
@@ -990,7 +1013,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
     let options = loader.options;
     let source = loader.source;
     let root = root.clone();
-    loader.load(&root, Some(source.to_owned()), ModuleOrigin::File, &root)?;
+    loader.load(&root, Some(source.to_owned()), loader.root_origin, &root)?;
     loader.validate_parse_unit(&root)?;
     let mut resolutions: FastSet<(Rc<str>, Rc<str>)> = FastSet::default();
     let mut referencees: Referencees = FastMap::default();
