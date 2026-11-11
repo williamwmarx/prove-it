@@ -18,6 +18,9 @@ const VARYING: &[&str] = &[
     "Finished computing initial states",
     "Finished in",
     "calculated (optimistic)",
+    "Progress(",
+    "Checking temporal properties",
+    "Finished checking temporal properties",
 ];
 
 fn get_untimed_lines(text: &str, directory: &str) -> String {

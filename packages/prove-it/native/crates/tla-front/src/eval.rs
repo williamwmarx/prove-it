@@ -79,6 +79,26 @@ fn get_elements(value: ConfigValue) -> Result<Vec<ConfigValue>> {
     }
 }
 
+/// The longest text of a value the evaluator prints, which TLC's pretty-printer, 80 columns wide,
+/// leaves on one line.
+const MAXIMUM_PLAIN_TEXT: usize = 60;
+
+/// The text TLC prints of a natural number, a string of letters, digits and spaces, or a boolean.
+fn format_scalar(value: &ConfigValue) -> Option<String> {
+    match value {
+        ConfigValue::Number(number) if *number >= 0.0 => Some(format!("{number}")),
+        ConfigValue::String(text)
+            if text
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == ' ') =>
+        {
+            Some(format!("\"{text}\""))
+        }
+        ConfigValue::Boolean(value) => Some(if *value { "TRUE" } else { "FALSE" }.to_owned()),
+        _ => None,
+    }
+}
+
 /// The sets of numbers and strings TLC knows by name, which have no elements to list.
 enum Infinite {
     Nat,
@@ -147,6 +167,41 @@ impl Evaluator<'_> {
             }
             _ => Err(not_yet("values TLC can't compare")),
         }
+    }
+
+    /// `=` of two operands, `Value#equals` of the left one's value: an integer, a string or a
+    /// boolean fails for a value of another kind but a model value, with both values' texts.
+    fn equals_operands(&self, args: &[Expr], scope: Option<&Rc<Scope>>) -> Result<bool> {
+        let left = self.evaluate(&args[0], scope)?;
+        let right = self.evaluate(&args[1], scope)?;
+        let failure = match (&left, &right) {
+            (ConfigValue::Number(_), ConfigValue::Number(_))
+            | (ConfigValue::String(_), ConfigValue::String(_))
+            | (ConfigValue::Boolean(_), ConfigValue::Boolean(_))
+            | (_, ConfigValue::ModelValue(_)) => None,
+            (ConfigValue::Number(_), _) => Some(("check equality of integer", "non-integer")),
+            (ConfigValue::String(_), _) => Some(("check equality of string", "non-string")),
+            (ConfigValue::Boolean(_), _) => Some(("compare equality of boolean", "non-boolean")),
+            _ => None,
+        };
+        let Some((check, other)) = failure else {
+            return self.equals(&left, &right);
+        };
+        // The values' texts, which TLC pretty-prints, the right one's as its class prints it.
+        let left_text = format_scalar(&left).ok_or_else(|| not_yet("values TLC can't compare"))?;
+        let right_text = match (&right, &args[1].kind) {
+            (ConfigValue::Set(elements), ExpressionKind::SetEnumeration(_)) => elements
+                .iter()
+                .map(format_scalar)
+                .collect::<Option<Vec<_>>>()
+                .map(|elements| format!("{{{}}}", elements.join(", "))),
+            _ => format_scalar(&right),
+        }
+        .filter(|text| text.len() <= MAXIMUM_PLAIN_TEXT)
+        .ok_or_else(|| not_yet("values TLC can't compare"))?;
+        Err(FrontError::Evaluation(format!(
+            "Attempted to {check} {left_text} with {other}:\n{right_text}"
+        )))
     }
 
     fn create_set(&self, elements: Vec<ConfigValue>) -> Result<ConfigValue> {
@@ -483,8 +538,8 @@ impl Evaluator<'_> {
                 let (left, right) = integers()?;
                 ConfigValue::Boolean(left >= right)
             }
-            ("=", 2) => ConfigValue::Boolean(self.equals(&value(0)?, &value(1)?)?),
-            ("/=", 2) => ConfigValue::Boolean(!self.equals(&value(0)?, &value(1)?)?),
+            ("=", 2) => ConfigValue::Boolean(self.equals_operands(args, scope)?),
+            ("/=", 2) => ConfigValue::Boolean(!self.equals_operands(args, scope)?),
             ("\\in", 2) => ConfigValue::Boolean(self.is_member(&value(0)?, &args[1], scope)?),
             ("\\notin", 2) => ConfigValue::Boolean(!self.is_member(&value(0)?, &args[1], scope)?),
             ("\\subseteq", 2) => {
