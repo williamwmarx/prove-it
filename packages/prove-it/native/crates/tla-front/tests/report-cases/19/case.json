@@ -1,5 +1,6 @@
 {
   "root": "Strong",
   "version": "1.7.4",
-  "test": "checks the level of an operator applied to []A as TLC 1.7.4's SANY does"
+  "test": "checks the level of an operator applied to []A as TLC 1.7.4's SANY does",
+  "declines": "TLC 1.7.4's semantic errors"
 }

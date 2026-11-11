@@ -1,0 +1,6 @@
+{
+  "root": "Spec",
+  "version": "master",
+  "mode": "default",
+  "declines": "a recursive definition a record's field applies, on which SANY's linter overflows its stack, which SANY's linter reads"
+}

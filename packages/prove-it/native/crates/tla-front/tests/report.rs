@@ -107,46 +107,36 @@ fn get_recorded_report(recording: &str) -> String {
 
 // Cases of SANY's report that the TypeScript report's tests held, each a directory of modules with
 // the root module and TLC's version in `case.json`. `report-cases.json` records what TLC prints for
-// each, TLC 1.7.4's in `report-cases-174.json`; the front end writes it or, for the cases DECLINED
-// names, declines.
+// each, TLC 1.7.4's in `report-cases-174.json`; the front end writes it or declines it for the
+// reason the case gives.
 #[test]
 fn reports_each_recorded_case_as_sany_does_or_declines() {
-    // TLC 1.7.4's semantic errors, which the front end doesn't write.
-    const DECLINED: &[&str] = &["19", "20", "22", "34", "35"];
     let mut recordings = get_recordings(include_str!(
         "../../../../tests/conformance/sany-stdout/report-cases.json"
     ));
     recordings.extend(get_recordings(include_str!(
         "../../../../tests/conformance/sany-stdout/report-cases-174.json"
     )));
-    check_recorded_cases("report-cases", &recordings, DECLINED);
+    check_recorded_cases("report-cases", &recordings);
 }
 
 // tests/sany-cases: the specs that adversarial runs against TLC at d8fb231 found the report of
 // SANY's parsing and semantic analysis wrong or declining for, each a directory as report-cases'
 // are, whose `case.json` names TLC's default mode where TLC ran without -noGenerateSpecTE and so
 // adds _TLCTrace to the root module's EXTENDS. `sany-cases.json` records what TLC prints for
-// each; the front end writes it or, for the cases DECLINED names, declines.
+// each; the front end writes it or declines it for the reason the case gives.
 #[test]
 fn reports_each_adversarial_case_as_sany_does_or_declines() {
-    const DECLINED: &[&str] = &[
-        // A definition of the postfix operator ', which the front end's parser rejects.
-        "c-bi34", "st-bi34", "te-bi34", "r2-bd27",
-        // A module of the CommunityModules, whose report depends on whether TLC finds
-        // CommunityModules.jar beside tla2tools.jar.
-        "c-dc01", "c-dc02", "st-dc01", "st-dc02",
-        // SANY's generator throwing on the root module after a module of the user's.
-        "c-dc03", "st-dc03",
-    ];
     let recordings = get_recordings(include_str!(
         "../../../../tests/conformance/sany-stdout/sany-cases.json"
     ));
-    check_recorded_cases("sany-cases", &recordings, DECLINED);
+    check_recorded_cases("sany-cases", &recordings);
 }
 
 /// Checks the front end's report of each case of `tests/<cases>` against `recordings`, keyed
-/// `<cases>/<case>`: the same text, or a decline for the cases `declined` names.
-fn check_recorded_cases(cases: &str, recordings: &BTreeMap<String, String>, declined: &[&str]) {
+/// `<cases>/<case>`: the same text, or, where `case.json` gives the reason the front end declines
+/// it for (`declines`), that decline.
+fn check_recorded_cases(cases: &str, recordings: &BTreeMap<String, String>) {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join(cases);
@@ -198,10 +188,10 @@ fn check_recorded_cases(cases: &str, recordings: &BTreeMap<String, String>, decl
             },
         );
         let expected = get_recorded_report(&recordings[&format!("{cases}/{name}")]);
-        let is_declined = declined.contains(&name.as_str());
+        let declines = field("declines");
         match report {
-            Ok(report) if !is_declined && report.text == expected => {}
-            Err(FrontError::NotYet(_)) if is_declined => {}
+            Ok(report) if declines.is_none() && report.text == expected => {}
+            Err(FrontError::NotYet(reason)) if declines.as_ref() == Some(&reason) => {}
             Ok(report) => wrong.push(format!("{name}: wrote\n{}\nnot\n{expected}", report.text)),
             Err(error) => wrong.push(format!("{name}: {error:?}")),
         }
