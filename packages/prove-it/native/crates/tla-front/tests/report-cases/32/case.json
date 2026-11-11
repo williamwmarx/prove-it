@@ -1,0 +1,5 @@
+{
+ "root": "At",
+ "version": "master",
+ "test": "reads @ as an identifier"
+}
