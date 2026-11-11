@@ -7,7 +7,8 @@ import tlc2.overrides.*;
 // holds: the module, the operator and its level (`minLevel`), one per line, sorted. They are the
 // public static methods of the classes TLC loads for a module (`processModuleOverrides`): those of
 // tlc2/module, named after the module, by `TLARegistry.mapName` of the method's name, and those
-// `@TLAPlusOperator` or `@Evaluation` names, CommunityModules' in tlc2/overrides among them.
+// `@TLAPlusOperator` or `@Evaluation` names, CommunityModules' in tlc2/overrides among them. Each
+// class is initialized as it loads, which registers its operators' names with TLARegistry.
 //
 // javac -cp tla2tools.jar TlcOverrides.java && java -cp tla2tools.jar:. TlcOverrides tla2tools.jar
 public class TlcOverrides {
@@ -18,7 +19,7 @@ public class TlcOverrides {
       for (Enumeration<JarEntry> e = jar.entries(); e.hasMoreElements();) {
         String n = e.nextElement().getName();
         if ((n.startsWith("tlc2/module/") || n.startsWith("tlc2/overrides/")) && n.endsWith(".class") && !n.contains("$")) {
-          classes.add(Class.forName(n.replace('/', '.').replace(".class", ""), false, TlcOverrides.class.getClassLoader()));
+          classes.add(Class.forName(n.replace('/', '.').replace(".class", ""), true, TlcOverrides.class.getClassLoader()));
         }
       }
     }

@@ -115,8 +115,14 @@ never walks its definition. `tla-front/src/tlc_overrides.tsv` lists them, as
 methods of the `tlc2.module` classes named after a module (by `TLARegistry.mapName`), and every
 `@TLAPlusOperator` and `@Evaluation`, CommunityModules' in `tlc2.overrides` among them. Those of a
 level above constant are TLCGet, CounterExample, Trace, PickSuccessor, `_Counts`, `_TLCState`, and
-IOUtils' IOExec, IOEnvExec and their templates. Only the root module's variables give a name a
-location, so only their spelling makes a name state-level.
+IOUtils' IOExec, IOEnvExec and their templates. TLC sets a method on the body of the operator the
+module of its class defines, so an operator of another module spelled the same keeps its own
+body. A standard module's operator with no Java method TLC reads through its TLA+ definition, which
+the model walks in the module's own text: Bags' SubBag binds x, y, f, i, r and s. Only the root
+module's variables give a name a location, so only their spelling makes a name state-level; an
+argument in the place of a parameter that takes arguments is an `OpArgNode`, of level 0 whatever
+its spelling; and a theorem's or an assumption's name looks up to a `ThmOrAssumpDefNode`, whose
+statement `getLevelBound` never enters.
 
 Over the corpus (733 models) every difference from `NORMALIZED` is of a kind the model explains:
 192 literal bodies and 155 substitutes for constants, where only Defns differs, and 23 definitions

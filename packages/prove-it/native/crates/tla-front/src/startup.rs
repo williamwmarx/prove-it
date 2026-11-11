@@ -123,6 +123,8 @@ pub fn get_startup_model(environment: &Environment) -> StartupModel {
     let bound = LevelBound {
         environment,
         overridden: get_overridden_bodies(environment),
+        facts: get_fact_statements(environment),
+        standard: std::cell::OnceCell::new(),
     };
     let mut model = StartupModel {
         attempted: Vec::new(),
@@ -149,8 +151,8 @@ pub fn get_startup_model(environment: &Environment) -> StartupModel {
         let Some(definition) = environment.definitions.get(target) else {
             continue;
         };
-        if matches!(&definition.kind, DefinitionKind::Operator { params, .. } if params.is_empty())
-        {
+        // TLC checks only that the definition has no parameters, a function's too.
+        if is_nullary(definition) {
             model.reads.insert(key(definition), Read::Attempted);
             model.attempted.push((definition.clone(), Rule::Substitute));
         }
@@ -193,10 +195,44 @@ pub fn get_startup_model(environment: &Environment) -> StartupModel {
     model
 }
 
+fn address(expression: &Expr) -> usize {
+    Rc::as_ptr(expression) as usize
+}
+
+/// The statements of the named theorems and assumptions of the spec's modules, by address. TLC
+/// looks a theorem's or an assumption's name up to a `ThmOrAssumpDefNode`, whose statement
+/// `getLevelBound` never enters.
+fn get_fact_statements(environment: &Environment) -> FastSet<usize> {
+    let mut facts = FastSet::default();
+    for module in &environment.modules {
+        for assumption in module.assumptions.iter().filter(|fact| fact.name.is_some()) {
+            facts.insert(address(&assumption.expression));
+        }
+        for theorem in module.theorems.iter().filter(|fact| fact.name.is_some()) {
+            if let Statement::Expression(statement) = &theorem.statement {
+                facts.insert(address(statement));
+            }
+        }
+    }
+    facts
+}
+
+/// The level of the Java method of an operator of the standard module `module`, where TLC
+/// overrides it.
+fn get_module_override_level(module: &str, name: &str) -> Option<u8> {
+    get_overrides()
+        .find(|&(overridden, operator, _)| overridden == module && operator == name)
+        .map(|(_, _, level)| level)
+}
+
 /// `SymbolNodeValueLookupProvider.getLevelBound` over the AST.
 struct LevelBound<'a> {
     environment: &'a Environment,
     overridden: FastMap<usize, u8>,
+    /// The statements of the named theorems and assumptions, by address.
+    facts: FastSet<usize>,
+    /// The standard modules, parsed once one is needed.
+    standard: std::cell::OnceCell<Vec<Module>>,
 }
 
 impl LevelBound<'_> {
@@ -295,6 +331,9 @@ impl LevelBound<'_> {
             return arguments;
         }
         if let Some(definition) = get_definition(&name, self.environment) {
+            if self.facts.contains(&address(&definition.body)) {
+                return arguments;
+            }
             // TLC reads an operator a Java method overrides through the method, of its level,
             // and never its body.
             if let Some(&level) = self
@@ -312,9 +351,100 @@ impl LevelBound<'_> {
             return arguments.max(level);
         }
         if self.environment.builtins.contains_key(&name) {
-            return arguments.max(get_builtin_override_level(&name).unwrap_or(0));
+            let level = get_builtin_override_level(&name)
+                .unwrap_or_else(|| self.get_standard_operator_level(&name));
+            return arguments.max(level);
         }
         arguments
+    }
+
+    // The level of a standard module's operator TLC implements with no Java method, which it
+    // finds by walking the operator's TLA+ definition in its module.
+    fn get_standard_operator_level(&self, name: &str) -> u8 {
+        let modules = self.standard.get_or_init(|| {
+            crate::standard_modules::MASTER
+                .iter()
+                .filter_map(|(_, source)| crate::parser::parse_module(source).ok())
+                .collect()
+        });
+        modules
+            .iter()
+            .find_map(|module| {
+                let definition = module
+                    .definitions
+                    .iter()
+                    .find(|definition| &*definition.name == name)?;
+                Some(self.get_standard_level(module, &definition.body, &mut vec![key(definition)]))
+            })
+            .unwrap_or(0)
+    }
+
+    // `getLevelBound` over a standard module's definition, whose names resolve in the module.
+    fn get_standard_level(
+        &self,
+        module: &Module,
+        expression: &Expr,
+        expanding: &mut Vec<usize>,
+    ) -> u8 {
+        let (written, args): (&Name, &[Expr]) = match &expression.kind {
+            ExpressionKind::Identifier { name, .. } => (name, &[]),
+            ExpressionKind::Apply { operator, args, .. } => (operator, args),
+            ExpressionKind::Lambda { .. } | ExpressionKind::OperatorReference { .. } => return 0,
+            ExpressionKind::Always(_)
+            | ExpressionKind::Eventually(_)
+            | ExpressionKind::Fairness { .. } => return 3,
+            ExpressionKind::Prime(_)
+            | ExpressionKind::Unchanged(_)
+            | ExpressionKind::Action { .. } => return 2,
+            ExpressionKind::Enabled(_) => return 1,
+            _ => {
+                return expression
+                    .children()
+                    .iter()
+                    .map(|child| self.get_standard_level(module, child, expanding))
+                    .max()
+                    .unwrap_or(0);
+            }
+        };
+        let defined = module
+            .definitions
+            .iter()
+            .find(|definition| definition.name == *written);
+        let arguments = args
+            .iter()
+            .enumerate()
+            .map(|(position, argument)| {
+                let is_operator_place = defined.is_some_and(|definition| {
+                    matches!(
+                        &definition.kind,
+                        DefinitionKind::Operator { params, .. }
+                            if params.get(position).is_some_and(|param| param.arity > 0)
+                    )
+                });
+                if is_operator_place {
+                    0
+                } else {
+                    self.get_standard_level(module, argument, expanding)
+                }
+            })
+            .max()
+            .unwrap_or(0);
+        if self.environment.variables.contains(written) {
+            return 1;
+        }
+        let Some(definition) = defined else {
+            return arguments.max(get_builtin_override_level(written).unwrap_or(0));
+        };
+        if let Some(level) = get_module_override_level(&module.name, written) {
+            return arguments.max(level);
+        }
+        if expanding.contains(&key(definition)) {
+            return arguments;
+        }
+        expanding.push(key(definition));
+        let level = self.get_standard_level(module, &definition.body, expanding);
+        expanding.pop();
+        arguments.max(level)
     }
 
     fn get_definition_level_in(

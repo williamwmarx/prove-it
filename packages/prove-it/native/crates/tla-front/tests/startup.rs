@@ -9,6 +9,10 @@ use tla_front::startup::{Read, Rule, get_startup_model};
 
 const MODULE_N: &str = "---- MODULE N ----\nEXTENDS Naturals\nOp(x) == {n \\in Nat : n > x}\nH(G(_)) == G(1)\nPass(x(_)) == H(x)\n====\n";
 
+const MODULE_FACTS: &str = "---- MODULE Facts ----\nEXTENDS Naturals\nASSUME A == \\A x \\in {1, 2} : x > 0\nTHEOREM T == \\A x \\in {1, 2} : x > 0\n====\n";
+
+const MODULE_NAMED: &str = "---- MODULE Named ----\nx == 1\nOp == x\n====\n";
+
 fn create(definitions: &str, config: &str) -> Environment {
     create_extending("Naturals, TLC", definitions, config)
 }
@@ -24,7 +28,12 @@ fn create_extending(extends: &str, definitions: &str, config: &str) -> Environme
     .expect("a configuration");
     create_environment(&EnvironmentOptions {
         source: &source,
-        load_module: &|name| (name == "N").then(|| MODULE_N.to_owned()),
+        load_module: &|name| match name {
+            "N" => Some(MODULE_N.to_owned()),
+            "Facts" => Some(MODULE_FACTS.to_owned()),
+            "Named" => Some(MODULE_NAMED.to_owned()),
+            _ => None,
+        },
         config: &config,
         is_unconfigured: false,
         version: TlcVersion::Master,
@@ -224,5 +233,83 @@ fn counts_an_operator_parameter_passed_on_of_level_zero_whatever_its_spelling() 
             "D"
         ),
         (Read::Attempted, true, Some(Rule::Constant))
+    );
+}
+
+// TLC looks a theorem's or an assumption's name up to a `ThmOrAssumpDefNode`, whose statement
+// `getLevelBound` never enters, though it binds a name spelled as a variable.
+#[test]
+fn counts_a_theorem_or_an_assumption_named_of_level_zero() {
+    assert_eq!(
+        decide("I == INSTANCE Facts\nD == <<{3, 1, 2}, I!A>>", "", "D"),
+        (Read::Attempted, true, Some(Rule::Constant))
+    );
+    assert_eq!(
+        decide("I == INSTANCE Facts\nD == <<{3, 1, 2}, I!T>>", "", "D"),
+        (Read::Attempted, true, Some(Rule::Constant))
+    );
+}
+
+// A definition of another module spelled as a variable is of level 1, as any name is.
+#[test]
+fn counts_a_definition_spelled_as_a_variable_of_level_one() {
+    assert_eq!(
+        decide("I == INSTANCE Named\nD == <<{3, 1, 2}, I!Op>>", "", "D"),
+        (Read::Operator, false, None)
+    );
+}
+
+// TLC walks the TLA+ definition of a standard module's operator it implements with no Java method,
+// whose names may be spelled as a variable: Bags' SubBag(B) binds x, y, f, i, r and s.
+#[test]
+fn walks_a_standard_operator_without_a_java_method() {
+    let decide_with = |variable: &str| {
+        let source = format!(
+            "---- MODULE M ----\nEXTENDS Naturals, Bags\nVARIABLE {variable}\nD == <<{{3, 1, 2}}, SubBag(SetToBag({{1}}))>>\nInit == {variable} = 0\nNext == {variable}' = {variable}\n====\n"
+        );
+        let config =
+            parse_config("INIT Init\nNEXT Next\n", TlcVersion::Master).expect("a configuration");
+        let environment = create_environment(&EnvironmentOptions {
+            source: &source,
+            load_module: &|_| None,
+            config: &config,
+            is_unconfigured: false,
+            version: TlcVersion::Master,
+            is_level_checked: false,
+            load_class: None,
+        })
+        .expect("an environment");
+        decide_in(&environment, "D")
+    };
+    assert_eq!(
+        decide_with("v"),
+        (Read::Attempted, true, Some(Rule::Constant))
+    );
+    assert_eq!(decide_with("B"), (Read::Operator, false, None));
+    assert_eq!(decide_with("x"), (Read::Operator, false, None));
+}
+
+// TLC checks only that a substitute for a constant has no parameters: a function definition is one.
+#[test]
+fn attempts_a_function_substituted_for_a_constant() {
+    let source = "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLE x\nF[i \\in {1}] == i + x\nInit == x = 0\nNext == x' = x\n====\n";
+    let config = parse_config(
+        "CONSTANT K <- F\nINIT Init\nNEXT Next\n",
+        TlcVersion::Master,
+    )
+    .expect("a configuration");
+    let environment = create_environment(&EnvironmentOptions {
+        source,
+        load_module: &|_| None,
+        config: &config,
+        is_unconfigured: false,
+        version: TlcVersion::Master,
+        is_level_checked: false,
+        load_class: None,
+    })
+    .expect("an environment");
+    assert_eq!(
+        decide_in(&environment, "F"),
+        (Read::Attempted, false, Some(Rule::Substitute))
     );
 }
