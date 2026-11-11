@@ -355,6 +355,11 @@ impl<'ir> Evaluator<'ir> {
         context: &Context,
         visited: &mut HashSet<NodeId>,
     ) -> bool {
+        // `getLevelBound` takes any name spelled as a variable for one (`getVarLoc` of the name's
+        // `UniqueString`), a parameter or a bound name in another module too.
+        if self.is_level_bound && self.ir.variables.contains(&name.text) {
+            return true;
+        }
         if name.is_local {
             return bound_expression(context, name.text).is_some_and(|(node, inner)| {
                 // A definition checks its own visit, in the Definition arm.

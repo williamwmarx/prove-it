@@ -62,7 +62,8 @@ impl<'ir> Rebuilder<'ir> {
     /// a 0-ary definition of constant level, as the front end marks it, whose evaluation then
     /// succeeds. `Unsupported` where the evaluator can't tell.
     pub fn is_computed_at_startup(&mut self, definition: u32) -> Result<bool, Unsupported> {
-        if !self.is_precomputed(definition) {
+        let node = self.evaluator.ir.definitions[definition as usize];
+        if !self.is_precomputed(definition) || self.evaluator.may_reach_bound(node) {
             return Ok(false);
         }
         let evaluator = &mut self.evaluator;

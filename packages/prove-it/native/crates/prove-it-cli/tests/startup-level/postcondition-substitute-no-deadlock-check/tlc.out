@@ -1,0 +1,15 @@
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module N
+Semantic processing of module M
+Linting of module N
+Linting of module M
+Computing initial states...
+Finished computing initial states: 1 distinct state generated
+Error: Evaluating postcondition P at line 10, col 6 to line 10, col 17 of module M failed.
+Attempted to compare string "a" with non-string:
+2
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

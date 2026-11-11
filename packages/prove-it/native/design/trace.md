@@ -515,9 +515,11 @@ each successor's states. That is where `getLevelBound` finds it of constant leve
 `may_reach_bound` follows: a builtin of a level above constant (TLCGet, CounterExample, Trace,
 `_Counts`) reads the state; an operator passed as an argument, a LAMBDA or the name of an operator
 with parameters, reads none, whatever its body reads; and so does a 0-ary definition the
-configuration substitutes for a constant, whose value TLC computed as it started.
-`may_reach_bound` keeps its answer for each definition, which a definition evaluated again at each
-use asks each time.
+configuration substitutes for a constant, whose value TLC computed as it started. A name spelled as
+a variable reads the state, a parameter or a bound name in another module too, since TLC asks the
+name's `UniqueString` (`getVarLoc`). `may_reach_bound` keeps its answer for each definition, which
+a definition evaluated again at each use asks each time. An ALIAS or a POSTCONDITION is one TLC
+computed as it started, which it rejects, only where `getLevelBound` agrees.
 
 ## Sets TLC holds unnormalized
 
