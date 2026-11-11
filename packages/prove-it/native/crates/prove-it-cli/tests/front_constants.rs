@@ -30,6 +30,20 @@ fn get_untimed_lines(text: &str, directory: &str) -> String {
         .collect()
 }
 
+/// Copies a fixture's file, or its directory with what it holds, such as a class at its
+/// package's path.
+fn copy(source: &Path, target: &Path) {
+    if source.is_dir() {
+        std::fs::create_dir_all(target).expect("a directory");
+        for entry in std::fs::read_dir(source).expect("a directory's entries") {
+            let name = entry.expect("an entry").file_name();
+            copy(&source.join(&name), &target.join(&name));
+        }
+    } else {
+        std::fs::copy(source, target).expect("a copy");
+    }
+}
+
 #[test]
 fn computes_constants_and_overrides_as_tlc() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/front_constants");
@@ -55,7 +69,7 @@ fn computes_constants_and_overrides_as_tlc() {
                 spec = file.file_stem().map(|stem| stem.to_owned());
             }
             if file != Path::new("tlc.out") && file != Path::new("declined") {
-                std::fs::copy(source.join(&file), directory.join(&file)).expect("a copy");
+                copy(&source.join(&file), &directory.join(&file));
             }
         }
         let spec = spec.expect("a configuration");
