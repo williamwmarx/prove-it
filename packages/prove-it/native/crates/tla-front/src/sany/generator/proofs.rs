@@ -1092,39 +1092,51 @@ impl ModuleGenerator<'_> {
         let is_infix = self.is_infix_expression(statement)
             && !self.is_parenthesized(self.get_operand_span(statement));
         let at_step = match (&statement.kind, *previous_right) {
-            (ExpressionKind::Apply { operator, args, .. }, Some(previous))
-                if is_infix
-                    && matches!(args[0].kind, ExpressionKind::ExceptAt)
-                    && !self.is_parenthesized(self.get_operand_span(&args[0])) =>
-            {
-                Some((operator, args, previous))
+            (ExpressionKind::Apply { operator, args, .. }, Some(previous)) if is_infix => {
+                Some((operator.clone(), &args[0], &args[1], previous))
             }
+            (
+                ExpressionKind::Junction {
+                    is_and, operands, ..
+                },
+                Some(previous),
+            ) if is_infix && operands.len() == 2 => Some((
+                Name::from(if *is_and { "\\land" } else { "\\lor" }),
+                &operands[0],
+                &operands[1],
+                previous,
+            )),
             _ => None,
-        };
+        }
+        .filter(|(_, left, ..)| {
+            matches!(left.kind, ExpressionKind::ExceptAt)
+                && !self.is_parenthesized(self.get_operand_span(left))
+        });
         let expression = match at_step {
             // generateGenID reports an @ step's operator it doesn't find, and generateProof the
             // step, and gives up the rest of the proof.
-            Some((operator, ..)) if self.resolve_symbol(&resolve_synonym(operator)).is_none() => {
+            Some((operator, ..)) if self.resolve_symbol(&resolve_synonym(&operator)).is_none() => {
                 let Some(unresolved) = self.get_unresolved_operator(statement) else {
                     return not_yet("an @ step's operator without a place");
                 };
                 let location = self.get_location(statement);
+                let spelling = unresolved.name;
                 self.add_error(
                     &get_token_location(&self.file, unresolved.index),
-                    format!("Could not find declaration or definition of symbol '{operator}'."),
+                    format!("Could not find declaration or definition of symbol '{spelling}'."),
                 );
                 self.add_error(
                     &location,
-                    format!("Couldn't resolve infix operator symbol `{operator}'."),
+                    format!("Couldn't resolve infix operator symbol `{spelling}'."),
                 );
                 return Ok(None);
             }
             // SANY generates an @ step's right side before the $Nop that stands for its @.
-            Some((operator, args, previous)) => {
-                let at_right = self.generate_expression(&args[1])?;
+            Some((operator, left, right, previous)) => {
+                let at_right = self.generate_expression(right)?;
                 let location = self.get_location(statement);
-                let resolved = self.resolve_name(operator, &location)?;
-                let at_location = self.get_location(&args[0]);
+                let resolved = self.resolve_name(&operator, &location)?;
+                let at_location = self.get_location(left);
                 let at =
                     self.apply_builtin("$Nop", [previous], at_location, OpApplBinding::default());
                 self.create_op_appl(resolved, [at, at_right], location, OpApplBinding::default())

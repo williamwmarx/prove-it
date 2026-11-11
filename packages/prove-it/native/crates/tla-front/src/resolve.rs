@@ -2740,10 +2740,12 @@ fn get_step_at(expression: &Expression) -> Option<usize> {
     if !is_infix_expression(expression) {
         return None;
     }
-    let ExpressionKind::Apply { args, .. } = &expression.kind else {
-        return None;
+    let left = match &expression.kind {
+        ExpressionKind::Apply { args, .. } => &args[0],
+        ExpressionKind::Junction { operands, .. } if operands.len() == 2 => &operands[0],
+        _ => return None,
     };
-    matches!(args[0].kind, ExpressionKind::ExceptAt).then(|| Rc::as_ptr(&args[0]) as usize)
+    matches!(left.kind, ExpressionKind::ExceptAt).then(|| Rc::as_ptr(left) as usize)
 }
 
 /// A LET or a step binds the name of the INSTANCE after the names it adds.
