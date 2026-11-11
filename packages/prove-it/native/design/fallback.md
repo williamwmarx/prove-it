@@ -279,8 +279,10 @@ it from one that printed something else. Each is outside the corpus:
   from the normalized set only where nothing printed depends on it (`lazy-duplicates.md`): an
   invariant violated before the stream first differs, or a stream whose order alone differs
   where the first initial state to violate an invariant is the same in either order. Nine cells
-  of `prove-it-cli/tests/lazy_duplicates.rs` printed what TLC prints so before and decline now,
-  such as `kept.unionSub.constHeld` and `kept.cupOrder.varPlain.init`.
+  of `prove-it-cli/tests/lazy_duplicates.rs` printed what TLC prints so before and decline now:
+  `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
+  `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
+  first position where the stream differs from the normalized set, not where the stream starts.
 
 #### Known wrong outputs
 

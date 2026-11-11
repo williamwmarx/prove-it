@@ -158,7 +158,8 @@ fn get_differences(test: &str, configuration: &str, cells: &[(String, String)]) 
         std::fs::write(directory.join("M.tla"), spec).expect("a spec");
         let expected =
             std::fs::read_to_string(grid.join(format!("{cell}.out"))).expect("TLC's output");
-        let is_declined = expected == "not native yet\n";
+        let is_declined_after_initial = expected == "not native yet after the initial states\n";
+        let is_declined = is_declined_after_initial || expected == "not native yet\n";
         for threads in ["1", "4"] {
             let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
                 .args(["-noGenerateSpecTE", "M"])
@@ -169,11 +170,16 @@ fn get_differences(test: &str, configuration: &str, cells: &[(String, String)]) 
                 .expect("the binary runs");
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            // A decline may come once the initial states are printed, which the check drops with
-            // them (`checkSources`), but never once the search has ended.
+            // The binary prints as it checks, so a decline in the next-state relation follows the
+            // initial states' report, which the library's check drops with it (`checkSources`).
+            // A decline prints nothing after that report, and only the cells recorded so print it.
             let is_as_expected = if is_declined {
+                let report = stdout
+                    .lines()
+                    .position(|line| line.starts_with("Finished computing initial states"));
                 stderr.contains("prove-it: not native yet: ")
-                    && !stdout.contains("distinct states found")
+                    && report.is_some() == is_declined_after_initial
+                    && report.is_none_or(|index| stdout.lines().count() == index + 1)
             } else {
                 get_untimed(&stdout) == expected
             };
