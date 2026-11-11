@@ -680,6 +680,24 @@ fn binds_trace_to_both_states_of_a_simulations_shortest_violation() {
     );
 }
 
+// TLC's simulation binds Trace to the initial state that violates an invariant, with the initial
+// predicate as its action (`SimulationWorker.getTrace`).
+#[test]
+fn binds_trace_to_a_simulations_violating_initial_state() {
+    let spec = "---- MODULE One ----\nEXTENDS Naturals, TLC, Sequences, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x > 0\nAl == [x |-> x, t |-> Trace]\n====\n";
+    let (code, text) = simulate(
+        "simulate-alias-one",
+        "One",
+        (spec, "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Al\n"),
+        &["-seed", "1", "-simulate", "num=1", "-depth", "10"],
+    );
+    assert_eq!(code, Some(12), "{text}");
+    assert!(
+        text.contains("Error: Invariant Inv is violated by the initial state:\n/\\ x = 0\n/\\ t = <<[_action |-> [name |-> \"Init\", location |-> [beginLine |-> 4, beginColumn |-> 9, endLine |-> 4, endColumn |-> 13, module |-> \"One\"]], x |-> 0]>>\n"),
+        "{text}"
+    );
+}
+
 // TLC's simulation sorts a record an action binds a parameter to, as it fingerprints it, at a
 // point the trace evaluator doesn't follow: an alias that reads Trace then declines, and one that
 // doesn't prints as TLC prints it.

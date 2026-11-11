@@ -2067,7 +2067,6 @@ pub(crate) fn print_violation(
     let checked = postconditions.filter(|_| !ir.model.postconditions.is_empty());
     let checks = TraceChecks {
         run: checked,
-        initial: None,
         ..checks
     };
     let trace = match rebuild_trace(
