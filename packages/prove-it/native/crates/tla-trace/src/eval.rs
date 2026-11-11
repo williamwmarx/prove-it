@@ -246,8 +246,9 @@ pub struct CallStack {
     pub frames: Vec<StackFrame>,
     pub is_frozen: bool,
     /// The values the replay built that TLC's `CallStackTool` gives a source, by their address,
-    /// each with the node that built it.
-    sourced: HashMap<usize, NodeId>,
+    /// each with the node that built it. Each is kept, so that no other value takes its address
+    /// while the replay runs.
+    sourced: HashMap<usize, (NodeId, Value)>,
     /// The value each node of the replay last evaluated to.
     values: HashMap<NodeId, Value>,
     /// Whether the failure was in a method of a value with a source, which TLC reports as a
@@ -285,7 +286,7 @@ pub struct CallStack {
 impl CallStack {
     /// The node that built a value with a source.
     pub(crate) fn source(&self, value: &Value) -> Option<NodeId> {
-        self.sourced.get(&address(value)?).copied()
+        self.sourced.get(&address(value)?).map(|&(node, _)| node)
     }
 }
 
@@ -1160,7 +1161,10 @@ impl<'ir> Evaluator<'ir> {
                 && !is_copied
                 && let Some(address) = address(value)
             {
-                stack.sourced.entry(address).or_insert(node);
+                stack
+                    .sourced
+                    .entry(address)
+                    .or_insert_with(|| (node, value.clone()));
             }
             stack.values.insert(node, value.clone());
         }
