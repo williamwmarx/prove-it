@@ -110,9 +110,10 @@ export const getRecordingPath = (model: CorpusModel, mode: OutputMode) => {
   for (const corpus of getCorpora()) {
     if (LIBRARY_CORPORA.has(corpus.name)) hash.update(`${corpus.name} ${corpus.commit}\n`);
   }
+  // A run in another mode may have written trace exploration files it hasn't taken yet.
   for (const name of readdirSync(model.directory).sort()) {
     const path = join(model.directory, name);
-    if (!statSync(path).isFile()) continue;
+    if (!statSync(path).isFile() || TRACE_FILE.test(name)) continue;
     hash.update(`${name}\n`);
     hash.update(readFileSync(path));
   }
