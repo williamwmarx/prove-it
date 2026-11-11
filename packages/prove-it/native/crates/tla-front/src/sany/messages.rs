@@ -125,6 +125,7 @@ const PROVEN_MESSAGES: &[&str] = &[
     "X has both temporal formula and action as arguments.",
     "X in instantiating module 'X':",
     "X inside X clauses are not yet implemented.",
+    "X lab must contain formal parameter `X'.",
     "X label `X'.",
     "X lb declares extra parameter(s)  q  ",
     "X lbl declares extra parameter(s)  x  ",
