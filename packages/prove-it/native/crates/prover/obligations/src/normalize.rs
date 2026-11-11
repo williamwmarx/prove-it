@@ -50,7 +50,7 @@ struct Expander<'pipeline, 'sink, 'warn> {
     salts: &'pipeline Counter,
     latest_modules: &'pipeline HashMap<String, Rc<Mule>>,
     on_warning: &'pipeline RefCell<&'sink mut Warn<'warn>>,
-    // The modules an INSTANCE inside a LET or DEFINE is instantiating, innermost last.
+    // The modules whose instantiated body is being expanded, innermost last.
     instantiating: Vec<String>,
 }
 
@@ -801,7 +801,16 @@ fn instantiate(
             })
             .collect::<Vec<_>>(),
     )?;
-    let (_, lambdified) = lambdify_units(anonymizer, expander, &instance_scope, &body)?;
+    // The body of a module whose body is being expanded reaches the same INSTANCE again, so tlapm
+    // recurses until its stack overflows, as it does on a module that extends itself. Substitutes
+    // are no part of the body: an INSTANCE of the module inside one expands once.
+    if expander.instantiating.contains(&instance.module) {
+        return Err(ObligationError::bug("Stack overflow"));
+    }
+    expander.instantiating.push(instance.module.clone());
+    let lambdified = lambdify_units(anonymizer, expander, &instance_scope, &body);
+    expander.instantiating.pop();
+    let (_, lambdified) = lambdified?;
     localize_axioms(localize(
         expander,
         apply_parameters(lambdified, &anonymized)?,
@@ -840,12 +849,6 @@ fn expand_instance_with(
             "Module.Elab.anon#defns",
         ));
     }
-    // Instantiating a module again inside its own instantiation reaches the same INSTANCE again,
-    // so tlapm recurses until its stack overflows, as it does on a module that extends itself.
-    if expander.instantiating.contains(module) {
-        return Err(ObligationError::bug("Stack overflow"));
-    }
-    expander.instantiating.push(module.clone());
     let units = instantiate(
         anonymizer,
         expander,
@@ -855,9 +858,7 @@ fn expand_instance_with(
         true,
         name,
         &definition.location,
-    );
-    expander.instantiating.pop();
-    let units = units?;
+    )?;
     let mut definitions = Vec::new();
     let mut rest = units;
     let mut position = 0;
