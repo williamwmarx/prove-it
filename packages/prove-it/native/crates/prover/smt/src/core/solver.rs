@@ -1,9 +1,6 @@
 //! Ported from Z3 (src/smt/smt_solver.cpp, src/smt/smt_kernel.cpp, src/smt/smt_setup.cpp), MIT
 //! license, see z3-license.txt, through `solver.ts`. Decides an SMT-LIB problem the way `z3 -smt2
 //! AUTO_CONFIG=false smt.MBQI=true` does for tlapm's UFNIA obligations.
-//!
-//! `decideSmt` records the calls the arithmetic theory makes into lp when `PROVE_IT_LP_TRACE` is
-//! set (`recordLpTrace`); that recording only serves the port of lp, and is not ported.
 
 use prove_decide::{Decision, Limits, Statistic, Verdict};
 
