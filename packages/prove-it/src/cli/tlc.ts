@@ -692,7 +692,11 @@ const checkSpec = async (
     return EXIT_STATUS.configParseError;
   }
   const fileName = basename(specPath, ".tla");
-  const timing: Timing = { startTime: Date.now(), livenessStartTime: undefined, isParsed: false };
+  const timing: Timing = {
+    startTime: Date.now(),
+    livenessStartTime: undefined,
+    isParsed: false,
+  };
   // Without -tool, TLC prints how long it ran for a person to read.
   const printFinished = () => {
     const runtime = Date.now() - timing.startTime;
@@ -994,6 +998,10 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   if (isConfigured && specPaths.length > 1) {
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
+  }
+  // TLC strips one .tla where SANY reads the file of the name that remains.
+  if (specPaths.some((path) => path.endsWith(".tla.tla"))) {
+    return declineNatively("a spec named with .tla twice");
   }
   const paths = [
     ...new Map(

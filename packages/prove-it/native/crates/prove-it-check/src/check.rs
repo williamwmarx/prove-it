@@ -153,6 +153,10 @@ fn check_specs(args: &[String], java: &Java, is_tlc: bool, output: &mut Output<'
             None => format!("{path}.tla"),
         })
         .collect();
+    // TLC strips one .tla where SANY reads the file of the name that remains.
+    if spec_paths.iter().any(|path| path.ends_with(".tla.tla")) {
+        return not_native(output, "a spec named with .tla twice");
+    }
     if spec_paths.is_empty() {
         let _ = writeln!(output.err, "{USAGE}");
         return 1;

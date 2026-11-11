@@ -49,6 +49,11 @@ pub trait Host {
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>>;
     /// A module's text: `<name>.tla` in the first of the directories that has it.
     fn load_module(&self, directories: &[&Path], name: &str) -> Option<String>;
+    /// Whether TLC's resolver finds `<name>.tla` in the first of the directories where it exists,
+    /// as a directory may, where SANY can't read it.
+    fn is_module_unreadable(&self, _directories: &[&Path], _name: &str) -> bool {
+        false
+    }
     /// The Java override TLC loads for a module: `<name>.class` in the directory.
     fn load_class(&self, directory: &Path, name: &str) -> Option<Vec<u8>>;
     fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h>;
@@ -136,8 +141,13 @@ impl Host for SystemHost {
         path.exists()
     }
 
+    // Java decodes a file's malformed UTF-8 to replacement characters.
     fn read_text(&self, path: &Path) -> Option<String> {
-        std::fs::read_to_string(path).ok()
+        let bytes = std::fs::read(path).ok()?;
+        Some(match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+        })
     }
 
     fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
@@ -159,6 +169,14 @@ impl Host for SystemHost {
         directories
             .iter()
             .find_map(|directory| self.read_text(&directory.join(format!("{name}.tla"))))
+    }
+
+    fn is_module_unreadable(&self, directories: &[&Path], name: &str) -> bool {
+        directories
+            .iter()
+            .map(|directory| directory.join(format!("{name}.tla")))
+            .find(|path| path.exists())
+            .is_some_and(|path| std::fs::read(path).is_err())
     }
 
     fn load_class(&self, directory: &Path, name: &str) -> Option<Vec<u8>> {

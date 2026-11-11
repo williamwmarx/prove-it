@@ -34,9 +34,24 @@ export const getInputPaths = (paths: string[]): InputPath[] =>
 export const findModuleFile = (directories: string[], name: string) =>
   directories.map((directory) => join(directory, `${name}.tla`)).find(existsSync);
 
+// TLC's resolver takes the first directory where the module's file exists, as a directory may,
+// which SANY can't read.
+export class UnreadableModuleError extends Error {
+  constructor() {
+    super("a module whose file SANY finds but can't read");
+  }
+}
+
 export const createModuleLoader = (directories: string[]) => (name: string) => {
-  const path = findModuleFile(directories, name);
-  return path === undefined ? undefined : readFileSync(path, "utf8");
+  const entry = directories
+    .map((directory) => join(directory, `${name}.tla`))
+    .find(existsSync);
+  if (entry === undefined) return undefined;
+  try {
+    return readFileSync(entry, "utf8");
+  } catch {
+    throw new UnreadableModuleError();
+  }
 };
 
 // SimpleFilenameToStream: SANY names the file of a module it can't find, and where it looked.
