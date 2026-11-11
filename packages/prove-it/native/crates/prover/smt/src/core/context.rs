@@ -2423,6 +2423,23 @@ mod tests {
         assert_eq!(context.find_assignment(p), LBool::True);
     }
 
+    // get_assignment answers false for false, which shares its Boolean variable with true
+    // (smt_context.cpp:1646-1648, 1685).
+    #[test]
+    fn assigns_false_to_false() {
+        let mut context = mk(2);
+        let p = mk_const(&mut context, "p", SORT_BOOL);
+        assert(&mut context, p);
+        assert_eq!(context.search().unwrap(), LBool::True);
+        let (true_expr, false_expr) = (context.m.true_expr, context.m.false_expr);
+        assert_eq!(
+            context.find_bool_var(false_expr),
+            context.find_bool_var(true_expr)
+        );
+        assert_eq!(context.find_assignment(false_expr), LBool::False);
+        assert_eq!(context.find_assignment(true_expr), LBool::True);
+    }
+
     fn assert_pigeonhole(context: &mut Context, holes: usize) {
         let x: Vec<Vec<Expr>> = (0..=holes)
             .map(|i| {

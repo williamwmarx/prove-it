@@ -317,11 +317,13 @@ impl Context {
             }
             return LBool::Undef;
         }
-        if let Some(bool_var) = self.find_bool_var(expr) {
-            return value_of(bool_var);
-        }
+        // get_assignment(expr) answers false for false before it reads the Boolean variable that
+        // false shares with true (smt_context.cpp:1646-1648).
         if expr == m.false_expr {
             return LBool::False;
+        }
+        if let Some(bool_var) = self.find_bool_var(expr) {
+            return value_of(bool_var);
         }
         if expr == m.true_expr {
             return LBool::True;
