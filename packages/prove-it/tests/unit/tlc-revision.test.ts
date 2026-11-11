@@ -2,18 +2,20 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check, parseConfig } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-set");
 
 describe("TLCGet revision and configuration match TLC", () => {
   it.each(["TLCSet", "TLCSetPost"])("passes TLC's TLCSet test with %s.cfg", async (name) => {
-    const config = parseConfig(readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8"));
-    config.checkDeadlock = false;
-    const result = await check({
-      source: readFileSync(join(DIRECTORY, "TLCSet.tla"), "utf8"),
-      config,
-    });
+    const config = `${readFileSync(join(DIRECTORY, `${name}.cfg`), "utf8")}\nCHECK_DEADLOCK FALSE\n`;
+    const result = await checkOnEngine(
+      {
+        source: readFileSync(join(DIRECTORY, "TLCSet.tla"), "utf8"),
+        config,
+      },
+      "an assumption that fails to evaluate: evaluating the assumption again: TLCGet",
+    );
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([
       4225, 4225, 4225,
@@ -23,11 +25,14 @@ describe("TLCGet revision and configuration match TLC", () => {
   it("reports a development build like TLC without a manifest", async () => {
     const printed: string[] = [];
     const fields = ["calver", "count", "date", "tag", "timestamp"];
-    await check({
-      source: `---- MODULE M ----\nEXTENDS TLC\nASSUME DOMAIN TLCGet("revision") = {${fields.map((field) => `"${field}"`).join(", ")}}\n${fields.map((field) => `ASSUME PrintT(TLCGet("revision").${field})`).join("\n")}\nASSUME PrintT(TLCGet("config").install)\n====`,
-      config: "",
-      onPrint: (text) => printed.push(text),
-    });
+    await checkOnEngine(
+      {
+        source: `---- MODULE M ----\nEXTENDS TLC\nASSUME DOMAIN TLCGet("revision") = {${fields.map((field) => `"${field}"`).join(", ")}}\n${fields.map((field) => `ASSUME PrintT(TLCGet("revision").${field})`).join("\n")}\nASSUME PrintT(TLCGet("config").install)\n====`,
+        config: "",
+        onPrint: (text) => printed.push(text),
+      },
+      "an assumption that fails to evaluate: evaluating the assumption again: TLCGet",
+    );
     expect(printed).toHaveLength(6);
     expect(printed[0]).toMatch(/^"\d{4}\.\d{2}\.\d{2}\.\d{6}"$/);
     expect(printed[1]).toBe("0");

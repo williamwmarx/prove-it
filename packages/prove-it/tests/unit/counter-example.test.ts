@@ -3,9 +3,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { checkParsed } from "../../src/parallel";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
+// What the postcondition prints after the trace reaches the TypeScript check's traceOutput, which
+// the library's result doesn't hold, and not the engine's prints, so these stay on checkParsed.
 const checkCounterExample = async (configName: string) => {
   const printed: string[] = [];
   const result = await checkParsed({
@@ -51,6 +54,11 @@ describe("POSTCONDITION after a violation matches TLC", () => {
   });
 
   it("keeps the status of the violation when the postcondition is false", async () => {
-    expect((await checkCounterExample("CounterExampleFails"))[0]).toBe("invariant-violation");
+    const result = await checkOnEngine({
+      source: readFileSync(join(DIRECTORY, "CounterExample.tla"), "utf8"),
+      config: readFileSync(join(DIRECTORY, "CounterExampleFails.cfg"), "utf8"),
+      onPrint: () => undefined,
+    });
+    expect(result.status).toBe("invariant-violation");
   });
 });
