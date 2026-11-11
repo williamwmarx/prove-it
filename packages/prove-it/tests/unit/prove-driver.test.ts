@@ -426,6 +426,38 @@ describe("the Rust driver", () => {
     });
   });
 
+  // The second decision waits for the first obligation's report, so a driver that held reports
+  // back until every decision of a round settled would never finish.
+  it.each(["ts", "rust"])(
+    "with the %s driver, reports an obligation before a later one's decision settles",
+    async (driver) => {
+      let release = () => {};
+      const reported = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const setting = process.env.PROVE_IT_PROVER_DRIVER;
+      process.env.PROVE_IT_PROVER_DRIVER = driver;
+      try {
+        const result = await proveWith(
+          {
+            source: getModule("THEOREM 1 = 1 BY SMT\nTHEOREM 2 = 2 BY Zenon"),
+            onObligation: (obligation) => {
+              if (obligation.id === 1) release();
+            },
+          },
+          async (prover) => {
+            if (prover === "zenon") await reported;
+            return { verdict: "unsat", timeUsedMs: 1, statistics: {} };
+          },
+        );
+        expect(result.obligations.length).toBeGreaterThan(1);
+      } finally {
+        if (setting === undefined) delete process.env.PROVE_IT_PROVER_DRIVER;
+        else process.env.PROVE_IT_PROVER_DRIVER = setting;
+      }
+    },
+  );
+
   it("proves with workers as the TypeScript driver does", async () => {
     const source = loadFixture("HourClock") ?? "";
     const setting = process.env.PROVE_IT_PROVER_DRIVER;

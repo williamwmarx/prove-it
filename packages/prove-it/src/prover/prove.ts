@@ -533,6 +533,8 @@ const proveNatively = async (
   const known = new Map<string, string | undefined>();
   // The decisions that threw what ends the run, by key.
   const failures = new Map<string, unknown>();
+  // The decisions being made, by key.
+  const inFlight = new Map<string, Promise<unknown>>();
   let reportedCount = 0;
   // As the TypeScript driver does, each report waits for an abort to land first.
   const report = async (reports: ProofObligation[]) => {
@@ -587,26 +589,32 @@ const proveNatively = async (
         throw failures.get(failed.key);
       }
       if (requests.length > 0) options.signal?.throwIfAborted();
-      await Promise.all(
-        requests.map(async (request) => {
-          try {
-            // A decide that throws at once is read as one that rejects, as the TypeScript awaits it.
-            const answer = await getAnswer(
-              Promise.resolve().then(() =>
-                decideText(
-                  request.prover,
-                  request.text,
-                  { timeLimitMs: request.timeLimitMs, signal: options.signal },
-                  request.priority,
-                ),
-              ),
-            );
-            known.set(`decide:${request.key}`, answer);
-          } catch (error) {
-            failures.set(request.key, error);
-          }
-        }),
-      );
+      for (const request of requests) {
+        if (inFlight.has(request.key)) continue;
+        // A decide that throws at once is read as one that rejects, as the TypeScript awaits it.
+        const decided = getAnswer(
+          Promise.resolve().then(() =>
+            decideText(
+              request.prover,
+              request.text,
+              { timeLimitMs: request.timeLimitMs, signal: options.signal },
+              request.priority,
+            ),
+          ),
+        ).then(
+          (answer) => known.set(`decide:${request.key}`, answer),
+          (error: unknown) => failures.set(request.key, error),
+        );
+        inFlight.set(
+          request.key,
+          decided.then(() => inFlight.delete(request.key)),
+        );
+      }
+      // The next round starts once a decision settles, with every other that settled with it, so
+      // that obligations are reported as they settle and their next methods start, as with the
+      // TypeScript driver.
+      if (inFlight.size > 0) await Promise.race(inFlight.values());
+      await new Promise((resolve) => setTimeout(resolve));
     }
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
