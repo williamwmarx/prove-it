@@ -12,7 +12,7 @@ use crate::describe::{Description, Part, describe};
 use crate::environment::{EnvironmentOptions, create_environment};
 use crate::errors::FrontError;
 use crate::eval::Evaluator;
-use crate::hash::FastMap;
+use crate::hash::{FastMap, FastSet};
 use crate::lower::{Lowering, RankedTexts};
 use crate::order::{TlcOrder, get_checker_strings, get_unique};
 use crate::spec::{
@@ -198,20 +198,30 @@ fn lower_ranked(
     let order = TlcOrder::new(source, load, version)?.with_root_extendees(root_extendees);
     // TLC computes the constant definitions after SANY and before it builds its checker.
     let sany = order.get_sany_string_order(&config)?;
-    // A text with a lone surrogate, which a `str` can't hold, as `Tail("😀a")` makes, ranks by a
-    // name of its own and keeps its units for the IR's wide texts.
-    let mut wide: FastMap<Rc<str>, Box<[u16]>> = FastMap::default();
-    let startup: Vec<String> = startup_texts
+    let decoded: Vec<Option<String>> = startup_texts
         .iter()
-        .map(|units| {
-            String::from_utf16(units).unwrap_or_else(|_| {
-                let name: String = std::iter::once('\u{FFFF}')
-                    .chain(
-                        units
-                            .iter()
-                            .flat_map(|unit| format!("{unit:04x}").chars().collect::<Vec<_>>()),
-                    )
-                    .collect();
+        .map(|units| String::from_utf16(units).ok())
+        .collect();
+    // A text with a lone surrogate, which a `str` can't hold, as `Tail("😀a")` makes, ranks by a
+    // name of its own and keeps its units for the IR's wide texts. The name is U+FFFF, as many
+    // times as it takes to be no text the front ranks, then the units in hex.
+    let taken: FastSet<&str> = sany
+        .iter()
+        .chain(decoded.iter().flatten())
+        .map(String::as_str)
+        .chain(get_checker_strings(&config))
+        .collect();
+    let mut wide: FastMap<Rc<str>, Box<[u16]>> = FastMap::default();
+    let startup: Vec<String> = decoded
+        .iter()
+        .zip(startup_texts)
+        .map(|(text, units)| {
+            text.clone().unwrap_or_else(|| {
+                let hex: String = units.iter().map(|unit| format!("{unit:04x}")).collect();
+                let name = (1..)
+                    .map(|count| format!("{}{hex}", "\u{FFFF}".repeat(count)))
+                    .find(|name| !taken.contains(name.as_str()))
+                    .expect("a name no text takes");
                 wide.insert(Rc::from(name.as_str()), units.clone());
                 name
             })
