@@ -20,6 +20,12 @@ use crate::stack::on_search_stack;
 /// it ends its report with 2777 (design/cli.md, "-coverage").
 pub(crate) const CUT: Duration = Duration::from_secs(60);
 
+/// The longest native run whose report the engine's counts print: the engine's search took at
+/// least 0.08 times as long as TLC on the perf suite, its counting variant longer, so a run of at
+/// most 10 s is one TLC took well under 5 minutes over (design/coverage.md). A longer run takes
+/// the replay, whose time `CUT` bounds TLC's by.
+pub(crate) const ENGINE_CUT: Duration = Duration::from_secs(10);
+
 /// With -coverage, how many progress reports TLC prints before the one it follows with a
 /// coverage report: `coverageInterval / progressInterval`, -coverage's minutes as milliseconds in
 /// a Java int over the 60 s between progress reports.
@@ -75,6 +81,7 @@ pub(crate) fn compute(
     polynomial: usize,
     counted: Option<Result<Counted, String>>,
     is_compared: bool,
+    elapsed: Duration,
 ) -> Result<Vec<CoverageMessage>, String> {
     let counts = match outcome {
         SearchOutcome::Complete { counts, .. } => (counts.generated, counts.distinct),
@@ -93,6 +100,9 @@ pub(crate) fn compute(
         _ => return Err("coverage of a run that ends other than at a violation or its end".into()),
     };
     let counted = match (outcome, counted) {
+        (_, Some(Ok(_))) if elapsed > ENGINE_CUT && !is_compared => {
+            Err("a run TLC may take more than 5 minutes over".to_string())
+        }
         (SearchOutcome::Complete { .. }, Some(Ok(counted))) => Ok(counted),
         (_, Some(Err(why))) => Err(why),
         _ => Err("a search that stopped".to_string()),

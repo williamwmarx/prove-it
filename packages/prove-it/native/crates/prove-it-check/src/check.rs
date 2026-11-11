@@ -1315,7 +1315,15 @@ fn check_spec(spec_path: &str, args: &Parsed, java: &Java, printer: &mut Printer
             .host
             .get_variable("PROVE_IT_TEST_COVERAGE_COMPARE")
             .is_some_and(|value| value == "1");
-        match coverage::compute(&ir, &outcome, sources, fingerprint_index, counted, compared) {
+        match coverage::compute(
+            &ir,
+            &outcome,
+            sources,
+            fingerprint_index,
+            counted,
+            compared,
+            start.elapsed(),
+        ) {
             Ok(messages) => printer.coverage = Some(messages),
             Err(why) => return report_not_native(printer, &why),
         }
