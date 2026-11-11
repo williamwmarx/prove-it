@@ -324,7 +324,10 @@ fn get_assumed_instances(assumed: &Assumed, found: &mut Vec<Name>) {
     match assumed {
         Assumed::Expression(expression) => get_let_instances(expression, found),
         Assumed::NewSymbol(_) => {}
-        Assumed::AssumeProve(assume_prove) => {
+        Assumed::AssumeProve(assume_prove)
+        | Assumed::Label {
+            body: assume_prove, ..
+        } => {
             assume_prove
                 .assumptions
                 .iter()

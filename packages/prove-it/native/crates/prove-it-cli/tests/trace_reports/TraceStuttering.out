@@ -1,0 +1,34 @@
+exit 13
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module TraceStuttering
+Linting of module TLCExt
+Linting of module TraceStuttering
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Error: Temporal property Never was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ x = 0
+/\ length = 0
+/\ trace = <<>>
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module TraceStuttering>
+/\ x = 1
+/\ length = 1
+/\ trace = <<[x |-> 0]>>
+
+State 3: <Next line 5, col 9 to line 5, col 27 of module TraceStuttering>
+/\ x = 2
+/\ length = 3
+/\ trace = <<[x |-> 0], [x |-> 1], [x |-> 2]>>
+
+State 4: Stuttering
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

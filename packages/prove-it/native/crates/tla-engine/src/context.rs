@@ -740,7 +740,8 @@ impl EngineContext {
                         ActionOptions {
                             is_init: false,
                             is_shortcut: model.is_warning_enabled,
-                            can_print: false,
+                            // A simulation takes its steps by the actions alone.
+                            can_print: compiler.simulation.is_some(),
                         },
                         "an action",
                     ) {

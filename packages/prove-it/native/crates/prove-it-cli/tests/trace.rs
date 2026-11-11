@@ -119,6 +119,40 @@ fn declines_a_counterexample_where_tlc_records_the_trace() {
 }
 
 #[test]
+fn declines_an_error_after_a_behavior_where_tlc_records_the_trace() {
+    // TLC records the behavior it prints before any error, so it writes the trace exploration
+    // spec for an Assert that fails in an action (exit 14) and for an invariant that fails to
+    // evaluate (exit 76) as for a counterexample: at d8fb231, Stop_TTrace_<epoch>.tla and its path
+    // after both.
+    for (name, spec, config) in [
+        (
+            "trace-assert",
+            "---- MODULE Stop ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1 /\\ Assert(x < 1, \"x is one\")\n====\n",
+            "INIT Init\nNEXT Next\n",
+        ),
+        (
+            "trace-invariant",
+            "---- MODULE Stop ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == IF x = 1 THEN 1 ELSE TRUE\n====\n",
+            "INIT Init\nNEXT Next\nINVARIANT Inv\n",
+        ),
+    ] {
+        let (output, directory) = run_spec(name, spec, config, &[]);
+        let text = format!(
+            "{}{}",
+            stdout(&output),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            text.contains(
+                "prove-it: not native yet: the trace exploration spec TLC writes for a counterexample"
+            ),
+            "{name}: {text}"
+        );
+        std::fs::remove_dir_all(directory).expect("removed");
+    }
+}
+
+#[test]
 fn declines_a_module_of_the_users_that_the_trace_exploration_spec_uses() {
     // SANY analyzes the modules TLC adds for the trace exploration spec with the spec's, so a
     // TLCExt beside the spec that fails its analysis fails TLC's run, though the spec doesn't use

@@ -5,7 +5,7 @@
 //! state it keeps, so every state but the last prints sorted. The last state of a violation is
 //! one the search didn't keep, and TLC fingerprinted it only if it satisfies the constraints.
 
-use tla_ir::{AtomKind, Ir, NodeId};
+use tla_ir::{AtomKind, Definition, DefinitionForm, Ir, NodeId};
 use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
@@ -54,6 +54,41 @@ impl<'ir> Rebuilder<'ir> {
     pub fn is_precomputed(&mut self, definition: u32) -> bool {
         let node = self.evaluator.ir.definitions[definition as usize];
         self.evaluator.is_precomputed(node)
+    }
+
+    /// Whether TLC holds the definition at this index of the IR's definitions as the value it
+    /// computed as it started (`processConstantDefns`), which it rejects where the configuration
+    /// names it as the ALIAS or a POSTCONDITION (`Spec.getAliasSpec`, `getPostConditionSpecs`):
+    /// a 0-ary definition of constant level, as the front end marks it, whose evaluation then
+    /// succeeds. `Unsupported` where the evaluator can't tell.
+    pub fn is_computed_at_startup(&mut self, definition: u32) -> Result<bool, Unsupported> {
+        if !self.is_precomputed(definition) {
+            return Ok(false);
+        }
+        let evaluator = &mut self.evaluator;
+        let ir = evaluator.ir;
+        let defined = evaluator.definition(ir.definitions[definition as usize]);
+        let is_marked = defined.flags & Definition::NORMALIZED != 0
+            && matches!(&defined.form, DefinitionForm::Operator(params) if params.is_empty())
+            && !ir.model.startup.definitions.contains(&definition);
+        let unsure = || {
+            Err(Unsupported(
+                "a definition TLC may compute as it starts".into(),
+            ))
+        };
+        if !is_marked {
+            return unsure();
+        }
+        evaluator.level = 0;
+        run(evaluator.compute_startup())?;
+        evaluator.printed.clear();
+        let writes = evaluator.register_writes;
+        let computed = evaluator.evaluate(defined.body, &Context::default());
+        if computed.is_err() || !evaluator.printed.is_empty() || evaluator.register_writes != writes
+        {
+            return unsure();
+        }
+        Ok(true)
     }
 
     pub(crate) fn evaluator(&mut self) -> &mut Evaluator<'ir> {

@@ -1,0 +1,18 @@
+exit 12
+Semantic processing of module Naturals
+Semantic processing of module PostconditionConstantInvariant
+Linting of module PostconditionConstantInvariant
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 24 of module PostconditionConstantInvariant>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 24 of module PostconditionConstantInvariant>
+x = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

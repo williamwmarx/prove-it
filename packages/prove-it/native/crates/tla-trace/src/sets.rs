@@ -7,7 +7,8 @@ use crate::eval::Predicate;
 use crate::print::{format_pretty, format_value};
 use crate::value::{
     Class, Evaluated, Lazy, Value, compare, elements, equals, fail, fail_coded, fail_runtime,
-    failing_comparison, find_key, is_enumerable, mark_unnormalized, set_of, unnormalized,
+    failing_comparisons, find_key, is_enumerable, mark_unnormalized, set_of, unnormalized,
+    unsorted_failure,
 };
 
 /// How many elements the evaluator enumerates of a lazy set before it gives up, as the engine
@@ -333,6 +334,12 @@ pub fn failing_sets(value: &Value, set: &Value) -> Option<(Vec<Value>, Value, Va
         }
         return None;
     }
+    // `SetPredValue.member` asks its base set first: a filter `CallStackTool` copied has no
+    // source, and the FingerprintException of its base passes through it.
+    if let Lazy::Filter(base, _) = &**lazy {
+        is_member(value, base).err()?;
+        return nested_failure(value, base);
+    }
     // Each element a nested set tests, in the order `is_member` tests them.
     let tested: Vec<(Value, &Value)> = match (&**lazy, value) {
         (Lazy::FunctionSet(domain, range), Value::Function(function)) => {
@@ -413,27 +420,49 @@ fn nested_failure(value: &Value, nested: &Value) -> Option<(Vec<Value>, Value, V
     ))
 }
 
-/// The values in whose `compareTo` TLC's binary search of a sorted set for `value` fails
-/// (`ValueVec.search`, `elem.compareTo`), outermost first, or none where the search doesn't fail
-/// so. A set TLC holds unnormalized it searches with its elements' `equals`.
+/// The values in whose methods TLC's search of a set enumeration for `value` fails
+/// (`ValueVec.search`), outermost first, or none where the search doesn't fail so: a sorted set's
+/// binary search fails in `value`'s `compareTo`, and one TLC holds unnormalized in its elements'
+/// `equals`.
 pub fn failing_search(value: &Value, set: &Value) -> Vec<Value> {
-    let Value::Set(elements) = set else {
+    if !matches!(set, Value::Set(_) | Value::Unsorted(_)) {
         return Vec::new();
+    }
+    failing_comparisons(|| is_member(value, set))
+        .err()
+        .unwrap_or_default()
+}
+
+/// The set whose method fails where TLC's `cap` or `diff` of a set enumeration or an interval
+/// fails testing its elements, as it holds them, in the other operand (`SetEnumValue.cap`,
+/// `IntervalValue.diff`), or its `cup` with another set enumeration enumerating it or testing its
+/// elements in itself (`SetEnumValue.cup`), with the element its `member` tests.
+pub fn failing_operation(
+    received: &Value,
+    other: &Value,
+    is_union: bool,
+) -> Option<(Value, Option<Value>)> {
+    if !is_reducible(received) {
+        return None;
+    }
+    if is_union && matches!(other, Value::Unsorted(_)) {
+        return Some((other.clone(), None));
+    }
+    if is_union && !is_reducible(other) {
+        return None;
+    }
+    let (enumerated, tested) = if is_union {
+        (other, received)
+    } else {
+        (received, other)
     };
-    if unnormalized(set).is_some() {
-        return Vec::new();
-    }
-    let (mut low, mut high) = (0, elements.len());
-    while low < high {
-        let middle = low + (high - low) / 2;
-        match compare(value, &elements[middle]) {
-            Ok(Ordering::Equal) => return Vec::new(),
-            Ok(Ordering::Less) => high = middle,
-            Ok(Ordering::Greater) => low = middle + 1,
-            Err(_) => return failing_comparison(value, &elements[middle]),
-        }
-    }
-    Vec::new()
+    let held = match unnormalized(enumerated) {
+        Some(written) => written,
+        None => elements(enumerated).ok()?.to_vec(),
+    };
+    held.into_iter()
+        .find(|element| is_member(element, tested).is_err())
+        .map(|element| (tested.clone(), Some(element)))
 }
 
 /// A lazy filter's test of an element of its base, which only the evaluator can make.
@@ -452,8 +481,12 @@ pub fn is_member_filtered(
     test_filter: &mut Filter<'_>,
 ) -> Evaluated<bool> {
     // TLC tests a set it holds unnormalized element by element, as it built it, asking each
-    // element whether it equals the value (`ValueVec.search`).
-    if let Some(written) = unnormalized(set) {
+    // element whether it equals the value (`ValueVec.search`), one it can't normalize too.
+    let written = match set {
+        Value::Unsorted(values) => Some(values.to_vec()),
+        _ => unnormalized(set),
+    };
+    if let Some(written) = written {
         for element in &written {
             if equals(element, value)? {
                 return Ok(true);
@@ -805,6 +838,11 @@ pub fn union(left: &Value, right: &Value) -> Evaluated<Value> {
     }
     if is_empty_reducible(right) && !is_reducible(left) {
         return Ok(left.clone());
+    }
+    // `cup` of a set enumeration or an interval enumerates another set enumeration, which
+    // normalizes it.
+    if let (true, Value::Unsorted(values)) = (is_reducible(left), right) {
+        return Err(unsorted_failure(values));
     }
     // `Tool`'s OPCODE_cup: a reducible operand's `cup`, the other's lazy union otherwise.
     match (is_reducible(left), is_reducible(right)) {

@@ -45,6 +45,8 @@ pub struct Front {
     /// What TLC prints itself after the constant definitions and before the assumptions (the
     /// engine's `startup_done`).
     pub startup_messages: Vec<StartupMessage>,
+    /// How a simulation labels an initial state, where the front end knows.
+    pub initial_label: Option<String>,
 }
 
 /// The front as tla-front finds it: the model it lowers, or where TLC stops before the search, as
@@ -85,6 +87,7 @@ pub fn read_front(
             sany: None,
             override_messages: Vec::new(),
             startup_messages: Vec::new(),
+            initial_label: None,
         }));
     }
     let describe = host.get_file_describer(files);
@@ -122,6 +125,7 @@ pub fn read_front(
                 sany: Some(sany.text),
                 startup_messages: lowered.startup_messages?,
                 override_messages: lowered.override_messages,
+                initial_label: lowered.initial_label,
             }));
         }
         Err(FrontError::NotYet(reason)) => return Err(reason),
@@ -159,8 +163,8 @@ fn lower(
         root_extendees,
     };
     // The evaluator recurses, so it runs with the search's stack.
-    let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index]| {
-        on_search_stack(|| tla_trace::get_startup_texts(ir, definitions))
+    let get_startup_texts = |ir: &tla_ir::Ir, definitions: &[tla_ir::Index], interned: usize| {
+        on_search_stack(|| tla_trace::get_startup_texts(ir, definitions, interned))
     };
     lower_front_ranking_of(sources, config_text, &options, &get_startup_texts)
 }

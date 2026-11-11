@@ -146,6 +146,9 @@ pub trait Reporter {
     }
     /// The check part way through the search found the properties hold so far.
     fn liveness_finished(&mut self) {}
+    /// A simulation's progress, every minute (`Simulator.ProgressReport`): the states checked,
+    /// the traces started, and TLC's packed mean and squared deviations of their lengths.
+    fn simulation_progress(&mut self, _generated: u64, _traces: u64, _lengths: i64) {}
     /// What Print or PrintT printed: the values, as ids of the search's store.
     fn print(&mut self, store: &Store, prints: &Prints);
     /// What Print or PrintT printed while TLC started: as the substitutes and constant
@@ -212,7 +215,8 @@ pub const DELEGATED_ASSUMPTION: &str = "unsupported: AssertError";
 
 /// What the caller found of an assumption the engine left to it.
 pub struct Delegated {
-    pub holds: bool,
+    /// Whether it holds, or `None` where it fails to evaluate.
+    pub holds: Option<bool>,
     /// The state it leaves TLC's generator in.
     pub random: u64,
 }
@@ -482,7 +486,7 @@ const INITIAL_VIEW_FAILED: &str = "a VIEW that fails on an initial state";
 // A successor the next-state relation leaves a variable of unassigned in, which TLC reports.
 const INCOMPLETE_SUCCESSOR: &str = "a successor that isn't complete";
 
-fn is_engine_limit(reason: &str) -> bool {
+pub(crate) fn is_engine_limit(reason: &str) -> bool {
     !TLC_FAILURES.contains(&reason)
 }
 
@@ -2444,7 +2448,7 @@ fn holds_all_changed_none(machine: &mut Machine<'_>, context: &EngineContext) ->
     Ok(true)
 }
 
-fn describe(error: CompileError) -> String {
+pub(crate) fn describe(error: CompileError) -> String {
     match error {
         CompileError::Bail(reason) | CompileError::Decline(reason) => reason,
     }
@@ -2652,7 +2656,10 @@ fn symmetry_group(
 }
 
 // The values the startup definitions computed, which reading them again gives without effects.
-fn startup_values(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<Vec<Id>> {
+pub(crate) fn startup_values(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+) -> Outcome<Vec<Id>> {
     context
         .startup
         .definitions
@@ -2667,6 +2674,123 @@ fn share_startup(machine: &mut Machine<'_>, context: &EngineContext) -> Outcome<
     let mut encoder = SharedEncoder::new(&machine.store);
     encoder.encode(&machine.store, &values)?;
     Ok(encoder.finish())
+}
+
+/// TLC's startup, as the search and the simulation run it: the substitutes, the constant
+/// definitions and the symmetry, then the assumptions, reported as TLC prints them. Returns the
+/// symmetry's group, or the outcome TLC stops with before it computes the initial states.
+pub(crate) fn start(
+    machine: &mut Machine<'_>,
+    context: &EngineContext,
+    settings: &Settings,
+    reporter: &mut dyn Reporter,
+) -> Result<Option<Group>, Box<SearchOutcome>> {
+    // TLCGet("level") is 0 while TLC starts.
+    let startup = machine.store.int(0).and_then(|zero| {
+        machine.set_slot(LEVEL_SLOT, zero);
+        run_startup(machine, &context.startup, settings.is_violation_reported)
+    });
+    let group = match startup {
+        Err(Bail(reason)) => return Err(Box::new(SearchOutcome::Declined(reason.into()))),
+        Ok(Started {
+            failed: Some((_, Bail(reason))),
+            ..
+        }) if !settings.is_violation_reported => {
+            return Err(Box::new(SearchOutcome::Declined(reason.into())));
+        }
+        Ok(started) => {
+            let report = |reporter: &mut dyn Reporter, printed: &[Prints]| {
+                printed
+                    .iter()
+                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            };
+            report(reporter, &started.printed);
+            if let Some(message) = started.config_error {
+                return Err(Box::new(SearchOutcome::ConfigError { message }));
+            }
+            if !started.small_sets.is_empty() {
+                reporter.symmetry_sets_too_small(&started.small_sets);
+            }
+            reporter.startup_done();
+            report(reporter, &started.assumed);
+            let mut assumed = Assumed {
+                violated: started.violated,
+                failed: started.failed,
+                delegated: started.delegated,
+            };
+            // The caller checks each assumption the engine leaves to it, and the engine goes on
+            // from the generator's state it leaves.
+            while let Some((position, bail)) = assumed.delegated {
+                let delegated = match reporter.check_assumption(position) {
+                    Ok(delegated) => delegated,
+                    Err(reason) if bail.0 == DELEGATED_ASSUMPTION => {
+                        return Err(Box::new(SearchOutcome::Declined(reason)));
+                    }
+                    // Where the caller can't check one the engine stopped at a limit of, TLC may
+                    // fail there, which the caller reports as it does any that fails.
+                    Err(_) => {
+                        assumed = Assumed {
+                            violated: None,
+                            failed: Some((position, bail)),
+                            delegated: None,
+                        };
+                        break;
+                    }
+                };
+                match delegated.holds {
+                    Some(true) => {}
+                    Some(false) => {
+                        let name = context.startup.assumptions[position as usize].1.clone();
+                        return Err(Box::new(SearchOutcome::AssumptionViolated { name }));
+                    }
+                    None => return Err(Box::new(SearchOutcome::AssumptionFailed { position })),
+                }
+                machine.random = JavaRandom::from_state(delegated.random);
+                assumed = match check_assumptions(
+                    machine,
+                    &context.startup,
+                    position as usize + 1,
+                    settings.is_violation_reported,
+                ) {
+                    Ok(assumed) => assumed,
+                    Err(Bail(reason)) => {
+                        return Err(Box::new(SearchOutcome::Declined(reason.into())));
+                    }
+                };
+                let printed = std::mem::take(&mut machine.output)
+                    .into_iter()
+                    .filter_map(|printed| match printed {
+                        Printed::Values(values) => Some(values),
+                        Printed::InitialStates(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                printed
+                    .iter()
+                    .for_each(|values| reporter.startup_print(&machine.store, values));
+            }
+            if let Some(name) = assumed.violated {
+                return Err(Box::new(SearchOutcome::AssumptionViolated { name }));
+            }
+            if let Some((position, _)) = assumed.failed {
+                return Err(Box::new(SearchOutcome::AssumptionFailed { position }));
+            }
+            if context.is_diameter_searched || context.is_view_search_read {
+                return Err(Box::new(SearchOutcome::Stopped {
+                    reason: if context.is_diameter_searched {
+                        crate::context::DIAMETER_SEARCHED
+                    } else {
+                        crate::context::VIEW_SEARCH_READ
+                    }
+                    .into(),
+                    checkpoint: None,
+                    collisions: 0,
+                    violation: None,
+                }));
+            }
+            started.group
+        }
+    };
+    Ok(group)
 }
 
 /// Searches the model the IR describes. It runs compiled closures, which recurse with the
@@ -2750,106 +2874,9 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
     };
     let program = compiler.finish();
     let mut machine = Machine::new(&program, store);
-    // TLCGet("level") is 0 while TLC starts.
-    let startup = machine.store.int(0).and_then(|zero| {
-        machine.set_slot(LEVEL_SLOT, zero);
-        run_startup(
-            &mut machine,
-            &context.startup,
-            settings.is_violation_reported,
-        )
-    });
-    let group = match startup {
-        Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
-        Ok(Started {
-            failed: Some((_, Bail(reason))),
-            ..
-        }) if !settings.is_violation_reported => return SearchOutcome::Declined(reason.into()),
-        Ok(started) => {
-            let report = |reporter: &mut dyn Reporter, printed: &[Prints]| {
-                printed
-                    .iter()
-                    .for_each(|values| reporter.startup_print(&machine.store, values));
-            };
-            report(reporter, &started.printed);
-            if let Some(message) = started.config_error {
-                return SearchOutcome::ConfigError { message };
-            }
-            if !started.small_sets.is_empty() {
-                reporter.symmetry_sets_too_small(&started.small_sets);
-            }
-            reporter.startup_done();
-            report(reporter, &started.assumed);
-            let mut assumed = Assumed {
-                violated: started.violated,
-                failed: started.failed,
-                delegated: started.delegated,
-            };
-            // The caller checks each assumption the engine leaves to it, and the engine goes on
-            // from the generator's state it leaves.
-            while let Some((position, bail)) = assumed.delegated {
-                let delegated = match reporter.check_assumption(position) {
-                    Ok(delegated) => delegated,
-                    Err(reason) if bail.0 == DELEGATED_ASSUMPTION => {
-                        return SearchOutcome::Declined(reason);
-                    }
-                    // Where the caller can't check one the engine stopped at a limit of, TLC may
-                    // fail there, which the caller reports as it does any that fails.
-                    Err(_) => {
-                        assumed = Assumed {
-                            violated: None,
-                            failed: Some((position, bail)),
-                            delegated: None,
-                        };
-                        break;
-                    }
-                };
-                if !delegated.holds {
-                    let name = context.startup.assumptions[position as usize].1.clone();
-                    return SearchOutcome::AssumptionViolated { name };
-                }
-                machine.random = JavaRandom::from_state(delegated.random);
-                assumed = match check_assumptions(
-                    &mut machine,
-                    &context.startup,
-                    position as usize + 1,
-                    settings.is_violation_reported,
-                ) {
-                    Ok(assumed) => assumed,
-                    Err(Bail(reason)) => return SearchOutcome::Declined(reason.into()),
-                };
-                let printed = std::mem::take(&mut machine.output)
-                    .into_iter()
-                    .filter_map(|printed| match printed {
-                        Printed::Values(values) => Some(values),
-                        Printed::InitialStates(_) => None,
-                    })
-                    .collect::<Vec<_>>();
-                printed
-                    .iter()
-                    .for_each(|values| reporter.startup_print(&machine.store, values));
-            }
-            if let Some(name) = assumed.violated {
-                return SearchOutcome::AssumptionViolated { name };
-            }
-            if let Some((position, _)) = assumed.failed {
-                return SearchOutcome::AssumptionFailed { position };
-            }
-            if context.is_diameter_searched || context.is_view_search_read {
-                return SearchOutcome::Stopped {
-                    reason: if context.is_diameter_searched {
-                        crate::context::DIAMETER_SEARCHED
-                    } else {
-                        crate::context::VIEW_SEARCH_READ
-                    }
-                    .into(),
-                    checkpoint: None,
-                    collisions: 0,
-                    violation: None,
-                };
-            }
-            started.group
-        }
+    let group = match start(&mut machine, &context, settings, reporter) {
+        Ok(group) => group,
+        Err(outcome) => return *outcome,
     };
     // The initial states draw on from where the startup left the generator.
     let startup_random = machine.random.state();
@@ -3087,9 +3114,12 @@ pub fn search(ir: &Ir, settings: &Settings, reporter: &mut dyn Reporter) -> Sear
         }) {
             machine.assigned_shapes = Some((0..width).map(|_| ShapeJoin::default()).collect());
         }
+        machine.is_before_initial_state = true;
         (context.init)(&mut machine, &mut |machine: &mut Machine<'_>| {
+            machine.is_before_initial_state = false;
             search.visit_initial(machine, &context)
         })?;
+        machine.is_before_initial_state = false;
         search.flush(&mut machine);
         initial_states = (search.initial_generated, search.states.count() as u64);
         // TLC stops before it expands a state, at a time of its threads' choosing.
@@ -5110,7 +5140,7 @@ fn label_lasso(
     Ok(labels)
 }
 
-fn report_printed(reporter: &mut dyn Reporter, store: &Store, printed: &Printed) {
+pub(crate) fn report_printed(reporter: &mut dyn Reporter, store: &Store, printed: &Printed) {
     match printed {
         Printed::Values(values) => reporter.print(store, values),
         Printed::InitialStates(count) => reporter.initial_states_progress(*count),

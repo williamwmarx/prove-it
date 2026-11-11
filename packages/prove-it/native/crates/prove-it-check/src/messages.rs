@@ -52,6 +52,9 @@ pub const COMPUTING_INIT_PROGRESS: u32 = 2269;
 pub const SYMMETRY_SET_TOO_SMALL: u32 = 2300;
 pub const CONFIG_FILE_ERROR: u32 = 5001;
 pub const TRACE_SPEC_WRITTEN: u32 = 2501;
+pub const GENERAL: u32 = 1000;
+pub const CONFIG_ID_REQUIRES_NO_ARG: u32 = 2228;
+pub const CONFIG_ID_MUST_NOT_BE_CONSTANT: u32 = 2233;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -86,6 +89,8 @@ pub struct Printer<'o> {
     pub recorded_trace: RecordedTrace,
     /// Why the run declines, where it can't write the spec TLC writes.
     pub trace_spec_decline: Option<String>,
+    /// TLC's coverage report of the run, which comes before the statistics.
+    pub coverage: Option<Vec<tla_trace::CoverageMessage>>,
 }
 
 impl<'o> Printer<'o> {
@@ -101,6 +106,7 @@ impl<'o> Printer<'o> {
             trace_spec: None,
             recorded_trace: RecordedTrace::default(),
             trace_spec_decline: None,
+            coverage: None,
         }
     }
 

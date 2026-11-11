@@ -1,0 +1,12 @@
+exit 255
+Semantic processing of module Naturals
+Semantic processing of module PostconditionConstant
+Linting of module PostconditionConstant
+Computing initial states...
+Error: TLC threw an unexpected exception.
+This was probably caused by an error in the spec or model.
+See the User Output or TLC Console for clues to what happened.
+The exception was a java.lang.RuntimeException
+: The post condition Never cannot be a constant.
+4 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
