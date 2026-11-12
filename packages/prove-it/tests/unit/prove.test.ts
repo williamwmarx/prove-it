@@ -92,43 +92,31 @@ describe("prove follows tlapm's default method", () => {
   });
 
   // Two different lone surrogates, which the engine would read as the same U+FFFD, so that the
-  // axiom that the two strings differ would contradict itself and prove both.
+  // axiom that the two strings differ would contradict itself and prove both. The engine's strings
+  // can't hold one, so prove declines the text that holds it before it decides anything.
   it.each(["=", "#"])(
     "proves neither string %s the other where each is a lone surrogate",
     async (operator) => {
-      const result = await prove({
+      const proving = prove({
         source: `---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM "\uD800" ${operator} "\uDC00" BY SMT\n====\n`,
       });
-      expect(result.obligations).toMatchObject([
-        { status: "failed", reason: "smt failed: smt declined: the text holds a lone surrogate" },
-        { status: "trivial" },
-      ]);
+      await expect(proving).rejects.toThrow(
+        new TlaUnsupportedError("not native yet: the source isn't well-formed UTF-16"),
+      );
     },
   );
 
-  // The module that defines the strings is one the Rust driver gives way to the TypeScript one for.
-  it.each(["rust", "ts"])(
-    "proves neither string = nor # the other where a module it extends defines them, with the %s driver",
-    async (driver) => {
-      const setting = process.env.PROVE_IT_PROVER_DRIVER;
-      process.env.PROVE_IT_PROVER_DRIVER = driver;
+  it.each(["=", "#"])(
+    "proves neither string %s the other where a module it extends defines them",
+    async (operator) => {
       const library = '---- MODULE Lib ----\nC1 == "\uD800"\nC2 == "\uDC00"\n====\n';
-      const results = await Promise.all(
-        ["=", "#"].map((operator) =>
-          prove({
-            source: `---- MODULE M ----\nEXTENDS Lib, TLAPS\nTHEOREM C1 ${operator} C2 BY SMT DEF C1, C2\n====\n`,
-            loadModule: (name) => (name === "Lib" ? library : undefined),
-          }),
-        ),
-      ).finally(() => {
-        if (setting === undefined) delete process.env.PROVE_IT_PROVER_DRIVER;
-        else process.env.PROVE_IT_PROVER_DRIVER = setting;
+      const proving = prove({
+        source: `---- MODULE M ----\nEXTENDS Lib, TLAPS\nTHEOREM C1 ${operator} C2 BY SMT DEF C1, C2\n====\n`,
+        loadModule: (name) => (name === "Lib" ? library : undefined),
       });
-      for (const result of results)
-        expect(result.obligations).toMatchObject([
-          { status: "failed", reason: "smt failed: smt declined: the text holds a lone surrogate" },
-          { status: "trivial" },
-        ]);
+      await expect(proving).rejects.toThrow(
+        new TlaUnsupportedError("not native yet: the module Lib isn't well-formed UTF-16"),
+      );
     },
   );
 

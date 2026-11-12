@@ -62,8 +62,6 @@ const proveNatively = (
 // What prove reports with the Rust driver and the native backends, as it reports each obligation
 // and in the end, or the error it throws. It aborts once abortAfter obligations are reported.
 const proveWithRust = async (options: ProveOptions, abortAfter?: number) => {
-  const setting = process.env.PROVE_IT_PROVER_DRIVER;
-  process.env.PROVE_IT_PROVER_DRIVER = "rust";
   const controller = new AbortController();
   const streamed: unknown[] = [];
   try {
@@ -82,9 +80,6 @@ const proveWithRust = async (options: ProveOptions, abortAfter?: number) => {
       error: { class: thrown.constructor.name, name: thrown.name, message: thrown.message },
       streamed,
     };
-  } finally {
-    if (setting === undefined) delete process.env.PROVE_IT_PROVER_DRIVER;
-    else process.env.PROVE_IT_PROVER_DRIVER = setting;
   }
 };
 

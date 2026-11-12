@@ -926,10 +926,12 @@ and the differential runs once with it cleared each round.
 `timeout` or `false` is computed from it as now. An abort stops JavaScript from calling again,
 and the cancel cell stops the Rust decisions in flight.
 
-**Selection.** `PROVE_IT_PROVER_DRIVER=ts|rust` picks the driver. The default stays TypeScript
-until the end-to-end differential (2.2, layer 5) is clean on all 304 modules with 1 and 4
-threads: identical `ProofObligation`s less `timeUsedMs`, and identical `missingProofCount` and
-`omittedProofCount`.
+**Selection.** There is none: `prove` proves with the Rust driver (`proveNatively`), which
+answers its decisions through the engine's `decide` export, in the decision pool where there are
+workers. Where no engine loads, `prove` throws an `EngineUnavailableError` before it reads the
+source. `PROVE_IT_PROVER_DRIVER`, which chose the TypeScript driver by default and the Rust one
+with `rust`, is gone; `prove-driver.test.ts` checks the Rust driver against what the TypeScript
+driver gave (`tests/fixtures/prove/driver.json`) where the Rust doesn't follow tlapm instead.
 
 **Where the engine comes from.** Once the Rust driver is the only one, proving needs the engine
 wherever the package runs. Every entry that proves (`proveWith`, `proveObligations`, the prove

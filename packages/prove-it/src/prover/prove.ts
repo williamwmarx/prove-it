@@ -1,9 +1,9 @@
 // Proves a module's obligations with tla-ts's own backends, in tlapm's order, or with tlapm.
 
 import { getNativeAddon, loadWasmEngine, type NativeProve } from "../engine/native";
-import { getEnvironmentSetting, reportEngine } from "../engine/settings";
 import {
   EngineInvariantError,
+  EngineUnavailableError,
   TlapmBugError,
   TlaProofError,
   TlaProverError,
@@ -609,24 +609,18 @@ const proveNatively = async (
   }
 };
 
-// The Rust driver proves where PROVE_IT_PROVER_DRIVER is "rust" and a native engine loads.
-const getNativeDriver = () => {
-  if (getEnvironmentSetting("PROVE_IT_PROVER_DRIVER") !== "rust") return undefined;
-  const native = getNativeAddon();
-  if (typeof native !== "string") return native;
-  reportEngine(`prover: no native engine for the driver: ${native}`);
-  return undefined;
-};
-
 // prove, deciding with decideWith where it is given, for scripts that replay recorded decisions.
 export const proveWith = async (
   options: ProveOptions,
   decideWith?: DecidePool["decide"],
 ): Promise<ProveResult> => {
   const name = getModuleName(options.source);
-  if (options.backend !== "tlapm") await loadWasmEngine();
-  const native = options.backend === "tlapm" ? undefined : getNativeDriver();
-  if (native !== undefined) return proveNatively(options, name, native, decideWith);
+  if (options.backend !== "tlapm") {
+    await loadWasmEngine();
+    const native = getNativeAddon();
+    if (typeof native === "string") throw new EngineUnavailableError(native, false);
+    return proveNatively(options, name, native, decideWith);
+  }
   const modules = new Map<string, string>();
   const results = getObligations(
     [{ file: `${name}.tla`, source: options.source }],
@@ -642,36 +636,23 @@ export const proveWith = async (
     missingProofCount: results.reduce((total, result) => total + result.summary.absent.length, 0),
     omittedProofCount: results.reduce((total, result) => total + result.summary.omitted.length, 0),
   };
-  if (options.backend === "tlapm") {
-    if (typeof process === "undefined" || process.versions?.node === undefined)
-      throw new TlaUnsupportedError("The tlapm backend runs only in Node and Bun.");
-    const tlapm = await import("./tlapm/tlapm");
-    const byId = new Map(obligations.map((obligation) => [obligation.id, obligation]));
-    const reported = await tlapm.proveWithTlapm(
-      name,
-      new Map([[name, options.source], ...modules]),
-      {
-        signal: options.signal,
-        onResult: (id, result) => {
-          const obligation = byId.get(id);
-          if (obligation) options.onObligation?.(getTlapmObligation(obligation, result));
-        },
-      },
-    );
-    return {
-      obligations: obligations.map((obligation) =>
-        getTlapmObligation(obligation, reported.get(obligation.id)),
-      ),
-      ...counts,
-    };
-  }
-  const reports = await proveObligations(obligations, {
-    workers: options.workers,
-    decide: decideWith,
+  if (typeof process === "undefined" || process.versions?.node === undefined)
+    throw new TlaUnsupportedError("The tlapm backend runs only in Node and Bun.");
+  const tlapm = await import("./tlapm/tlapm");
+  const byId = new Map(obligations.map((obligation) => [obligation.id, obligation]));
+  const reported = await tlapm.proveWithTlapm(name, new Map([[name, options.source], ...modules]), {
     signal: options.signal,
-    onReport: (report) => options.onObligation?.(report.obligation),
+    onResult: (id, result) => {
+      const obligation = byId.get(id);
+      if (obligation) options.onObligation?.(getTlapmObligation(obligation, result));
+    },
   });
-  return { obligations: reports.map((report) => report.obligation), ...counts };
+  return {
+    obligations: obligations.map((obligation) =>
+      getTlapmObligation(obligation, reported.get(obligation.id)),
+    ),
+    ...counts,
+  };
 };
 
 export const prove = (options: ProveOptions) => proveWith(options);
