@@ -1304,7 +1304,8 @@ is next.
     `checkSources` answers the reads for tlapm's command line from `kind:`, `realpath:`, `bytes:`
     and `entries:` keys and returns the journal as `files`, which the CLI applies the same way,
     with the same reasons. The run reads every module's cache before it proves any, so a round
-    that lacks a key never proves.
+    that lacks a key never proves: the paths it writes, and the history's entries, from which it
+    learns whether the history's new directory, named by the time, is there.
   - **Checks:** `prove-it-cli/tests/tlapm.rs` and `unit/cli.test.ts` hold every recording of
     `tests/fixtures/obligations` and `tlapm-cli`, through the binary and through the addon;
     `unit/tlapm-cache.test.ts` reads and writes tlapm's fingerprints file through the CLI;

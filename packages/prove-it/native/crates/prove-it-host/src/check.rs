@@ -6,7 +6,9 @@
 //!   stderr, its exit code, what the check found where it searched, as the library reports it
 //!   (`get_outcome`), and the files it writes;
 //! - `{ kind: "needed", keys }`, what the check reads that isn't known yet (`sources`). It asks for
-//!   everything before it searches, so a round never searches;
+//!   everything before it searches or proves, so a round never does either; tlapm's command line
+//!   learns whether the history's new directory, named by the time, is there from the history's
+//!   entries, and asks for it alone where a run of the same second left one;
 //! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
 //!   printed before.
 //!

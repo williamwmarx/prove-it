@@ -1302,7 +1302,15 @@ fn read_cache(
             .get("--usefp")
             .map_or(fingerprints.clone(), |values| values[0].clone());
         let history = PathBuf::from(format!("{fingerprints}.history"));
-        let mut paths = vec![fingerprints, loaded.clone()];
+        let directory = format!("{cache_directory}/{}.tlaps", module.name);
+        let mut paths = vec![
+            cache_directory.to_owned(),
+            directory.clone(),
+            format!("{fingerprints}.tmp"),
+            format!("{directory}/{}.thy", module.name),
+            fingerprints,
+            loaded.clone(),
+        ];
         paths.extend(get_history_sources(module_names, &modules[..=index]));
         io.call(move |session| {
             let host = session.host();
@@ -1432,6 +1440,20 @@ fn save_history(io: &Io<'_>, path: &str, sources: &[String], now: LocalTime) -> 
         let host = session.output.host;
         let overlay = &session.overlay;
         let directory = PathBuf::from(directory);
+        // The history's entries say whether the directory, named by the time, is there, which the
+        // host is then not asked: a host that answers in rounds would be asked anew each second.
+        let now = get_milliseconds(host);
+        let name = directory
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        let is_listed = overlay.list(&history, now, host).is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| Some(&entry.name) == name.as_ref())
+        });
+        if !is_listed {
+            overlay.set_missing(&directory);
+        }
         // mkdir -p, then cp -p of each file there is.
         if !overlay.create_directory(&directory, true, host) {
             return;
@@ -1444,7 +1466,6 @@ fn save_history(io: &Io<'_>, path: &str, sources: &[String], now: LocalTime) -> 
         }
         // rm -rf `ls -1td <history>/* | tail -n +11`: the glob leaves out dotfiles, and ls lists the
         // latest first.
-        let now = get_milliseconds(host);
         let Some(mut entries) = overlay.list(&history, now, host) else {
             return;
         };

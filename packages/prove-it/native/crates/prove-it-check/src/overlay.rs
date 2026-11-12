@@ -142,6 +142,15 @@ impl Overlay {
         Some(entries)
     }
 
+    /// Holds that nothing is at the path, where the run knows it from a directory's entries.
+    pub fn set_missing(&self, path: &Path) {
+        if matches!(self.find(path), Found::Underlying) {
+            self.nodes
+                .borrow_mut()
+                .insert(path.to_path_buf(), Node::Removed);
+        }
+    }
+
     fn record(&self, operation: FileOperation) {
         self.journal.borrow_mut().push(operation);
     }
@@ -376,6 +385,24 @@ mod tests {
         assert!(overlay.create_directory(Path::new("top"), false, &Disk));
         assert!(overlay.create_directory(Path::new("cache"), true, &Disk));
         assert_eq!(overlay.into_journal().len(), 3);
+    }
+
+    // What a directory's entries say isn't there, the host isn't asked of again.
+    #[test]
+    fn knows_a_path_missing_without_the_host() {
+        let overlay = Overlay::default();
+        overlay.set_missing(Path::new("cache/old"));
+        assert_eq!(overlay.get_kind(Path::new("cache/old"), &Disk), None);
+        assert!(overlay.create_directory(Path::new("cache/old/new"), true, &Disk));
+        assert_eq!(
+            overlay.get_kind(Path::new("cache/old/fingerprints"), &Disk),
+            None
+        );
+        overlay.set_missing(Path::new("cache/old/new"));
+        assert_eq!(
+            overlay.get_kind(Path::new("cache/old/new"), &Disk),
+            Some(PathKind::Directory)
+        );
     }
 
     #[test]
