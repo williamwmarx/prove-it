@@ -873,6 +873,10 @@ declines, the CLI prints the decline and exits with 1, and where no engine loads
   `--printallobs` where tlapm proves (tlapm then prints each proved obligation's text too), an
   option without its arguments or without an integer, `--threads` below 1 or above 99 where tlapm
   proves (its scheduler asserts), no module, and globs. tlapm reports each in its own words.
+- **A module file that isn't UTF-8** (`a module file tlapm finds but can't read`): tlapm reads
+  bytes, and read with U+FFFD for each byte that isn't UTF-8, two different strings would be one
+  and a theorem that they are equal proved. The binary's `read_to_string` and the CLI's fatal
+  `TextDecoder` both give such a file no text.
 - **A cache it can't read or write as tlapm does:** a fingerprints file that doesn't load (tlapm
   moves it aside), and a directory, a file or a history entry it can't make, write, copy or remove.
 

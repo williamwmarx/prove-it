@@ -206,6 +206,26 @@ fn declines_an_error_tlapm_ends_with() {
     assert!(stderr(&output).starts_with(NOT_NATIVE));
 }
 
+/// tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't UTF-8,
+/// they would be one, and the theorem proved.
+#[test]
+fn declines_a_module_that_isnt_utf8() {
+    let directory = copy_fixtures("obligations");
+    let mut source = b"---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM \"".to_vec();
+    source.push(0xff);
+    source.extend_from_slice(b"\" = \"");
+    source.push(0xfe);
+    source.extend_from_slice(b"\" BY SMT\n====\n");
+    fs::write(directory.join("M.tla"), source).expect("the module is written");
+    let output = run_in(&directory, &["M.tla"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        format!("{NOT_NATIVE}a module file tlapm finds but can't read: M.tla\n")
+    );
+}
+
 #[test]
 fn declines_what_it_cant_do_as_tlapm_does() {
     let cases: [(&[&str], &str); 5] = [

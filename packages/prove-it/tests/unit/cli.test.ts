@@ -1383,6 +1383,28 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       'prove-it: not native yet: the backtrace tlapm prints as it ends with Failure("Module.Parser.parse_file"), as it can\'t find Missing.tla\n',
     );
   });
+
+  // tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't
+  // UTF-8, they would be one, and the theorem proved.
+  it("declines a module that isn't UTF-8 rather than read two strings alike", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.concat([
+        Buffer.from('---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM "'),
+        Buffer.from([0xff]),
+        Buffer.from('" = "'),
+        Buffer.from([0xfe]),
+        Buffer.from('" BY SMT\n====\n'),
+      ]),
+    );
+    const result = runTlapmIn(directory, ["M.tla"]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: a module file tlapm finds but can't read: M.tla\n",
+    );
+  });
 });
 
 // Each file in tlapm-cli is what tlapm 9ed0376 wrote: .stdout and .stderr without options, .strict

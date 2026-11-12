@@ -48,11 +48,22 @@ const listEntries = (path: string) =>
         .join("")
     : undefined;
 
+// A file that isn't UTF-8 has no text, as the binary's read_to_string gives none: read with U+FFFD
+// in place of its bytes, two different files would read alike.
+const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const readText = (path: string) => {
+  try {
+    return decoder.decode(readFileSync(path));
+  } catch {
+    return undefined;
+  }
+};
+
 // The files the native check reads for tlapm's command line, by key (prove-it-host's check.rs).
 const readKey = (key: string) => {
   const separator = key.indexOf(":");
   const [kind, path] = [key.slice(0, separator), key.slice(separator + 1)];
-  if (kind === "text") return getKind(path) === "file" ? readFileSync(path, "utf8") : undefined;
+  if (kind === "text") return getKind(path) === "file" ? readText(path) : undefined;
   if (kind === "bytes")
     return getKind(path) === "file" ? new Uint8Array(readFileSync(path)) : undefined;
   if (kind === "kind") return getKind(path);
