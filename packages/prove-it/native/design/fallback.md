@@ -757,7 +757,6 @@ TLC answer the test held is here:
 
 | Repro | TLC | Native |
 |---|---|---|
-| `PrintT("x٣" :> 5)` | `[x٣ \|-> 5]` | `("x٣" :> 5)` |
 | `PrintT` of a record TLC sorts while comparing it with itself and the records inside it | `<<[fld2 \|-> 2, fld1 \|-> 1]>>` | `<<[fld1 \|-> 1, fld2 \|-> 2]>>` |
 | a function over a domain TLC keeps lazy, applied only where defined (`\div 0` elsewhere) | success | the assumption fails: "The second argument of \div is 0." |
 | an error in a module nested in a nested module | SANY's errors | SANY's errors and "A VARIABLE declaration may not appear within a recursive definition section." |

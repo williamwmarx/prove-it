@@ -22,7 +22,7 @@ use tla_values::{Id, Store};
 use crate::Unsupported;
 use crate::failure::nested;
 use crate::pretty::pretty_print;
-use crate::print::{format_pretty, format_printed, format_value};
+use crate::print::{format_pretty, format_printed, format_value, holds_unknown_key};
 use crate::random::{random_element, random_subset};
 use crate::sets::{
     as_tuple, cardinality, difference, failing_operation, intersection, is_member,
@@ -5172,6 +5172,9 @@ impl<'ir> Evaluator<'ir> {
                     return as_java_failure(signature, checked.map(|()| Value::Bool(true)));
                 }
                 checked?;
+                if values.iter().any(holds_unknown_key) {
+                    return fail("printing a key whose letters Unicode's categories decide");
+                }
                 self.printed
                     .push(values.iter().map(format_printed).collect());
                 if name == "Print" {
@@ -5198,6 +5201,9 @@ impl<'ir> Evaluator<'ir> {
                 for value in [message, left, right] {
                     let value = self.settle(&value).map_err(unfollowed)?;
                     check_unchecked(&value).map_err(unfollowed)?;
+                    if holds_unknown_key(&value) {
+                        return fail("printing a key whose letters Unicode's categories decide");
+                    }
                     self.printed.push(vec![format_printed(&value)]);
                 }
                 Value::Bool(false)

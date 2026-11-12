@@ -2,7 +2,7 @@
 //! evaluator's values: a record in the order written until TLC sorts it, an interval as `1..3`,
 //! and a lazy set expanded where TLC enumerates it to print it.
 
-use tla_values::print::is_field_name;
+use tla_values::print::{get_field_name, is_field_name};
 
 use crate::sets::cardinality;
 use crate::value::{Class, Function, Lazy, Value, normalize};
@@ -313,6 +313,21 @@ pub(crate) fn text_string(units: &[u16]) -> String {
     let mut out = String::new();
     write_text(units, &mut out);
     out
+}
+
+/// Whether TLC's text of a value turns on a string key whose letters Unicode's categories decide
+/// (`get_field_name`), whether it prints the function holding it as a record.
+pub fn holds_unknown_key(value: &Value) -> bool {
+    match value {
+        Value::Set(elements) | Value::Unsorted(elements) => elements.iter().any(holds_unknown_key),
+        Value::Function(function) => {
+            function.domain.iter().any(|key| {
+                matches!(key, Value::Str(text) if get_field_name(&text.units).is_none())
+                    || holds_unknown_key(key)
+            }) || function.range.iter().any(holds_unknown_key)
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]

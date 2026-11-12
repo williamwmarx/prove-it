@@ -594,6 +594,15 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  // TLC prints "x\u0663" :> 5 as the record [x\u0663 |-> 5]: Java's Character takes the Arabic-Indic
+  // digit for a digit, which the engine doesn't know past Latin-1.
+  it("declines a key whose letters Unicode's categories decide", async () => {
+    await expectDeclined(
+      getModuleOptions('ASSUME PrintT("x\u0663" :> 5)'),
+      "printing a value whose text depends on how TLC built it",
+    );
+  });
+
   it("orders and compares intervals by size and then low bound like TLC", async () => {
     const prints: string[] = [];
     await checkOnEngine({
