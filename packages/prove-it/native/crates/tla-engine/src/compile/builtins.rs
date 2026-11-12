@@ -29,6 +29,7 @@ use super::{
 };
 use crate::footprint::Footprint;
 use crate::machine::{Eval, Machine, Printed, Prints};
+use crate::search::{HostRead, JsonFiles};
 
 // Operators whose results depend on more than their arguments, or that print.
 const IMPURE_BUILTINS: [&str; 8] = [
@@ -761,8 +762,8 @@ impl Compiler<'_> {
     }
 
     // The Json module's operators that write a value to the file a string names, as JSON or one
-    // element of a sequence per line, or read one, as TLC's Json class does (`src/json.ts`). Only
-    // the native checker reads and writes the files: the interpreter does beside the addon.
+    // element of a sequence per line, or read one, as TLC's Json class does. They read and write
+    // the files `Settings::json_files` names.
     // Writing prints in TLC's order, as Print does; reading ranks the strings it reads. Where the
     // model writes a file, a read sees what was last written, so it too is evaluated only where,
     // and as often as, TLC does; where it writes none, every read of a file reads the same, as
@@ -773,7 +774,8 @@ impl Compiler<'_> {
         operands: &[Operand],
         context: &Context,
     ) -> Compiling<Compiled> {
-        if !self.is_file_system {
+        let files = self.json_files.clone();
+        if let JsonFiles::Declined = files {
             return decline(format!("{name}, whose file the host reads and writes"));
         }
         let is_written = name.ends_with("Serialize");
@@ -810,8 +812,20 @@ impl Compiler<'_> {
             return Ok(leaf(
                 eval(move |machine| {
                     let path = read_path(machine, &evaluators[0])?;
-                    let text: Vec<u16> = std::fs::read(&path)
-                        .map_err(|_| Bail("a Json operator's file that can't be read"))
+                    let bytes = match &files {
+                        JsonFiles::Host(host) => match host.read(&path) {
+                            HostRead::Bytes(bytes) => Ok(bytes),
+                            HostRead::Missing => Err(()),
+                            HostRead::Unread => {
+                                return Err(Bail(
+                                    "unsupported: a Json operator's file the host hasn't read",
+                                ));
+                            }
+                        },
+                        _ => std::fs::read(&path).map_err(|_| ()),
+                    };
+                    let text: Vec<u16> = bytes
+                        .map_err(|()| Bail("a Json operator's file that can't be read"))
                         .map(|bytes| String::from_utf8_lossy(&bytes).encode_utf16().collect())?;
                     if is_lines {
                         json::read_nd_json(&mut machine.store, &text)
@@ -856,11 +870,16 @@ impl Compiler<'_> {
                         }
                         json::write_json(store, value, &mut text)?;
                     }
+                    let text = String::from_utf16_lossy(&text);
+                    if let JsonFiles::Host(written) = &files {
+                        written.write(path, text.into_bytes());
+                        return Ok(TRUE);
+                    }
                     // TLC makes the file's directories first, whether or not it then can.
                     if let Some(parent) = std::path::Path::new(&path).parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    std::fs::write(&path, String::from_utf16_lossy(&text))
+                    std::fs::write(&path, text)
                         .map_err(|_| Bail("a Json operator's file that can't be written"))?;
                     Ok(TRUE)
                 }),

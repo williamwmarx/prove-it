@@ -171,10 +171,14 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
             : logged.loadModule?.(path)
           : kind === "class"
             ? logged.loadClass?.(path)
-            : // SANY's report names the file of each module it parses, which the result doesn't hold.
-              kind === "file"
-              ? ""
-              : undefined;
+            : // A file the spec reads, as the Json module's operators do.
+              kind === "read"
+              ? logged.readFile?.(path)
+              : // SANY's report names the file of each module it parses, which the result
+                // doesn't hold.
+                kind === "file"
+                ? ""
+                : undefined;
   };
   const result = checkAllSources(
     addon,

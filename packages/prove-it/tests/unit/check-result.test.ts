@@ -238,8 +238,9 @@ describe("check's result", () => {
     const logPath = join(directory, "checks.jsonl");
     process.env.PROVE_IT_CHECK_LOG = logPath;
     const source =
-      '---- MODULE M ----\nEXTENDS Naturals, Json, Helper\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x\' = x + 1 /\\ ndJsonSerialize("out.json", <<Value>>)\n====';
-    const config = "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE";
+      "---- MODULE M ----\nEXTENDS Naturals, Helper\nCONSTANT K\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x' = x + Value\n====";
+    // TLC reports this number as a NumberFormatException, which the native check declines.
+    const config = "INIT Init\nNEXT Next\nCONSTANT K = 3000000000\nCHECK_DEADLOCK FALSE";
     try {
       await expect(
         check({

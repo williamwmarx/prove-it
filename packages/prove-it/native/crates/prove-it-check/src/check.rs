@@ -4,14 +4,14 @@
 use std::path::Path;
 
 use crate::host_path::Platform;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 use tla_engine::Prints;
 use tla_engine::clock::Instant;
 
 use tla_engine::search::{
-    Continued, ContinuedTrace, Delegated, ErrorSite, MINIMUM_SHARED_LEVEL, Reporter, SearchOutcome,
-    Settings, Violation, ViolationKind, search,
+    Continued, ContinuedTrace, Delegated, ErrorSite, HostFiles, JsonFiles, MINIMUM_SHARED_LEVEL,
+    Reporter, SearchOutcome, Settings, Violation, ViolationKind, search,
 };
 use tla_live::{Liveness, Verdict};
 use tla_values::print::{is_printable, is_printable_normalized, write_value};
@@ -1258,6 +1258,11 @@ fn check_spec(
             return report_not_native(printer, reason);
         }
     }
+    let json_files = if printer.host.is_file_system() {
+        JsonFiles::System
+    } else {
+        JsonFiles::Host(Arc::new(HostFiles::new(printer.host.spec_files_read())))
+    };
     let settings = Settings {
         is_violation_reported: true,
         workers,
@@ -1284,7 +1289,7 @@ fn check_spec(
         is_dumped,
         is_continued,
         large_region_advice: printer.host.large_region_advice(),
-        is_file_system: printer.host.is_file_system(),
+        json_files: json_files.clone(),
         ..Settings::default()
     };
     let threads = settings.threads;
@@ -1409,6 +1414,16 @@ fn check_spec(
             drop(receiver);
         },
     );
+    // The host reads the files the Json module's operators would have read, and writes those they
+    // wrote.
+    if let JsonFiles::Host(files) = &json_files {
+        for path in files.take_unread() {
+            printer.host.read_spec_file(&path);
+        }
+        for (path, bytes) in files.take_written() {
+            printer.host.write_file(Path::new(&path), &bytes, false);
+        }
+    }
     if let Some(reason) = declined {
         return report_not_native(printer, &reason);
     }

@@ -1032,15 +1032,17 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
-  it("declines a substitute that JsonDeserialize defines", async () => {
-    await expectDeclined(
-      {
-        source:
-          '---- MODULE M ----\nEXTENDS Json\nCONSTANT C\nVARIABLE x\nTrace == JsonDeserialize("missing.json")\nInit == x = 0\nNext == x\' = x\n====',
-        config: "CONSTANT C <- Trace\nINIT Init\nNEXT Next",
-      },
-      "the engine declined: JsonDeserialize, whose file the host reads and writes",
-    );
+  it("checks a model with a substitute that JsonDeserialize defines, which nothing reads", async () => {
+    const result = await checkOnEngine({
+      source:
+        '---- MODULE M ----\nEXTENDS Json\nCONSTANT C\nVARIABLE x\nTrace == JsonDeserialize("missing.json")\nInit == x = 0\nNext == x\' = x\n====',
+      config: "CONSTANT C <- Trace\nINIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
   });
 
   it("overrides definitions and ignores undeclared names assigned by the configuration", async () => {

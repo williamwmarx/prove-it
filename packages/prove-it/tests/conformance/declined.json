@@ -1,7 +1,3 @@
 {
-  "ccf/tla/consistency/TraceMultiNodeReads.cfg": "the engine declined: ndJsonDeserialize, whose file the host reads and writes",
-  "etcd-raft/tla/Traceetcdraft.cfg": "the engine declined: ndJsonDeserialize, whose file the host reads and writes",
-  "examples/specifications/MisraReachability/MCParReach.cfg": "the engine stopped: an atom of the temporal properties that may fail to evaluate: evaluating the failure again: it didn't fail",
-  "examples/specifications/ewd840/EWD840_json.cfg": "the engine declined: JsonSerialize, whose file the host reads and writes",
-  "examples/specifications/ewd998/EWD998ChanTrace.cfg": "the engine declined: ndJsonDeserialize, whose file the host reads and writes"
+  "examples/specifications/MisraReachability/MCParReach.cfg": "the engine stopped: an atom of the temporal properties that may fail to evaluate: evaluating the failure again: it didn't fail"
 }

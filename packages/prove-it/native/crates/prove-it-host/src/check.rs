@@ -21,7 +21,8 @@
 //! links followed, `cwd`, the working directory, and `tmpdir`, the system's temporary directory.
 //! tlapm's command line also reads `entries:<path>`, a directory's entries, each as its `mtimeMs`
 //! and its name, each ended by a NUL. The library has no files: it answers `text:<path>` for the
-//! spec and its configuration, `module:<name>` and `class:<name>`.
+//! spec and its configuration, `module:<name>`, `class:<name>`, and `read:<path>` for a file the
+//! spec reads, as the Json module's operators do, through `readFile`.
 //!
 //! `resolveFiles(args, given, request, known)` answers, through the same keys, what the CLI's
 //! TypeScript check asks of where TLC finds the files of the spec `given` on the command line
@@ -206,6 +207,23 @@ impl Host for SourcesHost {
 
     fn is_file_system(&self) -> bool {
         !self.is_library
+    }
+
+    fn read_spec_file(&self, path: &str) -> Option<Vec<u8>> {
+        self.get(format!("read:{path}")).map(String::into_bytes)
+    }
+
+    fn spec_files_read(&self) -> Vec<(String, Option<Vec<u8>>)> {
+        self.sources
+            .get_answered_with("read:")
+            .into_iter()
+            .map(|(key, text)| {
+                (
+                    key["read:".len()..].to_owned(),
+                    text.map(String::into_bytes),
+                )
+            })
+            .collect()
     }
 
     // The check's writes go back to JavaScript, which writes them: the library's, which answers

@@ -1182,8 +1182,12 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
 - `check` runs `checkSources` as the CLI does, with the spec and its configuration as the files
   `<Module>.tla` and `<Module>.cfg`, its modules through `loadModule`, and `-seed`, `-workers`,
   `-lncheck`, `-tool`, `-nowarning` and `-continue` from its options. The Json module's operators
-  decline there, since the library answers for files through `readFile` and `writeFile`. The
-  machine's `isLibrary` says so, and only then does the check write each printed state's plain
+  read and write the library's files there, through `readFile` (`read:<path>`) and `writeFile`
+  (`Settings::json_files`): the engine reads what the library read for it before the search, and
+  stops at a file it hasn't, which the library reads before the check runs again, so a check that
+  reads a file only as it searches searches twice; it keeps what they write, which the library
+  writes once the check ends, each file with what it was last written. The machine's `isLibrary`
+  says so, and only then does the check write each printed state's plain
   data, at most 1,000,000 elements of it a variable, TLC's own bound on a set it builds; past
   that the value is `null`. The binary and the CLI's `checkSources` write none.
 - The check records what it found as it prints (`prove-it-check`'s `outcome.rs`), and
