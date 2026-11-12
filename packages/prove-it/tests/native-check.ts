@@ -2,6 +2,8 @@
 // TypeScript path where the engine declines, and says so only under PROVE_IT_ENGINE=debug, so a
 // test moved off the interpreter asserts on `declined` that the engine itself gave its result.
 
+import { expect } from "bun:test";
+
 import { check, type CheckOptions, type CheckResult } from "../src";
 import { getNativeAddon } from "../src/engine/native";
 
@@ -62,6 +64,13 @@ export const checkWithInterpreter = (options: CheckOptions): Promise<CheckResult
   });
   queue = checked.catch(() => undefined);
   return checked;
+};
+
+// The engine's result, asserting that it gave it, or that it declined for `declinedFor`.
+export const checkOnEngine = async (options: CheckOptions, declinedFor?: string) => {
+  const { result, declined } = await checkNatively(options);
+  expect(declined).toBe(declinedFor);
+  return result;
 };
 
 // TLC's report of an assumption that fails to evaluate, whose text starts at column 8 of `line`.

@@ -28,6 +28,9 @@ The two facts differ exactly where the branches have accreted rules:
   (round 15's s3: TLC accepts `ALIAS D`).
 - **Substitute for a definition, `X <- D`**: the second loop reaches D through X's tool object,
   evaluates it, and does `defns.put`, so both facts become Value.
+- **A substitute the cfg also gives a value, `C <- D` or `X <- D` with `D = v`**: `processConstants`
+  puts v in `defns(D)`, and the substitution copies that value to C's or X's tool object, so neither
+  loop of `processConstantDefns` reaches D's body. D is not attempted.
 - **0-ary OpDefNode of a module with `processConstantDefns()`** (not instantiated with parameters),
   not given a value by the cfg and not vetoed: TLC evaluates it if `getLevelBound(body) == 0`, and
   both facts become Value. `getLevelBound` differs from SANY's level in several ways:
@@ -131,7 +134,8 @@ reads, RandomSubset) or for an action inside an operator argument (an attempt th
 the adversarial rounds of `design/trace.md` (914 models), the differences are the operator-argument
 and TLCSet shapes of rounds 10 to 13 (116, attempted where `NORMALIZED` isn't), which give main's
 wrong verdicts, and the names spelled as variables of rounds 14 to 16 (96, operators where
-`NORMALIZED` is).
+`NORMALIZED` is). Over the ALIAS review rounds (`cases-alias`, 1247 models, 114 of which TLC rejects),
+the differences are 252 literal bodies and 20 substitutes for constants, where only Defns differs.
 
 Still approximate: the order of the attempts is the substitutes, then the definitions in
 `startup_definitions`' order, where TLC goes module by module with each module's substitutes

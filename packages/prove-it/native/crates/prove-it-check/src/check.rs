@@ -18,7 +18,9 @@ use tla_values::{Id, Store};
 use crate::args::{Java, Parsed, Stop, USAGE, get_java_launch, is_auto};
 use crate::coverage;
 use crate::dump_trace::{TraceDumps, is_writable, write};
-use crate::failure::{ErrorStop, print_assumption_failure, print_failure};
+use crate::failure::{
+    ErrorStop, deadlock_atom_stack, print_assumption_failure, print_call_stack, print_failure,
+};
 use crate::front::{Failure, Read, read_front};
 use crate::host::{Files, Host};
 use crate::jar::{get_tools_jar, is_174};
@@ -803,6 +805,18 @@ fn format_printed(store: &Store, prints: &Prints) -> Option<String> {
     Some(printed.join("  "))
 }
 
+// What TLC prints as it adds the state it stopped at to the behavior graphs, where the search
+// placed it.
+fn format_added(violation: &Violation) -> Result<Vec<String>, &'static str> {
+    violation
+        .added
+        .iter()
+        .flatten()
+        .map(|prints| format_printed(&violation.store, prints))
+        .collect::<Option<Vec<_>>>()
+        .ok_or("printing a value whose text depends on how TLC built it")
+}
+
 /// The counts a Progress line reports.
 #[derive(Clone, Copy)]
 pub(crate) struct Statistics {
@@ -1427,11 +1441,13 @@ fn check_spec(
     );
     // Under -continue TLC reports an error or a deadlock otherwise than it does without it, with
     // other traces and exit codes, which the binary doesn't follow.
+    // WebAssembly's recursion bound stops the search as it would without -continue.
     if is_continued
         && !matches!(
-            outcome,
+            &outcome,
             SearchOutcome::Complete { .. } | SearchOutcome::Declined(_)
         )
+        && !matches!(&outcome, SearchOutcome::Stopped { reason, .. } if reason == tla_engine::machine::WEBASSEMBLY_TOO_DEEP)
     {
         return report_not_native(printer, "-continue to a search that stops");
     }
@@ -1722,10 +1738,20 @@ fn check_spec(
             return ASSUMPTION_VIOLATION;
         }
         SearchOutcome::Stopped {
-            violation: Some(violation),
+            violation: Some(mut violation),
             reason,
             ..
         } => {
+            // TLC's worker fails on a POSTCONDITION it rejects as it reports a deadlock, before it
+            // adds the deadlocked state to the behavior graphs (`Worker.run`): no atom fails and
+            // no node accepts there, and nothing prints.
+            if rejected_postcondition.is_some()
+                && let ViolationKind::Deadlock { accepted, atom } = &mut violation.kind
+            {
+                *accepted = None;
+                *atom = None;
+                violation.added = None;
+            }
             let printed = match violation.kind {
                 // TLC's worker fails on a POSTCONDITION it rejects as it is to check it on the
                 // trace of a safety violation, after printing the trace, and reports nothing more
@@ -1794,9 +1820,15 @@ fn check_spec(
                 {
                     Err("a failure outside the next-state relation with an ALIAS".to_string())
                 }
-                ViolationKind::Error { site } => {
+                ViolationKind::Error { site } => 'failure: {
+                    let added = match violation.added.as_ref().map(|_| format_added(&violation)) {
+                        Some(Err(why)) => break 'failure Err(why.to_string()),
+                        Some(Ok(added)) => Some(added),
+                        None => None,
+                    };
                     let counts = &violation.counts;
                     let stop = ErrorStop {
+                        added,
                         reason: &reason,
                         store: &violation.store,
                         states: violation.states.iter().map(Vec::as_slice).collect(),
@@ -2077,6 +2109,7 @@ pub(crate) fn print_violation(
     let accepted = match &violation.kind {
         ViolationKind::Deadlock {
             accepted: Some(accepted),
+            ..
         } => {
             if checked.is_some() || !checks.dumps.is_empty() {
                 return Err("a postcondition after a deadlock that violates a temporal property");
@@ -2093,6 +2126,17 @@ pub(crate) fn print_violation(
             }
         }
         _ => None,
+    };
+    // TLC adds a deadlocked state to the behavior graphs once it has reported the deadlock and
+    // checked the postconditions, and prints the call stack of an atom that fails there.
+    let atom_stack = match violation.kind {
+        ViolationKind::Deadlock {
+            atom: Some(atom), ..
+        } => match deadlock_atom_stack(ir, violation, atom) {
+            Ok(stack) => stack,
+            Err(reason) => return Ok(report_not_native(printer, &reason)),
+        },
+        _ => Vec::new(),
     };
     let model = &ir.model;
     let (code, text, exit_code, status) = match violation.kind {
@@ -2247,10 +2291,16 @@ pub(crate) fn print_violation(
             loop_start: None,
         });
         for line in &dumped_lines {
-            printer.line(line);
+            printer.printed(line);
         }
         print_finished(printer, start);
         return Ok(exit_code);
+    }
+    let added = format_added(violation)?;
+    // TLC reports a postcondition that fails before it adds the state it stopped at to the
+    // behavior graphs, which the printing doesn't order.
+    if !added.is_empty() && !ir.model.postconditions.is_empty() {
+        return Err("a POSTCONDITION before what TLC prints adding the stopped state");
     }
     let lasso_printed = match &violation.kind {
         ViolationKind::Lasso { printed, .. } => printed
@@ -2280,7 +2330,7 @@ pub(crate) fn print_violation(
     let first_output = trace.states[0].output.iter();
     let (heading_code, heading) = if is_counterexample {
         for line in first_output.clone().chain(&trace.trace_output) {
-            printer.line(line);
+            printer.printed(line);
         }
         // What the atoms print as TLC finds the properties the lasso it rebuilt violates, as it
         // checks them rather than as it rebuilds the trace.
@@ -2295,7 +2345,7 @@ pub(crate) fn print_violation(
     } else {
         printer.report(code, &text);
         for line in first_output {
-            printer.line(line);
+            printer.printed(line);
         }
         (
             code::BEHAVIOR_UP_TO_THIS_POINT,
@@ -2340,18 +2390,21 @@ pub(crate) fn print_violation(
     );
     if lasso.is_none() && is_counterexample {
         for line in postcondition_output.clone() {
-            printer.line(line);
+            printer.printed(line);
         }
     }
     match lasso {
         None if is_counterexample => {}
+        // TLC adds the state it stopped at to the behavior graphs once it has checked the
+        // postconditions on the trace (`Worker.run`).
         None => {
             for line in trace
                 .trace_output
                 .iter()
                 .chain(postcondition_output.clone())
+                .chain(&added)
             {
-                printer.line(line);
+                printer.printed(line);
             }
         }
         Some((loop_start, true, _, _)) => {
@@ -2413,7 +2466,7 @@ pub(crate) fn print_violation(
     }
     if lasso.is_some() {
         for line in postcondition_output {
-            printer.line(line);
+            printer.printed(line);
         }
     }
     if let Some((accepted, headline, labels)) = accepted {
@@ -2422,7 +2475,7 @@ pub(crate) fn print_violation(
             .iter()
             .chain(&accepted.trace_output)
         {
-            printer.line(line);
+            printer.printed(line);
         }
         printer.report(code::TEMPORAL_PROPERTY_VIOLATED, &headline);
         printer.print(
@@ -2433,6 +2486,9 @@ pub(crate) fn print_violation(
         print_states(printer, &accepted.states, &labels);
     }
     print_postcondition_failure(printer, ir, trace.postconditions.as_ref());
+    if !atom_stack.is_empty() {
+        print_call_stack(printer, ir, &atom_stack);
+    }
     if let Some(checking) = checking {
         print_liveness_finished(printer, checking);
     }
@@ -2517,7 +2573,7 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
         .into_iter()
         .flat_map(|state| &state.output)
     {
-        printer.line(line);
+        printer.printed(line);
     }
     printer.print(
         code::BEHAVIOR_UP_TO_THIS_POINT,
@@ -2527,7 +2583,7 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
     let labels: Vec<&str> = report.labels.iter().map(String::as_str).collect();
     print_states(printer, &trace.states, &labels);
     for line in &trace.trace_output {
-        printer.line(line);
+        printer.printed(line);
     }
 }
 
@@ -2535,7 +2591,7 @@ fn print_states(printer: &mut Printer, states: &[PrintedState], labels: &[&str])
     for (position, (state, label)) in states.iter().zip(labels).enumerate() {
         if position > 0 {
             for line in &state.output {
-                printer.line(line);
+                printer.printed(line);
             }
         }
         printer.state(position + 1, label, state.variables.clone());

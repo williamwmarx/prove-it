@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { check } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -15,7 +15,7 @@ describe("TLCGet matches TLC", () => {
     ["Param", [13, 4, 2]],
   ])("describes the %s specification as TLC does", async (name, counts) => {
     const directory = join(FIXTURES, "tlc-spec");
-    const result = await check({
+    const result = await checkOnEngine({
       source: readFileSync(join(directory, `${name}.tla`), "utf8"),
       config: readFileSync(join(directory, `${name}.cfg`), "utf8"),
       loadModule: (module) => readFileSync(join(directory, `${module}.tla`), "utf8"),

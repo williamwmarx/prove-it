@@ -82,9 +82,18 @@ platform addon loads.
   TLC's trace from it. A run-time stop the engine doesn't model does the same.
 - **A WebAssembly trap.** The engine's frames are on the host's call stack there, which is
   shallower than the addon's search thread, so a deep recursion can trap. The loader replaces the
-  instance and returns a stop that hands nothing over, and the interpreter searches from the start
-  (src/engine/wasm.ts). This is the one fallback that is not a semantic hand-over; it stays until
-  the engine's recursion no longer runs on the host's stack.
+  instance and returns a stop that hands nothing over (src/engine/wasm.ts). The CLI's interpreter
+  then searches from the start; the library's check throws `WebAssemblyStackError` instead, as it
+  does where the engine stops at its recursion bound.
+
+### Interpreter limits
+
+Where the native check declines, the library's `check()` passes the TypeScript check's prints of
+a violation's trace to `onPrint` as TLC prints them, but for three shapes, where the TypeScript
+check places them otherwise than TLC or prints other values in them: an ALIAS that prints, a
+temporal property that prints, and TLCExt's `Trace`. There `onPrint` gets what the TypeScript
+check printed as it searched, as where the native check doesn't run (`onProgress`, `onPause`, a
+`dot` dump, TLC 1.7.4). `tests/unit/trace-prints.test.ts` pins them; they go with the interpreter.
 
 Each of these reports itself under `PROVE_IT_ENGINE=debug` (`native: declined: …`,
 `handed over after …`).
@@ -161,7 +170,8 @@ Besides the 15 declines, it does the following in the library:
 - **What `getEngineIneligibility` keeps from the engine:** `PROVE_IT_ENGINE=0`, `-dump`, `-continue`,
   a periodic config and TLC 1.7.4. The binary says `not native yet` to `-dump`, `-continue` and
   TLC 1.7.4. The engine doesn't support a periodic config either.
-- **A WebAssembly stack overflow.** The interpreter searches from the start.
+- **A WebAssembly stack overflow.** The library's check throws `WebAssemblyStackError`; the CLI's
+  interpreter searches from the start.
 - **`PROVE_IT_LIVE_CHECK=1`.** It cross-checks the native liveness verdict.
 
 Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The binary writes
@@ -234,25 +244,34 @@ Measured at main 6871cd2, with the log as this section gives it:
 
 #### Liveness
 
-Measured again at main 33b0d56, after #217, #239, #244, #253, #265 and #277, with `check-log`
-counting TLC 1.7.4's checks apart (63, retired with the interpreter): 286 of the other checks have
-temporal properties, 232 are native and 54 are not. 22 of those 54 are the liveness part of this
-plan, down from 43:
+Measured again on main f941e35 with a check that fails on a deadlocked state, what a model with
+temporal properties prints at a stop, and TLC's errors for a tautology and a non-boolean constant
+part, with `check-log` counting TLC 1.7.4's checks apart (63, retired with the interpreter): 287 of
+the other checks have temporal properties, 245 are native and 42 are not. 12 of those 42 are the
+liveness part of this plan, down from 22:
 - a failure in a model with temporal properties: an atom of the temporal properties that may fail
-  to evaluate (2), and SUBSET of a non-set evaluated again after Next fails (1);
-- the search's stops in a model with temporal properties: deadlock (3), an invariant (1), a
-  division by zero (1);
-- a property TLC finds a tautology (3), or a constant part of a temporal formula that isn't a
-  boolean (2);
+  to evaluate, and SUBSET of a non-set evaluated again after Next fails (1 each);
+- a division by zero in Next where a late node of that state runs Next again, which TLC fails on a
+  second time, evaluating the checks again (1);
 - printing where the native checker doesn't check the temporal properties (5): prints it doesn't
   place in TLC's order (2), a node that accepts every behavior, a predicate the engine leaves to the
   interpreter, and steps from states it didn't store (1 each);
 - an atom the engine doesn't answer, a late node at another diameter, a step back into the cycle of
   a spec that prints, and several states under VIEW or SYMMETRY (1 each).
 
-Of the other 32: constant evaluation (9), a constraint, a VIEW or an action property that fails on
-a successor (8), a power set too large to build (3), `-dump` (3), the builtin Trace and PrintT
-(2 each), and five more of the evaluator's and the front end's gaps (1 each).
+Of the other 30: constant evaluation (9), a constraint, a VIEW or an action property that fails on
+a successor (8), a power set too large to build (3), `-dump` (3), PrintT where the engine can't
+place it (2), and five more of the evaluator's and the front end's gaps (1 each).
+
+A deadlock in a model with temporal properties prints TLC's output where a check fails as TLC adds
+the deadlocked state to the behavior graphs: the deadlock, the trace, then that check's call stack
+([liveness.md](liveness.md)). It declines a check that reads a definition an INSTANCE copies, whose
+call stack in TLC holds the INSTANCE as a frame. A spec that prints, stopped by a deadlock, a violated invariant or
+action property, or a failure of Next or an invariant, prints what TLC prints at the stop, in TLC's
+order, the prints of adding the stopped state after the trace included (liveness.md, "Print at a
+stop"). It declines a late node of a state whose next states fail, one whose full Next takes
+other steps than the search took, and an invariant that prints which the configuration lists twice,
+which TLC checks twice.
 
 The corpus has no temporal decline: `differential --native-only` matches 1,460 of 1,466 runs, and
 the 6 known differences aren't about liveness.
@@ -261,6 +280,29 @@ A lasso that ends in the first state of its cycle (the `temporal` test's three r
 gap. TLC prints every state, then stutters at the cycle's first state, and so does the binary now.
 A grid of 160 small specs (`prove-it-cli/tests/lasso-grid`) prints what TLC prints on all 640 runs:
 one thread and four, checking the properties periodically and at the end.
+
+A property TLC finds a tautology, and a constant part of a temporal formula that isn't a boolean,
+are native. TLC stops at a property's \A over the empty set as it unrolls the properties
+(`SpecProcessor.processConfigProps`), and at a formula whose negation has no solution
+(`ModelChecker.modelCheckImpl`), with `EC.TLC_LIVE_FORMULA_TAUTOLOGY`. It stops at a constant part
+of a temporal formula whose value isn't a boolean (`Liveness.astToLive`) with
+`EC.TLC_EXPECTED_VALUE`, which names the part by `SemanticNode.toString`: a numeral's image, such
+as `\b101`, or else the part's location. Where the part is an expression an INSTANCE puts in for
+a declaration of the module it instantiates, TLC's `SubstInNode` keeps the declaration's node and
+binds it to the expression's value (`Liveness.astToLive`), so TLC names the declaration where the
+instantiated module writes it, which the front end doesn't keep: that declines wherever the part
+is, or is within, a substitute or what the front end makes of one (a LET or IF it folds, an
+operator it calls, a substitute a later INSTANCE or a renaming copies). TLC takes a property's
+label whole, and unrolls a property's \A with the substitutions of the INSTANCEs it went through
+left unbound, taking the \A whole where reading one fails (`SpecProcessor.processConfigProps`).
+The front end unrolls a \A as main does, with the substitutions bound, so it declines, as main
+does, a tautology or a constant part that isn't a boolean in a property where it unrolled a \A
+(see "Declines to win back"). A grid of 113 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 608 of its 904 runs; the others
+decline, for the constant evaluator's gaps, a substituted declaration, an unrolled \A, a constant
+definition TLC may print as it starts before the error, or a tautology
+after a state-level property, which TLC warns of first. Four name an
+INSTANCE's definition before the INSTANCE, which SANY doesn't know there.
 
 Nothing reaches these liveness declines, so they stay declines until a test or a model does:
 - an accepting node under SYMMETRY or a VIEW;
@@ -300,6 +342,14 @@ it from one that printed something else. Each is outside the corpus:
   a constant definition impure, the IR marks the four `Builtin::DECLINED`, and the engine declines
   them where it computes them, as it did before it checked them.
 
+A property's \A that TLC unrolls, or takes whole, with the substitutions of the INSTANCEs it went
+through left unbound declines where it is a tautology or has a constant part that isn't a boolean,
+as on main. Branch `live-stops-full` follows TLC's lookup there: lazy operator arguments, LET
+definitions and closures read in the context they are written in, a definition named from outside
+its INSTANCE entered through its own `SubstInNode`, and root constants and configuration overrides
+read past an INSTANCE. Eight adversarial rounds kept finding edges in it (nested INSTANCEs that
+substitute a bare name, operator arguments naming an INSTANCE's copy), so it waits there.
+
 #### Known wrong outputs
 
 The engine and the trace evaluator test a union, an equality of sets and a membership in a UNION
@@ -316,6 +366,41 @@ where TLC answers TRUE (found by #327's adversarial round; each wrong on main al
 | `1 \in UNION {{"a"}, {2}}` | `Attempted to check equality of string "a" with non-string:\n2` | `Attempted to compare integer 2 with non-integer:\n"a"` |
 
 The last three under AssertError, with TLC's message, answer FALSE where TLC answers TRUE.
+
+A module instantiated by the name of a module nested in an EXTENDed module fails to parse where
+SANY finds it: with `Holder.tla` holding `---- MODULE Held ----` nested, `EXTENDS Holder` then
+`J == INSTANCE Held` stops with "Cannot find source file for module Held imported in module M."
+(exit 150), where TLC checks the spec. `tests/unit/modules.test.ts` ("sees the nested modules of
+an extended module") checks it with the TypeScript check until the front end matches.
+
+A membership in a union whose enumerable side holds a value of another type is TRUE where TLC
+fails: TLC tests the enumerable side first, so `ASSUME 1 \in Int \cup {"none"}` stops with
+"Attempted to check equality of string "none" with non-string:\n1", where the engine finds the
+assumption true and checks the spec. `tests/unit/check.test.ts` ("checks membership in a union of a
+non-enumerable set against the enumerable side first") checks it with the TypeScript check.
+
+A function over a domain TLC keeps lazy, applied at one point, fails where TLC computes only that
+point: `ASSUME PrintT([s \in SUBSET {1} |-> 1 \div Cardinality(s)][{1}])` prints `1` in TLC, where
+the engine computes the function at every `s`, `{}` among them, and stops with "The second argument
+of \div is 0." `tests/unit/check.test.ts` ("evaluates a function over a domain TLC keeps lazy only
+where it is applied") checks it with the TypeScript check.
+
+A function from strings whose keys are Unicode letters and digits beyond ASCII prints as a function
+where TLC prints a record: TLC tests each character of a key with Java's
+`Character.isLetterOrDigit` (FcnRcdValue), so `PrintT("x٣" :> 5)` (U+0663, a decimal digit) prints
+`[x٣ |-> 5]` in TLC and `("x٣" :> 5)` natively. `tests/unit/check.test.ts` ("prints empty intervals
+and keys that are not field names like TLC") checks it with the TypeScript check.
+
+A record TLC compares with itself prints its fields in another order: TLC's equality normalizes the
+record, so after `[fld2 |-> 0]` has interned fld2 first, `ToString(LET r == <<[fld1 |-> 1, fld2 |->
+2]>> IN IF r = r THEN r ELSE r)` gives `"<<[fld2 |-> 2, fld1 |-> 1]>>"` in TLC and `"<<[fld1 |-> 1,
+fld2 |-> 2]>>"` natively. `tests/unit/check.test.ts` ("sorts a record TLC compares with itself and
+the records inside it") checks it with the TypeScript check.
+
+A file that instantiates or extends its own inner module of the file's name, as `---- MODULE B ----`
+holding `---- MODULE B ----` and `I == INSTANCE B` does, declines (`a module that names a module of
+its own name`), where TLC checks it: SANY scopes the inner module's context, which the front end
+keys by name. It panicked before. It comes back once the front end scopes contexts as SANY does.
 
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
@@ -368,6 +453,15 @@ Outside the counts, SANY's report differs on an INSTANCE of a module with semant
 `*** Errors: 2` for module Spec, while the binary prints `*** Errors: 3`, adding `Substitution error,
 probably due to error in module being instantiated.` at the INSTANCE (exit 150 in both).
 
+TLC rejects a VIEW or a POSTCONDITION the configuration names by a definition it computed as it
+started, as it does an ALIAS, but holds a definition whose body is a number or a string as written
+and computes nothing for it (`SymbolNodeValueLookupProvider.lookup`, `Spec.getViewSpec`,
+`getPostConditionSpecs`). The binary differs on two shapes: a POSTCONDITION that is a number or a
+string, `PC == "s"`, which it rejects as a constant (exit 255) where TLC evaluates it and reports
+it not a boolean (exit 10); and a VIEW TLC computes as it starts, `V == TRUE`, `V == {1}`,
+`V == A` with `A == 5`, which TLC rejects ("The view function V cannot be a constant.", exit
+151) where the binary checks the model.
+
 The binary declines a module file it finds but can't read, such as a directory or text not in
 UTF-8 (`a module's file the front end can't read`), where SANY prints `***Internal error: Unable to
 create NamedInputStream in toIStream method`. Where the TypeScript check finds the files, TLC's
@@ -397,6 +491,16 @@ record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm pr
 | LamportMutex_proofs #574 | cf2bc77dbe72f5d0 | Z3 4.8.9 proves it, 5.3.3 times out |
 | PaxosCommit_proof #345 | c4f10dabeaca0a49 | Z3 4.8.9 proves it, 5.3.3 times out; the port needs 10,358,109 steps, above its limit of 7,321,600 |
 | Boulanger #240 | b2ca9ee96f3db516 | flattening clauses as Z3 4.8.9 does lengthens the port's search from 1,807,047 steps to 8,170,365, though its 4 distributions are 4.8.9's: open |
+
+At the level of inputs, #321 also moved ten `smt` inputs tlapm proves from `unsat` to `unknown`
+that main proved: 0dfd248d2bdad02b, 12a106a46ac87d79, 181f3f94d6c23221, 2f279b8fcc0984d6,
+52c873767bacfb3b, 6181e3d8679eef23, 6f1bb244e72ae33d, 8e48a4022642d1fc, b2ca9ee96f3db516 and
+e8e512b5c0878a4e, and gained one. Z3 4.8.9 proves nine of the ten (all but 6181e3d8679eef23). Only
+b2ca9ee96f3db516 (Boulanger #240) loses its obligation; Zenon or Isabelle prove the other nine's.
+
+The engine's `decide` declines a text that holds a lone surrogate, so the obligation fails. A string
+that is one would read as U+FFFD, two different strings would be one name, and the axiom that they
+differ would prove anything. No obligation of tlapm's record holds one.
 
 #### Every reason
 
@@ -440,7 +544,7 @@ Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so t
 | 3 | the engine declined: unsupported: PickSuccessor | `unit/tlc-ext-operators.test.ts:11` ×2, `unit/tlc-ext-operators.test.ts:61` |
 | 3 | the engine stopped: an order of strings the search ranked | `unit/native-builtins.test.ts:279` ×2, `unit/native-builtins.test.ts:327` |
 | 3 | the engine stopped: applied a function outside its domain: evaluating the failure again: applied a function outside its domain | `unit/check.test.ts:1896`, `unit/check.test.ts:1874`, `unit/native-search.test.ts:505` |
-| 3 | the engine stopped: deadlock | `unit/tlc-replay.test.ts:185`, `unit/tlc-replay.test.ts:167`, `unit/check.test.ts:2521` |
+| 1 | the engine stopped: deadlock | `unit/check.test.ts:2521` |
 | 3 | the engine stopped: expected an integer: evaluating the failure again: expected an integer, not a string | `unit/tlc-replay.test.ts:40` ×2, `unit/exit-codes.test.ts:10` |
 | 3 | the engine stopped: record compared with a function | `unit/engine.test.ts:46` ×3 |
 | 2 | a constant part of a temporal formula that isn't a boolean | `unit/check.test.ts:5354` ×2 |
@@ -745,6 +849,11 @@ search thread doesn't.
   declines the model, so that a recursion never traps there. A trap that a deeper frame still
   causes declines too (`checkSources` in `wasm.ts`). A larger stack in a Worker, which Node alone
   offers, is optional, and an explicit stack in the evaluator isn't worth its size.
+- **The library's answer.** Where the engine as WebAssembly stops at its bound
+  (`recursion deeper than WebAssembly's stack holds`) or traps, the library's check throws
+  `WebAssemblyStackError`, which names the addon and the binary, rather than search again in the
+  interpreter. So a model that recurses between 1,000 and 20,000 calls is checked with the addon
+  and the binary and rejected as WebAssembly: `native.test.ts` pins both answers.
 
 ### The CLI flipped
 
@@ -783,14 +892,15 @@ now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator
 
 Since #250 the binary prints SANY's report of the trace exploration spec too, and checks TLC's
 default natively. After an error trace of two states or more it writes the spec TLC writes,
-`<Spec>_TTrace_<epoch>.tla`, and its path after `Finished in` (`te_spec.rs`). It still declines
-where TLC writes the trace's file, `<Spec>_TTrace_<epoch>.bin`, for a counterexample: TLC gzips it
-with Java's Deflater, whose compressed bytes the binary doesn't reproduce, and writes each string's
-token in TLC's run. An error after a behavior, as an Assert that fails in an action, has no trace
-file and is native. On the 733 corpus models in TLC's default, against TLC's recordings of that
-mode, 569 print and write what TLC does, 161 decline at the trace file, and 3 differ as they do
-with `-noGenerateSpecTE`, by TLC's runtime (a Java stack overflow, where TLC is installed, and a
-NullPointerException in TLC).
+`<Spec>_TTrace_<epoch>.tla`, and its path after `Finished in` (`te_spec.rs`), and for any
+counterexample the trace file, `<Spec>_TTrace_<epoch>.bin`, which is identical where TLC reads it
+back to the same trace (AGENTS.md, "The oracle"; cli.md, "-dumpTrace"). On the 733 corpus models in
+TLC's default, against TLC's recordings of that mode, with each `.bin` compared by what the jar
+reads back from it, 723 print and write what TLC does, 3 differ as they do with
+`-noGenerateSpecTE`, by TLC's runtime (a Java stack overflow, where TLC is installed, and a
+NullPointerException in TLC), and 7 decline at a trace file `tla-trace` doesn't dump: a random
+draw, whose trace TLC may not find again for its postconditions (5), a set TLC keeps lazy (1), and a
+deadlock that violates a temporal property (1).
 
 ### The public API afterwards
 
@@ -833,7 +943,8 @@ check. The tests of the interpreter's own results run `checkParsed`, the TypeScr
   - WebAssembly fails to compile;
   - or `dist` lacks the engine.
   A browser keeps the WebAssembly engine.
-- A WebAssembly stack overflow becomes an error unless S2 lifts it first.
+- A WebAssembly stack overflow is an error, `WebAssemblyStackError`, in the library's check. The
+  PR that removes `PROVE_IT_ENGINE=0` drops its message's clause that names it.
 - `-dump`, `-continue` and periodic configs are checked natively. TLC 1.7.4's output is retired.
 - The library prints what the binary prints. Today they differ only where the library hands over.
 
