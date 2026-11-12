@@ -84,6 +84,44 @@ const TEXT_BUILTINS: [&str; 7] = [
     "TLCSet",
 ];
 
+/// The builtins whose value is a boolean, a number or a string, whatever their arguments hold.
+const SCALAR_BUILTINS: [&str; 34] = [
+    "Cardinality",
+    "IsFiniteSet",
+    "Len",
+    "\\in",
+    "\\notin",
+    "=",
+    "#",
+    "/=",
+    "\\subseteq",
+    "\\subset",
+    "\\supseteq",
+    "\\supset",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "=<",
+    "\\leq",
+    "\\geq",
+    "+",
+    "-",
+    "-.",
+    "*",
+    "\\div",
+    "%",
+    "^",
+    "~",
+    "\\lnot",
+    "\\neg",
+    "=>",
+    "<=>",
+    "\\equiv",
+    "/\\",
+    "\\/",
+];
+
 /// Why an expression didn't compile.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CompileError {
@@ -1718,15 +1756,16 @@ impl<'a> Compiler<'a> {
                 .all(|part| !self.reads_unsized(part, scope, &mut HashSet::new()))
     }
 
-    // Whether an expression, through the definitions it names, may build a set of tuples,
+    // Whether an expression's value, through the definitions it names, may hold a set of tuples,
     // functions or records that TLC may fail to print: TLC prints one by sizing its parts in order
     // up to one it finds empty (`SetOfTuplesValue.toString` and its siblings), and fails on a part
     // it can't size, where the engine, having enumerated the set as TLC does to compute with it,
-    // prints what it holds. A subexpression selector, which names what it reaches by text, may
-    // reach anything.
+    // prints what it holds. A set an expression whose value is a boolean, a number or a string
+    // consumes, as `Cardinality(S \X T)` does, isn't in its value. A subexpression selector,
+    // which names what it reaches by text, may reach anything.
     fn may_hold_unsized(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         let (node, kind) = self.node(node);
-        if !seen.insert(node) {
+        if !seen.insert(node) || self.is_scalar_valued(kind) {
             return false;
         }
         let is_unsized = match kind {
@@ -1766,6 +1805,30 @@ impl<'a> Compiler<'a> {
                 .unsized_children(kind)
                 .into_iter()
                 .any(|child| self.may_hold_unsized(child, seen))
+    }
+
+    // Whether an expression's value is a boolean, a number or a string, whatever sets it reads:
+    // a literal, a quantifier, a conjunction or disjunction, or a builtin that gives one, such as
+    // Cardinality, a membership, a comparison or arithmetic.
+    fn is_scalar_valued(&self, kind: &NodeKind) -> bool {
+        match kind {
+            NodeKind::Number(_)
+            | NodeKind::WideNumber(_)
+            | NodeKind::Decimal(_)
+            | NodeKind::String(_)
+            | NodeKind::And(_)
+            | NodeKind::Or(_)
+            | NodeKind::Forall { .. }
+            | NodeKind::Exists { .. }
+            | NodeKind::UnboundedQuantifier { .. }
+            | NodeKind::Unchanged(_)
+            | NodeKind::Enabled(_) => true,
+            NodeKind::Apply { name, .. } if !name.is_local => matches!(
+                name.resolution,
+                Resolution::Builtin(index) if SCALAR_BUILTINS.contains(&self.builtin_name(index))
+            ),
+            _ => false,
+        }
     }
 
     // Whether TLC, sizing the parts in order up to one empty as written, meets one it may fail to
@@ -1856,6 +1919,9 @@ impl<'a> Compiler<'a> {
         seen: &mut HashSet<(NodeId, Vec<bool>)>,
     ) -> bool {
         let kind = self.node(node).1;
+        if self.is_scalar_valued(kind) {
+            return false;
+        }
         match kind {
             NodeKind::Identifier(name)
             | NodeKind::OperatorReference(name)
