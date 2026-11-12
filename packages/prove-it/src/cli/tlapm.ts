@@ -257,7 +257,9 @@ class NotUtf8Error extends Error {
   }
 }
 
-const ESCAPED_BYTE = /[\uDC80-\uDCFF]/gu;
+// By code unit, not code point: a string's escape of a high surrogate, such as a pragma's
+// "\ud800", pairs with an escaped byte that follows it.
+const ESCAPED_BYTE = /[\uDC80-\uDCFF]/g;
 
 // The modules read with an escaped byte, by the byte.
 const notUtf8 = { paths: new Map<string, string[]>() };

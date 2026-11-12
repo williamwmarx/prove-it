@@ -1668,6 +1668,34 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.status).toBe(1);
   });
 
+  // An escaped byte is found as a UTF-16 unit, whether a string's escape pairs it with a high
+  // surrogate or not; a character whose low surrogate is one declines only where a byte was read.
+  it.each([
+    [
+      "after a pragma's escape of a high surrogate",
+      '---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM TRUE OBVIOUS (*{ by (isabelle "\\ud800\xff") }*)\n====\n',
+      true,
+    ],
+    [
+      "nowhere, beside a character outside the BMP",
+      '---- MODULE M ----\nEXTENDS TLAPS\nS == "\xf0\x9f\x83\xbf"\nTHEOREM S = S OBVIOUS\n====\n',
+      false,
+    ],
+  ])("judges a byte that isn't UTF-8 %s by its UTF-16 unit", (_, text, isDeclined) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(join(directory, "M.tla"), Buffer.from(text, "latin1"));
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    if (isDeclined) {
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+      );
+      expect(result.status).toBe(1);
+    } else {
+      expect(result.stderr).not.toContain("not native yet");
+      expect(result.status).toBe(0);
+    }
+  });
+
   it("declines a byte that isn't UTF-8 in a pragma", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(
