@@ -1415,6 +1415,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
         Ok(generated) => (Some(generated), None),
         Err(_) => (None, None),
     };
+    let undecided_link = undecided.clone();
     // Where linking gives the messages, the linter of its modules gives the warnings of SANY's.
     let messages = match generated {
         Some(generated) => generated,
@@ -1447,6 +1448,11 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
             return Err(not_yet("SANY's generator exception before the root module"));
         }
     };
+    // The TypeScript check throws the errors linking gives, which the library throws only where
+    // they are SANY's.
+    let is_linked = messages.iter().all(|module| module.errors.is_empty())
+        || link_messages(loader, &order, undecided_link, is_user_module_added)
+            .is_ok_and(|linked| linked == messages);
     // SANY.frontEndSemanticAnalysis: after each module, SANY prints every message so far.
     let mut warnings: Vec<SanyError> = Vec::new();
     let mut errors: Vec<SanyError> = Vec::new();
@@ -1493,7 +1499,7 @@ fn write_sany_text(loader: &mut Loader, root: &Rc<str>) -> Result<()> {
                 .values()
                 .any(|loaded| reject_module_literals(&loaded.module).is_err())
         };
-        if !was_failed && !errors.is_empty() && !has_rejected_literal() {
+        if is_linked && !was_failed && !errors.is_empty() && !has_rejected_literal() {
             loader.report = Some(SanyReport {
                 errors: errors.clone(),
                 warnings: warnings.clone(),
