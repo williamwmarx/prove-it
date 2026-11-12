@@ -429,6 +429,21 @@ Fingerprint Stack Trace. `tests/unit/check.test.ts` ("reports the sources of a s
 fails to enumerate", "reports the left side of %s that fails to compare") checks them with the
 TypeScript check.
 
+Adding a state to the behavior graph that fails after an invariant violation leaves out where it
+fails: with `Fair == x' = 1 \div (x - 1)`, `Next == x < 3 /\ x' = x + 1`, `Inv == x < 2`,
+`Spec == Init /\ [][Next]_x /\ WF_x(Fair)` and `PROPERTY Live`, `INVARIANT Inv`, TLC prints after
+the trace "The error occurred when TLC was evaluating the nested expressions at the following
+positions:" with three frames, and the engine prints the rest alike without it; both exit 12.
+`tests/unit/tlc-replay.test.ts` ("prints where adding a state to the behavior graph fails after a
+violation") checks it with the TypeScript check.
+
+`RTBound` of TLC's RealTime module, whose body holds `\EE`, applied in an initial predicate, is
+declined by the engine (`unsupported: expression UnboundedQuantifier`) and reported by the
+TypeScript check as "TLC cannot evaluate an unbounded quantifier at line 20, column 6", where TLC
+reports "TLC encountered a temporal formula (\EE) when evaluating a predicate or action." with the
+same frames and exit code. `tests/unit/bundled-modules.test.ts` asserts the TypeScript check's
+text; it goes with the interpreter.
+
 A file that instantiates or extends its own inner module of the file's name, as `---- MODULE B ----`
 holding `---- MODULE B ----` and `I == INSTANCE B` does, declines (`a module that names a module of
 its own name`), where TLC checks it: SANY scopes the inner module's context, which the front end

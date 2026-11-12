@@ -180,6 +180,36 @@ describe("checkSources", () => {
     expect(getOutcome(CASES[3])).toBeUndefined();
   });
 
+  // The library answers for files itself: the files the check writes come back in order, and the
+  // binary writes the same bytes to the machine's.
+  it("returns the files the library's check writes, as the binary writes them", () => {
+    const test = CASES[0];
+    const directory = getDirectory(test);
+    const dumped = join(directory, "states.dump");
+    const result = checkAllSources(
+      getAddon(),
+      ["-noGenerateSpecTE", "-deadlock", "-dump", dumped, getSpecPath(directory, test.args)],
+      ["", "", "", 1, 0, 0, 0, "UTC0", [], true],
+      (key) => readLibraryKey(directory, key),
+    );
+    if (result.kind !== "checked") throw new Error(JSON.stringify(result));
+    const written = result.writes.reduce(
+      (files, write) =>
+        files.set(
+          write.path,
+          (write.isAppended ? (files.get(write.path) ?? "") : "") +
+            new TextDecoder().decode(write.bytes),
+        ),
+      new Map<string, string>(),
+    );
+    expect([...written.keys()]).toEqual([dumped]);
+    spawnSync(BINARY, ["-noGenerateSpecTE", "-deadlock", "-dump", dumped, "Counter.tla"], {
+      cwd: directory,
+    });
+    expect(written.get(dumped)).toBe(readFileSync(dumped, "utf8"));
+    rmSync(directory, { recursive: true, force: true });
+  });
+
   // WebAssembly's frames are on the host's stack, so its engine stops recursing sooner.
   it.if(process.env.PROVE_IT_ENGINE_WASM !== undefined)(
     "declines recursion deeper than WebAssembly's stack holds, where the addon recurses",

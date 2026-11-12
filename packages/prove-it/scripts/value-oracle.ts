@@ -1,16 +1,13 @@
 // The value oracle (native/DESIGN.md 6.8): seeded batches of generated values and operations on
-// them, answered by TLC's own Value classes (native/oracle/ValueOracle.java), the TypeScript store
-// (src/engine/store.ts, src/engine/fingerprint.ts), the interpreter's fingerprints
-// (src/tlc/fingerprint.ts), and the native store (src/engine/native-store.ts). The operations are
-// building a value, compare, equals, membership and fingerprint.
+// them, answered by TLC's own Value classes (native/oracle/ValueOracle.java) and by the native
+// store (native/crates/tla-values) through the addon's store hooks. The operations are building a
+// value, compare, equals, membership and fingerprint.
 //
-// The native store must answer as the TypeScript store does, with the same ids and the same
-// reasons to stop. Against TLC, a store may stop where TLC doesn't (the engine then hands the step
-// to the interpreter, which costs time but not parity), but where TLC fails the store must stop,
-// and where both answer, the answers must agree. A batch interns its spec's strings and model
-// names first, in a random order, as TLC interns a spec's, and then the strings a spec would build,
-// which TLC ranks by when it builds them and the stores by their text, so it builds them in the
-// order of their text.
+// The store may stop where TLC doesn't (the engine then declines the model), but where TLC fails
+// the store must stop, and where both answer, the answers must agree. A batch interns its spec's
+// strings and model names first, in a random order, as TLC interns a spec's, and then the strings
+// a spec would build, in the order of their text; TLC and the store intern them all in that order
+// before the batch.
 // Usage: TLA2TOOLS_JAR=... PROVE_IT_ENGINE_ADDON=... bun scripts/run.ts value-oracle
 //        [--operations 100000] [--seed 1]
 
@@ -19,33 +16,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { getStateFingerprints, resetFingerprints } from "../src/engine/fingerprint";
-import { nativeStore } from "../src/engine/native-store";
-import {
-  Bailout,
-  compare,
-  equals,
-  FALSE,
-  functionOf,
-  int,
-  isMember,
-  model,
-  resetStore,
-  setOf,
-  str,
-  TRUE,
-  tupleOf,
-} from "../src/engine/store";
-import { getTlcFingerprint } from "../src/tlc/fingerprint";
-import {
-  createEnumeratedSet,
-  createFunction,
-  createModelValue,
-  createRecord,
-  createTuple,
-  setStringOrder,
-  type Value,
-} from "../src/values";
+import { getNativeAddon } from "../src/engine/native";
 import { getOption } from "./corpora";
 
 type Tree =
@@ -67,6 +38,12 @@ const seed = Number(getOption("--seed") ?? 1);
 const jar = process.env.TLA2TOOLS_JAR;
 if (!jar || !process.env.PROVE_IT_ENGINE_ADDON) {
   console.error("Set TLA2TOOLS_JAR to tla2tools.jar and PROVE_IT_ENGINE_ADDON to the addon");
+  process.exit(2);
+}
+
+const addon = getNativeAddon();
+if (typeof addon === "string") {
+  console.error(`The value oracle needs the addon: ${addon}`);
   process.exit(2);
 }
 
@@ -183,70 +160,47 @@ const toTokens = (tree: Tree): string[] => {
   }
 };
 
-const toValue = (tree: Tree): Value => {
-  switch (tree.kind) {
-    case "bool":
-    case "int":
-      return tree.value;
-    case "string":
-      return tree.text;
-    case "model":
-      return createModelValue(tree.text);
-    case "set":
-      // As the interpreter builds a set enumeration, which TLC sorts only when it must.
-      return createEnumeratedSet(tree.elements.map(toValue));
-    case "tuple":
-      return createTuple(tree.elements.map(toValue));
-    case "record":
-      return createRecord(tree.fields.map(([name, field]) => [name, toValue(field)]));
-    case "function":
-      return createFunction(tree.pairs.map(([key, value]) => [toValue(key), toValue(value)]));
-  }
+// The store's ids of FALSE and TRUE, which it holds from its start.
+const FALSE = 0;
+const TRUE = 1;
+
+// Why the store stopped, which its hooks give as a string.
+class Stopped extends Error {}
+
+const perform = (name: string, args: unknown[]) => {
+  const result = addon.storePerform(name, args);
+  if (typeof result === "string") throw new Stopped(result);
+  return result;
 };
 
-interface StoreFunctions {
-  int: (value: number) => number;
-  str: (text: string) => number;
-  model: (name: string) => number;
-  setOf: (elements: number[]) => number;
-  tupleOf: (elements: ArrayLike<number>, length: number) => number;
-  functionOf: (keys: number[], values: number[]) => number;
-  compare: (left: number, right: number) => number;
-  equals: (left: number, right: number) => boolean;
-  isMember: (element: number, set: number) => boolean;
-}
+const performId = (name: string, args: unknown[]) => {
+  const result = perform(name, args);
+  if (typeof result !== "number") throw new Error(`the store's ${name} gave ${String(result)}`);
+  return result;
+};
 
-// A tree built as convert.ts's fromValue builds a value: its parts first, a function's keys
-// before its values.
-const build = (store: StoreFunctions, tree: Tree): number => {
+// A tree built as the engine builds a value: its parts first, a function's keys before its values.
+const build = (tree: Tree): number => {
   switch (tree.kind) {
     case "bool":
       return tree.value ? TRUE : FALSE;
     case "int":
-      return store.int(tree.value);
+      return performId("int", [tree.value]);
     case "string":
-      return store.str(tree.text);
+      return performId("str", [tree.text]);
     case "model":
-      return store.model(tree.text);
+      return performId("model", [tree.text]);
     case "set":
-      return store.setOf(tree.elements.map((element) => build(store, element)));
-    case "tuple": {
-      const elements = tree.elements.map((element) => build(store, element));
-      return store.tupleOf(elements, elements.length);
-    }
+      return performId("setOf", [tree.elements.map(build)]);
+    case "tuple":
+      return performId("tupleOf", [tree.elements.map(build)]);
     case "record": {
-      const keys = tree.fields.map(([name]) => store.str(name));
-      return store.functionOf(
-        keys,
-        tree.fields.map(([, field]) => build(store, field)),
-      );
+      const keys = tree.fields.map(([name]) => performId("str", [name]));
+      return performId("functionOf", [keys, tree.fields.map(([, field]) => build(field))]);
     }
     case "function": {
-      const keys = tree.pairs.map(([key]) => build(store, key));
-      return store.functionOf(
-        keys,
-        tree.pairs.map(([, value]) => build(store, value)),
-      );
+      const keys = tree.pairs.map(([key]) => build(key));
+      return performId("functionOf", [keys, tree.pairs.map(([, value]) => build(value))]);
     }
   }
 };
@@ -256,34 +210,24 @@ const answer = (operation: () => unknown): Answer => {
     const result = operation();
     return { value: typeof result === "number" ? String(Math.sign(result)) : String(result) };
   } catch (error) {
-    if (error instanceof Bailout) return { failure: error.message };
+    if (error instanceof Stopped) return { failure: error.message };
     return { failure: error instanceof Error ? `${error.name}: ${error.message}` : String(error) };
   }
 };
 
-const localStore: StoreFunctions = {
-  int,
-  str,
-  model,
-  setOf,
-  tupleOf,
-  functionOf,
-  compare,
-  equals,
-  isMember,
+const fingerprintOf = (id: number) => {
+  const fingerprints = new BigInt64Array(1);
+  addon.storeFingerprints(Int32Array.of(id), 1, Int32Array.of(0), undefined, false, fingerprints);
+  return String(fingerprints[0]);
 };
 
 const tally = {
   operations: 0,
-  // Whether the native store answered exactly as the TypeScript store, ids and reasons included.
-  nativeDiffers: 0,
-  // The stores against TLC.
   agree: 0,
   bothFail: 0,
   storeStopsAlone: 0,
   storeMissesFailure: 0,
   answersDiffer: 0,
-  interpreterDiffers: 0,
 };
 const examples: string[] = [];
 // The operations of each outcome, by name.
@@ -295,83 +239,53 @@ const report = (kind: keyof typeof tally, text: string) => {
   if (examples.length < 20) examples.push(`${kind}: ${text}`);
 };
 
-const fingerprintOf = (
-  fingerprint: (states: Int32Array, count: number, width: number, order: number[]) => BigInt64Array,
-  id: number,
-) => String(fingerprint(Int32Array.of(id), 1, 1, [0])[0]);
-
 const runBatch = (operations: number) => {
   const shuffled = [...RANKED, ...MODELS].sort(() => next(3) - 1);
-  setStringOrder(shuffled);
-  resetStore();
-  resetFingerprints();
-  nativeStore.resetStore();
-  nativeStore.resetFingerprints();
+  const order = [...shuffled, ...[...UNRANKED].sort()];
+  addon.storePerform("resetStore", [order]);
+  addon.storeResetFingerprints();
   const trees: Tree[] = [];
-  const localIds: (number | undefined)[] = [];
-  const nativeIds: (number | undefined)[] = [];
-  const requests = [
-    `strings ${[...shuffled, ...[...UNRANKED].sort()].map((text) => `s${encodeText(text)}`).join(" ")}`,
-  ];
-  // Each request with the stores' answers, to compare with TLC's once it has answered them all.
-  const asked: { text: string; local: Answer; native: Answer; interpreter?: Answer }[] = [];
-  const ask = (text: string, local: Answer, native: Answer, interpreter?: Answer) => {
+  const ids: (number | undefined)[] = [];
+  const requests = [`strings ${order.map((text) => `s${encodeText(text)}`).join(" ")}`];
+  // Each request with the store's answer, to compare with TLC's once it has answered them all.
+  const asked: { text: string; native: Answer }[] = [];
+  const ask = (text: string, native: Answer) => {
     requests.push(text);
-    asked.push({ text, local, native, interpreter });
+    asked.push({ text, native });
   };
   const values = Math.max(2, Math.floor(operations / 8));
   for (let index = 0; index < values; index++) {
     const tree = generate(3);
     trees.push(tree);
-    const local = answer(() => build(localStore, tree));
-    const native = answer(() => build(nativeStore, tree));
-    // The ids themselves, which the native store must hand out as the TypeScript store does.
-    const localId = local.failure === undefined ? build(localStore, tree) : undefined;
-    const nativeId = native.failure === undefined ? build(nativeStore, tree) : undefined;
-    localIds.push(localId);
-    nativeIds.push(nativeId);
-    ask(
-      `value ${toTokens(tree).join(" ")}`,
-      localId === undefined ? local : { value: String(localId) },
-      nativeId === undefined ? native : { value: String(nativeId) },
-    );
+    const built = answer(() => build(tree));
+    ids.push(built.failure === undefined ? build(tree) : undefined);
+    ask(`value ${toTokens(tree).join(" ")}`, built);
   }
   while (asked.length < operations) {
     const left = next(values);
     const right = next(values);
     const kind = next(4);
-    const leftId = localIds[left];
-    const rightId = localIds[right];
-    const nativeLeft = nativeIds[left];
-    const nativeRight = nativeIds[right];
-    // A value a store couldn't build is no operand, but its build was an operation.
+    const leftId = ids[left];
+    const rightId = ids[right];
+    // A value the store couldn't build is no operand, but its build was an operation.
     if (leftId === undefined || rightId === undefined) continue;
-    if (nativeLeft === undefined || nativeRight === undefined) continue;
     if (kind === 0) {
       ask(
         `compare ${left} ${right}`,
-        answer(() => compare(leftId, rightId)),
-        answer(() => nativeStore.compare(nativeLeft, nativeRight)),
+        answer(() => perform("compare", [leftId, rightId])),
       );
     } else if (kind === 1) {
       ask(
         `equals ${left} ${right}`,
-        answer(() => equals(leftId, rightId)),
-        answer(() => nativeStore.equals(nativeLeft, nativeRight)),
+        answer(() => perform("equals", [leftId, rightId])),
       );
     } else if (kind === 2 && trees[right].kind === "set") {
       ask(
         `member ${left} ${right}`,
-        answer(() => isMember(leftId, rightId)),
-        answer(() => nativeStore.isMember(nativeLeft, nativeRight)),
+        answer(() => perform("isMember", [leftId, rightId])),
       );
     } else {
-      ask(
-        `fingerprint ${left}`,
-        { value: fingerprintOf(getStateFingerprints, leftId) },
-        { value: fingerprintOf(nativeStore.getStateFingerprints, nativeLeft) },
-        answer(() => String(BigInt.asIntN(64, getTlcFingerprint([toValue(trees[left])])))),
-      );
+      ask(`fingerprint ${left}`, { value: fingerprintOf(leftId) });
     }
   }
   const oracle = spawnSync("java", ["-cp", `${jar}:${classes}`, "ValueOracle"], {
@@ -398,18 +312,6 @@ const runBatch = (operations: number) => {
     const tlc: Answer = line.startsWith("!") ? { failure: line.slice(1) } : { value: line };
     const isBuild = request.text.startsWith("value ");
     tally.operations++;
-    if (JSON.stringify(request.local) !== JSON.stringify(request.native)) {
-      report(
-        "nativeDiffers",
-        `${describe(request.text)}: ${JSON.stringify(request.local)} ${JSON.stringify(request.native)}`,
-      );
-    }
-    if (request.interpreter && request.interpreter.value !== tlc.value) {
-      report(
-        "interpreterDiffers",
-        `${describe(request.text)}: ${JSON.stringify(request.interpreter)}, TLC ${line}`,
-      );
-    }
     const store = request.native;
     const value = isBuild && store.failure === undefined ? "ok" : store.value;
     const name = request.text.split(" ")[0];
@@ -443,13 +345,10 @@ console.log(Object.fromEntries(Object.entries(breakdown).sort()));
 console.log(
   [
     `${tally.operations} operations on generated values, seed ${seed}:`,
-    `the native store answered ${tally.operations - tally.nativeDiffers} as the TypeScript store does, ${tally.nativeDiffers} otherwise;`,
     `against TLC, ${tally.agree} agree, ${tally.bothFail} fail in both, ${tally.storeStopsAlone} stop the store alone,`,
-    `${tally.storeMissesFailure} fail in TLC alone, ${tally.answersDiffer} answer otherwise;`,
-    `the interpreter's fingerprint differs from TLC's ${tally.interpreterDiffers} times.`,
+    `${tally.storeMissesFailure} fail in TLC alone, ${tally.answersDiffer} answer otherwise.`,
   ].join("\n"),
 );
-const disagreements =
-  tally.nativeDiffers + tally.storeMissesFailure + tally.answersDiffer + tally.interpreterDiffers;
+const disagreements = tally.storeMissesFailure + tally.answersDiffer;
 console.log(disagreements === 0 ? "No disagreements." : `${disagreements} disagreements.`);
 if (disagreements > 0) process.exitCode = 1;
