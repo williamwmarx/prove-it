@@ -1000,6 +1000,12 @@ Checks the binary answered and now declines, because the answer matched TLC only
     `unit/union-grid.test.ts` (1,944 cells: each operation on two of nine operands, alone and
     held in unions another operand answers) has 0 wrong verdicts, against 242 on main; 10 of its
     cells decline, each a difference from a record's domain that declined on main too.
+  - Four runs of the upstream tla-ts suite that matched before #362 decline since: an assumption
+    that fails in the body of a function TLC keeps lazy, where the evaluator can't tell the key
+    TLC evaluates (`[[x \in 1..2 |-> 1 \div 0] EXCEPT ![1] = 0][1] = 0`,
+    `[x \in 1..2 |-> IF x = 1 THEN 7 ELSE 1 \div 0][2] = 7`, and `F = F` of a recursive function
+    that fails at a key), and `ValueSemanticsAssume` run with warnings on, whose EXCEPT of a
+    missing key TLC warns of.
   - An operand with effects that a name binds, as a LET definition or an operator's argument
     does, stops the engine before it evaluates either operand, as one written in place does;
     should an effect run all the same as the membership builds or tests its operands, it stops
