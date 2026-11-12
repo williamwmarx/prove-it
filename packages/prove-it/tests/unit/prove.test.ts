@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 
 import { encodeForBackend } from "../../scripts/native-prover";
 import { type ProofObligation, prove, type ProveOptions, TlaUnsupportedError } from "../../src";
@@ -125,6 +126,45 @@ describe("prove follows tlapm's default method", () => {
     await expect(proveFixture("HourClock_proof", { backend: "tlapm" })).rejects.toThrow(
       TlaUnsupportedError,
     );
+  });
+
+  // A tlapm that proves the first obligation and fails the second, by its toolbox messages; the
+  // obligations, their texts and the counts are the engine's.
+  it("reads each obligation's status from tlapm with the tlapm backend", async () => {
+    const bin = mkdtempSync(join(tmpdir(), "prove-it-tlapm-"));
+    const message = (fields: string[]) =>
+      `@!!BEGIN\n${fields.map((field) => `@!!${field}\n`).join("")}@!!END\n`;
+    writeFileSync(
+      join(bin, "tlapm"),
+      `#!/bin/sh\ncat >&2 <<'END'\n${message(["type:obligation", "id:1", "status:proved", "prover:smt"])}${message(["type:obligation", "id:2", "status:failed", "reason:no"])}END\n`,
+    );
+    chmodSync(join(bin, "tlapm"), 0o755);
+    process.env.PATH = `${bin}${delimiter}${PATH}`;
+    const source =
+      "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 + 1 = 2 BY SMT\nTHEOREM 2 = 2\nTHEOREM 3 = 3 OMITTED\n====\n";
+    const reported: ProofObligation[] = [];
+    const result = await prove({
+      source,
+      backend: "tlapm",
+      onObligation: (obligation) => reported.push(obligation),
+    });
+    const native = await prove({ source });
+    expect(result).toEqual({
+      ...native,
+      obligations: [
+        { ...native.obligations[0], status: "proved", prover: "smt" },
+        { ...native.obligations[1], status: "failed", reason: "no" },
+        ...native.obligations.slice(2).map(({ id, location, text }) => ({
+          id,
+          location,
+          text,
+          status: "unsupported" as const,
+          reason: "tlapm reported no result",
+        })),
+      ],
+    });
+    expect(reported).toEqual(result.obligations.slice(0, 2));
+    expect(result.missingProofCount + result.omittedProofCount).toBe(2);
   });
 });
 

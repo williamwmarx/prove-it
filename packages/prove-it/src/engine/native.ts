@@ -299,6 +299,8 @@ export type NativeObligations =
       kind: "obligations";
       obligations: NativeObligation[];
       encodings: ({ kind: "text"; text: string } | NativeObligationError)[];
+      missingProofCount: number;
+      omittedProofCount: number;
     }
   | NativeObligationError;
 

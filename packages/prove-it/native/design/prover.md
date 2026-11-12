@@ -6,8 +6,10 @@ where the code goes, the stages, and what speed to expect. It follows DESIGN.md'
 lands behind a differential with the TypeScript path still the default, the default flips only
 once the Rust path matches everywhere, and then the TypeScript is deleted.
 
-Status: phase 1 (this document). No port code yet. Numbers marked *measured* come from the
-4-core cloud container (Node 22.23.4, Bun 1.4.4) on `main` at de3a9f8.
+Status: done. The Rust driver is the only one, and the TypeScript prover, its obligations and
+its tlapm command line are deleted (P6d in the handoff); sections 1 to 5 are the plan as it was
+written, and their inventory and numbers the record of the TypeScript it ported. Numbers marked
+*measured* come from the 4-core cloud container (Node 22.23.4, Bun 1.4.4) on `main` at de3a9f8.
 
 ---
 
@@ -110,7 +112,12 @@ What this gives:
 - **Library:** `prove(options)` is the only export (`src/index.ts`), with the types `ProveOptions`,
   `ProveResult`, `ProofObligation` and its three variants. `ProveOptions` has `source`,
   `loadModule`, `backend` (`"tla-ts"` default, or `"tlapm"` to run a real tlapm in Node or Bun),
-  `signal`, `onObligation` and `workers`.
+  `signal`, `onObligation` and `workers`. `src/prover/prove.ts` loads the engine, as an addon or
+  as WebAssembly, and throws an `EngineUnavailableError` where none loads. With the default
+  back end it runs the Rust driver in rounds (`proveNatively`, 4c), answering the modules it reads
+  with `loadModule` and its decisions through the engine's `decide` export. With `"tlapm"` it reads
+  the obligations and the counts of missing and omitted proofs from the engine's `obligations`
+  export, and each obligation's status from tlapm's toolbox messages (`src/prover/tlapm/tlapm.ts`).
 - **CLI:** `prove-it tlapm …` reproduces tlapm's command line and its toolbox protocol on stderr:
   `-N`, `--summary`, `--strict`, `--toolbox`, `--line`, `--printallobs`, `--threads` (default the
   machine's cores), `-I`, `--noproving`, `--nofp`, `--nofpl`, `--safefp`, `--cleanfp`, `--usefp`,
@@ -118,24 +125,19 @@ What this gives:
   `tlapm.rs`), in the binary and through `checkSources` in the CLI of `dist/`, whose
   `src/cli/tlapm.ts` only answers its reads and applies the files it writes; fallback.md, "tlapm",
   lists what it declines.
-- **Workers:** with `workers > 1` and workers supported, `proveObligations` starts a decide pool:
-  each worker runs `decide(prover, text, timeLimitMs)`; the pool dispatches the earliest obligation
-  first, and up to four obligations per worker are in flight. Abort terminates the workers.
-  Without workers every decision runs on the calling thread.
-- **Settings:** no `PROVE_IT_*` variable reaches the prover today. `PROVE_IT_WORKERS` is the
-  model checker's. `TLAPM_CACHE_DIR` is tlapm's.
+- **Workers:** with `workers > 1` and workers supported, `prove` starts a decide pool
+  (`decide-pool.ts`, `prove-worker.ts`): each worker answers `decide(prover, text, timeLimitMs)`
+  through the engine's `decide` export; the pool dispatches the earliest obligation first. Abort
+  terminates the workers. Without workers every decision runs on the calling thread.
+- **Settings:** no `PROVE_IT_*` variable reaches the prover but `PROVE_IT_ENGINE`, which can leave
+  it without an engine. `PROVE_IT_WORKERS` is the model checker's. `TLAPM_CACHE_DIR` is tlapm's.
 - **Scripts:** `bench:prove` (`prove-benchmark.ts`), and the conformance scripts against tlapm's
-  recorded results: `conformance:prove` (statuses per obligation against `proofs.json`),
-  `conformance:smt`, `:zenon`, `:isabelle`, `:ptl` (each decider against the input tlapm sent and
-  the verdict its back end gave), `conformance:smt-encode`, `:isabelle-encode` (encodings against
-  tlapm's), `conformance:tlapm` (CLI output against `tlapm.json`), `conformance:sany`
-  (`proof-conformance.ts`). The decider and encoder conformance scripts need `.proofs/`, the inputs
-  `conformance:record-proofs` captures from a real tlapm; no CI job runs any of them, and this
-  container has no tlapm.
-- **Tests:** `tests/unit/{prove,prove-workers,obligations,obligation-isabelle,obligation-zenon,ptl,
-  smt,smt-clause-store,smt-intervals,smt-nlsat,smt-pdd,zenon,isabelle,tlapm-cache}.test.ts`: about
-  140 tests, 3,060 lines. The `smt-intervals`, `smt-nlsat` and `smt-pdd` tests drive `lp/` and
-  `nlsat/` classes directly.
+  recorded results, which read the engine's `obligations`, `fingerprint`, `decide` and `prove`
+  exports through `scripts/native-prover.ts`; `conformance:tlapm` (`tlapm-conformance.ts`) runs
+  `prove-it tlapm` itself. The decider and encoder conformance scripts need `.proofs/`, the inputs
+  `conformance:record-proofs` captures from a real tlapm; no CI job runs any of them.
+- **Tests:** `tests/unit/{prove,prove-driver,prove-workers,deciders,tlapm-cache}.test.ts` and the
+  tlapm cases of `cli.test.ts`, and the Rust crates' own tests.
 
 ---
 
@@ -934,8 +936,8 @@ with `rust`, is gone; `prove-driver.test.ts` checks the Rust driver against what
 driver gave (`tests/fixtures/prove/driver.json`) where the Rust doesn't follow tlapm instead.
 
 **Where the engine comes from.** Once the Rust driver is the only one, proving needs the engine
-wherever the package runs. Every entry that proves (`proveWith`, `proveObligations`, the prove
-worker) calls `loadWasmEngine` before `getNativeAddon`, and that covers each host:
+wherever the package runs. Every entry that proves (`prove` and the prove worker) calls
+`loadWasmEngine` before `getNativeAddon`, and that covers each host:
 - Node or Bun with the platform's addon installed: the addon.
 - Node or Bun without it, as on a platform no package is built for: `loadAddonOrWasm` loads the
   `dist/prove-it-engine.wasm` the npm package ships (`release.yml` checks the tarball holds it).
@@ -946,7 +948,8 @@ worker) calls `loadWasmEngine` before `getNativeAddon`, and that covers each hos
 - The executable `build-binary.ts` compiles: it embeds the addon when one is built for the
   platform, or else the WebAssembly, and `loadAddonOrWasm` finds either beside the CLI. The
   script's own checks then prove `Proofs.tla` with what it embedded.
-- `PROVE_IT_ENGINE=0` opts out of the engine, and `loadWasmEngine` leaves it unloaded.
+- `PROVE_IT_ENGINE=0` opts out of the engine, and `loadWasmEngine` leaves it unloaded, so `prove`
+  throws an `EngineUnavailableError`.
 
 **Stages.**
 - P6a, the driver: `prove-it-prover::prove`, the host export, the loop in `prove.ts`, and the
@@ -1349,6 +1352,23 @@ is next.
     of `tlapm.json` (1,507 byte for byte, 366 declined at tlapm's backtrace). The TypeScript's
     `tlapm/cache.ts`, `ocaml-marshal.ts` and `scripts/tlapm-cache-fixtures.ts` are deleted; the
     fixtures it wrote stay as frozen records.
+- P6d, the Rust driver alone (this entry's PR): `prove` proves with the Rust driver, and
+  `PROVE_IT_PROVER_DRIVER` is gone (4c, "Selection").
+  - **Deleted:** the TypeScript driver of `src/prover/prove.ts`, its encoders and Prep
+    (`src/prover/{isabelle,prep,ptl,smt,zenon}`, `first-order.ts`, `ocaml.ts`, `tlaps-module.ts`)
+    and the obligations (`src/obligations/`): 44 files and 16,013 lines, 8,901 of them the
+    obligations'. What stays in `src/prover` is `prove`'s wrapper of the engine, its types, the
+    decide pool and its worker, `deciders.ts`, which answers a decision through the engine's
+    `decide` export, and the tlapm back end, `tlapm/tlapm.ts`.
+  - **The tlapm back end** read the obligations with the TypeScript; it now reads them, and the
+    counts of missing and omitted proofs, from the engine's `obligations` export, which gained
+    `missingProofCount` and `omittedProofCount` (ABI 26).
+  - **Checks:** `prove-driver.test.ts` checks the Rust driver alone against `driver.json`, what the
+    TypeScript driver gave, but for the cases where the Rust follows tlapm and the TypeScript
+    didn't: a pragma's string read raw, and a lone surrogate in the source or a module read, which
+    the Rust declines; their recordings are removed. P6a's "Known TypeScript deviations" are now the
+    record of the deleted TypeScript; its "Open" items stay open in the Rust, which still throws
+    the JavaScript engine's errors there.
 
 ### Deviations from Z3
 

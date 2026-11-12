@@ -258,8 +258,8 @@ Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The 
 "-dumpTrace" lists; the interpreter writes none. It prints `-coverage`'s report and declines the
 cases cli.md's "-coverage" lists: its "Not native" list, the cut, `-continue` carried past a
 violation, and estimates without `-fp` that differ by polynomial.
-`src/pcal` only validates for SANY, `src/obligations` imports nothing from the interpreter, and
-`src/prover` imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
+`src/pcal` only validates for SANY, and `src/prover`, the wrapper of the Rust prover driver,
+imports only `worker.ts`'s thread helpers (`isWorkerSupported`, `spawnWorker`,
 `getParentPort`). Those move to the prover. `tlc/version.ts`, `tlc/jar-data.ts` and
 `tlc/messages.ts` are shared with the front end and the CLI, so they move too.
 
@@ -1201,7 +1201,7 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   over tlapm's own fingerprints file; the theory file byte for byte; and the fingerprints file,
   which holds what tlapm's holds but for each result's date and versions. tlapm copies Zenon's
   stderr to its stdout, and the native command writes Zenon's `exhausted search space` line, which
-  the TypeScript CLI left out. It sends Isabelle's stdout to a file (`Prep.isabelle_prove`), and
+  the deleted TypeScript CLI left out. It sends Isabelle's stdout to a file (`Prep.isabelle_prove`), and
   Isabelle writes nothing to stderr for a proof it doesn't find, so such a failure prints as any
   other.
 - `scripts/tlapm-conformance.ts` on the 1,873 modules of `tests/conformance/tlapm.json`, run as
@@ -1226,7 +1226,7 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   exception with the OCaml backtrace of where it raised it, and in toolbox mode a toolbox message of
   the location and message `Errors.set` kept (`tlapm_lib.ml`, `init`). Neither is known without a
   run of tlapm, and the recordings in `tests/fixtures/obligation-errors` leave the backtrace out. A
-  module file that isn't there declines the same way. The TypeScript CLI printed these without the
+  module file that isn't there declines the same way. The deleted TypeScript CLI printed these without the
   backtrace.
 - **What a back end writes that tlapm copies to its stdout.** tlapm runs each back end with its
   stderr on its own stdout (`System.launch_process`). Zenon's is known (`Zenon error: …`, from
@@ -1276,7 +1276,7 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
 
 ### Declines to win back
 
-Runs origin/main's TypeScript CLI printed as tlapm does only by chance:
+Runs the deleted TypeScript CLI printed as tlapm does only by chance:
 - Toolbox mode with more than one thread, where two decisions are in flight together: the
   TypeScript printed each obligation's messages in order, which tlapm does only where the results
   happen to come back in that order.
@@ -1301,6 +1301,8 @@ Runs origin/main's TypeScript CLI printed as tlapm does only by chance:
   flight together declines in toolbox mode.
 - A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
   not for the front end's, which reads the rest of the line as the comment.
+- A TAB before the module header, on the header's line, shifts the columns printed on that line,
+  because the front end expands tabs and tlapm counts bytes.
 - tlapm writes each proof Zenon finds to the theory file (`Prep.save_result`, `Isabelle.thy_write`),
   with Zenon's input and the command it ran on a temporary file; Prove It's theory holds
   Isabelle's proofs alone.

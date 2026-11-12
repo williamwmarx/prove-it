@@ -8,7 +8,8 @@ Status: M1 to M7 built (their outcomes are in section 11). Section 12 supersedes
 chain described in sections 0, 1 and 8.4: the target is now an all-Rust checker, with no
 TypeScript fallback. The TypeScript engine is deleted; [design/fallback.md](design/fallback.md)
 records what `check` does now where the native engine declines or doesn't load. The port of the
-prover (`src/prover`, `src/obligations`) is planned apart, in [design/prover.md](design/prover.md).
+prover, whose TypeScript is deleted but for `prove`'s wrapper in `src/prover`, is planned apart, in
+[design/prover.md](design/prover.md).
 The sections below
 that compare with the TypeScript engine are the record of when it was the oracle. Every number marked *measured*
 comes from the prototypes that were under `native/prototypes/` until 1916b69 (section 10) on a
@@ -2388,7 +2389,7 @@ covering it in Rust, then removing the TypeScript path once the gates below hold
 | CLI and TLC's output (stage 5, `prove-it-cli`) | `cli/`, `check.ts`, `tlc/messages.ts`, traces | the full-stdout differential against TLC |
 
 **Distribution.** The binary ships per platform; the npm package becomes a thin launcher for it and
-then carries the binary alone. The proof checker (`src/prover`, `src/obligations`) is outside this
+then carries the binary alone. The proof checker (`crates/prover/`, design/prover.md) is outside this
 plan for now.
 
 ### 12.1 Liveness, as built (stage 3, first part)
