@@ -378,8 +378,27 @@ fn lower_ranked(
                 "The configuration file did not specify the next state predicate.".to_owned(),
             ));
         }
-        // TLC warns of the invariants and the properties before it reads the constraints.
+        // TLC warns of the invariants and the properties before it reads the constraints, which it
+        // reads after it computes the constant definitions, which may print first.
+        let may_print = !environment.java_overrides.is_empty()
+            || environment.startup_definitions.iter().any(|definition| {
+                is_startup_definition(definition, &environment, &facts)
+                    && reaches_effect(
+                        definition,
+                        &environment,
+                        None,
+                        &["Print", "PrintT", "AssertEq"],
+                        false,
+                    )
+            });
         check_search_config(&config, &environment, &facts, &evaluator).map_err(|error| {
+            if may_print && matches!(error, FrontError::Config(_) | FrontError::Evaluation(_)) {
+                return FrontError::NotYet(
+                    "an error in what the configuration names for the search, after what the \
+                     constant definitions print"
+                        .to_owned(),
+                );
+            }
             let invariants: Vec<(Rc<str>, Option<usize>)> = constant_invariants
                 .iter()
                 .flatten()
