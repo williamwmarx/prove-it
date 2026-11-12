@@ -816,6 +816,9 @@ pub struct Compiler<'a> {
     pub is_diameter_read: bool,
     /// Whether anything compiled may print, and whether it uses ToString, which ranks strings.
     pub is_printing: bool,
+    /// How many startup definitions' bodies are being compiled, where a print the engine can't
+    /// tell TLC prints declines rather than prints as the engine holds its value.
+    startup_bodies: u32,
     pub is_ranking: bool,
     /// Whether a variable is assigned a set TLC keeps lazy, and whether a set read out of the
     /// state is enumerated in TLC's order: under a VIEW TLC never normalizes the first, so the
@@ -925,6 +928,7 @@ impl<'a> Compiler<'a> {
             is_distinct_read: false,
             is_diameter_read: false,
             is_printing: false,
+            startup_bodies: 0,
             is_ranking: false,
             is_lazy_set_held: false,
             is_held_set_enumerated: false,
@@ -1621,7 +1625,8 @@ impl<'a> Compiler<'a> {
                         "PrintT" => {
                             is_print_seen
                                 && args.last().is_some_and(|&arg| {
-                                    self.may_be_lazy_or_print(arg, seen, is_print_seen)
+                                    !self.is_print_settled(arg, &mut Vec::new())
+                                        && self.may_be_lazy_or_print(arg, seen, is_print_seen)
                                 })
                         }
                         _ => false,
@@ -1639,6 +1644,28 @@ impl<'a> Compiler<'a> {
         };
         seen.remove(&node);
         is_lazy
+    }
+
+    // Whether a print's argument is a set of functions, records or tuples written there, whose
+    // evaluation has no effect, which the print builds as TLC holds it to find whether TLC's
+    // `toString` prints it (`Lazy::check_printed`).
+    pub(crate) fn is_print_checked(&self, node: NodeId) -> bool {
+        matches!(
+            self.node(node).1,
+            NodeKind::FunctionSet { .. } | NodeKind::RecordSet(_) | NodeKind::Product(_)
+        ) && !self.may_have_effect(node, &mut HashSet::new())
+    }
+
+    // `is_print_checked`, with no part that may hold a set TLC may fail to print, which the check
+    // doesn't follow, itself or as a name bound around it holds (`scope`).
+    fn is_print_settled(&self, node: NodeId, scope: &mut Vec<(TextId, bool)>) -> bool {
+        self.is_print_checked(node)
+            && self
+                .node(node)
+                .1
+                .children()
+                .into_iter()
+                .all(|part| !self.reads_unsized(part, scope, &mut HashSet::new()))
     }
 
     // Whether an expression, through the definitions it names, may build a set of tuples,
@@ -1719,10 +1746,11 @@ impl<'a> Compiler<'a> {
                     let NodeKind::Apply { args, .. } = kind else {
                         return true;
                     };
-                    if args
-                        .iter()
-                        .any(|&arg| self.reads_unsized(arg, scope, &mut HashSet::new()))
-                    {
+                    let is_print = matches!(self.builtin_name(index), "Print" | "PrintT");
+                    if args.iter().any(|&arg| {
+                        !(is_print && self.is_print_settled(arg, scope))
+                            && self.reads_unsized(arg, scope, &mut HashSet::new())
+                    }) {
                         return true;
                     }
                 }
@@ -2427,7 +2455,10 @@ impl<'a> Compiler<'a> {
             expanding: context.expanding_with(node),
             ..context.global(true)
         };
-        let compiled = self.compile(definition.body, &body_context)?;
+        self.startup_bodies += 1;
+        let compiled = self.compile(definition.body, &body_context);
+        self.startup_bodies -= 1;
+        let compiled = compiled?;
         let once = self.allocate_once();
         let inner = compiled.eval.clone();
         let compiled = self.kept_definition(

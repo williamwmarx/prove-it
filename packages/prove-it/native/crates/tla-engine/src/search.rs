@@ -664,6 +664,7 @@ const TLC_FAILURES: &[&str] = &[
     "a function over a non-set",
     "a function set of non-sets",
     crate::compile::lazy::INFINITE_DOMAIN,
+    crate::compile::lazy::UNSIZED_PRINT,
     "a function set over a non-set domain",
     "a guard that isn't a boolean",
     "a membership in SUBSET of a non-set",

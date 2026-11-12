@@ -8,7 +8,8 @@
 use std::sync::Arc;
 
 use tla_values::store::{
-    EMPTY_SET, KIND_INT, KIND_SET, KIND_STRING, KIND_TUPLE, Outcome, is_function_kind,
+    EMPTY_SET, KIND_BOOL, KIND_INT, KIND_LAZY_FUNCTION, KIND_MODEL, KIND_SET, KIND_STRING,
+    KIND_TUPLE, Outcome, is_function_kind,
 };
 use tla_values::{Bail, Id};
 
@@ -24,6 +25,14 @@ pub(crate) const OVERFLOWING_SUBSET_BASE: usize = 31;
 pub(crate) const INFINITE_DOMAIN: &str = "enumerated [D -> R] with D infinite";
 pub(crate) const SUBSET_OVERFLOW: &str = "an overflow counting the elements of a power set";
 pub(crate) const MAXIMUM_ELEMENTS: f64 = (1u64 << 24) as f64;
+/// What printing a set of functions, records or tuples stops with where TLC's `toString`, which
+/// PrintT calls unchecked, fails on a part.
+pub(crate) const UNSIZED_PRINT: &str = "printed a set with a part TLC can't size";
+/// What printing such a set stops with where the engine can't tell whether TLC's `toString` fails.
+const UNSURE_PRINT: Bail = Bail("unsupported: printing a set whose part TLC may fail to size");
+/// The fewest elements TLC prints a lazy set as written rather than enumerated
+/// (`TLCGlobals.enumBound`).
+const ENUM_BOUND: u64 = 2000;
 /// What streaming a [`Lazy::Kept`] other than as its normalized set stops with.
 const KEPT_STREAMED: &str =
     "unsupported: streaming a lazy set TLC may have normalized at an earlier use";
@@ -683,6 +692,129 @@ impl Lazy {
     }
 }
 
+/// What TLC found a set of functions, records or tuples it prints to hold, from its parts, before
+/// it enumerated any (`Lazy::check_printed`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PrintedSet {
+    /// None, as a part is empty, or the range of functions of a nonempty domain is.
+    Empty,
+    /// The one function of an empty domain.
+    OfEmptyFunction,
+    /// What enumerating it gives.
+    Enumerated,
+}
+
+// What TLC's `toString` of a set of functions, records or tuples asks of its parts, unchecked as
+// PrintT prints: `Err(UNSIZED_PRINT)` where TLC fails, `Err(UNSURE_PRINT)` where the engine can't
+// tell, and otherwise the answer.
+impl Lazy {
+    /// Whether TLC's `toString` of this set of functions, records or tuples prints it, as PrintT
+    /// calls it unchecked: it sizes the parts in order up to an empty one, failing on a part it
+    /// can't size, and below `ENUM_BOUND` elements enumerates the set, which first tests each part
+    /// for emptiness up to an empty one, failing on a non-set (`SetOfTuplesValue.toString` and
+    /// `elements`, and their siblings for records and functions). `Err(UNSIZED_PRINT)` where TLC
+    /// fails, and otherwise what TLC found the set to hold before it enumerated any part.
+    pub(crate) fn check_printed(&self, machine: &mut Machine<'_>) -> Outcome<PrintedSet> {
+        let size = match self {
+            Lazy::RecordSet(_, parts) | Lazy::Product(parts) => {
+                let mut size: u64 = 1;
+                for part in parts {
+                    let part = part.printed_size(machine)?;
+                    if part == 0 {
+                        size = 0;
+                        break;
+                    }
+                    size = size.saturating_mul(part);
+                }
+                size
+            }
+            Lazy::FunctionSet(domain, range) => {
+                if domain.printed_is_empty(machine)? {
+                    1
+                } else {
+                    let domain = domain.printed_size(machine)?;
+                    let range = range.printed_size(machine)?;
+                    (0..domain.min(32)).fold(1u64, |size, _| size.saturating_mul(range))
+                }
+            }
+            _ => return Err(UNSURE_PRINT),
+        };
+        if size >= ENUM_BOUND {
+            return Ok(PrintedSet::Enumerated);
+        }
+        match self {
+            Lazy::RecordSet(_, parts) | Lazy::Product(parts) => {
+                for part in parts {
+                    if part.printed_is_empty(machine)? {
+                        return Ok(PrintedSet::Empty);
+                    }
+                }
+            }
+            Lazy::FunctionSet(domain, _) if domain.printed_is_empty(machine)? => {
+                return Ok(PrintedSet::OfEmptyFunction);
+            }
+            Lazy::FunctionSet(_, range) if range.printed_is_empty(machine)? => {
+                return Ok(PrintedSet::Empty);
+            }
+            _ => {}
+        }
+        Ok(PrintedSet::Enumerated)
+    }
+
+    // A part's `size`: a set's count, a function's, tuple's or record's number of keys, and a
+    // failure for any other value or a set TLC can't enumerate.
+    fn printed_size(&self, machine: &mut Machine<'_>) -> Outcome<u64> {
+        match self {
+            Lazy::Set(id) => {
+                let kind = machine.store.kind_of(*id);
+                if kind == KIND_SET || kind == KIND_TUPLE || is_function_kind(kind) {
+                    Ok(u64::from(machine.store.size_of(*id)))
+                } else if matches!(kind, KIND_INT | KIND_STRING | KIND_BOOL | KIND_MODEL) {
+                    Err(Bail(UNSIZED_PRINT))
+                } else {
+                    Err(UNSURE_PRINT)
+                }
+            }
+            // `UserValue.size`: Nat, Int, STRING and Seq(S).
+            Lazy::Infinite(_) => Err(Bail(UNSIZED_PRINT)),
+            Lazy::Subset(base) => match base.printed_size(machine)? {
+                size if size < 31 => Ok(1 << size),
+                _ => Err(UNSURE_PRINT),
+            },
+            Lazy::FunctionSet(..) | Lazy::RecordSet(..) | Lazy::Product(..) => {
+                self.size(machine).map_err(|_| UNSURE_PRINT)
+            }
+            _ => Err(UNSURE_PRINT),
+        }
+    }
+
+    // A part's `isEmpty` (`Value.isEmpty`), which fails on any value but a set.
+    fn printed_is_empty(&self, machine: &mut Machine<'_>) -> Outcome<bool> {
+        match self {
+            Lazy::Set(id) => {
+                if machine.store.kind_of(*id) == KIND_SET {
+                    Ok(machine.store.size_of(*id) == 0)
+                } else if matches!(
+                    machine.store.kind_of(*id),
+                    KIND_INT | KIND_STRING | KIND_BOOL | KIND_MODEL | KIND_TUPLE
+                ) || is_function_kind(machine.store.kind_of(*id))
+                    || machine.store.kind_of(*id) == KIND_LAZY_FUNCTION
+                {
+                    Err(Bail(UNSIZED_PRINT))
+                } else {
+                    Err(UNSURE_PRINT)
+                }
+            }
+            // Nat, Int, STRING and Seq(S) aren't empty (`UserValue.isEmpty`), nor is SUBSET S.
+            Lazy::Infinite(_) | Lazy::Subset(_) => Ok(false),
+            Lazy::FunctionSet(..) | Lazy::RecordSet(..) | Lazy::Product(..) => {
+                self.is_empty(machine).map_err(|_| UNSURE_PRINT)
+            }
+            _ => Err(UNSURE_PRINT),
+        }
+    }
+}
+
 // Whether elements streamed differ from their normalized set's, in order.
 fn is_unnormalized(machine: &mut Machine<'_>, elements: &[Id]) -> Outcome<bool> {
     let set = machine.store.set_of(elements)?;
@@ -886,5 +1018,94 @@ mod tests {
             Some(9)
         );
         assert_eq!(size(Lazy::Subset(Box::new(Lazy::Set(three)))), Some(8));
+    }
+
+    // `SetOfTuplesValue.toString` and its siblings, which PrintT calls unchecked: the parts are
+    // sized in order up to an empty one, so a part TLC can't size fails only before it, and the
+    // set it then enumerates tests each part for emptiness, which fails on a non-set.
+    #[test]
+    fn prints_a_set_by_its_parts_as_tlc_does() {
+        let program = Program::default();
+        let mut store = Store::new();
+        store.reset(std::iter::empty::<&[u16]>());
+        let mut machine = Machine::new(&program, store);
+        let integers: Vec<Id> = (1..=3)
+            .map(|value| machine.store.int(value).expect("an integer"))
+            .collect();
+        let int = || Lazy::Infinite("Int");
+        let empty = || Lazy::Set(EMPTY_SET);
+        let three = Lazy::Set(machine.store.set_of(&integers).expect("a set"));
+        let number = Lazy::Set(integers[0]);
+        let tuple = Lazy::Set(machine.store.tuple_of(&integers[..1]));
+        let mut printed = |set: Lazy| match set.check_printed(&mut machine) {
+            Ok(_) => "prints",
+            Err(Bail(reason)) if reason == UNSIZED_PRINT => "fails",
+            Err(_) => "unsure",
+        };
+        assert_eq!(printed(Lazy::Product(vec![int(), empty()])), "fails");
+        assert_eq!(printed(Lazy::Product(vec![empty(), int()])), "prints");
+        assert_eq!(
+            Lazy::Product(vec![empty(), number.clone()])
+                .check_printed(&mut machine)
+                .ok(),
+            Some(PrintedSet::Empty)
+        );
+        assert_eq!(
+            Lazy::FunctionSet(Box::new(empty()), Box::new(tuple.clone()))
+                .check_printed(&mut machine)
+                .ok(),
+            Some(PrintedSet::OfEmptyFunction)
+        );
+        assert_eq!(
+            Lazy::Product(vec![three.clone(), three.clone()])
+                .check_printed(&mut machine)
+                .ok(),
+            Some(PrintedSet::Enumerated)
+        );
+        let mut printed = |set: Lazy| match set.check_printed(&mut machine) {
+            Ok(_) => "prints",
+            Err(Bail(reason)) if reason == UNSIZED_PRINT => "fails",
+            Err(_) => "unsure",
+        };
+        assert_eq!(printed(Lazy::Product(vec![three.clone(), int()])), "fails");
+        assert_eq!(
+            printed(Lazy::Product(vec![number.clone(), empty()])),
+            "fails"
+        );
+        assert_eq!(
+            printed(Lazy::Product(vec![three.clone(), tuple.clone()])),
+            "fails"
+        );
+        assert_eq!(
+            printed(Lazy::Product(vec![three.clone(), three.clone()])),
+            "prints"
+        );
+        assert_eq!(
+            printed(Lazy::RecordSet(Vec::new(), vec![int(), empty()])),
+            "fails"
+        );
+        assert_eq!(
+            printed(Lazy::FunctionSet(Box::new(int()), Box::new(empty()))),
+            "fails"
+        );
+        assert_eq!(
+            printed(Lazy::FunctionSet(Box::new(empty()), Box::new(int()))),
+            "prints"
+        );
+        assert_eq!(
+            printed(Lazy::FunctionSet(Box::new(tuple), Box::new(three.clone()))),
+            "fails"
+        );
+        assert_eq!(
+            printed(Lazy::FunctionSet(Box::new(three.clone()), Box::new(number))),
+            "fails"
+        );
+        assert_eq!(
+            printed(Lazy::Product(vec![
+                Lazy::Product(vec![int(), empty()]),
+                int()
+            ])),
+            "prints"
+        );
     }
 }

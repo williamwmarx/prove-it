@@ -158,6 +158,13 @@ AssertEq, RandomElement, RandomSubset and TLCSet, whose effects the search sees 
 definition fails at each use exactly as it failed at startup, before the same lack of effects, as
 in `PrintT(<<expression that fails>>)`. Its `once` keeps no value, so each use evaluates the body.
 
+A definition such as `Test == PrintT(Int \X {})`, whose print TLC fails as it sizes the set's
+parts (cli.md, "definitions"), fails before any effect too, and the engine's print fails there
+as TLC's does, so it is retried the same way: its argument, a set of functions, records or tuples
+written there, doesn't count as a value TLC keeps lazy (`is_print_settled`). The trace evaluator
+words the failure at each use as PrintT's Java method's, sizing each part as TLC does
+(`check_unchecked`).
+
 The startup values hand on `NO_VALUE` for it. The trace evaluator takes that as a definition to
 evaluate again where it is used, and so does a failure's evaluation, which takes those markers
 even where it takes no other startup value. The trace evaluator does the same for one its own

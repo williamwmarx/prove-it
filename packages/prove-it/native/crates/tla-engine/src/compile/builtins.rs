@@ -16,7 +16,7 @@ use tla_values::{Bail, Id, Store};
 
 use super::bridged;
 use super::fused;
-use super::lazy::{Lazy, Operator, Reference};
+use super::lazy::{Lazy, Operator, PrintedSet, Reference, UNSIZED_PRINT};
 use super::lazy_function;
 use super::nodes::{evaluate_set, expect_set};
 use super::predicate::{Leaf, Predicate};
@@ -605,6 +605,20 @@ impl Compiler<'_> {
         let footprint = Footprint::merge_all(compiled.iter().map(|operand| &operand.footprint))
             .merge(&Footprint::slot(super::PRINT_SLOT));
         let is_boolean = !is_print || compiled[1].is_boolean;
+        // TLC prints a set of functions, records or tuples it holds lazy by sizing its parts
+        // (`Lazy::check_printed`), which may fail where the engine enumerated the set: such an
+        // operand is first built as TLC holds it. Where the engine can't tell, a startup
+        // definition declines, and elsewhere the engine prints the set it enumerates.
+        let is_unsure_declined = self.startup_bodies > 0;
+        let checked: Vec<Option<Reference>> = operands
+            .iter()
+            .zip(&compiled)
+            .map(|(operand, compiled)| {
+                self.is_print_checked(operand.node)
+                    .then(|| compiled.reference.clone())
+                    .flatten()
+            })
+            .collect();
         let evaluators: Vec<Eval> = compiled.into_iter().map(|operand| operand.eval).collect();
         // The native binary's reporter finds what it can't print itself: TLC prints the startup's
         // in the front the binary records, and the binary stops at any later one. It prints each
@@ -619,10 +633,13 @@ impl Compiler<'_> {
             is_boolean,
             ..leaf(
                 eval(move |machine| {
-                    let mut values = Vec::with_capacity(evaluators.len());
-                    for evaluate in &evaluators {
-                        values.push(evaluate(machine)?);
-                    }
+                    let values = evaluate_printed(
+                        machine,
+                        &evaluators,
+                        &checked,
+                        is_unsure_declined,
+                        is_print,
+                    )?;
                     let result = if is_print { values[1] } else { TRUE };
                     push_prints(machine, values, constructions.as_deref())?;
                     Ok(result)
@@ -2384,6 +2401,56 @@ const NAMED_REGISTER_PREFIX: &str = "s:";
 /// The prefix of a key of TLCGet and TLCSet that names a Java system property, whose value
 /// `System.getProperty` gives with the key as the default.
 const JAVA_PROPERTY_PREFIX: &str = "-D";
+
+// Print's or PrintT's arguments, each evaluated in turn as TLC does, where one with a reference
+// (`checked`) is built as TLC holds it, and enumerated only once TLC's `toString` of each such
+// argument, in turn, is found to print it (`Lazy::check_printed`). Where the engine can't tell,
+// it declines if `is_unsure_declined` and otherwise enumerates the set. An argument only printed
+// (all but Print's second, which is its value) that TLC finds empty, or the one function of an
+// empty domain, from its parts, is that, where enumerating it may ask a part TLC never asks.
+fn evaluate_printed(
+    machine: &mut Machine<'_>,
+    evaluators: &[Eval],
+    checked: &[Option<Reference>],
+    is_unsure_declined: bool,
+    is_print: bool,
+) -> Outcome<Vec<Id>> {
+    let mut lazies = Vec::with_capacity(evaluators.len());
+    let mut values = Vec::with_capacity(evaluators.len());
+    for (evaluate, reference) in evaluators.iter().zip(checked) {
+        match reference {
+            Some(reference) => {
+                lazies.push(Some(reference(machine)?));
+                values.push(None);
+            }
+            None => {
+                lazies.push(None);
+                values.push(Some(evaluate(machine)?));
+            }
+        }
+    }
+    for (position, lazy) in lazies.iter().enumerate() {
+        let Some(lazy) = lazy else {
+            continue;
+        };
+        let is_only_printed = !is_print || position == 0;
+        match lazy.check_printed(machine) {
+            Err(Bail(reason)) if reason != UNSIZED_PRINT && !is_unsure_declined => {}
+            Ok(PrintedSet::Empty) if is_only_printed => values[position] = Some(EMPTY_SET),
+            Ok(PrintedSet::OfEmptyFunction) if is_only_printed => {
+                values[position] = Some(machine.store.set_of(&[EMPTY_TUPLE])?);
+            }
+            checked => {
+                checked?;
+            }
+        }
+    }
+    evaluators
+        .iter()
+        .zip(values)
+        .map(|(evaluate, value)| value.map_or_else(|| evaluate(machine), Ok))
+        .collect()
+}
 
 // Prints the values of a Print or PrintT, with TLC's text of each where the native checker knows
 // how TLC built it.

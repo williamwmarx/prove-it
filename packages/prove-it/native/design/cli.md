@@ -116,12 +116,18 @@ same way:
   (`may_be_lazy`), as TLC then evaluates it again where it is used. PrintT's value is TRUE, so
   `Test == PrintT(e)` is computed once whatever e is, and prints e as the engine prints it
   anywhere. TLC prints a set of tuples, functions or records by sizing its parts in order up to an
-  empty one (`SetOfTuplesValue.toString` and its siblings), and fails on a part it can't size, such
-  as Int in `Int \X {}`, where the engine prints the empty set it enumerated: a definition that
-  prints or writes a value's text and may build such a set (`may_hold_unsized`) declines ("a set
-  TLC may fail to print, at startup"). Parts that are enumerations, intervals, BOOLEAN or sets
-  built of those are sized; a part empty as written (`{}`, `3..1`) stops the walk; a record set's
-  fields are walked in the order of their names' ranks.
+  empty one, then asking each part whether it is empty as it enumerates the set
+  (`SetOfTuplesValue.toString` and its siblings), and fails on a part it can't size, such as Int in
+  `Int \X {}`, or on a value that isn't a set. Where such a set is Print's or PrintT's argument as
+  written, without effects (`is_print_checked`), the print builds it from its reference as TLC holds
+  it and walks its parts so (`Lazy::check_printed`) before it enumerates it: where TLC fails, the
+  print fails with a failure TLC reports ("printed a set with a part TLC can't size"), which a
+  startup definition then retries at each use; where the engine can't tell, a startup
+  definition's print declines and any other prints the set it enumerates. A definition that
+  prints or writes a value's text and may build such a set anywhere else (`may_hold_unsized`)
+  declines ("a set TLC may fail to print, at startup"). Parts that are enumerations, intervals,
+  BOOLEAN or sets built of those are sized; a part empty as written (`{}`, `3..1`) stops the
+  walk; a record set's fields are walked in the order of their names' ranks.
 - **symmetry**: the SYMMETRY definition, and each set its body's operator applies to, by the name
   TLC's warning gives it (`getPermutedSets`, `symmetry.ts`) and, for `Permutations(S)` of a
   constant or definition the configuration doesn't replace with `<-`, S. TLC evaluates the body
