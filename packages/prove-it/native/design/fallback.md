@@ -828,3 +828,64 @@ The engine's search doesn't count TLC's cost model; the replay pass in `tla-trac
 (cli.md, "-coverage"). Counting in the engine was built (branch `engine-coverage`) and not adopted:
 TLC with coverage runs 20 to 35 times as long as the engine's search on record-heavy specs, so the
 times of TLC's report part way through can't be bounded from the engine's.
+
+## tlapm
+
+`prove-it tlapm …` runs natively (`prove-it-check`'s `tlapm.rs`): in the binary, and in the CLI of
+`dist/`, which hands the command line to `checkSources` and applies the file operations its result
+lists (`prove-it-host`'s `files.rs`). There is no TypeScript fallback: where the native command
+declines, the CLI prints the decline and exits with 1, and where no engine loads, it throws
+`EngineUnavailableError`.
+
+### What matches
+
+- Every fixture tlapm 9ed0376 recorded in `tests/fixtures/obligations` and `tests/fixtures/tlapm-cli`
+  (`prove-it-cli/tests/tlapm.rs`, `unit/cli.test.ts`): stdout, stderr and the exit status, with
+  `-N`, `--toolbox`, `--line`, `--printallobs`, `--strict`, `--summary`, `--nofp`, `--cleanfp`, and
+  over tlapm's own fingerprints file; the theory file byte for byte; and the fingerprints file,
+  which holds what tlapm's holds but for each result's date and versions. tlapm copies Zenon's
+  stderr to its stdout, and the native command writes Zenon's `exhausted search space` line, which
+  the TypeScript CLI left out.
+- `scripts/tlapm-conformance.ts` on the 1,873 modules of `tests/conformance/tlapm.json`, run as
+  `record-tlapm.ts` ran tlapm (`-N --printallobs --toolbox 0 0`): every one of the 33,138
+  obligations of the 1,507 modules tlapm accepted prints byte for byte, and the 366 modules it
+  rejected decline.
+
+### Declines
+
+- **An error tlapm ends with** (`the backtrace tlapm prints as it ends with …`): tlapm prints the
+  exception with the OCaml backtrace of where it raised it, and in toolbox mode a toolbox message of
+  the location and message `Errors.set` kept (`tlapm_lib.ml`, `init`). Neither is known without a
+  run of tlapm, and the recordings in `tests/fixtures/obligation-errors` leave the backtrace out. A
+  module file that isn't there declines the same way. The TypeScript CLI printed these without the
+  backtrace.
+- **What a back end writes that tlapm copies to its stdout.** tlapm runs each back end with its
+  stderr on its own stdout (`System.launch_process`). Zenon's is known (`Zenon error: …`, from
+  `prove.ml`'s `periodic` and `prove_fail`) and written. The native command declines:
+  - an obligation Isabelle doesn't prove within its time limit, since Isabelle reports why on its
+    stderr;
+  - a Zenon search that stops otherwise than on an exhausted search, the memory limit or the time
+    limit, and an input a back end can't read.
+- **What Prove It can't try as tlapm does:** a method with no back end in Prove It (cvc3, Cooper,
+  …), and a method whose encoder can't take the obligation (`smt can't encode …`), where tlapm
+  would try it.
+- **Command lines it doesn't model:** an option outside `src/cli/options.ts`'s list,
+  `--printallobs` where tlapm proves (tlapm then prints each proved obligation's text too), an
+  option without its arguments or without an integer, `--threads` below 1 or above 99 where tlapm
+  proves (its scheduler asserts), no module, and globs. tlapm reports each in its own words.
+- **A cache it can't read or write as tlapm does:** a fingerprints file that doesn't load (tlapm
+  moves it aside), and a directory, a file or a history entry it can't make, write, copy or remove.
+
+### Known wrong outputs
+
+- `tlapm/test/fast/language/parse_function_comma_args.tla` #2: Prove It's SMT encoder writes the LET
+  definitions inside the LET, and the SMT back end proves the obligation, where tlapm's
+  `Smtlib.pp_print_expr` writes them outside it and Z3 rejects its input
+  (`scripts/tlapm-deviations.ts`). tlapm reports a failure and Prove It a proof.
+- An obligation a back end decides otherwise than tlapm's, within the same time limit, prints the
+  other status. Run with `--threads 4 --toolbox 0 0` on the 248 modules of `proofs.json` with at
+  most 120 obligations, against the statuses tlapm recorded there: 223 give every obligation
+  tlapm's status, 23 decline, and 2 differ, `parse_function_comma_args.tla` #2 above and
+  `tlapm/examples/Bakery.tla` #60, which Z3 proves in 3 s and Prove It's SMT back end doesn't
+  within the method's 60 s.
+- The CLI of `dist/` prints what the command printed once it ends, not as it goes.

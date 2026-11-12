@@ -14,7 +14,6 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getSteadyLines } from "../../scripts/normalize-output";
-import { readMarshaled } from "../../src/prover/tlapm/ocaml-marshal";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -1354,7 +1353,8 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.stderr).toBe("");
   });
 
-  // Each .stderr file is what tlapm -N writes to stderr, without the OCaml backtrace.
+  // Each .stderr file is what tlapm -N writes to stderr, without the OCaml backtrace of where it
+  // raised the error, which only a run of tlapm knows.
   it.each([
     "Declaration",
     "Hide",
@@ -1364,21 +1364,23 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     "Tab",
     "Unexpected",
     "UnknownModule",
-  ])("prints the error tlapm prints for %s", (name) => {
+  ])("declines the error tlapm ends with for %s", (name) => {
+    const recording = readFileSync(join(FIXTURES, "obligation-errors", `${name}.stderr`), "utf8");
+    const exception = /^ tlapm ending abnormally with (.*)$/m.exec(recording)?.[1];
     const result = runTlapm("obligation-errors", ["-N", `${name}.tla`]);
-    expect(result.status).toBe(3);
+    expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
-      readFileSync(join(FIXTURES, "obligation-errors", `${name}.stderr`), "utf8"),
+      `prove-it: not native yet: the backtrace tlapm prints as it ends with ${exception}\n`,
     );
   });
 
-  it("names a module it cannot find", () => {
+  it("declines a module it cannot find", () => {
     const result = runTlapm("obligations", ["-N", "Missing.tla"]);
-    expect(result.status).toBe(3);
+    expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
-      'File "<unknown>":\nError: File "Missing.tla" not found\n tlapm ending abnormally with Failure("Module.Parser.parse_file")\n\n',
+      'prove-it: not native yet: the backtrace tlapm prints as it ends with Failure("Module.Parser.parse_file"), as it can\'t find Missing.tla\n',
     );
   });
 });
@@ -1389,10 +1391,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
 // over that cache, and .nofp and .cleanfp to stdout with --nofp and --cleanfp.
 const readRecording = (name: string) => readFileSync(join(FIXTURES, "tlapm-cli", name), "utf8");
 
-// tlapm copies to stdout what Zenon writes to stderr, which tla-ts's Zenon doesn't write.
-const withoutZenonOutput = (output: string) => output.replaceAll(/^Zenon error: .*\n/gm, "");
-
-describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () => {
+describe("tlapm proves with Prove It's provers and prints what tlapm prints", () => {
   // The time each backend took varies from run to run.
   const withoutTimeUsed = (output: string) =>
     output.replaceAll(/time-used: [\d.]+ \(\d+%\)/g, "time-used: <time>");
@@ -1407,7 +1406,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
   it("prints the obligations it couldn't prove and ends abnormally", () => {
     const result = runTlapm("tlapm-cli", ["Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(withoutZenonOutput(readRecording("Failures.stdout")));
+    expect(result.stdout).toBe(readRecording("Failures.stdout"));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 
@@ -1421,7 +1420,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     const result = runTlapm("tlapm-cli", ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
+      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n(Zenon error: exhausted search space without finding a proof\n){2}\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
     );
     expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
   });
@@ -1432,10 +1431,10 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Twice.toolbox")));
   });
 
-  it("rejects the tlapm options it doesn't support", () => {
+  it("declines the tlapm options it doesn't support", () => {
     const result = runTlapm("obligations", ["-C", "Proofs.tla"]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: tla-ts tlapm does not support the tlapm option -C.\n");
+    expect(result.stderr).toBe("prove-it: not native yet: the tlapm option -C\n");
   });
 });
 
@@ -1453,27 +1452,15 @@ describe("tlapm shares its cache with tlapm", () => {
     return directory;
   };
 
-  // The fingerprints file without the date and the versions stored with each result.
-  const readFingerprints = (path: string) => {
-    const bytes = readFileSync(path);
-    const table = readMarshaled(bytes, readMarshaled(bytes, 0).next).value;
-    return JSON.stringify(table, (_, value) =>
-      /^(9ed0376|Zenon version \[268\]|Isabelle2025|tla-ts .*)$/.test(value) ||
-      (value?.fields?.length === 6 && value.fields.every(Number.isInteger))
-        ? "<stored>"
-        : value,
-    );
-  };
-
+  // The fingerprints it writes reuse each result as tlapm's do.
   it("writes the theory and the fingerprints tlapm writes", () => {
     const directory = copyFixtures("tlapm-cli");
     runTlapmIn(directory, ["Failures.tla"]);
     expect(readFileSync(join(directory, ".tlacache/Failures.tlaps/Failures.thy"), "utf8")).toBe(
       readRecording("Failures.thy"),
     );
-    expect(readFingerprints(join(directory, ".tlacache/Failures.tlaps/fingerprints"))).toBe(
-      readFingerprints(join(directory, "Failures.fingerprints")),
-    );
+    const result = runTlapmIn(directory, ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"]);
+    expect(result.stderr).toBe(readRecording("Failures.reused"));
   });
 
   it("reuses what tlapm concluded", () => {
@@ -1495,7 +1482,7 @@ describe("tlapm shares its cache with tlapm", () => {
   it.each(["--nofp", "--cleanfp"])("proves again under %s", (option) => {
     const result = runTlapmIn(copyWithCache(), [option, "Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(withoutZenonOutput(readRecording(`Failures.${option.slice(2)}`)));
+    expect(result.stdout).toBe(readRecording(`Failures.${option.slice(2)}`));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 

@@ -44,6 +44,22 @@ pub struct Files<'a> {
 /// The path TLC prints for the file it parses a module from, by the module's name and origin.
 pub type FileDescription<'h> = Box<dyn Fn(&str, ModuleOrigin) -> String + 'h>;
 
+/// What a path names, where it names something.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PathKind {
+    File,
+    Directory,
+    Other,
+}
+
+/// An entry of a directory, with when it was last modified, in milliseconds since the epoch as
+/// Node's `mtimeMs` gives it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Entry {
+    pub name: String,
+    pub modified: f64,
+}
+
 pub trait Host {
     fn is_file(&self, path: &Path) -> bool;
     fn read_text(&self, path: &Path) -> Option<String>;
@@ -81,6 +97,36 @@ pub trait Host {
     /// place of it otherwise, such as `-dump`'s; whether it could. A host that writes no files
     /// leaves the check to decline what writes one.
     fn write_file(&self, _path: &Path, _bytes: &[u8], _is_appended: bool) -> bool {
+        false
+    }
+    /// What the path names, as tlapm's command line asks, which writes its cache beside the
+    /// modules. A host that answers none of these, nor the operations below, writes no cache, and
+    /// the command declines.
+    fn get_path_kind(&self, _path: &Path) -> Option<PathKind> {
+        None
+    }
+    /// The path with every link resolved, as Node's `realpathSync` gives it.
+    fn get_real_path(&self, _path: &Path) -> Option<PathBuf> {
+        None
+    }
+    /// The entries of a directory, in no particular order.
+    fn list_directory(&self, _path: &Path) -> Option<Vec<Entry>> {
+        None
+    }
+    /// Makes the directory and those above it that are missing; whether it could.
+    fn create_directory(&self, _path: &Path) -> bool {
+        false
+    }
+    /// Removes what the path names, a directory with what it holds, where it names something;
+    /// whether it could.
+    fn remove(&self, _path: &Path) -> bool {
+        false
+    }
+    fn rename(&self, _from: &Path, _to: &Path) -> bool {
+        false
+    }
+    /// Copies a file, with the time it was last modified; whether it could.
+    fn copy_file(&self, _from: &Path, _to: &Path) -> bool {
         false
     }
     /// Whether the check may read and write the machine's files, as the Json module's operators
@@ -160,6 +206,62 @@ impl Host for SystemHost {
         std::fs::read(path).ok()
     }
 
+    fn get_path_kind(&self, path: &Path) -> Option<PathKind> {
+        let metadata = std::fs::metadata(path).ok()?;
+        Some(if metadata.is_file() {
+            PathKind::File
+        } else if metadata.is_dir() {
+            PathKind::Directory
+        } else {
+            PathKind::Other
+        })
+    }
+
+    fn get_real_path(&self, path: &Path) -> Option<PathBuf> {
+        std::fs::canonicalize(path).ok()
+    }
+
+    fn list_directory(&self, path: &Path) -> Option<Vec<Entry>> {
+        std::fs::read_dir(path)
+            .ok()?
+            .map(|entry| {
+                let entry = entry.ok()?;
+                Some(Entry {
+                    name: entry.file_name().to_string_lossy().into_owned(),
+                    modified: get_modified(&entry.path())?,
+                })
+            })
+            .collect()
+    }
+
+    fn create_directory(&self, path: &Path) -> bool {
+        std::fs::create_dir_all(path).is_ok()
+    }
+
+    fn remove(&self, path: &Path) -> bool {
+        match std::fs::symlink_metadata(path) {
+            Err(_) => true,
+            Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path).is_ok(),
+            Ok(_) => std::fs::remove_file(path).is_ok(),
+        }
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> bool {
+        std::fs::rename(from, to).is_ok()
+    }
+
+    fn copy_file(&self, from: &Path, to: &Path) -> bool {
+        let copy = || -> std::io::Result<()> {
+            std::fs::copy(from, to)?;
+            let modified = std::fs::metadata(from)?.modified()?;
+            std::fs::File::options()
+                .write(true)
+                .open(to)?
+                .set_modified(modified)
+        };
+        copy().is_ok()
+    }
+
     fn load_module(&self, directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf> {
         let Some(path) = directories
             .iter()
@@ -211,6 +313,17 @@ impl Host for SystemHost {
     fn large_region_advice(&self) -> Option<Advice> {
         self.large_region_advice
     }
+}
+
+/// `statSync(path).mtimeMs`: seconds and nanoseconds since the epoch as a double of milliseconds.
+fn get_modified(path: &Path) -> Option<f64> {
+    let since = std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some(since.as_secs() as f64 * 1e3 + f64::from(since.subsec_nanos()) / 1e6)
 }
 
 fn read_trimmed(path: &str) -> Option<String> {

@@ -955,7 +955,7 @@ const findSpec = (path: string, java: JavaProperties) =>
         .find(existsSync) ?? path);
 
 // The zone TLC prints its dates in, as a POSIX TZ rule of the offset the process has now.
-const getZoneRule = () => {
+export const getZoneRule = () => {
   const offset = -new Date().getTimezoneOffset();
   const hours = Math.floor(Math.abs(offset) / 60);
   const minutes = String(Math.abs(offset) % 60).padStart(2, "0");

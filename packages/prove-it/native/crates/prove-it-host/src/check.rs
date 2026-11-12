@@ -2,9 +2,9 @@
 //! `checkSources(args, known, machine)` checks the spec the TLC command line `args` names as the
 //! binary does, reading its files from what JavaScript knows (`sources`), and returns one of:
 //!
-//! - `{ kind: "checked", exitCode, out, err, outcome }`, what the binary prints to stdout and
-//!   stderr, its exit code, and what the check found where it searched, as the library reports it
-//!   (`get_outcome`);
+//! - `{ kind: "checked", exitCode, out, err, outcome, files }`, what the binary prints to stdout and
+//!   stderr, its exit code, what the check found where it searched, as the library reports it
+//!   (`get_outcome`), and the files it writes;
 //! - `{ kind: "needed", keys }`, what the check reads that isn't known yet (`sources`). It asks for
 //!   everything before it searches, so a round never searches;
 //! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
@@ -13,8 +13,12 @@
 //! The keys it reads, besides SANY's `module:` and `file:`, are `text:<path>`, the text of the file
 //! at a path the command line names (the spec and its configuration), `bytes:<path>`, the bytes of
 //! the tla2tools.jar on a Java launch's class path, and `class:<name>`, the Java override for a
-//! module, both as a Uint8Array. `machine` gives what TLC's banner and dates describe, and what the
-//! check may use of it:
+//! module, both as a Uint8Array. tlapm's command line also reads `kind:<path>`, what is at a path
+//! (`file`, `directory` or `other`), `realpath:<path>`, the path with its links resolved, and
+//! `entries:<path>`, a directory's entries, each as its `mtimeMs` and its name, each ended by a NUL;
+//! and it writes its cache: the files a run writes are in the result's `files`, in the order
+//! JavaScript applies them (`files.rs`), and a run that writes no files has none. `machine` gives
+//! what TLC's banner and dates describe, and what the check may use of it:
 //! `[system, release, arch, cores, memoryMegabytes, pid, now, zone, variables, isLibrary]`, with
 //! `now` in milliseconds since the epoch, `zone` a POSIX TZ rule, `variables` the environment's
 //! `[name, value]` pairs the check reads, and `isLibrary` whether the library's check runs it: the
@@ -26,10 +30,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prove_it_check::zone::{Zone, parse_rule};
-use prove_it_check::{FileDescription, Files, Host, Machine, Outcome, Output};
+use prove_it_check::{Entry, FileDescription, Files, Host, Machine, Outcome, Output, PathKind};
 use tla_engine::clock::Instant;
 use tla_front::report::ModuleOrigin;
 
+use crate::files::{Overlay, Underlying, parse_entries};
 use crate::hooks::HookResult;
 use crate::sources::{Sources, get_text};
 use crate::value::HostValue;
@@ -47,11 +52,33 @@ struct SourcesHost {
     zone: Zone,
     variables: Vec<(String, String)>,
     is_library: bool,
+    /// The files the check writes, which only tlapm's command line does.
+    overlay: Option<Overlay>,
 }
 
 impl SourcesHost {
     fn get(&self, key: String) -> Option<String> {
         self.sources.get(key)
+    }
+
+    fn now_milliseconds(&self) -> f64 {
+        self.now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64() * 1000.0)
+    }
+}
+
+impl Underlying for Sources {
+    fn get_kind(&self, path: &Path) -> Option<PathKind> {
+        match self.get(format!("kind:{}", path.display()))?.as_str() {
+            "file" => Some(PathKind::File),
+            "directory" => Some(PathKind::Directory),
+            _ => Some(PathKind::Other),
+        }
+    }
+
+    fn list(&self, path: &Path) -> Option<Vec<Entry>> {
+        parse_entries(&self.get(format!("entries:{}", path.display()))?)
     }
 }
 
@@ -73,11 +100,68 @@ impl Host for SourcesHost {
     }
 
     fn read_text(&self, path: &Path) -> Option<String> {
-        self.get(format!("text:{}", path.display()))
+        match self.overlay.as_ref().and_then(|overlay| overlay.read(path)) {
+            Some(bytes) => bytes.and_then(|bytes| String::from_utf8(bytes).ok()),
+            None => self.get(format!("text:{}", path.display())),
+        }
     }
 
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>> {
-        self.sources.get_bytes(format!("bytes:{}", path.display()))
+        match self.overlay.as_ref().and_then(|overlay| overlay.read(path)) {
+            Some(bytes) => bytes,
+            None => self.sources.get_bytes(format!("bytes:{}", path.display())),
+        }
+    }
+
+    fn get_path_kind(&self, path: &Path) -> Option<PathKind> {
+        match &self.overlay {
+            Some(overlay) => overlay.get_kind(path, &self.sources),
+            None => self.sources.get_kind(path),
+        }
+    }
+
+    fn get_real_path(&self, path: &Path) -> Option<PathBuf> {
+        self.get(format!("realpath:{}", path.display()))
+            .map(PathBuf::from)
+    }
+
+    fn list_directory(&self, path: &Path) -> Option<Vec<Entry>> {
+        match &self.overlay {
+            Some(overlay) => overlay.list(path, self.now_milliseconds(), &self.sources),
+            None => self.sources.list(path),
+        }
+    }
+
+    fn create_directory(&self, path: &Path) -> bool {
+        self.overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.create_directory(path, &self.sources))
+    }
+
+    fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
+        !is_appended
+            && self
+                .overlay
+                .as_ref()
+                .is_some_and(|overlay| overlay.write(path, bytes, &self.sources))
+    }
+
+    fn remove(&self, path: &Path) -> bool {
+        self.overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.remove(path, &self.sources))
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> bool {
+        self.overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.rename(from, to, &self.sources))
+    }
+
+    fn copy_file(&self, from: &Path, to: &Path) -> bool {
+        self.overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.copy(from, to, &self.sources))
     }
 
     fn load_module(&self, _directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf> {
@@ -232,6 +316,10 @@ fn check(arguments: &[HostValue]) -> HookResult {
         zone: parse_rule(&get_text(zone, "the zone")?).map_or(Zone::UTC, Zone::from_rule),
         variables,
         is_library,
+        overlay: args
+            .first()
+            .is_some_and(|command| command == "tlapm")
+            .then(Overlay::default),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let mut output = Output {
@@ -262,6 +350,12 @@ fn check(arguments: &[HostValue]) -> HookResult {
         ("out", HostValue::text(&String::from_utf8_lossy(&out))),
         ("err", HostValue::text(&err)),
         ("outcome", get_outcome(outcome)),
+        (
+            "files",
+            host.overlay
+                .as_ref()
+                .map_or(HostValue::Array(Vec::new()), Overlay::get_journal),
+        ),
     ]))
 }
 
@@ -353,6 +447,7 @@ mod tests {
             zone: Zone::UTC,
             variables: Vec::new(),
             is_library: false,
+            overlay: None,
         };
         let first = host.now();
         std::thread::sleep(Duration::from_millis(5));

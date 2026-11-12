@@ -111,13 +111,13 @@ What this gives:
   `ProveResult`, `ProofObligation` and its three variants. `ProveOptions` has `source`,
   `loadModule`, `backend` (`"tla-ts"` default, or `"tlapm"` to run a real tlapm in Node or Bun),
   `signal`, `onObligation` and `workers`.
-- **CLI:** `prove-it tlapm …` (`src/cli/tlapm.ts`) reproduces tlapm's command line and its toolbox
-  protocol on stderr: `-N`, `--summary`, `--strict`, `--toolbox`, `--line`, `--printallobs`,
-  `--threads` (default `availableParallelism()`), `-I`, `--noproving`, `--nofp`, `--nofpl`,
-  `--safefp`, `--cleanfp`, `--usefp`, `--cache-dir` (or `TLAPM_CACHE_DIR`). It calls
-  `getObligations`, `proveObligations`, `formatNormalized`, `encodeProofTheory` and the
-  fingerprint cache directly. The native binary declines it: `prove-it-cli/src/check.rs` prints
-  `not native yet: tlapm`.
+- **CLI:** `prove-it tlapm …` reproduces tlapm's command line and its toolbox protocol on stderr:
+  `-N`, `--summary`, `--strict`, `--toolbox`, `--line`, `--printallobs`, `--threads` (default the
+  machine's cores), `-I`, `--noproving`, `--nofp`, `--nofpl`, `--safefp`, `--cleanfp`, `--usefp`,
+  `--cache-dir` (or `TLAPM_CACHE_DIR`). It runs natively since P6c (`prove-it-check`'s
+  `tlapm.rs`), in the binary and through `checkSources` in the CLI of `dist/`, whose
+  `src/cli/tlapm.ts` only answers its reads and applies the files it writes; fallback.md, "tlapm",
+  lists what it declines.
 - **Workers:** with `workers > 1` and workers supported, `proveObligations` starts a decide pool:
   each worker runs `decide(prover, text, timeLimitMs)`; the pool dispatches the earliest obligation
   first, and up to four obligations per worker are in flight. Abort terminates the workers.
@@ -1275,6 +1275,32 @@ is next.
     (a TAB anywhere fails it before any pragma is read). A backslash before U+2028 or U+2029
     still ends the pragma's match, as the TypeScript's regular expression does, where tlapm reads
     on.
+
+- P6c, `prove-it tlapm` native (this entry's PR): `prove-it-check`'s `tlapm.rs` ports
+  `src/cli/tlapm.ts` onto the driver, and the TypeScript CLI hands the command line to the engine.
+  - **The run:** the obligations, the driver's rounds and the printing run on a thread of their own
+    with a 256 MB stack, which reaches the host and the output through calls to the thread that
+    holds them (`Io`). Decisions run on a pool of `--threads` std threads with 256 MB stacks, the
+    earliest obligation's first, as many in flight as there are threads; the next round starts once
+    one is made. In WebAssembly everything runs in place, one decision at a time.
+  - **The driver** gained `Settings`: the results the fingerprints file holds, which it reuses and
+    adds to (`Round::results`, which the file saves), `--nofp` and `--nofpl`, which forget an
+    obligation's fingerprint at each method as `Prep.already_processed` does, and `--noproving`.
+    `tlapm_cache` reads and writes the file's bytes, and keeps each result as the driver's
+    `Attempt`; the history moved to `tlapm.rs`, through the host.
+  - **The host** gained what tlapm's cache needs (`Host::get_path_kind`, `get_real_path`,
+    `list_directory`, `create_directory`, `remove`, `rename`, `copy_file`). `checkSources` answers
+    them for tlapm's command line from `kind:`, `realpath:` and `entries:` keys and an overlay of
+    what the run wrote, and returns the operations as `files`, which the CLI applies once the run
+    is known not to decline. The run reads every module's cache before it proves any, so a round
+    that lacks a key never proves.
+  - **Checks:** `prove-it-cli/tests/tlapm.rs` and `unit/cli.test.ts` hold every recording of
+    `tests/fixtures/obligations` and `tlapm-cli`, through the binary and through the addon;
+    `unit/tlapm-cache.test.ts` reads and writes tlapm's fingerprints file through the CLI;
+    `scripts/tlapm-conformance.ts` runs the binary, or with `--cli` the CLI, on the 1,873 modules
+    of `tlapm.json` (1,507 byte for byte, 366 declined at tlapm's backtrace). The TypeScript's
+    `tlapm/cache.ts`, `ocaml-marshal.ts` and `scripts/tlapm-cache-fixtures.ts` are deleted; the
+    fixtures it wrote stay as frozen records.
 
 ### Deviations from Z3
 

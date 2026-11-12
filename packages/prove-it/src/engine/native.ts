@@ -88,6 +88,15 @@ export type NativeSanyXml =
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
+// An operation on the files that a check writes, as tlapm's command line writes its cache, which
+// JavaScript applies in order (prove-it-host's files.rs).
+export type NativeFileOperation =
+  | [kind: "mkdir", path: string]
+  | [kind: "write", path: string, bytes: Uint8Array]
+  | [kind: "remove", path: string]
+  | [kind: "rename", from: string, to: string]
+  | [kind: "copy", from: string, to: string];
+
 // What the native binary prints for a TLC command line, its exit code and what it found, the keys
 // of what the check still reads, or why the binary declines the model (prove-it-host's check.rs).
 export type NativeCheckSources =
@@ -97,6 +106,7 @@ export type NativeCheckSources =
       out: string;
       err: string;
       outcome: NativeCheckOutcome | undefined;
+      files: NativeFileOperation[];
     }
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
@@ -392,7 +402,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 19;
+const ABI_VERSION = 23;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

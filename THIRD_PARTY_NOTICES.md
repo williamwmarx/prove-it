@@ -114,10 +114,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 <https://github.com/ocaml/ocaml>
 
-Seven files are ported from the OCaml Core System and remain under its license, the GNU Lesser General Public License version 2.1 with OCaml's linking exception, rather than MIT:
+Six files are ported from the OCaml Core System and remain under its license, the GNU Lesser General Public License version 2.1 with OCaml's linking exception, rather than MIT:
 
-- `src/prover/tlapm/ocaml-marshal.ts`, ported from `runtime/intern.c` and `runtime/extern.c`
-- `native/crates/prover/obligations/src/marshal.rs`, the Rust port of `src/prover/tlapm/ocaml-marshal.ts`
+- `native/crates/prover/obligations/src/marshal.rs`, ported from `runtime/intern.c` and `runtime/extern.c` through the TypeScript port that preceded it
 - `native/crates/prover/zenon/src/ocaml.rs`, ported from `Hashtbl.hash` (`runtime/hash.c`) and `List.sort` and `List.stable_sort` (`stdlib/list.ml`)
 - `src/obligations/format.ts`, ported from the `Format` module (`stdlib/format.ml`)
 - `src/obligations/action.ts`, whose `getHash` is ported from `runtime/hash.c`

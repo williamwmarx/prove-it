@@ -20,13 +20,14 @@ mod stack;
 mod summary;
 mod te_spec;
 mod time;
+mod tlapm;
 mod trace;
 mod xml_exporter;
 mod zip;
 pub mod zone;
 
 pub use check::run;
-pub use host::{FileDescription, Files, Host, Machine, SystemHost};
+pub use host::{Entry, FileDescription, Files, Host, Machine, PathKind, SystemHost};
 pub use messages::Output;
 pub use outcome::{Counts, Outcome, Reported, ReportedState};
 pub use plain::Variable;

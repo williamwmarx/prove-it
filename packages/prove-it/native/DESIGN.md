@@ -2476,7 +2476,7 @@ front door that falls back to a JS process: nothing it meets is handed to JavaSc
 | `Print`, `PrintT` output during the search | `check.ts` `print` | the engine's `Reporter::print`, through the value printer |
 | Exit codes (`EXIT_STATUS`, `EXIT_CODES`) | `exit-codes.ts`, `cli/tlc.ts` | `prove-it-cli`: the same table |
 | Several specs in one run (`Checking X.tla with X.cfg`), the first non-zero exit code | `checkSpecs` | `prove-it-cli` |
-| `tlapm` | `cli/tlapm.ts` | out of scope: the JS CLI keeps it until it has its own plan |
+| `tlapm` | `cli/tlapm.ts`, which now runs the native one through `checkSources` | `prove-it-check`'s `tlapm.rs` over the prover's driver and back ends (design/prover.md, P6c) |
 | `tla2sany.xml.XMLExporter` (`-o`, `-t`, `-r`, `-u`, `-I`) | `cli/xml-exporter.ts` (arguments; the export is the engine's `sanyXml`) | `prove-it-check`'s `xml_exporter.rs` over `tla-front`'s `sany` module (design/front.md, "SANY's XMLExporter") |
 
 ### 13.2 Seams to the other stages
