@@ -1,6 +1,8 @@
 //! Runs the binary as a user would: on specs of the tests' own, which tla-front reads, and on
 //! golden engine IRs, such as TCommit's, which PROVE_IT_TEST_IR names in place of a spec's.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -3833,6 +3835,11 @@ fn labels_a_step_of_a_next_state_relation_that_instantiates_in_a_let() {
         "SPECIFICATION Spec\nINVARIANT Inv\nCONSTANT\n\tNext <- ReDefNext\n",
         &[],
     );
+    if cfg!(windows) {
+        common::assert_declined(&output, common::DECLINED_ROOT_FILE, "let-instance");
+        std::fs::remove_dir_all(directory).expect("removed");
+        return;
+    }
     let text = stdout(&output);
     assert_eq!(
         output.status.code(),

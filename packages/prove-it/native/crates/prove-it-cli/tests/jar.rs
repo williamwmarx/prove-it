@@ -1,6 +1,8 @@
 //! Runs the binary on TLC's Java launch with a tla2tools.jar on the class path, which picks the TLC
 //! it reproduces and names the standard modules TLC copies from it.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -55,31 +57,31 @@ fn checks_with_the_tla2tools_jar_on_the_class_path() {
     // TLC copies a standard module out of the jar, and names the copy and where it copied it from.
     let delimiter = if cfg!(windows) { ';' } else { ':' };
     let output = launch(&format!("classes{delimiter}tla2tools.jar"));
-    let text = stdout(&output);
-    assert_eq!(output.status.code(), Some(0), "{text}");
-    let naturals = text
-        .lines()
-        .find(|line| line.ends_with("/Naturals.tla)"))
-        .expect("Naturals parsed");
-    // On Windows the URL writes the path as a file URL's pathname, which jar.rs's tests pin.
-    let jar_url = if cfg!(windows) {
-        "/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)".to_owned()
+    // No run of TLC on Windows recorded the jar's URL, which Java writes with File.toURI.
+    if cfg!(windows) {
+        common::assert_declined(&output, common::DECLINED_JAR, "jar");
     } else {
-        format!(
+        let text = stdout(&output);
+        assert_eq!(output.status.code(), Some(0), "{text}");
+        let naturals = text
+            .lines()
+            .find(|line| line.ends_with("/Naturals.tla)"))
+            .expect("Naturals parsed");
+        let jar_url = format!(
             "Naturals.tla (jar:file:{}/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)",
             real.display()
-        )
-    };
-    assert!(
-        naturals.starts_with("Parsing file ")
-            && naturals.contains("Naturals.tla (jar:file:/")
-            && naturals.ends_with(&jar_url),
-        "{text}"
-    );
-    assert!(
-        text.contains("\nModel checking completed. No error has been found.\n"),
-        "{text}"
-    );
+        );
+        assert!(
+            naturals.starts_with("Parsing file ")
+                && naturals.contains("Naturals.tla (jar:file:/")
+                && naturals.ends_with(&jar_url),
+            "{text}"
+        );
+        assert!(
+            text.contains("\nModel checking completed. No error has been found.\n"),
+            "{text}"
+        );
+    }
     for (class_path, what) in [
         ("tla2tools-1.7.4.jar", "TLC 1.7.4"),
         (
@@ -108,6 +110,10 @@ fn checks_with_the_tla2tools_jar_on_the_class_path() {
             "Spec",
         ],
     );
-    assert_eq!(named.status.code(), Some(0), "{}", stdout(&named));
+    if cfg!(windows) {
+        common::assert_declined(&named, common::DECLINED_JAR, "named");
+    } else {
+        assert_eq!(named.status.code(), Some(0), "{}", stdout(&named));
+    }
     std::fs::remove_dir_all(directory).expect("removed");
 }

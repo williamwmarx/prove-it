@@ -128,7 +128,11 @@ pub enum OnWindows {
 
 /// The reasons the binary gives on Windows, each up to where it names a path.
 pub const DECLINED_FILE_URL: &str =
-    "the URL TLC prints on Windows of a module whose path isn't its real one";
+    "SANY's report of the URL TLC prints on Windows of a module whose path isn't its real one";
+pub const DECLINED_ROOT_FILE: &str =
+    "SANY's report of the path TLC prints on Windows of a module in the root module's file";
+pub const DECLINED_JAR: &str =
+    "SANY's report of the URL TLC prints on Windows of a standard module in its jar";
 pub const DECLINED_CLASS_URL: &str = "the URL TLC prints on Windows of a Java class";
 pub const DECLINED_TRACE_SPEC: &str =
     "the path TLC prints on Windows of the trace exploration spec";
