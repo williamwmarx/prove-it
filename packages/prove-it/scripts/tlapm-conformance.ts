@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
+import type { NativeObligation } from "../src/engine/native";
 import { TlaUnsupportedError } from "../src/errors";
-import type { PrintedObligation } from "../src/obligations";
 import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, getOption, writeResults } from "./corpora";
 import { getModuleObligations } from "./proof-records";
 import {
@@ -22,12 +22,12 @@ const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".tlapm-results.json");
 interface Outcome {
   status: "ok" | "error" | "unsupported";
   error?: string;
-  obligations: PrintedObligation[];
+  obligations: NativeObligation[];
 }
 
 const analyze = (path: string): Outcome => {
   try {
-    return { status: "ok", obligations: getModuleObligations(path) };
+    return { status: "ok", obligations: getModuleObligations(path).obligations };
   } catch (error) {
     if (error instanceof TlaUnsupportedError)
       return { status: "unsupported", error: error.message, obligations: [] };
@@ -40,7 +40,7 @@ const analyze = (path: string): Outcome => {
 };
 
 // Whether tla-ts prints the recorded obligation at its location, up to whitespace.
-const isSameText = (expected: TlapmObligation | undefined, actual: PrintedObligation | undefined) =>
+const isSameText = (expected: TlapmObligation | undefined, actual: NativeObligation | undefined) =>
   expected !== undefined &&
   actual !== undefined &&
   expected.loc === actual.location &&

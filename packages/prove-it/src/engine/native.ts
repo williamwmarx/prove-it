@@ -194,6 +194,49 @@ export type NativeProve =
       reports?: ProofObligation[];
     };
 
+// An error the obligations throw, by the name of its class in errors.ts (prove-it-host's prove.rs).
+export interface NativeObligationError {
+  kind: "error";
+  name: string;
+  message: string;
+  failure?: string;
+  exception?: string;
+}
+
+export interface NativeMethod {
+  prover: string;
+  timeLimitMs: number;
+}
+
+// An obligation as tlapm prints it, with the methods Prep tries on it (prove-it-host's
+// obligations.rs).
+export interface NativeObligation {
+  id: number;
+  location: string;
+  kind: "Main" | "Support" | "Error" | "Omitted";
+  text: string;
+  methods: NativeMethod[] | NativeObligationError;
+}
+
+// A module's obligations and the text each backend asked for receives, or the modules they need.
+export type NativeObligations =
+  | { kind: "needed"; keys: string[] }
+  | {
+      kind: "obligations";
+      obligations: NativeObligation[];
+      encodings: ({ kind: "text"; text: string } | NativeObligationError)[];
+    }
+  | NativeObligationError;
+
+// Each obligation's fingerprint as tlapm makes it, or the modules they need.
+export type NativeFingerprints =
+  | { kind: "needed"; keys: string[] }
+  | {
+      kind: "fingerprints";
+      fingerprints: { id: number; fingerprint: string | NativeObligationError }[];
+    }
+  | NativeObligationError;
+
 export interface NativeAddon extends NativeStoreHooks {
   abiVersion: () => number;
   decide: (
@@ -204,6 +247,17 @@ export interface NativeAddon extends NativeStoreHooks {
     cancel: Int32Array | undefined,
   ) => NativeDecision;
   prove: (file: string, source: string, known: [string, string | undefined][]) => NativeProve;
+  obligations: (
+    file: string,
+    source: string,
+    known: [string, string | undefined][],
+    encode: [number, string][],
+  ) => NativeObligations;
+  fingerprint: (
+    file: string,
+    source: string,
+    known: [string, string | undefined][],
+  ) => NativeFingerprints;
   checkSources: (
     args: string[],
     known: [string, string | Uint8Array | undefined][],
@@ -392,7 +446,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 19;
+const ABI_VERSION = 22;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";

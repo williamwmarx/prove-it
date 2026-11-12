@@ -2281,7 +2281,7 @@ pub(crate) fn print_violation(
             loop_start: None,
         });
         for line in &dumped_lines {
-            printer.line(line);
+            printer.printed(line);
         }
         print_finished(printer, start);
         return Ok(exit_code);
@@ -2320,11 +2320,11 @@ pub(crate) fn print_violation(
     let first_output = trace.states[0].output.iter();
     let (heading_code, heading) = if is_counterexample {
         for line in first_output.clone().chain(&trace.trace_output) {
-            printer.line(line);
+            printer.printed(line);
         }
         // What the atoms print as TLC finds the properties the lasso it rebuilt violates.
         for line in &lasso_printed {
-            printer.line(line);
+            printer.printed(line);
         }
         printer.report(code, &text);
         (
@@ -2334,7 +2334,7 @@ pub(crate) fn print_violation(
     } else {
         printer.report(code, &text);
         for line in first_output {
-            printer.line(line);
+            printer.printed(line);
         }
         (
             code::BEHAVIOR_UP_TO_THIS_POINT,
@@ -2379,7 +2379,7 @@ pub(crate) fn print_violation(
     );
     if lasso.is_none() && is_counterexample {
         for line in postcondition_output.clone() {
-            printer.line(line);
+            printer.printed(line);
         }
     }
     match lasso {
@@ -2393,7 +2393,7 @@ pub(crate) fn print_violation(
                 .chain(postcondition_output.clone())
                 .chain(&added)
             {
-                printer.line(line);
+                printer.printed(line);
             }
         }
         Some((loop_start, true, _, _)) => {
@@ -2455,7 +2455,7 @@ pub(crate) fn print_violation(
     }
     if lasso.is_some() {
         for line in postcondition_output {
-            printer.line(line);
+            printer.printed(line);
         }
     }
     if let Some((accepted, headline, labels)) = accepted {
@@ -2464,7 +2464,7 @@ pub(crate) fn print_violation(
             .iter()
             .chain(&accepted.trace_output)
         {
-            printer.line(line);
+            printer.printed(line);
         }
         printer.report(code::TEMPORAL_PROPERTY_VIOLATED, &headline);
         printer.print(
@@ -2562,7 +2562,7 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
         .into_iter()
         .flat_map(|state| &state.output)
     {
-        printer.line(line);
+        printer.printed(line);
     }
     printer.print(
         code::BEHAVIOR_UP_TO_THIS_POINT,
@@ -2572,7 +2572,7 @@ fn print_continued(printer: &mut Printer, report: &ContinuedReport) {
     let labels: Vec<&str> = report.labels.iter().map(String::as_str).collect();
     print_states(printer, &trace.states, &labels);
     for line in &trace.trace_output {
-        printer.line(line);
+        printer.printed(line);
     }
 }
 
@@ -2580,7 +2580,7 @@ fn print_states(printer: &mut Printer, states: &[PrintedState], labels: &[&str])
     for (position, (state, label)) in states.iter().zip(labels).enumerate() {
         if position > 0 {
             for line in &state.output {
-                printer.line(line);
+                printer.printed(line);
             }
         }
         printer.state(position + 1, label, state.variables.clone());

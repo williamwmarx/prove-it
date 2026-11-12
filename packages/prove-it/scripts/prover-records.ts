@@ -5,8 +5,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { Statistics, Verdict } from "../src/prover/verdict";
+import type { NativeDecision } from "../src/engine/native";
 import { CONFORMANCE_DIRECTORY } from "./corpora";
+
+// A backend's answer, as the native engine decides it.
+type Decided = Extract<NativeDecision, { kind: "decided" }>;
 
 // The answer to an input with stepLimit steps and no time limit, or the error the backend threw.
 // An input that throws has no step limit: a backend may take steps before the error, as Z3 does
@@ -15,10 +18,15 @@ import { CONFORMANCE_DIRECTORY } from "./corpora";
 export interface InputRecord {
   prover: string;
   stepLimit?: number;
-  verdict: Verdict;
-  statistics: Statistics;
+  verdict: Decided["verdict"];
+  statistics: Decided["statistics"];
   error?: string;
 }
+
+// The recorded answer, as prove's driver reads it: the verdict, in no time, or the message of the
+// TlaProverError the backend threw.
+export const getRecordedAnswer = (record: InputRecord) =>
+  record.error === undefined ? `${record.verdict} 0` : `error:${record.error}`;
 
 export const PROVER_INPUTS_PATH = join(CONFORMANCE_DIRECTORY, "prover-inputs.json");
 
@@ -54,8 +62,8 @@ export const readInputRecords = (): Record<string, InputRecord> => {
 
 // The answer a decision gave to a recorded input, or the error it threw.
 export interface InputAnswer {
-  verdict: Verdict;
-  statistics: Statistics;
+  verdict: Decided["verdict"];
+  statistics: Decided["statistics"];
   error?: string;
 }
 

@@ -301,7 +301,9 @@ fn get_report(report: &Report) -> HostValue {
     HostValue::Object(properties)
 }
 
-fn get_error(error: &ObligationError) -> HostValue {
+/// An error the obligations or the driver throw, as `{ kind: "error", name, message }`, with the
+/// `failure` and `exception` of a `TlaProofError`.
+pub(crate) fn get_error(error: &ObligationError) -> HostValue {
     let mut properties = vec![
         ("kind", HostValue::text("error")),
         ("name", HostValue::text(error.name())),

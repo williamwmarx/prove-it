@@ -14,7 +14,9 @@
 //! - `bytes:<path>`, the bytes of a file the command line names, such as the tla2tools.jar on a
 //!   Java launch's class path, as a Uint8Array (`checkSources`);
 //! - `decide:<key>`, a backend's answer to a decision `prove` asks for, with its text, by the key it
-//!   gives it (`prove`).
+//!   gives it (`prove`);
+//! - `path:<name>#<n>`, the file the module `prove` reads as `module:<name>#<n>` came from, which
+//!   errors name (`obligations` and `fingerprint`).
 //!
 //! An export that reads something else names it by a key of a new kind, which this list gains.
 

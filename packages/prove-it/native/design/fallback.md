@@ -86,6 +86,15 @@ platform addon loads.
   then searches from the start; the library's check throws `WebAssemblyStackError` instead, as it
   does where the engine stops at its recursion bound.
 
+### Interpreter limits
+
+Where the native check declines, the library's `check()` passes the TypeScript check's prints of
+a violation's trace to `onPrint` as TLC prints them, but for three shapes, where the TypeScript
+check places them otherwise than TLC or prints other values in them: an ALIAS that prints, a
+temporal property that prints, and TLCExt's `Trace`. There `onPrint` gets what the TypeScript
+check printed as it searched, as where the native check doesn't run (`onProgress`, `onPause`, a
+`dot` dump, TLC 1.7.4). `tests/unit/trace-prints.test.ts` pins them; they go with the interpreter.
+
 Each of these reports itself under `PROVE_IT_ENGINE=debug` (`native: declined: …`,
 `handed over after …`).
 
@@ -504,6 +513,12 @@ record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm pr
 | LamportMutex_proofs #574 | cf2bc77dbe72f5d0 | Z3 4.8.9 proves it, 5.3.3 times out |
 | PaxosCommit_proof #345 | c4f10dabeaca0a49 | Z3 4.8.9 proves it, 5.3.3 times out; the port needs 10,358,109 steps, above its limit of 7,321,600 |
 | Boulanger #240 | b2ca9ee96f3db516 | flattening clauses as Z3 4.8.9 does lengthens the port's search from 1,807,047 steps to 8,170,365, though its 4 distributions are 4.8.9's: open |
+
+At the level of inputs, #321 also moved ten `smt` inputs tlapm proves from `unsat` to `unknown`
+that main proved: 0dfd248d2bdad02b, 12a106a46ac87d79, 181f3f94d6c23221, 2f279b8fcc0984d6,
+52c873767bacfb3b, 6181e3d8679eef23, 6f1bb244e72ae33d, 8e48a4022642d1fc, b2ca9ee96f3db516 and
+e8e512b5c0878a4e, and gained one. Z3 4.8.9 proves nine of the ten (all but 6181e3d8679eef23). Only
+b2ca9ee96f3db516 (Boulanger #240) loses its obligation; Zenon or Isabelle prove the other nine's.
 
 The engine's `decide` declines a text that holds a lone surrogate, so the obligation fails. A string
 that is one would read as U+FFFD, two different strings would be one name, and the axiom that they

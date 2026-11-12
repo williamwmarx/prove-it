@@ -49,6 +49,8 @@ interface Exports {
   prove_it_check: Call;
   prove_it_decide: Call;
   prove_it_prove: Call;
+  prove_it_obligations: Call;
+  prove_it_fingerprint: Call;
   prove_it_sany_text: Call;
   prove_it_sany_xml: Call;
   prove_it_check_sources: Call;
@@ -307,6 +309,14 @@ export const instantiateEngine = (module: WebAssembly.Module): NativeAddon => {
       >,
     prove: (file, source, known) =>
       callCurrent("prove_it_prove", [file, source, known]) as ReturnType<NativeAddon["prove"]>,
+    obligations: (file, source, known, encode) =>
+      callCurrent("prove_it_obligations", [file, source, known, encode]) as ReturnType<
+        NativeAddon["obligations"]
+      >,
+    fingerprint: (file, source, known) =>
+      callCurrent("prove_it_fingerprint", [file, source, known]) as ReturnType<
+        NativeAddon["fingerprint"]
+      >,
     sanyText: (root, source, fileName, known) =>
       callCurrent("prove_it_sany_text", [root, source, fileName, known]) as ReturnType<
         NativeAddon["sanyText"]
