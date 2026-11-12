@@ -14,6 +14,15 @@ fn get_text(name: &str, source: &str) -> String {
 }
 
 fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
+    get_report_with_files(name, source, &[])
+}
+
+/// What SANY prints for the root module `source`, named Main, with the modules `files`.
+fn get_report_with_files(
+    name: &str,
+    source: &str,
+    files: &[(&str, &str)],
+) -> Result<SanyText, FrontError> {
     let directory =
         std::env::temp_dir().join(format!("tla-front-report-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -24,7 +33,12 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
         &ReportOptions {
             version: TlcVersion::Master,
             file_name: None,
-            load_module: &|_| None,
+            load_module: &|name| {
+                files
+                    .iter()
+                    .find(|file| file.0 == name)
+                    .map(|file| file.1.to_owned())
+            },
             describe_file: &|name, origin| format!("{name} {origin:?}"),
             root_extendees: &[],
             is_xml_export: false,
@@ -367,6 +381,52 @@ fn reports_def_entries_that_name_no_defined_operator() {
 }
 
 // E4223: a nested module named like a module SANY has already read.
+// SpecObj.resolveNamesBetweenSpecAndExtention: SANY binds the name an extender instantiates to
+// the inner module of the same name of the file it extends, and reads no file for it. The front
+// end binds it where every module of the spec has a name of its own.
+#[test]
+fn binds_a_name_to_an_inner_module_of_an_extended_file() {
+    let holder = "---- MODULE Holder ----\n---- MODULE Held ----\nValue == 2\n====\n====\n";
+    let source =
+        "---- MODULE Main ----\nEXTENDS Mid\nJ == INSTANCE Held\nASSUME J!Value = 2\n====\n";
+    let mid = "---- MODULE Mid ----\nEXTENDS Holder\n====\n";
+    assert_eq!(
+        get_report_with_files("inner", source, &[("Mid", mid), ("Holder", holder)])
+            .expect("a text")
+            .text,
+        "Parsing file Main File\nParsing file Mid File\nParsing file Holder File\nSemantic processing of module Holder\nSemantic processing of module Mid\nSemantic processing of module Main\nLinting of module Holder\nLinting of module Mid\nLinting of module Main\n"
+    );
+}
+
+// Where only an inner module of a file extends the file holding the inner module, SANY binds the
+// names of that inner module alone, not those of the modules extending the file.
+#[test]
+fn binds_no_name_for_the_modules_extending_a_file_whose_inner_module_extends() {
+    let files = [
+        (
+            "B",
+            "---- MODULE B ----\n---- MODULE K ----\nEXTENDS Holder\n====\n====\n",
+        ),
+        (
+            "Holder",
+            "---- MODULE Holder ----\n---- MODULE Held ----\nQ == 2\n====\n====\n",
+        ),
+    ];
+    let fatal = "In module I\n\nCannot find source file for module Held imported in module I.";
+    assert_eq!(
+        get_report_with_files(
+            "inner-extender",
+            "---- MODULE Main ----\n---- MODULE I ----\nEXTENDS B\nJ == INSTANCE Held\n====\n====\n",
+            &files
+        )
+        .expect("a text")
+        .text,
+        format!(
+            "Parsing file Main File\nParsing file B File\nParsing file Holder File\n\nFatal errors while parsing TLA+ spec in file Main\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n"
+        )
+    );
+}
+
 #[test]
 fn reports_a_nested_module_named_like_a_standard_module_it_extends() {
     assert_eq!(
