@@ -29,7 +29,7 @@ use super::{
     member, operator_context, predicate_node, reference_of, unsupported,
 };
 use crate::footprint::Footprint;
-use crate::machine::{Eval, Machine, Printed, Prints};
+use crate::machine::{Eval, Machine, Member, Parts, Printed, Prints};
 use crate::search::{HostRead, JsonFiles};
 
 // Operators whose results depend on more than their arguments, or that print.
@@ -2244,10 +2244,44 @@ impl Compiler<'_> {
         // TLC evaluates both operands, left first, before it tests either for an element
         // (OPCODE_cup, OPCODE_cap, OPCODE_setdiff), so a test that one operand decides runs the
         // other's parts too.
-        let operand_parts = self.once_a_round(vec![Self::parts_of(left), Self::parts_of(right)]);
+        // TLC then reduces the operation where an operand is Reducible, testing one operand's
+        // elements in the other, so a test of the result runs those tests too.
+        let reduction = self.reduction(
+            name,
+            left,
+            right,
+            (is_reducible(left), is_reducible(right)),
+            has_effect,
+        );
+        let operand_parts =
+            self.once_a_round(vec![Self::parts_of(left), Self::parts_of(right), reduction]);
         let lazy_member = if is_lazy(left) || is_lazy(right) {
             let (left_member, right_member) = (self.member_test(left), self.member_test(right));
             let tested = match name {
+                // TLC tests the set enumeration it reduced an intersection or a difference to
+                // (`Reducible.cap` and `diff`): the elements of the Reducible operand, the left
+                // one where both are, that the other holds or lacks.
+                "\\cap" | "\\" if is_reduced => {
+                    let (enumerated, held_by) =
+                        if name == "\\cap" && is_reducible(left) != Some(true) {
+                            (right.eval.clone(), left_member)
+                        } else {
+                            (left.eval.clone(), right_member)
+                        };
+                    let is_kept_where_held = name == "\\cap";
+                    member(move |machine, element| {
+                        let set = evaluate_set(machine, &enumerated, "expected a set")?;
+                        let mut kept = Vec::new();
+                        for index in 0..machine.store.size_of(set) {
+                            let held = machine.store.element_at(set, index);
+                            if held_by(machine, held)? == is_kept_where_held {
+                                kept.push(held);
+                            }
+                        }
+                        let reduced = machine.store.set_of_sorted(&kept);
+                        machine.store.is_member(element, reduced)
+                    })
+                }
                 // TLC makes the union of a Reducible set and another with the Reducible one first,
                 // and SetCupValue.member asks its first set first, so comparing the element with
                 // that set's elements fails first. It builds the union of two Reducible sets
@@ -2331,18 +2365,12 @@ impl Compiler<'_> {
                 "\\cap" => Operator::Intersection,
                 _ => Operator::Difference,
             };
-            // TLC evaluates both operands as it builds the set (SetCupValue, SetCapValue,
-            // SetDiffValue), whatever it tests later.
-            let (left_parts, right_parts) = (Self::parts_of(left), Self::parts_of(right));
             return Ok(Some(Compiled {
                 is_normalized: false,
                 infinite: Some("Combined"),
                 is_reducible: is_reduced,
                 member: lazy_member,
-                parts: Some(super::parts(move |machine| {
-                    left_parts(machine)?;
-                    right_parts(machine)
-                })),
+                parts: lazy_parts,
                 reference: combine_references(&[left, right], move |machine, mut sets| {
                     let right = sets.pop().expect("the right set");
                     let left = sets.pop().expect("the left set");
@@ -2426,6 +2454,95 @@ impl Compiler<'_> {
             is_reducible: is_reduced,
             ..binary(left, right, operation, true, false)
         }))
+    }
+
+    // The tests TLC makes as it reduces `left name right` (`Tool`'s OPCODE_cup, OPCODE_cap and
+    // OPCODE_setdiff): `Reducible.cap` and `diff` test each element of a set enumeration or an
+    // interval in the other operand, and `cup` each element of another one in itself unless it is
+    // empty. Where the compiled operand doesn't tell whether TLC's value is Reducible
+    // (`reducible`), the tests of each case run, since a test that fails stops the engine and TLC
+    // makes no test the engine doesn't.
+    fn reduction(
+        &self,
+        name: &str,
+        left: &Compiled,
+        right: &Compiled,
+        reducible: (Option<bool>, Option<bool>),
+        has_effect: bool,
+    ) -> Parts {
+        // Each run of tests: the operand whose elements TLC tests, whether its value is known to
+        // be Reducible, the other operand's test, and the operand that makes no test where it is
+        // empty.
+        let mut runs: Vec<(Eval, bool, Member, Option<Eval>)> = Vec::new();
+        let (left_reducible, right_reducible) = reducible;
+        match name {
+            "\\cup" => {
+                if left_reducible != Some(false) && right_reducible != Some(false) {
+                    runs.push((
+                        right.eval.clone(),
+                        right_reducible == Some(true),
+                        self.member_test(left),
+                        Some(left.eval.clone()),
+                    ));
+                }
+            }
+            _ => {
+                if left_reducible != Some(false) {
+                    runs.push((
+                        left.eval.clone(),
+                        left_reducible == Some(true),
+                        self.member_test(right),
+                        None,
+                    ));
+                }
+                if name == "\\cap" && left_reducible != Some(true) && right_reducible != Some(false)
+                {
+                    runs.push((
+                        right.eval.clone(),
+                        right_reducible == Some(true),
+                        self.member_test(left),
+                        None,
+                    ));
+                }
+            }
+        }
+        if runs.is_empty() {
+            return super::parts(|_| Ok(()));
+        }
+        // The tests evaluate an operand its parts have evaluated, which an effect shows.
+        if has_effect {
+            return super::parts(|_| {
+                Err(Bail(
+                    "a set operation TLC reduces on an operand with effects",
+                ))
+            });
+        }
+        super::parts(move |machine| {
+            for (enumerated, is_reducible, tested, unless_empty) in &runs {
+                if let Some(receiver) = unless_empty {
+                    let receiver = receiver(machine)?;
+                    if machine.store.kind_of(receiver) != KIND_SET
+                        || machine.store.size_of(receiver) == 0
+                    {
+                        continue;
+                    }
+                }
+                // A value the engine holds as no set, where TLC's may be Reducible or not, is
+                // one TLC keeps lazy, which it doesn't reduce.
+                let set = enumerated(machine)?;
+                if machine.store.kind_of(set) != KIND_SET {
+                    if *is_reducible {
+                        return Err(Bail("a set TLC reduces that the engine holds as no set"));
+                    }
+                    continue;
+                }
+                for index in 0..machine.store.size_of(set) {
+                    let element = machine.store.element_at(set, index);
+                    tested(machine, element)?;
+                }
+            }
+            Ok(())
+        })
     }
 }
 // ToString(v): TLC's text of v built as `construction` says (`write_constructed`), as a string

@@ -1,7 +1,9 @@
-// Records TLC's answer to each cell of tests/union-grid.ts in tests/fixtures/union-grid/tlc.json:
-// what the assumptions print, then the error TLC reports as it checks them, or success.
+// Records TLC's answer to each cell of the grids of tests/union-grid.ts in
+// tests/fixtures/union-grid: what the assumptions print, then the error TLC reports as it checks
+// them, or success. The grid of unions goes in tlc.json and the grid of reduced operations in
+// reductions.json; --only names one of the two files to record it alone.
 //
-// Usage: TLA2TOOLS_JAR=path bun scripts/run.ts record-union-grid
+// Usage: TLA2TOOLS_JAR=path bun scripts/run.ts record-union-grid [--only reductions.json]
 
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -9,7 +11,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { getUnionGrid } from "../tests/union-grid";
+import { getReductionGrid, getUnionGrid, type GridCell } from "../tests/union-grid";
 
 export interface RecordedAnswer {
   status: string;
@@ -50,30 +52,38 @@ const getAnswer = (output: string): RecordedAnswer => {
     : { status: "other", headline: report.join("\n"), prints };
 };
 
-const cells = getUnionGrid();
-const answers: Record<string, RecordedAnswer> = {};
-let next = 0;
-const work = async () => {
-  const directory = mkdtempSync(join(tmpdir(), "union-grid-"));
-  while (next < cells.length) {
-    const cell = cells[next++];
-    writeFileSync(join(directory, "M.tla"), cell.source);
-    writeFileSync(join(directory, "M.cfg"), cell.config);
-    const result = await run(
-      "java",
-      ["-cp", jarPath, "tlc2.TLC", "-nowarning", "-workers", "1", "M"],
-      { cwd: directory },
-    ).catch((error: { stdout: string }) => error);
-    answers[cell.id] = getAnswer(result.stdout);
-    if (Object.keys(answers).length % 200 === 0) {
-      console.log(`${Object.keys(answers).length} of ${cells.length}`);
+const record = async (cells: GridCell[], fixture: string) => {
+  const answers: Record<string, RecordedAnswer> = {};
+  let next = 0;
+  const work = async () => {
+    const directory = mkdtempSync(join(tmpdir(), "union-grid-"));
+    while (next < cells.length) {
+      const cell = cells[next++];
+      writeFileSync(join(directory, "M.tla"), cell.source);
+      writeFileSync(join(directory, "M.cfg"), cell.config);
+      const result = await run(
+        "java",
+        ["-cp", jarPath, "tlc2.TLC", "-nowarning", "-workers", "1", "M"],
+        { cwd: directory },
+      ).catch((error: { stdout: string }) => error);
+      answers[cell.id] = getAnswer(result.stdout);
+      if (Object.keys(answers).length % 200 === 0) {
+        console.log(`${Object.keys(answers).length} of ${cells.length}`);
+      }
     }
-  }
-};
-await Promise.all(Array.from({ length: availableParallelism() }, work));
+  };
+  await Promise.all(Array.from({ length: availableParallelism() }, work));
 
-const fixtures = join(import.meta.dirname, "../tests/fixtures/union-grid");
-mkdirSync(fixtures, { recursive: true });
-const sorted = Object.fromEntries(cells.map((cell) => [cell.id, answers[cell.id]]));
-writeFileSync(join(fixtures, "tlc.json"), `${JSON.stringify(sorted, null, 2)}\n`);
-console.log(`Recorded ${cells.length} cells`);
+  const fixtures = join(import.meta.dirname, "../tests/fixtures/union-grid");
+  mkdirSync(fixtures, { recursive: true });
+  const sorted = Object.fromEntries(cells.map((cell) => [cell.id, answers[cell.id]]));
+  writeFileSync(join(fixtures, fixture), `${JSON.stringify(sorted, null, 2)}\n`);
+  console.log(`Recorded ${cells.length} cells in ${fixture}`);
+};
+
+const onlyIndex = process.argv.indexOf("--only");
+const only = onlyIndex === -1 ? undefined : process.argv[onlyIndex + 1];
+if (only === undefined || only === "tlc.json") await record(getUnionGrid(), "tlc.json");
+if (only === undefined || only === "reductions.json") {
+  await record(getReductionGrid(), "reductions.json");
+}

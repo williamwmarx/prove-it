@@ -505,7 +505,7 @@ where TLC answers TRUE (found by #327's adversarial round; each wrong on main al
 | `{3, 1, 2} = {1, "a"}` | `Attempted to compare string "a" with non-string:\n1` | `Attempted to check equality of the set {1, 2, 3} with the value:\n{1, "a"}` |
 | `Cardinality(UNION {{2, 1}, {"a"}})` | `Attempted to check equality of integer 2 with non-integer:\n"a"` | `Attempted to compare integer 1 with non-integer:\n"a"` |
 | `1 \in UNION {{"a"}, {2}}` | `Attempted to check equality of string "a" with non-string:\n2` | `Attempted to compare integer 2 with non-integer:\n"a"` |
-| `1 \in (DOMAIN [a \|-> 0]) \cup {1}`, where TLC holds a record's domain unnormalized (`RecordValue.getDomain`) and a function's normalized | `Attempted to check equality of string "a" with non-string:\n1` | `Attempted to compare integer 1 with non-integer:\n"a"` |
+| `1 \in (DOMAIN [a \|-> 0]) \cup {1}`, where TLC holds a record's domain unnormalized (`RecordValue.getDomain`) and a function's normalized, and likewise each union, intersection or difference of a record's domain with a set of integers, alone or held in a union (`unit/union-grid.test.ts` pins 149 such cells of its grid of reduced operations) | `Attempted to check equality of string "a" with non-string:\n1` | `Attempted to compare integer 1 with non-integer:\n"a"` |
 | Membership in a set of values TLC fails to compare, alone or in a union (`unit/union-grid.test.ts` pins 416 such cells, each the same on main): `3 \in SUBSET {1, "a"}`, `3 \in [a : {1, "a"}]`, `3 \in {1, "a"} \X {1}`, `3 \in [{1} -> {1, "a"}]`, `3 \in {1, "a"} \cap {1, "a"}`, `3 \in {1, "a"} \cup {1, 2}` | the comparison normalizing the set fails at, such as `Attempted to compare string "a" with non-string:\n1` | the element's kind check, such as `Attempted to check if non-record\n3\nis in the set of records:…` |
 
 The last three under AssertError, with TLC's message, answer FALSE where TLC answers TRUE.
@@ -992,6 +992,13 @@ Checks the binary answered and now declines, because the answer matched TLC only
     answered from the left operand alone.
   - 36 cells with an operand that prints or sets a register: building an operand and then testing
     it would evaluate it twice, so the engine stops before it evaluates either.
+  - TLC reduces a `\cup`, `\cap` or `\` of a set enumeration or an interval as it evaluates it,
+    testing one operand's elements in the other (`Reducible.cup`, `cap` and `diff`), so a
+    membership in the result, or in a set that holds it, runs those tests too, and stops where an
+    operand has effects, since they evaluate it again. The grid of reduced operations in
+    `unit/union-grid.test.ts` (1,944 cells: each operation on two of nine operands, alone and
+    held in unions another operand answers) has 0 wrong verdicts, against 242 on main; 10 of its
+    cells decline, each a difference from a record's domain that declined on main too.
 
 - **Strings made during the search** (the string-order change; check-log on the same log, 1386
   native on main, 1384 after): `unit/check.test.ts:704` and `unit/parallel.test.ts:18` with

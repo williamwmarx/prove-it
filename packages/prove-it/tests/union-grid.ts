@@ -177,3 +177,56 @@ export const getUnionGrid = (): GridCell[] =>
       );
     }),
   );
+
+// Operands of an inner set operation, each of a kind TLC reduces or keeps lazy: set enumerations
+// in and out of order, an interval, the empty set, a set TLC only tests, a power set, a set of
+// another kind of value, a domain, and a constant the configuration binds to a set.
+const REDUCED_OPERANDS = [
+  "{1}",
+  "{2, 1}",
+  "1..2",
+  "{}",
+  "Nat",
+  "SUBSET {1}",
+  '{"a"}',
+  "DOMAIN [a |-> 0]",
+  "KS",
+];
+
+// What holds the inner operation: nothing, or unions that could answer from another operand
+// without making it.
+const REDUCTION_HOLDERS: [string, (inner: string) => string][] = [
+  ["alone", (inner) => inner],
+  ["before-Nat", (inner) => `(${inner}) \\cup Nat`],
+  ["after-Nat", (inner) => `Nat \\cup (${inner})`],
+  ["under-two", (inner) => `((${inner}) \\cup Nat) \\cup {1}`],
+];
+
+/**
+ * A grid of memberships in a union, an intersection or a difference TLC may reduce as it
+ * evaluates it (`Reducible.cup`, `cap` and `diff`), alone and held in unions that another operand
+ * answers. scripts/record-union-grid.ts records TLC's answer to each in
+ * tests/fixtures/union-grid/reductions.json.
+ */
+export const getReductionGrid = (): GridCell[] =>
+  ["\\cup", "\\cap", "\\"].flatMap((operator) =>
+    REDUCED_OPERANDS.flatMap((left) =>
+      REDUCED_OPERANDS.flatMap((right) =>
+        REDUCTION_HOLDERS.flatMap(([holder, hold]) =>
+          ["1", "3"].map((element) => ({
+            id: `(${left}) ${operator} (${right}) ${holder} ${element}`,
+            source: [
+              "---- MODULE M ----",
+              "EXTENDS Integers, Sequences, FiniteSets, TLC",
+              "CONSTANT KS, KI, KM, KF",
+              "F == 1 :> 1 @@ 2 :> 2",
+              `ASSUME ${element} \\in ${hold(`(${left}) ${operator} (${right})`)}`,
+              "====",
+              "",
+            ].join("\n"),
+            config: CONFIG,
+          })),
+        ),
+      ),
+    ),
+  );
