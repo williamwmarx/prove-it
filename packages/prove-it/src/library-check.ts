@@ -26,12 +26,12 @@ export interface CheckOptions extends Omit<SearchOptions, "onProgress"> {
 // The standard modules the TypeScript check reads as its own, never asking loadModule for them.
 const BUILT_IN_MODULES = new Set(["Naturals", "Integers", "Sequences", "FiniteSets", "TLC"]);
 
-// Why the engine as WebAssembly declines a recursion its stack doesn't hold: it trapped
-// (src/engine/wasm.ts), or stopped at its bound (machine.rs).
-const WEBASSEMBLY_STACK_REASONS = [
-  "WebAssembly ran out of stack",
-  "the engine stopped: recursion deeper than WebAssembly's stack holds",
-];
+// Whether the engine as WebAssembly declined a recursion its stack doesn't hold: it trapped
+// (src/engine/wasm.ts), or stopped at its bound (WEBASSEMBLY_TOO_DEEP in machine.rs), as it
+// searched or as it started.
+const isWebAssemblyStack = (reason: string) =>
+  reason === "WebAssembly ran out of stack" ||
+  reason.endsWith(": recursion deeper than WebAssembly's stack holds");
 
 // TLC's file name for the spec: its module's.
 const getModuleName = (source: string) => /^\s*-{4,}\s*MODULE\s+(\w+)\s*-{4,}/m.exec(source)?.[1];
@@ -114,7 +114,7 @@ const checkWithEngine = (options: CheckOptions) => {
     read,
   );
   if (result.kind === "declined") {
-    if (WEBASSEMBLY_STACK_REASONS.includes(result.reason)) throw new WebAssemblyStackError();
+    if (isWebAssemblyStack(result.reason)) throw new WebAssemblyStackError();
     reportEngine(`native: check declined: ${result.reason}`);
     return undefined;
   }

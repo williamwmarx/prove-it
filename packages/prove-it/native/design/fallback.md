@@ -811,7 +811,8 @@ check. The tests of the interpreter's own results run `checkParsed`, the TypeScr
   - WebAssembly fails to compile;
   - or `dist` lacks the engine.
   A browser keeps the WebAssembly engine.
-- A WebAssembly stack overflow is an error, `WebAssemblyStackError`, in the library's check.
+- A WebAssembly stack overflow is an error, `WebAssemblyStackError`, in the library's check. The
+  PR that removes `PROVE_IT_ENGINE=0` drops its message's clause that names it.
 - `-dump`, `-continue` and periodic configs are checked natively. TLC 1.7.4's output is retired.
 - The library prints what the binary prints. Today they differ only where the library hands over.
 

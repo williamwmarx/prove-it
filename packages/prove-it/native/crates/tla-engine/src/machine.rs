@@ -66,10 +66,13 @@ const MAXIMUM_RECURSION: u32 = if cfg!(target_arch = "wasm32") {
     20_000
 };
 
-/// Why the engine stops at that bound: as WebAssembly, the library throws `WebAssemblyStackError`
-/// for it (`src/library-check.ts`).
+/// Why the engine as WebAssembly stops at that bound, for which the library throws
+/// `WebAssemblyStackError` (`src/library-check.ts`).
+pub const WEBASSEMBLY_TOO_DEEP: &str = "recursion deeper than WebAssembly's stack holds";
+
+/// Why the engine stops at that bound.
 const TOO_DEEP: &str = if cfg!(target_arch = "wasm32") {
-    "recursion deeper than WebAssembly's stack holds"
+    WEBASSEMBLY_TOO_DEEP
 } else {
     "recursion too deep"
 };

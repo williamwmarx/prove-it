@@ -271,7 +271,7 @@ export class EngineUnavailableError extends Error {
 export class WebAssemblyStackError extends Error {
   constructor() {
     super(
-      "The WebAssembly engine ran out of stack: the spec recurses deeper than the host's stack holds there, about 1,000 calls of a recursive operator. Check it with the native addon or the prove-it binary, which recurse to 20,000 calls, or set PROVE_IT_ENGINE=0 to check with the interpreter.",
+      "The WebAssembly engine ran out of stack: the spec recurses or nests deeper than the host's stack holds there, about 1,000 calls of a recursive operator. Check it with the native addon or the prove-it binary, which recurse to 20,000 calls, or set PROVE_IT_ENGINE=0 to check with the interpreter.",
     );
     this.name = "WebAssemblyStackError";
   }

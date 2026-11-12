@@ -220,8 +220,9 @@ describe("the native engine", () => {
   );
 
   // The engine as WebAssembly stops a recursion at 1,000 calls, where the addon and the binary go on
-  // to 20,000 (fallback.md, "WebAssembly's stack"): the library's check answers this model with the
-  // addon, and rejects it with WebAssemblyStackError as WebAssembly.
+  // to 20,000 (fallback.md, "WebAssembly's stack"): the library's check answers these models with
+  // the addon, and rejects them with WebAssemblyStackError as WebAssembly, whether the engine stops
+  // as it searches, as it starts on a constant invariant, or under -continue.
   it.if(WASM !== undefined && ADDON !== undefined)(
     "rejects with WebAssemblyStackError a recursion the addon checks",
     () => {
@@ -232,21 +233,34 @@ describe("the native engine", () => {
           script,
           [
             `import { check, WebAssemblyStackError } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, "../../src/index.ts")).href)};`,
-            'const source = "---- MODULE Deep ----\\nEXTENDS Naturals\\nRECURSIVE F(_)\\nF(n) == IF n = 0 THEN 0 ELSE 1 + F(n - 1)\\nVARIABLE x\\nInit == x = 0\\nNext == x < 1 /\\\\ x\' = F(1500) - 1499\\n====";',
-            'const answer = await check({ source, config: "INIT Init\\nNEXT Next\\nCHECK_DEADLOCK FALSE" }).then(',
-            "  (result) => [result.status, result.distinctStates],",
-            "  (error) => [error instanceof WebAssemblyStackError, error.message],",
-            ");",
-            "console.log(JSON.stringify(answer));",
+            'const header = "---- MODULE Deep ----\\nEXTENDS Naturals\\nRECURSIVE F(_)\\nF(n) == IF n = 0 THEN 0 ELSE 1 + F(n - 1)\\nVARIABLE x\\nInit == x = 0\\n";',
+            "const models = [",
+            '  [header + "Next == x < 1 /\\\\ x\' = F(1500) - 1499\\n====", "INIT Init\\nNEXT Next\\nCHECK_DEADLOCK FALSE", false],',
+            '  [header + "Next == UNCHANGED x\\nInv == F(1500) = 1500\\n====", "INIT Init\\nNEXT Next\\nINVARIANT Inv", false],',
+            '  [header + "Next == x < 1 /\\\\ x\' = F(1500) - 1499\\n====", "INIT Init\\nNEXT Next\\nCHECK_DEADLOCK FALSE", true],',
+            "];",
+            "const answers = [];",
+            "for (const [source, config, isContinued] of models) {",
+            "  answers.push(await check({ source, config, isContinued }).then(",
+            "    (result) => [result.status, result.distinctStates],",
+            "    (error) => [error instanceof WebAssemblyStackError, error.message],",
+            "  ));",
+            "}",
+            "console.log(JSON.stringify(answers));",
           ].join("\n"),
         );
         const runDeep = (env: Record<string, string | undefined>) =>
           spawnSync("bun", [script], { encoding: "utf8", env: { ...process.env, ...env } }).stdout;
         expect(runDeep({ PROVE_IT_ENGINE_WASM: undefined, PROVE_IT_ENGINE_ADDON: ADDON })).toBe(
-          `${JSON.stringify(["success", 2])}\n`,
+          `${JSON.stringify([
+            ["success", 2],
+            ["success", 1],
+            ["success", 2],
+          ])}\n`,
         );
+        const rejected = [true, new WebAssemblyStackError().message];
         expect(runDeep({ PROVE_IT_ENGINE_WASM: WASM })).toBe(
-          `${JSON.stringify([true, new WebAssemblyStackError().message])}\n`,
+          `${JSON.stringify([rejected, rejected, rejected])}\n`,
         );
       } finally {
         rmSync(directory, { recursive: true, force: true });
