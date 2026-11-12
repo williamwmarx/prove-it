@@ -15,6 +15,7 @@ import {
 import { getAtPrefix, getLocusText } from "../obligations/expression";
 import { format, renderDoc } from "../obligations/format";
 import type { LineRange } from "../obligations/generate";
+import { findPragma } from "../obligations/pragma";
 import { printSequent } from "../obligations/printer";
 import {
   encodeProofTheory,
@@ -245,7 +246,7 @@ const getSequenceLength = (bytes: Uint8Array, index: number) => {
 // tlapm reads a module's bytes. Read with U+FFFD for each byte that isn't UTF-8, two different
 // strings would be one, and a theorem that they are equal proved. So each such byte reads as a
 // character the file doesn't hold, and where the lexer the obligations are read with puts one in a
-// token, or a pragma holds one, it declines; elsewhere, as in a comment or past the module's end,
+// token, or a pragma the obligations read holds one, it declines; elsewhere, as in a comment or past the module's end,
 // each reads as a U+FFFD of its own, so that a column counts it once, as tlapm's, which count bytes,
 // do.
 class NotUtf8Error extends Error {
@@ -270,17 +271,22 @@ const decodeEach = (bytes: Uint8Array, replacement: string) => {
   return parts.join("");
 };
 
-const isInPragma = (text: string, sentinel: string, end: number) => {
-  for (
-    let open = text.indexOf("(*{");
-    open !== -1 && open < end;
-    open = text.indexOf("(*{", open + 3)
-  ) {
-    const close = text.indexOf("}*)", open + 3);
-    if (text.slice(open, close === -1 ? end : close).includes(sentinel)) return true;
-  }
-  return false;
-};
+// Whether a pragma holds the sentinel: the obligations read one where it opens after a token, past
+// blanks and line ends (findPragma), up to its `}*)`.
+const isInPragma = (lines: string[], tokens: Token[], sentinel: string) =>
+  tokens.some((token) => {
+    if (token.kind === "ModuleEnd" || token.kind === "End") return false;
+    const open = findPragma(lines, { line: token.line - 1, column: token.endColumn });
+    if (open === undefined) return false;
+    for (let index = open.line; index < lines.length; index++) {
+      const start = index === open.line ? open.column : 0;
+      const close = lines[index].indexOf("}*)", start);
+      if (lines[index].slice(start, close === -1 ? undefined : close).includes(sentinel))
+        return true;
+      if (close !== -1) return false;
+    }
+    return false;
+  });
 
 const readModule = (path: string) => {
   const bytes = readFileSync(path);
@@ -298,16 +304,9 @@ const readModule = (path: string) => {
     if (error instanceof Error && error.message.includes(sentinel)) throw new NotUtf8Error(path);
     return text;
   }
-  const last = tokens.at(-1);
-  const lines = judged.split("\n");
-  const end =
-    last === undefined
-      ? judged.length
-      : lines.slice(0, last.line - 1).reduce((total, line) => total + line.length + 1, 0) +
-        last.endColumn;
   if (
     tokens.some((token) => `${token.text}${token.spelling ?? ""}`.includes(sentinel)) ||
-    isInPragma(judged, sentinel, end)
+    isInPragma(judged.split("\n"), tokens, sentinel)
   )
     throw new NotUtf8Error(path);
   return text;

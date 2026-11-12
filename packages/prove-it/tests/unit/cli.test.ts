@@ -1428,11 +1428,14 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   // that isn't UTF-8 there reads as it did, one U+FFFD for one byte.
   it.each([
     ["before the header", [0xe9, 0x0a], ""],
+    ["after a pragma's opening before the header", [0x28, 0x2a, 0x7b, 0x20, 0xe9, 0x0a], ""],
     ["in a line comment", [], "\\* caf\xe9\n"],
     ["in a nested comment", [], "(* (* caf\xe9 *) \xff *)\n"],
     // The lexer the obligations are read with ends a `\*` comment at a line feed alone, where
     // tlapm's ends it at a carriage return too.
     ["after a carriage return in a line comment", [], "\\* abc\r\xe9\n"],
+    ["after a pragma's opening in a line comment", [], "\\* (*{ \xe9\n"],
+    ["after a pragma's opening in a nested comment", [], "(* (*{ \xe9 }*) *)\n"],
   ])("reads a byte that isn't UTF-8 %s as tlapm skips it", (_, before, inside) => {
     const getModule = (byte: number) =>
       Buffer.concat([
