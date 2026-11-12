@@ -1906,7 +1906,8 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 Resolution::Definition(index) => {
-                    let (body, mut bound) = self.applied_definition(index, kind, scope);
+                    let (body, mut bound) =
+                        self.applied_definition(index, kind, scope, &mut HashSet::new());
                     if seen.insert((body, bound.iter().map(|&(_, may_hold)| may_hold).collect()))
                         && self.may_write_unsized(body, &mut bound, seen)
                     {
@@ -1973,12 +1974,20 @@ impl<'a> Compiler<'a> {
                 } else {
                     match name.resolution {
                         Resolution::Builtin(index) => self.builtin_name(index) == "TLCGet",
+                        // A definition met again within its own walk is a recursion, whose
+                        // value may hold anything.
                         Resolution::Definition(index) => {
-                            let (body, mut bound) = self.applied_definition(index, kind, scope);
-                            seen.insert((
-                                body,
-                                bound.iter().map(|&(_, may_hold)| may_hold).collect(),
-                            )) && self.reads_unsized_name(body, &mut bound, seen)
+                            let (body, mut bound) =
+                                self.applied_definition(index, kind, scope, seen);
+                            let key = (body, bound.iter().map(|&(_, may_hold)| may_hold).collect());
+                            if seen.contains(&key) {
+                                true
+                            } else {
+                                seen.insert(key.clone());
+                                let is_read = self.reads_unsized_name(body, &mut bound, seen);
+                                seen.remove(&key);
+                                is_read
+                            }
                         }
                         _ => false,
                     }
@@ -2018,11 +2027,14 @@ impl<'a> Compiler<'a> {
     // value may hold a set `may_hold_unsized` finds: the argument's, where the expression applies
     // the definition to arguments in `scope`. A definition passed by name may be applied to
     // anything.
+    // `walking` holds the definitions being walked for names, each with its parameters', which
+    // classifying an argument walks within.
     fn applied_definition(
         &self,
         index: Index,
         kind: &NodeKind,
         scope: &mut Vec<(TextId, bool)>,
+        walking: &mut HashSet<(NodeId, Vec<bool>)>,
     ) -> (NodeId, Vec<(TextId, bool)>) {
         let node = self.ir.definitions[index as usize];
         let definition = self.definition(node);
@@ -2039,7 +2051,7 @@ impl<'a> Compiler<'a> {
             .map(|(position, param)| {
                 let may_hold = args
                     .get(position)
-                    .is_none_or(|&arg| self.reads_unsized(arg, scope, &mut HashSet::new()));
+                    .is_none_or(|&arg| self.reads_unsized(arg, scope, walking));
                 (param.name, may_hold)
             })
             .collect();
