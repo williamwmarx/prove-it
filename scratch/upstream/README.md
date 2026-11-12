@@ -22,3 +22,24 @@ Scratch measurement data. This branch is never merged.
 
 - `results/baseline.tsv.gz`, `results/candidate.tsv.gz`: one row per run: id, class, verdict, exit, sha256 of the normalized transcript, sha256 of stderr, wall ms, decline reason.
 - `results/*.jsonl.gz`: the full raw rows (normalized transcript and stderr); they compress to about 1 MB each.
+
+## Findings (startup-guards ef8d0a55 vs main cb48b6eb)
+
+| class | baseline | candidate |
+| --- | ---: | ---: |
+| match | 35,101 | 40,712 |
+| decline | 36,363 | 30,749 |
+| wrong vs the recording | 1,360 | 1,363 |
+| noncompletion (120 s limit: tlc/engine262/{functions_and_arrays,print_sum,uncaught_type_error}) | 3 | 3 |
+
+Transitions: decline->match 5,723; match->decline 112; decline->wrong-vs-recording 4; wrong->decline 1 (operators/bag_minus/bag_minus_union#assume); decline->decline 30,636 (4,614 of them with a changed reason); match->match 34,989; wrong->wrong 1,359 (byte-identical); noncompletion 3. 10,454 runs changed class or output. No run crashed.
+
+Pinned-jar adjudication (`adjudication/`, 7,652 runs of tla2tools.jar d8fb231d):
+
+- New wrong outputs: none. Every changed run where the candidate is not a match is a decline (4,727) or equals the pinned jar (the 4 decline->wrong-vs-recording runs, a SANY precedence version gap; see `adjudication/changed-not-match-wrong-vs-recording.md`).
+- decline->match sample of 300 (seed 20261112): all 300 equal the pinned jar.
+- guard-overreach (6,795): 5,723 match, 1,072 still decline, 0 wrong (baseline: all 6,795 decline).
+- startup-wrong-cases (575): 566 decline, 0 match, 9 match the pinned jar only (recording differs), 0 wrong (baseline: 569 decline, 6 pinned-jar-only).
+- Regressions: 112 baseline matches now decline, all `#assume` runs, all with reason `an assumption that fails to evaluate: evaluating the assumption again: a startup definition that failed where TLC may fail otherwise: ...`; on all 112 the baseline output also equals the pinned jar. List in `adjudication/regressions.tsv`.
+- Pre-existing, unchanged by the branch: 553 runs differ from the pinned jar on both binaries with byte-identical output (236 exit differs, 317 text only; 296 under tlc/standard). Listed in `adjudication/report.json`.
+- `hang_postcond` is not in the upstream suite.
