@@ -2758,6 +2758,9 @@ pub(crate) fn print_small_sets(printer: &mut Printer, names: &[String]) {
 }
 
 fn print_failed_front(printer: &mut Printer, failure: &Failure, start: Instant) -> i32 {
+    if let Some(message) = &failure.missing_spec {
+        printer.note(message);
+    }
     // SpecProcessor reports an exception of SANY's with `Assert.fail(EC.TLC_PARSING_FAILED2, e)`,
     // whose message TLC words with the code again (`MP.getMessage`), before SANY finishes.
     if let Some(exception) = &failure.exception {

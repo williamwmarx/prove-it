@@ -5,16 +5,19 @@
 use std::cell::Cell;
 use std::path::Path;
 
-use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
 use tla_front::model::{
     LoweredModel, ModelOptions, ModelSources, StartupMessage, lower_front_ranking_of,
 };
-use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text_of};
+use tla_front::report::{
+    ModuleOrigin, ReportOptions, SanyText, get_missing_root_text, get_sany_text_of,
+};
 use tla_front::tlc_messages::CodedError;
+use tla_front::{TlcVersion, get_standard_module};
 
-use crate::host::{Files, Host};
+use crate::host::{FileKind, Files, Host};
 use crate::host_path::{Platform, get_stem};
+use crate::resolve::get_missing_spec_message;
 use crate::stack::on_search_stack;
 
 /// What the front end gives a run: the model to check, or where TLC stops before it searches.
@@ -25,8 +28,10 @@ pub enum Read {
 
 /// A spec TLC stops at before the search: SANY's report, then SANY's rejection of the spec, or
 /// else the warnings TLC prints before the error it reports with its code, or the exception SANY
-/// threw, which ends the report.
+/// threw, which ends the report. SANY's resolver says on standard error where it looked for a spec
+/// no file holds.
 pub struct Failure {
+    pub missing_spec: Option<String>,
     pub sany: String,
     pub warnings: Vec<StartupMessage>,
     pub error: Option<CodedError>,
@@ -102,6 +107,7 @@ pub fn read_front(
         let describe = host.get_file_describer(files);
         let sany = native_sany(
             host.platform(),
+            host.kind(spec) == FileKind::Absent,
             spec_path,
             files.main_file,
             sources.as_ref(),
@@ -114,6 +120,9 @@ pub fn read_front(
         })?;
         if sany.is_failed {
             return Ok(Read::Failed(Failure {
+                missing_spec: sources.is_none().then(|| {
+                    get_missing_spec_message(host, files.main_file, &files.directories[1..])
+                }),
                 sany: sany.text,
                 warnings: Vec::new(),
                 error: None,
@@ -148,6 +157,7 @@ pub fn read_front(
             .get_coded(is_tool)
             .ok_or("an error tla-front raises that TLC reports without a code")?;
         Ok(Read::Failed(Failure {
+            missing_spec: None,
             sany: sany.text,
             warnings,
             error: Some(coded),
@@ -189,8 +199,11 @@ fn lower(
     lower_front_ranking_of(sources, config_text, &options, &get_startup_texts)
 }
 
+/// SANY's report, or its fatal error where no file holds the spec and the jar no standard module
+/// of its name.
 fn native_sany(
     platform: Platform,
+    is_spec_absent: bool,
     spec_path: &str,
     main_file: &str,
     sources: Option<&ModelSources>,
@@ -199,15 +212,25 @@ fn native_sany(
 ) -> Result<SanyText, FrontError> {
     let root = get_stem(platform.file_name(spec_path));
     // TLC gives SANY the spec as the command line names it, without .tla, unless it's absolute.
-    let file_name = if platform.is_absolute(main_file) {
-        Some(root)
+    let name = if platform.is_absolute(main_file) {
+        root
     } else {
-        Some(main_file)
+        main_file
     };
-    let sources = sources.ok_or_else(|| FrontError::NotYet("a spec without a file".to_owned()))?;
+    let Some(sources) = sources else {
+        return if is_spec_absent && get_standard_module(root, TlcVersion::Master).is_none() {
+            Ok(SanyText {
+                text: get_missing_root_text(name, name),
+                is_failed: true,
+                exception: None,
+            })
+        } else {
+            Err(FrontError::NotYet("a spec without a file".to_owned()))
+        };
+    };
     let options = ReportOptions {
         version: TlcVersion::Master,
-        file_name,
+        file_name: Some(name),
         load_module: sources.load_module,
         describe_file,
         root_extendees,

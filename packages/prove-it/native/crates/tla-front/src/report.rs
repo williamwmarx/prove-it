@@ -632,14 +632,31 @@ pub fn get_sany_text_of(
             let parse_error = parse_error.map_or_else(String::new, |text| format!("{text}\n"));
             Ok(SanyText {
                 text: format!(
-                    "{}{parse_error}\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n",
-                    loader.lines.concat()
+                    "{}{parse_error}{}",
+                    loader.lines.concat(),
+                    get_fatal_text(name, &fatal)
                 ),
                 is_failed: true,
                 exception: None,
             })
         }
     }
+}
+
+/// What SANY prints of the spec named `name` on the command line where no file holds its root
+/// module `root`, as its resolver finds none (`SANY.frontEndParse`).
+pub fn get_missing_root_text(name: &str, root: &str) -> String {
+    get_fatal_text(
+        name,
+        &format!("Unknown location\n\nCannot find source file for module {root}"),
+    )
+}
+
+/// SANY's report of a fatal error, which it prints twice.
+fn get_fatal_text(name: &str, fatal: &str) -> String {
+    format!(
+        "\nFatal errors while parsing TLA+ spec in file {name}\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n"
+    )
 }
 
 /// What SANY prints where its generator throws on the root module, which `SANY.parse` prints
