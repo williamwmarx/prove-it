@@ -900,6 +900,11 @@ export const checkSpecs = async (
   java: JavaProperties,
   isTlcLaunch = false,
 ) => {
+  // Only the native check writes -dumpTrace's files, such as where it can't write them.
+  if (args.includes("-dumpTrace")) {
+    console.error("prove-it: not native yet: -dumpTrace");
+    return NOT_NATIVE_EXIT_CODE;
+  }
   const parsed = CHECK_COMMAND.parse(args);
   const isConfigured = parsed.has("-config");
   const specPaths = getSpecPaths(parsed);

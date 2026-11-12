@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -149,11 +149,16 @@ describe("check dumps the state graph like TLC's -dump", () => {
   });
 });
 
-const runCli = (args: string[]) =>
-  spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args], {
-    cwd: join(FIXTURES, "counter"),
+// TLC writes the trace exploration spec of Counter's deadlock beside the spec, so the spec is
+// checked in a copy of the fixture.
+const runCli = (args: string[]) => {
+  const directory = mkdtempSync(join(tmpdir(), "tla-ts-counter-"));
+  cpSync(join(FIXTURES, "counter"), directory, { recursive: true });
+  return spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args], {
+    cwd: directory,
     encoding: "utf8",
   });
+};
 
 describe("the CLI takes TLC's -dump flag", () => {
   it("adds the extension of the format to the file name", () => {

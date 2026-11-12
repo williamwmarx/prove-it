@@ -179,29 +179,6 @@ const TLC_REPORTS = [
     ],
   ],
   [
-    "SafetyProperty",
-    12,
-    [
-      "Starting... (_)",
-      "Implied-temporal checking--satisfiability problem has 1 branches.",
-      "Computing initial states...",
-      "Finished computing initial states: 1 distinct state generated at _.",
-      "Error: Temporal property Bounded was violated.",
-      "",
-      "Error: The following behavior constitutes a counter-example:",
-      "",
-      "State 1: <Initial predicate>",
-      "x = 0",
-      "",
-      "State 2: <Next line 5, col 9 to line 5, col 27 of module SafetyProperty>",
-      "x = 1",
-      "",
-      "3 states generated, 3 distinct states found, 1 states left on queue.",
-      "The depth of the complete state graph search is 3.",
-      "Finished in _ at (_)",
-    ],
-  ],
-  [
     "FailedInvariant",
     76,
     [
@@ -501,6 +478,29 @@ describe("the CLI reports results like TLC", () => {
     const result = runCli("cli-output", name);
     expect(result.status).toBe(code);
     expect(getSteadyLines(result.stdout)).toEqual([...lines, ""]);
+  });
+
+  // The engine hands the search over at a deadlock it doesn't report, and TLC prints the path of
+  // the counterexample's trace exploration spec, "Trace exploration spec path:
+  // ./SafetyProperty_TTrace__.tla", which only the native check writes.
+  it("declines SafetyProperty, whose trace exploration spec the interpreter doesn't write", () => {
+    const result = runCli("cli-output", "SafetyProperty");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toEndWith(
+      "prove-it: not native yet: the trace exploration spec of an error trace\n",
+    );
+  });
+
+  // TLC prints that the postcondition of _JsonTrace failed, with the message of the Java
+  // exception it caught, "WaterJugs.cfg/x.json (Not a directory)".
+  it("declines a -dumpTrace file it can't write", () => {
+    const result = runCli("water-jugs", "WaterJugs", [
+      "-dumpTrace",
+      "json",
+      "WaterJugs.cfg/x.json",
+    ]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("prove-it: not native yet: -dumpTrace\n");
   });
 
   it("names no temporal property when the counterexample a VIEW merges satisfies them all", () => {
