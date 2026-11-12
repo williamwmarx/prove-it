@@ -14,14 +14,15 @@ const directory = mkdtempSync(join(tmpdir(), "prove-it-stop-at-"));
 
 afterAll(() => rmSync(directory, { recursive: true, force: true }));
 
-// Specs that violate an invariant, deadlock, end in an error and succeed. TLC writes the trace
-// exploration spec of an error beside the spec, so they are checked in a copy of the fixtures.
+// Specs that violate an invariant, deadlock, end in an error and succeed, and whether TLC writes
+// the trace exploration spec of their error without -tool, which only the native check writes.
+// TLC writes it beside the spec, so they are checked in a copy of the fixtures.
 const MODELS = [
-  ["water-jugs", "WaterJugs"],
-  ["counter", "Counter"],
-  ["cli-output", "FailedInvariant"],
-  ["commit", "Commit"],
-];
+  ["water-jugs", "WaterJugs", true],
+  ["counter", "Counter", true],
+  ["cli-output", "FailedInvariant", true],
+  ["commit", "Commit", false],
+] as const;
 
 MODELS.forEach((model) =>
   cpSync(join(FIXTURES, model[0]), join(directory, model[0]), { recursive: true }),
@@ -44,6 +45,7 @@ const run = (
   });
   return {
     transcript: getTranscript(String(result.status), result.stdout, result.stderr),
+    status: result.status,
     stderr: result.stderr,
   };
 };
@@ -57,16 +59,25 @@ const getExpanded = (fixture: string, name: string) => {
 
 describe("PROVE_IT_STOP_AT", () => {
   it.each(MODELS)(
-    "hands %s over before a state and prints what it prints without",
-    (fixture, name) => {
+    "hands %s over before a state and prints what it prints without, or declines",
+    (fixture, name, isTraceSpecWritten) => {
       const expanded = getExpanded(fixture, name);
       expect(expanded).toBeGreaterThan(0);
       for (const args of [[], ["-tool"]]) {
         const expected = run(fixture, name, args).transcript;
+        const isDeclined = isTraceSpecWritten && args.length === 0;
+        expect(expected.includes("Trace exploration spec path: ")).toBe(isDeclined);
         for (const stopAt of new Set([0, 1, Math.floor(expanded / 2), expanded - 1])) {
           const stopped = run(fixture, name, args, { PROVE_IT_STOP_AT: String(stopAt) });
           expect(stopped.stderr).toContain(": stopped where PROVE_IT_STOP_AT asked\n");
-          expect(stopped.transcript).toBe(expected);
+          if (isDeclined) {
+            expect(stopped.status).toBe(1);
+            expect(stopped.stderr).toEndWith(
+              "prove-it: not native yet: the trace exploration spec of an error trace\n",
+            );
+          } else {
+            expect(stopped.transcript).toBe(expected);
+          }
         }
       }
     },
