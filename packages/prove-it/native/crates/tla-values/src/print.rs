@@ -212,6 +212,10 @@ pub enum Construction {
     /// `[x \in S |-> e]` over a set enumeration or an interval, or `k :> v`: how its keys are
     /// built, and how its values are.
     Function(Box<Construction>, Box<Construction>),
+    /// `[x \in S |-> e]` over a set TLC keeps lazy, such as `S \X T` or `SUBSET S`, which TLC
+    /// keeps lazy too (`FcnLambdaValue`) and builds as it prints, from the body's values as they
+    /// are, unnormalized: how its keys are built, and how its values are.
+    LazyFunction(Box<Construction>, Box<Construction>),
     /// `SUBSET S` (`SubsetValue`) of a set enumeration or an interval.
     Subset(Box<Construction>),
     /// `[S -> T]` (`SetOfFcnsValue`) of set enumerations or intervals.
@@ -375,7 +379,18 @@ fn write_normalized(
                 )
             })
         }
-        Construction::Function(key, value) => {
+        Construction::Function(key, value) | Construction::LazyFunction(key, value) => {
+            // TLC doesn't normalize the values of a function it keeps lazy, so a value it may
+            // have normalized otherwise prints only where both texts agree.
+            let value_normalized = match construction {
+                Construction::LazyFunction(..) if normalized == Normalized::Yes => {
+                    Normalized::Maybe
+                }
+                _ => normalized,
+            };
+            let write = |out: &mut Vec<u16>, id: Id, construction: &Construction| {
+                write_normalized(store, id, construction, value_normalized, out)
+            };
             if kind == KIND_TUPLE {
                 return join(out, tuple, &mut |out, index| {
                     write(out, store.get_range_value(id, index), value)

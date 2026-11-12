@@ -3476,6 +3476,43 @@ describe("evaluation errors match TLC", () => {
       ),
     );
   });
+
+  // TLC keeps a function over a domain that isn't a set enumeration or an interval lazy, so it
+  // applies [s \in SUBSET {1} |-> 1 \div Cardinality(s)] at {1} alone and prints 1, and prints
+  // its records as they are built.
+  it("evaluates a function over a domain TLC keeps lazy only where it is applied", async () => {
+    const source = (body: string) =>
+      `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nASSUME PrintT([b |-> 0])\n${body}\n====`;
+    await expectDeclined(
+      {
+        source: source("ASSUME PrintT([s \\in SUBSET {1} |-> 1 \\div Cardinality(s)][{1}])"),
+        config: "",
+      },
+      getAssumptionDeclined("the body of a function TLC keeps lazy, at a key it may not evaluate"),
+    );
+    const print = async (expression: string) => {
+      const prints: string[] = [];
+      const result = await checkOnEngine({
+        source: source(`ASSUME PrintT(${expression})`),
+        config: "",
+        onPrint: (text) => prints.push(text),
+      });
+      return [result.status, ...prints.slice(1)];
+    };
+    expect(
+      await Promise.all(
+        [
+          "[v \\in {0} |-> [a |-> 1, b |-> 2]]",
+          "[v \\in SUBSET {0} |-> [a |-> 1, b |-> 2]]",
+          "[v \\in {0} \\X {1} |-> [a |-> 1, b |-> 2]]",
+        ].map(print),
+      ),
+    ).toEqual([
+      ["success", "(0 :> [b |-> 2, a |-> 1])"],
+      ["success", "({} :> [a |-> 1, b |-> 2] @@ {0} :> [a |-> 1, b |-> 2])"],
+      ["success", "(<<0, 1>> :> [a |-> 1, b |-> 2])"],
+    ]);
+  });
 });
 
 describe("DOMAIN matches TLC", () => {

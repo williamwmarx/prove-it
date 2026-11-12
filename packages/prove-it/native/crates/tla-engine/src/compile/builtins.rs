@@ -746,6 +746,19 @@ impl Compiler<'_> {
                 bounds,
                 body,
             } => match bounds.as_slice() {
+                // TLC keeps a function lazy unless its domain is reducible (`Tool`'s OPCODE_fc),
+                // as a product, a power set, a set of functions or of records isn't.
+                [bound]
+                    if matches!(bound.pattern, Pattern::Name(_))
+                        && matches!(
+                            self.node(bound.set).1,
+                            NodeKind::Product(_)
+                                | NodeKind::FunctionSet { .. }
+                                | NodeKind::RecordSet(_)
+                        ) =>
+                {
+                    Construction::LazyFunction(Box::new(Construction::Held), Box::new(of(body)))
+                }
                 [bound] if matches!(bound.pattern, Pattern::Name(_)) => as_set(&bound.set)
                     .and_then(|domain| domain.of_elements().cloned())
                     .map_or(Construction::Held, |key| {

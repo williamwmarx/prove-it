@@ -3452,6 +3452,11 @@ impl<'ir> Evaluator<'ir> {
                 stack.is_frozen_before_fingerprint = stack.is_frozen;
             }
         }
+        // TLC evaluates the body of a function it keeps lazy only at the keys it applies it to
+        // (`FcnLambdaValue.apply`), which may not include the one the evaluator failed at.
+        if result.is_err() && !is_built {
+            return fail("the body of a function TLC keeps lazy, at a key it may not evaluate");
+        }
         result
     }
 
