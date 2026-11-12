@@ -3727,7 +3727,10 @@ describe("evaluation errors match TLC", () => {
           source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nC == ${constraint}\n====`,
           config: `INIT Init\nNEXT Next\n${config} C`,
         },
-        "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
+        // The engine reports a failing action constraint as TLC does.
+        config === "CONSTRAINT"
+          ? "the engine stopped: a constraint, a VIEW or an action property that fails on a successor"
+          : undefined,
       );
       return [getErrors(run.output).slice(0, 2), run.exitCode];
     };
