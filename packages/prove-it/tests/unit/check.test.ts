@@ -194,8 +194,58 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("checks membership in a union of a non-enumerable set", async () => {
+  it("checks membership in a union of a non-enumerable set against the enumerable side first", async () => {
+    expect((await checkModule('ASSUME 1 \\in Int \\cup {"none"}')).status).toBe(
+      "assumption-violation",
+    );
     expect((await checkModule("ASSUME 5 \\in UNION {Nat}")).status).toBe("success");
+  });
+
+  // TLC builds the union of two set enumerations or intervals, testing the right one's elements
+  // in the left one, and otherwise tests the one it can enumerate first (OPCODE_cup).
+  it.each([
+    [
+      '1 \\in (DOMAIN ("a" :> 0)) \\cup {1}',
+      'Attempted to compare integer 1 with non-integer:\n"a"',
+    ],
+    [
+      '1 \\in {1} \\cup (DOMAIN ("a" :> 0))',
+      'Attempted to check equality of integer 1 with non-integer:\n"a"',
+    ],
+    [
+      "1 \\in {1} \\cup (DOMAIN [a |-> 0])",
+      'Attempted to check equality of integer 1 with non-integer:\n"a"',
+    ],
+    [
+      '1 \\in (DOMAIN <<5>>) \\cup {"x"}',
+      'Attempted to check if the value:\n"x"\nis in the integer interval 1..1',
+    ],
+    [
+      '1 \\in (1..2) \\cup {"x"}',
+      'Attempted to check if the value:\n"x"\nis in the integer interval 1..2',
+    ],
+    [
+      '1 \\in ({1, 2} \\cap Nat) \\cup {"x"}',
+      'Attempted to check equality of integer 1 with non-integer:\n"x"',
+    ],
+    [
+      '{"a"} \\in {1} \\cup (SUBSET {"a"})',
+      'Attempted to check equality of integer 1 with non-integer:\n{"a"}',
+    ],
+  ])("fails as TLC does testing %s", async (assumption, message) => {
+    const result = await checkModule(`ASSUME ${assumption}`);
+    expect([result.status, result.violations[0]?.headline]).toEqual([
+      "assumption-violation",
+      `Evaluating assumption line 6, col 8 to line 6, col ${7 + assumption.length} of module M failed.\n${message}`,
+    ]);
+  });
+
+  it("tests a union with a power set, a set of records or a domain where TLC does", async () => {
+    expect((await checkModule('ASSUME 1 \\in (SUBSET {"a"}) \\cup {1}')).status).toBe("success");
+    expect((await checkModule("ASSUME 1 \\in [a : {1}] \\cup {1}")).status).toBe("success");
+    expect((await checkModule("ASSUME 3 \\in (1..2) \\cup (DOMAIN <<5, 6, 7>>)")).status).toBe(
+      "success",
+    );
   });
 
   it("defers a set operation on a value that isn't a set until it enumerates the result", async () => {
@@ -542,6 +592,15 @@ describe("check matches TLC", () => {
       "[x1 |-> 2, y |-> 3]",
       '("x\u00b2" :> 4)',
     ]);
+  });
+
+  // TLC prints "x\u0663" :> 5 as the record [x\u0663 |-> 5]: Java's Character takes the Arabic-Indic
+  // digit for a digit, which the engine doesn't know past Latin-1.
+  it("declines a key whose letters Unicode's categories decide", async () => {
+    await expectDeclined(
+      getModuleOptions('ASSUME PrintT("x\u0663" :> 5)'),
+      "printing a value whose text depends on how TLC built it",
+    );
   });
 
   it("orders and compares intervals by size and then low bound like TLC", async () => {
@@ -2883,6 +2942,27 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  // TLC sorts the record r as it compares it with itself, and prints "<<[fld2 |-> 2, fld1 |-> 1]>>",
+  // fld2 first since it interned fld2 first; a record built in place prints as written.
+  it("declines ToString of a record TLC may have sorted, and writes one built in place", async () => {
+    const options = (body: string) => ({
+      source: `---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT([fld2 |-> 0])\n${body}\n====`,
+      config: "",
+    });
+    await expectDeclined(
+      options(
+        "ASSUME PrintT(ToString(LET r == <<[fld1 |-> 1, fld2 |-> 2]>> IN IF r = r THEN r ELSE r))",
+      ),
+      getAssumptionDeclined("ToString of a record TLC may have sorted"),
+    );
+    const prints: string[] = [];
+    await checkOnEngine({
+      ...options("ASSUME PrintT(ToString(<<1, [fld1 |-> 1, fld2 |-> 2]>>))"),
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["[fld2 |-> 0]", '"<<1, [fld1 |-> 1, fld2 |-> 2]>>"']);
+  });
+
   it("declines a TLCEval argument TLC can't sort, inside an instance that substitutes or not", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
@@ -3396,6 +3476,43 @@ describe("evaluation errors match TLC", () => {
       ),
     );
   });
+
+  // TLC keeps a function over a domain that isn't a set enumeration or an interval lazy, so it
+  // applies [s \in SUBSET {1} |-> 1 \div Cardinality(s)] at {1} alone and prints 1, and prints
+  // its records as they are built.
+  it("evaluates a function over a domain TLC keeps lazy only where it is applied", async () => {
+    const source = (body: string) =>
+      `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nASSUME PrintT([b |-> 0])\n${body}\n====`;
+    await expectDeclined(
+      {
+        source: source("ASSUME PrintT([s \\in SUBSET {1} |-> 1 \\div Cardinality(s)][{1}])"),
+        config: "",
+      },
+      getAssumptionDeclined("the body of a function TLC keeps lazy, at a key it may not evaluate"),
+    );
+    const print = async (expression: string) => {
+      const prints: string[] = [];
+      const result = await checkOnEngine({
+        source: source(`ASSUME PrintT(${expression})`),
+        config: "",
+        onPrint: (text) => prints.push(text),
+      });
+      return [result.status, ...prints.slice(1)];
+    };
+    expect(
+      await Promise.all(
+        [
+          "[v \\in {0} |-> [a |-> 1, b |-> 2]]",
+          "[v \\in SUBSET {0} |-> [a |-> 1, b |-> 2]]",
+          "[v \\in {0} \\X {1} |-> [a |-> 1, b |-> 2]]",
+        ].map(print),
+      ),
+    ).toEqual([
+      ["success", "(0 :> [b |-> 2, a |-> 1])"],
+      ["success", "({} :> [a |-> 1, b |-> 2] @@ {0} :> [a |-> 1, b |-> 2])"],
+      ["success", "(<<0, 1>> :> [a |-> 1, b |-> 2])"],
+    ]);
+  });
 });
 
 describe("DOMAIN matches TLC", () => {
@@ -3562,6 +3679,8 @@ describe("name resolution matches SANY", () => {
     "One(a) == a\nf == One(UNCHANGED) /\\ One(') /\\ One(^+)",
     "K(a) == LET C(b) == a IN C(1)\nHigh(Op(_)) == Op(1)\nM(a) == INSTANCE Naturals\nA == High(K(1)!C) /\\ U1\nB == High(M(1)!+)",
     "RECURSIVE F(_)\nF(n) == n\nF(n) == n\nG == 1",
+    // SANY's errors of modules nested in nested modules, which the CLI prints as TLC does.
+    "Foo == U\n---- MODULE Middle ----\nA == V\n---- MODULE Inner ----\nRECURSIVE R(_)\nB == W\n====\nC == X\n====\nBar == Y",
   ])("declines %j, which SANY rejects", async (source) => {
     await expectDeclined(getOptions(source), "the engine stopped before it searched (exit 150)");
   });
@@ -5058,6 +5177,41 @@ describe("initial predicate and next-state relation match TLC", () => {
         "INIT Init\nNEXT Next\nCONSTRAINT C",
       ),
     ).rejects.toThrow(new TlaConfigError("The constraint of C is equal to FALSE"));
+  });
+
+  // TLC warns that P is a state-level property before it reads the constraint C and rejects it,
+  // as the CLI prints; the library throws the error, and declines where onProgress would receive
+  // the warning.
+  it("warns about a state-level property before it reads the constraints", async () => {
+    const options = {
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nP == x = 0\nC == FALSE\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY P\nCONSTRAINT C",
+    };
+    await expect(checkOnEngine(options)).rejects.toThrow(
+      new TlaConfigError("The constraint of C is equal to FALSE"),
+    );
+    await expectDeclined(
+      { ...options, onProgress: () => {} },
+      "warnings onProgress receives before an error",
+    );
+  });
+
+  it("leaves a function as it is where an EXCEPT names a key it lacks, and warns of it", async () => {
+    const options = {
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nf == [i \\in 1..2 |-> i]\nASSUME [f EXCEPT ![3] = 1] = f\nASSUME [f EXCEPT ![3] = 1][1] = 2\n====",
+      config: "",
+    };
+    const result = await checkOnEngine({ ...options, isWarningEnabled: false });
+    expect(result.status).toBe("assumption-violation");
+    expect(result.violations[0]?.headline).toBe(
+      "Assumption line 5, col 8 to line 5, col 33 of module M is false.",
+    );
+    await expectDeclined(
+      options,
+      "an assumption that fails to evaluate: evaluating the assumption again: an EXCEPT of a key the function lacks, which TLC warns of",
+    );
   });
 
   it("rejects an invariant that is not a state predicate", async () => {

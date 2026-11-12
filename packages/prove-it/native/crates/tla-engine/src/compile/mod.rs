@@ -250,6 +250,14 @@ pub struct Compiled {
     pub(crate) is_reference_exact: bool,
     /// For `SUBSET S`: S, which `\subseteq` of two power sets compares in their place.
     pub(crate) subset_base: Option<Box<Compiled>>,
+    /// For a set: whether TLC keeps it lazy, not as a set enumeration or an interval
+    /// (`Reducible`), such as SUBSET S, [S -> T], [a : S], S \X T, or the union of one with
+    /// another.
+    pub(crate) is_irreducible: bool,
+    /// For a set: whether TLC is known to hold it as a set enumeration (`Reducible`) though the
+    /// compiled set isn't one, as a model's constant, or a union, intersection or difference TLC
+    /// reduces.
+    pub(crate) is_reducible: bool,
 }
 
 impl Compiled {
@@ -376,6 +384,8 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         element_references: None,
         is_reference_exact: false,
         subset_base: None,
+        is_irreducible: false,
+        is_reducible: false,
     }
 }
 
@@ -1373,7 +1383,47 @@ impl<'a> Compiler<'a> {
     // Whether evaluating an expression may print, draw, set a TLC register, or write or read a
     // file, itself or through the definitions it names. An operator bound locally may do
     // anything.
-    fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    /// Whether evaluating an expression may have an effect, as `may_have_effect` says, in the
+    /// scope it is written in: a name the scope binds to an expression, as a LET definition or an
+    /// operator's argument is bound, may have what its expression may.
+    pub(crate) fn may_have_effect_in(
+        &self,
+        node: NodeId,
+        context: &Context,
+        seen: &mut HashSet<NodeId>,
+    ) -> bool {
+        if self.may_have_effect(node, seen) {
+            return true;
+        }
+        let mut nodes = vec![node];
+        let mut walked = HashSet::new();
+        while let Some(node) = nodes.pop() {
+            if !walked.insert(node) {
+                continue;
+            }
+            if let NodeKind::Identifier(name) = self.node(node).1
+                && name.is_local
+                && let Some(scope) = lookup(&context.scope, name.text)
+            {
+                let may = match &scope.binding {
+                    Binding::Argument(argument) => self.may_have_effect_in(
+                        argument.expression,
+                        &argument_context(argument),
+                        seen,
+                    ),
+                    Binding::Operator(_) => true,
+                    Binding::Slot(_) | Binding::Value { .. } | Binding::Recursive { .. } => false,
+                };
+                if may {
+                    return true;
+                }
+            }
+            nodes.extend(self.children(node));
+        }
+        false
+    }
+
+    pub(crate) fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         if !seen.insert(node) {
             return false;
         }
@@ -2090,6 +2140,10 @@ impl<'a> Compiler<'a> {
                 // and each set in it stream in order.
                 return match self.ir.constants[index as usize].value {
                     Some(value) => Ok(Compiled {
+                        is_reducible: matches!(
+                            self.ir.values.list[value as usize],
+                            tla_ir::Value::Set(_)
+                        ),
                         is_in_order: true,
                         are_elements_in_order: true,
                         are_elements_of_elements_in_order: true,

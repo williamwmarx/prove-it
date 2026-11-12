@@ -889,6 +889,12 @@ pub fn union(left: &Value, right: &Value) -> Evaluated<Value> {
                 Err(error) => Err(error),
             }
         }
+        // A set enumeration TLC fails to normalize is Reducible all the same, so it comes first.
+        (false, false)
+            if matches!(right, Value::Unsorted(_)) && !matches!(left, Value::Unsorted(_)) =>
+        {
+            Ok(lazy(Lazy::Cup(right.clone(), left.clone())))
+        }
         (true, false) | (false, false) => Ok(lazy(Lazy::Cup(left.clone(), right.clone()))),
         (false, true) => Ok(lazy(Lazy::Cup(right.clone(), left.clone()))),
     }

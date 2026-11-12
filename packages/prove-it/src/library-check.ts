@@ -233,6 +233,11 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       throw new TlaUnsupportedError(
         `not native yet: the engine stopped before it searched (exit ${result.exitCode})`,
       );
+    // TLC warns of the invariants and properties before it reports an error of the constraints,
+    // which onProgress would receive, and the error doesn't carry.
+    if (logged.onProgress && /^Warning: /m.test(result.out)) {
+      throw new TlaUnsupportedError("not native yet: warnings onProgress receives before an error");
+    }
     writeFiles();
     thrown.prints.forEach((text) => (logged.onPrint ?? console.log)(text));
     throw thrown.kind === "syntax"

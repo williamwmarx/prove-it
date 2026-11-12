@@ -378,7 +378,31 @@ fn lower_ranked(
                 "The configuration file did not specify the next state predicate.".to_owned(),
             ));
         }
-        check_search_config(&config, &environment, &facts, &evaluator)?;
+        // TLC warns of the invariants and the properties before it reads the constraints.
+        check_search_config(&config, &environment, &facts, &evaluator).map_err(|error| {
+            let invariants: Vec<(Rc<str>, Option<usize>)> = constant_invariants
+                .iter()
+                .flatten()
+                .map(|name| (name.clone(), None))
+                .collect();
+            let properties: Vec<Rc<str>> = properties
+                .state_level
+                .iter()
+                .map(|name| Rc::from(&**name))
+                .collect();
+            match error {
+                error @ FrontError::Config(_)
+                    if options.is_warning_enabled
+                        && !(invariants.is_empty() && properties.is_empty()) =>
+                {
+                    FrontError::Warned(
+                        get_search_warnings(&invariants, &properties),
+                        Box::new(error),
+                    )
+                }
+                error => error,
+            }
+        })?;
         // TLC searches no states of a spec without variables, which `check.ts` lowers with FALSE for
         // Init and Next.
         let model = if environment.variables.is_empty() {
