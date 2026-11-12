@@ -316,6 +316,18 @@ impl<'ir> Rebuilder<'ir> {
         Ok(std::mem::take(&mut evaluator.printed))
     }
 
+    /// Evaluates the startup's definitions as TLC does, to confirm each the search found failing
+    /// fails here too before any effect (`set_searched_failing`): the search swallows such a
+    /// failure, as TLC does, whether or not anything reads the definition, and may fail where TLC
+    /// doesn't. `Err` where the evaluator computes one, or fails only after an effect.
+    pub fn confirm_startup(&mut self) -> Result<(), Unsupported> {
+        let evaluator = self.evaluator();
+        evaluator.level = 0;
+        let confirmed = run(evaluator.compute_startup_drawing());
+        evaluator.random = None;
+        confirmed
+    }
+
     /// Evaluates again the assumption at `position` of the model's assumptions, which failed to
     /// evaluate as TLC started, after the startup's definitions, and returns TLC's report of it
     /// (`checkAssumptions`), with what the assumptions before it printed and what it printed

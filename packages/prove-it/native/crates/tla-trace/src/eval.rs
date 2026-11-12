@@ -2320,8 +2320,16 @@ impl<'ir> Evaluator<'ir> {
                 // TLC warns as it goes on, which the evaluator doesn't print.
                 Err(error) if error.reason == EXCEPT_OF_MISSING_KEY => return Err(error),
                 Err(_) => {
+                    let is_unaffected = effects(self) == before;
+                    // The search found it failing before any effect, which the evaluator must
+                    // too, as TLC evaluates it again at each use.
+                    if !is_unaffected && self.searched_failing.contains(&node) {
+                        return fail(
+                            "a startup definition the search found failing that fails here after an effect",
+                        );
+                    }
                     if ir.model.startup.definitions.contains(&index)
-                        && effects(self) == before
+                        && is_unaffected
                         && !self.may_reach(self.definition(node).body, UNSEEN_EFFECTS)
                     {
                         self.failed_startup.insert(node);

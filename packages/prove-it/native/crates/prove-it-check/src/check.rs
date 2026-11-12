@@ -692,8 +692,24 @@ impl Reporter for Relay<'_> {
         }
     }
 
+    // The search swallowed each startup definition it found failing, as TLC does, which the trace
+    // evaluator confirms TLC fails on too, whether or not anything reads the definition.
     fn startup_failed(&mut self, failed: &[bool]) {
         self.failed_startup = failed.to_vec();
+        if !failed.contains(&true) {
+            return;
+        }
+        let confirmed = Rebuilder::new(self.ir).and_then(|mut rebuilder| {
+            rebuilder.set_workers(self.workers);
+            rebuilder.set_searched_failing(failed);
+            rebuilder.confirm_startup()
+        });
+        if let Err(Unsupported(reason)) = confirmed {
+            self.is_declined = true;
+            let _ = self.sender.send(Event::Declined(format!(
+                "a startup definition that fails: {reason}"
+            )));
+        }
     }
 
     fn startup_done(&mut self) {
