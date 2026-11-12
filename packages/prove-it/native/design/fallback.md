@@ -395,6 +395,21 @@ Nothing reaches these liveness declines, so they stay declines until a test or a
 - uncounted branches;
 - every decline of atoms that read or set TLC's registers.
 
+One corpus model stops at an atom the engine doesn't answer: MisraReachability's MCParReach,
+whose `PROPERTY Refines` is `R!Spec`, with `R == INSTANCE Reachable WITH vroot <- vrootBar, pc <-
+pcBar`. The engine doesn't compile the action atom of `R!Spec`, whose `\E v \in vroot` enumerates
+the substitute `vrootBar == vroot \cup UNION {toVroot[i] : i \in Procs}` read in the INSTANCE's
+scope: a set TLC keeps lazy, of which the compiled substitute keeps no reference (`enumerating a
+set TLC keeps lazy (vrootBar@ParReach: \cup at line 0)`). An atom the engine doesn't answer is one
+TLC may fail at as it adds the initial state, so the search stops there, and replaying the atom
+finds no failure: the binary and the library decline it ("the engine stopped: an atom of the
+temporal properties that may fail to evaluate: evaluating the failure again: it didn't fail"),
+where TLC checks it (747 states generated, 393 distinct). Written in the root module as
+`R!Init /\ [][R!Next]_R!vars /\ WF_R!vars(R!Next)`, the property is native: TLC and the binary
+both fail there ("In evaluation, the identifier vroot is either undefined or not an operator.").
+Winning it back takes compiling a substitute's set with its lazy reference where an atom reads it
+in an INSTANCE's scope.
+
 #### Action constraints that fail to evaluate
 
 An ACTION_CONSTRAINT that fails to evaluate on a step is native: TLC throws out of
