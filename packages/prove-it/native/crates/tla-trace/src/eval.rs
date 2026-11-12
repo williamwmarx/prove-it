@@ -3529,7 +3529,10 @@ impl<'ir> Evaluator<'ir> {
             function,
             Value::Set(_) | Value::Interval(..) | Value::Unsorted(_)
         ) {
-            return fail("applied a set as a function");
+            return fail(format!(
+                "applied a non-function: {}",
+                format_value(&function)
+            ));
         }
         let argument = argument(self)?;
         if let Value::Lambda(lambda) = &function {
