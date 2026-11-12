@@ -38,17 +38,20 @@ const run = async (source: string, config: string, engine: string): Promise<Run>
   }
 };
 
-// The native check's run and the TypeScript check's, of a module M of the body.
+// The native check's run and the TypeScript check's, of a module M of the body. With the engine
+// off the TypeScript check reports what it printed as it searched, not what it printed of a trace
+// (fallback.md, "Interpreter limits"): `searchPrinted` where that differs from the native check's.
 const runBoth = async (
   body: string,
   config: string,
+  searchPrinted?: string[],
   source = `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\n${body}\n====`,
 ) => {
   const native = await run(source, config, "debug");
   const typeScript = await run(source, config, "0");
   expect(native.isNative).toBe(true);
   expect(native.result).toEqual(typeScript.result);
-  expect(native.printed).toEqual(typeScript.printed);
+  expect(typeScript.printed).toEqual(searchPrinted ?? native.printed);
   return native;
 };
 
@@ -64,8 +67,11 @@ describe("check's result", () => {
         "Inv == x < 1",
       ].join("\n"),
       "CONSTANTS a = a b = b\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      ["0"],
     );
-    expect(run.printed).toEqual(["0"]);
+    // TLC prints 0 as it searches, then as it rebuilds the trace, before its second state and
+    // after it.
+    expect(run.printed).toEqual(["0", "0", "0"]);
     expect(run.result.status).toBe("invariant-violation");
     expect([run.result.generatedStates, run.result.distinctStates, run.result.depth]).toEqual([
       2, 2, 2,
@@ -105,6 +111,7 @@ describe("check's result", () => {
     const run = await runBoth(
       "",
       readFileSync(join(directory, "Github710d.cfg"), "utf8"),
+      undefined,
       readFileSync(join(directory, "Github710d.tla"), "utf8"),
     );
     expect(run.result.status).toBe("deadlock");
@@ -127,6 +134,7 @@ describe("check's result", () => {
     const run = await runBoth(
       "",
       readFileSync(join(directory, "Lazy.cfg"), "utf8"),
+      undefined,
       readFileSync(join(directory, "Lazy.tla"), "utf8"),
     );
     const states = run.result.violations[0].states;

@@ -175,7 +175,7 @@ pub fn print_failure(
     // before the state (`printTrace`).
     if let Some(first) = report.states.first() {
         for line in &first.output {
-            printer.line(line);
+            printer.printed(line);
         }
         printer.print(
             code::BEHAVIOR_UP_TO_THIS_POINT,
@@ -185,7 +185,7 @@ pub fn print_failure(
         for (position, step) in report.states.iter().enumerate() {
             if position > 0 {
                 for line in &step.output {
-                    printer.line(line);
+                    printer.printed(line);
                 }
             }
             printer.state(position + 1, &step.label, step.variables.clone());
@@ -233,7 +233,7 @@ pub fn print_failure(
         );
     }
     for line in &report.after {
-        printer.line(line);
+        printer.printed(line);
     }
     print_postcondition_failure(printer, ir, report.postconditions.as_ref());
     match &failure.fingerprint {
