@@ -91,6 +91,21 @@ describe("prove follows tlapm's default method", () => {
     ]);
   });
 
+  // Two different lone surrogates, which the engine would read as the same U+FFFD, so that the
+  // axiom that the two strings differ would contradict itself and prove both.
+  it.each(["=", "#"])(
+    "proves neither string %s the other where each is a lone surrogate",
+    async (operator) => {
+      const result = await prove({
+        source: `---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM "\uD800" ${operator} "\uDC00" BY SMT\n====\n`,
+      });
+      expect(result.obligations).toMatchObject([
+        { status: "failed", reason: "smt failed: smt declined: the text holds a lone surrogate" },
+        { status: "trivial" },
+      ]);
+    },
+  );
+
   it("needs tlapm on the PATH for the tlapm backend", async () => {
     process.env.PATH = "";
     await expect(proveFixture("HourClock_proof", { backend: "tlapm" })).rejects.toThrow(

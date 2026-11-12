@@ -94,10 +94,11 @@ fn checks_as_tlc_does_by_default_where_it_records_the_trace() {
 }
 
 #[test]
-fn declines_a_counterexample_where_tlc_records_the_trace() {
-    // TLC writes the trace's file for any counterexample, compressed with Java's Deflater, which
-    // the binary doesn't yet.
-    let spec = "---- MODULE Viol ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x > 0\n====\n";
+fn writes_the_trace_file_of_a_counterexample() {
+    // TLC writes the trace's file for any counterexample, gzipped, beside the trace exploration
+    // spec for a trace of two states or more. Its tokens are the binary's own, so it is checked
+    // by what TLC's -loadTrace rebuilds from it (scripts/differential.ts, --modes te).
+    let spec = "---- MODULE Viol ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 2\n====\n";
     let (output, directory) = run_spec(
         "trace-counterexample",
         spec,
@@ -109,11 +110,29 @@ fn declines_a_counterexample_where_tlc_records_the_trace() {
         stdout(&output),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        text.contains(
-            "prove-it: not native yet: the trace file of the trace exploration spec, which TLC compresses with Java's Deflater"
-        ),
-        "{text}"
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    let mut written: Vec<String> = std::fs::read_dir(&directory)
+        .expect("the directory")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.starts_with("Viol_TTrace_"))
+        .collect();
+    written.sort();
+    let extensions: Vec<&str> = written
+        .iter()
+        .map(|name| name.rsplit('.').next().unwrap_or_default())
+        .collect();
+    assert_eq!(extensions, ["bin", "tla"], "{text}");
+    let bytes = std::fs::read(directory.join(&written[0])).expect("the trace file");
+    assert_eq!(
+        bytes.get(..2),
+        Some([0x1f, 0x8b].as_slice()),
+        "a gzip member"
     );
     std::fs::remove_dir_all(directory).expect("removed");
 }
@@ -203,14 +222,15 @@ fn declines_a_module_of_the_users_that_the_trace_exploration_spec_uses() {
 
 #[test]
 fn checks_the_other_specs_after_declining_a_counterexample() {
-    // The binary checks each spec it's given in turn, as after any spec it declines.
+    // The binary checks each spec it's given in turn, as after any spec it declines: here one that
+    // draws at random.
     let directory =
         std::env::temp_dir().join(format!("prove-it-trace-batch-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
     let files = [
         (
             "Viol.tla",
-            "---- MODULE Viol ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x > 0\n====\n",
+            "---- MODULE Viol ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x + RandomElement({1})\nInv == x < 2\n====\n",
         ),
         ("Viol.cfg", "INIT Init\nNEXT Next\nINVARIANT Inv\n"),
         (
@@ -233,12 +253,7 @@ fn checks_the_other_specs_after_declining_a_counterexample() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(
-        text.contains(
-            "not native yet: the trace file of the trace exploration spec, which TLC compresses with Java's Deflater"
-        ),
-        "{text}"
-    );
+    assert!(text.contains("\nprove-it: not native yet: "), "{text}");
     assert!(text.contains("Checking Good.tla with Good.cfg\n"), "{text}");
     assert!(
         text.contains("Model checking completed. No error has been found."),

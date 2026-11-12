@@ -1,0 +1,49 @@
+TLC2 Version 2026.11.11.204519
+Running breadth-first search Model-Checking with fp 116 and seed -2485748869837047185 with 1 worker on 4 cores with 3040MB heap and 64MB offheap memory [pid: 27772] (Linux 6.18.44-fc-v378 amd64, Ubuntu 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/claude-0/-home-user-prove-it/c0e68e63-e75f-51e7-9054-f329a341e1c4/scratchpad/recdi/DumpInvariant.tla
+Parsing file /tmp/tlc-8881294042808621624/Naturals.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-8881294042808621624/Sequences.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-8881294042808621624/_JsonTrace.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/_JsonTrace.tla)
+Parsing file /tmp/tlc-8881294042808621624/_TLCTrace.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-8881294042808621624/TLC.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-8881294042808621624/TLCExt.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-8881294042808621624/Json.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Json.tla)
+Parsing file /tmp/tlc-8881294042808621624/FiniteSets.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-8881294042808621624/Integers.tla (jar:file:/tmp/tlaplus/tlatools/org.lamport.tlatools/dist/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module Json
+Semantic processing of module _JsonTrace
+Semantic processing of module _TLCTrace
+Semantic processing of module DumpInvariant
+Linting of module TLCExt
+Linting of module Json
+Linting of module _JsonTrace
+Linting of module _TLCTrace
+Linting of module DumpInvariant
+Starting... (2026-11-11 20:45:19)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-11 20:45:20.
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pc = (p1 :> "idle" @@ p2 :> "idle")
+/\ log = <<>>
+
+State 2: <Next line 7, col 11 to line 9, col 61 of module DumpInvariant>
+/\ pc = (p1 :> "busy" @@ p2 :> "idle")
+/\ log = <<[who |-> p1, at |-> 0]>>
+
+State 3: <Next line 7, col 11 to line 9, col 61 of module DumpInvariant>
+/\ pc = (p1 :> "busy" @@ p2 :> "busy")
+/\ log = <<[who |-> p1, at |-> 0], [who |-> p2, at |-> 1]>>
+
+"CounterExample written: DumpInvariant.json"
+4 states generated, 4 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 3.
+Finished in 00s at (2026-11-11 20:45:20)
+Trace exploration spec path: ./DumpInvariant_TTrace_1794429919.tla

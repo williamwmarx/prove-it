@@ -1,0 +1,20 @@
+exit 12
+Semantic processing of module Naturals
+Semantic processing of module Live110B
+Semantic processing of module Live110
+Linting of module Live110B
+Linting of module Live110
+Computing initial states...
+Error: Invariant line 8, col 26 to line 8, col 34 of module Live110 is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 24 of module Live110>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 24 of module Live110>
+x = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

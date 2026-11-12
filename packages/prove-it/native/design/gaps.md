@@ -1120,9 +1120,13 @@ as Integers does.
   records the trace as TLC's `ErrorTraceMessagePrinterRecorder` does and writes the spec as
   `TraceExplorationSpec.writeSpecTEStreams` does (`te_spec.rs`), with the variables and the model
   values in the orders of TLC's Java hash sets and the date as `java.util.Date` writes it, in UTC.
-- **What still declines:** the trace file `_TLCTraceSilent` writes for a counterexample,
-  `<Spec>_TTrace_<epoch>.bin`, which joins -dumpTrace's postconditions but which TLC gzips with
-  Java's Deflater and writes with its own tokens of the strings; a date in a zone other than UTC,
+- **The trace file:** for a counterexample `_TLCTraceSilent` writes `<Spec>_TTrace_<epoch>.bin`,
+  which joins -dumpTrace's postconditions (cli.md, "-dumpTrace"). The binary writes it with
+  zlib's stream and its own tokens of the strings, which TLC's `-loadTrace` reads back to the same
+  trace, the bar the Parity workflow holds it to ("The tokens of a dumped trace").
+- **What still declines:** a dump `tla-trace` doesn't make (cli.md, "-dumpTrace": an ALIAS, a
+  random draw, a failure evaluating the spec past the initial states and the rest); a date in a
+  zone other than UTC,
   whose name Java gives it; `-teSpecOutDir`; a spec named by a path Java's `Path` would normalize,
   such as `specs//M`; model values the spec makes with TLCModelValue; a model value named as an
   operator of the modules `_TLCTrace` loads, which TLC's `Defns` holds; an initial state without a
@@ -1192,3 +1196,7 @@ violated it, so the binary declined each such run.
   static methods of each module's Java override, in the order `getDeclaredMethods` gives them,
   which the JVM doesn't fix (`SpecProcessor.processModuleOverrides`); and the seed, the fingerprint
   polynomial and TLC's install location that `createConfig` interns before RecordValue's names.
+- The bar, the owner's decision of 2026-11-11: since the order of `getDeclaredMethods` decides
+  the tokens, the `.bin` is identical where TLC's `-loadTrace tlc` reads it back to the same
+  trace, and every other file and stdout stay byte for byte (AGENTS.md, "The oracle"). The Parity
+  workflow checks it on each `.bin` its TLC-default differential writes (cli.md, "-dumpTrace").

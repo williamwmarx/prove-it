@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::alias::Alias;
 use crate::deflate::{crc32, deflate};
 use crate::print::{format_value, print_order};
 use crate::rebuild::{Rebuilder, run};
@@ -50,34 +51,72 @@ pub struct TraceDump {
 impl Rebuilder<'_> {
     /// What TLC's trace modules dump of a violation's counterexample, as its postconditions read
     /// it: for an invariant violation, `counter_example.trace` from
-    /// [`Rebuilder::rebuild_counter_example`]. Not for a safety violation of a model with an
-    /// ALIAS, whose records the dump doesn't follow.
+    /// [`Rebuilder::rebuild_counter_example`], through the ALIAS for a safety violation, as TLC
+    /// builds it. With `is_sharing_followed` the dump shares
+    /// each value TLC shares, as a file written byte for byte needs, and declines where the
+    /// evaluator doesn't; without it, as for TLC's binary trace file, which a reader that rebuilds
+    /// the same trace from it matches (AGENTS.md, "The oracle"), it writes a value TLC shares as
+    /// many times as the evaluator made it.
     pub fn dump_trace(
         &mut self,
         counter_example: &CounterExample<'_>,
+        is_sharing_followed: bool,
+        is_initial: bool,
+        is_tool: bool,
     ) -> Result<TraceDump, Unsupported> {
         let ir = self.evaluator().ir;
-        if counter_example.cycle.is_none() && ir.model.alias.is_some() {
-            return unsupported("of a model with an ALIAS");
-        }
-        if let Some(reason) = self.evaluator().unshared {
+        // TLC's worker builds a safety violation's counterexample from the ALIAS of each state
+        // (`Worker.doPostCondition`), whose records the dump follows only where it needn't share
+        // values as TLC does; an initial state's violation, `is_initial`, from the state itself
+        // (`ModelChecker.doInit`'s `new CounterExample(errState)`).
+        let aliases = if counter_example.cycle.is_none() && !is_initial && ir.model.alias.is_some()
+        {
+            if is_sharing_followed {
+                return unsupported("of a model with an ALIAS");
+            }
+            // An ALIAS that fails holds TLC's message as -tool writes it (`Tool.evalAlias`).
+            self.alias(counter_example.trace, None, None, is_tool)?
+        } else {
+            None
+        };
+        if let Some(reason) = self.evaluator().unshared.filter(|_| is_sharing_followed) {
             return unsupported(reason);
         }
-        let value = self.counter_example_value(counter_example, None, true)?;
+        let value = self.counter_example_value(
+            counter_example,
+            aliases.as_deref(),
+            true,
+            is_sharing_followed,
+        )?;
         let evaluator = self.evaluator();
         let variables: Vec<Box<[u16]>> = ir
             .tlc_order
             .iter()
             .map(|&variable| ir.get_text_units(ir.variables[variable as usize]).into())
             .collect();
-        // Each state's record has the variables as its domain, which DOMAIN makes strings of.
-        let vars = if counter_example.trace.states.is_empty() {
-            Vec::new()
-        } else {
+        let variable_names = || {
             variables
                 .iter()
                 .map(|name| Value::Str(evaluator.text_of(name.clone())))
-                .collect()
+                .collect::<Vec<_>>()
+        };
+        // `UNION { DOMAIN trace[i] : i \in DOMAIN trace }`: each state's record has the variables
+        // as its domain, or the fields of its ALIAS, which DOMAIN makes strings of.
+        let vars: Vec<Value> = match &aliases {
+            _ if counter_example.trace.states.is_empty() => Vec::new(),
+            None => variable_names(),
+            Some(aliases) => aliases
+                .iter()
+                .flat_map(|alias| match alias {
+                    Alias::Record(fields) => fields
+                        .iter()
+                        .map(|(name, _)| {
+                            Value::Str(evaluator.text_of(name.encode_utf16().collect()))
+                        })
+                        .collect(),
+                    Alias::State => variable_names(),
+                })
+                .collect(),
         };
         Ok(TraceDump {
             counter_example: value,

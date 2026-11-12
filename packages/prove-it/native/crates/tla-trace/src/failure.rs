@@ -49,6 +49,12 @@ pub enum Site {
     /// on the states `Atom` says: TLC reports the next-state relation's error and the trace, then
     /// the atom's call stack.
     NextAtom { atom: u32, is_extra: bool },
+    /// Evaluating the atom at this position of the model's atoms as TLC adds the path's last
+    /// state, deadlocked, to the behavior graphs, on the states `Atom` says, the stuttering step's
+    /// second the state again: TLC has reported the deadlock and the trace, and prints the call
+    /// stack of its rerun with its `CallStackTool`, or nothing where that rerun throws a
+    /// FingerprintException, which its worker doesn't catch there.
+    DeadlockAtom { atom: u32, is_extra: bool },
 }
 
 /// Where TLC fails to fingerprint a state: the ranges of the expressions that built the values it
@@ -507,7 +513,7 @@ impl<'ir> Rebuilder<'ir> {
         }
         // The state an atom reads past the path, which TLC rebuilds no trace to.
         let (states, actions, extra) = match site {
-            Site::Atom { is_extra: true, .. } => {
+            Site::Atom { is_extra: true, .. } | Site::DeadlockAtom { is_extra: true, .. } => {
                 let (extra, path) = states.split_last().ok_or_else(|| {
                     Unsupported("evaluating the failure again: an atom without a state".into())
                 })?;
@@ -827,7 +833,9 @@ impl<'ir> Rebuilder<'ir> {
             }
             // TLC evaluates the atom as it adds the state, on the state, the successor whose
             // state predicate it checks, or the step to it.
-            Site::Atom { atom, .. } | Site::InitialAtom { atom, .. } => {
+            Site::Atom { atom, .. }
+            | Site::DeadlockAtom { atom, .. }
+            | Site::InitialAtom { atom, .. } => {
                 let Some(atom) = ir.model.atoms.get(atom as usize) else {
                     return Err(Unsupported("an atom the model doesn't have".into()));
                 };
@@ -912,7 +920,7 @@ impl<'ir> Rebuilder<'ir> {
         // TLC evaluates the action of <<A>>_v, and records no node for the brackets, whether
         // the property writes them or the front does for WF_v(A) and SF_v(A).
         let mut call_stack = call_stack;
-        if let Site::Atom { atom, .. } = site
+        if let Site::Atom { atom, .. } | Site::DeadlockAtom { atom, .. } = site
             && let Some(atom) = ir.model.atoms.get(atom as usize)
             && matches!(
                 ir.nodes.arena[atom.expression as usize].kind,
@@ -1109,6 +1117,31 @@ impl<'ir> Rebuilder<'ir> {
                 replay: Replay::default(),
             });
         }
+        // TLC's rerun of an atom on a deadlocked state with its `CallStackTool` throws the
+        // FingerprintException, which escapes `Worker#doNextCheckLiveness` to a report of the
+        // error that finds the deadlock's already set: TLC prints nothing of it.
+        if call_stack.is_fingerprinted
+            && matches!(site, Site::DeadlockAtom { .. })
+            && let Some(message) = &error.message
+        {
+            let (code, text, tool_text) = report(message, true);
+            return Ok(Failure {
+                code,
+                message: text,
+                tool_message: tool_text,
+                call_stack: Vec::new(),
+                exit_code: FAILURE_ERROR,
+                printed,
+                fingerprint: Some(FingerprintFailure {
+                    sources: fingerprint_ranges(evaluator, &call_stack),
+                    reason: message.text.clone(),
+                    tool_reason: nested(message),
+                    is_replayed: true,
+                }),
+                state: None,
+                replay: Replay::default(),
+            });
+        }
         // TLC's search evaluates an invariant without the `CallStackTool`, whose values have no
         // source, so the failure is the one the evaluator gives where it follows it.
         if call_stack.is_fingerprinted
@@ -1227,9 +1260,11 @@ impl<'ir> Rebuilder<'ir> {
                     "replaying the expansion without the fingerprints the search found".into(),
                 ));
             };
+            // TLC reports the message of the evaluation that failed, so what evaluating it again
+            // printed isn't printed again; its replay skips the failing state, which it had
+            // added to its set (`Worker#isSeenState`), and checks no invariant there.
             let replayed = replay_expansion(evaluator, path, &known)?;
-            let mut printed = printed;
-            printed.append(&mut evaluator.printed);
+            let printed = std::mem::take(&mut evaluator.printed);
             let (call_stack, fingerprint, exit_code) = match replayed.failure {
                 None => (Vec::new(), None, FAILURE_SAFETY_EVAL),
                 Some(ReplayFailure::Fingerprint(fingerprint)) => {
@@ -1251,7 +1286,7 @@ impl<'ir> Rebuilder<'ir> {
         }
         // TLC reports an error adding a state to the behavior graphs as one in the next states
         // (`Worker#doNextCheckLiveness`), and exits on an exception it didn't expect as for any.
-        let is_atom = matches!(site, Site::Atom { .. });
+        let is_atom = matches!(site, Site::Atom { .. } | Site::DeadlockAtom { .. });
         let (code, text, tool_text) = report(&message, site == Site::Next || is_atom);
         Ok(Failure {
             code,
@@ -1261,16 +1296,18 @@ impl<'ir> Rebuilder<'ir> {
             // A failed assertion in the next states exits as one, and any other error, or any
             // in the initial predicate, as the failure of the replay (`getFailureExitCode`).
             exit_code: match (site, message.code) {
-                (Site::Next | Site::Atom { .. }, Some(ASSERT_FAILED)) => VIOLATION_ASSERT,
+                (
+                    Site::Next | Site::Atom { .. } | Site::DeadlockAtom { .. },
+                    Some(ASSERT_FAILED),
+                ) => VIOLATION_ASSERT,
                 // TLC's replay of the expansion, and an error adding a state to the behavior
                 // graphs, exit by an EvalException's code (`errorConstantToExitStatus`): an
                 // undefined identifier is among the configuration's errors, and the others are
                 // general ones.
-                (Site::Next | Site::Atom { .. }, Some(UNDEFINED_IDENTIFIER))
-                    if message.is_eval_exception =>
-                {
-                    ERROR_CONFIG_PARSE
-                }
+                (
+                    Site::Next | Site::Atom { .. } | Site::DeadlockAtom { .. },
+                    Some(UNDEFINED_IDENTIFIER),
+                ) if message.is_eval_exception => ERROR_CONFIG_PARSE,
                 (Site::Next, _) if message.is_eval_exception => FAILURE_ERROR,
                 _ if is_atom => FAILURE_ERROR,
                 _ => FAILURE_SPEC_EVAL,

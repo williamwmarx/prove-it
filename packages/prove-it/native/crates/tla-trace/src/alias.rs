@@ -8,7 +8,7 @@ use crate::print::{print_order, text_string};
 use crate::rebuild::{Rebuilder, run};
 use crate::value::{Class, EvalError, TlcMessage, Value};
 use crate::{Trace, Unsupported};
-use tla_ir::{Definition, DefinitionForm};
+use tla_ir::{Definition, DefinitionForm, NodeKind};
 
 /// A state as TLC prints it through the ALIAS.
 #[derive(Clone, Debug)]
@@ -82,7 +82,13 @@ impl Rebuilder<'_> {
                 REQUIRES_NO_ARGUMENT,
             )),
             Some((index, definition)) => {
-                if Rebuilder::new(ir)?.is_computed_at_startup(index)? {
+                // TLC evaluates an ALIAS that is a number or a string as written, which gives no
+                // record, where it computes any other constant definition as it starts.
+                let is_written_value = matches!(
+                    evaluator.kind(definition.body),
+                    NodeKind::Number(_) | NodeKind::String(_)
+                );
+                if !is_written_value && Rebuilder::new(ir)?.is_computed_at_startup(index)? {
                     Err(rejected(
                         format!("The alias {name} cannot be a constant."),
                         MUST_NOT_BE_CONSTANT,
