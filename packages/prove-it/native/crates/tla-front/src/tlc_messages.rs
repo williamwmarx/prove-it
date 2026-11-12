@@ -264,7 +264,7 @@ pub fn format_nested_message(text: &str, is_tool: bool) -> String {
 /// SpecProcessor.processConstants's Assert.fail for a literal TLC can't hold, from the front end's
 /// "TLC can't handle ...: <literal> at <location>": the literal on a line of its own, and the exit
 /// code EC.ExitStatus gives the message's code.
-fn get_rejected_literal(error: &FrontError) -> Option<CodedError> {
+pub fn get_rejected_literal(error: &FrontError) -> Option<CodedError> {
     let FrontError::Evaluation(message) = error else {
         return None;
     };

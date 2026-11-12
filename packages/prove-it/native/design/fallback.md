@@ -580,9 +580,17 @@ found these, each wrong on main alike:
 | `CONSTANT K <- D` with `CONSTRAINT D`, D a set | `TLC expected a boolean value, but did not find one.` at D's definition | `The constraint of D is equal to {1}` |
 | `CONSTANT K <- Nope` where `K` isn't declared and the spec's `C` is unassigned | `The constant parameter C is not assigned a value by the configuration file.` | `In the configuration file, the identifier K does not appear in the specification.` |
 | A circular dependency SANY finds as it loads the files, with standard modules to load before the cycle closes | stops at the cycle | parses those modules first, as it finds the cycle once it has loaded every file |
+| A constant definition that applies AssertEq, which TLC computes as it starts | `D == AssertEq(1, 2)`: prints `"Assertion failed"`, `1` and `2` | prints nothing (the IR declines TLCExt's builtins there and leaves the definition out of its startup) |
+| A decimal an INSTANCE substitutes | `I == INSTANCE Inner WITH c <- 1.5`, unread | checks the model | `TLC can't handle real numbers.` |
+| `_POSSIBLE` that lists a predicate twice | `_POSSIBLE AtOne` twice | `Parsing or semantic analysis failed._POSSIBLE: semantic analysis of generated module failed` | `_POSSIBLE lists AtOne more than once` |
 
-The PrintT ones wait on steps 2 and 3 of [startup.md](startup.md); the library leaves those to the
-TypeScript check, which prints first.
+The PrintT ones wait on steps 2 and 3 of [startup.md](startup.md). The library's check declines
+them ("what the spec prints as TLC computes its constants"): where the front end stops at an error
+TLC reports after it computes the constant definitions, and one of those may print
+(`may_print_constant_definitions`), and where the engine stops as it starts having left out a
+constant definition that applies a TLCExt builtin. The AssertEq one declines there alike. The
+library leaves the `Integer overflow` one declined too ("the engine stopped before it searched
+(exit 75)").
 
 The front end binds a name to an inner module of an extended file as SANY does
 (`resolveNamesBetweenSpecAndExtention`) only where its first load stops at "Cannot find source
@@ -950,14 +958,23 @@ progress events for the library's `onProgress` (see "The public API afterwards")
 
 Checks the binary answered and now declines, because the answer matched TLC only by chance.
 
-- **The library where the check stops before it searches without a typed error** (PR 7): decimal
-  and big literals, a bad SYMMETRY, constant parts of a property, a second ALIAS, a recursion
-  overflow in the configuration and an evaluation error in a property's bound. The binary prints
-  TLC's output, but `get_thrown` returns nothing, so `check` throws `TlaUnsupportedError` "not
-  native yet: the engine stopped before it searched (exit N)" where the interpreter threw TLC's
-  error. Winning them back takes `get_thrown` reporting them. SANY's fatal errors (a module it
-  can't find or parse, a file named after another module, a circular dependency) are won back:
-  `check` throws them as `TlaSyntaxError` with SANY's report.
+- **The library where the check stops before it searches without a typed error** (PR 7): a
+  decimal or big literal the front end rejects, and a big number in the configuration, which it
+  words otherwise than TLC or rejects where TLC doesn't (see "Known wrong outputs"), and a stop
+  after SANY printed a warning, which the library would print before it throws. The binary prints
+  its output, but `get_thrown` returns nothing, so `check` throws `TlaUnsupportedError` "not
+  native yet: the engine stopped before it searched (exit N)" where the interpreter threw its own
+  error. Won back: SANY's fatal errors (a module it can't find or parse, a file named after
+  another module, a circular dependency), which `check` throws as `TlaSyntaxError` with SANY's
+  report; and the other configuration and evaluation errors TLC reports before it searches (a
+  configuration file it can't parse, a SYMMETRY that isn't a set of permutations, a temporal
+  formula it can't handle or whose constant part fails, a stack overflow, an exception as it
+  starts), which `check` throws as `TlaConfigError`, `TlaEvaluationError` or
+  `TlaStackOverflowError` with TLC's message, after what the spec printed as TLC computed its
+  constants. 205 of the 214 such errors `bun run test` throws are TLC's error and prints, run
+  against TLC at d8fb231; the others are listed under "Known wrong outputs", or are TLC's warnings
+  TLC prints before the error, which `onPrint` doesn't get, or TLC's call stack after a stack
+  overflow, which `TlaStackOverflowError` doesn't hold.
 
 - **Strings made during the search** (the string-order change; check-log on the same log, 1386
   native on main, 1384 after): `unit/check.test.ts:704` and `unit/parallel.test.ts:18` with
@@ -1174,13 +1191,15 @@ classes. The owner decided to break them, and they broke after the CLI's flip:
   the spec printed, and each violation or error TLC reports, as its message's code and text with
   the states TLC prints after it. A state carries each variable as TLC prints it and as plain data.
 - Where the native check stops before it searches, at a spec or configuration TLC rejects,
-  `checkSources` returns the error the TypeScript check throws for it as `thrown` (ABI 25), and
-  the library throws it: a `TlaSyntaxError` with SANY's report (`createSanyError`), a
-  `TlaConfigError` with the message of tla-front's config error, which keeps `errors.ts`'s, or a
-  `TlaEvaluationError` for a temporal formula TLC can't check or a spec with no next-state action.
-  SANY's report holds the errors of the first module with errors and the warnings so far, which
-  the TypeScript check throws. The library leaves the error to the TypeScript check where the two
-  may differ:
+  `checkSources` returns the error the library throws for it as `thrown` (ABI 27), with what the
+  spec printed before it, which the library prints first: a `TlaSyntaxError` with SANY's report
+  (`createSanyError`), a `TlaConfigError` or a `TlaEvaluationError` with TLC's message, or a
+  `TlaStackOverflowError`. Where the library can't know all TLC prints before the error,
+  `checkSources` declines (see "Known wrong outputs"). Before ABI 27 `thrown` held only a
+  `TlaConfigError` of tla-front's config error and a `TlaEvaluationError` for a temporal formula
+  TLC can't check or a spec with no next-state action. SANY's report holds the errors of the
+  first module with errors and the warnings so far, which the TypeScript check throws. The library
+  left the error to the TypeScript check where the two may differ:
   - a fatal error of SANY's parsing phase, as the TypeScript check loads modules as it links them;
   - a module with a literal TLC can't hold, which the TypeScript check rejects as it loads it;
   - the arity of an instance's substitution, and a module defined twice, which it words its own

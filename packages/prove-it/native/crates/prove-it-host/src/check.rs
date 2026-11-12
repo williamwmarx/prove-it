@@ -13,7 +13,7 @@
 //!   learns whether the history's new directory, named by the time, is there from the history's
 //!   entries, and asks for it alone where a run of the same second left one;
 //! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
-//!   printed before.
+//!   printed before, or where the library's check can't throw the error TLC reports as TLC does.
 //!
 //! The CLI answers for the machine's files, which the check finds as the binary does: `stat:<path>`,
 //! `"file"`, `"directory"` or `"other"` where the system finds something at the path,
@@ -353,9 +353,14 @@ fn check(arguments: &[HostValue]) -> HookResult {
     let err = String::from_utf8_lossy(&err);
     // What the binary prints as it declines, which the host checks otherwise: what was printed
     // before it is dropped.
-    if let Some(reason) = err.lines().find_map(|line| line.strip_prefix(NOT_NATIVE))
-        && exit_code == 1
-    {
+    let declined = match &outcome.thrown {
+        Some(Thrown::NotNative(reason)) if outcome.status.is_none() => Some(*reason),
+        _ => err
+            .lines()
+            .find_map(|line| line.strip_prefix(NOT_NATIVE))
+            .filter(|_| exit_code == 1),
+    };
+    if let Some(reason) = declined {
         return Ok(HostValue::Object(vec![
             ("kind", HostValue::text("declined")),
             ("reason", HostValue::text(reason)),
@@ -388,15 +393,24 @@ fn check(arguments: &[HostValue]) -> HookResult {
     ]))
 }
 
-/// Where the check stopped before it searched, the error the library throws:
-/// `{ kind: "syntax", sany }` with the report of `TlaSyntaxError`, or `{ kind: "config" |
-/// "evaluation", message }`; undefined otherwise, and where the spec printed first, which the
-/// library reports with the TypeScript check's error.
+/// Where the check stopped before it searched, the error the library throws, with what the spec
+/// printed before it, which the library prints first: `{ kind: "syntax", sany, prints }` with the
+/// report of `TlaSyntaxError`, `{ kind: "config" | "evaluation", message, prints }`, or
+/// `{ kind: "stack-overflow", prints }`; undefined otherwise.
 fn get_thrown(outcome: &Outcome) -> HostValue {
-    let (Some(thrown), None, true) = (&outcome.thrown, outcome.status, outcome.prints.is_empty())
-    else {
+    let (Some(thrown), None) = (&outcome.thrown, outcome.status) else {
         return HostValue::Undefined;
     };
+    let prints = (
+        "prints",
+        HostValue::Array(
+            outcome
+                .prints
+                .iter()
+                .map(|text| HostValue::text(text))
+                .collect(),
+        ),
+    );
     let get_errors = |errors: &[SanyError]| {
         HostValue::Array(
             errors
@@ -428,15 +442,22 @@ fn get_thrown(outcome: &Outcome) -> HostValue {
                     ),
                 ]),
             ),
+            prints,
         ]),
         Thrown::Config(message) => HostValue::Object(vec![
             ("kind", HostValue::text("config")),
             ("message", HostValue::text(message)),
+            prints,
         ]),
         Thrown::Evaluation(message) => HostValue::Object(vec![
             ("kind", HostValue::text("evaluation")),
             ("message", HostValue::text(message)),
+            prints,
         ]),
+        Thrown::StackOverflow => {
+            HostValue::Object(vec![("kind", HostValue::text("stack-overflow")), prints])
+        }
+        Thrown::NotNative(_) => HostValue::Undefined,
     }
 }
 

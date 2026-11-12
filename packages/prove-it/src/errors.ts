@@ -136,6 +136,13 @@ export class TlaEvaluationError extends TlaError {
 export const STACK_OVERFLOW_MESSAGE =
   "This was a Java StackOverflowError. It was probably the result\nof an incorrect recursive function definition that caused TLC to enter\nan infinite loop when trying to compute the function or its application\nto an element in its putative domain.";
 
+// A Java StackOverflowError, which TLC catches only at the top, unlike the exceptions of evaluation.
+export class TlaStackOverflowError extends TlaEvaluationError {
+  constructor() {
+    super(STACK_OVERFLOW_MESSAGE);
+  }
+}
+
 // An evaluation error that TLC raises as an EvalException from a standard module's Java code. It
 // keeps the name TlaEvaluationError, and index.ts doesn't export it.
 export class TlaModuleError extends TlaEvaluationError {

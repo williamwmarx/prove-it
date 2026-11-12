@@ -11,6 +11,7 @@ import {
   EngineUnavailableError,
   TlaConfigError,
   TlaEvaluationError,
+  TlaStackOverflowError,
   TlaUnsupportedError,
   WebAssemblyStackError,
 } from "./errors";
@@ -155,29 +156,25 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     [`${name}.tla`, logged.source],
     [`${name}.cfg`, config],
   ]);
-  const answers: unknown[] = [];
   const read = (key: string) => {
     const [kind, ...rest] = key.split(":");
     const path = rest.join(":");
-    const answer =
-      kind === "text"
-        ? texts.get(path)
-        : // The bytes of a tla2tools.jar a Java launch names, which the library's command line,
-          // with no launch, never does.
-          kind === "bytes"
-          ? undefined
-          : kind === "module"
-            ? BUILT_IN_MODULES.has(path)
-              ? undefined
-              : logged.loadModule?.(path)
-            : kind === "class"
-              ? logged.loadClass?.(path)
-              : // SANY's report names the file of each module it parses, which the result doesn't hold.
-                kind === "file"
-                ? ""
-                : undefined;
-    answers.push(answer);
-    return answer;
+    return kind === "text"
+      ? texts.get(path)
+      : // The bytes of a tla2tools.jar a Java launch names, which the library's command line,
+        // with no launch, never does.
+        kind === "bytes"
+        ? undefined
+        : kind === "module"
+          ? BUILT_IN_MODULES.has(path)
+            ? undefined
+            : logged.loadModule?.(path)
+          : kind === "class"
+            ? logged.loadClass?.(path)
+            : // SANY's report names the file of each module it parses, which the result doesn't hold.
+              kind === "file"
+              ? ""
+              : undefined;
   };
   const result = checkAllSources(
     addon,
@@ -243,19 +240,14 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     prints.slice(printed).forEach((text) => print(text));
     return checked;
   }
-  // The check stopped before it searched, at a spec or a configuration TLC rejects. TLC prints
-  // what the spec prints as it computes the constants before it reports an error of the
-  // configuration or of evaluating the spec, which the native check doesn't.
+  // The check stopped before it searched, at a spec or a configuration TLC rejects, after what the
+  // spec printed as TLC computed its constants.
   const thrown = result.thrown;
-  const isPrinting = answers.some(
-    (answer) =>
-      answer instanceof Uint8Array ||
-      (typeof answer === "string" && /\b(PrintT?|TLCExt|IOUtils)\b/.test(answer)),
-  );
-  if (thrown === undefined || (thrown.kind !== "syntax" && isPrinting))
+  if (thrown === undefined)
     throw new TlaUnsupportedError(
-      `not native yet: ${thrown === undefined ? `the engine stopped before it searched (exit ${result.exitCode})` : "what the spec prints as TLC computes its constants"}`,
+      `not native yet: the engine stopped before it searched (exit ${result.exitCode})`,
     );
+  thrown.prints.forEach((text) => (logged.onPrint ?? console.log)(text));
   throw thrown.kind === "syntax"
     ? createSanyError(
         thrown.sany.errors,
@@ -265,5 +257,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       )
     : thrown.kind === "config"
       ? new TlaConfigError(thrown.message)
-      : new TlaEvaluationError(thrown.message);
+      : thrown.kind === "evaluation"
+        ? new TlaEvaluationError(thrown.message)
+        : new TlaStackOverflowError();
 };
