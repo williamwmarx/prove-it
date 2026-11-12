@@ -1,5 +1,3 @@
-import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
-import type { TlcVersion } from "../tlc/version";
 import { createSanyLexer, escapeLexeme, getKind, type SanyToken } from "./lexer";
 
 // The report SANY's parser, TLAplusParser, gives for a module it fails to parse. This interprets
@@ -159,6 +157,75 @@ interface ParserState {
 type ScanResult = "matched" | "failed" | "done";
 
 // JavaCC's amount for a LOOKAHEAD that gives an expansion but no amount.
+// SANY's synonyms for its operators, from tla2tools.jar.
+const SANY_OPERATOR_SYNONYMS = [
+  ["\\lnot", "~", "\\neg", "¬"],
+  ["[]", "□"],
+  ["<>", "◇"],
+  ["\\land", "/\\", "∧"],
+  ["\\lor", "\\/", "∨"],
+  ["\\equiv", "<=>", "≡", "⇔"],
+  ["/=", "#", "≠"],
+  ["\\leq", "<=", "=<", "≤"],
+  ["\\geq", ">=", "≥"],
+  ["\\times", "\\X", "×"],
+  ["\\intersect", "\\cap", "∩"],
+  ["\\union", "\\cup", "∪"],
+  ["\\o", "\\circ", "∘"],
+  ["\\oplus", "(+)", "⊕"],
+  ["\\ominus", "(-)", "⊖"],
+  ["\\odot", "(.)", "⊙"],
+  ["\\oslash", "(/)", "⊘"],
+  ["\\otimes", "(\\X)", "⊗"],
+  ["\\approx", "≈"],
+  [":=", "≔"],
+  ["\\asymp", "≍"],
+  ["\\bigcirc", "◯"],
+  ["::=", "⩴"],
+  ["\\bullet", "●"],
+  ["\\cdot", "⋅"],
+  ["\\cong", "≅"],
+  ["\\div", "÷"],
+  ["\\doteq", "≐"],
+  ["..", "‥"],
+  ["...", "…"],
+  ["!!", "‼"],
+  ["\\gg", "≫"],
+  ["=>", "⇒"],
+  ["\\in", "∈"],
+  ["=|", "⫤"],
+  ["~>", "↝"],
+  ["\\ll", "≪"],
+  ["-|", "⊣"],
+  ["\\notin", "∉"],
+  ["-+->", "⇸"],
+  ["\\prec", "≺"],
+  ["\\preceq", "⪯"],
+  ["\\propto", "∝"],
+  ["??", "⁇"],
+  ["|=", "⊨"],
+  ["|-", "⊢"],
+  ["\\sim", "∼"],
+  ["\\simeq", "≃"],
+  ["\\sqcap", "⊓"],
+  ["\\sqcup", "⊔"],
+  ["\\sqsubset", "⊏"],
+  ["\\sqsubseteq", "⊑"],
+  ["\\sqsupset", "⊐"],
+  ["\\sqsupseteq", "⊒"],
+  ["\\star", "⋆"],
+  ["\\subset", "⊂"],
+  ["\\subseteq", "⊆"],
+  ["\\succ", "≻"],
+  ["\\succeq", "⪰"],
+  ["\\supset", "⊃"],
+  ["\\supseteq", "⊇"],
+  ["\\uplus", "⊎"],
+  ["||", "‖"],
+  ["\\wr", "≀"],
+  ["^+", "⁺"],
+];
+
 const UNBOUNDED_AMOUNT = 2147483647;
 const EOF = getKind("EOF");
 const IDENTIFIER = getKind("IDENTIFIER");
@@ -297,11 +364,6 @@ const OPERATORS = new Map([
   ...SANY_OPERATOR_SYNONYMS.flatMap((synonyms) =>
     synonyms.slice(1).map((synonym) => [synonym, CANONICAL_OPERATORS.get(synonyms[0])] as const),
   ),
-]);
-// TLC 1.7.4's SANY read its operators from ConfigConstants, which gave these three 10-13.
-const OPERATORS_174 = new Map([
-  ...OPERATORS,
-  ...createOperators("prefix", 100, 130, false, "SUBSET", "UNION", "DOMAIN"),
 ]);
 // OperatorStack's fcnOp, which a function application's "[" pushes, and Operator.VoidOperator,
 // which OperatorStack.finalReduce pushes to reduce the whole stack.
@@ -2127,11 +2189,11 @@ const parse = (state: ParserState, unit: Unit): boolean => {
 };
 
 // What SANY reports for a module its lexer or parser rejects, or undefined if it accepts the module.
-export const getSanyParseError = (source: string, version?: TlcVersion) => {
+export const getSanyParseError = (source: string) => {
   const readToken = createSanyLexer(source);
   const start: SanyToken = { kind: EOF, image: "", beginLine: 0, beginColumn: 0, next: undefined };
   const state: ParserState = {
-    operators: version === "1.7.4" ? OPERATORS_174 : OPERATORS,
+    operators: OPERATORS,
     readToken: () => {
       const token = readToken();
       if (typeof token !== "string") return token;

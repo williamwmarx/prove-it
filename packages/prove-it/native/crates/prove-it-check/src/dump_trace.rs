@@ -190,15 +190,11 @@ impl TraceDumps {
     }
 }
 
-/// Whether the host can write each file: TLC writes a JSON dump into the directories it makes
-/// and a `tlc` one into the directory that holds it, and fails where it can't.
+/// Whether the host can write each file.
 pub fn is_writable(host: &dyn Host, files: &[DumpedFile]) -> bool {
-    let platform = host.platform();
-    files.iter().all(|file| {
-        platform
-            .last_separator(&file.path)
-            .is_none_or(|end| host.is_file(Path::new(&file.path[..end.max(1)])))
-    })
+    files
+        .iter()
+        .all(|file| host.can_write(Path::new(&file.path)))
 }
 
 /// Writes the files in their order, as the postconditions do, or says it couldn't.

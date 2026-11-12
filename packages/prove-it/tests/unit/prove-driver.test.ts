@@ -376,7 +376,9 @@ describe("prove with the Rust driver", () => {
           return undefined;
         },
       });
-    expect((await run("\uFFFD")).result?.obligations[0]).toMatchObject({ status: "proved" });
+    const wellFormed = await run("\uFFFD");
+    expect(wellFormed.error).toBeUndefined();
+    expect(wellFormed.result?.obligations[0]?.text).toContain('Y == "\uFFFD"');
     const wellFormedLoads = loads.splice(0);
     for (const surrogate of ["\uD800", "\uDFFF"]) {
       expect<unknown>(await run(surrogate)).toEqual({

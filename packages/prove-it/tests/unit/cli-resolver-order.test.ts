@@ -41,9 +41,10 @@ interface ResolverCase {
   files: Record<string, string>;
   args: string[];
   // What TLC at d8fb231 printed for the same files and command line, with the root as {root}:
-  // where it found the files and its errors, on stdout and then on stderr, and its exit code
-  // last; or undefined where tla-ts declines.
+  // where it found the files and its errors, on stdout and then on stderr, and its exit code last.
   printed?: string[];
+  // Or why the native check declines it.
+  declined?: string;
 }
 
 const CASES: ResolverCase[] = [
@@ -122,15 +123,7 @@ const CASES: ResolverCase[] = [
     name: "missing-spec-in-directory",
     files: { "sub/Nope.cfg": CONFIG, lib: "/" },
     args: ["-DTLA-Library=lib", "tlc2.TLC", "sub/Nope"],
-    printed: [
-      "Fatal errors while parsing TLA+ spec in file sub/Nope",
-      "Cannot find source file for module sub/Nope",
-      "Cannot find source file for module sub/Nope",
-      "Error: Parsing or semantic analysis failed.",
-      // on stderr
-      "File does not exist: {root}/./sub/Nope.tla while looking in these directories: {root}, sub, classpath:/tla2sany/StandardModules, classpath:/",
-      "exit 150",
-    ],
+    declined: "SANY's report of a spec without a file",
   },
   // TLC stops at the first M.class it finds, and loads no override from a directory.
   {
@@ -167,29 +160,13 @@ const CASES: ResolverCase[] = [
     name: "library-path-without-value",
     files: { "Spec.cfg": CONFIG, "L/Spec.tla": SPEC, "L/M.tla": MODULE },
     args: ["-DTLA-Library=L", "-DTLA-Library", "tlc2.TLC", "Spec"],
-    printed: [
-      "Fatal errors while parsing TLA+ spec in file Spec",
-      "Cannot find source file for module Spec",
-      "Cannot find source file for module Spec",
-      "Error: Parsing or semantic analysis failed.",
-      // on stderr
-      "File does not exist: {root}/./Spec.tla while looking in these directories: {root}, , classpath:/tla2sany/StandardModules, classpath:/",
-      "exit 150",
-    ],
+    declined: "SANY's report of a spec without a file",
   },
   {
     name: "missing-spec-in-doubled-directory",
     files: { "Nope.cfg": CONFIG },
     args: ["tlc2.TLC", ".//Nope"],
-    printed: [
-      "Fatal errors while parsing TLA+ spec in file .//Nope",
-      "Cannot find source file for module .//Nope",
-      "Cannot find source file for module .//Nope",
-      "Error: Parsing or semantic analysis failed.",
-      // on stderr
-      "File does not exist: {root}/././Nope.tla while looking in these directories: {root}, ., classpath:/tla2sany/StandardModules, classpath:/",
-      "exit 150",
-    ],
+    declined: "SANY's report of a spec without a file",
   },
   // TLC reads anything there but a directory, such as /dev/null.
   {
@@ -214,12 +191,13 @@ const CASES: ResolverCase[] = [
       "exit 151",
     ],
   },
-  // TLC finds the configuration on the library path, then can't read the spec, which tla-ts
-  // doesn't report as TLC does.
+  // TLC finds the configuration on the library path, then can't read the spec, which the native
+  // check doesn't report as TLC does.
   {
     name: "spec-directory-with-library-configuration",
     files: { "Spec.tla": "/", "lib/Spec.cfg": CONFIG },
     args: ["-DTLA-Library=lib", "tlc2.TLC", "Spec"],
+    declined: "SANY's report of a spec without a file",
   },
   // MonolithSpecExtractor.getConfig: TLC reads a -config x as x.cfg.
   {
@@ -232,8 +210,9 @@ const CASES: ResolverCase[] = [
     name: "configuration-directory-without-extension",
     files: { "Spec.tla": SPEC, "M.tla": MODULE, "d.cfg": "/" },
     args: ["tlc2.TLC", "-config", "d", "Spec"],
+    declined: "a configuration file the front end rejects",
   },
-  // TLC drops a -config's .cfg and reads X.tla's CONFIG section, which tla-ts doesn't, or names
+  // TLC drops a -config's .cfg and reads X.tla's CONFIG section, which the native check doesn't, or names
   // the file it doesn't find.
   {
     name: "missing-module-configuration",
@@ -254,6 +233,8 @@ const CASES: ResolverCase[] = [
     name: "module-configuration",
     files: { "Spec.tla": SPEC, "M.tla": MODULE, "Spec.tla.cfg": CONFIG },
     args: ["tlc2.TLC", "-config", "Spec.tla.cfg", "Spec"],
+    declined:
+      "a configuration in a module's CONFIG section, which TLC reads from a -config ending in .tla",
   },
   // TLC reads the configuration before the spec.
   {
@@ -266,23 +247,26 @@ const CASES: ResolverCase[] = [
     ],
   },
   // TLC prints `***Internal error: Unable to create FileInputStream` as it fails to read the
-  // directory, which tla-ts doesn't.
+  // directory, which the native check doesn't.
   {
     name: "configuration-directory",
     files: { "Spec.tla": SPEC, "M.tla": MODULE, "C.cfg": "/" },
     args: ["tlc2.TLC", "-config", "C.cfg", "Spec"],
+    declined: "a configuration file the front end rejects",
   },
   // TLC prints `***Internal error: Unable to create NamedInputStream in toIStream method` as it
-  // fails to read the directory, which tla-ts doesn't.
+  // fails to read the directory, which the native check doesn't.
   {
     name: "module-directory",
     files: { "Spec.tla": SPEC, "Spec.cfg": CONFIG, "M.tla": "/" },
     args: ["tlc2.TLC", "Spec"],
+    declined: "a module's file the front end can't read, such as a directory or text not in UTF-8",
   },
   {
     name: "spec-directory",
     files: { "Spec.tla": "/", "Spec.cfg": CONFIG },
     args: ["tlc2.TLC", "Spec"],
+    declined: "SANY's report of a spec without a file",
   },
 ];
 
@@ -309,9 +293,9 @@ const setUp = (root: string, files: Record<string, string>) =>
     writeFileSync(target, contents);
   });
 
-describe.each(["native", "TypeScript"])("the %s check", (check) => {
+describe("the native check", () => {
   it.each(CASES)("finds the files of $name as TLC does", (resolverCase) => {
-    const root = join(temporary, `${check}-${resolverCase.name}`);
+    const root = join(temporary, resolverCase.name);
     setUp(root, resolverCase.files);
     const args = resolverCase.args.flatMap((arg) =>
       arg === "tlc2.TLC" ? [arg, "-noGenerateSpecTE"] : [arg.replace("{root}", root)],
@@ -319,11 +303,13 @@ describe.each(["native", "TypeScript"])("the %s check", (check) => {
     const result = spawnSync("bun", [CLI, ...args], {
       cwd: root,
       encoding: "utf8",
-      env: { ...process.env, ...(check === "TypeScript" && { PROVE_IT_ENGINE: "0" }) },
     });
     const text = `${result.stdout}${result.stderr}`;
-    if (resolverCase.printed === undefined) {
-      expect(text).toMatch(/prove-it: not native yet: |TlaUnsupportedError: /);
+    if (resolverCase.declined !== undefined) {
+      expect(/^prove-it: not native yet: (.*)$/m.exec(result.stderr)?.[1]).toBe(
+        resolverCase.declined,
+      );
+      expect(result.status).toBe(1);
       return;
     }
     const printed = text
@@ -331,12 +317,12 @@ describe.each(["native", "TypeScript"])("the %s check", (check) => {
       .filter((line) => PREFIXES.some((prefix) => line.startsWith(prefix)))
       .filter((line) => !line.includes("/tlc-"));
     expect([...printed, `exit ${result.status}`]).toEqual(
-      resolverCase.printed.map((line) => line.replaceAll("{root}", root)),
+      (resolverCase.printed ?? []).map((line) => line.replaceAll("{root}", root)),
     );
   });
 
   // TLC at d8fb231 says which version it is, then that it has no spec, on stdout alone, once it has
-  // read every option, which the TypeScript check doesn't, so it declines.
+  // read every option.
   it.each([
     [
       [],
@@ -350,12 +336,7 @@ describe.each(["native", "TypeScript"])("the %s check", (check) => {
     const result = spawnSync("bun", [CLI, "tlc2.TLC", ...options], {
       cwd: temporary,
       encoding: "utf8",
-      env: { ...process.env, ...(check === "TypeScript" && { PROVE_IT_ENGINE: "0" }) },
     });
-    if (check === "TypeScript") {
-      expect(result.stderr).toStartWith("TlaUnsupportedError: ");
-      return;
-    }
     expect(result.stdout.replace(/^TLC2 Version .*$/m, "TLC2 Version _")).toBe(printed);
     expect(result.stderr).toBe("");
     expect(result.status).toBe(1);

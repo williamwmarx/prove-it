@@ -1,7 +1,7 @@
-export type { CheckStatus } from "./check";
 export type {
   CheckProgress,
   CheckResult,
+  CheckStatus,
   PlainValue,
   TraceStep,
   TraceVariable,

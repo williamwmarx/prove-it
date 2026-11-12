@@ -64,14 +64,12 @@ jobs:
       matrix:
         include:
           - task: Cargo Build
-            # The native tests load the addon in Bun from the sources and in Node from dist, the
-            # store and fingerprint tests run on the native store too, and the native search's tests
-            # compare it with the interpreter.
+            # The native tests load the addon in Bun from the sources and in Node from dist.
             command: |
               cd packages/prove-it
               bun scripts/platform-packages.ts build
               bun run build
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts tests/unit/deciders.test.ts
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" bun test tests/unit/native.test.ts tests/unit/native-check.test.ts tests/unit/deciders.test.ts
           # The engine as WebAssembly: its code for wasm32 linted, then the native tests with it
           # standing in for the addon, as where there is no process.dlopen (DESIGN.md 7.4).
           - task: WebAssembly
@@ -81,26 +79,20 @@ jobs:
               bun scripts/platform-packages.ts build
               bun run build
               bun scripts/platform-packages.ts build --target wasm32-unknown-unknown
-              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/dist/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-search.test.ts tests/unit/engine-store.test.ts tests/unit/engine-fingerprints.test.ts tests/unit/deciders.test.ts tests/unit/cli-rust-resolution.test.ts tests/unit/prove-driver.test.ts
+              PROVE_IT_ENGINE_ADDON="$PWD/native/npm/linux-x64-gnu/prove-it-engine.node" PROVE_IT_ENGINE_WASM="$PWD/dist/prove-it-engine.wasm" bun test tests/unit/native.test.ts tests/unit/native-check.test.ts tests/unit/deciders.test.ts tests/unit/cli-rust-resolution.test.ts tests/unit/prove-driver.test.ts
               bun test tests/unit/prove-workers.test.ts -t "without process.dlopen"
           # Every unit test, with the native engine that bun run test builds searching
           # (tests/setup.ts).
           - task: Test
             command: bun run test
-          # The Rust front end against the TypeScript one, on every module of the corpora and the
-          # fixtures (native/DESIGN.md section 14). resolve and ir link each module as a spec's root
-          # and lower it; model, order and model-ir link, order and lower each corpus model. The
-          # binary prints what TLC printed, as recorded, on SANY's corpus and the RECURSIVE grid, and
-          # what SANY's XMLExporter printed on SANY's corpus and the XML fixtures, with each flag set.
+          # The binary prints what TLC printed, as recorded, on SANY's corpus and the RECURSIVE grid,
+          # and what SANY's XMLExporter printed on SANY's corpus and the XML fixtures, with each flag
+          # set.
           - task: Front End
             command: |
               cd packages/prove-it
-              bun scripts/front-modules.ts --check
               bun scripts/fetch-corpora.ts
-              cd native && cargo build --release --locked -p tla-front --bin front-dump -p prove-it-cli --bin prove-it && cd ..
-              for mode in tokens ast sany-ast config resolve model ir order model-ir; do
-                bun scripts/front-differential.ts "$mode" --mutate 400 --rust native/target/release/front-dump
-              done
+              cd native && cargo build --release --locked -p prove-it-cli --bin prove-it && cd ..
               bun scripts/sany-corpus.ts --recorded tests/conformance/sany-stdout/corpus.json
               bun scripts/sany-corpus.ts --specs native/crates/tla-front/tests/recursive-shapes --recorded tests/conformance/sany-stdout/grid.json
               xml=tests/conformance/sany-stdout/xml
@@ -112,14 +104,6 @@ jobs:
               bun scripts/sany-corpus.ts $fixtures --recorded "$xml-fixtures-o.json" --arguments "-o" --names "$names"
               bun scripts/sany-corpus.ts $fixtures --recorded "$xml-fixtures-o-t-r-u.json" --arguments "-o -t -r -u" --names "$names"
               bun scripts/sany-corpus.ts $fixtures --recorded "$xml-fixtures-include.json" --arguments "-o -I nested" --names Missing,Root
-          # Every corpus model lowered to the engine IR, which round-trips through Rust, and the
-          # golden models' IR, which must match tests/conformance/ir: a change to the lowering
-          # updates them (`bun scripts/run.ts engine-ir --update`).
-          - task: Engine IR
-            command: |
-              cd packages/prove-it
-              bun scripts/fetch-corpora.ts
-              bun scripts/run.ts engine-ir --concurrency 8
           # The standalone executable with the native engine embedded, which build-binary.ts runs on
           # models that need what it embeds.
           - task: Binary
@@ -159,26 +143,12 @@ jobs:
               npx --no prove-it Commit.cfg 2> engine.log > /dev/null || status=$?
               test "$status" -eq 255
               grep -q '^The native engine is unavailable: no @atemp/prove-it-linux-x64-gnu' engine.log
-              # The CLI finds the spec's files only with an engine, so PROVE_IT_ENGINE=0, which
-              # leaves the search to the interpreter, doesn't check without one, and isn't offered.
-              status=0
-              PROVE_IT_ENGINE=0 npx --no prove-it Commit.cfg 2> engine.log > /dev/null || status=$?
-              test "$status" -eq 255
-              grep -q '^The native engine is unavailable: no @atemp/prove-it-linux-x64-gnu' engine.log
-              if grep -q 'PROVE_IT_ENGINE=0' engine.log; then exit 1; fi
-              # The package with the engine as WebAssembly checks without the platform package,
-              # with PROVE_IT_ENGINE=0 too.
+              # The package with the engine as WebAssembly checks without the platform package.
               npm install --ignore-scripts --no-audit --no-fund "$packs/$main"
-              PROVE_IT_ENGINE=0 npx --no prove-it Commit.cfg | grep -q '251 distinct states found'
-              # A state log leaves the check to the TypeScript check, which searches the engine IR
-              # past the binary's own check; where the log can't be created, the engine writes none.
-              export PROVE_IT_STATE_LOG=missing/states.jsonl
-              PROVE_IT_ENGINE=debug npx --no prove-it Commit.cfg 2> engine.log > /dev/null
-              grep -q '^\[engine\] native: complete: ' engine.log
+              npx --no prove-it Commit.cfg | grep -q '251 distinct states found'
+              # With the platform package, its addon checks.
               npm install --ignore-scripts --no-audit --no-fund "$packs"/atemp-prove-it-linux-x64-gnu-*.tgz
-              PROVE_IT_ENGINE=debug npx --no prove-it Commit.cfg 2> engine.log > /dev/null
-              grep -q '^\[engine\] native: complete: ' engine.log
-              grep -q '^\[engine\] checked 251 states on 1 thread ' engine.log
+              npx --no prove-it Commit.cfg | grep -q '251 distinct states found'
               # The platform package's native binary runs with an empty environment, no node or bun.
               binary=node_modules/@atemp/prove-it-linux-x64-gnu/bin/prove-it
               test -x "$binary"

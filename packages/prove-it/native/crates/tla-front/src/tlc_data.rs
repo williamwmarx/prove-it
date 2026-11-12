@@ -1,5 +1,4 @@
-//! The texts SANY and TLC intern, as `src/tlc/jar-data.ts` holds them, which TLC's string order
-//! reads. `scripts/front-modules.ts` writes this file; don't edit it by hand.
+//! The texts SANY and TLC intern, copied from tla2tools.jar, which TLC's string order reads.
 
 pub const SANY_BUILTINS: &[&str] = &[
     "STRING",

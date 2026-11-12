@@ -43,7 +43,7 @@ use prove_it_check::resolve::{self, Config, Resolved};
 use prove_it_check::zone::{Zone, parse_rule};
 use prove_it_check::{
     Entry, FileDescriber, FileDescription, FileKind, FileOperation, Files, Host, Machine, Outcome,
-    Output, Thrown,
+    Output, Thrown, is_directory_there,
 };
 use tla_engine::clock::Instant;
 use tla_front::errors::SanyError;
@@ -74,14 +74,10 @@ struct SourcesHost {
 }
 
 impl SourcesHost {
-    /// Whether the CLI can write into the directory (`writable:<directory>`), the working
-    /// directory for a path without one.
-    fn is_writable(&self, directory: Option<&Path>) -> bool {
-        let directory = directory
-            .filter(|directory| !directory.as_os_str().is_empty())
-            .map_or_else(|| self.current_dir(), Path::to_path_buf);
-        self.get(format!("writable:{}", directory.display()))
-            .is_some()
+    /// Whether the CLI can write the file (`writable:<path>`): a file there it can write, or none
+    /// in a directory it can write into.
+    fn is_writable(&self, path: &Path) -> bool {
+        self.get(format!("writable:{}", path.display())).is_some()
     }
 
     fn get(&self, key: String) -> Option<String> {
@@ -215,7 +211,7 @@ impl Host for SourcesHost {
     // The check's writes go back to JavaScript, which writes them: the library's, which answers
     // for files itself, and the CLI's into a directory it said it can write.
     fn write_file(&self, path: &Path, bytes: &[u8], is_appended: bool) -> bool {
-        let is_written = self.is_library || self.is_writable(path.parent());
+        let is_written = self.is_library || self.is_writable(path);
         if is_written {
             self.writes.borrow_mut().push((
                 path.display().to_string(),
@@ -226,10 +222,19 @@ impl Host for SourcesHost {
         is_written
     }
 
-    fn prepare_write(&self, directory: &Path) {
+    fn prepare_write(&self, path: &Path) {
         if !self.is_library {
-            self.is_writable(Some(directory));
+            self.is_writable(path);
         }
+    }
+
+    // The CLI's answer is what `prepare_write` asked, so that nothing new is asked once the check
+    // has searched.
+    fn can_write(&self, path: &Path) -> bool {
+        if self.is_library {
+            return is_directory_there(self, path);
+        }
+        self.is_writable(path)
     }
 
     fn is_plain(&self) -> bool {

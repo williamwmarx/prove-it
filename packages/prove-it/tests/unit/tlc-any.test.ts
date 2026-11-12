@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import { checkNatively } from "../native-check";
+import { checkOnEngine } from "../native-check";
 
 const checkAssumption = (assumption: string) =>
-  checkNatively({
+  checkOnEngine({
     source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nASSUME ${assumption}\n====`,
     config: "",
   });
@@ -14,18 +14,16 @@ const getFailure = (assumption: string, message: string) =>
 
 describe("Any matches TLC", () => {
   it("contains every value", async () => {
-    const { result, declined } = await checkAssumption(
+    const result = await checkAssumption(
       '1 \\in Any /\\ "a" \\in Any /\\ {} \\in Any /\\ {1} \\subseteq Any /\\ ~IsFiniteSet(Any) /\\ ToString(<<Any>>) = "<<ANY>>"',
     );
-    expect(declined).toBeUndefined();
     expect(result.status).toBe("success");
   });
 
   it.each(["Any = Any", "{Any} = {Any}", "<<Any>> = <<Any>>", "Any \\in {Any}"])(
     "fails to compare %s",
     async (assumption) => {
-      const { result, declined } = await checkAssumption(assumption);
-      expect(declined).toBeUndefined();
+      const result = await checkAssumption(assumption);
       expect(result.status).toBe("assumption-violation");
       expect(result.violations[0]?.headline).toBe(
         getFailure(assumption, "Attempted to compare ANY with the value\nANY"),
@@ -39,8 +37,7 @@ describe("Any matches TLC", () => {
     ["{1} = Any", "Attempted to check equality of the set {1} with the value:\nANY"],
     ["Nat = Any", "Attempted to compare Nat with the value\nANY"],
   ])("fails to check %s for equality like TLC's Java classes", async (assumption, message) => {
-    const { result, declined } = await checkAssumption(assumption);
-    expect(declined).toBeUndefined();
+    const result = await checkAssumption(assumption);
     expect(result.status).toBe("assumption-violation");
     expect(result.violations[0]?.headline).toBe(getFailure(assumption, message));
   });

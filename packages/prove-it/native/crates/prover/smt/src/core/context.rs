@@ -42,6 +42,7 @@ use crate::core::theory_lra::TheoryLra;
 use crate::core::theory_lra_state::TheoryClosure;
 use crate::util::error::SmtError;
 use crate::util::lbool::LBool;
+use crate::util::rlimit::{MAX_SIZE, StopReason};
 
 pub const FC_DONE: u8 = 0;
 pub const FC_CONTINUE: u8 = 1;
@@ -489,8 +490,13 @@ impl Context {
         self.theory_init()
     }
 
-    /// The search stops with unknown when the manager's resource limit cancels it.
+    /// The search stops with unknown when the manager's resource limit cancels it, or when the
+    /// context has grown past MAX_SIZE, where resource_limits_exceeded reads Z3's memory watermark.
     pub fn check_canceled(&self) -> bool {
+        let size = self.m.get_num_nodes() + self.enode_arena.len() + self.qmanager.get_num_found();
+        if size > MAX_SIZE {
+            self.m.limit.stop(StopReason::Heap);
+        }
         !self.m.limit.inc()
     }
 

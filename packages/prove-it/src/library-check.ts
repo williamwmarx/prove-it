@@ -1,46 +1,61 @@
 // The library's check: the native binary's check, run in-process through checkSources as the CLI
 // runs it, which reads the spec, its configuration and its modules from the options rather than
-// files. Where it declines the model, or the options ask for what only the TypeScript check does,
-// the TypeScript check checks it and its result converts.
+// files. Where the native check declines the model, check throws TlaUnsupportedError.
 
-import type {
-  CheckOptions as SearchOptions,
-  OutputLine,
-  SearchStatistics,
-  TraceStep,
-} from "./check";
-import {
-  type CheckProgress,
-  type CheckResult,
-  fromNativeOutcome,
-  fromSearchResult,
-  toContinuedViolation,
-  type Violation,
-} from "./check-result";
-import { formatConfig, parseConfig } from "./config";
-import {
-  checkAllSources,
-  getNativeAddon,
-  loadWasmEngine,
-  type NativeThrown,
-} from "./engine/native";
-import { getEngineVariables, isTypeScriptCheckAsked, reportEngine } from "./engine/settings";
+import { type CheckProgress, type CheckResult, fromNativeOutcome } from "./check-result";
+import { formatConfig, type ModelConfig, parseConfig } from "./config";
+import { checkAllSources, getNativeAddon, loadWasmEngine } from "./engine/native";
+import { getCheckLog, getEngineVariables, reportEngine } from "./engine/settings";
 import {
   createSanyError,
+  EngineUnavailableError,
   TlaConfigError,
   TlaEvaluationError,
+  TlaUnsupportedError,
   WebAssemblyStackError,
 } from "./errors";
 import { getNativeProgress } from "./native-progress";
-import { checkUnlogged, logCheck } from "./parallel";
 
-export interface CheckOptions extends Omit<SearchOptions, "onProgress"> {
-  // Reports the points of the search at which TLC prints a message. The native check reports them
-  // once it ends, in order among what the spec printed; the TypeScript check, as it goes.
+// TLC's -dump: the reachable states, or with `dot` the state graph, which the native check doesn't
+// write yet.
+interface StateDump {
+  path: string;
+  dot?: boolean;
+}
+
+export interface CheckOptions {
+  // The spec's root module.
+  source: string;
+  // Its configuration, as TLC reads a .cfg file, or parsed.
+  config: string | ModelConfig;
+  // The text of a module the spec extends or instantiates, by name, where it isn't a standard one.
+  loadModule?: (name: string) => string | undefined;
+  // The bytes of a Java class that overrides an operator, by name.
+  loadClass?: (name: string) => Uint8Array | undefined;
+  // Where TLC prints a line: the spec's prints, and SANY's warnings.
+  onPrint?: (line: string) => void;
+  // A file the spec reads or writes, as IOUtils does, and the -dump file.
+  readFile?: (path: string) => string | undefined;
+  writeFile?: (path: string, text: string) => void;
+  // The Java system properties TLCGet("-Dname") reads, as a Java launch's -D sets them.
+  systemProperties?: ReadonlyMap<string, string>;
+  // TLC's -seed, -workers, -lncheck final, -dump, -tool, -continue, -nowarning, and -generateSpecTE.
+  seed?: bigint;
+  workers?: number;
+  livenessCheck?: "default" | "final";
+  dump?: StateDump;
+  isTool?: boolean;
+  isContinued?: boolean;
+  isTraceRecorded?: boolean;
+  isWarningEnabled?: boolean;
+  // Whether the caller reported SANY's warnings, which the check otherwise prints.
+  isSanyReported?: boolean;
+  // Reports the points of the search at which TLC prints a message, once the check ends, in order
+  // among what the spec printed.
   onProgress?: (progress: CheckProgress) => void;
 }
 
-// The standard modules the TypeScript check reads as its own, never asking loadModule for them.
+// The standard modules the engine reads as its own, never asking loadModule for them.
 const BUILT_IN_MODULES = new Set(["Naturals", "Integers", "Sequences", "FiniteSets", "TLC"]);
 
 // Whether the engine as WebAssembly declined a recursion its stack doesn't hold: it trapped
@@ -50,91 +65,94 @@ const isWebAssemblyStack = (reason: string) =>
   reason === "WebAssembly ran out of stack" ||
   reason.endsWith(": recursion deeper than WebAssembly's stack holds");
 
-// TLC's file name for the spec: its module's.
-const getModuleName = (source: string) => /^\s*-{4,}\s*MODULE\s+(\w+)\s*-{4,}/m.exec(source)?.[1];
+// The options with the check written to PROVE_IT_CHECK_LOG, and each module, class and file it
+// reads as it reads it.
+const logCheck = (options: CheckOptions): CheckOptions => {
+  const append = getCheckLog();
+  if (!append) return options;
+  const id = crypto.randomUUID();
+  append({
+    id,
+    source: options.source,
+    config: typeof options.config === "string" ? options.config : formatConfig(options.config),
+    seed: options.seed?.toString(),
+    livenessCheck: options.livenessCheck,
+    isTool: options.isTool === true,
+    workers: options.workers,
+    isContinued: options.isContinued === true,
+    isWarningEnabled: options.isWarningEnabled !== false,
+    caller: new Error().stack,
+  });
+  const loadModule = options.loadModule;
+  const loadClass = options.loadClass;
+  const readFile = options.readFile;
+  return {
+    ...options,
+    loadModule:
+      loadModule &&
+      ((name) => {
+        const text = loadModule(name);
+        if (text !== undefined) append({ id, module: name, source: text });
+        return text;
+      }),
+    loadClass:
+      loadClass &&
+      ((name) => {
+        const bytes = loadClass(name);
+        if (bytes !== undefined)
+          append({
+            id,
+            class: name,
+            bytes: btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join("")),
+          });
+        return bytes;
+      }),
+    readFile:
+      readFile &&
+      ((path) => {
+        const text = readFile(path);
+        if (text !== undefined) append({ id, file: path, text });
+        return text;
+      }),
+  };
+};
 
-// Why the native check doesn't take these options, if it doesn't.
-const getDeclined = (options: CheckOptions) =>
-  (
-    [
-      [isTypeScriptCheckAsked(), "a setting only the TypeScript check honours"],
-      [options.version === "1.7.4", "TLC 1.7.4"],
-      [Boolean(options.dump?.dot), "-dump dot"],
-      [
-        Boolean(options.dump) && typeof options.dump?.path !== "string",
-        "a -dump path that isn't a string",
-      ],
-      [options.onPause !== undefined, "onPause"],
-    ] as const
-  ).find((entry) => entry[0])?.[1];
-
-// SANY's error that the TypeScript check reports in words of its own, for which the library leaves
-// it to throw its error.
-const OWN_WORDED_ERROR =
-  /^An operator must be substituted for symbol '\w+', and it must have arity \d+\.$/;
-
-// The error the TypeScript check throws where the native check stops before it searches, if the
-// library knows it: where the spec may print as TLC computes its constants (it names `Print`,
-// `PrintT`, TLCExt's operators that print or IOUtils, or loads a Java override), the TypeScript
-// check prints first.
-const getThrownError = (thrown: NativeThrown, isPrinting: boolean) =>
-  thrown.kind !== "syntax"
-    ? isPrinting
-      ? undefined
-      : thrown.kind === "config"
-        ? new TlaConfigError(thrown.message)
-        : new TlaEvaluationError(thrown.message)
-    : thrown.sany.errors.some((error) => OWN_WORDED_ERROR.test(error.message)) ||
-        // The TypeScript check words a module defined twice its own way where it's a standard
-        // module, and doesn't report it with other errors.
-        thrown.sany.errors.some((error) => error.message.startsWith("Multiply-defined module"))
-      ? undefined
-      : createSanyError(
-          thrown.sany.errors,
-          thrown.sany.isFatal,
-          thrown.sany.parseError,
-          thrown.sany.warnings,
-        );
-
-// The native check's result, why it declined, or undefined where it wasn't run or stopped before
-// it searched.
-const checkWithEngine = (options: CheckOptions) => {
-  const declined = getDeclined(options);
-  const name = getModuleName(options.source);
-  const config =
-    declined !== undefined || typeof options.config === "string"
-      ? options.config
-      : formatConfig(options.config);
-  if (declined !== undefined || name === undefined || typeof config !== "string") {
-    reportEngine(
-      `native: check takes the TypeScript path: ${declined ?? (name === undefined ? "a spec without a module header" : "a ModelConfig no configuration file holds")}`,
-    );
-    return undefined;
+export const check = async (options: CheckOptions): Promise<CheckResult> => {
+  await loadWasmEngine();
+  const logged = logCheck(options);
+  // TLC's file name for the spec: its module's.
+  const name = /^\s*-{4,}\s*MODULE\s+(\w+)\s*-{4,}/m.exec(logged.source)?.[1];
+  if (name === undefined)
+    throw new TlaUnsupportedError("not native yet: a spec without a module header");
+  if (logged.dump?.dot) throw new TlaUnsupportedError("not native yet: -dump dot");
+  const config = typeof logged.config === "string" ? logged.config : formatConfig(logged.config);
+  if (config === undefined) {
+    throw new TlaUnsupportedError("not native yet: a ModelConfig no configuration file holds");
   }
   const addon = getNativeAddon();
-  if (typeof addon === "string") return undefined;
+  if (typeof addon === "string") throw new EngineUnavailableError(addon);
   // The system properties go in front of TLC's class as a Java launch's -D, as the binary reads
   // them.
-  const launch = options.systemProperties
+  const launch = logged.systemProperties
     ? [
-        ...[...options.systemProperties].map((property) => `-D${property[0]}=${property[1]}`),
+        ...[...logged.systemProperties].map((property) => `-D${property[0]}=${property[1]}`),
         "tlc2.TLC",
       ]
     : [];
   const args = [
     ...launch,
-    ...(options.isTraceRecorded ? [] : ["-noGenerateSpecTE"]),
-    ...(options.seed === undefined ? [] : ["-seed", String(options.seed)]),
-    ...(options.workers === undefined ? [] : ["-workers", String(options.workers)]),
-    ...(options.livenessCheck === "final" ? ["-lncheck", "final"] : []),
-    ...(options.isTool ? ["-tool"] : []),
-    ...(options.isWarningEnabled === false ? ["-nowarning"] : []),
-    ...(options.isContinued ? ["-continue"] : []),
-    ...(options.dump ? ["-dump", options.dump.path] : []),
+    ...(logged.isTraceRecorded ? [] : ["-noGenerateSpecTE"]),
+    ...(logged.seed === undefined ? [] : ["-seed", String(logged.seed)]),
+    ...(logged.workers === undefined ? [] : ["-workers", String(logged.workers)]),
+    ...(logged.livenessCheck === "final" ? ["-lncheck", "final"] : []),
+    ...(logged.isTool ? ["-tool"] : []),
+    ...(logged.isWarningEnabled === false ? ["-nowarning"] : []),
+    ...(logged.isContinued ? ["-continue"] : []),
+    ...(logged.dump ? ["-dump", logged.dump.path] : []),
     `${name}.tla`,
   ];
   const texts = new Map([
-    [`${name}.tla`, options.source],
+    [`${name}.tla`, logged.source],
     [`${name}.cfg`, config],
   ]);
   const answers: unknown[] = [];
@@ -151,9 +169,9 @@ const checkWithEngine = (options: CheckOptions) => {
           : kind === "module"
             ? BUILT_IN_MODULES.has(path)
               ? undefined
-              : options.loadModule?.(path)
+              : logged.loadModule?.(path)
             : kind === "class"
-              ? options.loadClass?.(path)
+              ? logged.loadClass?.(path)
               : // SANY's report names the file of each module it parses, which the result doesn't hold.
                 kind === "file"
                 ? ""
@@ -181,154 +199,71 @@ const checkWithEngine = (options: CheckOptions) => {
   if (result.kind === "declined") {
     if (isWebAssemblyStack(result.reason)) throw new WebAssemblyStackError();
     reportEngine(`native: check declined: ${result.reason}`);
-    return result.reason;
+    throw new TlaUnsupportedError(`not native yet: ${result.reason}`);
   }
-  // The check stops before it searches at a spec or a configuration TLC rejects, for which the
-  // library throws the TypeScript check's error, or else lets the TypeScript check throw it.
-  if (result.outcome === undefined) {
-    // TLC prints what the spec prints as it computes the constants before it reports an error of
-    // the configuration or of evaluating the spec, which the native check doesn't.
-    const isPrinting = answers.some(
-      (answer) =>
-        answer instanceof Uint8Array ||
-        (typeof answer === "string" && /\b(PrintT?|TLCExt|IOUtils)\b/.test(answer)),
+  if (result.outcome !== undefined) {
+    // The library writes each file the check wrote, with what each write appended. The check names
+    // the -dump file as TLC does, with .dump added, and the library writes it at the path the
+    // caller gave; other files, as a trace exploration spec, keep their names.
+    const written = new Map<string, string>();
+    const decoder = new TextDecoder();
+    result.writes.forEach((write) =>
+      written.set(
+        write.path,
+        (write.isAppended ? (written.get(write.path) ?? "") : "") + decoder.decode(write.bytes),
+      ),
     );
-    const error = result.thrown && getThrownError(result.thrown, isPrinting);
-    if (error !== undefined) throw error;
-    reportEngine(
-      `native: check takes the TypeScript path: the engine stopped before it searched (exit ${result.exitCode})`,
+    const dumpPath = logged.dump?.path;
+    written.forEach((text, path) =>
+      logged.writeFile?.(
+        dumpPath !== undefined && (path === dumpPath || path === `${dumpPath}.dump`)
+          ? dumpPath
+          : path,
+        text,
+      ),
     );
-    return undefined;
+    const print = logged.onPrint ?? console.log;
+    if (!logged.isSanyReported) result.outcome.sanyWarnings.forEach((text) => print(text));
+    const prints = result.outcome.prints;
+    const checked = fromNativeOutcome(result.outcome);
+    const onProgress = logged.onProgress;
+    const events = onProgress
+      ? getNativeProgress(
+          result.outcome,
+          checked.violations,
+          parseConfig(config),
+          logged.isContinued ?? false,
+        )
+      : [];
+    const printed = events.reduce((count, event) => {
+      prints.slice(count, event.printsBefore).forEach((text) => print(text));
+      onProgress?.(event.progress);
+      return Math.max(count, event.printsBefore);
+    }, 0);
+    prints.slice(printed).forEach((text) => print(text));
+    return checked;
   }
-  // The check names the -dump file as TLC does, with .dump added; the library writes it at the
-  // path the caller gave, with what each write appended.
-  const written = new Map<string, string>();
-  const decoder = new TextDecoder();
-  result.writes.forEach((write) =>
-    written.set(
-      write.path,
-      (write.isAppended ? (written.get(write.path) ?? "") : "") + decoder.decode(write.bytes),
-    ),
+  // The check stopped before it searched, at a spec or a configuration TLC rejects. TLC prints
+  // what the spec prints as it computes the constants before it reports an error of the
+  // configuration or of evaluating the spec, which the native check doesn't.
+  const thrown = result.thrown;
+  const isPrinting = answers.some(
+    (answer) =>
+      answer instanceof Uint8Array ||
+      (typeof answer === "string" && /\b(PrintT?|TLCExt|IOUtils)\b/.test(answer)),
   );
-  written.forEach((text, path) =>
-    options.writeFile?.(options.dump ? options.dump.path : path, text),
-  );
-  const print = options.onPrint ?? console.log;
-  // The TypeScript check prints SANY's warnings as it links the spec, where the caller didn't.
-  if (!options.isSanyReported) result.outcome.sanyWarnings.forEach((text) => print(text));
-  const prints = result.outcome.prints;
-  const checked = fromNativeOutcome(result.outcome);
-  const onProgress = options.onProgress;
-  const events = onProgress
-    ? getNativeProgress(
-        result.outcome,
-        checked.violations,
-        parseConfig(config),
-        options.isContinued ?? false,
+  if (thrown === undefined || (thrown.kind !== "syntax" && isPrinting))
+    throw new TlaUnsupportedError(
+      `not native yet: ${thrown === undefined ? `the engine stopped before it searched (exit ${result.exitCode})` : "what the spec prints as TLC computes its constants"}`,
+    );
+  throw thrown.kind === "syntax"
+    ? createSanyError(
+        thrown.sany.errors,
+        thrown.sany.isFatal,
+        thrown.sany.parseError,
+        thrown.sany.warnings,
       )
-    : [];
-  let printed = 0;
-  events.forEach((event) => {
-    prints.slice(printed, event.printsBefore).forEach((text) => print(text));
-    printed = Math.max(printed, event.printsBefore);
-    onProgress?.(event.progress);
-  });
-  prints.slice(printed).forEach((text) => print(text));
-  return checked;
-};
-
-const toStatistics = (statistics: SearchStatistics): SearchStatistics => ({
-  generatedStates: statistics.generatedStates,
-  distinctStates: statistics.distinctStates,
-  queuedStates: statistics.queuedStates,
-  depth: statistics.depth,
-});
-
-// What the TypeScript check finds, converted. With -continue it reports each violation it goes on
-// past as it finds it.
-// A violation or a failure of the TypeScript check, with its trace.
-interface Traced {
-  trace: TraceStep[];
-  traceOutput?: OutputLine[];
-}
-
-// What the spec printed as TLC rebuilt and printed a trace, then after it, as the native check
-// reports it.
-const getTracePrints = (reported: Traced | undefined) =>
-  [
-    ...(reported?.trace ?? []).flatMap((step) => step.output ?? []),
-    ...(reported?.traceOutput ?? []),
-  ].filter((line) => typeof line === "string");
-
-// What the native check declines where the TypeScript check places the trace's prints otherwise
-// than TLC, or prints other values in them: a printing ALIAS, a printing temporal property, and
-// TLCExt's Trace (native/design/fallback.md, "Interpreter limits").
-const MISPLACED_TRACE_PRINTS = [
-  "an ALIAS that prints",
-  "prints it doesn't place in TLC's order",
-  "TLCExt's Trace",
-];
-
-// The TypeScript check's result. Where the native check declined for `declined`, the trace's prints
-// go to onPrint as the native check reports them, but where the TypeScript check misplaces them;
-// where the native check didn't run, as with onProgress, they don't, as before.
-const checkWithInterpreter = async (options: CheckOptions, declined: string | undefined) => {
-  const isTracePrinted =
-    declined !== undefined && !MISPLACED_TRACE_PRINTS.some((reason) => declined.includes(reason));
-  const print = (line: string) => {
-    if (isTracePrinted) (options.onPrint ?? console.log)(line);
-  };
-  const isTool = options.isTool ?? false;
-  const version = options.version ?? "master";
-  const continued: Violation[] = [];
-  // The traces -continue reported as the search went on, whose prints went to onPrint then.
-  const reportedTraces = new Set<Traced>();
-  const onProgress = options.onProgress;
-  const result = await checkUnlogged({
-    ...options,
-    onProgress:
-      onProgress || options.isContinued
-        ? (progress) => {
-            // The search's statistics are its whole result so far, of which the event carries
-            // the counts.
-            if (progress.kind === "progress" || progress.kind === "liveness-started") {
-              return onProgress?.({ ...progress, statistics: toStatistics(progress.statistics) });
-            }
-            if (progress.kind !== "violation") return onProgress?.(progress);
-            // TLC prints each violation's trace as it reports it, without rebuilding it once more
-            // after it, and goes on.
-            reportedTraces.add(progress.violation);
-            getTracePrints({ trace: progress.violation.trace }).forEach((line) => print(line));
-            const reported = toContinuedViolation(
-              progress.status,
-              progress.violation,
-              isTool,
-              version,
-            );
-            continued.push(...reported);
-            onProgress?.({ kind: "violation", status: progress.status, violation: reported[0] });
-          }
-        : undefined,
-  });
-  // Every trace the result carries but one -continue reported as it went on: the violation, a
-  // temporal property the deadlocked state violates too, and a failure.
-  [result.violation, result.additionalViolation, result.failure]
-    .filter((traced) => traced === undefined || !reportedTraces.has(traced))
-    .flatMap(getTracePrints)
-    .forEach((line) => print(line));
-  return fromSearchResult(result, continued, isTool, version);
-};
-
-export const check = async (options: CheckOptions): Promise<CheckResult> => {
-  await loadWasmEngine();
-  // PROVE_IT_CHECK_LOG logs the call once, and what either check reads under it.
-  const readers = logCheck({ ...options, onProgress: undefined });
-  const logged = {
-    ...options,
-    loadModule: readers.loadModule,
-    loadClass: readers.loadClass,
-    readFile: readers.readFile,
-  };
-  const native = checkWithEngine(logged);
-  return typeof native === "object" ? native : checkWithInterpreter(logged, native);
+    : thrown.kind === "config"
+      ? new TlaConfigError(thrown.message)
+      : new TlaEvaluationError(thrown.message);
 };

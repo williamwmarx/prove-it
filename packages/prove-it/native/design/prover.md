@@ -240,9 +240,10 @@ sides **without a deadline and with a step limit**, as built in P0:
   `tests/conformance/prover-inputs.json`. From then on the record is a fact about the input, not
   the machine: any port, on any machine, at any load, must give the same answer and statistics
   from the same step limit.
-- **Unstable answers.** A full heap (V8's, in `rlimit.ts`) or stack ends a decision for a reason
-  of the runtime, not the search. The record keeps the reason as the statistic `stop`, and the
-  differential reports such inputs as `unstable` instead of comparing them.
+- **Unstable answers.** A full stack ends a decision for a reason of the runtime, not the search.
+  The record keeps the reason as the statistic `stop`, and the differential reports such inputs as
+  `unstable` instead of comparing them. V8's full heap was one too while the TypeScript decided;
+  the Rust SMT core's `stop=heap` is its size cap (3.6), a count, and is compared like any stop.
 
 ### 2.4 The baseline
 
@@ -492,8 +493,28 @@ coordinator first, done by or with that crate's owner, and kept to that flag.
   host, as it imports `prove_it_report` today. The step budget of 2.3 is a second, optional
   limit. No new timeouts.
 - **Memory:** where V8's heap would fill, the TS SMT solver answers `unknown`. Rust has no such
-  ceiling in-process; it counts the AST manager's nodes and stops at a fixed cap, as Z3's
-  `max_memory` does, so an obligation cannot take the process down.
+  ceiling in-process; it counts what a decision holds and stops at a fixed cap, as Z3's
+  `max_memory` does, so an obligation cannot take the process down. The SMT core's cap is
+  `MAX_SIZE` in `rlimit.rs`: 2^26 of the AST manager's nodes, the goal's formulas, the e-graph's
+  nodes and the instances E-matching found (their fingerprints and queued entries), about 140
+  bytes each, so about 9 GB. It is read where Z3 checks memory: where the context reads its
+  cancel flag (Z3's `resource_limits_exceeded`), where the goal takes a formula and where the
+  manager makes an expression (Z3's `memory::allocate`), so that a decision that grows without
+  taking steps stops too. Past it the decision is `unknown` with `stop=heap`. These are counts,
+  not bytes, so a run stops at the same step on every machine and in WebAssembly.
+
+  No count can both bound memory tightly and never stop a search that would end in an answer:
+  a search holds what Z3 holds, and some that answer within 5 million steps hold gigabytes. A
+  multi-pattern over 2,910 terms of each of two functions, whose 8.5 million instances a weight
+  delays, answers sat at 371,285 steps with 1.7 GB (Z3 5.3.3: sat in 4.5 s at 1.2 GB), which a cap
+  of 2^24 stopped; one over about 5,800 terms would hold about 4.7 GB. 2^26 is a
+  ceiling against runaway growth, not a budget: the decider corpus holds at most 7.3 million
+  under its step limits (z3/d678a5ca2b5418a6, 1.3 GB). What it stops:
+  - goal::quick_process splitting 59 let-bound conjunctions of the one before with itself into
+    2^59 formulas without a step stops (Z3 5.3.3: timeout at 9.4 GB in 20 s);
+  - a mutant of smt/706e2c3eb8dbf208 whose one E-matching run finds millions of instances, 10.5 GB
+    by two million steps, stops at 1,691,188 steps with 4.9 GB (Z3 5.3.3 grows the same way:
+    timeout at 175 MB with tlapm's `-T:5`, 1.2 GB at 20 s, 6.7 GB at 60 s).
 - **Stack:** recursion that overflows in JS answers `unknown`. Rust cannot catch an overflow, so
   each decision runs on a thread with a large stack (256 MB, like the engine's search thread), and
   the deep recursions the TS relies on catching (the rewriters, Isabelle's unifier and simplifier)

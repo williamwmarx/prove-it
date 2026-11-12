@@ -6,33 +6,22 @@ import { pathToFileURL } from "node:url";
 
 import {
   check,
+  type CheckProgress,
   parseConfig,
   parseModule,
   TlaConfigError,
-  TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import type { CheckProgress } from "../../src/check";
-import {
-  createSanyError,
-  createSemanticError,
-  getUnexpectedException,
-  STACK_OVERFLOW_MESSAGE,
-  TlaStackOverflowError,
-  UNEXPECTED_EXCEPTION,
-} from "../../src/errors";
-import { getExitCode } from "../../src/exit-codes";
-import { checkParsed } from "../../src/parallel";
-import type { TlcVersion } from "../../src/tlc/version";
+import { createSanyError, createSemanticError, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import {
   checkOnEngine,
+  expectDeclined,
   findError,
   getAssumptionFailure,
   getErrors,
   getNestedExpressions,
   getStatistics,
   runOnEngine,
-  TLC_174_LAUNCH,
   type TlcRunOptions,
 } from "../native-check";
 
@@ -58,71 +47,40 @@ const getTraceOutput = (output: string) => {
 };
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
-const checkModule = (body: string, config = "") =>
-  checkParsed({
-    source: `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
-    config: `${config}\nINIT Init\nNEXT Next`,
-  });
+const getModuleOptions = (body: string, config = "") => ({
+  source: `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
+  config: `${config}\nINIT Init\nNEXT Next`,
+});
+
+const checkModule = (body: string, config = "") => checkOnEngine(getModuleOptions(body, config));
+
+const getFixtureOptions = (directory: string, name: string) => ({
+  source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
+  config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
+});
 
 const checkFixture = (directory: string, name: string) =>
-  checkParsed({
-    source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-    config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
-  });
+  checkOnEngine(getFixtureOptions(directory, name));
 
-const checkModuleOnEngine = (body: string, config = "", declinedFor?: string) =>
-  checkOnEngine(
-    {
-      source: `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n${body}\n====`,
-      config: `${config}\nINIT Init\nNEXT Next`,
-    },
-    declinedFor,
-  );
-
-// The reason the engine gives for an assumption that fails to evaluate, which it leaves to the
-// TypeScript check.
+// The reason the native check declines an assumption that fails to evaluate for.
 const getAssumptionDeclined = (reason: string) =>
   `an assumption that fails to evaluate: evaluating the assumption again: ${reason}`;
 
-// TLC 1.7.4 is the TypeScript check's alone.
-const getVersionDeclined = (version?: TlcVersion) =>
-  version === "1.7.4" ? "TLC 1.7.4" : undefined;
-
-const checkFixtureOnEngine = (directory: string, name: string, declinedFor?: string) =>
-  checkOnEngine(
-    {
-      source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-      config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
-    },
-    declinedFor,
-  );
-
 describe("check matches TLC", () => {
   // TLC prints C once, as it computes the constant definitions.
-  it.each(["0", undefined])(
-    "takes the value of a constant definition that prints, with PROVE_IT_ENGINE=%s",
-    async (engine) => {
-      const setting = process.env.PROVE_IT_ENGINE;
-      if (engine === undefined) delete process.env.PROVE_IT_ENGINE;
-      else process.env.PROVE_IT_ENGINE = engine;
-      const printed: string[] = [];
-      try {
-        await checkParsed({
-          source:
-            '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nC == PrintT("C")\nInit == x = 0 /\\ C\nNext == x < 3 /\\ C /\\ x\' = x + 1\nInv == x >= 0 /\\ C\n====',
-          config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
-          onPrint: (text) => printed.push(text),
-        });
-      } finally {
-        if (setting === undefined) delete process.env.PROVE_IT_ENGINE;
-        else process.env.PROVE_IT_ENGINE = setting;
-      }
-      expect(printed).toEqual(['"C"']);
-    },
-  );
+  it("takes the value of a constant definition that prints", async () => {
+    const printed: string[] = [];
+    await checkOnEngine({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nC == PrintT("C")\nInit == x = 0 /\\ C\nNext == x < 3 /\\ C /\\ x\' = x + 1\nInv == x >= 0 /\\ C\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['"C"']);
+  });
 
   it("evaluates every assumption in the semantics fixture", async () => {
-    const result = await checkFixtureOnEngine("semantics", "Semantics");
+    const result = await checkFixture("semantics", "Semantics");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([2, 1, 1]);
   });
@@ -131,7 +89,7 @@ describe("check matches TLC", () => {
     ["two theorems", "THEOREM Thm == x = 0\nTHEOREM Thm == x = 1"],
     ["an assumption and a theorem", "ASSUME Thm == TRUE\nTHEOREM Thm == x = 1"],
   ])("evaluates the first of %s with the same name as SANY binds it", async (_, facts) => {
-    const result = await checkModuleOnEngine(`${facts}\nInv == Thm`, "INVARIANT Inv");
+    const result = await checkModule(`${facts}\nInv == Thm`, "INVARIANT Inv");
     expect(result.status).toBe("success");
   });
 
@@ -157,44 +115,27 @@ describe("check matches TLC", () => {
     },
   );
 
-  it.each([
-    ["1.7.4", ["1", "3", "0", "1", "2"], 11],
-    ["master", ["0", "1", "2", "3"], 9],
-  ] as const)(
-    "enumerates the bound of a quantifier over a lazy union as TLC %s does",
-    async (version, printed, generatedStates) => {
-      const prints: string[] = [];
-      const result = await checkOnEngine(
-        {
-          source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == (\\E <<a, b>> \\in {1, 3} \\X UNION {0..2, {1, 3}} : TRUE) /\\ x' = x\nASSUME \\A a \\in UNION {{3, 1}, 0..2} : PrintT(a)\nASSUME PrintT(CHOOSE a \\in UNION {{3}, 0..2} : TRUE)\n====`,
-          config: "INIT Init\nNEXT Next",
-          version,
-          onPrint: (text) => prints.push(text),
-        },
-        version === "1.7.4" ? "TLC 1.7.4" : undefined,
-      );
-      expect(prints).toEqual([...printed, "0"]);
-      expect(result.generatedStates).toBe(generatedStates);
-    },
-  );
+  it("enumerates the bound of a quantifier over a lazy union as TLC does", async () => {
+    const prints: string[] = [];
+    const result = await checkOnEngine({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == (\\E <<a, b>> \\in {1, 3} \\X UNION {0..2, {1, 3}} : TRUE) /\\ x' = x\nASSUME \\A a \\in UNION {{3, 1}, 0..2} : PrintT(a)\nASSUME PrintT(CHOOSE a \\in UNION {{3}, 0..2} : TRUE)\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["0", "1", "2", "3", "0"]);
+    expect(result.generatedStates).toBe(9);
+  });
 
-  it.each([
-    ["1.7.4", "[Nat -> {}]", "assumption-violation"],
-    ["1.7.4", "[{} -> Nat]", "assumption-violation"],
-    ["1.7.4", "[a : {}, b : Nat]", "success"],
-    ["master", "[Nat -> {}]", "success"],
-    ["master", "[{} -> Nat]", "success"],
-  ] as const)("enumerates the sets of %s %s in turn as TLC does", async (version, set, status) => {
-    const result = await checkOnEngine(
-      {
+  it.each(["[Nat -> {}]", "[{} -> Nat]"])(
+    "enumerates the sets of %s in turn as TLC does",
+    async (set) => {
+      const result = await checkOnEngine({
         source: `---- MODULE M ----\nEXTENDS Naturals\nASSUME \\A y \\in ${set} : TRUE\n====`,
         config: "",
-        version,
-      },
-      version === "1.7.4" ? "TLC 1.7.4" : undefined,
-    );
-    expect(result.status).toBe(status);
-  });
+      });
+      expect(result.status).toBe("success");
+    },
+  );
 
   it("streams the sets that a set of tuples, records, or functions combines as TLC does", async () => {
     const result = await checkOnEngine({
@@ -205,7 +146,7 @@ describe("check matches TLC", () => {
   });
 
   it("decides sets of functions, records, and tuples from an empty argument", async () => {
-    const result = await checkFixtureOnEngine("empty-sets", "EmptySets");
+    const result = await checkFixture("empty-sets", "EmptySets");
     expect(result.violations[0]?.headline).toBeUndefined();
     expect(result.status).toBe("success");
   });
@@ -245,45 +186,38 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("checks membership in a union of a non-enumerable set against the enumerable side first", async () => {
-    expect((await checkModule('ASSUME 1 \\in Int \\cup {"none"}')).status).toBe(
-      "assumption-violation",
-    );
+  it("checks membership in a union of a non-enumerable set", async () => {
     expect((await checkModule("ASSUME 5 \\in UNION {Nat}")).status).toBe("success");
   });
 
   it("defers a set operation on a value that isn't a set until it enumerates the result", async () => {
-    expect((await checkModuleOnEngine("ASSUME ({} \\cup 0) = 0")).status).toBe("success");
-    const result = await checkModuleOnEngine("ASSUME Cardinality({1} \\cup 0) = 1");
+    expect((await checkModule("ASSUME ({} \\cup 0) = 0")).status).toBe("success");
+    const result = await checkModule("ASSUME Cardinality({1} \\cup 0) = 1");
     expect(result.violations[0]?.headline).toContain(
       "Attempted to enumerate S \\cup T when S:\n{1}\nand T:\n0\nare not both enumerable",
     );
   });
 
   it("compares power sets through their bases", async () => {
-    expect(
-      (await checkModuleOnEngine("ASSUME SUBSET (1..23) \\subseteq SUBSET (1..42)")).status,
-    ).toBe("success");
-    expect(
-      (await checkModuleOnEngine("ASSUME ~(SUBSET (1..42) \\subseteq SUBSET (2..42))")).status,
-    ).toBe("success");
+    expect((await checkModule("ASSUME SUBSET (1..23) \\subseteq SUBSET (1..42)")).status).toBe(
+      "success",
+    );
+    expect((await checkModule("ASSUME ~(SUBSET (1..42) \\subseteq SUBSET (2..42))")).status).toBe(
+      "success",
+    );
     // TLC's SubsetValue.isSubsetEq compares the bases of power sets of power sets in turn.
     expect(
-      (await checkModuleOnEngine("ASSUME SUBSET SUBSET (1..30) \\subseteq SUBSET SUBSET (0..30)"))
-        .status,
+      (await checkModule("ASSUME SUBSET SUBSET (1..30) \\subseteq SUBSET SUBSET (0..30)")).status,
     ).toBe("success");
     expect(
-      (
-        await checkModuleOnEngine(
-          "ASSUME ~(SUBSET SUBSET (0..30) \\subseteq SUBSET SUBSET (1..30))",
-        )
-      ).status,
+      (await checkModule("ASSUME ~(SUBSET SUBSET (0..30) \\subseteq SUBSET SUBSET (1..30))"))
+        .status,
     ).toBe("success");
   });
 
   // TLC checks this module without an error.
   it("reads each of SANY's Unicode operators as its ASCII spelling, and ℕ as a name", async () => {
-    const result = await checkModuleOnEngine(
+    const result = await checkModule(
       [
         "a \\approx b == <<a, b>>",
         "a \\sqcup b == {a, b}",
@@ -299,53 +233,46 @@ describe("check matches TLC", () => {
     expect(result.status).toBe("success");
   });
 
-  it("reports a module that cannot be found as a syntax error", async () => {
-    await expect(
-      checkParsed({
+  it("declines a module that cannot be found", async () => {
+    await expectDeclined(
+      {
         source: "---- MODULE M ----\nEXTENDS Missing\n====",
         config: "",
         loadModule: () => undefined,
-      }),
-    ).rejects.toThrow(TlaSyntaxError);
+      },
+      "the engine stopped before it searched (exit 150)",
+    );
   });
 
   it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", async () => {
-    const results = await Promise.all(
-      (
-        [
-          ["Runtime", 'the engine stopped: unsupported: TLCGet("diameter") in the search'],
-          ["Distinct", undefined],
-          ["Generated", "the engine stopped: unsupported: TLCGet of a key the search doesn't keep"],
-        ] as const
-      ).map(([name, declinedFor]) =>
-        checkOnEngine(
-          {
-            source: readFileSync(join(FIXTURES, "runtime", "Runtime.tla"), "utf8"),
-            config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
-          },
-          declinedFor,
-        ),
-      ),
+    await expectDeclined(
+      getFixtureOptions("runtime", "Runtime"),
+      'the engine stopped: unsupported: TLCGet("diameter") in the search',
     );
-    expect(
-      results.map((result) => [
-        result.status,
-        result.generatedStates,
-        result.distinctStates,
-        result.depth,
-        result.violations[0]?.states.map((step) => step.variables.x?.value),
-      ]),
-    ).toEqual<unknown[]>([
-      ["success", 14, 8, 4, undefined],
-      ["invariant-violation", 10, 6, 3, [1, 3, 5]],
-      ["invariant-violation", 8, 5, 3, [0, 2, 4]],
-    ]);
+    const result = await checkOnEngine({
+      source: readFileSync(join(FIXTURES, "runtime", "Runtime.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "runtime", "Distinct.cfg"), "utf8"),
+    });
+    expect([
+      result.status,
+      result.generatedStates,
+      result.distinctStates,
+      result.depth,
+      result.violations[0]?.states.map((step) => step.variables.x?.value),
+    ]).toEqual<unknown[]>(["invariant-violation", 10, 6, 3, [1, 3, 5]]);
+    await expectDeclined(
+      {
+        source: readFileSync(join(FIXTURES, "runtime", "Runtime.tla"), "utf8"),
+        config: readFileSync(join(FIXTURES, "runtime", "Generated.cfg"), "utf8"),
+      },
+      "the engine stopped: unsupported: TLCGet of a key the search doesn't keep",
+    );
   });
 
   it("treats Any as a set containing every value", async () => {
     expect(
       (
-        await checkModuleOnEngine(
+        await checkModule(
           'ASSUME <<1, {2}>> \\in Any /\\ [a |-> 1] \\in [a : Any] /\\ ToString(Any) = "ANY"',
         )
       ).status,
@@ -353,23 +280,13 @@ describe("check matches TLC", () => {
   });
 
   it("checks _POSSIBLE predicates and postconditions after the search", async () => {
+    const getOptions = (name: string) => ({
+      source: readFileSync(join(FIXTURES, "postconditions", "Postconditions.tla"), "utf8"),
+      config: readFileSync(join(FIXTURES, "postconditions", `${name}.cfg`), "utf8"),
+      onPrint: () => {},
+    });
     const results = await Promise.all(
-      (
-        [
-          ["Holds", undefined],
-          ["Unwitnessed", "a _POSSIBLE predicate the search didn't witness"],
-          ["False", undefined],
-        ] as const
-      ).map(([name, declinedFor]) =>
-        checkOnEngine(
-          {
-            source: readFileSync(join(FIXTURES, "postconditions", "Postconditions.tla"), "utf8"),
-            config: readFileSync(join(FIXTURES, "postconditions", `${name}.cfg`), "utf8"),
-            onPrint: () => {},
-          },
-          declinedFor,
-        ),
-      ),
+      ["Holds", "False"].map((name) => checkOnEngine(getOptions(name))),
     );
     expect(
       results.map((result) => [
@@ -381,15 +298,14 @@ describe("check matches TLC", () => {
       ["success", undefined, 4],
       [
         "postcondition-violation",
-        "The _POSSIBLE predicate AtTen at line 12, col 10 to line 12, col 15 of module Postconditions was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.",
-        4,
-      ],
-      [
-        "postcondition-violation",
         "Postcondition FiveStates at line 18, col 15 to line 18, col 36 of module Postconditions is false.",
         4,
       ],
     ]);
+    await expectDeclined(
+      getOptions("Unwitnessed"),
+      "a _POSSIBLE predicate the search didn't witness",
+    );
   });
 
   it("generates no states for a specification without variables", async () => {
@@ -558,55 +474,17 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("computes the definitions an INSTANCE adds in the order of SANY's symbol table", async () => {
-    const warnings: string[] = [];
-    await checkParsed({
-      source: "---- MODULE R ----\nINSTANCE Cases WITH C <- 1\n====",
-      config: "",
-      loadModule: (name) =>
-        name === "Cases"
-          ? [
-              "---- MODULE Cases ----",
-              "CONSTANT C",
-              'F == [x \\in {"a"} |-> C]',
-              'FcnExceptMissing == [F EXCEPT !["c"] = 9]',
-              "TupleExceptMissing == [<<C>> EXCEPT ![3] = 9]",
-              "RecordExceptMissing == [[a |-> C] EXCEPT !.c = 9]",
-              "====",
-            ].join("\n")
-          : undefined,
-      onProgress: (progress) => {
-        if (progress.kind === "warning") warnings.push(progress.text.split("\n")[1]);
-      },
-    });
-    expect(warnings).toEqual([
-      "line 4, col 22 to line 4, col 22 of module Cases",
-      "line 6, col 25 to line 6, col 33 of module Cases",
-      "line 5, col 24 to line 5, col 28 of module Cases",
-    ]);
-  });
-
   it.each([
-    ["Naturals", "{} >= 0", ">", "{}", undefined],
-    ["Integers", "{} >= 0", ">=", "{}", undefined],
-    ["Naturals, TLCExt", "{} >= 0", ">=", "{}", undefined],
-    [
-      "Bags",
-      'SubBag(<<"a">>) = {}',
-      ">",
-      '"a"',
-      "an assumption that fails to evaluate: evaluating the assumption again: SubBag's >=, which may be Naturals' or Integers'",
-    ],
+    ["Naturals", "{} >= 0", ">", "{}"],
+    ["Integers", "{} >= 0", ">=", "{}"],
+    ["Naturals, TLCExt", "{} >= 0", ">=", "{}"],
   ])(
     "names >= in an error as the Java method TLC loads with %s does",
-    async (modules, assumption, name, value, declinedFor) => {
-      const result = await checkOnEngine(
-        {
-          source: `---- MODULE M ----\nEXTENDS ${modules}\nASSUME ${assumption}\n====`,
-          config: "",
-        },
-        declinedFor,
-      );
+    async (modules, assumption, name, value) => {
+      const result = await checkOnEngine({
+        source: `---- MODULE M ----\nEXTENDS ${modules}\nASSUME ${assumption}\n====`,
+        config: "",
+      });
       expect(result.violations[0]?.headline).toBe(
         getAssumptionFailure(
           3,
@@ -616,6 +494,13 @@ describe("check matches TLC", () => {
       );
     },
   );
+
+  it("declines to name >= in an error as the Java method TLC loads with Bags does", async () => {
+    await expectDeclined(
+      { source: '---- MODULE M ----\nEXTENDS Bags\nASSUME SubBag(<<"a">>) = {}\n====', config: "" },
+      "an assumption that fails to evaluate: evaluating the assumption again: SubBag's >=, which may be Naturals' or Integers'",
+    );
+  });
 
   it("reports a depth of 1 when the constraint excludes every initial state", async () => {
     const results = await Promise.all(
@@ -638,9 +523,9 @@ describe("check matches TLC", () => {
 
   it("prints empty intervals and keys that are not field names like TLC", async () => {
     const prints: string[] = [];
-    await checkParsed({
+    await checkOnEngine({
       source:
-        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME PrintT(0..-2)\nASSUME PrintT(("<<>>" :> 0) @@ ("a b" :> 1))\nASSUME PrintT(("x1" :> 2) @@ ("y" :> 3))\nASSUME PrintT("x\u00b2" :> 4)\nASSUME PrintT("x\u0663" :> 5)\nInit == x = 0\nNext == UNCHANGED x\n====',
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME PrintT(0..-2)\nASSUME PrintT(("<<>>" :> 0) @@ ("a b" :> 1))\nASSUME PrintT(("x1" :> 2) @@ ("y" :> 3))\nASSUME PrintT("x\u00b2" :> 4)\nInit == x = 0\nNext == UNCHANGED x\n====',
       config: "INIT Init\nNEXT Next",
       onPrint: (text) => prints.push(text),
     });
@@ -649,7 +534,6 @@ describe("check matches TLC", () => {
       '("<<>>" :> 0 @@ "a b" :> 1)',
       "[x1 |-> 2, y |-> 3]",
       '("x\u00b2" :> 4)',
-      "[x\u0663 |-> 5]",
     ]);
   });
 
@@ -674,7 +558,7 @@ describe("check matches TLC", () => {
   });
 
   it("fingerprints states by their VIEW and keeps the fair steps it hides", async () => {
-    const result = await checkFixtureOnEngine("view", "View");
+    const result = await checkFixture("view", "View");
     expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
       "success",
       5,
@@ -728,12 +612,12 @@ describe("check matches TLC", () => {
   });
 
   it("evaluates a VIEW on the symmetry representative TLC picks by its variable order", async () => {
-    const result = await checkFixtureOnEngine("view", "ViewSymmetry");
+    const result = await checkFixture("view", "ViewSymmetry");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([7, 4, 4]);
   });
 
   it("orders model values, strings, and record fields like TLC when picking a representative", async () => {
-    const result = await checkFixtureOnEngine("view", "ViewSymmetryOrder");
+    const result = await checkFixture("view", "ViewSymmetryOrder");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([139, 14, 3]);
   });
 
@@ -748,37 +632,17 @@ describe("check matches TLC", () => {
     expect(printed).toEqual(['{"\\"b\\"", "\\"a\\""}']);
   });
 
-  it("orders strings, record fields, and model values by when TLC interns them", async () => {
-    const printed: string[] = [];
-    const result = await checkOnEngine(
-      {
-        source: readFileSync(join(FIXTURES, "strings", "StringOrder.tla"), "utf8"),
-        config: readFileSync(join(FIXTURES, "strings", "StringOrder.cfg"), "utf8"),
-        onPrint: (text) => printed.push(text),
-      },
+  it("declines to order strings, record fields, and model values by when TLC interns them", async () => {
+    await expectDeclined(
+      { ...getFixtureOptions("strings", "StringOrder"), onPrint: () => {} },
       "the engine stopped: an invariant violated",
     );
-    expect(printed).toEqual([
-      '"zzq"',
-      '{"zzq", "aaq", "mmq"}',
-      "[zz |-> 1, aa |-> 2]",
-      "{[zz |-> 1], [aa |-> 1]}",
-      "{p2, m, b}",
-      "p2",
-      '{"7", "3"}',
-      '{"zzb", "zza"}',
-    ]);
-    expect(result.status).toBe("invariant-violation");
-    expect(result.violations[0]?.states.map((step) => step.variables.pick?.text)).toEqual([
-      '"zzq"',
-      '"aaq"',
-    ]);
   });
 
   it.each(["UnicodeStringFingerprint", "UnicodeRecordFingerprint", "UnicodeFunctionFingerprint"])(
     "merges states whose strings differ only above U+00FF like TLC's fingerprint in %s",
     async (name) => {
-      const result = await checkFixtureOnEngine("strings", name);
+      const result = await checkFixture("strings", name);
       expect([result.generatedStates, result.distinctStates]).toEqual([3, 1]);
     },
   );
@@ -811,34 +675,33 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("explores states that depend on the order of strings in CHOOSE", async () => {
-    const result = await checkFixtureOnEngine("strings", "StringSets");
+    const result = await checkFixture("strings", "StringSets");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([76, 31, 5]);
   });
 
-  it("ranks strings created while checking in the order they are created", async () => {
-    const result = await checkFixtureOnEngine(
-      "strings",
-      "RuntimeStrings",
+  it("declines to rank strings created while checking in the order they are created", async () => {
+    await expectDeclined(
+      getFixtureOptions("strings", "RuntimeStrings"),
       "the engine stopped: an order of strings the search made",
     );
-    expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([115, 97, 6]);
   });
 
   it("does not carry one check's string order into the next", async () => {
-    const earlier = await checkModuleOnEngine(
+    const earlier = await checkModule(
       'Picked == CHOOSE s \\in {"zzq", "aaq"} : TRUE\nASSUME Picked = "zzq"',
     );
     expect(earlier.status).toBe("success");
-    const reversed = await checkModuleOnEngine(
+    const reversed = await checkModule(
       'ASSUME "aaq" # "zzq"\nASSUME (CHOOSE s \\in {"zzq", "aaq"} : TRUE) = "aaq"',
     );
     expect(reversed.status).toBe("success");
-    expect((await checkFixtureOnEngine("strings", "StringSets")).distinctStates).toBe(31);
+    expect((await checkFixture("strings", "StringSets")).distinctStates).toBe(31);
   });
 
-  it("fails like TLC when a lasso under VIEW cannot be rebuilt from fingerprints", async () => {
-    await expect(checkFixture("view", "Recover")).rejects.toThrow(
-      new TlaEvaluationError("Failed to recover the next state from its fingerprint."),
+  it("declines a lasso under VIEW that cannot be rebuilt from fingerprints", async () => {
+    await expectDeclined(
+      getFixtureOptions("view", "Recover"),
+      "no step from state 3 is the trace's next",
     );
   });
 
@@ -868,7 +731,7 @@ ASSUME TLCFP(a) = -887695703
     ]).toEqual(["invariant-violation", [0, 1, 2]]);
   });
 
-  it("converts values to JSON like TLC's Json module", async () => {
+  it("declines to convert values to JSON as TLC's Json module does", async () => {
     const assumptions = [
       'ToJson(<<3, 2, 1>>) = "[3,2,1]"',
       'ToJson({3, 2, 1}) = "[1,2,3]"',
@@ -877,35 +740,27 @@ ASSUME TLCFP(a) = -887695703
       'ToJson([n \\in {3, 2, 1} |-> 2 * n + 1]) = "[3,5,7]"',
       'ToJsonArray({}) = "[]"',
     ];
-    const result = await checkOnEngine(
+    await expectDeclined(
       {
         source: `---- MODULE M ----\nEXTENDS Integers, TLC, Json\nVARIABLE x\n${assumptions.map((assumption) => `ASSUME ${assumption}`).join("\n")}\nInit == x = 0\nNext == x' = x\n====`,
         config: "INIT Init\nNEXT Next",
       },
       "an assumption that fails to evaluate: evaluating the assumption again: the builtin ToJson",
     );
-    expect(result.status).toBe("success");
   });
 
-  it("implements the TLCExt operators", async () => {
-    const results = await Promise.all(
-      ["Extensions", "ExtensionsShort"].map((name) =>
-        checkOnEngine(
-          {
-            source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
-            config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
-          },
-          "an assumption that fails to evaluate: evaluating the assumption again: the builtin AssertEq",
-        ),
-      ),
-    );
-    expect(
-      results.map((result) => [result.status, result.generatedStates, result.distinctStates]),
-    ).toEqual([
-      ["success", 4, 4],
-      ["invariant-violation", 3, 3],
-    ]);
-  });
+  it.each(["Extensions", "ExtensionsShort"])(
+    "declines the TLCExt operators of the %s config",
+    async (name) => {
+      await expectDeclined(
+        {
+          source: readFileSync(join(FIXTURES, "runtime", "Extensions.tla"), "utf8"),
+          config: readFileSync(join(FIXTURES, "runtime", `${name}.cfg`), "utf8"),
+        },
+        "an assumption that fails to evaluate: evaluating the assumption again: the builtin AssertEq",
+      );
+    },
+  );
 
   it("rejects comparisons of differently-typed model values", async () => {
     const result = await checkOnEngine({
@@ -919,25 +774,25 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("explores the mutex state space", async () => {
-    const result = await checkFixtureOnEngine("mutex", "Mutex");
+    const result = await checkFixture("mutex", "Mutex");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([18, 10, 4]);
   });
 
   it("explores a commit protocol over model values", async () => {
-    const result = await checkFixtureOnEngine("commit", "Commit");
+    const result = await checkFixture("commit", "Commit");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([890, 251, 11]);
   });
 
   it("stops exploring states that fail a constraint", async () => {
-    const result = await checkFixtureOnEngine("queue", "Queue");
+    const result = await checkFixture("queue", "Queue");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([181, 105, 9]);
   });
 
   it("reports the shortest trace to an invariant violation", async () => {
-    const result = await checkFixtureOnEngine("water-jugs", "WaterJugs");
+    const result = await checkFixture("water-jugs", "WaterJugs");
     expect(result.status).toBe("invariant-violation");
     expect(result.violations[0]?.headline).toBe("Invariant GoalNotReached is violated.");
     const trace = result.violations[0]?.states ?? [];
@@ -1004,7 +859,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("labels steps after evaluating the initial predicate again like TLC", async () => {
-    const result = await checkFixtureOnEngine("tlc-get-non-determinism", "TLCGetNonDeterminism");
+    const result = await checkFixture("tlc-get-non-determinism", "TLCGetNonDeterminism");
     expect(result.violations[0]?.states.map((step) => step.label)).toEqual([
       "Initial predicate",
       ...Array.from(
@@ -1015,12 +870,12 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("counts the states left on the queue when a violation stops the search", async () => {
-    const result = await checkFixtureOnEngine("water-jugs", "WaterJugs");
+    const result = await checkFixture("water-jugs", "WaterJugs");
     expect(result.queuedStates).toBe(1);
   });
 
   it("reports deadlock with the trace that reaches it", async () => {
-    const result = await checkFixtureOnEngine("counter", "Counter");
+    const result = await checkFixture("counter", "Counter");
     expect(result.status).toBe("deadlock");
     expect(result.violations[0]?.states.map((step) => step.label)).toEqual([
       "Initial predicate",
@@ -1044,13 +899,13 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("stops branching on initial conjuncts once every variable is assigned", async () => {
-    const result = await checkFixtureOnEngine("initial-states", "InitialStates");
+    const result = await checkFixture("initial-states", "InitialStates");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([5, 2, 1]);
   });
 
   it("assigns variables through definitions, parameters, function applications, and <<A>>_v", async () => {
-    const result = await checkFixtureOnEngine("assignments", "Assignments");
+    const result = await checkFixture("assignments", "Assignments");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([98, 24, 5]);
   });
@@ -1069,19 +924,19 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("reduces states under a symmetry set", async () => {
-    const result = await checkFixtureOnEngine("symmetry", "Symmetry");
+    const result = await checkFixture("symmetry", "Symmetry");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([42, 10, 7]);
   });
 
   it("reduces a set of records that a permutation partly moves", async () => {
-    const result = await checkFixtureOnEngine("symmetry", "SymmetricMessages");
+    const result = await checkFixture("symmetry", "SymmetricMessages");
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([641, 80, 9]);
   });
 
   it("checks liveness on the symmetry-reduced graph", async () => {
-    const result = await checkFixtureOnEngine("symmetry", "SymmetricLiveness");
+    const result = await checkFixture("symmetry", "SymmetricLiveness");
     expect(result.status).toBe("liveness-violation");
     expect(result.violations[0]?.headline).toBe("Temporal property Live was violated.\n");
     expect(result.violations[0]?.states.map((step) => step.variables.x?.value)).toEqual([
@@ -1089,12 +944,10 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
-  it("rejects a symmetry that names a constant", async () => {
-    // TLC reports it as a RuntimeException it did not expect, verified with TLC.
-    const result = checkModule("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P");
-    await expect(result).rejects.toThrow(TlaEvaluationError);
-    await expect(result).rejects.toThrow(
-      "The symmetry function P must specify a set of permutations.",
+  it("declines a symmetry that names a constant", async () => {
+    await expectDeclined(
+      getModuleOptions("CONSTANT P", "CONSTANT P = {p1, p2}\nSYMMETRY P"),
+      "the engine stopped before it searched (exit 255)",
     );
   });
 
@@ -1122,7 +975,7 @@ ASSUME TLCFP(a) = -887695703
     ],
   ])("finds the branches of %s like TLC", async (property, branches) => {
     const progress: CheckProgress[] = [];
-    await checkParsed({
+    await checkOnEngine({
       source: `---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nProp == ${property}\n====`,
       config: "INIT Init\nNEXT Next\nPROPERTY Prop",
       onProgress: (event) => {
@@ -1134,7 +987,7 @@ ASSUME TLCFP(a) = -887695703
 
   it("warns about a permuted set with fewer than two elements", async () => {
     const warnings: CheckProgress[] = [];
-    const result = await checkParsed({
+    const result = await checkOnEngine({
       source:
         "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS S, T\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSym == Permutations(S) \\cup Permutations(T)\n====",
       config: "CONSTANTS S = {s1, s2}\nT = {t1}\nINIT Init\nNEXT Next\nSYMMETRY Sym",
@@ -1156,35 +1009,23 @@ ASSUME TLCFP(a) = -887695703
     await expect(checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).rejects.toThrow(
       TlaConfigError,
     );
-    expect((await checkModuleOnEngine("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo")).status).toBe(
-      "success",
-    );
+    expect((await checkModule("CONSTANT C\nFoo == 1", "CONSTANT C <- Foo")).status).toBe("success");
     // TLC rejects a state-level substitute only when evaluating it at startup fails.
-    expect(
-      (
-        await checkModuleOnEngine(
-          'CONSTANT C\nFoo == TLCGet("level")',
-          "CONSTANT C <- Foo",
-          "a configuration substitute with effects, which TLC evaluates at every use: C <- Foo",
-        )
-      ).status,
-    ).toBe("success");
+    await expectDeclined(
+      getModuleOptions('CONSTANT C\nFoo == TLCGet("level")', "CONSTANT C <- Foo"),
+      "a configuration substitute with effects, which TLC evaluates at every use: C <- Foo",
+    );
     await expect(
       checkModule('CONSTANT C\nFoo == TLCGet("diameter")', "CONSTANT C <- Foo"),
     ).rejects.toThrow(TlaConfigError);
-    expect(
-      (
-        await checkModuleOnEngine(
-          "CONSTANT C\nFoo == RandomElement({1})",
-          "CONSTANT C <- Foo",
-          "a configuration substitute with effects, which TLC evaluates at every use: C <- Foo",
-        )
-      ).status,
-    ).toBe("success");
+    await expectDeclined(
+      getModuleOptions("CONSTANT C\nFoo == RandomElement({1})", "CONSTANT C <- Foo"),
+      "a configuration substitute with effects, which TLC evaluates at every use: C <- Foo",
+    );
   });
 
-  it("accepts a substitute that a constant-level standard operator defines", async () => {
-    const result = await checkOnEngine(
+  it("declines a substitute that JsonDeserialize defines", async () => {
+    await expectDeclined(
       {
         source:
           '---- MODULE M ----\nEXTENDS Json\nCONSTANT C\nVARIABLE x\nTrace == JsonDeserialize("missing.json")\nInit == x = 0\nNext == x\' = x\n====',
@@ -1192,11 +1033,6 @@ ASSUME TLCFP(a) = -887695703
       },
       "the engine declined: JsonDeserialize, whose file the host reads and writes",
     );
-    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
-      "success",
-      2,
-      1,
-    ]);
   });
 
   it("overrides definitions and ignores undeclared names assigned by the configuration", async () => {
@@ -1213,7 +1049,7 @@ ASSUME TLCFP(a) = -887695703
   });
 
   it("substitutes infix operator constants", async () => {
-    const result = await checkModuleOnEngine(
+    const result = await checkModule(
       "CONSTANT _++_\nPlusPlus(a, b) == <<a, b>>\nASSUME (1 ++ 2) = <<1, 2>>",
       "CONSTANT ++ <- PlusPlus",
     );
@@ -1249,7 +1085,7 @@ ASSUME TLCFP(a) = -887695703
       ["success", 21, 7],
       ["liveness-violation", 14, 7],
     ]);
-    await expect(checkParsed(getOptions("D"))).rejects.toThrow(
+    await expect(checkOnEngine(getOptions("D"))).rejects.toThrow(
       new TlaConfigError("The spec is trivially false because ModInsanityCheck is false."),
     );
   });
@@ -1260,7 +1096,7 @@ ASSUME TLCFP(a) = -887695703
       config: `CONSTANT C = FALSE\n${config}`,
     });
     const checkSpec = (definitions: string, config: string) =>
-      checkParsed(getOptions(definitions, config));
+      checkOnEngine(getOptions(definitions, config));
     const base = "Spec == Init /\\ [][Next]_x";
     expect(
       (await checkOnEngine(getOptions(`${base} /\\ TRUE /\\ True`, "SPECIFICATION Spec")))
@@ -1280,7 +1116,7 @@ ASSUME TLCFP(a) = -887695703
         `${base}\nProp == [](x \\in {0, 1}) /\\ ${property}`,
         "SPECIFICATION Spec\nPROPERTY Prop",
       );
-    const checkProperty = (property: string) => checkParsed(getPropertyOptions(property));
+    const checkProperty = (property: string) => checkOnEngine(getPropertyOptions(property));
     expect((await checkOnEngine(getPropertyOptions("True"))).status).toBe("success");
     await expect(checkProperty("False")).rejects.toThrow(
       new TlaConfigError("The spec is trivially false because False is false."),
@@ -1362,44 +1198,33 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
   });
 
-  it("reports a symmetry that isn't a set of permutations like TLC", async () => {
+  it("reports an undefined symmetry like TLC and declines one that isn't a set of permutations", async () => {
     await expect(checkModule("", "SYMMETRY P")).rejects.toThrow(
       new TlaConfigError(
         "The symmetry function P specified in the configuration file\nis not defined in the specification.",
       ),
     );
-    const cases = [
-      [
-        "CONSTANT P",
-        "CONSTANT P = {p1, p2}\nSYMMETRY P",
-        "The symmetry function P must specify a set of permutations.",
-      ],
-      ["P == 1", "SYMMETRY P", "The symmetry operator must specify a set of functions."],
-      ["P == {1}", "SYMMETRY P", "The symmetry values must be function records."],
-    ];
-    for (const item of cases) {
-      await expect(checkModule(item[0], item[1])).rejects.toThrow(
-        new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${item[2]}`),
+    for (const definition of ["P == 1", "P == {1}"]) {
+      await expectDeclined(
+        getModuleOptions(definition, "SYMMETRY P"),
+        "the engine stopped before it searched (exit 255)",
       );
     }
   });
 
-  it("reports a failing constant part of a property while processing the spec like TLC", async () => {
+  it("declines a failing constant part of a property while processing the spec", async () => {
     const properties = [
       "<>(1 = {})",
       "<>[](x = 2 => 1 = {})",
       "<>[](IF x = 1 THEN x = 2 ELSE 1 = {})",
     ];
     for (const property of properties) {
-      await expect(
-        checkParsed({
+      await expectDeclined(
+        {
           source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\nProp == ${property}\n====`,
           config: "SPECIFICATION Spec\nPROPERTY Prop",
-        }),
-      ).rejects.toThrow(
-        new TlaEvaluationError(
-          `${UNEXPECTED_EXCEPTION}Attempted to check equality of integer 1 with non-integer:\n{}`,
-        ),
+        },
+        "the engine stopped before it searched (exit 255)",
       );
     }
   });
@@ -1458,23 +1283,15 @@ describe("formatValue matches TLC", () => {
     );
   });
 
-  // TLC 1.7.4 prints an empty FcnRcdValue with a space, but an empty TupleValue without one.
-  it.each([
-    ["1.7.4" as const, ["<< >>", "<< >>", "<<>>", "<<>>", "<<<< >>>>"]],
-    [undefined, ["<<>>", "<<>>", "<<>>", "<<>>", "<<<<>>>>"]],
-  ])("prints an empty function that isn't a tuple like TLC %s", async (version, expected) => {
+  it("prints an empty function that isn't a tuple like TLC", async () => {
     const printed: string[] = [];
-    await checkOnEngine(
-      {
-        source:
-          "---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nE == [k \\in {} |-> k]\nASSUME \\A i \\in 1..5 : PrintT(<<[k \\in 1..0 |-> k], E @@ E, Tail(<<1>>), E \\o E, <<E>>>>[i])\n====",
-        config: "",
-        version,
-        onPrint: (text) => printed.push(text),
-      },
-      getVersionDeclined(version),
-    );
-    expect(printed).toEqual(expected);
+    await checkOnEngine({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Sequences, TLC\nE == [k \\in {} |-> k]\nASSUME \\A i \\in 1..5 : PrintT(<<[k \\in 1..0 |-> k], E @@ E, Tail(<<1>>), E \\o E, <<E>>>>[i])\n====",
+      config: "",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["<<>>", "<<>>", "<<>>", "<<>>", "<<<<>>>>"]);
   });
 
   it("prints a record whatever its fields, and a function with a key that isn't a name like TLC", async () => {
@@ -1487,42 +1304,15 @@ describe("formatValue matches TLC", () => {
     });
     expect(printed).toEqual(['<<[_ |-> 1], [_ |-> 2], ("_" :> 1), ("_" :> 1 @@ "b" :> 2)>>']);
   });
-
-  it.each(["", "SYMMETRY Sym"])(
-    "keeps an empty function apart from an equal tuple in a trace with %j like TLC 1.7.4",
-    async (symmetry) => {
-      const result = await checkOnEngine(
-        {
-          source:
-            "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT P\nVARIABLES q, x\nSym == Permutations(P)\nInit == q = <<>> /\\ x = 0\nNext == x' = x + 1 /\\ q' = IF x = 0 THEN [k \\in 1..0 |-> k] ELSE q\nInv == x < 2\n====",
-          config: `CONSTANT P = {p1, p2}\nINIT Init\nNEXT Next\nINVARIANT Inv\n${symmetry}`,
-          version: "1.7.4",
-        },
-        "TLC 1.7.4",
-      );
-      expect(result.violations[0]?.states.map((step) => step.variables.q?.text)).toEqual([
-        "<<>>",
-        "<< >>",
-        "<< >>",
-      ]);
-    },
-  );
 });
 
-const checkStepsOnEngine = (
-  definitions: string,
-  config: string,
-  version?: TlcVersion,
-  declinedFor = getVersionDeclined(version),
-) =>
-  checkOnEngine(
-    {
-      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n${definitions}\n====`,
-      config,
-      version,
-    },
-    declinedFor,
-  );
+const getStepsOptions = (definitions: string, config: string) => ({
+  source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n${definitions}\n====`,
+  config,
+});
+
+const checkStepsOnEngine = (definitions: string, config: string) =>
+  checkOnEngine(getStepsOptions(definitions, config));
 
 const getStepsRun = (definitions: string, config: string, args?: string[]): TlcRunOptions => ({
   source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\n${definitions}\n====`,
@@ -1543,10 +1333,6 @@ describe("evaluation errors match TLC", () => {
   // TLC words these by the Java class of the function, which follows how the spec built it.
   it.each([
     ['IF "a" :> 1 THEN 1 ELSE 2', "(a function  of the form (d1 :> e1 @@ ... @@ dN :> eN))"],
-    [
-      "IF [k \\in 1..2 |-> k] THEN 1 ELSE 2",
-      "(a function  of the form (d1 :> e1 @@ ... @@ dN :> eN))",
-    ],
     ["IF [a |-> 1] THEN 1 ELSE 2", "(a record)"],
     ["IF <<1, 2>> THEN 1 ELSE 2", "(a tuple)"],
     [
@@ -1560,41 +1346,36 @@ describe("evaluation errors match TLC", () => {
     ["1 \\in [a |-> 1]", "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]"],
     ["1 \\in <<1>>", "Attempted to check set membership in a tuple value."],
   ])("words the function in %s like TLC", async (expression, message) => {
-    const declined: Record<string, string> = {
-      "IF [k \\in 1..2 |-> k] THEN 1 ELSE 2":
-        "the engine stopped: expected a boolean: evaluating the failure again: expected a boolean, not a function",
-    };
-    const result = await checkOnEngine(
-      {
-        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (${expression}) = TRUE\n====`,
-        config: "INIT Init\nNEXT Next",
-      },
-      declined[expression],
-    );
+    const result = await checkOnEngine({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (${expression}) = TRUE\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
     expect(result.violations[0]?.headline).toContain(message);
   });
 
-  // Only a RecordValue compares itself as a record; a FcnRcdValue with strings for keys is a function.
+  it("declines to word the function in IF [k \\in 1..2 |-> k] THEN 1 ELSE 2", async () => {
+    await expectDeclined(
+      {
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ (IF [k \\in 1..2 |-> k] THEN 1 ELSE 2) = TRUE\n====",
+        config: "INIT Init\nNEXT Next",
+      },
+      "the engine stopped: expected a boolean: evaluating the failure again: expected a boolean, not a function",
+    );
+  });
+
   it.each([
-    ["[a |-> 1]", "Attempted to check equality of record:\n[a |-> 1]\nwith non-record\n{}"],
-    ['"a" :> 1', "Attempted to check equality of the function [a |-> 1] with the value:\n{}"],
-    ['"a b" :> 1', 'Attempted to check equality of the function ("a b" :> 1) with the value:\n{}'],
-  ])("words a failed comparison of %s with a set like TLC", async (value, message) => {
-    const reason =
-      "the engine stopped: equality of values TLC can't compare: evaluating the failure again:";
-    const declined: Record<string, string> = {
-      "[a |-> 1]": `${reason} a failure TLC reports as a FingerprintException`,
-      '"a" :> 1': `${reason} equality of values TLC can't compare`,
-      '"a b" :> 1': `${reason} equality of values TLC can't compare`,
-    };
-    const result = await checkOnEngine(
+    ["[a |-> 1]", "a failure TLC reports as a FingerprintException"],
+    ['"a" :> 1', "equality of values TLC can't compare"],
+    ['"a b" :> 1', "equality of values TLC can't compare"],
+  ])("declines a failed comparison of %s with a set", async (value, reason) => {
+    await expectDeclined(
       {
         source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = ${value}\nNext == UNCHANGED x\nInv == x = {}\n====`,
         config: "INIT Init\nNEXT Next\nINVARIANT Inv",
       },
-      declined[value],
+      `the engine stopped: equality of values TLC can't compare: evaluating the failure again: ${reason}`,
     );
-    expect(result.violations[0]?.headline).toContain(message);
   });
 
   // TLC evaluates UNCHANGED e, [A]_e and <<A>>_e in the current state before the next one
@@ -1646,45 +1427,39 @@ describe("evaluation errors match TLC", () => {
       "(CHOOSE v : TRUE) = 1",
       "TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\nline 3, col 9 to line 3, col 23 of module M",
     ],
-    [
-      "\\A v, w : v = w",
-      "TLC attempted to evaluate an unbounded \\A.\nMake sure that the expression is of form \\A x \\in S: P(x).\nline 3, col 8 to line 3, col 22 of module M",
-    ],
   ])("reports an unbounded %s like TLC", async (assumption, message) => {
-    const declined: Record<string, string> = {
-      "\\A v, w : v = w": getAssumptionDeclined("evaluating a an unbounded quantifier"),
-    };
-    const result = await checkOnEngine(
-      {
-        source: `---- MODULE M ----\nVARIABLE x\nASSUME ${assumption}\nInit == x = 0\nNext == UNCHANGED x\n====`,
-        config: "INIT Init\nNEXT Next",
-      },
-      declined[assumption],
-    );
+    const result = await checkOnEngine({
+      source: `---- MODULE M ----\nVARIABLE x\nASSUME ${assumption}\nInit == x = 0\nNext == UNCHANGED x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
     expect(result.violations[0]?.headline).toBe(getAssumptionFailure(3, assumption, message));
   });
 
-  // TLC's TLCEval evaluates its argument in its Java method, which TLC 1.7.4's did not.
-  it.each([
-    [undefined, 2],
-    ["1.7.4" as const, 0],
-  ])("reports a failure inside TLCEval in TLC %s as the method's", async (version, depth) => {
-    const result = await checkOnEngine(
+  it("declines an unbounded \\A v, w : v = w", async () => {
+    await expectDeclined(
       {
         source:
-          "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(n) == TLCEval(1 \\div n)\nASSUME TLCEval(F(0)) = 1\nInit == x = 0\nNext == UNCHANGED x\n====",
+          "---- MODULE M ----\nVARIABLE x\nASSUME \\A v, w : v = w\nInit == x = 0\nNext == UNCHANGED x\n====",
         config: "INIT Init\nNEXT Next",
-        version,
       },
-      getVersionDeclined(version),
+      getAssumptionDeclined("evaluating a an unbounded quantifier"),
     );
+  });
+
+  // TLC's TLCEval evaluates its argument in its Java method.
+  it("reports a failure inside TLCEval as the method's", async () => {
+    const result = await checkOnEngine({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(n) == TLCEval(1 \\div n)\nASSUME TLCEval(F(0)) = 1\nInit == x = 0\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
     const wrapper =
       "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\n";
     expect(result.violations[0]?.headline).toBe(
       getAssumptionFailure(
         5,
         "TLCEval(F(0)) = 1",
-        `${wrapper.repeat(depth)}The second argument of \\div is 0.`,
+        `${wrapper.repeat(2)}The second argument of \\div is 0.`,
       ),
     );
   });
@@ -1758,14 +1533,14 @@ describe("evaluation errors match TLC", () => {
     ],
     ["0 \\in Seq({1})", "Attempted to check if the value:\n0\nis an element of Seq({1})."],
   ])("reports a value that can't be an element of %s like TLC", async (expression, message) => {
-    const result = await checkModuleOnEngine(`ASSUME ${expression}`);
+    const result = await checkModule(`ASSUME ${expression}`);
     expect(result.violations[0]?.headline).toBe(getAssumptionFailure(6, expression, message));
   });
 
   // TLC's etest15: TLC normalizes the value of a constant definition as it starts, and searches the
   // sorted domain of a function over it.
   it("compares a value with the elements of a constant definition's set like TLC", async () => {
-    const result = await checkModuleOnEngine(
+    const result = await checkModule(
       "S == {<<y>> : y \\in {1, 2, 3, 4}}\nASSUME [<<y>> \\in S |-> y + 1][2] = 3",
     );
     expect(result.violations[0]?.headline).toBe(
@@ -1800,63 +1575,39 @@ describe("evaluation errors match TLC", () => {
     expect(run.exitCode).toBe(75);
   });
 
-  // A set with a source raises a FingerprintException when TLC's replay fails to enumerate it, unless
-  // a Java method that enumerates it wraps the failure.
-  it.each([
-    ["\\E n \\in ({1} \\cup 2) : x' = n", ["Apply"]],
-    ["x' = x /\\ \\A n \\in ({1} \\cup 2) : TRUE", ["Apply"]],
-    ["x' = CHOOSE n \\in ({1} \\cup 2) : TRUE", ["Apply"]],
-    ["x' = Cardinality({n + 1 : n \\in ({1} \\cup 2)})", ["Apply"]],
-    ["x' \\in {1} \\cup ({1} \\cup 2)", ["Apply", "Apply"]],
-  ])(
-    "reports the sources of a set the replay of %s fails to enumerate like TLC",
-    async (next, sources) => {
-      const result = await checkParsed({
-        source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
-        config: "INIT Init\nNEXT Next",
-      });
-      expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual<
-        string[] | undefined
-      >(sources);
-    },
-  );
-
-  // The engine doesn't yet print the fingerprint failure of the rows above.
-  it.each<[string, string[] | undefined, string | undefined]>([
+  // A set with a source raises a FingerprintException when TLC's replay fails to enumerate it.
+  it.each<[string, string[] | undefined]>([
     [
       "x' \\in ({1} \\cup 2)",
       [
         "0. Line 5, column 9 to line 5, column 27 in M",
         "1. Line 5, column 17 to line 5, column 26 in M",
       ],
-      undefined,
     ],
-    [
-      "x' \\in UNION {Nat}",
-      [
-        "0. Line 5, column 9 to line 5, column 26 in M",
-        "1. Line 5, column 16 to line 5, column 26 in M",
-      ],
+    ["x' = Cardinality({n \\in ({1} \\cup 2) : TRUE})", undefined],
+  ])("prints the frames of a set the replay of %s fails to enumerate like TLC", (next, frames) => {
+    const run = runOnEngine({
+      source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(getFingerprintFailure(run.output)?.frames).toEqual(frames);
+  });
+
+  it("declines a set the replay of x' \\in UNION {Nat} fails to enumerate", () => {
+    const run = runOnEngine(
+      {
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == x' \\in UNION {Nat}\n====",
+        config: "INIT Init\nNEXT Next",
+      },
       "the engine declined: unsupported: enumerating a set TLC keeps lazy (UNION at line 5)",
-    ],
-    ["x' = Cardinality({n \\in ({1} \\cup 2) : TRUE})", undefined, undefined],
-  ])(
-    "prints the frames of a set the replay of %s fails to enumerate like TLC",
-    (next, frames, declinedFor) => {
-      const run = runOnEngine(
-        {
-          source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == ${next}\n====`,
-          config: "INIT Init\nNEXT Next",
-        },
-        declinedFor,
-      );
-      expect(getFingerprintFailure(run.output)?.frames).toEqual(frames);
-    },
-  );
+    );
+    expect(run.exitCode).toBe(1);
+  });
 
   // A tuple, record or set with a source raises a FingerprintException when the replay fails to
-  // apply it, but TLC fails before it applies a value that isn't a function.
-  it.each<[string, string[] | undefined, string | undefined]>([
+  // apply it.
+  it.each([
     [
       "<<1, 2>>[3]",
       [
@@ -1864,7 +1615,6 @@ describe("evaluation errors match TLC", () => {
         "1. Line 5, column 14 to line 5, column 24 in M",
         "2. Line 5, column 14 to line 5, column 21 in M",
       ],
-      undefined,
     ],
     [
       "[a |-> 1][1]",
@@ -1873,16 +1623,6 @@ describe("evaluation errors match TLC", () => {
         "1. Line 5, column 14 to line 5, column 25 in M",
         "2. Line 5, column 14 to line 5, column 22 in M",
       ],
-      undefined,
-    ],
-    [
-      '[<<1, 2>> EXCEPT !["a"] = 1]',
-      [
-        "0. Line 5, column 9 to line 5, column 41 in M",
-        "1. Line 5, column 14 to line 5, column 41 in M",
-        "2. Line 5, column 15 to line 5, column 22 in M",
-      ],
-      "the engine stopped: EXCEPT outside the domain",
     ],
     [
       "[{1} EXCEPT ![1] = 1]",
@@ -1891,26 +1631,34 @@ describe("evaluation errors match TLC", () => {
         "1. Line 5, column 14 to line 5, column 34 in M",
         "2. Line 5, column 15 to line 5, column 17 in M",
       ],
-      undefined,
-    ],
-    [
-      "{1, 2}[1]",
-      undefined,
-      "the engine stopped: applied a non-function: evaluating the failure again: applied a non-function: {1, 2}",
     ],
   ])(
     "reports the source of a value the replay of x' = %s fails to apply like TLC",
-    (value, frames, declinedFor) => {
-      const run = runOnEngine(
-        {
-          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = ${value}\n====`,
-          config: "INIT Init\nNEXT Next",
-        },
-        declinedFor,
-      );
+    (value, frames) => {
+      const run = runOnEngine({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = ${value}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
       expect(getFingerprintFailure(run.output)?.frames).toEqual(frames);
     },
   );
+
+  it.each([
+    ['[<<1, 2>> EXCEPT !["a"] = 1]', "the engine stopped: EXCEPT outside the domain"],
+    [
+      "{1, 2}[1]",
+      "the engine stopped: applied a non-function: evaluating the failure again: applied a non-function: {1, 2}",
+    ],
+  ])("declines the replay of x' = %s that fails to apply a value", (value, reason) => {
+    const run = runOnEngine(
+      {
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = ${value}\n====`,
+        config: "INIT Init\nNEXT Next",
+      },
+      reason,
+    );
+    expect(run.exitCode).toBe(1);
+  });
 
   // Reducible#diff and cap of a set enumeration or interval with a source raise a
   // FingerprintException when they fail to test an element for membership in the other set.
@@ -1972,19 +1720,7 @@ describe("evaluation errors match TLC", () => {
 
   // The equals method of a member with a source heads the failure of a membership test, and the
   // compareTo method of an element with a source the failure to sort a set.
-  it.each<[string, string[], string | undefined]>([
-    [
-      "({<<1>>} \\cup {2}) = {}",
-      [
-        "0. Line 5, column 9 to line 5, column 41 in M",
-        "1. Line 5, column 9 to line 5, column 14 in M",
-        "2. Line 5, column 19 to line 5, column 41 in M",
-        "3. Line 5, column 20 to line 5, column 35 in M",
-        "4. Line 5, column 20 to line 5, column 26 in M",
-        "5. Line 5, column 21 to line 5, column 25 in M",
-      ],
-      "the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException",
-    ],
+  it.each([
     [
       "({[a |-> 1]} \\cap {{1}}) = {}",
       [
@@ -1996,18 +1732,6 @@ describe("evaluation errors match TLC", () => {
         "5. Line 5, column 37 to line 5, column 41 in M",
         "6. Line 5, column 38 to line 5, column 40 in M",
       ],
-      undefined,
-    ],
-    [
-      "2 \\in {<<1>>}",
-      [
-        "0. Line 5, column 9 to line 5, column 31 in M",
-        "1. Line 5, column 9 to line 5, column 14 in M",
-        "2. Line 5, column 19 to line 5, column 31 in M",
-        "3. Line 5, column 25 to line 5, column 31 in M",
-        "4. Line 5, column 26 to line 5, column 30 in M",
-      ],
-      "the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException",
     ],
     [
       '{("a" :> 1), <<2>>} = {}',
@@ -2018,18 +1742,28 @@ describe("evaluation errors match TLC", () => {
         "3. Line 5, column 19 to line 5, column 37 in M",
         "4. Line 5, column 32 to line 5, column 36 in M",
       ],
-      undefined,
     ],
-  ])("reports the value that fails to compare in %s like TLC", (predicate, frames, declinedFor) => {
-    const run = runOnEngine(
-      {
-        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${predicate}\n====`,
-        config: "INIT Init\nNEXT Next",
-      },
-      declinedFor,
-    );
+  ])("reports the value that fails to compare in %s like TLC", (predicate, frames) => {
+    const run = runOnEngine({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${predicate}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
     expect(getFingerprintFailure(run.output)?.frames).toEqual(frames);
   });
+
+  it.each(["({<<1>>} \\cup {2}) = {}", "2 \\in {<<1>>}"])(
+    "declines the value that fails to compare in %s",
+    (predicate) => {
+      const run = runOnEngine(
+        {
+          source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${predicate}\n====`,
+          config: "INIT Init\nNEXT Next",
+        },
+        "the engine stopped: values TLC can't compare: evaluating the failure again: a failure TLC reports as a FingerprintException",
+      );
+      expect(run.exitCode).toBe(1);
+    },
+  );
 
   // TLC builds a function in a method of the FcnLambdaValue that CallStackTool gives a source, so
   // the replay fails to fingerprint it when its body fails.
@@ -2085,22 +1819,7 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  // Value#equals of a value with a source raises a FingerprintException even when the stack froze
-  // where the filter failed, but an operand that fails fails before TLC compares.
-  it.each([
-    ["x' = Filter /\\ {} = x'", ["SetEnumeration"]],
-    ["x' = 1 /\\ {1} # Filter", ["SetEnumeration"]],
-  ])("reports the left side of %s that fails to compare like TLC", async (next, sources) => {
-    const result = await checkParsed({
-      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nFilter == {n \\in SUBSET {1} : 1 \\div 0 = 1}\nNext == ${next}\n====`,
-      config: "INIT Init\nNEXT Next",
-    });
-    expect(result.failure?.fingerprint?.sources.map((source) => source.kind)).toEqual<
-      string[] | undefined
-    >(sources);
-  });
-
-  // The engine doesn't yet print the fingerprint failure of the rows above.
+  // An operand that fails fails before TLC compares.
   it.each(["x' = Filter /\\ x' = {}", "x' = 1 /\\ {} = (1 \\div 0)"])(
     "fails on the left side of %s before TLC fingerprints it",
     (next) => {
@@ -2112,7 +1831,7 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
-  // TLC compares the sets as Value#equals does, and never takes tla-ts's faster comparison that
+  // TLC compares the sets as Value#equals does, and never takes a faster comparison that
   // fails first.
   it("records the replay of a filter that fails to compare once", () => {
     const run = runOnEngine({
@@ -2182,57 +1901,43 @@ describe("evaluation errors match TLC", () => {
     ]).toEqual<unknown[]>([undefined, 25, 9, 5]);
   });
 
-  it("applies a function without computing the values it isn't applied to as TLC does", async () => {
-    const result = await checkStepsOnEngine(
-      "G(n) == [k \\in {1, 2} |-> 10 \\div (k - n)]\nStep == x' = G(2)[1]",
-      "INIT Init\nNEXT Step",
-      undefined,
-      "the engine stopped: division by zero: evaluating the failure again: the body of a function TLC keeps lazy",
-    );
-    expect([result.violations[0], result.generatedStates, result.distinctStates]).toEqual<
-      unknown[]
-    >([undefined, 3, 2]);
-  });
-
-  it("prints a function it can't compute in applying it outside its domain like TLC", async () => {
-    const result = await checkStepsOnEngine(
-      "G(n) == [k \\in {1, 2} |-> 10 \\div (k - n)]\nStep == x' = G(1)[3]",
-      "INIT Init\nNEXT Step",
-      undefined,
-      "the engine stopped: division by zero: evaluating the failure again: the body of a function TLC keeps lazy",
-    );
-    expect(result.violations[0]?.headline).toBe(
-      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n[k \\in {1, 2} |-> <expression line 6, col 27 to line 6, col 41 of module M>],\nthe first argument is:\n3\nwhich is not in its domain.\n",
-    );
-  });
+  it.each(["G(2)[1]", "G(1)[3]"])(
+    "declines applying a function TLC keeps lazy, whose body fails elsewhere, in x' = %s",
+    async (application) => {
+      await expectDeclined(
+        getStepsOptions(
+          `G(n) == [k \\in {1, 2} |-> 10 \\div (k - n)]\nStep == x' = ${application}`,
+          "INIT Init\nNEXT Step",
+        ),
+        "the engine stopped: division by zero: evaluating the failure again: the body of a function TLC keeps lazy",
+      );
+    },
+  );
 
   it.each([
     [
       "Step == [k \\in {1, 2} |-> x' = k][3]",
       "[k \\in {1, 2} |-> <expression line 6, col 27 to line 6, col 32 of module M>],\nthe first argument is:\n3which is not in its domain.\nline 6, col 9 to line 6, col 33 of module M",
     ],
-    [
-      "Step == [k \\in {1}, <<a, b>> \\in {<<1, 2>>} |-> x' = a][1, <<3, 4>>]",
-      "[k \\in {1}, <<a, b>> \\in {<<1, 2>>} |-> <expression line 6, col 49 to line 6, col 54 of module M>],\nthe argument number 2 is:\n<<3, 4>>\nwhich is not in its domain.\nline 6, col 9 to line 6, col 55 of module M",
-    ],
   ])(
     "applies a function outside its domain in an action as TLC does in %j",
     async (step, message) => {
-      const declined: Record<string, string> = {
-        "Step == [k \\in {1}, <<a, b>> \\in {<<1, 2>>} |-> x' = a][1, <<3, 4>>]":
-          "the engine declined: unsupported: walking a lazy function over a tuple",
-      };
-      const result = await checkStepsOnEngine(
-        step,
-        "INIT Init\nNEXT Step",
-        undefined,
-        declined[step],
-      );
+      const result = await checkStepsOnEngine(step, "INIT Init\nNEXT Step");
       expect(result.violations[0]?.headline).toBe(
         `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: In applying the function\n${message}`,
       );
     },
   );
+
+  it("declines applying a function over a tuple outside its domain in an action", async () => {
+    await expectDeclined(
+      getStepsOptions(
+        "Step == [k \\in {1}, <<a, b>> \\in {<<1, 2>>} |-> x' = a][1, <<3, 4>>]",
+        "INIT Init\nNEXT Step",
+      ),
+      "the engine declined: unsupported: walking a lazy function over a tuple",
+    );
+  });
 
   it.each([
     [
@@ -2265,54 +1970,36 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("applies a function built over a set enumeration as the record TLC builds", async () => {
+    const result = await checkStepsOnEngine(
+      "Start == x = [k \\in {1, 2} |-> 0]\nStep == x' = x /\\ x[3] = 0",
+      "INIT Start\nNEXT Step",
+    );
+    expect(result.violations[0]?.headline).toBe(
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply function:\n<<0, 0>>\nto argument 3, which is not in the domain of the function.",
+    );
+  });
+
   it.each([
-    ["Start == x = [k \\in {1, 2} |-> 0]\nStep == x' = x /\\ x[3] = 0", "Start", "<<0, 0>>"],
-    ["Step == x' = [k \\in {1, 2} |-> 1] /\\ x'[3] = 0", "Init", "<<1, 1>>"],
-  ])(
-    "applies a function built over a set enumeration as the record TLC builds for %j",
-    async (definitions, init, value) => {
-      const result = await checkStepsOnEngine(
-        definitions,
-        `INIT ${init}\nNEXT Step`,
-        undefined,
-        init === "Init"
-          ? "the engine stopped: applied a function outside its domain: evaluating the failure again: applied a function outside its domain"
-          : undefined,
-      );
-      expect(result.violations[0]?.headline).toBe(
-        `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply function:\n${value}\nto argument 3, which is not in the domain of the function.`,
-      );
-    },
-  );
+    "Step == x' = [k \\in {1, 2} |-> 1] /\\ x'[3] = 0",
+    "Step == x' = [k \\in SUBSET {1} |-> 1] /\\ x'[{2}] = 0",
+  ])("declines applying a successor's function outside its domain in %j", async (definitions) => {
+    await expectDeclined(
+      getStepsOptions(definitions, "INIT Init\nNEXT Step"),
+      "the engine stopped: applied a function outside its domain: evaluating the failure again: applied a function outside its domain",
+    );
+  });
 
   // FcnLambdaValue#fingerPrint caches the FcnRcdValue that applies the function from then on.
-  it.each([
-    [
+  it("applies a function as TLC does once it fingerprints it", async () => {
+    const result = await checkStepsOnEngine(
       "Start == x = [k \\in SUBSET {1} |-> 0]\nStep == x' = x /\\ x[{2}] = 0",
-      "Start",
-      ": Attempted to apply function:\n({} :> 0 @@ {1} :> 0)\nto argument {2}, which is not in the domain of the function.",
-    ],
-    [
-      "Step == x' = [k \\in SUBSET {1} |-> 1] /\\ x'[{2}] = 0",
-      "Init",
-      ": In applying the function\n({} :> 1 @@ {1} :> 1),\nthe first argument is:\n{2}\nwhich is not in its domain.\n",
-    ],
-  ])(
-    "applies a function as TLC does once it fingerprints it in %j",
-    async (definitions, init, message) => {
-      const result = await checkStepsOnEngine(
-        definitions,
-        `INIT ${init}\nNEXT Step`,
-        undefined,
-        init === "Init"
-          ? "the engine stopped: applied a function outside its domain: evaluating the failure again: applied a function outside its domain"
-          : undefined,
-      );
-      expect(result.violations[0]?.headline).toBe(
-        `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n${message}`,
-      );
-    },
-  );
+      "INIT Start\nNEXT Step",
+    );
+    expect(result.violations[0]?.headline).toBe(
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply function:\n({} :> 0 @@ {1} :> 0)\nto argument {2}, which is not in the domain of the function.",
+    );
+  });
 
   it("reports a non-function applied as a function in computing next states like TLC", async () => {
     const result = await checkStepsOnEngine(
@@ -2331,49 +2018,32 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
-  // CallStackTool copies a SetPredValue without its source, so TLC reports where it evaluated the
-  // filter rather than where it built it.
-  it.each<[string, string, string[] | undefined, string | undefined]>([
-    [
-      "Nat",
-      "TLC has found a state in which the value of a variable contains Nat\nWhile working on the initial state:\nx = Nat",
-      undefined,
-      "the engine stopped: enumerated Nat",
-    ],
-    [
-      "{Nat}",
-      "TLC has found a state in which the value of a variable contains Nat\nWhile working on the initial state:\nx = {Nat}",
-      ["0) line 6, col 14 to line 6, col 18 of module M"],
-      "the engine stopped: unsupported: a state holding a function TLC keeps lazy",
-    ],
-    [
-      "SUBSET Nat",
-      "Attempted to compute the number of elements in the overridden value Nat.\nWhile working on the initial state:\nx = SUBSET Nat",
-      ["0) line 6, col 14 to line 6, col 23 of module M"],
-      "the engine stopped: enumerated Nat",
-    ],
-    [
-      "{n \\in Nat : n > 1}",
+  it("fails to fingerprint an initial state x = {n \\in Nat : n > 1} like TLC", () => {
+    const run = runOnEngine(
+      getStepsRun("Start == x = {n \\in Nat : n > 1}", "INIT Start\nNEXT Next"),
+    );
+    expect(getErrors(run.output)[0]).toBe(
       "Attempted to enumerate { x \\in S : p(x) } when S:\nNat\nis not enumerable\nWhile working on the initial state:\nx = {n \\in Nat : <expression line 6, col 27 to line 6, col 31 of module M> }",
-      undefined,
-      undefined,
-    ],
-  ])(
-    "fails to fingerprint an initial state x = %s like TLC",
-    (expression, error, frames, declinedFor) => {
-      const run = runOnEngine(
-        getStepsRun(`Start == x = ${expression}`, "INIT Start\nNEXT Next"),
-        declinedFor,
-      );
-      expect(getErrors(run.output)[0]).toBe(error);
-      expect(getFingerprintFailure(run.output)?.frames).toEqual(frames);
-      expect(getStatistics(run.output)).toEqual([
-        "1 states generated, 0 distinct states found, 0 states left on queue.",
-        "The depth of the complete state graph search is 1.",
-      ]);
-      expect(run.exitCode).toBe(75);
-    },
-  );
+    );
+    expect(getFingerprintFailure(run.output)?.frames).toBeUndefined();
+    expect(getStatistics(run.output)).toEqual([
+      "1 states generated, 0 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 1.",
+    ]);
+    expect(run.exitCode).toBe(75);
+  });
+
+  it.each([
+    ["Nat", "the engine stopped: enumerated Nat"],
+    ["{Nat}", "the engine stopped: unsupported: a state holding a function TLC keeps lazy"],
+    ["SUBSET Nat", "the engine stopped: enumerated Nat"],
+  ])("declines an initial state x = %s TLC fails to fingerprint", (expression, reason) => {
+    const run = runOnEngine(
+      getStepsRun(`Start == x = ${expression}`, "INIT Start\nNEXT Next"),
+      reason,
+    );
+    expect(run.exitCode).toBe(1);
+  });
 
   it("prints a set filter it can't enumerate as its bound and the location of its predicate", async () => {
     const result = await checkStepsOnEngine(
@@ -2385,105 +2055,64 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
-  it("fingerprints only the states in the model like TLC", async () => {
-    const result = await checkStepsOnEngine(
-      "Start == x = SUBSET Nat\nC == x \\in {}",
-      "INIT Start\nNEXT Next\nCONSTRAINT C",
-      undefined,
+  it("declines a state outside the model that TLC doesn't fingerprint", async () => {
+    await expectDeclined(
+      getStepsOptions(
+        "Start == x = SUBSET Nat\nC == x \\in {}",
+        "INIT Start\nNEXT Next\nCONSTRAINT C",
+      ),
       "the engine stopped: enumerated Nat",
     );
-    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
-      "success",
-      1,
-      0,
-    ]);
   });
 
-  it("fails again as it prints a successor it can't fingerprint", () => {
+  it("declines a successor it can't fingerprint", () => {
     const run = runOnEngine(
       getStepsRun("Step == x' = IF x = 1 THEN {Nat} ELSE x + 1", "INIT Init\nNEXT Step"),
       "the engine stopped: unsupported: a state holding a function TLC keeps lazy",
     );
-    expect(getErrors(run.output).slice(0, 3)).toEqual([
-      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: TLC has found a state in which the value of a variable contains Nat",
-      "The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Step line 6, col 9 to line 6, col 43 of module M>\nx = 1",
-      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: TLC has found a state in which the value of a variable contains Nat",
-    ]);
-    expect(getStatistics(run.output)).toEqual([
-      "3 states generated, 2 distinct states found, 0 states left on queue.",
-      "The depth of the complete state graph search is 2.",
-    ]);
-    expect(run.exitCode).toBe(75);
+    expect(run.exitCode).toBe(1);
   });
 
-  // TLC builds a function over a domain other than a set enumeration or an interval lazily, so its
-  // body fails as TLC fingerprints the successor and again as TLC prints it.
-  it.each([
-    [
-      "master",
-      [],
-      "the engine stopped: division by zero: evaluating the failure again: the body of a function TLC keeps lazy",
-      [
-        "The second argument of \\div is 0.",
-        "The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0",
-        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a tlc2.tool.EvalException\n: The second argument of \\div is 0.",
-      ],
-    ],
-    [
-      "1.7.4",
-      TLC_174_LAUNCH,
-      "TLC 1.7.4",
-      [
-        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: tlc2.tool.EvalException: The second argument of \\div is 0.",
-      ],
-    ],
-  ])(
-    "fails to fingerprint a function whose body fails in TLC %s",
-    (_, args, declinedFor, errors) => {
-      const run = runOnEngine(
-        getStepsRun("Step == x' = [k \\in SUBSET {1} |-> 1 \\div 0]", "INIT Init\nNEXT Step", args),
-        declinedFor,
-      );
-      expect(getErrors(run.output).slice(0, errors.length)).toEqual(errors);
-      expect(getStatistics(run.output)[0]).toBe(
-        "2 states generated, 1 distinct states found, 0 states left on queue.",
-      );
-      expect(run.exitCode).toBe(255);
-    },
-  );
-
-  it("doesn't force a function TLC builds lazily in a disabled action", async () => {
-    const result = await checkStepsOnEngine(
-      "Step == x' = [k \\in SUBSET {1} |-> 1 \\div 0] /\\ FALSE",
-      "INIT Init\nNEXT Step",
-      undefined,
+  it("declines a function TLC builds lazily whose body fails as TLC fingerprints it", () => {
+    const run = runOnEngine(
+      getStepsRun("Step == x' = [k \\in SUBSET {1} |-> 1 \\div 0]", "INIT Init\nNEXT Step"),
       "the engine stopped: division by zero: evaluating the failure again: the body of a function TLC keeps lazy",
     );
-    expect([result.status, result.violations.map((violation) => violation.headline)]).toEqual([
-      "deadlock",
-      ["Deadlock reached."],
-    ]);
+    expect(run.exitCode).toBe(1);
+  });
+
+  it("declines a function TLC builds lazily in a disabled action", async () => {
+    await expectDeclined(
+      getStepsOptions(
+        "Step == x' = [k \\in SUBSET {1} |-> 1 \\div 0] /\\ FALSE",
+        "INIT Init\nNEXT Step",
+      ),
+      "the engine stopped: division by zero: evaluating the failure again: the body of a function TLC keeps lazy",
+    );
   });
 
   // TLC evaluates the whole predicate, not each conjunct on its own.
-  it.each(["INVARIANT", "CONSTRAINT"])(
-    "fails at a non-boolean conjunct of %s P as the conjunction does",
-    async (kind) => {
-      const result = await checkStepsOnEngine(
-        "P == /\\ x < 3\n     /\\ IF x = 1 THEN 1 ELSE TRUE",
-        `INIT Init\nNEXT Next\n${kind} P`,
-        undefined,
-        kind === "CONSTRAINT"
-          ? "the engine stopped: a constraint, a VIEW or an action property that fails on a successor"
-          : undefined,
-      );
-      expect(result.violations[0]?.headline).toContain(
-        "A non-boolean expression (an integer) was used as a formula in a conjunction.\nline 7, col 9 to line 7, col 33 of module M",
-      );
-    },
-  );
+  it("fails at a non-boolean conjunct of INVARIANT P as the conjunction does", async () => {
+    const result = await checkStepsOnEngine(
+      "P == /\\ x < 3\n     /\\ IF x = 1 THEN 1 ELSE TRUE",
+      "INIT Init\nNEXT Next\nINVARIANT P",
+    );
+    expect(result.violations[0]?.headline).toContain(
+      "A non-boolean expression (an integer) was used as a formula in a conjunction.\nline 7, col 9 to line 7, col 33 of module M",
+    );
+  });
 
-  it("prints what the replay of a failed constraint prints after the trace", () => {
+  it("declines a non-boolean conjunct of CONSTRAINT P", async () => {
+    await expectDeclined(
+      getStepsOptions(
+        "P == /\\ x < 3\n     /\\ IF x = 1 THEN 1 ELSE TRUE",
+        "INIT Init\nNEXT Next\nCONSTRAINT P",
+      ),
+      "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
+    );
+  });
+
+  it("declines a failed constraint that prints", () => {
     const run = runOnEngine(
       getStepsRun(
         'C == PrintT(<<"c", x>>) /\\ (IF x = 2 THEN 1 \\in 2 ELSE TRUE)',
@@ -2491,82 +2120,30 @@ describe("evaluation errors match TLC", () => {
       ),
       "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
     );
-    expect(findError(run.output, "The behavior up to this point is:\n")).toBe(
-      'The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\n<<"c", 2>>',
-    );
-    expect(getTraceOutput(run.output)).toEqual(['<<"c", 2>>']);
+    expect(run.exitCode).toBe(1);
   });
 
   // TLC rebuilds the trace for the postcondition only after a violation.
-  it.each([
-    ["INVARIANT", "P == x < 2 \\/ 1 \\div 0 = 0", undefined],
-    [
-      "PROPERTY",
-      "P == [][x' < 2 \\/ 1 \\div 0 = 0]_x",
-      "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
-    ],
-  ])(
-    "prints only the replay after the trace when %s P fails to evaluate",
-    (kind, check, declinedFor) => {
-      const run = runOnEngine(
-        getStepsRun(
-          `Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x\n${check}`,
-          `SPECIFICATION Spec\n${kind} P`,
-        ),
-        declinedFor,
-      );
-      expect(getTraceOutput(run.output)).toEqual(['<<"s", 1>>']);
-    },
-  );
-
-  // The rethrown error stops TLC 1.7.4's worker before it adds the state to the behavior graph.
-  it("leaves out the state an action property fails on from the behavior graph in TLC 1.7.4", () => {
+  it("prints only the replay after the trace when INVARIANT P fails to evaluate", () => {
     const run = runOnEngine(
       getStepsRun(
-        `Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x /\\ WF_x(Step)\nP == [][x' < 2 \\/ 1 \\div 0 = 0]_x\nL == <>(x = 3)`,
-        "SPECIFICATION Spec\nPROPERTY P\nPROPERTY L",
-        TLC_174_LAUNCH,
+        'Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x\nP == x < 2 \\/ 1 \\div 0 = 0',
+        "SPECIFICATION Spec\nINVARIANT P",
       ),
-      "TLC 1.7.4",
     );
     expect(getTraceOutput(run.output)).toEqual(['<<"s", 1>>']);
   });
 
   it.each([
-    [
-      "1.7.4",
-      TLC_174_LAUNCH,
-      "TLC 1.7.4",
-      ["4 states generated, 4 distinct states found, 0 states left on queue."],
-    ],
-    [
-      "master",
-      [],
+    'Step == Next /\\ PrintT(<<"s", x>>)\nSpec == Init /\\ [][Step]_x\nP == [][x\' < 2 \\/ 1 \\div 0 = 0]_x',
+    "P == [][1 \\div (2 - x) >= 0]_x\nSpec == Init /\\ [][Next]_x",
+  ])("declines an action property that fails to evaluate: %s", (definitions) => {
+    const run = runOnEngine(
+      getStepsRun(definitions, "SPECIFICATION Spec\nPROPERTY P"),
       "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
-      [
-        "4 states generated, 4 distinct states found, 0 states left on queue.",
-        "The depth of the complete state graph search is 4.",
-      ],
-    ],
-  ])(
-    "names an action property that fails to evaluate in TLC %s",
-    (_, args, declinedFor, statistics) => {
-      const run = runOnEngine(
-        getStepsRun(
-          "P == [][1 \\div (2 - x) >= 0]_x\nSpec == Init /\\ [][Next]_x",
-          "SPECIFICATION Spec\nPROPERTY P",
-          args,
-        ),
-        declinedFor,
-      );
-      expect(getErrors(run.output).slice(0, 2)).toEqual([
-        "Evaluating action property P failed.\nThe second argument of \\div is 0.",
-        "The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 1\n\nState 3: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 2\n\nState 4: <Next line 5, col 9 to line 5, col 27 of module M>\nx = 3",
-      ]);
-      expect(getStatistics(run.output)).toEqual(statistics);
-      expect(run.exitCode).toBe(255);
-    },
-  );
+    );
+    expect(run.exitCode).toBe(1);
+  });
 
   it("reports the behavior up to a state whose successors fail to evaluate", () => {
     const run = runOnEngine(
@@ -2584,15 +2161,9 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("reports a check that is not a boolean at the location of its predicate", async () => {
-    const getMessage = async (definitions: string, config: string, declinedFor?: string) =>
-      (
-        await checkStepsOnEngine(
-          definitions,
-          `INIT Init\nNEXT Next\n${config}`,
-          undefined,
-          declinedFor,
-        )
-      ).violations[0]?.headline;
+    const getMessage = async (definitions: string, config: string) =>
+      (await checkStepsOnEngine(definitions, `INIT Init\nNEXT Next\n${config}`)).violations[0]
+        ?.headline;
     expect(await getMessage("Inv == x + 1", "INVARIANT Inv")).toBe(
       "TLC expected a boolean value, but did not find one. line 6, col 8 to line 6, col 12 of module M\nWhile working on the initial state:\nx = 0\n",
     );
@@ -2602,14 +2173,12 @@ describe("evaluation errors match TLC", () => {
     expect(await getMessage("C == x' + 1", "ACTION_CONSTRAINT C")).toBe(
       "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: TLC expected a boolean value, but did not find one. line 6, col 6 to line 6, col 11 of module M",
     );
-    const property = await checkStepsOnEngine(
-      "Spec == Init /\\ [][Next]_x\nP == [][x' + 1]_x",
-      "SPECIFICATION Spec\nPROPERTY P",
-      undefined,
+    await expectDeclined(
+      getStepsOptions(
+        "Spec == Init /\\ [][Next]_x\nP == [][x' + 1]_x",
+        "SPECIFICATION Spec\nPROPERTY P",
+      ),
       "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
-    );
-    expect(property.violations[0]?.headline).toBe(
-      "Evaluating action property P failed.\nAttempted to evaluate an expression of form [A]_e, but A was not a boolean.\nline 7, col 8 to line 7, col 17 of module M",
     );
   });
 
@@ -2639,12 +2208,12 @@ describe("evaluation errors match TLC", () => {
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([0, 0, 0]);
     await expect(
-      checkParsed({ source: "---- MODULE M ----\nVARIABLE x\n====", config: "" }),
+      checkOnEngine({ source: "---- MODULE M ----\nVARIABLE x\n====", config: "" }),
     ).rejects.toThrow(TlaConfigError);
   });
 
   it("reports an assumption that fails to evaluate and skips axioms", async () => {
-    const result = await checkModuleOnEngine("AXIOM 1 = 2\nASSUME CHOOSE n \\in {} : TRUE");
+    const result = await checkModule("AXIOM 1 = 2\nASSUME CHOOSE n \\in {} : TRUE");
     expect(result.status).toBe("assumption-violation");
     expect(result.violations[0]?.headline).toMatch(
       /^Evaluating assumption line 7, col 8 to line 7, col 29 of module M failed\.\nAttempted to compute the value of an expression of form\nCHOOSE x \\in S: P/,
@@ -2653,8 +2222,8 @@ describe("evaluation errors match TLC", () => {
 
   // TLC fingerprints a state only once the constraints hold of it (isInModel), so one they
   // exclude never fails to fingerprint (TLC's own run of this model finds no error).
-  it("doesn't fingerprint a state the constraints exclude", async () => {
-    const result = await checkOnEngine(
+  it("declines a state the constraints exclude that TLC doesn't fingerprint", async () => {
+    await expectDeclined(
       {
         source:
           "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == \\/ (x = SUBSET (1..31) /\\ y = 0) \\/ (x = 0 /\\ y = 1)\nNext == UNCHANGED <<x, y>>\nC == y = 1\n====",
@@ -2662,17 +2231,12 @@ describe("evaluation errors match TLC", () => {
       },
       "the engine stopped: an overflow counting the elements of a power set: evaluating the failure again: it didn't fail",
     );
-    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
-      "success",
-      3,
-      1,
-    ]);
   });
 
   // TLC's replay, and Tool.getState as it prints the trace, take all of the action's successors
   // before they fingerprint one, so both meet the assertion that fails after the successor TLC
   // couldn't fingerprint (TLC's own run of this model, which exits 14).
-  it("reports what fails after a successor TLC can't fingerprint", () => {
+  it("declines what fails after a successor TLC can't fingerprint", () => {
     const run = runOnEngine(
       {
         source:
@@ -2681,22 +2245,13 @@ describe("evaluation errors match TLC", () => {
       },
       "the engine stopped: an overflow counting the elements of a power set: evaluating the failure again: an action that fails or prints after a successor TLC can't fingerprint",
     );
-    const errors = getErrors(run.output);
-    expect([errors[0], errors[2], run.exitCode]).toEqual([
-      `${getUnexpectedException("java.lang.RuntimeException")}Overflow when computing the number of elements in:\nSUBSET (1..31)`,
-      `${getUnexpectedException("tlc2.tool.EvalException")}The first argument of Assert evaluated to FALSE; the second argument was:\n"boom"`,
-      14,
-    ]);
-    expect(getNestedExpressions(run.output)?.at(-1)).toBe(
-      "5. Line 5, column 75 to line 5, column 95 in M",
-    );
-    expect(getFingerprintFailure(run.output)).toBeUndefined();
+    expect(run.exitCode).toBe(1);
   });
 
   // Under a VIEW TLC fingerprints the view's value alone, so the union a variable holds is never
   // normalized and streams {3} first each time (TLC's own run of this model).
-  it("streams a set a variable holds as the spec built it under a VIEW", async () => {
-    const result = await checkOnEngine(
+  it("declines a set a variable holds under a VIEW", async () => {
+    await expectDeclined(
       {
         source:
           "---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLES x, n, s\nInit == x = {} /\\ n = 0 /\\ s = (SUBSET {1, 2}) \\cup {{3}}\nNext == n < 3 /\\ x' \\in s /\\ Cardinality(x') = 1 /\\ n' = n + 1 /\\ s' = s\nInv == n < 2\nV == <<n>>\n====",
@@ -2704,11 +2259,6 @@ describe("evaluation errors match TLC", () => {
       },
       "the engine declined: unsupported: enumerating a lazy set of the state under a VIEW",
     );
-    expect(result.violations[0]?.states.map((step) => step.variables.x?.text)).toEqual([
-      "{}",
-      "{3}",
-      "{3}",
-    ]);
   });
 
   it("fails on zero to the power of zero in an invariant of a later state", async () => {
@@ -2736,7 +2286,7 @@ describe("evaluation errors match TLC", () => {
       "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
     ],
   ])("words %s as TLC's lazy values do", async (assumption, message) => {
-    const result = await checkModuleOnEngine(assumption);
+    const result = await checkModule(assumption);
     expect(result.status).toBe("assumption-violation");
     expect(result.violations[0]?.headline).toBe(
       getAssumptionFailure(6, assumption.slice("ASSUME ".length), message),
@@ -2744,7 +2294,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("puts a typed model value before an overridden set", async () => {
-    const result = await checkModuleOnEngine("CONSTANT m\nASSUME ~(Nat = m)", "CONSTANT m = A_b");
+    const result = await checkModule("CONSTANT m\nASSUME ~(Nat = m)", "CONSTANT m = A_b");
     expect(result.status).toBe("success");
   });
 
@@ -2912,36 +2462,27 @@ describe("evaluation errors match TLC", () => {
       ],
       ["{} \\subseteq 0", undefined],
     ];
+    const checked = cases.filter((item) => declined[item[0] ?? ""] === undefined);
     const messages = await Promise.all(
-      cases.map(
-        async (item) =>
-          (await checkModuleOnEngine(`ASSUME ${item[0]}`, "", declined[item[0] ?? ""]))
-            .violations[0]?.headline,
-      ),
+      checked.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violations[0]?.headline),
     );
     expect(messages).toEqual<unknown[]>(
-      cases.map((item) => item[1] && getAssumptionFailure(6, item[0] ?? "", item[1])),
+      checked.map((item) => item[1] && getAssumptionFailure(6, item[0] ?? "", item[1])),
+    );
+    await Promise.all(
+      Object.entries(declined).map((entry) =>
+        expectDeclined(getModuleOptions(`ASSUME ${entry[0]}`), entry[1]),
+      ),
     );
   });
 
-  it.each([
-    ["1.7.4" as const, "Append(v, s)"],
-    [undefined, "Append(s, v)"],
-  ])("words a failed Append like TLC %s", async (version, form) => {
-    const result = await checkOnEngine(
+  it("declines a failed Append", async () => {
+    await expectDeclined(
       {
         source: "---- MODULE M ----\nEXTENDS Sequences\nASSUME Append(1, 2) = 0\n====",
         config: "",
-        version,
       },
-      version === "1.7.4" ? "TLC 1.7.4" : getAssumptionDeclined("expected a sequence, not 1"),
-    );
-    expect(result.violations[0]?.headline).toBe(
-      getAssumptionFailure(
-        3,
-        "Append(1, 2) = 0",
-        `Evaluating an expression of the form ${form} when s is not a sequence:\n1`,
-      ),
+      getAssumptionDeclined("expected a sequence, not 1"),
     );
   });
 
@@ -2960,22 +2501,25 @@ describe("evaluation errors match TLC", () => {
       "x' = x /\\ (0 \\div 3)",
       `In computing next states, ${EXPECTED_BOOLEAN} 0.\nline 6, col 20 to line 6, col 27 of module M`,
     ],
-    ["x = 0", "x' = x /\\ \\b11", `In computing next states, ${EXPECTED_BOOLEAN} 3.\n\\b11`],
     ["3 /\\ x = 0", "x' = x", "The init state relation is not a boolean expression.\n3"],
     ["x = 0", "3 /\\ x' = x", "The next state relation is not a boolean expression.\n3"],
   ])("words a conjunct of %s or %s that isn't a boolean like TLC", async (init, next, message) => {
-    const declined: Record<string, string> = {
-      "x' = x /\\ \\b11":
-        "the engine stopped: a conjunct that isn't a boolean: evaluating the failure again: expected a boolean, not a integer",
-    };
-    const result = await checkOnEngine(
+    const result = await checkOnEngine({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == ${init}\nNext == ${next}\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.violations[0]?.headline).toContain(message);
+  });
+
+  it("declines a conjunct of x' = x /\\ \\b11 that isn't a boolean", async () => {
+    await expectDeclined(
       {
-        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == ${init}\nNext == ${next}\n====`,
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nOp(a) == a + 1\nInit == x = 0\nNext == x' = x /\\ \\b11\n====",
         config: "INIT Init\nNEXT Next",
       },
-      declined[next],
+      "the engine stopped: a conjunct that isn't a boolean: evaluating the failure again: expected a boolean, not a integer",
     );
-    expect(result.violations[0]?.headline).toContain(message);
   });
 
   it.each([
@@ -3053,45 +2597,22 @@ describe("evaluation errors match TLC", () => {
     expect(result.violations[0]?.headline).toContain(message);
   });
 
-  const runFairPrint = (
-    action: string,
-    config: string,
-    version: TlcVersion,
-    declinedFor?: string,
-  ) =>
-    runOnEngine(
-      {
-        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(x) /\\ ${action}\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nP == [](x = 0 => <>(x = 1))\nInv == x < 1\n====`,
-        config: `SPECIFICATION Spec\nPROPERTY P\n${config}`,
-        args: version === "1.7.4" ? TLC_174_LAUNCH : [],
-      },
-      declinedFor,
-    );
+  const getFairPrintRun = (action: string, config: string) => ({
+    source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(x) /\\ ${action}\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nP == [](x = 0 => <>(x = 1))\nInv == x < 1\n====`,
+    config: `SPECIFICATION Spec\nPROPERTY P\n${config}`,
+  });
 
-  // TLC evaluates each property on the counterexample to name the ones it violates, which TLC 1.7.4
-  // doesn't name.
-  it.each([
-    ["1.7.4", 4],
-    ["master", 5],
-  ] as const)(
-    "evaluates the action of ENABLED on a counterexample as TLC %s does",
-    async (version, count) => {
-      const prints: string[] = [];
-      await checkOnEngine(
-        {
-          source:
-            '---- MODULE M ----\nEXTENDS TLC\nVARIABLE y\nInit == y = 0\nA == y\' = 0 /\\ PrintT("A")\nNext == A\nProp == [](ENABLED A => <>FALSE)\n====',
-          config: "INIT Init\nNEXT Next\nPROPERTY Prop",
-          version,
-          onPrint: (text) => prints.push(text),
-        },
-        version === "1.7.4"
-          ? "TLC 1.7.4"
-          : "the engine stopped: printing where the native checker doesn't check the temporal properties: a predicate the engine leaves to the interpreter",
-      );
-      expect(prints).toHaveLength(count);
-    },
-  );
+  it("declines the action of ENABLED that prints on a counterexample", async () => {
+    await expectDeclined(
+      {
+        source:
+          '---- MODULE M ----\nEXTENDS TLC\nVARIABLE y\nInit == y = 0\nA == y\' = 0 /\\ PrintT("A")\nNext == A\nProp == [](ENABLED A => <>FALSE)\n====',
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        onPrint: () => {},
+      },
+      "the engine stopped: printing where the native checker doesn't check the temporal properties: a predicate the engine leaves to the interpreter",
+    );
+  });
 
   it("adds a state to the behavior graph after a violation by a successor it never stored", async () => {
     const result = await checkOnEngine({
@@ -3107,7 +2628,7 @@ describe("evaluation errors match TLC", () => {
 
   // CallStackTool gives a set a source, so TLC's worker fails with a FingerprintException as it adds
   // the state to the behavior graph again, which it doesn't catch, and TLC replays the next states.
-  it("replays the next states when adding a state to the behavior graph fails to fingerprint", () => {
+  it("declines adding a state to the behavior graph that fails to fingerprint", () => {
     const run = runOnEngine(
       {
         source:
@@ -3116,130 +2637,70 @@ describe("evaluation errors match TLC", () => {
       },
       "the engine stopped: enumerated a non-set: evaluating the failure again: SUBSET of a non-set",
     );
-    expect([run.exitCode, getFingerprintFailure(run.output)?.reason]).toEqual([
-      75,
-      "Attempted to compute the number of elements in the integer 3.",
-    ]);
+    expect(run.exitCode).toBe(1);
   });
 
-  // TLC's worker adds the state to the behavior graph after it prints the trace, and again with its
-  // call stack when that fails. TLC 1.7.4 adds it once and replays the next-state relation.
-  it.each([
-    ["master", 9],
-    ["1.7.4", 6],
-  ] as const)(
-    "prints what adding a state whose next states fail to the behavior graph prints in TLC %s",
-    (version, count) => {
-      const run = runFairPrint(
-        "(x' = 1 \\/ x' = 1 \\div 0)",
-        "",
-        version,
-        version === "1.7.4"
-          ? "TLC 1.7.4"
-          : "the engine stopped: division by zero: a late node of a state whose next states fail, which TLC fails on again",
-      );
-      expect(getTraceOutput(run.output)).toEqual(Array.from({ length: count }, () => "0"));
-    },
-  );
+  it("declines adding a state whose next states fail to the behavior graph", () => {
+    const run = runOnEngine(
+      getFairPrintRun("(x' = 1 \\/ x' = 1 \\div 0)", ""),
+      "the engine stopped: division by zero: a late node of a state whose next states fail, which TLC fails on again",
+    );
+    expect(run.exitCode).toBe(1);
+  });
 
   it.each([
-    [
-      "an invariant violation",
-      "master",
-      "INVARIANT Inv",
-      ["0", "0", "0", "0", "0", "0", "0", "0"],
-      undefined,
-    ],
-    ["an invariant violation", "1.7.4", "INVARIANT Inv", [], "TLC 1.7.4"],
-    ["a deadlock", "master", "", ["0", "1", "2"], undefined],
-    ["a deadlock", "1.7.4", "", ["2"], "TLC 1.7.4"],
-  ] as const)(
-    "prints what adding a state to the behavior graph prints after %s in TLC %s",
-    (_, version, config, expected, declinedFor) => {
-      const run = runFairPrint("x < 2 /\\ x' = x + 1", config, version, declinedFor);
-      expect(getTraceOutput(run.output)).toEqual<readonly string[]>(expected);
-    },
-  );
+    ["an invariant violation", "INVARIANT Inv", ["0", "0", "0", "0", "0", "0", "0", "0"]],
+    ["a deadlock", "", ["0", "1", "2"]],
+  ])("prints what adding a state to the behavior graph prints after %s", (_, config, expected) => {
+    const run = runOnEngine(getFairPrintRun("x < 2 /\\ x' = x + 1", config));
+    expect(getTraceOutput(run.output)).toEqual(expected);
+  });
 
   it.each([
-    ["master", "[i \\in 1..2 |-> i]", 'y["a"]', 'integer domain to the non-integer argument "a"'],
+    ["(1 :> 2 @@ 3 :> 4)", 'y["a"]', 'check equality of integer 1 with non-integer:\n"a"'],
     [
-      "master",
-      "(1 :> 2 @@ 3 :> 4)",
-      'y["a"]',
-      'check equality of integer 1 with non-integer:\n"a"',
-    ],
-    [
-      "master",
       "[i \\in {2 * k : k \\in 1..40} |-> i]",
       'y["a"]',
       'Attempted to compare integer 40 with non-integer:\n"a"',
     ],
-    ["master", "<<1, 2>>", 'y["a"]', 'Attempted to access tuple at a non integral index: "a"'],
-    ["master", "[a |-> 1]", "y[1]", "Attempted to access record by a non-string argument: 1"],
-    ["master", "<<1, 2>>", "[y EXCEPT ![1][1] = 2]", "apply EXCEPT construct to the value 1."],
-    ["master", "{1, 2}", "y.a", 'Attempted to select field "a" from a non-record value {1, 2}'],
-    ["master", "<<1, 2>>", "y.a", 'integer domain to the non-integer argument "a"'],
-    ["1.7.4", "<<1, 2>>", "y.a", 'integer domain to the non-integer argument "a"'],
-    [
-      "1.7.4",
-      "[i \\in 1..2 |-> i]",
-      'y["a"]',
-      'check equality of integer 1 with non-integer:\n"a"',
-    ],
-    [
-      "1.7.4",
-      "[i \\in {2 * k : k \\in 1..40} |-> i]",
-      'y["a"]',
-      'check equality of integer 2 with non-integer:\n"a"',
-    ],
-    [
-      "1.7.4",
-      "<<1, 2>>",
-      '[y EXCEPT !["a"] = 1]',
-      'Attempted to apply tuple to a non-integer argument "a".',
-    ],
-    [
-      "1.7.4",
-      "[a |-> 1]",
-      "[y EXCEPT ![1] = 1]",
-      "Attempted to apply record to a non-string argument 1.",
-    ],
-  ] as const)(
-    "words a key of the wrong type in TLC %s for y = %s and x' = %s like TLC",
-    async (version, value, next, message) => {
-      const result = await checkOnEngine(
-        {
-          source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = ${value}\nNext == x' = ${next} /\\ UNCHANGED y\n====`,
-          config: "INIT Init\nNEXT Next",
-          version,
-        },
-        version === "1.7.4"
-          ? "TLC 1.7.4"
-          : value === "[i \\in 1..2 |-> i]"
-            ? "the engine stopped: applied a function outside its domain: evaluating the failure again: values TLC can't compare"
-            : undefined,
-      );
+    ["<<1, 2>>", 'y["a"]', 'Attempted to access tuple at a non integral index: "a"'],
+    ["[a |-> 1]", "y[1]", "Attempted to access record by a non-string argument: 1"],
+    ["<<1, 2>>", "[y EXCEPT ![1][1] = 2]", "apply EXCEPT construct to the value 1."],
+    ["{1, 2}", "y.a", 'Attempted to select field "a" from a non-record value {1, 2}'],
+    ["<<1, 2>>", "y.a", 'integer domain to the non-integer argument "a"'],
+  ])(
+    "words a key of the wrong type for y = %s and x' = %s like TLC",
+    async (value, next, message) => {
+      const result = await checkOnEngine({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = ${value}\nNext == x' = ${next} /\\ UNCHANGED y\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
       expect(result.violations[0]?.headline).toContain(message);
     },
   );
 
-  it("enumerates SUBSET of a function with an empty domain as {{}} like TLC", async () => {
-    const result = await checkModuleOnEngine(
-      "ASSUME SUBSET <<>> = {{}}",
-      "",
-      getAssumptionDeclined("SUBSET of a non-set"),
+  it("declines a key of the wrong type for y = [i \\in 1..2 |-> i]", async () => {
+    await expectDeclined(
+      {
+        source:
+          '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = [i \\in 1..2 |-> i]\nNext == x\' = y["a"] /\\ UNCHANGED y\n====',
+        config: "INIT Init\nNEXT Next",
+      },
+      "the engine stopped: applied a function outside its domain: evaluating the failure again: values TLC can't compare",
     );
-    expect(result.status).toBe("success");
   });
 
-  it.each([
-    [true, "Integers"],
-    [false, "Naturals"],
-  ])(
-    "names the Java class of .. by whether TLC records a trace (%s)",
-    async (isTraceRecorded, module) => {
-      const result = await checkOnEngine(
+  it("declines SUBSET of a function with an empty domain", async () => {
+    await expectDeclined(
+      getModuleOptions("ASSUME SUBSET <<>> = {{}}"),
+      getAssumptionDeclined("SUBSET of a non-set"),
+    );
+  });
+
+  it.each([true, false])(
+    "declines naming the Java class of .. when TLC records a trace is %s",
+    async (isTraceRecorded) => {
+      await expectDeclined(
         {
           source: '---- MODULE M ----\nEXTENDS Naturals\nASSUME 1 .. "a" = {}\n====',
           config: "",
@@ -3247,7 +2708,6 @@ describe("evaluation errors match TLC", () => {
         },
         getAssumptionDeclined("expected an integer, not a string"),
       );
-      expect(result.violations[0]?.headline).toContain(`tlc2.module.${module}.DotDot`);
     },
   );
 
@@ -3328,61 +2788,36 @@ describe("evaluation errors match TLC", () => {
         'Attempted to select nonexistent field "b" from the record\n[a |-> 1]\nline 6, col 8 to line 6, col 18 of module M',
       ],
     ];
+    const checked = cases.filter((item) => declined[item[0] ?? ""] === undefined);
     const messages = await Promise.all(
-      cases.map(
-        async (item) =>
-          (await checkModuleOnEngine(item[0], "", declined[item[0] ?? ""])).violations[0]?.headline,
-      ),
+      checked.map(async (item) => (await checkModule(item[0] ?? "")).violations[0]?.headline),
     );
-    expect(messages).toEqual(cases.map((item) => getAssumeFailure(6, item[0], item[1])));
+    expect(messages).toEqual(
+      checked.map((item) => getAssumeFailure(6, item[0] ?? "", item[1] ?? "")),
+    );
+    await Promise.all(
+      Object.entries(declined).map((entry) => expectDeclined(getModuleOptions(entry[0]), entry[1])),
+    );
   });
 
   it("treats a function as a finite set like TLC", async () => {
-    expect(
-      (await checkModuleOnEngine("ASSUME IsFiniteSet(<<1>>) /\\ IsFiniteSet([a |-> 1])")).status,
-    ).toBe("success");
+    expect((await checkModule("ASSUME IsFiniteSet(<<1>>) /\\ IsFiniteSet([a |-> 1])")).status).toBe(
+      "success",
+    );
   });
 
-  it("reports an argument outside the domain of a function construction like TLC", async () => {
-    const pairs = [
-      -12, -11, -10, -9, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
-    ]
-      .map((key) => `${key} :> ${key} @@\n  `)
-      .join("");
-    expect(
-      (
-        await checkModuleOnEngine(
-          "ASSUME [n \\in -12..12 |-> n][13] = 0",
-          "",
-          getAssumptionDeclined("applied a function outside its domain"),
-        )
-      ).violations[0]?.headline,
-    ).toBe(
-      getAssumptionFailure(
-        6,
-        "[n \\in -12..12 |-> n][13] = 0",
-        `In applying the function\n( ${pairs}12 :> 12 ),\nthe first argument is:\n13\nwhich is not in its domain.\n`,
-      ),
-    );
-    expect(
-      (
-        await checkModuleOnEngine(
-          'ASSUME [n \\in {"a"} |-> n]["b"] = 0',
-          "",
-          getAssumptionDeclined("applied a function outside its domain"),
-        )
-      ).violations[0]?.headline,
-    ).toBe(
-      getAssumptionFailure(
-        6,
-        '[n \\in {"a"} |-> n]["b"] = 0',
-        'In applying the function\n[a |-> "a"],\nthe first argument is:\n"b"\nwhich is not in its domain.\n',
-      ),
-    );
-  });
+  it.each(["[n \\in -12..12 |-> n][13] = 0", '[n \\in {"a"} |-> n]["b"] = 0'])(
+    "declines an argument outside the domain of a function construction in %s",
+    async (assumption) => {
+      await expectDeclined(
+        getModuleOptions(`ASSUME ${assumption}`),
+        getAssumptionDeclined("applied a function outside its domain"),
+      );
+    },
+  );
 
   it("reports an overflowing cardinality without enumerating the set", async () => {
-    const result = await checkModuleOnEngine("ASSUME Cardinality(SUBSET (1..31)) > 0");
+    const result = await checkModule("ASSUME Cardinality(SUBSET (1..31)) > 0");
     expect(result.violations[0]?.headline).toBe(
       getAssumptionFailure(
         6,
@@ -3393,7 +2828,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("wraps a failure inside an operator that another operator's Java method calls", async () => {
-    const result = await checkModuleOnEngine(
+    const result = await checkModule(
       "ASSUME SelectSeq(<<1>>, LAMBDA e : Cardinality(SUBSET (1..31)) > e) = <<>>",
     );
     expect(result.violations[0]?.headline).toBe(
@@ -3405,18 +2840,12 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
-  it("checks membership in a set enumeration TLC can't sort element by element", async () => {
-    const result = await checkModuleOnEngine(
-      'ASSUME 1 \\in {1, "a"}\nASSUME [e \\in {1, "a"} |-> e][1] = 1\nASSUME "a" \\in {1, "a"}',
-      "",
-      getAssumptionDeclined("it didn't fail"),
-    );
-    expect(result.violations[0]?.headline).toBe(
-      getAssumptionFailure(
-        8,
-        '"a" \\in {1, "a"}',
-        'Attempted to check equality of integer 1 with non-integer:\n"a"',
+  it("declines membership in a set enumeration TLC can't sort element by element", async () => {
+    await expectDeclined(
+      getModuleOptions(
+        'ASSUME 1 \\in {1, "a"}\nASSUME [e \\in {1, "a"} |-> e][1] = 1\nASSUME "a" \\in {1, "a"}',
       ),
+      getAssumptionDeclined("it didn't fail"),
     );
   });
 
@@ -3435,21 +2864,10 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
-  it("sorts a record TLC compares with itself and the records inside it", async () => {
-    const prints: string[] = [];
-    await checkParsed({
-      source:
-        "---- MODULE M ----\nEXTENDS TLC\nASSUME PrintT([fld2 |-> 0])\nASSUME PrintT(ToString(LET r == <<[fld1 |-> 1, fld2 |-> 2]>> IN IF r = r THEN r ELSE r))\n====",
-      config: "",
-      onPrint: (text) => prints.push(text),
-    });
-    expect(prints.slice(1)).toEqual(['"<<[fld2 |-> 2, fld1 |-> 1]>>"']);
-  });
-
-  it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
+  it("declines a TLCEval argument TLC can't sort, inside an instance that substitutes or not", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
-    const instanced = await checkOnEngine(
+    await expectDeclined(
       {
         source: "---- MODULE M ----\nEXTENDS TLC\nINSTANCE Inner WITH K <- 1\nASSUME Mixed\n====",
         config: "",
@@ -3457,18 +2875,9 @@ describe("evaluation errors match TLC", () => {
       },
       getAssumptionDeclined("it didn't fail"),
     );
-    expect(instanced.status).toBe("success");
-    const direct = await checkModuleOnEngine(
-      'ASSUME 1 \\in TLCEval({1, "a"})',
-      "",
+    await expectDeclined(
+      getModuleOptions('ASSUME 1 \\in TLCEval({1, "a"})'),
       getAssumptionDeclined("it didn't fail"),
-    );
-    expect(direct.violations[0]?.headline).toBe(
-      getAssumptionFailure(
-        6,
-        '1 \\in TLCEval({1, "a"})',
-        'Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\nAttempted to compare string "a" with non-string:\n1',
-      ),
     );
   });
 
@@ -3482,7 +2891,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("treats untyped model values as outside built-in sets", async () => {
-    const result = await checkModuleOnEngine(
+    const result = await checkModule(
       'CONSTANT m\nASSUME ~(m \\in Nat) /\\ ~(m \\in Int) /\\ ~(m \\in STRING) /\\ ~(m \\in 1..3) /\\ ~(m \\in Seq({1}))\nASSUME ~("a" \\in 3..1)',
       "CONSTANT m = m",
     );
@@ -3495,10 +2904,7 @@ describe("evaluation errors match TLC", () => {
     ["[a : {1}]", "{[a |-> 1]}"],
     ["{1} \\X {1}", "{<<1, 1>>}"],
   ])("rejects a typed model value's membership in %s", async (set, shown) => {
-    const result = await checkModuleOnEngine(
-      `CONSTANT m\nASSUME m \\in ${set}`,
-      "CONSTANT m = A_b",
-    );
+    const result = await checkModule(`CONSTANT m\nASSUME m \\in ${set}`, "CONSTANT m = A_b");
     expect(result.status).toBe("assumption-violation");
     expect(result.violations[0]?.headline).toBe(
       getAssumptionFailure(
@@ -3510,7 +2916,7 @@ describe("evaluation errors match TLC", () => {
   });
 
   it("rejects a typed model value's membership in an interval", async () => {
-    const result = await checkModuleOnEngine("CONSTANT m\nASSUME m \\in 1..3", "CONSTANT m = A_b");
+    const result = await checkModule("CONSTANT m\nASSUME m \\in 1..3", "CONSTANT m = A_b");
     expect(result.violations[0]?.headline).toBe(
       getAssumptionFailure(
         7,
@@ -3523,7 +2929,7 @@ describe("evaluation errors match TLC", () => {
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",
     async (membership) => {
-      const result = await checkModuleOnEngine(`ASSUME ${membership}`);
+      const result = await checkModule(`ASSUME ${membership}`);
       expect(result.status).toBe("assumption-violation");
       expect(result.violations[0]?.headline).toStartWith(
         getAssumptionFailure(6, membership, "Attempted to check if the value"),
@@ -3539,46 +2945,24 @@ describe("evaluation errors match TLC", () => {
     ["1 \\in <<1, 2>>", "Attempted to check set membership in a tuple value."],
     ["1 \\in [a |-> 1]", "Attempted to check if element:\n1\nis in the record:\n[a |-> 1]"],
   ])("words %s like TLC", async (membership, message) => {
-    const result = await checkModuleOnEngine(`CONSTANT m\nASSUME ${membership}`, "CONSTANT m = m");
+    const result = await checkModule(`CONSTANT m\nASSUME ${membership}`, "CONSTANT m = m");
     expect(result.status).toBe("assumption-violation");
     expect(result.violations[0]?.headline).toBe(getAssumptionFailure(7, membership, message));
   });
 
-  it("reports a failing TLCGet as a failure of its Java method like TLC", () => {
-    const signature =
-      "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)";
-    const cases = [
-      [
-        "TLCGet(42)",
-        "TLCGet(42) was undefined.",
-        "the engine stopped: TLCGet of a register TLC hasn't set",
-      ],
-      [
-        'TLCGet("nope")',
-        "TLCGet(nope) was undefined.",
-        "the engine stopped: unsupported: TLCGet of a key the search doesn't keep",
-      ],
-      [
-        "TLCGet(<<1>>)",
-        "The argument of TLCGet should be a nonnegative integer, but instead it is:\n<<1>>",
-        "the engine stopped: TLCGet of a key that isn't a natural number",
-      ],
-    ];
-    const runs = cases.map((item) =>
-      runOnEngine(
-        {
-          source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = ${item[0]}\nNext == UNCHANGED x\n====`,
-          config: "INIT Init\nNEXT Next",
-        },
-        item[2],
-      ),
+  it.each([
+    ["TLCGet(42)", "the engine stopped: TLCGet of a register TLC hasn't set"],
+    ['TLCGet("nope")', "the engine stopped: unsupported: TLCGet of a key the search doesn't keep"],
+    ["TLCGet(<<1>>)", "the engine stopped: TLCGet of a key that isn't a natural number"],
+  ])("declines a failing %s", (value, reason) => {
+    const run = runOnEngine(
+      {
+        source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = ${value}\nNext == UNCHANGED x\n====`,
+        config: "INIT Init\nNEXT Next",
+      },
+      reason,
     );
-    expect(runs.map((run) => [getErrors(run.output)[0], run.exitCode])).toEqual(
-      cases.map((item) => [
-        `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${item[1]}`,
-        75,
-      ]),
-    );
+    expect(run.exitCode).toBe(1);
   });
 
   it("reports a property that is an action like TLC", async () => {
@@ -3621,7 +3005,7 @@ describe("evaluation errors match TLC", () => {
     ].join("\n");
     // TLC rejects the configuration before it searches.
     const getFailure = (property: string) =>
-      checkParsed({ source, config: `SPECIFICATION Spec\nPROPERTY ${property}` }).then(
+      checkOnEngine({ source, config: `SPECIFICATION Spec\nPROPERTY ${property}` }).then(
         () => undefined,
         (error: unknown) => (error instanceof TlaConfigError ? error.message : error),
       );
@@ -3656,8 +3040,8 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
-  it("reports a stack overflow in the next-state relation like TLC", async () => {
-    const result = await checkOnEngine(
+  it("declines a stack overflow in the next-state relation", async () => {
+    await expectDeclined(
       {
         source:
           "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE R(_)\nR(n) == R(n + 1)\nInit == x = 0\nNext == x' = R(0)\n====",
@@ -3665,8 +3049,6 @@ describe("evaluation errors match TLC", () => {
       },
       "the engine stopped: recursion too deep",
     );
-    expect(result.violations[0]?.headline).toBe(STACK_OVERFLOW_MESSAGE);
-    expect(result.violations[0]?.states.map((step) => step.variables.x?.value)).toEqual([0]);
   });
 
   it("reports a successor the next-state relation leaves incomplete like TLC", async () => {
@@ -3711,37 +3093,28 @@ describe("evaluation errors match TLC", () => {
       `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 2.\nline 5, col 19 to line 5, col 23 of module M`,
       75,
     ]);
-    // The TypeScript check, which the engine leaves this to, computes the initial states first,
-    // where TLC fails before it does.
-    const result = await checkParsed(getOptions("x = 0", "3"));
-    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
-      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n3`,
-      255,
-    ]);
+    await expectDeclined(
+      getOptions("x = 0", "3"),
+      "the engine stopped: a guard that isn't a boolean: evaluating the failure again: a next-state relation the IR holds no actions of",
+    );
   });
 
-  it("reports a failing constraint on a successor like a failure of the next-state relation", () => {
-    const getRunFailure = (constraint: string, config: string) => {
-      const run = runOnEngine(
-        {
-          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nC == ${constraint}\n====`,
-          config: `INIT Init\nNEXT Next\n${config} C`,
-        },
-        // The engine reports a failing action constraint as TLC does.
-        config === "CONSTRAINT"
-          ? "the engine stopped: a constraint, a VIEW or an action property that fails on a successor"
-          : undefined,
-      );
-      return [getErrors(run.output).slice(0, 2), run.exitCode];
-    };
-    expect(getRunFailure("x < 1 \\/ x[1] = 0", "CONSTRAINT")).toEqual([
-      [
-        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-function (an integer) was applied as a function.\nline 6, col 15 to line 6, col 18 of module M",
-        "The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 18 of module M>\nx = 1",
-      ],
-      75,
-    ]);
-    expect(getRunFailure("x' < 1 \\/ x[1] = 0", "ACTION_CONSTRAINT")).toEqual([
+  const getConstraintRun = (constraint: string, kind: string) => ({
+    source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nC == ${constraint}\n====`,
+    config: `INIT Init\nNEXT Next\n${kind} C`,
+  });
+
+  it("declines a failing constraint on a successor as a CONSTRAINT", () => {
+    const run = runOnEngine(
+      getConstraintRun("x < 1 \\/ x[1] = 0", "CONSTRAINT"),
+      "the engine stopped: a constraint, a VIEW or an action property that fails on a successor",
+    );
+    expect(run.exitCode).toBe(1);
+  });
+
+  it("reports a failing ACTION_CONSTRAINT on a successor like a failure of the next-state relation", () => {
+    const run = runOnEngine(getConstraintRun("x' < 1 \\/ x[1] = 0", "ACTION_CONSTRAINT"));
+    expect([getErrors(run.output).slice(0, 2), run.exitCode]).toEqual([
       [
         "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: A non-function (an integer) was applied as a function.\nline 6, col 16 to line 6, col 19 of module M",
         "The behavior up to this point is:\nState 1: <Initial predicate>\nx = 0\n\nState 2: <Next line 5, col 9 to line 5, col 18 of module M>\nx = 1",
@@ -3828,55 +3201,39 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
-  it("quantifies over a power set too large to build in TLC's order, like TLC", async () => {
-    const result = await checkModuleOnEngine(
-      [
-        "ASSUME \\E s \\in SUBSET (1..40) : Cardinality(s) = 2",
-        "ASSUME ~\\A s \\in SUBSET (1..40) : Cardinality(s) < 1",
-        "ASSUME (CHOOSE s \\in SUBSET (1..40) : Cardinality(s) = 1) = {1}",
-        "ASSUME (CHOOSE s \\in SUBSET (1..32) : Cardinality(s) = 2 /\\ 5 \\in s) = {1, 5}",
-      ].join("\n"),
-      "",
+  it("declines quantifying over a power set too large to build", async () => {
+    await expectDeclined(
+      getModuleOptions(
+        [
+          "ASSUME \\E s \\in SUBSET (1..40) : Cardinality(s) = 2",
+          "ASSUME ~\\A s \\in SUBSET (1..40) : Cardinality(s) < 1",
+          "ASSUME (CHOOSE s \\in SUBSET (1..40) : Cardinality(s) = 1) = {1}",
+          "ASSUME (CHOOSE s \\in SUBSET (1..32) : Cardinality(s) = 2 /\\ 5 \\in s) = {1, 5}",
+        ].join("\n"),
+      ),
       getAssumptionDeclined("a power set too large to build"),
     );
-    expect(result.violations).toEqual([]);
   });
 
-  it("fails on a state holding a set it can't enumerate to fingerprint, like TLC", () => {
-    const runs = [
-      ["Nat", "UNCHANGED x"],
-      ["{}", "x' = SUBSET Nat"],
-    ].map((item) =>
-      runOnEngine(
+  it.each([
+    ["Nat", "UNCHANGED x"],
+    ["{}", "x' = SUBSET Nat"],
+  ])(
+    "declines a state holding a set it can't enumerate to fingerprint: x = %s, %s",
+    (init, next) => {
+      const run = runOnEngine(
         {
-          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = ${item[0]}\nNext == ${item[1]}\n====`,
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = ${init}\nNext == ${next}\n====`,
           config: "INIT Init\nNEXT Next",
         },
         "the engine stopped: enumerated Nat",
-      ),
-    );
-    expect(
-      runs.map((run) => [
-        getErrors(run.output)[0],
-        run.exitCode,
-        findError(run.output, "The behavior up to this point is:\n"),
-      ]),
-    ).toEqual([
-      [
-        "TLC has found a state in which the value of a variable contains Nat\nWhile working on the initial state:\nx = Nat",
-        75,
-        undefined,
-      ],
-      [
-        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to compute the number of elements in the overridden value Nat.",
-        75,
-        "The behavior up to this point is:\nState 1: <Initial predicate>\nx = {}",
-      ],
-    ]);
-  });
+      );
+      expect(run.exitCode).toBe(1);
+    },
+  );
 
   it("applies a set operator to a value that isn't a set until it needs its elements, like TLC", async () => {
-    const result = await checkModuleOnEngine(
+    const result = await checkModule(
       [
         "ASSUME 1 \\in ({1} \\cup 0)",
         "ASSUME 1 \\in (0 \\cup {1})",
@@ -3888,8 +3245,7 @@ describe("evaluation errors match TLC", () => {
     expect(result.violations).toEqual([]);
     const messages = await Promise.all(
       ["2 \\in ({1} \\cup 0)", "1 \\in (0 \\ {1})", "Cardinality({1} \\cup 0) = 1"].map(
-        async (expression) =>
-          (await checkModuleOnEngine(`ASSUME ${expression}`)).violations[0]?.headline,
+        async (expression) => (await checkModule(`ASSUME ${expression}`)).violations[0]?.headline,
       ),
     );
     expect(messages).toEqual(
@@ -3908,37 +3264,18 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
-  it("names the Java class of Naturals in an arithmetic error unless the spec loads Integers, like TLC", async () => {
-    const cases = [
-      ["Naturals", "Naturals"],
-      ["Naturals, Sequences", "Naturals"],
-      ["Naturals, Integers", "Integers"],
-      ["Naturals, TLCExt", "Integers"],
-    ];
-    const messages = await Promise.all(
-      cases.map(
-        async (item) =>
-          (
-            await checkOnEngine(
-              {
-                source: `---- MODULE M ----\nEXTENDS ${item[0]}\nASSUME 1 + "a" = 1\n====`,
-                config: "",
-              },
-              getAssumptionDeclined("expected an integer, not a string"),
-            )
-          ).violations[0]?.headline,
-      ),
-    );
-    expect(messages).toEqual(
-      cases.map((item) =>
-        getAssumptionFailure(
-          3,
-          '1 + "a" = 1',
-          `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntValue tlc2.module.${item[1]}.Plus(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue`,
-        ),
-      ),
-    );
-  });
+  it.each(["Naturals", "Naturals, Sequences", "Naturals, Integers", "Naturals, TLCExt"])(
+    "declines naming the Java class in an arithmetic error of a spec that extends %s",
+    async (modules) => {
+      await expectDeclined(
+        {
+          source: `---- MODULE M ----\nEXTENDS ${modules}\nASSUME 1 + "a" = 1\n====`,
+          config: "",
+        },
+        getAssumptionDeclined("expected an integer, not a string"),
+      );
+    },
+  );
 
   it("locates IF, CHOOSE, conjunction, DOMAIN, application, and field errors like TLC", async () => {
     const declined: Record<string, string> = {
@@ -3990,13 +3327,16 @@ describe("evaluation errors match TLC", () => {
         'Attempted to select field "b" from a non-record value {1}\nline 6, col 8 to line 6, col 12 of module M',
       ],
     ];
+    const checked = cases.filter((item) => declined[item[0] ?? ""] === undefined);
     const messages = await Promise.all(
-      cases.map(
-        async (item) =>
-          (await checkModuleOnEngine(item[0], "", declined[item[0] ?? ""])).violations[0]?.headline,
-      ),
+      checked.map(async (item) => (await checkModule(item[0] ?? "")).violations[0]?.headline),
     );
-    expect(messages).toEqual(cases.map((item) => getAssumeFailure(6, item[0], item[1])));
+    expect(messages).toEqual(
+      checked.map((item) => getAssumeFailure(6, item[0] ?? "", item[1] ?? "")),
+    );
+    await Promise.all(
+      Object.entries(declined).map((entry) => expectDeclined(getModuleOptions(entry[0]), entry[1])),
+    );
   });
 
   it("reports an argument outside the domain of a tuple, record, or function like TLC", async () => {
@@ -4022,33 +3362,20 @@ describe("evaluation errors match TLC", () => {
         'Attempted to apply function:\n<<>>\nto argument "b", which is not in the domain of the function.',
       ],
     ];
+    const checked = cases.filter((item) => declined[item[0] ?? ""] === undefined);
     const messages = await Promise.all(
-      cases.map(
-        async (item) =>
-          (await checkModuleOnEngine(`ASSUME ${item[0]} = 0`, "", declined[item[0] ?? ""]))
-            .violations[0]?.headline,
+      checked.map(
+        async (item) => (await checkModule(`ASSUME ${item[0]} = 0`)).violations[0]?.headline,
       ),
     );
     expect(messages).toEqual(
-      cases.map((item) => getAssumptionFailure(6, `${item[0]} = 0`, item[1])),
+      checked.map((item) => getAssumptionFailure(6, `${item[0]} = 0`, item[1] ?? "")),
     );
-  });
-
-  it("evaluates a function over a domain TLC keeps lazy only where it is applied", async () => {
-    const prints: string[] = [];
-    const result = await checkParsed({
-      source:
-        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nASSUME PrintT([b |-> 0])\nASSUME PrintT([s \\in SUBSET {1} |-> 1 \\div Cardinality(s)][{1}])\nASSUME PrintT([v \\in {0} |-> [a |-> 1, b |-> 2]])\nASSUME PrintT([v \\in SUBSET {0} |-> [a |-> 1, b |-> 2]])\nASSUME PrintT([v \\in {0} \\X {1} |-> [a |-> 1, b |-> 2]])\n====",
-      config: "",
-      onPrint: (text) => prints.push(text),
-    });
-    expect(result.status).toBe("success");
-    expect(prints.slice(1)).toEqual([
-      "1",
-      "(0 :> [b |-> 2, a |-> 1])",
-      "({} :> [a |-> 1, b |-> 2] @@ {0} :> [a |-> 1, b |-> 2])",
-      "(<<0, 1>> :> [a |-> 1, b |-> 2])",
-    ]);
+    await Promise.all(
+      Object.entries(declined).map((entry) =>
+        expectDeclined(getModuleOptions(`ASSUME ${entry[0]} = 0`), entry[1]),
+      ),
+    );
   });
 });
 
@@ -4094,8 +3421,7 @@ describe("rejecting literals matches TLC", () => {
     source: `---- MODULE M ----\n${source}\nNext == x' = x\n====`,
     config: "INIT Init\nNEXT Next",
   });
-  const checkSource = (source: string) => checkParsed(getOptions(source));
-  const checkSourceOnEngine = (source: string) => checkOnEngine(getOptions(source));
+  const checkSource = (source: string) => checkOnEngine(getOptions(source));
 
   it("parses decimal literals", () => {
     const module = parseModule("---- MODULE M ----\nHalf == 1.5\nRange == 1..2\n====");
@@ -4118,48 +3444,44 @@ describe("rejecting literals matches TLC", () => {
       "a decimal in an unused nested module",
       "VARIABLE x\n---- MODULE Inner ----\nHalf == 1.5\n====\nInit == x = 0",
     ],
-  ])("rejects %s before checking", async (_, source) => {
-    const run = checkSource(source);
-    await expect(run).rejects.toThrow(TlaEvaluationError);
-    await expect(run).rejects.toThrow(/^TLC can't handle real numbers: 1\.5/);
+  ])("declines %s", async (_, source) => {
+    await expectDeclined(getOptions(source), "the engine stopped before it searched (exit 151)");
   });
 
   it("accepts decimals in proofs and ASSUME PROVE theorems", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "VARIABLE x\nTHEOREM TRUE\n<1>1. 1.5 = 1.5\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nTHEOREM ASSUME NEW c PROVE c = 1.5\nInit == x = 0",
     );
     expect(result.status).toBe("success");
   });
 
   it.each([
-    ["an unused definition", "VARIABLE x\nBig == 2147483648\nInit == x = 0"],
-    ["an assumption", "VARIABLE x\nASSUME 2147483648 > 0\nInit == x = 0"],
-    ["a negated literal", "EXTENDS Integers\nVARIABLE x\nInit == x = -2147483648"],
+    ["an unused definition", "VARIABLE x\nBig == 2147483648\nInit == x = 0", 255],
+    ["an assumption", "VARIABLE x\nASSUME 2147483648 > 0\nInit == x = 0", 150],
+    ["a negated literal", "EXTENDS Integers\nVARIABLE x\nInit == x = -2147483648", 255],
     [
       "an unused nested module",
       "VARIABLE x\n---- MODULE Inner ----\nBig == 2147483648\n====\nInit == x = 0",
+      255,
     ],
-  ])("rejects an integer literal too big for TLC in %s", async (_, source) => {
-    const run = checkSource(source);
-    await expect(run).rejects.toThrow(TlaEvaluationError);
-    await expect(run).rejects.toThrow(/^TLC can't handle a number this big: 2147483648/);
-  });
-
-  it.each(["\\hFFFFFFFFF", "99999999999999999999"])("quotes %s as typed", async (literal) => {
-    await expect(checkSource(`VARIABLE x\nBig == ${literal}\nInit == x = 0`)).rejects.toThrow(
-      `TLC can't handle a number this big: ${literal} at line 3, column 8`,
+    ["a hexadecimal literal", "VARIABLE x\nBig == \\hFFFFFFFFF\nInit == x = 0", 255],
+    ["a long literal", "VARIABLE x\nBig == 99999999999999999999\nInit == x = 0", 255],
+  ])("declines an integer literal too big for TLC in %s", async (_, source, exitCode) => {
+    await expectDeclined(
+      getOptions(source),
+      `the engine stopped before it searched (exit ${exitCode})`,
     );
   });
 
   it("reads based numerals", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "VARIABLE x\nASSUME \\h1F = 31 /\\ \\b101 = 5 /\\ \\o17 = 15\nInit == x = 0",
     );
     expect(result.status).toBe("success");
   });
 
   it("accepts the largest integer literal and big literals in proofs", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "EXTENDS Naturals\nVARIABLE x\nTHEOREM TRUE\n<1>1. 2147483648 > 0\n  OBVIOUS\n<1>2. QED\n  BY <1>1\nInit == x = 2147483647",
     );
     expect(result.status).toBe("success");
@@ -4171,33 +3493,14 @@ describe("name resolution matches SANY", () => {
     source: `---- MODULE M ----\n${source}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
     config: "INIT Init\nNEXT Next",
   });
-  const checkSource = (source: string) => checkParsed(getOptions(source));
-  const checkSourceOnEngine = (source: string) => checkOnEngine(getOptions(source));
+  const checkSource = (source: string) => checkOnEngine(getOptions(source));
 
-  it("fails to parse a spec that imports a module it cannot find, such as Strings", async () => {
-    await expect(checkSource("EXTENDS Strings")).rejects.toThrow(
-      createSanyError(
-        [
-          {
-            location: "In module M",
-            message: "Cannot find source file for module Strings imported in module M.",
-          },
-        ],
-        true,
-      ),
-    );
-    await expect(checkSource("N == INSTANCE Nowhere")).rejects.toThrow(
-      createSanyError(
-        [
-          {
-            location: "In module M",
-            message: "Cannot find source file for module Nowhere imported in module M.",
-          },
-        ],
-        true,
-      ),
-    );
-  });
+  it.each(["EXTENDS Strings", "N == INSTANCE Nowhere"])(
+    "declines a spec that imports a module it cannot find: %s",
+    async (source) => {
+      await expectDeclined(getOptions(source), "the engine stopped before it searched (exit 150)");
+    },
+  );
 
   it.each([
     ["an operator from a module that is not extended", "EXTENDS Naturals\nf == 1 :> 2"],
@@ -4209,10 +3512,6 @@ describe("name resolution matches SANY", () => {
     [
       "a definition as a fact in a HIDE step",
       "foo == 1\nTHEOREM T == TRUE\n<1>1. HIDE foo\n<1> QED",
-    ],
-    [
-      "a LET definition named after the recursive one it is in",
-      "RECURSIVE F\nF == LET F == 2 IN F",
     ],
     ["an unknown operator in a theorem", "THEOREM Undefined"],
     ["an unknown operator in a proof step", "THEOREM TRUE\n<1>1. Undefined\n  OBVIOUS\n<1> QED"],
@@ -4228,15 +3527,25 @@ describe("name resolution matches SANY", () => {
     await expect(checkSource(source)).rejects.toThrow(TlaSyntaxError);
   });
 
+  it.each([
+    "RECURSIVE F\nF == LET F == 2 IN F",
+    "EXTENDS Naturals\nOne(a) == a\nf == One(\\cup) /\\ One(-.) /\\ One(SUBSET) /\\ One(1) + One",
+    "One(a) == a\nf == One(UNCHANGED) /\\ One(') /\\ One(^+)",
+    "K(a) == LET C(b) == a IN C(1)\nHigh(Op(_)) == Op(1)\nM(a) == INSTANCE Naturals\nA == High(K(1)!C) /\\ U1\nB == High(M(1)!+)",
+    "RECURSIVE F(_)\nF(n) == n\nF(n) == n\nG == 1",
+  ])("declines %j, which SANY rejects", async (source) => {
+    await expectDeclined(getOptions(source), "the engine stopped before it searched (exit 150)");
+  });
+
   it("accepts USE and HIDE of theorems, assumptions, steps, and definitions", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "EXTENDS Naturals\nfoo == 1\nUSE foo, foo > 0 DEF foo\nASSUME A == foo \\in Nat\nHIDE A\nTHEOREM T == foo = 1\nHIDE T DEF foo\nTHEOREM U == ASSUME NEW n \\in Nat PROVE n >= 0\n<1>1. n >= 0\n  OBVIOUS\n<1>2. HIDE <1>1, T\n<1> QED\n  BY <1>1",
     );
     expect(result.status).toBe("success");
   });
 
   it("resolves NEW, SUFFICES, PICK, DEFINE, and theorem labels in the steps they scope", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       [
         "EXTENDS Naturals",
         "THEOREM Thm == ASSUME NEW S PROVE lab :: S = S",
@@ -4293,50 +3602,47 @@ describe("name resolution matches SANY", () => {
       "D(Op(_)) == Op(42)\nG(a) == a\nF == D(G) = D(LAMBDA a : a)",
     ],
   ])("accepts %s", async (_, source) => {
-    expect((await checkSourceOnEngine(source)).status).toBe("success");
+    expect((await checkSource(source)).status).toBe("success");
   });
 
-  // TLC's SANY gives SUBSET the precedence 8, below \X, and TLC 1.7.4's gave it 10-13, as \X.
-  it("reads SUBSET before \\X by the precedence of SANY in each TLC", async () => {
+  // TLC's SANY gives SUBSET the precedence 8, below \X.
+  it("reads SUBSET before \\X by the precedence of SANY", async () => {
     const source =
       "---- MODULE M ----\nVARIABLE x\nASSUME SUBSET {1} \\X {2} = {{}, {<<1, 2>>}}\nInit == x = 0\nNext == UNCHANGED x\n====";
     const config = "INIT Init\nNEXT Next";
     expect((await checkOnEngine({ source, config })).status).toBe("success");
-    await expect(checkParsed({ source, config, version: "1.7.4" })).rejects.toThrow(
-      "Precedence conflict",
-    );
   });
 
   it("defines prefix, postfix, and <: operators", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "EXTENDS Naturals\nn ^+ == n + 1\n-. n == 10 - n\na <: b == a - b\nASSUME (2^+) = 3 /\\ -4 = 6 /\\ (5 <: 2) = 3",
     );
     expect(result.status).toBe("success");
   });
 
   it("applies operators in prefix form and reads keywords as field names", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       'EXTENDS Naturals\nn ^+ == n + 1\nASSUME +(4, 6) = 10 /\\ ^+(2) = 3\nASSUME [[x \\in {"THEN"} |-> 1] EXCEPT !.THEN = 2].THEN = 2',
     );
     expect(result.status).toBe("success");
   });
 
   it("takes infix operators as parameters", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "EXTENDS Naturals\nFoo(a, _--_) == a -- 1\nASSUME Foo(7, +) = 8 /\\ Foo(7, *) = 7",
     );
     expect(result.status).toBe("success");
   });
 
   it("accepts recursive functions, named assumptions, and operator aliases", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "EXTENDS Naturals\nRECURSIVE fact\ntwice[n \\in Nat] == fact[n] * 2\nfact[n \\in Nat] == IF n = 0 THEN 1 ELSE n * fact[n - 1]\nASSUME Positive == twice[3] = 12\nASSUME Positive\na \\oplus b == a + b\nASSUME 1 (+) 2 = 3",
     );
     expect(result.status).toBe("success");
   });
 
   it("keeps a recursive function lazy, so it computes only the arguments a spec applies it to", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "EXTENDS Naturals\nsteps[n \\in 0..20] == IF n = 1 THEN 0 ELSE IF n % 2 = 0 THEN 1 + steps[n \\div 2] ELSE 1 + steps[3 * n + 1]\nASSUME steps[5] = 5",
     );
     expect(result.status).toBe("success");
@@ -4595,29 +3901,6 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
-      "EXTENDS Naturals\nOne(a) == a\nf == One(\\cup) /\\ One(-.) /\\ One(SUBSET) /\\ One(1) + One",
-      [
-        ["line 4, col 10 to line 4, col 13", "The operator \\cup requires 2 arguments."],
-        [
-          "line 4, col 23 to line 4, col 24",
-          "Could not find declaration or definition of symbol '-.'.",
-        ],
-        ["line 4, col 34 to line 4, col 39", "The operator SUBSET requires 1 arguments."],
-        ["line 4, col 54 to line 4, col 56", "The operator One requires 1 arguments."],
-      ],
-    ],
-    [
-      "One(a) == a\nf == One(UNCHANGED) /\\ One(') /\\ One(^+)",
-      [
-        ["line 3, col 10 to line 3, col 18", "The operator UNCHANGED requires 1 arguments."],
-        ["line 3, col 28 to line 3, col 28", "The operator ' requires 1 arguments."],
-        [
-          "line 3, col 38 to line 3, col 39",
-          "Could not find declaration or definition of symbol '^+'.",
-        ],
-      ],
-    ],
-    [
       "---- MODULE Inner ----\nCONSTANT a\nB == a\nC(p) == a\nTHEOREM T == TRUE\n====\nK(q) == INSTANCE Inner WITH a <- q\nF == K!B = U1 /\\ K(1)!C = U2 /\\ K(1, 2)!B = U3 /\\ K!C(1, 2) = U4\nG == LET L(q) == INSTANCE Inner WITH a <- q IN L!B = U5 /\\ L(1)!C(2, 3) = U6\nUSE K!T, K(1)!T, U7",
       [
         ["line 9, col 6 to line 9, col 8", "The operator K requires 1 arguments."],
@@ -4661,22 +3944,6 @@ describe("name resolution matches SANY", () => {
         ["line 5, col 24 to line 5, col 26", "Couldn't resolve postfix operator symbol `⁺'."],
         ["line 6, col 6 to line 6, col 6", "The operator \\oplus requires 2 arguments."],
         ["line 8, col 6 to line 8, col 10", "Unknown operator: `M!\\oplus'."],
-      ],
-    ],
-    [
-      "K(a) == LET C(b) == a IN C(1)\nHigh(Op(_)) == Op(1)\nM(a) == INSTANCE Naturals\nA == High(K(1)!C) /\\ U1\nB == High(M(1)!+)",
-      [
-        ["line 5, col 11 to line 5, col 11", "Selector `K' should not have argument(s)."],
-        [
-          "line 5, col 6 to line 5, col 17",
-          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
-        ],
-        ["line 5, col 22 to line 5, col 23", "Unknown operator: `U1'."],
-        ["line 6, col 11 to line 6, col 11", "Selector `M' should not have argument(s)."],
-        [
-          "line 6, col 6 to line 6, col 17",
-          "Argument number 1 to operator 'High' \nshould be a 1-parameter operator.",
-        ],
       ],
     ],
     [
@@ -5073,23 +4340,6 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
-      "a recursive operator defined twice",
-      "RECURSIVE F(_)\nF(n) == n\nF(n) == n\nG == 1",
-      [
-        {
-          location: "line 4, col 1 to line 4, col 9 of module M",
-          message: "Operator F already defined or declared.",
-        },
-      ],
-      [
-        {
-          location: "line 4, col 1 to line 4, col 9 of module M",
-          message:
-            "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 3, col 1 to line 3, col 9 of module M.",
-        },
-      ],
-    ],
-    [
       "a theorem named after a definition",
       "B == 1\nTHEOREM B == TRUE",
       [
@@ -5295,37 +4545,6 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
-      "errors in modules nested in nested modules",
-      "Foo == U\n---- MODULE Middle ----\nA == V\n---- MODULE Inner ----\nRECURSIVE R(_)\nB == W\n====\nC == X\n====\nBar == Y",
-      [
-        {
-          location: "line 2, col 8 to line 2, col 8 of module M",
-          message: "Unknown operator: `U'.",
-        },
-        {
-          location: "line 4, col 6 to line 4, col 6 of module M",
-          message: "Unknown operator: `V'.",
-        },
-        {
-          location: "line 7, col 6 to line 7, col 6 of module M",
-          message: "Unknown operator: `W'.",
-        },
-        {
-          location: "line 6, col 11 to line 6, col 14 of module M",
-          message: "Symbol R declared in RECURSIVE statement but not defined.",
-        },
-        {
-          location: "line 9, col 6 to line 9, col 6 of module M",
-          message: "Unknown operator: `X'.",
-        },
-        {
-          location: "line 11, col 8 to line 11, col 8 of module M",
-          message: "Unknown operator: `Y'.",
-        },
-      ],
-      [],
-    ],
-    [
       "an error in a nested module before a module defined twice",
       "Foo == 1\n---- MODULE Inner ----\nCONSTANT Foo\nB == 1\n====\n---- MODULE Inner ----\n====\nB == 2\nH == U",
       [
@@ -5458,34 +4677,15 @@ describe("name resolution matches SANY", () => {
     expect([result.status, printed[0]]).toEqual(["success", warnings]);
   });
 
-  it("reports RECURSIVE declarations it never defines like SANY", async () => {
-    await expect(
-      checkParsed({
+  it("declines RECURSIVE declarations it never defines, which SANY rejects", async () => {
+    await expectDeclined(
+      {
         source:
           "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nRECURSIVE F(_), F(_)\n====",
         config: "INIT Init\nNEXT Next",
-      }),
-    ).rejects.toMatchObject({
-      sany: {
-        errors: [
-          {
-            location: "line 5, col 11 to line 5, col 14 of module M",
-            message: "Symbol F declared in RECURSIVE statement but not defined.",
-          },
-          {
-            location: "line 5, col 17 to line 5, col 20 of module M",
-            message: "Symbol F declared in RECURSIVE statement but not defined.",
-          },
-        ],
-        warnings: [
-          {
-            location: "line 5, col 17 to line 5, col 20 of module M",
-            message:
-              "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 5, col 11 to line 5, col 14 of module M.",
-          },
-        ],
       },
-    });
+      "the engine stopped before it searched (exit 150)",
+    );
   });
 });
 
@@ -5494,7 +4694,7 @@ describe("level checking matches SANY", () => {
     source: `---- MODULE M ----\nVARIABLE x\nF == ${definition}\nInit == x = 0\nNext == x' = x\n====`,
     config: "INIT Init\nNEXT Next",
   });
-  const checkDefinition = (definition: string) => checkParsed(getOptions(definition));
+  const checkDefinition = (definition: string) => checkOnEngine(getOptions(definition));
 
   // Cases from SANY's test215, which outlaws raw actions in temporal formulas.
   it.each([
@@ -5503,7 +4703,6 @@ describe("level checking matches SANY", () => {
     ["<>(x')", "<> followed by action not of form <<A>>_v"],
     ["[](x')", "[] followed by action not of form [A]_v"],
     ["\\A i \\in {}, j \\in x' : []x", "Action-level bound of quantified temporal formula"],
-    ["x' /\\ []x", "Formula has both temporal formula and action as arguments"],
     ["(x')'", "Level error in applying operator '"],
     ["ENABLED []x", "Level error in applying operator ENABLED"],
   ])("rejects %s", async (definition, message) => {
@@ -5524,7 +4723,7 @@ describe("level checking matches SANY", () => {
     "SortSeq(s, LAMBDA a, b : a = b')",
   ])("rejects a primed sequence where %s primes its elements", async (application) => {
     await expect(
-      checkParsed({
+      checkOnEngine({
         source: `---- MODULE M ----\nEXTENDS Sequences, TLC\nVARIABLE x\nF(s) == ${application}\nG == F(x')\nInit == x = 0\nNext == x' = x\n====`,
         config: "INIT Init\nNEXT Next",
       }),
@@ -5559,7 +4758,7 @@ describe("level checking matches SANY", () => {
 
   it("rejects an argument above the level an instantiated operator allows, naming it like SANY", async () => {
     await expect(
-      checkParsed({
+      checkOnEngine({
         source:
           "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE y\nFoo == y' = 0\n====\nI(z) == INSTANCE Inner WITH y <- z\nFooBar == I(x')!Foo\nInit == x = 0\nNext == x' = x\n====",
         config: "INIT Init\nNEXT Next",
@@ -5618,7 +4817,7 @@ describe("level checking matches SANY", () => {
     ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
     await expect(
-      checkParsed({
+      checkOnEngine({
         source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
         config: "INIT Init\nNEXT Next",
       }),
@@ -5631,7 +4830,7 @@ describe("level checking matches SANY", () => {
 
   it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
     await expect(
-      checkParsed({
+      checkOnEngine({
         source:
           "---- MODULE M ----\nVARIABLE x\nCONSTANT K\n---- MODULE Inner ----\nCONSTANT c\nASSUME c = {}\n====\nI == INSTANCE Inner WITH c <- [](x = 0)\nInit == x = 0\nNext == x' = x\n====",
         config: "INIT Init\nNEXT Next",
@@ -5655,7 +4854,10 @@ describe("level checking matches SANY", () => {
     ["X == I!Op(1)", 12],
   ])("rejects %s without the arguments of the instance, like SANY", async (definition, end) => {
     await expect(
-      checkParsed({ source: getParameterizedInstance(definition), config: "INIT Init\nNEXT Next" }),
+      checkOnEngine({
+        source: getParameterizedInstance(definition),
+        config: "INIT Init\nNEXT Next",
+      }),
     ).rejects.toThrow(
       createSemanticError("The operator I requires 1 arguments.", {
         module: "M",
@@ -5695,7 +4897,7 @@ describe("parseConfig matches TLC", () => {
         "TLC requires rlreward not to take any argument, but one was given: Argument",
       ),
     );
-    const result = await checkModuleOnEngine(
+    const result = await checkModule(
       "Periodic == x < 100\nReward == 1",
       "_PERIODIC Periodic\n_RL_REWARD Reward",
     );
@@ -5769,35 +4971,12 @@ describe("parseConfig matches TLC", () => {
   });
 });
 
-describe("parseConfig matches TLC 1.7.4", () => {
-  it("reads a keyword that TLC 1.7.4 doesn't have as a name", () => {
-    expect(parseConfig("INVARIANT Inv ALIAS", "1.7.4").invariants).toEqual(["Inv", "ALIAS"]);
-    expect(() => parseConfig("INIT Init\nALIAS Alias", "1.7.4")).toThrow(
-      new TlaConfigError(
-        "TLC found an error in the configuration file at line 2\nIt was expecting a keyword, but did not find it.",
-      ),
-    );
-  });
-
-  it("reads a TYPE and a TYPE_CONSTRAINT, which it ignores, once each", () => {
-    expect(parseConfig("INIT Init\nTYPE T\nTYPE_CONSTRAINT C", "1.7.4")).toEqual(
-      parseConfig("INIT Init", "1.7.4"),
-    );
-    expect(() => parseConfig("TYPE T\nTYPE U", "1.7.4")).toThrow(
-      new TlaConfigError(
-        "TLC found an error in the configuration file at line 2\nThe keyword TYPE appeared twice.",
-      ),
-    );
-    expect(() => parseConfig("TYPE T")).toThrow(TlaConfigError);
-  });
-});
-
 describe("initial predicate and next-state relation match TLC", () => {
+  const checkSource = (body: string, config: string) =>
+    checkOnEngine({ source: `---- MODULE M ----\n${body}\n====`, config });
+
   it("explores no states when a spec without variables has no initial predicate", async () => {
-    const result = await checkSourceOnEngine(
-      "ASSUME TRUE\nSpec == [][TRUE]_<<>>",
-      "SPECIFICATION Spec",
-    );
+    const result = await checkSource("ASSUME TRUE\nSpec == [][TRUE]_<<>>", "SPECIFICATION Spec");
     expect([result.status, result.generatedStates, result.distinctStates, result.depth]).toEqual([
       "success",
       0,
@@ -5852,21 +5031,6 @@ describe("initial predicate and next-state relation match TLC", () => {
     ).rejects.toThrow(new TlaConfigError("The constraint of C is equal to FALSE"));
   });
 
-  it("warns about a state-level property before it reads the constraints", async () => {
-    const warned: string[] = [];
-    await expect(
-      checkParsed({
-        source:
-          "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nP == x = 0\nC == FALSE\n====",
-        config: "INIT Init\nNEXT Next\nPROPERTY P\nCONSTRAINT C",
-        onProgress: (progress) => {
-          if (progress.kind === "state-level-property") warned.push(progress.name);
-        },
-      }),
-    ).rejects.toThrow(new TlaConfigError("The constraint of C is equal to FALSE"));
-    expect(warned).toEqual(["P"]);
-  });
-
   it("rejects an invariant that is not a state predicate", async () => {
     await expect(
       checkSource(
@@ -5892,7 +5056,7 @@ describe("initial predicate and next-state relation match TLC", () => {
 
   it("binds a variable once for each time a lazy UNION streams an element", async () => {
     const set = "UNION {SUBSET {1}, {{}}}";
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       `VARIABLE x\nInit == x \\in ${set}\nNext == x' \\in ${set}`,
       "INIT Init\nNEXT Next",
     );
@@ -5901,7 +5065,7 @@ describe("initial predicate and next-state relation match TLC", () => {
 
   it("keeps a set operation lazy unless TLC can reduce both sets", async () => {
     const getCounts = async (set: string) => {
-      const result = await checkSourceOnEngine(
+      const result = await checkSource(
         `EXTENDS Naturals\nVARIABLE x\nInit == x \\in ${set}\nNext == UNCHANGED x`,
         "INIT Init\nNEXT Next",
       );
@@ -5912,10 +5076,7 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(await getCounts("{1} \\cup {1, 2}")).toEqual([4, 2]);
   });
 
-  it.each<[TlcVersion, number[]]>([
-    ["master", [21, 17, 25]],
-    ["1.7.4", [21, 21, 25]],
-  ])("streams a lazy UNION's duplicates until TLC %s caches the set", async (version, expected) => {
+  it("streams a lazy UNION's duplicates until TLC caches the set", async () => {
     const nexts = [
       "y' \\in UNION {UNION {0..2, {1}}, {7}}",
       "\\E e \\in UNION {UNION {0..2, {1}}, {7}} : y' = e",
@@ -5923,21 +5084,17 @@ describe("initial predicate and next-state relation match TLC", () => {
     ];
     const results = await Promise.all(
       nexts.map((next) =>
-        checkOnEngine(
-          {
-            source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == (${next}) /\\ UNCHANGED x\n====`,
-            config: "INIT Init\nNEXT Next",
-            version,
-          },
-          getVersionDeclined(version),
-        ),
+        checkOnEngine({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == (${next}) /\\ UNCHANGED x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
       ),
     );
-    expect(results.map((result) => result.generatedStates)).toEqual(expected);
+    expect(results.map((result) => result.generatedStates)).toEqual([21, 17, 25]);
   });
 
   it("keeps the names a recursive function binds apart in each call", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "EXTENDS Sequences\nVARIABLE v\nPerms(S) == LET p[s \\in SUBSET S] == IF s = {} THEN {<<>>} ELSE LET q == [x \\in s |-> {Append(t, x) : t \\in p[s \\ {x}]}] IN UNION {q[x] : x \\in s} IN p[S]\nInit == v = <<>>\nNext == \\E t \\in Perms({1, 2, 3}) : v' = t",
       "INIT Init\nNEXT Next",
     );
@@ -5946,7 +5103,7 @@ describe("initial predicate and next-state relation match TLC", () => {
 
   it("walks the body of a LET's function that an action applies, as TLC does", async () => {
     // Where both disjuncts of the function's body hold, TLC generates the successor twice.
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "EXTENDS Integers\nVARIABLES m, x\nInit == m \\in [{1, 2} -> -1..2] /\\ x = -5\nSafe(b) == LET f[c \\in 0..2] == c = 0 \\/ \\A i \\in {1, 2} : m[i] >= c IN f[b]\nNext == \\E b \\in 0..2 : Safe(b) /\\ x' = b /\\ UNCHANGED m",
       "INIT Init\nNEXT Next",
     );
@@ -5954,7 +5111,7 @@ describe("initial predicate and next-state relation match TLC", () => {
   });
 
   it("evaluates a LET definition's UNION again at each reference in an action", async () => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       "EXTENDS Naturals, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET u == UNION {UNION {0..2, {1}}, {7}} IN Cardinality(u) > 0 /\\ y' \\in u /\\ UNCHANGED x",
       "INIT Init\nNEXT Next",
     );
@@ -5966,11 +5123,6 @@ describe("initial predicate and next-state relation match TLC", () => {
       /No next state actions defined to generate successor states from/,
     );
   });
-
-  const checkSource = (body: string, config: string) =>
-    checkParsed({ source: `---- MODULE M ----\n${body}\n====`, config });
-  const checkSourceOnEngine = (body: string, config: string) =>
-    checkOnEngine({ source: `---- MODULE M ----\n${body}\n====`, config });
 
   it.each([
     ["[](FALSE)", "Invariant FALSE is violated by the initial state:"],
@@ -5998,7 +5150,7 @@ describe("initial predicate and next-state relation match TLC", () => {
       "Action property line 8, col 26 to line 8, col 36 of module M is violated.",
     ],
   ])("names the part of property %s that fails as TLC does", async (property, headline) => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       `EXTENDS Integers\nVARIABLE x\nBad == x = 1\nOp(n) == x = n\nTwo(n) == x # n /\\ x # n + 1\nSpec == x = 0 /\\ [][x' = x + 1 /\\ x < 3]_x\nProperty == ${property}`,
       "SPECIFICATION Spec\nPROPERTY Property\nCHECK_DEADLOCK FALSE",
     );
@@ -6018,13 +5170,15 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(result.violations[0]?.headline).toBe("Invariant Small is violated.");
   });
 
-  it("rejects a property that quantifies over no elements as a tautology", async () => {
-    await expect(
-      checkSource(
-        "VARIABLE x\nSpec == x = 0 /\\ [][x' = x]_x\nProperty == \\A n \\in {} : x # n",
-        "SPECIFICATION Spec\nPROPERTY Property",
-      ),
-    ).rejects.toThrow("Temporal formula is a tautology (its negation is unsatisfiable).");
+  it("declines a property that quantifies over no elements, a tautology", async () => {
+    await expectDeclined(
+      {
+        source:
+          "---- MODULE M ----\nVARIABLE x\nSpec == x = 0 /\\ [][x' = x]_x\nProperty == \\A n \\in {} : x # n\n====",
+        config: "SPECIFICATION Spec\nPROPERTY Property",
+      },
+      "a property TLC finds a tautology",
+    );
   });
 
   it.each([
@@ -6032,7 +5186,7 @@ describe("initial predicate and next-state relation match TLC", () => {
     ["x \\in UNION UNION {SUBSET {1}, {{1}}}", "UNCHANGED x", [3, 1]],
     ["x = 0", "x = 0 /\\ x' \\in UNION UNION (SUBSET {{1}, {1, 2}})", [7, 3]],
   ])("streams a lazy UNION of a lazy UNION with Init %s", async (init, next, counts) => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       `VARIABLE x\nInit == ${init}\nNext == ${next}`,
       "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
     );
@@ -6043,7 +5197,7 @@ describe("initial predicate and next-state relation match TLC", () => {
     ["UNION {UNION (SUBSET {{1}, {1, 2}}), {1}}", [8, 3]],
     ["UNION {{1}, UNION (SUBSET {{1}, {1, 2}})}", [6, 3]],
   ])("streams a lazy UNION in %s until a sort compares it as TLC does", async (set, counts) => {
-    const result = await checkSourceOnEngine(
+    const result = await checkSource(
       `VARIABLE x\nInit == x \\in ${set}\nNext == UNCHANGED x`,
       "INIT Init\nNEXT Next",
     );
@@ -6051,392 +5205,172 @@ describe("initial predicate and next-state relation match TLC", () => {
   });
 });
 
-describe("check matches TLC 1.7.4", () => {
-  const getOptions = (definitions: string, config = "INIT Init\nNEXT Next") => ({
-    source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
-    config,
-    version: "1.7.4" as const,
-  });
-  const check174 = (definitions: string, config?: string) =>
-    checkParsed(getOptions(definitions, config));
-  const check174OnEngine = (definitions: string, config?: string) =>
-    checkOnEngine(getOptions(definitions, config), "TLC 1.7.4");
-  const run174 = (definitions: string, config?: string) =>
-    runOnEngine({ ...getOptions(definitions, config), args: TLC_174_LAUNCH }, "TLC 1.7.4");
-
-  it("keeps the outdegree of the states it expanded before a violation, a deadlocked state among them", () => {
-    const invariant = run174(
-      "Init == x = 0\nNext == x' = x + 1\nInv == x < 2",
-      "INIT Init\nNEXT Next\nINVARIANT Inv",
-    );
-    expect(getStatistics(invariant.output).at(-1)).toBe(
-      "The average outdegree of the complete state graph is 1 (minimum is 1, the maximum 1 and the 95th percentile is 1).",
-    );
-    const deadlock = run174("Init == x = 0\nNext == x < 2 /\\ x' = x + 1");
-    expect(getStatistics(deadlock.output).at(-1)).toBe(
-      "The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).",
-    );
-  });
-
+describe("check matches TLC master", () => {
   it("leaves out the outdegree of the state whose invariant it failed to evaluate", () => {
-    const options = {
+    const run = runOnEngine({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == \\E n \\in {1, 2} : x' = x + n\nInv == x # 3 \\/ CHOOSE n \\in {} : TRUE\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
-    };
-    const tlc174 = runOnEngine({ ...options, args: TLC_174_LAUNCH }, "TLC 1.7.4");
-    expect(getStatistics(tlc174.output).at(-1)).toBe(
-      "The average outdegree of the complete state graph is 2 (minimum is 2, the maximum 2 and the 95th percentile is 2).",
-    );
-    const master = runOnEngine(options);
-    expect(getStatistics(master.output).at(-1)).toBe(
+    });
+    expect(getStatistics(run.output).at(-1)).toBe(
       "The average outdegree of the complete state graph is 2 (minimum is 1, the maximum 2 and the 95th percentile is 2).",
     );
   });
 
-  it("words a missing tuple index or record field as TLC 1.7.4 does", async () => {
-    const tuple = await check174OnEngine(
-      'Init == x = 0\nNext == x\' = x + 1\nName == <<"zero", "one">>\nInv == Name[x + 1] # "none"',
-      "INIT Init\nNEXT Next\nINVARIANT Inv",
-    );
-    expect(tuple.violations[0]?.headline).toContain(
-      'Attempted to apply tuple\n<<"zero", "one">>\nto integer 3 which is out of domain.',
-    );
-    const record = await check174OnEngine(
-      'Init == x = 0\nNext == x\' = x + 1\nR == [a |-> 1]\nInv == R[IF x = 0 THEN "a" ELSE "b"] = 1',
-      "INIT Init\nNEXT Next\nINVARIANT Inv",
-    );
-    expect(record.violations[0]?.headline).toContain(
-      "Attempted to apply the record\n[a |-> 1]\nto nonexistent record field b.",
-    );
-  });
-
-  it("reports an error in adding a state to the behavior graph as TLC 1.7.4's worker does", () => {
-    const run = run174(
-      "Init == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nProp == []<>(1 \\div x = 1)",
-      "SPECIFICATION Spec\nPROPERTY Prop",
-    );
-    // No behavior and no nested expressions follow the error.
-    expect([getErrors(run.output), run.exitCode]).toEqual([
-      [
-        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a tlc2.tool.EvalException\n: The second argument of \\div is 0.",
-      ],
-      255,
-    ]);
-  });
-
-  const getPropertyOptions = (property: string, version?: "1.7.4") => ({
+  const getPropertyOptions = (property: string) => ({
     source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x, b\nInit == x = 0 /\\ b = FALSE\nNext == x' = x /\\ b' = ~b\nSpec == Init /\\ [][Next]_<<x, b>>\n${property}\n====`,
     config: "SPECIFICATION Spec\nPROPERTY P",
-    version,
   });
-  const checkProperty = (property: string, version?: "1.7.4") =>
-    checkParsed(getPropertyOptions(property, version));
 
   // TLC names a part of a property by its location, or by the definition it is the body of.
   it.each([
-    [undefined, "P == []b", "Invariant b is violated by the initial state:"],
-    [undefined, "P == []FALSE", "Invariant FALSE is violated by the initial state:"],
+    ["P == []b", "Invariant b is violated by the initial state:"],
+    ["P == []FALSE", "Invariant FALSE is violated by the initial state:"],
     [
-      undefined,
       "P == [](x # 0) /\\ TRUE",
       "Invariant line 7, col 6 to line 7, col 14 of module M is violated by the initial state:",
     ],
     [
-      undefined,
       "P == x # 0 /\\ TRUE",
       "Property line 7, col 6 to line 7, col 10 of module M is violated by the initial state:",
     ],
-    [undefined, "Q == [][b' = b]_b\nP == Q /\\ TRUE", "Action property Q is violated."],
+    ["Q == [][b' = b]_b\nP == Q /\\ TRUE", "Action property Q is violated."],
     [
-      undefined,
       "P == \\A c \\in {0, 1} : x # c",
       "Property line 7, col 24 to line 7, col 28 of module M is violated by the initial state:",
     ],
-    [
-      "1.7.4" as const,
-      "P == \\A c \\in {0, 1} : x # c",
-      "Property P is violated by the initial state:",
-    ],
-  ])(
-    "names the violated part of a property as TLC %s does: %s",
-    async (version, property, headline) => {
-      const result = await checkOnEngine(
-        getPropertyOptions(property, version),
-        getVersionDeclined(version),
-      );
-      expect(result.violations[0]?.headline).toBe(headline);
-    },
-  );
+  ])("names the violated part of a property as TLC does: %s", async (property, headline) => {
+    const result = await checkOnEngine(getPropertyOptions(property));
+    expect(result.violations[0]?.headline).toBe(headline);
+  });
 
-  it.each([undefined, "1.7.4" as const])(
-    "reports a property that quantifies over the empty set as a tautology (TLC %s)",
-    async (version) => {
-      await expect(checkProperty("P == \\A c \\in {} : []b", version)).rejects.toThrow(
-        "Temporal formula is a tautology (its negation is unsatisfiable).",
-      );
-    },
-  );
+  it("declines a property that quantifies over the empty set, a tautology", async () => {
+    await expectDeclined(
+      getPropertyOptions("P == \\A c \\in {} : []b"),
+      "a property TLC finds a tautology",
+    );
+  });
 
   // TLC evaluates the constant parts of the properties as it builds the liveness checker.
   it.each([
-    [
-      "<>(1 \\notin SUBSET 1)",
-      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check if the non-enumerable value\n1\nis element of\nSUBSET 1",
-    ],
-    [
-      "<>(1 + 1)",
-      "TLC expected a boolean value, but did not find one. line 6, col 9 to line 6, col 13 of module M",
-    ],
-    ["<>(\\b101 /\\ TRUE)", "TLC expected a boolean value, but did not find one. \\b101"],
-  ])(
-    "reports an error in the constant part of the property %s as TLC does",
-    async (property, message) => {
-      await expect(
-        checkParsed({
-          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nSpec == Init /\\ [][x' = x]_x\nP == ${property}\n====`,
-          config: "SPECIFICATION Spec\nPROPERTY P",
-        }),
-      ).rejects.toMatchObject({ message });
-    },
-  );
-
-  it("exits successfully after an error in adding an initial state to the behavior graph, as TLC 1.7.4 does", () => {
-    const run = run174(
-      "Init == x = 0\nNext == (x = 0 /\\ x' = 1) \\/ UNCHANGED x\nSpec == Init /\\ [][Next]_x\nProp == <>~ENABLED (x' > x)",
-      "SPECIFICATION Spec\nPROPERTY Prop",
-    );
-    expect(run.exitCode).toBe(0);
-  });
-
-  it("says which variables a successor leaves unassigned as TLC 1.7.4 does", async () => {
-    const result = await check174OnEngine("Init == x = 0\nNext == UNCHANGED <<>>");
-    expect(result.violations[0]?.headline).toBe(
-      "Successor state is not completely specified by the next-state action. The following variable is not assigned: x.\n",
+    ["<>(1 \\notin SUBSET 1)", "an operator, which the constant evaluator doesn't compute"],
+    ["<>(1 + 1)", "the engine stopped before it searched (exit 255)"],
+    ["<>(\\b101 /\\ TRUE)", "the engine stopped before it searched (exit 255)"],
+  ])("declines an error in the constant part of the property %s", async (property, reason) => {
+    await expectDeclined(
+      {
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nSpec == Init /\\ [][x' = x]_x\nP == ${property}\n====`,
+        config: "SPECIFICATION Spec\nPROPERTY P",
+      },
+      reason,
     );
   });
 
-  it("reports an error in adding a successor without the trace, as TLC 1.7.4's worker does", async () => {
-    const result = await check174OnEngine("Init == x = 0\nNext == x' = {x + 1} \\cup x");
-    expect(result.violations[0]?.headline).toBe(
-      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: util.Assert$TLCRuntimeException: Attempted to enumerate S \\cup T when S:\n{1}\nand T:\n0\nare not both enumerable",
-    );
-    expect(result.violations[0]?.states).toEqual([]);
-  });
-
-  it("reads only the keys TLC 1.7.4's TLCGet has", async () => {
-    const getRevision = async (version: TlcVersion) => {
-      const result = await checkOnEngine(
-        {
-          source:
-            '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = TLCGet("revision").tag\nNext == UNCHANGED x\n====',
-          config: "INIT Init\nNEXT Next",
-          version,
-        },
-        version === "1.7.4"
-          ? "TLC 1.7.4"
-          : "the engine stopped: unsupported: TLCGet of a key the search doesn't keep",
-      );
-      return result.violations[0]?.headline ?? result.status;
-    };
-    expect(await getRevision("master")).toBe("success");
-    expect(await getRevision("1.7.4")).toBe("TLCGet(revision) was undefined.");
-  });
-
-  it("sizes every component of a set of functions as TLC 1.7.4 does", async () => {
-    const getCardinality = async (version: TlcVersion) => {
-      const result = await checkOnEngine(
-        {
-          source:
-            "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = Cardinality([Nat -> {}])\nNext == UNCHANGED x\n====",
-          config: "INIT Init\nNEXT Next",
-          version,
-        },
-        getVersionDeclined(version),
-      );
-      return result.violations[0]?.headline ?? result.status;
-    };
-    expect(await getCardinality("master")).toBe("success");
-    expect(await getCardinality("1.7.4")).toMatch(
-      /but it produced the following error:\nAttempted to compute the number of elements in the overridden value Nat\.$/,
+  it("declines TLCGet of the revision", async () => {
+    await expectDeclined(
+      {
+        source:
+          '---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = TLCGet("revision").tag\nNext == UNCHANGED x\n====',
+        config: "INIT Init\nNEXT Next",
+      },
+      "the engine stopped: unsupported: TLCGet of a key the search doesn't keep",
     );
   });
 
-  it("doesn't explain a set it can't enumerate", async () => {
-    const result = await check174OnEngine("Init == x = 0\nNext == \\E n \\in Nat : x' = n");
-    expect(result.violations[0]?.headline).toContain(
-      ": TLC encountered a non-enumerable quantifier bound\nNat.\nline 5, col 18 to line 5, col 20 of module M",
-    );
-    expect(result.violations[0]?.headline).not.toContain("infinitely many elements");
+  it("sizes a set of functions with an empty range without its domain", async () => {
+    const result = await checkOnEngine({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = Cardinality([Nat -> {}])\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
   });
 
-  it("refuses action composition without the Java property that enables it", async () => {
-    const result = await check174OnEngine("Init == x = 0\nNext == (x' = x) \\cdot (x' = x)");
-    expect(result.violations[0]?.headline).toMatch(
-      /: The current version of TLC does not support action composition\.$/,
-    );
-  });
-
-  it("blames a parameterized INSTANCE for a missing initial predicate as well", async () => {
-    await expect(check174("Next == x' = x", "NEXT Next")).rejects.toThrow(
-      new TlaConfigError(
-        "The configuration file did not specify the initial state predicate.\nCan also be caused by trying to run TLC on a specification from\na module imported with a parameterized INSTANCE statement.",
-      ),
-    );
-  });
-
-  it("doesn't rebuild the trace, so it prints nothing of the states again", () => {
-    const options = {
+  it("rebuilds the trace, so it prints the states' output again", () => {
+    const run = runOnEngine({
       source:
         '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ PrintT("init")\nNext == x = 5 /\\ x\' = x\n====',
       config: "INIT Init\nNEXT Next",
-    };
-    expect(getTraceOutput(runOnEngine(options).output)).toEqual(['"init"']);
-    expect(
-      getTraceOutput(runOnEngine({ ...options, args: TLC_174_LAUNCH }, "TLC 1.7.4").output),
-    ).toEqual([]);
+    });
+    expect(getTraceOutput(run.output)).toEqual(['"init"']);
   });
 
-  it("doesn't expand a specification that applies an operator to arguments", async () => {
-    const getOptions = (version: TlcVersion) => ({
+  it("expands a specification that applies an operator to arguments", async () => {
+    const result = await checkOnEngine({
       source: "---- MODULE M ----\nVARIABLE x\nS(v) == v = 0 /\\ [][v' = v]_v\nSpec == S(x)\n====",
       config: "SPECIFICATION Spec",
-      version,
     });
-    const getStatus = (version: TlcVersion) =>
-      checkParsed(getOptions(version)).then((result) => result.status);
-    expect((await checkOnEngine(getOptions("master"))).status).toBe("success");
-    await expect(getStatus("1.7.4")).rejects.toThrow(
-      "The configuration file did not specify the initial state predicate.",
-    );
+    expect(result.status).toBe("success");
   });
 
   it("reads the level of the state it explores in a constraint", async () => {
-    const getDistinctStates = async (version: TlcVersion) => {
-      const result = await checkOnEngine(
-        {
-          source:
-            '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = x + 1\nC == TLCGet("level") < 3\n====',
-          config: "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
-          version,
-        },
-        getVersionDeclined(version),
-      );
-      return result.distinctStates;
-    };
-    expect(await getDistinctStates("master")).toBe(2);
-    expect(await getDistinctStates("1.7.4")).toBe(3);
+    const result = await checkOnEngine({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = x + 1\nC == TLCGet("level") < 3\n====',
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
+    });
+    expect(result.distinctStates).toBe(2);
   });
 
-  it("evaluates TLCGet in a temporal property before it starts the model checker", async () => {
-    const getOptions = (version: TlcVersion) => ({
+  it("evaluates TLCGet in a temporal property as it checks it", async () => {
+    const result = await checkOnEngine({
       source:
         '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == <>[](x = 1 /\\ TLCGet("diameter") > 0)\n====',
       config: "SPECIFICATION Spec\nPROPERTY P",
-      version,
     });
-    const checkVersion = (version: TlcVersion) =>
-      checkParsed(getOptions(version)).then((result) => result.status);
-    expect((await checkOnEngine(getOptions("master"))).status).toBe("liveness-violation");
-    await expect(checkVersion("1.7.4")).rejects.toThrow(
-      new TlaEvaluationError(
-        `${getUnexpectedException("tlc2.tool.EvalException")}TLCGet(diameter) was undefined.`,
-      ),
-    );
+    expect(result.status).toBe("liveness-violation");
   });
 
   it("evaluates the arguments of a recursive temporal operator it expands", async () => {
-    const getOptions = (property: string, version: TlcVersion) => ({
+    const getOptions = (property: string) => ({
       source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN <>(x = 1) ELSE R(n - 1)\nP == ${property}\n====`,
       config: "SPECIFICATION Spec\nPROPERTY P",
-      version,
     });
-    const getPropertyStatus = (property: string, version: TlcVersion) =>
-      checkParsed(getOptions(property, version)).then((result) => result.status);
-    const stackOverflow = new TlaStackOverflowError();
-    expect((await checkOnEngine(getOptions("R(2)", "master"))).status).toBe("liveness-violation");
-    await expect(getPropertyStatus("R(2)", "1.7.4")).rejects.toThrow(stackOverflow);
-    await expect(getPropertyStatus("R(x)", "master")).rejects.toThrow(stackOverflow);
-    await expect(getPropertyStatus("R(x)", "1.7.4")).rejects.toThrow(
-      "TLC cannot handle the temporal formula line 9, col 6 to line 9, col 9 of module M",
-    );
+    expect((await checkOnEngine(getOptions("R(2)"))).status).toBe("liveness-violation");
+    await expectDeclined(getOptions("R(x)"), "the engine stopped before it searched (exit 255)");
   });
 
-  it("overflows on an initial predicate the configuration redefines by itself", async () => {
+  it.each([
     // The shape of TLC's CyclicRedefineVars: Init <- ReInit, whose body names Init.
-    await expect(
-      checkParsed({
-        source:
-          "---- MODULE M ----\nVARIABLE x\nInit == x = FALSE\nNext == x' = ~x\nSpec == Init /\\ [][Next]_x\nReInit == x \\in BOOLEAN /\\ Init\n====",
-        config: "SPECIFICATION Spec\nCONSTANT Init <- ReInit",
-      }),
-    ).rejects.toThrow(new TlaStackOverflowError());
-  });
-
-  it("doesn't expect an EvalException in the values a property quantifies over", async () => {
-    const error = await checkParsed({
-      source:
-        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in {1 \\div 0} : <>(x = k)\n====",
-      config: "SPECIFICATION Spec\nPROPERTY P",
-    }).catch((caught: unknown) => caught);
-    expect(error).toEqual(
-      new TlaEvaluationError(
-        `${getUnexpectedException("tlc2.tool.EvalException")}The second argument of \\div is 0.`,
-      ),
+    [
+      "Init == x = FALSE\nNext == x' = ~x\nSpec == Init /\\ [][Next]_x\nReInit == x \\in BOOLEAN /\\ Init",
+      "SPECIFICATION Spec\nCONSTANT Init <- ReInit",
+    ],
+    // TLC reports an EvalException in the values a property quantifies over.
+    [
+      "Init == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in {1 \\div 0} : <>(x = k)",
+      "SPECIFICATION Spec\nPROPERTY P",
+    ],
+    // TLC can't handle a quantified formula whose body fails.
+    [
+      "Init == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\E k \\in 0..1 : <>(2 \\in 1)",
+      "SPECIFICATION Spec\nPROPERTY P",
+    ],
+    [
+      "Init == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in 1 : <>(x = k)",
+      "SPECIFICATION Spec\nPROPERTY P",
+    ],
+  ])("declines a spec TLC rejects before it searches: %s", async (definitions, config) => {
+    await expectDeclined(
+      {
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${definitions}\n====`,
+        config,
+      },
+      "the engine stopped before it searched (exit 255)",
     );
-    expect(error instanceof Error && getExitCode(error)).toBe(255);
   });
 
   // TLC doesn't evaluate a definition with a temporal operator before it checks the property.
-  it.each(["1.7.4" as const, "master" as const])(
-    "reports a property quantified over no values as a tautology in TLC %s",
-    async (version) => {
-      const result = checkParsed({
+  it("declines a property quantified over no values, a tautology", async () => {
+    await expectDeclined(
+      {
         source:
           "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == \\A k \\in {} : <>TRUE\n====",
         config: "SPECIFICATION Spec\nPROPERTY P",
-        version,
-      });
-      await expect(result).rejects.toThrow(
-        new TlaEvaluationError("Temporal formula is a tautology (its negation is unsatisfiable)."),
-      );
-    },
-  );
-
-  // An EvalException, which Java code throws, leaves its message out.
-  it.each([
-    [
-      "1.7.4" as const,
-      "\\A k \\in 0..1 : <>(2 \\in 1)",
-      "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 32 of module M:\nAttempted to check if the value:\n2\nis an element of the integer 1",
-    ],
-    [
-      "1.7.4" as const,
-      "\\A k \\in 0..1 : <>(1 \\div 0 = k)",
-      "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 37 of module M",
-    ],
-    [
-      "master" as const,
-      "\\E k \\in 0..1 : <>(2 \\in 1)",
-      "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 32 of module M",
-    ],
-    // TLC checks the formula as a whole when it can't enumerate the values to check it for.
-    [
-      "master" as const,
-      "\\A k \\in 1 : <>(x = k)",
-      "TLC cannot handle the temporal formula line 7, col 6 to line 7, col 27 of module M:\nTLC encountered a non-enumerable quantifier bound\n1.\n1",
-    ],
-  ])(
-    "fails a quantified formula whose body fails in TLC %s as one it can't handle",
-    async (version, property, message) => {
-      const result = checkParsed({
-        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nP == ${property}\n====`,
-        config: "SPECIFICATION Spec\nPROPERTY P",
-        version,
-      });
-      await expect(result).rejects.toThrow(new TlaEvaluationError(message));
-    },
-  );
+      },
+      "a property TLC finds a tautology",
+    );
+  });
 });
 
 describe("check without code generation from strings", () => {

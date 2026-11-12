@@ -8,6 +8,7 @@ use crate::core::asserted_formulas::AssertedFormulas;
 use crate::core::ast::AstManager;
 use crate::core::context::{Context, SmtParams};
 use crate::core::quant_tactics::apply_ufnia_tactic;
+use crate::core::script_subset::check_script;
 use crate::core::smtlib_parser::parse_smtlib;
 use crate::util::error::SmtError;
 use crate::util::lbool::LBool;
@@ -95,8 +96,24 @@ fn set_statistic(
 /// resource limit, the quantifier instances, and what stopped a search that gave up, in the order
 /// the TypeScript writes them. Every other error, which the TypeScript rethrows, fails as well.
 pub fn decide_smt(text: &str, limits: &Limits) -> Result<Decision, SmtError> {
-    let limit = ResourceLimit::new(limits);
     let mut statistics = Vec::new();
+    // Only the SMT-LIB tlapm's encoder writes is decided; anything else is declined.
+    let Ok(rlimit) = check_script(text) else {
+        set_statistic(
+            &mut statistics,
+            "stop",
+            Statistic::Text("unsupported".into()),
+        );
+        set_statistic(&mut statistics, "steps", Statistic::Count(0));
+        return Ok(Decision {
+            verdict: Verdict::Unknown,
+            statistics,
+        });
+    };
+    // The steps are Z3's rlimit units, so the rlimit is a step limit.
+    let limit = ResourceLimit::new(
+        &rlimit.map_or_else(|| limits.clone(), |steps| limits.with_step_limit(steps)),
+    );
     let verdict = match check_smt(text, limit.clone()) {
         Ok(check) => {
             set_statistic(
@@ -162,34 +179,31 @@ mod tests {
         Statistic::Text(text.into())
     }
 
+    // A script outside what tlapm's encoder writes is declined before any step.
     #[test]
     fn unsupported_input_is_unknown_and_says_so_before_the_steps() {
-        let decision = decide("(declare-sort U 0)\n(push 1)\n(check-sat)\n", None, None);
-        assert_eq!(decision.verdict, Verdict::Unknown);
-        assert_eq!(
-            decision.statistics,
-            [("stop", text("unsupported")), ("steps", count(1))]
-        );
+        for script in [
+            "(declare-sort U 0)\n(push 1)\n(check-sat)\n",
+            "(set-logic UFNIA)(declare-fun smt__p () Bool)(assert smt__p)\n",
+        ] {
+            let decision = decide(script, None, None);
+            assert_eq!(decision.verdict, Verdict::Unknown);
+            assert_eq!(
+                decision.statistics,
+                [("stop", text("unsupported")), ("steps", count(0))]
+            );
+        }
     }
 
+    // The parser reads the cancel on its 256th check, which takes no step, at step 174.
     #[test]
-    fn a_script_without_check_sat_is_unknown() {
-        let decision = decide("(declare-fun p () Bool)\n(assert p)\n", None, None);
-        assert_eq!(decision.verdict, Verdict::Unknown);
-        assert_eq!(
-            decision.statistics,
-            [("instances", count(0)), ("steps", count(3))]
-        );
-    }
-
-    #[test]
-    fn a_canceled_decision_stops_on_the_step_that_reads_the_cancel() {
+    fn a_canceled_decision_stops_where_it_reads_the_cancel() {
         let cancel: Cancel = Arc::new(|| true);
         let decision = decide(&read("Barriers-63.smt"), None, Some(cancel));
         assert_eq!(decision.verdict, Verdict::Unknown);
         assert_eq!(
             decision.statistics,
-            [("steps", count(256)), ("stop", text("signal"))]
+            [("steps", count(174)), ("stop", text("signal"))]
         );
     }
 

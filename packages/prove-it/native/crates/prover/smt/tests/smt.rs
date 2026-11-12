@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use prove_decide::{Cancel, DecideError, Decision, Limits, Statistic, Verdict};
 use prove_smt::core::solver::check_smt;
-use prove_smt::util::rlimit::ResourceLimit;
+use prove_smt::util::error::SmtError;
+use prove_smt::util::rlimit::{ResourceLimit, StopReason};
 
 const STEP_LIMIT: u64 = 50_000_000;
 /// The step limit `tests/tables/decide.txt` was recorded under.
@@ -83,9 +84,19 @@ fn decide_with(text: &str, cancel: Option<Cancel>) -> Result<Decision, DecideErr
     on_deep_stack(|| prove_smt::decide(text, &Limits::new(f64::INFINITY, Some(STEP_LIMIT), cancel)))
 }
 
-/// The verdict, or the reason the port declines the input.
+/// The verdict of the solver itself, past the subset of SMT-LIB that `decide` takes: these cases
+/// are the TypeScript's, written in more of SMT-LIB than tlapm's encoder. A parse error is the
+/// prover's error, as `decide` makes it.
 fn decide(text: &str) -> Result<Verdict, DecideError> {
-    decide_with(text, None).map(|decision| decision.verdict)
+    on_deep_stack(|| {
+        let limits = Limits::new(f64::INFINITY, Some(STEP_LIMIT), None);
+        match check_smt(text, ResourceLimit::new(&limits)) {
+            Ok(check) => Ok(check.verdict),
+            Err(SmtError::Parse(message)) => Err(DecideError::Prover(message)),
+            Err(SmtError::Canceled | SmtError::Unsupported(_)) => Ok(Verdict::Unknown),
+            Err(error) => Err(DecideError::Declined(error.to_string())),
+        }
+    })
 }
 
 // (g x) is f applied depth times to x, and (g 0) is not: unsat after one instance.
@@ -113,7 +124,7 @@ fn decide_lines(lines: &[&str]) -> Result<Verdict, DecideError> {
 fn proves_what_z3_proves() {
     for recorded in get_recorded("unsat") {
         assert_eq!(
-            decide(&read(&recorded.name)),
+            decide_with(&read(&recorded.name), None).map(|decision| decision.verdict),
             Ok(Verdict::Unsat),
             "proves {}",
             recorded.source
@@ -125,7 +136,7 @@ fn proves_what_z3_proves() {
 #[test]
 fn does_not_prove_what_z3_refutes() {
     for recorded in get_recorded("sat") {
-        let verdict = decide(&read(&recorded.name));
+        let verdict = decide_with(&read(&recorded.name), None).map(|decision| decision.verdict);
         assert!(verdict.is_ok(), "{}: {verdict:?}", recorded.source);
         assert_ne!(
             verdict,
@@ -471,4 +482,220 @@ fn releases_a_builtin_declaration_of_a_model_as_the_typescript_does() {
         decision,
         Ok("unknown instances=11 steps=20007 stop=steps".into())
     );
+}
+
+/// Scripts outside the SMT-LIB that tlapm's encoder writes: attributes, symbols, numerals,
+/// connectives, commands and logics it never writes, and scripts that misuse what it does write.
+/// Z3 answers some with an error and some with a verdict; the port declines each before any step.
+const OUTSIDE_THE_ENCODER: [&str; 49] = [
+    r"(declare-const i Int)(declare-fun p (Int) Bool)(assert (! (p i) :named a))(assert (forall ((z Int)) (! (=> a (p z)) :pattern (a))))(assert (not (p 7)))(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named a))(assert (not (a)))(check-sat)",
+    r"(declare-const x Bool)(assert (! (not x) :foo))(assert x)(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named a :foo))(assert (not a))(check-sat)",
+    r"(declare-const i Int)(declare-fun f (Int) Int)(assert (forall ((z Int)) (! (> (f z) 0) :pattern (! (f i) :named a))))(assert (< a 0))(check-sat)",
+    r"(declare-const x Bool)(assert (! (not x) :named -1))(assert x)(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :qid 1)))(assert (not (p 0)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :skolemid (a b))))(assert (not (p 0)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :weight 2.0)))(assert (not (p 0)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :no-pattern ((p z)))))(assert (not (p 0)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :pattern ((p z)) :no-pattern (p z))))(assert (not (p 0)))(check-sat)",
+    r"(declare-const x Bool)(assert (! (not x) :a:b n))(assert x)(check-sat)",
+    r"(declare-const x Bool)(assert (! (not x) :lblpos :named))(assert x)(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named false))(assert false)(check-sat)",
+    r"(declare-const x Bool)(assert (let ((false x)) false))(check-sat)",
+    r"(declare-const i Int)(assert (! (> i 0) :named <))(assert (< i 0))(check-sat)",
+    r"(declare-const |as| Bool)(assert |as|)(assert (not |as|))(check-sat)",
+    r"(declare-fun _ (Int) Bool)(assert (_ 1))(assert (not (_ 1)))(check-sat)",
+    r"(declare-const x Bool)(assert (let ((123 x)) (not x)))(assert x)(check-sat)",
+    r"(declare-const a'b Bool)(assert a'b)(assert (not a'b))(check-sat)",
+    r"(declare-const x Bool)(assert (not x) {)(assert x)(check-sat)",
+    r"(declare-const x Bool)(assert (not x) #)(assert x)(check-sat)",
+    r"(declare-const z Bool {)(assert z)(assert (not z))(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named a) {)(assert (not a))(check-sat)",
+    r"(')(assert false)(check-sat)",
+    r"(declare-const x Bool)(assert x)(foo ({) ) (assert (not x))(check-sat)",
+    r"(declare-const x Bool)(assert x)(foo (#) ) (assert (not x))(check-sat)",
+    r"(set-logic UFNIA zz)(declare-const r Real)(assert (> r 0.0))(assert (< r 0.0))(check-sat)",
+    r"(declare-const i Int)(assert (< i -1))(assert (> i -3))(assert (not (= i -2)))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((z Int)) (! (p z) :pattern ((p z)) :qid |\|| :skolemid |\||)))(assert (not (p 0)))(check-sat)",
+    r"(declare-const |a\|b| Bool)(assert |a\|b|)(assert (not |a\|b|))(check-sat)",
+    r"(declare-fun p (Int) Bool)(assert (forall ((true Int)) (p true)))(assert (not (p 0)))(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named |false|))(assert (not |false|))(check-sat)",
+    r"(declare-const x Bool)(assert (! x :named |+|))(assert (not |+|))(check-sat)",
+    r"(declare-const x Bool)(assert (iff x (not x)))(check-sat)",
+    r"(declare-const x Bool)(assert (implies x (not x)))(assert x)(check-sat)",
+    r"(declare-const c Int)(declare-const c Bool)(assert (and (as c Bool) (not (as c Bool))))(check-sat)",
+    r"(declare-fun g ((Int)) Int)(assert (not (= (g 1) (g 1))))(check-sat)",
+    r"(simplify true)(set-logic UFNIA)(declare-const r Real)(assert (> r 0.0))(assert (< r 0.0))(check-sat)",
+    r"(declare-const x Bool)(assert x)(check-sat)(exit 1)(assert false)(check-sat)",
+    r#"(declare-const x Bool)(assert x)(check-sat)(echo "unsat")"#,
+    r"(declare-fun a (Int) Bool)(declare-const i Int)(assert (let ((c a)) (< i 1)))(assert (> i 1))(check-sat)",
+    r"(set-logic QF_UF)(declare-const x Bool)(assert x)(assert (not x))(check-sat)",
+    r"(declare-const true Bool)(assert false)(check-sat)",
+    r"(declare-fun f (Int) Int)(declare-fun f (Int) Bool)(assert false)(check-sat)",
+    r"(declare-const x Bool)(assert x)(check-sat)(assert (not x))(check-sat)",
+    r"(assert (and))(assert false)(check-sat)",
+    r"(set-logic UFNIA)(declare-fun smt__i () Int)(assert (let ((smt__n0 (+ smt__i 1))) (let ((smt__n1 (* smt__n0 smt__n0))) (< smt__n1 0))))(check-sat)",
+    r"(set-logic UFNIA)(declare-fun smt__a () Int)(declare-fun smt__b () Int)(declare-fun smt__c () Int)(assert (= smt__a smt__b smt__c))(assert (not (= smt__a smt__c)))(check-sat)",
+];
+
+/// Scripts inside the commands and symbols the encoder writes on which Z3 4.8.9 reports an error or
+/// a warning, drops what it couldn't read and answers (independent break-it round on the subset):
+/// a :named name that names something else, a bound name that is `true` or applied, a pattern Z3
+/// drops, and an ill-sorted term. The port declines each, never answering where Z3 read otherwise.
+const MISREAD_BY_Z3: [&str; 16] = [
+    "(declare-fun smt__p () Bool)(assert (! smt__p :named |a|))(assert (! (not smt__p) :named |a|))",
+    "(declare-fun smt__p () Bool)(assert (! smt__p :named |smt__p|))(assert (not smt__p))",
+    "(declare-fun smt__p () Bool)(assert (! smt__p :named |smt__q|))(declare-fun smt__q () Int)(assert (= smt__q 5))(assert (= smt__q 6))",
+    "(declare-fun smt__q () Bool)(assert (! smt__q :named |not|))(assert (not smt__q))",
+    "(assert (exists ((true Bool)) (not true)))",
+    "(assert (exists ((false Bool)) false))",
+    "(assert (forall ((true Bool)) true))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__f Int)) (= (smt__f 1) 0)))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__x Int)) (! (= (smt__f smt__x) 0) :pattern ((forall ((smt__y Int)) (= smt__y smt__x))))))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__x Int)) (! (= (smt__f smt__x) 0) :pattern ((smt__f smt__x) smt__x))))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__x Int)) (! (= (smt__f smt__x) 0) :pattern ((+ smt__x 1)))))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__f (Int Int) Int)(assert (forall ((smt__x Int) (smt__y Int)) (! (= (smt__f smt__x smt__y) 0) :pattern ((smt__f smt__x 1)))))(assert (= (smt__f 1 2) 1))",
+    "(declare-fun smt__f (Int) Int)(assert (forall ((smt__y Int)) (forall ((smt__x Int)) (! (= (smt__f smt__x) smt__y) :pattern ((smt__f smt__y))))))(assert (= (smt__f 1) 1))",
+    "(declare-fun smt__p () Bool)(declare-fun smt__i () Int)(assert (= smt__p smt__i))(assert (not smt__p))",
+    "(declare-fun smt__i () Int)(assert (and smt__i true))",
+    "(declare-fun smt__i () Int)(assert (+ smt__i 1))",
+];
+
+#[test]
+fn declines_what_z3_reads_otherwise() {
+    for body in MISREAD_BY_Z3 {
+        let script = format!("(set-logic UFNIA)(declare-sort Idv 0){body}(check-sat)");
+        let decision = decide_with(&script, None).map(|decision| get_decision_text(&decision));
+        assert_eq!(
+            decision,
+            Ok("unknown stop=unsupported steps=0".into()),
+            "{script}"
+        );
+    }
+}
+
+// Z3 stops at the rlimit a script sets, in the units the port counts as steps: one step is too few
+// to refute even a contradiction, and Z3 4.8.9 answers unknown.
+#[test]
+fn stops_at_the_rlimit() {
+    let script = "(set-option :rlimit 1)(set-logic UFNIA)(declare-sort Idv 0)\
+                  (declare-fun smt__p () Bool)(assert smt__p)(assert (not smt__p))(check-sat)";
+    let decision = decide_with(script, None).map(|decision| get_decision_text(&decision));
+    assert_eq!(decision, Ok("unknown steps=3 stop=steps".into()));
+}
+
+#[test]
+fn declines_what_tlapm_does_not_write() {
+    for script in OUTSIDE_THE_ENCODER {
+        let decision = decide_with(script, None).map(|decision| get_decision_text(&decision));
+        assert_eq!(
+            decision,
+            Ok("unknown stop=unsupported steps=0".into()),
+            "{script}"
+        );
+    }
+}
+
+// What the encoder writes is decided: a goal named |Goal|, a pattern, a negative numeral as
+// (- 1), tlapm's rlimit and the final (exit).
+#[test]
+fn decides_what_tlapm_writes() {
+    let script = "(set-option :rlimit 30000000)\n(set-logic UFNIA)\n(declare-sort Idv 0)\n\
+                  (declare-fun smt__p (Int) Bool)\n(declare-fun smt__i () Int)\n\
+                  (assert (forall ((smt__z Int)) (! (smt__p smt__z) :pattern ((smt__p smt__z)))))\n\
+                  (assert (! (not (and (smt__p smt__i) (> smt__i (- 1)))) :named |Goal|))\n\
+                  (assert (= smt__i 0))\n(check-sat)\n(exit)\n";
+    assert_eq!(
+        decide_with(script, None).map(|decision| decision.verdict),
+        Ok(Verdict::Unsat)
+    );
+}
+
+// Each let names the conjunction of the term before with itself: goal::quick_process splits the
+// last into 2^59 conjuncts without taking a step, as Z3 5.3.3 does (`-T:20`: timeout at 9.4 GB).
+// The size cap stops the decision and says why. Lets are outside the subset `decide` takes, so the
+// solver is run on its own.
+#[test]
+fn stops_at_the_size_cap() {
+    let text = (1..60).fold(
+        "(declare-const x Bool)(declare-const y Bool)(assert (let ((n0 (and x y)))".to_string(),
+        |text, index| {
+            format!(
+                "{text} (let ((n{index} (and n{} n{})))",
+                index - 1,
+                index - 1
+            )
+        },
+    ) + " n59"
+        + &")".repeat(61)
+        + "(check-sat)";
+    let stop = on_deep_stack(|| {
+        let limit = ResourceLimit::new(&Limits::new(f64::INFINITY, None, None));
+        let check = check_smt(&text, limit.clone()).map(|check| check.verdict);
+        (check, limit.stop_reason())
+    });
+    assert_eq!(stop, (Err(SmtError::Canceled), Some(StopReason::Heap)));
+}
+
+// A multi-pattern over 2,910 terms of each of its two functions, with a weight that delays every
+// one of its 8.5 million instances: Z3 5.3.3 answers sat in 4.5 s at 1.2 GB, and the port, which
+// holds as much, answers too, under the cap.
+#[test]
+fn leaves_a_large_search_to_its_answer() {
+    let mut text = String::from("(declare-fun f (Int) Bool)(declare-fun g (Int) Bool)");
+    for index in 0..2910 {
+        text += &format!("(declare-const c{index} Int)(assert (f c{index}))(assert (g c{index}))");
+    }
+    text += "(assert (forall ((x Int) (y Int)) (! (or (f x) (g y)) :pattern ((f x) (g y)) \
+             :weight 100)))(check-sat)";
+    assert_eq!(decide(&text), Ok(Verdict::Sat));
+}
+
+// Terms that take no step to build or to simplify: a negated disjunction 10,000 wide, the distinct
+// of 1,000 constants and a product of 4,096 sums. Past the deadline, or once the signal is set,
+// each stops while it is read, at its first step, since the clock is read without a step too.
+#[test]
+fn stops_a_large_term_at_the_deadline_without_a_step() {
+    let declare = |count: usize, sort: &str| {
+        (0..count)
+            .map(|index| format!("(declare-fun smt__c{index} () {sort})\n"))
+            .collect::<String>()
+    };
+    let constants = |count: usize| {
+        (0..count)
+            .map(|index| format!(" smt__c{index}"))
+            .collect::<String>()
+    };
+    let product = (0..12).fold("(+ smt__c0 1)".to_string(), |term, _| {
+        format!("(* {term} {term})")
+    });
+    let scripts = [
+        format!(
+            "{}(assert (not (or{})))",
+            declare(10_000, "Bool"),
+            constants(10_000)
+        ),
+        format!(
+            "(declare-sort Idv 0)\n{}(assert (distinct{}))",
+            declare(1_000, "Idv"),
+            constants(1_000)
+        ),
+        format!("{}(assert (< {product} 0))", declare(1, "Int")),
+    ];
+    for script in scripts {
+        let text = format!("(set-logic UFNIA)\n{script}\n(check-sat)\n");
+        for (is_signaled, stop) in [(false, "time"), (true, "signal")] {
+            let decision = on_deep_stack(|| {
+                let limits = if is_signaled {
+                    Limits::new(f64::INFINITY, Some(STEP_LIMIT), Some(Arc::new(|| true)))
+                } else {
+                    Limits::new(-1.0, Some(STEP_LIMIT), None)
+                };
+                prove_smt::decide(&text, &limits)
+            })
+            .map(|decision| get_decision_text(&decision));
+            assert_eq!(decision, Ok(format!("unknown steps=1 stop={stop}")));
+        }
+    }
 }

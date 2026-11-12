@@ -1,16 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
 import { check, type CheckOptions } from "../../src";
-import { checkWithInterpreter } from "../native-check";
+import { expectDeclined } from "../native-check";
 
-// What check passes to onPrint, with the TypeScript check answering where `isInterpreted` asks
-// for it.
-const getPrinted = async (options: CheckOptions, isInterpreted: boolean) => {
+// What check passes to onPrint.
+const getPrinted = async (options: CheckOptions) => {
   const printed: string[] = [];
-  await (isInterpreted ? checkWithInterpreter : check)({
-    ...options,
-    onPrint: (text) => printed.push(text),
-  });
+  await check({ ...options, onPrint: (text) => printed.push(text) });
   return printed;
 };
 
@@ -27,7 +23,7 @@ const ASSERTING = [
 // TLC's output at d8fb231 (-fp 0 -workers 1 -noGenerateSpecTE), the lines the spec printed.
 describe("check reports what the spec prints with a trace in TLC's order", () => {
   it("prints a failure's trace as TLC does", async () => {
-    expect(await getPrinted({ source: ASSERTING, config: "INIT Init\nNEXT Next" }, false)).toEqual([
+    expect(await getPrinted({ source: ASSERTING, config: "INIT Init\nNEXT Next" })).toEqual([
       ...['<<"init", 0>>', '<<"pre", 0>>', '<<"post", 0>>', '<<"D", 0>>'],
       ...['<<"pre", 1>>', '<<"post", 1>>', '<<"pre", 10>>'],
       ...['<<"init", 0>>', '<<"pre", 0>>', '<<"post", 0>>', '<<"D", 0>>'],
@@ -35,16 +31,7 @@ describe("check reports what the spec prints with a trace in TLC's order", () =>
     ]);
   });
 
-  // Where the native check doesn't run, the TypeScript check reports what it printed as it
-  // searched, as before.
-  it("prints what the TypeScript check printed as it searched where the native check didn't run", async () => {
-    expect(await getPrinted({ source: ASSERTING, config: "INIT Init\nNEXT Next" }, true)).toEqual([
-      ...['<<"init", 0>>', '<<"pre", 0>>', '<<"post", 0>>', '<<"D", 0>>'],
-      ...['<<"pre", 1>>', '<<"post", 1>>', '<<"pre", 10>>'],
-    ]);
-  });
-
-  it("prints each trace -continue reports as TLC does", async () => {
+  it("declines -continue with a spec that prints", async () => {
     const source = [
       "---- MODULE C ----",
       "EXTENDS Naturals, TLC",
@@ -55,15 +42,10 @@ describe("check reports what the spec prints with a trace in TLC's order", () =>
       "Inv == x < 3",
       "====",
     ].join("\n");
-    expect(
-      await getPrinted(
-        { source, config: "INIT Init\nNEXT Next\nINVARIANT Inv", isContinued: true },
-        false,
-      ),
-    ).toEqual([
-      ...['<<"init", 0>>', '<<"init", 1>>', '<<"A", 0, 1>>', '<<"A", 1, 2>>', '<<"A", 2, 3>>'],
-      ...['<<"init", 0>>', '<<"init", 1>>', '<<"A", 1, 2>>', '<<"A", 2, 3>>', '<<"B", 3>>'],
-    ]);
+    await expectDeclined(
+      { source, config: "INIT Init\nNEXT Next\nINVARIANT Inv", isContinued: true },
+      "-continue with a spec that prints or sets TLC's registers",
+    );
   });
 
   const DEADLOCKING = [
@@ -75,52 +57,48 @@ describe("check reports what the spec prints with a trace in TLC's order", () =>
     "Live == [](x = 0 => [](x # 1))",
   ].join("\n");
 
-  it("prints the trace of a deadlock -continue ends at as TLC does", async () => {
-    const source = `---- MODULE D ----\n${DEADLOCKING}\n====`;
-    expect(
-      await getPrinted({ source, config: "INIT Init\nNEXT Next", isContinued: true }, false),
-    ).toEqual([
-      ...['<<"init", 0>>', '<<"next", 0>>'],
-      ...['<<"init", 0>>', '<<"next", 0>>'],
-      ...['<<"init", 0>>', '<<"next", 0>>'],
-    ]);
+  it("declines a deadlock -continue ends at in a spec that prints", async () => {
+    await expectDeclined(
+      {
+        source: `---- MODULE D ----\n${DEADLOCKING}\n====`,
+        config: "INIT Init\nNEXT Next",
+        isContinued: true,
+      },
+      "-continue with a spec that prints or sets TLC's registers",
+    );
   });
 
-  it("prints the trace of the temporal property a deadlocked state violates as TLC does", async () => {
-    const source = `---- MODULE L ----\n${DEADLOCKING}\n====`;
-    expect(
-      await getPrinted({ source, config: "SPECIFICATION Spec\nPROPERTY Live" }, false),
-    ).toEqual([
-      ...['<<"init", 0>>', '<<"next", 0>>', '<<"next", 0>>'],
-      ...['<<"init", 0>>', '<<"next", 0>>'],
-      ...['<<"init", 0>>', '<<"next", 0>>'],
-      ...['<<"init", 0>>', '<<"next", 0>>'],
-    ]);
+  it("declines the temporal property a deadlocked state violates in a spec that prints", async () => {
+    await expectDeclined(
+      {
+        source: `---- MODULE L ----\n${DEADLOCKING}\n====`,
+        config: "SPECIFICATION Spec\nPROPERTY Live",
+      },
+      "the engine stopped: deadlock: a stop the liveness checker doesn't follow in a model that prints",
+    );
   });
 
-  // The TypeScript check places these prints otherwise than TLC, or prints other values in them, so
-  // where the native check declines them it reports what the TypeScript check printed as it
-  // searched, as where the native check doesn't run (fallback.md, "Interpreter limits").
   const HEAD = "---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLE x\n";
   it.each([
     [
       "a printing ALIAS",
       `${HEAD}Init == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", x>>)\nInv == x < 3\nAlias == [x |-> x, p |-> PrintT(<<"alias", x>>)]\n====`,
       "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+      "an ALIAS that prints",
     ],
     [
       "a printing temporal property",
       `${HEAD}Init == x = 0\nNext == \\/ x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", x>>)\n        \\/ x = 3 /\\ x' = 0 /\\ PrintT(<<"B", x>>)\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == <>(PrintT(<<"lp", x>>) /\\ x = 7)\n====`,
       "SPECIFICATION Spec\nPROPERTY Live",
+      "the engine stopped: printing where the native checker doesn't check the temporal properties: prints it doesn't place in TLC's order",
     ],
     [
       "TLCExt's Trace",
       `${HEAD}Init == x = 0\nNext == x < 3 /\\ x' = x + 1 /\\ PrintT(<<"A", x, Len(Trace)>>)\nInv == x < 3\n====`,
       "INIT Init\nNEXT Next\nINVARIANT Inv",
+      "the engine stopped: TLCExt's Trace, the behavior the engine doesn't keep",
     ],
-  ])("leaves out the trace's prints of %s", async (_, source, config) => {
-    expect(await getPrinted({ source, config }, false)).toEqual(
-      await getPrinted({ source, config }, true),
-    );
+  ])("declines the trace's prints of %s", async (_, source, config, reason) => {
+    await expectDeclined({ source, config }, reason);
   });
 });

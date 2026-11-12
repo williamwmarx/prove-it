@@ -72,6 +72,14 @@ pub struct Entry {
     pub modified: f64,
 }
 
+/// Whether the directory that holds the file is there, or the path names none.
+pub fn is_directory_there<H: Host + ?Sized>(host: &H, path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    host.platform()
+        .last_separator(&text)
+        .is_none_or(|end| host.is_file(Path::new(&text[..end.max(1)])))
+}
+
 pub trait Host {
     /// The rules the host names its files by, which the engine as WebAssembly learns from
     /// JavaScript.
@@ -126,9 +134,14 @@ pub trait Host {
     fn write_file(&self, _path: &Path, _bytes: &[u8], _is_appended: bool) -> bool {
         false
     }
-    /// Says, before the check searches, a directory it may write a file into after it, so that a
-    /// host that answers what it lacks once the check returns knows it before then.
-    fn prepare_write(&self, _directory: &Path) {}
+    /// Says, before the check searches, a file it may write after it, so that a host that answers
+    /// what it lacks once the check returns knows it before then.
+    fn prepare_write(&self, _path: &Path) {}
+    /// Whether the host can write the file: TLC writes a JSON dump into the directories it makes
+    /// and a `tlc` one into the directory that holds it, and fails where it can't.
+    fn can_write(&self, path: &Path) -> bool {
+        is_directory_there(self, path)
+    }
     /// The entries of a directory, in no particular order, as tlapm's command line reads its
     /// cache's history. A host that answers none of these, nor the operations below, writes no
     /// cache, and the command declines.

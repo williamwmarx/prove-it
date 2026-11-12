@@ -27,6 +27,8 @@ interface ModelRun {
 }
 
 const PASSING_PATH = join(CONFORMANCE_DIRECTORY, "passing.json");
+// The models the native check declines, each with its reason, which a run accepts declined.
+const DECLINED_PATH = join(CONFORMANCE_DIRECTORY, "declined.json");
 const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".results.json");
 
 const getArgument = (name: string) => {
@@ -134,6 +136,16 @@ if (isUpdate) {
   const passing = results.filter((result) => result.verdict === "match").map((result) => result.id);
   writeFileSync(PASSING_PATH, `${JSON.stringify(passing, null, 2)}\n`);
   console.log(`Wrote ${passing.length} passing models to ${PASSING_PATH}`);
+  const declined = Object.fromEntries(
+    results
+      .filter((result) => result.verdict === "unsupported")
+      .map((result) => [
+        result.id,
+        result.actual?.error?.replace(/^.*not native yet: /s, "") ?? "",
+      ]),
+  );
+  writeFileSync(DECLINED_PATH, `${JSON.stringify(declined, null, 2)}\n`);
+  console.log(`Wrote ${Object.keys(declined).length} declined models to ${DECLINED_PATH}`);
 }
 
 if (isChecked) {
@@ -160,6 +172,18 @@ if (isChecked) {
     );
   };
   const regressed = [...passing].filter((id) => isSelected(id) && !matches.has(id));
+  // A model declined.json lists must still decline, or match, which `gained` reports.
+  const declined: Record<string, string> = existsSync(DECLINED_PATH)
+    ? JSON.parse(readFileSync(DECLINED_PATH, "utf8"))
+    : {};
+  const wronged = Object.keys(declined).filter(
+    (id) => isSelected(id) && !["unsupported", "match"].includes(getVerdict(id)),
+  );
+  if (wronged.length > 0) {
+    console.log(`\n${wronged.length} models listed in declined.json neither decline nor match:`);
+    for (const id of wronged) console.log(`  ${id}: ${getVerdict(id)}`);
+    process.exitCode = 1;
+  }
   const gained = [...matches].filter((id) => !passing.has(id));
   if (gained.length > 0) {
     console.log(`\n${gained.length} models match that passing.json doesn't list:`);

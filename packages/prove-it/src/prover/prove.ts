@@ -270,7 +270,7 @@ export const prove = async (options: ProveOptions): Promise<ProveResult> => {
   const name = getModuleName(options.source);
   await loadWasmEngine();
   const native = getNativeAddon();
-  if (typeof native === "string") throw new EngineUnavailableError(native, false);
+  if (typeof native === "string") throw new EngineUnavailableError(native);
   return options.backend === "tlapm"
     ? proveWithTlapm(options, name, native)
     : proveNatively(options, name, native);

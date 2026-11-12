@@ -24,6 +24,7 @@ fn get_shared_occs(m: &AstManager, forms: &[Expr]) -> Result<HashSet<Expr>, SmtE
     let mut shared = HashSet::new();
     let mut todo = forms.to_vec();
     while let Some(expr) = todo.pop() {
+        m.limit.check_time()?;
         if visited.contains(&expr) {
             shared.insert(expr);
             continue;
@@ -53,6 +54,7 @@ impl PropagateValues {
         goal: &mut Goal,
         index: usize,
     ) -> Result<(), SmtError> {
+        m.limit.check_time()?;
         let current = goal.forms.items[index];
         let is_rewriting = !self.rewriter.get_substitution_mut().is_empty();
         let rewritten = if is_rewriting {

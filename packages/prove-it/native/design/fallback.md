@@ -1,5 +1,11 @@
 # No TypeScript engine fallback
 
+**Superseded (PR 7, 2026-11-12).** The interpreter, the TypeScript checker and TLC 1.7.4's output
+are deleted. The library's `check` and the CLI run the native check alone: where it declines a
+model, `check` throws `TlaUnsupportedError` with `not native yet: <reason>`, and the CLI prints
+`prove-it: not native yet: <reason>` and exits 1. `PROVE_IT_ENGINE=0` is gone. The rest of this
+file records the plan as it stood before.
+
 What `check` does where the native engine declines a model or can't be loaded, now that the
 TypeScript engine is deleted. The plan was written for the owner on 2026-11-09 (branch
 `fallback-plan`); the owner chose option C below the same day, and this records it as built.
@@ -708,6 +714,30 @@ The engine's `decide` declines a text that holds a lone surrogate, so the obliga
 that is one would read as U+FFFD, two different strings would be one name, and the axiom that they
 differ would prove anything. No obligation of tlapm's record holds one.
 
+The SMT solver decides only the SMT-LIB tlapm's encoder writes (`script_subset.rs`). Two known
+issues remain within that subset. tlapm's encoder writes neither shape, and no input of the record
+reaches either:
+
+| Repro | Z3 4.8.9 | The port |
+|---|---|---|
+| `(assert (= (* b1 b2 … b12) 1))`, a product of 12 binomials over 24 Int constants | sat at once | runs on: `nlsat::levelwise::add_linear_approximations` reaches `AlgebraicManager::select` and `Rational::floor`, which read neither the deadline nor the step limit |
+| `(assert (distinct c0 … c11999))` over `Idv` | not measured | aborts the process: the rewriter's `mk_not` allocates past the size cap, which preprocessing never reads, and an allocation failure isn't caught |
+
+Found porting the unit tests off the interpreter (PR 7), each test case deleted with it, so the
+TLC answer the test held is here:
+
+| Repro | TLC | Native |
+|---|---|---|
+| `ASSUME 1 \in Int \cup {"none"}` | assumption violation | success |
+| `PrintT("x٣" :> 5)` | `[x٣ \|-> 5]` | `("x٣" :> 5)` |
+| `PrintT` of a record TLC sorts while comparing it with itself and the records inside it | `<<[fld2 \|-> 2, fld1 \|-> 1]>>` | `<<[fld1 \|-> 1, fld2 \|-> 2]>>` |
+| a function over a domain TLC keeps lazy, applied only where defined (`\div 0` elsewhere) | success | the assumption fails: "The second argument of \div is 0." |
+| an error in a module nested in a nested module | SANY's errors | SANY's errors and "A VARIABLE declaration may not appear within a recursive definition section." |
+| an ALIAS field holding a lazy function that fails to apply | the field's lazy text, `[i \in 1..1 \|-> <expression …>]` | `_ALIASEvalError` "The second argument of \div is 0." in each state |
+| an exception TLC raises printing a state of a violation | 2110 with no states, then 1000 "Attempted to compare boolean TRUE with non-boolean:\n1" | 2110 with both states, no 1000 |
+| `onProgress` of a spec whose INSTANCE adds definitions TLC warns about (EXCEPT warnings, check.test.ts "computes the definitions an INSTANCE adds…") | three warnings, at Cases lines 4, 6 and 5 | none, from the library or the CLI |
+| `onProgress` of a state-level PROPERTY before a CONSTRAINT equal to FALSE | the `state-level-property` warning for P, then the error | the error alone |
+
 #### Every reason
 
 Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so the counts follow
@@ -915,6 +945,13 @@ progress events for the library's `onProgress` (see "The public API afterwards")
 #### Declines to win back
 
 Checks the binary answered and now declines, because the answer matched TLC only by chance.
+
+- **The library where the check stops before it searches without a typed error** (PR 7): a missing
+  module, decimal and big literals, a bad SYMMETRY, constant parts of a property, a second ALIAS, a
+  recursion overflow in the configuration and an evaluation error in a property's bound. The
+  binary prints TLC's output, but `get_thrown` returns nothing, so `check` throws
+  `TlaUnsupportedError` "not native yet: the engine stopped before it searched (exit N)" where the
+  interpreter threw TLC's error. Winning them back takes `get_thrown` reporting them.
 
 - **Strings made during the search** (the string-order change; check-log on the same log, 1386
   native on main, 1384 after): `unit/check.test.ts:704` and `unit/parallel.test.ts:18` with
