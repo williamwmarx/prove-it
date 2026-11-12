@@ -1468,6 +1468,44 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(truncated.stderr).toBe(run(Buffer.from("(*ab*)")).stderr);
   });
 
+  // tlapm's parser asks for no token past the first module's `====`, so its lexer never reads
+  // what follows; a nested module's `====` doesn't end it.
+  it.each([
+    ["after the module's end", "THEOREM TRUE OBVIOUS\n====\n\xff\n", false],
+    ["after the module's end, in a string", 'THEOREM TRUE OBVIOUS\n====\n"\xff"\n', false],
+    [
+      "in a string in a nested module",
+      '---- MODULE Inner ----\nS == "\xff"\n====\nTHEOREM TRUE OBVIOUS\n====\n',
+      true,
+    ],
+    [
+      "after a nested module's end",
+      '---- MODULE Inner ----\n====\nS == "\xff"\nTHEOREM TRUE OBVIOUS\n====\n',
+      true,
+    ],
+    [
+      "in a nested module's comment",
+      "---- MODULE Inner ----\n(* \xff *)\n====\nTHEOREM TRUE OBVIOUS\n====\n",
+      false,
+    ],
+  ])("reads a byte that isn't UTF-8 %s as tlapm lexes it", (_, body, isDeclined) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.from(`---- MODULE M ----\nEXTENDS TLAPS\n${body}`, "latin1"),
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    if (isDeclined) {
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+      );
+      expect(result.status).toBe(1);
+    } else {
+      expect(result.stderr).not.toContain("not native yet");
+      expect(result.status).toBe(0);
+    }
+  });
+
   it("declines a byte that isn't UTF-8 in a pragma", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(

@@ -403,8 +403,9 @@ create NamedInputStream in toIStream method`. Where the TypeScript check finds t
 `prove-it tlapm` declines a module file with a byte that isn't UTF-8 where tlapm's lexer reads it
 as part of a token (`a byte that isn't UTF-8 outside a comment in …`): tlapm reads bytes, and read
 with U+FFFD for each such byte, two different strings would be one and a theorem that they are
-equal proved. Before the first module's header and inside a comment (`\*` or a nested `(* *)`, but
-not a pragma's `(*{ }*)`) the lexer skips it, so it reads as a U+FFFD there, one for each byte, so
+equal proved. Before the first module's header, after its `====` (past which tlapm's parser asks
+for no token) and inside a comment (`\*` or a nested `(* *)`, but not a pragma's `(*{ }*)`) the
+lexer skips it, so it reads as a U+FFFD there, one for each byte, so
 that columns count it as tlapm's, which count bytes, do.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the

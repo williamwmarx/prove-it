@@ -242,16 +242,25 @@ const getSequenceLength = (bytes: Uint8Array, index: number) => {
 };
 
 const MODULE_HEADER = /----+ *MODULE/y;
+const MODULE_KEYWORD = /(?<![A-Za-z0-9_])MODULE(?![A-Za-z0-9_])/y;
+const MODULE_END = /====+/y;
 
 // Whether a byte that isn't UTF-8 is where tlapm's lexer (alexer.mll) reads it as part of a token:
-// anywhere but before the first module's header, which its modfile rule skips, and inside a
-// comment, `\*` to the end of the line or a nested `(* *)`. `(*{` and `}*)` delimit a pragma, whose
-// contents are tokens.
+// anywhere but before the first module's header, which its modfile rule skips, inside a comment,
+// `\*` to the end of the line or a nested `(* *)`, and after the first module's `====`, past which
+// its parser asks for no token (Module.Parser.parse_). `(*{` and `}*)` delimit a pragma, whose
+// contents are tokens. Each MODULE keyword opens a module, a nested one's header or not, so that
+// the first module's end is never taken early.
 const hasIllFormedToken = (bytes: Uint8Array) => {
   const text = new TextDecoder("latin1").decode(bytes);
   let state: "modfile" | "token" | "line" | "string" = "modfile";
   let depth = 0;
+  let modules = 1;
   let index = 0;
+  const matchAt = (pattern: RegExp) => {
+    pattern.lastIndex = index;
+    return pattern.test(text) ? pattern.lastIndex : undefined;
+  };
   while (index < bytes.length) {
     const length = getSequenceLength(bytes, index);
     const isComment = state === "modfile" || state === "line" || depth > 0;
@@ -292,6 +301,15 @@ const hasIllFormedToken = (bytes: Uint8Array) => {
       continue;
     } else if (rest[0] === '"') {
       state = "string";
+    } else {
+      const keywordEnd = matchAt(MODULE_KEYWORD);
+      const end = keywordEnd === undefined ? matchAt(MODULE_END) : undefined;
+      if (keywordEnd !== undefined) modules++;
+      if (end !== undefined && --modules === 0) return false;
+      if (keywordEnd !== undefined || end !== undefined) {
+        index = keywordEnd ?? end ?? index;
+        continue;
+      }
     }
     index += Math.max(length, 1);
   }
