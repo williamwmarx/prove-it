@@ -602,15 +602,9 @@ fn run_tlapm(io: &Io<'_>, args: &[String]) -> Run<i32> {
             _ => {}
         }
     }
-    let mut directories = get_library_directories(io, &parsed)?;
-    for path in &module_paths {
-        let directory = get_dirname(path);
-        if !directories.contains(&directory) {
-            directories.insert(0, directory);
-        }
-    }
+    let search = Search::new(io, &parsed, &module_paths)?;
     prove_it_obligations_reset();
-    let generated = generate_obligations(io, files, &module_paths, &directories, lines, is_toolbox);
+    let generated = generate_obligations(io, files, &module_paths, &search, lines, is_toolbox);
     let (modules, module_names) = match generated {
         Generated::Modules(modules, names) => (modules, names),
         Generated::Declined(reason) => return decline(reason),
@@ -633,10 +627,9 @@ fn prove_it_obligations_reset() {
     prove_obligations::reset_caches();
 }
 
-// tlapm searches the current directory, then its standard library at lib/tlapm/stdlib beside
-// bin/tlapm, then each -I directory, the last given first.
-fn get_library_directories(io: &Io<'_>, parsed: &Parsed) -> Run<Vec<String>> {
-    let mut directories = vec![".".to_owned()];
+/// tlapm's standard library: lib/tlapm/stdlib beside bin/tlapm, where it holds TLAPS.tla
+/// (`Params.stdlib_path`).
+fn find_standard_library(io: &Io<'_>) -> Run<Option<String>> {
     let path = io
         .call(|session| session.host().get_variable("PATH"))
         .unwrap_or_default();
@@ -654,19 +647,150 @@ fn get_library_directories(io: &Io<'_>, parsed: &Parsed) -> Run<Vec<String>> {
         };
         let real = real.to_string_lossy().into_owned();
         let library = join_paths(&get_dirname(&get_dirname(&real)), "lib/tlapm/stdlib");
-        if io.exists(&library) {
-            directories.push(library);
-            break;
+        if io.exists(&concat_paths(&library, "TLAPS.tla")) {
+            return Ok(Some(library));
         }
     }
-    let includes: Vec<String> = parsed
-        .options
-        .iter()
-        .filter(|(name, _)| name == "-I")
-        .flat_map(|(_, values)| values.iter().cloned())
-        .collect();
-    directories.extend(includes.into_iter().rev());
-    Ok(directories)
+    Ok(None)
+}
+
+/// Where tlapm looks for a module's file: `M_save.file_search'` in the current directory, each -I
+/// directory in the order given and the standard library, and where none has it, `Loader` in the
+/// directories of the command line's modules, the current directory, the standard library and
+/// each -I directory, the last given first (`Tlapm_lib.setup_loader`).
+struct Search {
+    directories: Vec<String>,
+    loader: Vec<String>,
+}
+
+/// A module's file as tlapm finds it: the path it reads and names it by, or, where `Loader` read
+/// it, the path it read and the name it was asked for, which it names it by.
+struct Found {
+    path: String,
+    name: String,
+    is_loaded: bool,
+}
+
+impl Search {
+    // Params.add_search_dir keeps the standard library first and puts each new directory after it,
+    // so that it ends last of all, and the -I directories in the order given.
+    fn new(io: &Io<'_>, parsed: &Parsed, files: &[String]) -> Run<Search> {
+        let library = find_standard_library(io)?;
+        let mut includes: Vec<String> = Vec::new();
+        for (_, values) in parsed.options.iter().filter(|(name, _)| name == "-I") {
+            let directory = &values[0];
+            let directory = match (directory.strip_prefix('+'), &library) {
+                _ if directory.is_empty() => {
+                    return decline("the backtrace tlapm prints as it ends with -I \"\"");
+                }
+                (Some(_), None) => {
+                    return decline(
+                        "the backtrace tlapm prints as it ends with -I + without its standard library",
+                    );
+                }
+                (Some(relative), Some(library)) => concat_paths(library, relative),
+                (None, _) => directory.clone(),
+            };
+            if !includes.contains(&directory) && library.as_ref() != Some(&directory) {
+                includes.push(directory);
+            }
+        }
+        let mut directories = vec![".".to_owned()];
+        directories.extend(includes.iter().cloned());
+        directories.extend(library.iter().cloned());
+        let mut loader = vec![".".to_owned()];
+        loader.extend(library.iter().cloned());
+        loader.extend(includes.iter().rev().cloned());
+        for file in files.iter().rev() {
+            let directory = get_ocaml_dirname(file);
+            if !loader.contains(&directory) {
+                loader.insert(0, directory);
+            }
+        }
+        Ok(Search {
+            directories,
+            loader,
+        })
+    }
+
+    fn find(&self, io: &Io<'_>, name: &str) -> Run<Option<Found>> {
+        let found = |path: String| Found {
+            path,
+            name: String::new(),
+            is_loaded: false,
+        };
+        if !is_implicit(name) {
+            if io.exists(name) {
+                return Ok(Some(found(name.to_owned())));
+            }
+        } else if let Some(path) = self
+            .directories
+            .iter()
+            .map(|directory| concat_paths(directory, name))
+            .find(|path| io.exists(path))
+        {
+            return Ok(Some(found(path)));
+        }
+        // Loader.load_from_dirs reads the first file it can, and names the module by `name`.
+        for directory in &self.loader {
+            let path = concat_paths(directory, name);
+            match io.get_kind(&path) {
+                Some(PathKind::File) => {
+                    return Ok(Some(Found {
+                        path,
+                        name: name.to_owned(),
+                        is_loaded: true,
+                    }));
+                }
+                Some(PathKind::Other) => {
+                    return decline(format!("a module file tlapm finds but can't read: {path}"));
+                }
+                _ => {}
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// OCaml's `Filename.is_implicit`.
+fn is_implicit(path: &str) -> bool {
+    !path.starts_with('/') && !path.starts_with("./") && !path.starts_with("../")
+}
+
+/// OCaml's `Filename.concat`.
+fn concat_paths(directory: &str, name: &str) -> String {
+    if directory.is_empty() || directory.ends_with('/') {
+        format!("{directory}{name}")
+    } else {
+        format!("{directory}/{name}")
+    }
+}
+
+/// OCaml's `Filename.dirname`.
+fn get_ocaml_dirname(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let Some(mut end) = bytes.len().checked_sub(1) else {
+        return ".".to_owned();
+    };
+    while bytes[end] == b'/' {
+        let Some(previous) = end.checked_sub(1) else {
+            return "/".to_owned();
+        };
+        end = previous;
+    }
+    while bytes[end] != b'/' {
+        let Some(previous) = end.checked_sub(1) else {
+            return ".".to_owned();
+        };
+        end = previous;
+    }
+    while bytes[end] == b'/' {
+        let Some(previous) = end.checked_sub(1) else {
+            return "/".to_owned();
+        };
+        end = previous;
+    }
+    path[..=end].to_owned()
 }
 
 enum Generated {
@@ -685,7 +809,7 @@ fn generate_obligations(
     io: &Io<'_>,
     files: &[String],
     module_paths: &[String],
-    directories: &[String],
+    search: &Search,
     lines: LineRange,
     is_toolbox: bool,
 ) -> Generated {
@@ -705,45 +829,48 @@ fn generate_obligations(
             "the backtrace tlapm prints as it ends with {exception}"
         ))
     };
-    if let Some(index) = module_paths.iter().position(|path| !io.exists(path)) {
-        return fail(&format!(
-            "Failure(\"Module.Parser.parse_file\"), as it can't find {}",
-            files[index]
-        ));
-    }
+    // Tlapm_args gathers the command line's modules last first, and Tlapm_lib.read_new_modules
+    // reads them in that order into a map by name, so the first of two modules with one name wins.
     let mut mains = Vec::new();
-    for path in module_paths {
-        let Some(source) = read_text(io, path) else {
-            return Generated::Declined(format!(
-                "a module file tlapm finds but can't read: {path}"
-            ));
+    for (file, path) in files.iter().zip(module_paths).rev() {
+        let found = match search.find(io, path) {
+            Ok(Some(found)) => found,
+            Ok(None) => {
+                return fail(&format!(
+                    "Failure(\"Module.Parser.parse_file\"), as it can't find {file}"
+                ));
+            }
+            Err(Decline(reason)) => return Generated::Declined(reason),
         };
-        mains.push(ObligationSource {
-            file: format!("./{path}"),
-            source,
-        });
+        match read_module(io, &found, path) {
+            Ok(source) => mains.push(source),
+            Err(Decline(reason)) => return Generated::Declined(reason),
+        }
     }
     let mut module_names: Vec<String> = Vec::new();
-    let mut unreadable: Option<String> = None;
+    let mut declined: Option<String> = None;
     let generated = get_obligations(
         &mains,
         &mut |name| {
             if !module_names.iter().any(|known| known == name) {
                 module_names.push(name.to_owned());
             }
-            // tlapm names a file by joining its search directory and the name, as in ./M.tla.
-            let file = directories
-                .iter()
-                .map(|directory| format!("{directory}/{name}.tla"))
-                .find(|path| io.exists(path));
-            match file {
-                Some(file) => match read_text(io, &file) {
-                    Some(source) => Some(ObligationSource { file, source }),
-                    None => {
-                        unreadable.get_or_insert(file);
-                        None
-                    }
-                },
+            if declined.is_some() {
+                return None;
+            }
+            let found = match search.find(io, &format!("{name}.tla")) {
+                Ok(found) => found,
+                Err(Decline(reason)) => {
+                    declined = Some(reason);
+                    return None;
+                }
+            };
+            match found.map(|found| read_module(io, &found, &found.path)) {
+                Some(Ok(source)) => Some(source),
+                Some(Err(Decline(reason))) => {
+                    declined = Some(reason);
+                    None
+                }
                 None => (name == "TLAPS").then(|| ObligationSource {
                     file: "TLAPS.tla".to_owned(),
                     source: TLAPS_MODULE.to_owned(),
@@ -767,8 +894,8 @@ fn generate_obligations(
             printed.borrow_mut().extend(message);
         },
     );
-    if let Some(file) = unreadable {
-        return Generated::Declined(format!("a module file tlapm finds but can't read: {file}"));
+    if let Some(reason) = declined {
+        return Generated::Declined(reason);
     }
     let printed = printed.into_inner();
     match generated {
@@ -781,13 +908,80 @@ fn generate_obligations(
     }
 }
 
-fn read_text(io: &Io<'_>, path: &str) -> Option<String> {
-    let path = PathBuf::from(path);
-    io.call(move |session| {
-        session
-            .read(&path)
-            .and_then(|bytes| String::from_utf8(bytes).ok())
+/// A module's file as tlapm reads it. `Loader` hands tlapm's lexer the text, which it reads in
+/// token mode from the start (`Alexer.lex_string`), where it reads a file it finds itself from its
+/// module header on (`Alexer.modfile`).
+fn read_module(io: &Io<'_>, found: &Found, shown: &str) -> Run<ObligationSource> {
+    let path = PathBuf::from(&found.path);
+    let bytes = match io.get_kind(&found.path) {
+        Some(PathKind::File) => io.call(move |session| session.read(&path)),
+        _ => None,
+    };
+    let Some(source) = bytes.and_then(|bytes| String::from_utf8(bytes).ok()) else {
+        return decline(format!("a module file tlapm finds but can't read: {shown}"));
+    };
+    if found.is_loaded && !is_header_first(source.as_bytes()) {
+        return decline(format!(
+            "what comes before the module header of {}, which tlapm reads as tokens",
+            found.path
+        ));
+    }
+    Ok(ObligationSource {
+        file: if found.is_loaded {
+            found.name.clone()
+        } else {
+            found.path.clone()
+        },
+        source,
     })
+}
+
+/// Whether tlapm's lexer, in token mode from the start, reads only blanks and comments before the
+/// module header that `Alexer.modfile` finds.
+fn is_header_first(bytes: &[u8]) -> bool {
+    let is_header_at = |start: usize| {
+        let rest = &bytes[start..];
+        let dashes = rest.iter().take_while(|byte| **byte == b'-').count();
+        let spaces = rest[dashes..]
+            .iter()
+            .take_while(|byte| **byte == b' ')
+            .count();
+        dashes >= 4 && rest[dashes + spaces..].starts_with(b"MODULE")
+    };
+    let mut index = 0;
+    while index < bytes.len() {
+        match &bytes[index..] {
+            [b' ' | b'\n' | b'\r', ..] => index += 1,
+            [b'\\', b'*', ..] => {
+                index += bytes[index..]
+                    .iter()
+                    .position(|byte| matches!(byte, b'\n' | b'\r'))
+                    .unwrap_or(bytes.len() - index);
+            }
+            [b'(', b'*', b'{', ..] => break,
+            [b'(', b'*', ..] => {
+                let mut depth = 0;
+                while index < bytes.len() {
+                    match &bytes[index..] {
+                        [b'(', b'*', ..] => {
+                            depth += 1;
+                            index += 2;
+                        }
+                        [b'*', b')', ..] => {
+                            depth -= 1;
+                            index += 2;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => index += 1,
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    index < bytes.len() && is_header_at(index) && !(0..index).any(is_header_at)
 }
 
 #[allow(clippy::too_many_arguments)]

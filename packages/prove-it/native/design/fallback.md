@@ -873,7 +873,14 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
 - **Command lines it doesn't model:** an option outside `src/cli/options.ts`'s list,
   `--printallobs` where tlapm proves (tlapm then prints each proved obligation's text too), an
   option without its arguments or without an integer, `--threads` below 1 or above 99 where tlapm
-  proves (its scheduler asserts), no module, and globs. tlapm reports each in its own words.
+  proves (its scheduler asserts), no module, and globs. tlapm reports each in its own words. An
+  empty `-I`, and `-I +dir` where tlapm's standard library isn't found, end tlapm abnormally.
+- **What `Loader` reads as tokens** (`what comes before the module header of …`): tlapm finds a
+  module as `M_save.file_search'` does, in the current directory, each `-I` directory in the order
+  given and its standard library, naming it by that path (`./M.tla`, `I1/M.tla`), or else through
+  `Loader`, beside the command line's modules, naming it by its file's name alone. `Loader` hands
+  the lexer the text, which it reads in token mode from the start rather than from the header on,
+  so a module it reads with more than blanks and comments before its header declines.
 - **A module file that isn't UTF-8** (`a module file tlapm finds but can't read`): tlapm reads
   bytes, and read with U+FFFD for each byte that isn't UTF-8, two different strings would be one
   and a theorem that they are equal proved. The binary's `read_to_string` and the CLI's fatal

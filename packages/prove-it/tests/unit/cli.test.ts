@@ -1385,6 +1385,52 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     );
   });
 
+  const writeModules = (files: Record<string, string>) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(join(directory, path, ".."), { recursive: true });
+      writeFileSync(join(directory, path), text);
+    }
+    return directory;
+  };
+
+  // M_save.file_search' looks in the current directory, each -I directory in the order given and
+  // the standard library; only where none has the file does Loader look beside the command line's
+  // modules, and it names the module by the file it was asked for.
+  it("finds a module where tlapm does, and names it as tlapm does", () => {
+    const main = "---- MODULE Main ----\nEXTENDS Defs\n====\n";
+    const getDefs = (name: string) => `---- MODULE ${name} ----\nX == 1\n====\n`;
+    const warning = (file: string) =>
+      `File "${file}", line 1, character 1 to line 3, character 4 :\nWarning: module name "Other" does not match file name "Defs.tla".\n`;
+    const included = writeModules({
+      "I1/Defs.tla": getDefs("Other"),
+      "I2/Defs.tla": getDefs("Defs"),
+      "Main.tla": main,
+    });
+    expect(runTlapmIn(included, ["-N", "-I", "I1", "-I", "I2", "Main.tla"]).stderr).toBe(
+      warning("I1/Defs.tla"),
+    );
+    expect(runTlapmIn(included, ["-N", "-I", "I2", "-I", "I1", "Main.tla"]).stderr).toBe("");
+    const beside = writeModules({ "sub/Defs.tla": getDefs("Other"), "sub/Main.tla": main });
+    expect(runTlapmIn(beside, ["-N", "sub/Main.tla"]).stderr).toBe(warning("Defs.tla"));
+  });
+
+  // Tlapm_args gathers the command line's modules last first into a map by name, so the first of
+  // two with one name is the one tlapm proves.
+  it("proves the first of two modules with one name", () => {
+    const directory = writeModules({
+      "d1/M.tla": "---- MODULE M ----\nTHEOREM 1 = 3\n  OBVIOUS\n====\n",
+      "d2/M.tla": "---- MODULE M ----\nTHEOREM 1 = 2\n  OBVIOUS\n====\n",
+    });
+    const args = ["-N", "--toolbox", "0", "0", "--printallobs"];
+    expect(runTlapmIn(directory, [...args, "d1/M.tla", "d2/M.tla"]).stderr).toContain(
+      "@!!obl:1 = 3\n",
+    );
+    expect(runTlapmIn(directory, [...args, "d2/M.tla", "d1/M.tla"]).stderr).toContain(
+      "@!!obl:1 = 2\n",
+    );
+  });
+
   // Tlapm_lib.mkdir_tlaps makes the cache directory with Unix.mkdir, which makes none above it.
   it("declines a cache directory tlapm can't make, and writes nothing", () => {
     const directory = copyFixtures("obligations");

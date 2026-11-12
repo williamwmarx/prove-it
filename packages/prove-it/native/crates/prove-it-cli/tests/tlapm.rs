@@ -604,3 +604,126 @@ fn declines_an_operation_the_file_system_refuses() {
         format!("{NOT_NATIVE}a directory tlapm can't make: /proc/prove-it-tlapm\n")
     );
 }
+
+// A directory of its own with the files given.
+fn write_files(files: &[(&str, &str)]) -> PathBuf {
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    let directory = std::env::temp_dir().join(format!(
+        "prove-it-tlapm-files-{}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    for (path, text) in files {
+        let path = directory.join(path);
+        fs::create_dir_all(path.parent().expect("a directory")).expect("a directory");
+        fs::write(path, text).expect("a file");
+    }
+    directory
+}
+
+const MAIN: &str = "---- MODULE Main ----\nEXTENDS Defs\nTHEOREM X = 2\n  BY DEF X\n====\n";
+
+fn get_defs(value: u32) -> String {
+    format!("---- MODULE Defs ----\nX == {value}\n====\n")
+}
+
+fn get_defined(output: &Output) -> Vec<String> {
+    stderr(output)
+        .lines()
+        .filter_map(|line| {
+            line.find("X == ")
+                .map(|start| line[start..].trim().to_owned())
+        })
+        .collect()
+}
+
+// M_save.file_search' looks in the current directory, then each -I directory in the order given,
+// then the standard library; only where none has the file does Loader look in the command line's
+// directories.
+#[test]
+fn finds_a_module_where_tlapm_does() {
+    let (one, two) = (get_defs(1), get_defs(2));
+    let args = ["-N", "--toolbox", "0", "0", "--printallobs"];
+    let directory = write_files(&[
+        ("I1/Defs.tla", &one),
+        ("I2/Defs.tla", &two),
+        ("Main.tla", MAIN),
+    ]);
+    let output = run_in(
+        &directory,
+        &[&args[..], &["-I", "I1", "-I", "I2", "Main.tla"]].concat(),
+    );
+    assert_eq!(get_defined(&output), ["X == 1"]);
+    let output = run_in(
+        &directory,
+        &[&args[..], &["-I", "I2", "-I", "I1", "Main.tla"]].concat(),
+    );
+    assert_eq!(get_defined(&output), ["X == 2"]);
+    let directory = write_files(&[
+        ("Defs.tla", &one),
+        ("sub/Defs.tla", &two),
+        ("sub/Main.tla", MAIN),
+    ]);
+    let output = run_in(&directory, &[&args[..], &["sub/Main.tla"]].concat());
+    assert_eq!(get_defined(&output), ["X == 1"]);
+}
+
+// Loader names the module by the file it was asked for, without the directory it found it in.
+#[test]
+fn names_a_module_by_the_path_tlapm_finds_it_at() {
+    let other = "---- MODULE Other ----\nX == 1\n====\n";
+    let main = "---- MODULE Main ----\nEXTENDS Defs\n====\n";
+    let warning = |file: &str| {
+        format!(
+            "File \"{file}\", line 1, character 1 to line 3, character 4 :\nWarning: module name \"Other\" does not match file name \"Defs.tla\".\n"
+        )
+    };
+    let directory = write_files(&[("sub/Defs.tla", other), ("sub/Main.tla", main)]);
+    let output = run_in(&directory, &["-N", "sub/Main.tla"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stderr(&output), warning("Defs.tla"));
+    let directory = write_files(&[("Defs.tla", other), ("sub/Main.tla", main)]);
+    let output = run_in(&directory, &["-N", "sub/Main.tla"]);
+    assert_eq!(stderr(&output), warning("./Defs.tla"));
+    let output = run_in(&directory.join("sub"), &["-N", "-I", "..", "Main.tla"]);
+    assert_eq!(stderr(&output), warning("../Defs.tla"));
+}
+
+// tlapm adds ./ only to a path that Filename.is_implicit holds of.
+#[test]
+fn names_the_command_lines_module_as_tlapm_does() {
+    let directory = copy_fixtures("obligations");
+    let expected = read_recording("obligations", "Notes.stderr");
+    let output = run_in(&directory, &["-N", "./Notes.tla"]);
+    assert_eq!(stderr(&output), expected);
+    let absolute = directory.join("Notes.tla").to_string_lossy().into_owned();
+    let output = run_in(&directory, &["-N", &absolute]);
+    assert_eq!(stderr(&output), expected.replace("./Notes.tla", &absolute));
+}
+
+// Tlapm_args gathers the command line's modules last first, and Tlapm_lib.read_new_modules adds
+// each to a map by its name, so the first of two with one name is the one tlapm proves.
+#[test]
+fn proves_the_first_of_two_modules_with_one_name() {
+    let directory = write_files(&[
+        (
+            "d1/M.tla",
+            "---- MODULE M ----\nTHEOREM 1 = 3\n  OBVIOUS\n====\n",
+        ),
+        (
+            "d2/M.tla",
+            "---- MODULE M ----\nTHEOREM 1 = 2\n  OBVIOUS\n====\n",
+        ),
+    ]);
+    let args = ["-N", "--toolbox", "0", "0", "--printallobs"];
+    let output = run_in(&directory, &[&args[..], &["d1/M.tla", "d2/M.tla"]].concat());
+    assert!(
+        stderr(&output).contains("@!!obl:1 = 3\n"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!stderr(&output).contains("1 = 2"));
+    let output = run_in(&directory, &[&args[..], &["d2/M.tla", "d1/M.tla"]].concat());
+    assert!(stderr(&output).contains("@!!obl:1 = 2\n"));
+}
