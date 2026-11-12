@@ -86,7 +86,7 @@ fn without_time_used(text: &str) -> String {
 
 fn header(command: &str) -> String {
     format!(
-        "\n\\* TLAPM version 9ed0376\n\\* launched at 2026-11-10 12:00:00 with command line:\n\\* tla-ts tlapm {command}\n\n"
+        "\n\\* TLAPM version 9ed0376\n\\* launched at 2026-11-10 12:00:00 with command line:\n\\* prove-it tlapm {command}\n\n"
     )
 }
 
@@ -250,6 +250,80 @@ fn declines_what_it_cant_do_as_tlapm_does() {
     assert_eq!(
         (output.status.code(), stdout(&output)),
         (Some(0), "9ed0376\n".to_owned())
+    );
+}
+
+// OCaml's Arg reads the options in turn: --version prints and exits where it comes, and
+// Tlapm_args.set_max_threads raises Arg.Bad on a negative count, whether or not tlapm proves.
+#[test]
+fn reads_the_options_in_turn_as_ocamls_arg_does() {
+    let refused = format!("{NOT_NATIVE}tlapm's report of --threads -1, which it refuses\n");
+    for args in [
+        ["-N", "--threads", "-1", "Proofs.tla"].as_slice(),
+        ["--threads", "-1", "--version"].as_slice(),
+    ] {
+        let output = run("obligations", args);
+        assert_eq!(
+            (output.status.code(), stderr(&output)),
+            (Some(1), refused.clone())
+        );
+    }
+    let output = run("obligations", &["--version", "--threads", "-1", "-C"]);
+    assert_eq!(
+        (output.status.code(), stdout(&output)),
+        (Some(0), "9ed0376\n".to_owned())
+    );
+    let output = run("obligations", &["--threads", "1_000", "Proofs.tla"]);
+    assert_eq!(
+        stderr(&output),
+        format!("{NOT_NATIVE}--threads 1000, which tlapm refuses\n")
+    );
+    let output = run(
+        "obligations",
+        &["-N", "--threads", "0x7fffffffffffffff", "Proofs.tla"],
+    );
+    assert_eq!(
+        stderr(&output),
+        format!("{NOT_NATIVE}tlapm's report of --threads 0x7fffffffffffffff, which it refuses\n")
+    );
+    let output = run(
+        "obligations",
+        &["-N", "--line", "9999999999999999999", "Proofs.tla"],
+    );
+    assert_eq!(
+        stderr(&output),
+        format!("{NOT_NATIVE}tlapm's report of --line without an integer\n")
+    );
+    let output = run("obligations", &["-N", "-I", "", "Proofs.tla"]);
+    assert!(stderr(&output).starts_with(NOT_NATIVE));
+}
+
+// int_of_string reads 0x, 0o and 0b numbers, and _ between digits.
+#[test]
+fn reads_an_integer_as_tlapm_does() {
+    let expected = run("obligations", &["-N", "--toolbox", "6", "7", "Omit.tla"]);
+    let output = run(
+        "obligations",
+        &["-N", "--toolbox", "0x6", "0b111", "Omit.tla"],
+    );
+    assert_eq!(stderr(&output), stderr(&expected));
+    assert_eq!(
+        stderr(&output),
+        read_recording("obligations", "Omit-6-7.toolbox")
+    );
+    let output = run(
+        "obligations",
+        &[
+            "-N",
+            "--toolbox",
+            "0",
+            "4_611_686_018_427_387_903",
+            "Omit.tla",
+        ],
+    );
+    assert_eq!(
+        stderr(&output),
+        read_recording("obligations", "Omit.toolbox")
     );
 }
 

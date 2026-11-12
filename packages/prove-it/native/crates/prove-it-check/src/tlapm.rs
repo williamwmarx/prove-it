@@ -280,42 +280,80 @@ fn run_in_place(args: &[String], session: &mut Session<'_>) -> Run<i32> {
     })
 }
 
+/// Where OCaml's `Arg` stops reading tlapm's command line before its end: at `--version`, which
+/// prints the version and exits, or at what tlapm reports or ends abnormally on, which Prove It
+/// declines.
+enum Stop {
+    Version,
+    Decline(String),
+}
+
 struct Parsed {
     options: Vec<(String, Vec<String>)>,
     positionals: Vec<String>,
-    unknown: Vec<String>,
-    incomplete: Option<String>,
+    stop: Option<Stop>,
 }
 
 impl Parsed {
-    // defineCommand's parse.
+    // Arg.parse_argv: each option in turn, until one stops it.
     fn parse(args: &[String]) -> Parsed {
         let mut parsed = Parsed {
             options: Vec::new(),
             positionals: Vec::new(),
-            unknown: Vec::new(),
-            incomplete: None,
+            stop: None,
         };
         let mut index = 0;
-        while index < args.len() {
+        while index < args.len() && parsed.stop.is_none() {
             let arg = &args[index];
             index += 1;
             let Some(&(_, arity)) = OPTIONS.iter().find(|(name, _)| name == arg) else {
                 if arg.starts_with('-') {
-                    parsed.unknown.push(arg.clone());
+                    parsed.stop = Some(Stop::Decline(format!("the tlapm option {arg}")));
                 } else {
                     parsed.positionals.push(arg.clone());
                 }
                 continue;
             };
             let values: Vec<String> = args[index..].iter().take(arity).cloned().collect();
-            if values.len() < arity && parsed.incomplete.is_none() {
-                parsed.incomplete = Some(arg.clone());
-            }
             index += values.len();
+            parsed.stop = parsed.check(arg, &values);
             parsed.options.push((arg.clone(), values));
         }
         parsed
+    }
+
+    // What Arg reports, or what the option's action raises.
+    fn check(&self, name: &str, values: &[String]) -> Option<Stop> {
+        let arity = OPTIONS
+            .iter()
+            .find(|(option, _)| *option == name)
+            .map_or(0, |(_, arity)| *arity);
+        if values.len() < arity {
+            return Some(Stop::Decline(format!(
+                "tlapm's report of {name} without its arguments"
+            )));
+        }
+        if INTEGER_OPTIONS.contains(&name) && values.iter().any(|value| parse_int(value).is_none())
+        {
+            return Some(Stop::Decline(format!(
+                "tlapm's report of {name} without an integer"
+            )));
+        }
+        match name {
+            "--version" => Some(Stop::Version),
+            // Tlapm_args.set_max_threads raises Arg.Bad.
+            "--threads" if parse_int(&values[0]).is_some_and(|threads| threads < 0) => {
+                Some(Stop::Decline(format!(
+                    "tlapm's report of --threads {}, which it refuses",
+                    values[0]
+                )))
+            }
+            // Params.add_search_dir reads the directory's first character.
+            "-I" if values[0].is_empty() => Some(Stop::Decline(
+                "the backtrace tlapm prints as it ends with -I \"\"".to_owned(),
+            )),
+            _ => None,
+        }
     }
 
     fn has(&self, name: &str) -> bool {
@@ -333,10 +371,67 @@ impl Parsed {
         self.get(name).map(|values| {
             values
                 .iter()
-                .map(|value| value.parse().unwrap_or_default())
+                .map(|value| parse_int(value).unwrap_or_default())
                 .collect()
         })
     }
+}
+
+// OCaml's max_int, the largest of its 63-bit integers.
+const OCAML_MAX_INT: i64 = (1 << 62) - 1;
+
+/// OCaml's `int_of_string` (`parse_intnat` in runtime/ints.c): a sign, a prefix `0x`, `0o`, `0b` or
+/// `0u`, and digits, with `_` after the first; a decimal must fit in 63 bits, and a prefixed one in
+/// 63 bits unsigned, which wraps.
+fn parse_int(text: &str) -> Option<i64> {
+    let bytes = text.as_bytes();
+    let (is_negative, mut rest) = match bytes.first() {
+        Some(b'-') => (true, &bytes[1..]),
+        Some(b'+') => (false, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    let (base, is_signed) = match rest {
+        [b'0', b'x' | b'X', ..] => (16, false),
+        [b'0', b'o' | b'O', ..] => (8, false),
+        [b'0', b'b' | b'B', ..] => (2, false),
+        [b'0', b'u' | b'U', ..] => (10, false),
+        _ => (10, true),
+    };
+    if !is_signed {
+        rest = &rest[2..];
+    }
+    let digit = |byte: u8| char::from(byte).to_digit(16).filter(|digit| *digit < base);
+    let (first, rest) = rest.split_first()?;
+    let mut value = u64::from(digit(*first)?);
+    for byte in rest {
+        if *byte == b'_' {
+            continue;
+        }
+        let digit = digit(*byte)?;
+        value = value
+            .checked_mul(u64::from(base))?
+            .checked_add(u64::from(digit))?;
+    }
+    let limit = 1_u64 << 62;
+    if is_signed {
+        if value > limit || (value == limit && !is_negative) {
+            return None;
+        }
+    } else if value >= limit << 1 {
+        return None;
+    }
+    let value = if is_negative {
+        value.wrapping_neg()
+    } else {
+        value
+    };
+    // Val_long keeps the low 63 bits.
+    Some(((value << 1) as i64) >> 1)
+}
+
+/// OCaml's `+` on its 63-bit integers, which wraps.
+fn add_ocaml(left: i64, right: i64) -> i64 {
+    (left.wrapping_add(right) << 1) >> 1
 }
 
 /// Tlapm_args.quote_if_needed.
@@ -513,24 +608,16 @@ fn get_obligation_error(error: &ObligationError) -> Decline {
 fn run_tlapm(io: &Io<'_>, args: &[String]) -> Run<i32> {
     let parsed = Parsed::parse(args);
     let is_processing = !parsed.has("-N") && !parsed.has("--summary");
-    if let Some(option) = parsed.unknown.first() {
-        return decline(format!("the tlapm option {option}"));
+    match parsed.stop {
+        Some(Stop::Version) => {
+            io.out(format!("{TLAPM_VERSION}\n"));
+            return Ok(0);
+        }
+        Some(Stop::Decline(reason)) => return decline(reason),
+        None => {}
     }
     if is_processing && parsed.has("--printallobs") {
         return decline("--printallobs where tlapm proves");
-    }
-    if let Some(option) = &parsed.incomplete {
-        return decline(format!("tlapm's report of {option} without its arguments"));
-    }
-    if let Some((name, _)) = parsed.options.iter().find(|(name, values)| {
-        INTEGER_OPTIONS.contains(&name.as_str())
-            && values.iter().any(|value| value.parse::<i64>().is_err())
-    }) {
-        return decline(format!("tlapm's report of {name} without an integer"));
-    }
-    if parsed.has("--version") {
-        io.out(format!("{TLAPM_VERSION}\n"));
-        return Ok(0);
     }
     if parsed
         .positionals
@@ -543,13 +630,18 @@ fn run_tlapm(io: &Io<'_>, args: &[String]) -> Run<i32> {
     if files.is_empty() {
         return decline("tlapm's report of a command line without a module");
     }
+    // Schedule.run asserts that it has from 1 to 99 threads; the default is the processor count.
     let threads = match parsed.get_integers("--threads") {
-        Some(threads) if is_processing && !(1..=MAXIMUM_THREADS).contains(&threads[0]) => {
-            return decline(format!("--threads {}, which tlapm refuses", threads[0]));
-        }
-        Some(threads) => usize::try_from(threads[0].max(1)).unwrap_or(1),
-        None => io.call(|session| session.host().machine().cores.max(1)),
+        Some(threads) => threads[0],
+        None => io.call(|session| session.host().machine().cores) as i64,
     };
+    if is_processing && !(1..=MAXIMUM_THREADS).contains(&threads) {
+        return decline(match parsed.get("--threads") {
+            Some(_) => format!("--threads {threads}, which tlapm refuses"),
+            None => format!("{threads} processors, more threads than tlapm takes"),
+        });
+    }
+    let threads = usize::try_from(threads).unwrap_or(1).max(1);
     let module_paths: Vec<String> = files
         .iter()
         .map(|path| {
@@ -562,7 +654,8 @@ fn run_tlapm(io: &Io<'_>, args: &[String]) -> Run<i32> {
         .collect();
     let is_toolbox = parsed.has("--toolbox") || parsed.has("--line");
     if is_toolbox {
-        let command = std::iter::once("tla-ts")
+        // tlapm prints its own command line, which here is Prove It's.
+        let command = std::iter::once("prove-it")
             .chain(std::iter::once("tlapm"))
             .chain(args.iter().map(String::as_str))
             .map(quote_shell_argument)
@@ -577,26 +670,29 @@ fn run_tlapm(io: &Io<'_>, args: &[String]) -> Run<i32> {
     // Like tlapm, the last of --toolbox and --line wins, and a 0 means the whole module.
     let mut lines = WHOLE_MODULE;
     for (name, values) in &parsed.options {
-        let numbers: Vec<f64> = values
+        let numbers: Vec<i64> = values
             .iter()
-            .map(|value| value.parse::<i64>().unwrap_or_default() as f64)
+            .map(|value| parse_int(value).unwrap_or_default())
             .collect();
+        let get_end = |end: i64| {
+            if end == 0 || end == OCAML_MAX_INT {
+                f64::INFINITY
+            } else {
+                end as f64
+            }
+        };
         match name.as_str() {
             "--toolbox" => {
                 lines = LineRange {
-                    start: numbers[0],
-                    end: if numbers[1] == 0.0 {
-                        f64::INFINITY
-                    } else {
-                        numbers[1]
-                    },
+                    start: numbers[0] as f64,
+                    end: get_end(numbers[1]),
                 };
             }
-            "--line" if numbers[0] == 0.0 => lines = WHOLE_MODULE,
+            "--line" if numbers[0] == 0 => lines = WHOLE_MODULE,
             "--line" => {
                 lines = LineRange {
-                    start: numbers[0],
-                    end: numbers[0],
+                    start: numbers[0] as f64,
+                    end: get_end(numbers[0]),
                 };
             }
             _ => {}
@@ -680,9 +776,6 @@ impl Search {
         for (_, values) in parsed.options.iter().filter(|(name, _)| name == "-I") {
             let directory = &values[0];
             let directory = match (directory.strip_prefix('+'), &library) {
-                _ if directory.is_empty() => {
-                    return decline("the backtrace tlapm prints as it ends with -I \"\"");
-                }
                 (Some(_), None) => {
                     return decline(
                         "the backtrace tlapm prints as it ends with -I + without its standard library",
@@ -1101,11 +1194,12 @@ fn check_modules(
         let forgotten = (forgotten[0], forgotten[1]);
         let settings = Settings {
             known: KnownResults::new(&table),
+            // Prep.already_processed: `nofp_sl - 1 < start && stop < nofp_el + 1`, which wraps.
             is_fingerprinted: Box::new(move |obligation: &PrintedObligation| {
                 !is_nofp
                     && !obligation.locus.as_ref().is_some_and(|locus| {
-                        i64::from(locus.start_line) >= forgotten.0
-                            && i64::from(locus.end_line) <= forgotten.1
+                        add_ocaml(forgotten.0, -1) < i64::from(locus.start_line)
+                            && i64::from(locus.end_line) < add_ocaml(forgotten.1, 1)
                     })
             }),
             is_proving: !parsed.has("--noproving"),
@@ -1821,6 +1915,39 @@ mod tests {
         assert_eq!(join_paths(".", "tlapm"), "tlapm");
         assert_eq!(join_paths("a/../..", "tlapm"), "../tlapm");
         assert_eq!(join_paths("/", "lib/tlapm/stdlib"), "/lib/tlapm/stdlib");
+    }
+
+    #[test]
+    fn reads_an_integer_as_ocamls_int_of_string_does() {
+        let cases = [
+            ("42", Some(42)),
+            ("-7", Some(-7)),
+            ("+7", Some(7)),
+            ("1_000", Some(1000)),
+            ("0x1F", Some(31)),
+            ("0o17", Some(15)),
+            ("0b101", Some(5)),
+            ("0u12", Some(12)),
+            ("-0x1", Some(-1)),
+            ("4611686018427387903", Some(OCAML_MAX_INT)),
+            ("-4611686018427387904", Some(-OCAML_MAX_INT - 1)),
+            ("4611686018427387904", None),
+            ("0x4000000000000000", Some(-OCAML_MAX_INT - 1)),
+            ("0x7FFFFFFFFFFFFFFF", Some(-1)),
+            ("0x8000000000000000", None),
+            ("_1", None),
+            ("1x", None),
+            ("", None),
+            ("-", None),
+            ("0x", None),
+            (" 1", None),
+            ("1.0", None),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(parse_int(text), expected, "{text}");
+        }
+        assert_eq!(add_ocaml(OCAML_MAX_INT, 1), -OCAML_MAX_INT - 1);
+        assert_eq!(add_ocaml(-OCAML_MAX_INT - 1, -1), OCAML_MAX_INT);
     }
 
     #[test]

@@ -1336,8 +1336,21 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     const result = runTlapm("obligations", ["-N", "--line", "3", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
+      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* prove-it tlapm -N --line 3 Omit\.tla\n\n$/,
     );
+  });
+
+  // OCaml's Arg reads the options in turn, and Tlapm_args.set_max_threads raises Arg.Bad on a
+  // negative count whether or not tlapm proves; int_of_string reads 0x and _.
+  it("reads the options as OCaml's Arg does", () => {
+    const refused = runTlapm("obligations", ["-N", "--threads", "-1", "Proofs.tla"]);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toBe(
+      "prove-it: not native yet: tlapm's report of --threads -1, which it refuses\n",
+    );
+    expect(runTlapm("obligations", ["--version", "--threads", "-1"]).stdout).toBe("9ed0376\n");
+    const result = runTlapm("obligations", ["-N", "--toolbox", "0x6", "0b111", "Omit.tla"]);
+    expect(result.stderr).toBe(readExpected("Omit-6-7.toolbox"));
   });
 
   it("prints nothing outside toolbox mode", () => {
@@ -1519,7 +1532,7 @@ describe("tlapm proves with Prove It's provers and prints what tlapm prints", ()
     const result = runTlapm("tlapm-cli", ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n(Zenon error: exhausted search space without finding a proof\n){2}\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
+      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* prove-it tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n(Zenon error: exhausted search space without finding a proof\n){2}\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
     );
     expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
   });

@@ -872,8 +872,11 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   would try it.
 - **Command lines it doesn't model:** an option outside `src/cli/options.ts`'s list,
   `--printallobs` where tlapm proves (tlapm then prints each proved obligation's text too), an
-  option without its arguments or without an integer, `--threads` below 1 or above 99 where tlapm
-  proves (its scheduler asserts), no module, and globs. tlapm reports each in its own words. An
+  option without its arguments or without an integer (as OCaml's `int_of_string` reads one, with
+  `0x`, `0o`, `0b` and `_`), a negative `--threads` (`Tlapm_args.set_max_threads` raises
+  `Arg.Bad`, proving or not), `--threads` 0 or above 99 where tlapm proves (its scheduler
+  asserts), and so a machine of more than 99 processors without `--threads`, no module, and
+  globs. tlapm reports each in its own words, after a `--version` before it prints the version. An
   empty `-I`, and `-I +dir` where tlapm's standard library isn't found, end tlapm abnormally.
 - **What `Loader` reads as tokens** (`what comes before the module header of …`): tlapm finds a
   module as `M_save.file_search'` does, in the current directory, each `-I` directory in the order
@@ -907,6 +910,8 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   tlapm's status, 23 decline, and 2 differ, `parse_function_comma_args.tla` #2 above and
   `tlapm/examples/Bakery.tla` #60, which Z3 proves in 3 s and Prove It's SMT back end doesn't
   within the method's 60 s.
+- The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
+  (`tlapm_args.ml`, `init`); no recording holds tlapm's.
 - The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.
   The binary keeps the order in which the run wrote to stdout and stderr; the CLI writes stdout,
   then stderr. Where both go to one file, neither need interleave them as tlapm, whose stdout is
