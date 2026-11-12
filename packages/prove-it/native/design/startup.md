@@ -183,8 +183,12 @@ engine reports anything: the startup's prints, a configuration error, an excepti
 the search. The native checker's reporter runs the trace evaluator's startup
 (`Rebuilder::confirm_startup`) whether or not anything reads the definitions, as in
 `Test == PrintT({} \cap 0)` that nothing names, which TLC prints as `{}` where the search fails on
-`0`; it declines where the evaluator computes such a definition, or fails on it only after an
-effect. Any other reporter declines a swallowed failure.
+`0`. Only positive evidence confirms: a failure TLC raises itself, which the evaluator models with
+TLC's message, before any effect. The run declines where the evaluator computes such a
+definition, fails on it only after an effect, or fails in a way it doesn't model as TLC's (its
+own limits, such as the body of a function TLC keeps lazy), which says nothing of what TLC does:
+`PrintT(DOMAIN [x \in SUBSET {0} |-> {1} \cap 0])` prints `{{}, {0}}` in TLC, which never
+evaluates the body. Any other reporter declines a swallowed failure.
 
 TLC binds a variable that `x = D` assigns in the initial predicate or a step, D a definition it
 failed to compute as it started, and reports a failure of a value it builds there as a state it

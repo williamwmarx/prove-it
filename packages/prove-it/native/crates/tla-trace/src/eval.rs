@@ -2313,23 +2313,36 @@ impl<'ir> Evaluator<'ir> {
             };
             let before = effects(self);
             let evaluated = self.evaluate(self.definition(node).body, &Context::default());
-            // A definition the search found failing that computes here is one the evaluator
-            // and the engine disagree on, which TLC may print or compute as either does.
-            if evaluated.is_ok() && self.searched_failing.contains(&node) {
-                return fail("a startup definition the search found failing that computes");
-            }
+            let is_searched_failing = self.searched_failing.contains(&node);
             let value = match evaluated {
+                // A definition the search found failing that computes here is one the evaluator
+                // and the engine disagree on, which TLC may print or compute as either does.
+                Ok(_) if is_searched_failing => {
+                    return fail("a startup definition the search found failing that computes");
+                }
                 Ok(value) => value,
                 // TLC warns as it goes on, which the evaluator doesn't print.
                 Err(error) if error.reason == EXCEPT_OF_MISSING_KEY => return Err(error),
-                Err(_) => {
+                Err(error) => {
                     let is_unaffected = effects(self) == before;
-                    // The search found it failing before any effect, which the evaluator must
-                    // too, as TLC evaluates it again at each use.
-                    if !is_unaffected && self.searched_failing.contains(&node) {
-                        return fail(
-                            "a startup definition the search found failing that fails here after an effect",
-                        );
+                    // The search found it failing before any effect, which only a failure TLC
+                    // raises itself, with its message, confirms, before any effect: one the
+                    // evaluator can't follow says nothing of what TLC does.
+                    if is_searched_failing {
+                        match (&error.message, is_unaffected) {
+                            (None, _) => {
+                                return fail(format!(
+                                    "a startup definition the search found failing that the evaluator can't follow: {}",
+                                    error.reason
+                                ));
+                            }
+                            (Some(_), false) => {
+                                return fail(
+                                    "a startup definition the search found failing that fails here after an effect",
+                                );
+                            }
+                            (Some(_), true) => {}
+                        }
                     }
                     if ir.model.startup.definitions.contains(&index)
                         && is_unaffected
