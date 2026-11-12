@@ -1603,11 +1603,13 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       expect(both.stderr).not.toContain("not native yet");
       const found = Object.fromEntries(Object.entries(files).filter(([path]) => path !== unread));
       const alone = runTlapmIn(writeFiles(found), [...options, ...args]);
-      expect([both.status, both.stdout, both.stderr]).toEqual([
-        alone.status,
-        alone.stdout,
-        alone.stderr,
-      ]);
+      // tlapm's header gives the second each run was launched at.
+      const getOutcome = (run: typeof both) => [
+        run.status,
+        run.stdout.replace(/^\\\* launched at .* with command line:$/m, ""),
+        run.stderr,
+      ];
+      expect(getOutcome(both)).toEqual(getOutcome(alone));
     }
   });
 
