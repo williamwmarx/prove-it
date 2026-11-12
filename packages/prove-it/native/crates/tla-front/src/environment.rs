@@ -2088,12 +2088,13 @@ const BUILT_IN_CLASSES: [&str; 15] = [
 /// (`get_linked_module`), and reads any other operator by its body, so a spec that names one the
 /// class replaces declines.
 fn reject_class_overrides(
-    modules: &[Rc<Module>],
+    environment: &Environment,
     root: &Module,
     config: &ModelConfig,
     version: TlcVersion,
 ) -> Result<()> {
-    for module in modules {
+    let mut replaced: Vec<(Rc<str>, Name, Option<Position>)> = Vec::new();
+    for module in &environment.modules {
         if !BUILT_IN_CLASSES.contains(&&*module.name) {
             continue;
         }
@@ -2118,56 +2119,115 @@ fn reject_class_overrides(
                     .iter()
                     .any(|operator| operator.name == &*definition.name && operator.arity == arity)
             });
-            if is_replaced && !is_builtin && is_named(&definition.name, modules, definition, config)
-            {
-                return Err(FrontError::NotYet(format!(
-                    "an operator of a module of the user's that TLC's Java class replaces: {}!{}",
-                    module.name, definition.name
-                )));
+            if is_replaced && !is_builtin {
+                replaced.push((
+                    module.name.clone(),
+                    definition.name.clone(),
+                    definition.location.range.as_ref().map(|range| range.start),
+                ));
             }
         }
     }
-    Ok(())
+    if replaced.is_empty() {
+        return Ok(());
+    }
+    // The keys of the replaced definitions, and of their copies an INSTANCE makes, which keep the
+    // definition's place in its module.
+    let is_replaced = |definition: &Definition| {
+        replaced.iter().any(|(module, name, start)| {
+            definition.name == *name
+                && definition
+                    .location
+                    .range
+                    .as_ref()
+                    .is_some_and(|range| range.module == *module && Some(range.start) == *start)
+        })
+    };
+    let keys: FastSet<Name> = environment
+        .definitions
+        .iter()
+        .filter(|(_, definition)| is_replaced(definition))
+        .map(|(key, _)| key.clone())
+        .collect();
+    let named = get_named_definition(environment, config, &keys);
+    match named.and_then(|key| environment.definitions.get(&key)) {
+        Some(definition) => Err(FrontError::NotYet(format!(
+            "an operator of a module of the user's that TLC's Java class replaces: {}!{}",
+            definition
+                .location
+                .range
+                .as_ref()
+                .map_or("", |range| &*range.module),
+            definition.name
+        ))),
+        None => Ok(()),
+    }
 }
 
-/// Whether any expression of the modules but the definition's own body, or the configuration,
-/// names the operator, by the last part of the name as written.
-fn is_named(
-    operator: &str,
-    modules: &[Rc<Module>],
-    definition: &Rc<Definition>,
+/// The first of the keys that an expression of the spec, but the definition's own body, or the
+/// configuration names, by the definition the name resolves to.
+fn get_named_definition(
+    environment: &Environment,
     config: &ModelConfig,
-) -> bool {
-    fn names(expression: &Expr, operator: &str) -> bool {
-        let written = match &expression.kind {
-            ExpressionKind::Identifier { name, .. } => Some(name),
-            ExpressionKind::Apply { operator, .. }
-            | ExpressionKind::OperatorReference { operator, .. } => Some(operator),
-            _ => None,
-        };
-        written.is_some_and(|written| written.rsplit('!').next() == Some(operator))
-            || expression
-                .children()
-                .iter()
-                .any(|child| names(child, operator))
-    }
-    let in_modules = modules.iter().any(|module| {
-        module
-            .definitions
+    keys: &FastSet<Name>,
+) -> Option<Name> {
+    fn find(expression: &Expr, keys: &FastSet<Name>) -> Option<Name> {
+        if !expression.is_locally_resolved()
+            && matches!(
+                expression.kind,
+                ExpressionKind::Identifier { .. }
+                    | ExpressionKind::Apply { .. }
+                    | ExpressionKind::OperatorReference { .. }
+            )
+            && let Some(key) = expression.reference()
+            && keys.contains(&key)
+        {
+            return Some(key);
+        }
+        expression
+            .children()
             .iter()
-            .filter(|other| !Rc::ptr_eq(other, definition))
-            .any(|other| names(&other.body, operator))
-            || module
-                .assumptions
+            .find_map(|child| find(child, keys))
+    }
+    for module in &environment.modules {
+        for definition in &module.definitions {
+            // A recursive definition's own body is the class's method in TLC.
+            let inner: FastSet<Name> = keys
                 .iter()
-                .any(|assumption| names(&assumption.expression, operator))
-            || module.instances.iter().any(|instance| {
+                .filter(|key| {
+                    environment
+                        .definitions
+                        .get(*key)
+                        .is_none_or(|replaced| !Rc::ptr_eq(replaced, definition))
+                })
+                .cloned()
+                .collect();
+            if let Some(key) = find(&definition.body, &inner) {
+                return Some(key);
+            }
+        }
+        let others = module
+            .assumptions
+            .iter()
+            .map(|assumption| &assumption.expression)
+            .chain(module.instances.iter().flat_map(|instance| {
                 instance
                     .substitutions
                     .iter()
-                    .any(|substitution| names(&substitution.expression, operator))
-            })
-    });
+                    .map(|substitution| &substitution.expression)
+            }));
+        for expression in others {
+            if let Some(key) = find(expression, keys) {
+                return Some(key);
+            }
+        }
+    }
+    let root_key = |name: &str| -> Name {
+        environment
+            .root_symbols
+            .get(name)
+            .map_or_else(|| Rc::from(name), |symbol| symbol.key.clone())
+    };
     let named = [
         &config.init,
         &config.next,
@@ -2177,24 +2237,30 @@ fn is_named(
         &config.alias,
         &config.periodic,
         &config.rl_reward,
-    ];
-    let listed = [
-        &config.invariants,
-        &config.properties,
-        &config.constraints,
-        &config.action_constraints,
-        &config.postconditions,
-        &config.possible,
-    ];
-    in_modules
-        || named.iter().any(|name| name.as_deref() == Some(operator))
-        || listed
-            .iter()
-            .any(|names| names.iter().any(|name| name == operator))
-        || config
+    ]
+    .into_iter()
+    .flatten()
+    .chain(
+        [
+            &config.invariants,
+            &config.properties,
+            &config.constraints,
+            &config.action_constraints,
+            &config.postconditions,
+            &config.possible,
+        ]
+        .into_iter()
+        .flatten(),
+    )
+    .chain(
+        config
             .substitutions
             .iter()
-            .any(|substitution| substitution.target == operator)
+            .map(|substitution| &substitution.target),
+    );
+    named
+        .map(|name| root_key(name))
+        .find(|key| keys.contains(key))
 }
 
 /// `create_environment` up to the substitutes for constants, which TLC evaluates as it computes
@@ -2603,7 +2669,7 @@ pub fn link_environment(options: &EnvironmentOptions) -> Result<Environment> {
             .map(|linked| linked.module.clone())
             .collect(),
     };
-    reject_class_overrides(&environment.modules, &root, config, options.version)?;
+    reject_class_overrides(&environment, &root, config, options.version)?;
     Ok(environment)
 }
 
