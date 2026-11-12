@@ -1870,6 +1870,7 @@ fn check_spec(
                     let stop = ErrorStop {
                         added,
                         reason: &reason,
+                        startup: &violation.startup,
                         store: &violation.store,
                         states: violation.states.iter().map(Vec::as_slice).collect(),
                         actions: violation.labels.clone(),

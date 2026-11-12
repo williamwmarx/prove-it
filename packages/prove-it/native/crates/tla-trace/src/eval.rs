@@ -2215,11 +2215,21 @@ impl<'ir> Evaluator<'ir> {
         for index in substitutes.chain(ir.model.startup.definitions.iter().copied()) {
             let node = ir.definitions[index as usize];
             // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps
-            // it as an operator, evaluated again, and failing again, where it is used. The front
-            // end has rejected a substitute TLC checks and finds failing.
+            // it as an operator, evaluated again, and failing again, where it is used: before the
+            // same effects, none where it printed, drew and set no register before it failed here.
+            // The front end has rejected a substitute TLC checks and finds failing.
+            let effects = |evaluator: &Self| {
+                (
+                    evaluator.printed.len(),
+                    evaluator.random.map(|random| random.state()),
+                    evaluator.register_writes,
+                )
+            };
+            let before = effects(self);
             let Ok(value) = self.evaluate(self.definition(node).body, &Context::default()) else {
                 if ir.model.startup.definitions.contains(&index)
-                    && !self.may_reach(self.definition(node).body, EFFECTS)
+                    && effects(self) == before
+                    && !self.may_reach(self.definition(node).body, UNSEEN_EFFECTS)
                 {
                     self.failed_startup.insert(node);
                 }
@@ -2289,11 +2299,10 @@ impl<'ir> Evaluator<'ir> {
     /// Takes the values the search computed at startup for the model's startup definitions,
     /// ids of `store` in their order, as the values of those definitions.
     pub fn set_startup(&mut self, store: &Store, values: &[Id]) -> Result<(), Unsupported> {
+        self.set_failed_startup(values);
         for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
             let node = self.ir.definitions[index as usize];
-            // The search keeps no value of one that failed, which TLC evaluates again at each use.
             if id == NO_VALUE {
-                self.failed_startup.insert(node);
                 continue;
             }
             let value = from_store(store, id)?;
@@ -2301,6 +2310,17 @@ impl<'ir> Evaluator<'ir> {
             self.cache.insert((node, true), value);
         }
         Ok(())
+    }
+
+    /// Takes, of the values the search computed at startup, the startup definitions that failed
+    /// there, of which the search keeps no value (`NO_VALUE`) and which TLC evaluates again at
+    /// each use.
+    pub fn set_failed_startup(&mut self, values: &[Id]) {
+        for (&index, &id) in self.ir.model.startup.definitions.iter().zip(values) {
+            if id == NO_VALUE {
+                self.failed_startup.insert(self.ir.definitions[index as usize]);
+            }
+        }
     }
 
     /// Takes the values the search computed of the constant definitions whose body is a CHOOSE
@@ -6205,6 +6225,26 @@ const EFFECTS: &[&str] = &[
     "PrintT",
     "RandomElement",
     "RandomSubset",
+    "JavaTime",
+    "JsonSerialize",
+    "ndJsonSerialize",
+    "JsonDeserialize",
+    "ndJsonDeserialize",
+    "Serialize",
+    "Deserialize",
+    "IOExec",
+    "IOEnvExec",
+    "IOExecTemplate",
+    "IOEnvExecTemplate",
+    "IOEnv",
+];
+
+/// The builtins of `EFFECTS` but those whose effect the startup sees run: Print, PrintT,
+/// RandomElement, RandomSubset and TLCSet.
+const UNSEEN_EFFECTS: &[&str] = &[
+    "TLCGet",
+    "CounterExample",
+    "_Counts",
     "JavaTime",
     "JsonSerialize",
     "ndJsonSerialize",

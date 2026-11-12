@@ -2844,12 +2844,11 @@ fn run_startup(
     }
     // `processConstantDefns`: TLC swallows whatever a constant definition throws and keeps it as
     // an operator, which evaluates it again, with its effects, at every use. The engine keeps no
-    // value of one that fails, and evaluates it again at each use, where its body has no effect
-    // and reads no state.
+    // value of one that fails before any effect, and evaluates it again at each use, where it
+    // reads no state, so fails again there before any effect.
     for (evaluate, is_retried) in &startup.definitions {
-        if let Err(Bail(reason)) = evaluate(machine)
-            && (!is_retried || !settings.is_failed_startup_retried || is_engine_limit(reason))
-        {
+        let is_retried = *is_retried && settings.is_failed_startup_retried;
+        if evaluate_retried(machine, evaluate, is_retried).is_err() {
             return Err(Bail(
                 "unsupported: a definition TLC computes at startup that fails there",
             ));
@@ -3054,11 +3053,29 @@ pub(crate) fn startup_values(
         .startup
         .definitions
         .iter()
-        .map(|(evaluate, is_retried)| match evaluate(machine) {
-            Err(Bail(reason)) if *is_retried && !is_engine_limit(reason) => Ok(NO_VALUE),
-            result => result,
-        })
+        .map(|(evaluate, is_retried)| evaluate_retried(machine, evaluate, *is_retried))
         .collect()
+}
+
+// A startup definition's value, or NO_VALUE for one TLC evaluates again at each use that fails as
+// TLC reports before any effect: printing, drawing or setting a register.
+fn evaluate_retried(machine: &mut Machine<'_>, evaluate: &Eval, is_retried: bool) -> Outcome<Id> {
+    let effects = |machine: &Machine<'_>| {
+        (
+            machine.output.len(),
+            machine.random.state(),
+            machine.registers.writes,
+        )
+    };
+    let before = effects(machine);
+    match evaluate(machine) {
+        Err(Bail(reason))
+            if is_retried && !is_engine_limit(reason) && effects(machine) == before =>
+        {
+            Ok(NO_VALUE)
+        }
+        result => result,
+    }
 }
 
 // The values the constant CHOOSEs computed, but those that fail, which reading them again

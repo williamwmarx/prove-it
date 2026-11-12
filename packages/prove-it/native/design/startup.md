@@ -149,21 +149,32 @@ operator, which it evaluates again, and fails again, wherever it is used (`proce
 The engine did the same for none: a failure declined the model.
 
 Now `run_startup` goes on past a startup definition that fails with a failure TLC reports (not
-one of the engine's limits) where TLC's evaluation again at each use is the engine's evaluation
-at the use (`is_retried_at_use`): an operator without parameters whose body, through the
-definitions it names, neither reads the state nor has an effect or a value that depends on when
-or how often TLC evaluates it. Its `once` keeps no value, so each use evaluates the body. The
-startup values hand on `NO_VALUE` for it, which the trace evaluator takes as a definition to
-evaluate again where it is used, as it does one its own startup finds failing.
+one of the engine's limits) before any effect: nothing printed, no draw from the generator, no
+register set (`evaluate_retried`). It must also be one TLC evaluates again at each use as the
+engine does at the use (`is_retried_at_use`). That is an operator without parameters whose body,
+through the definitions it names, doesn't read the state. It has no value TLC may keep lazy, and
+no builtin whose value depends on when or how often TLC evaluates it, except Print, PrintT,
+AssertEq, RandomElement, RandomSubset and TLCSet, whose effects the search sees run. Such a
+definition fails at each use exactly as it failed at startup, before the same lack of effects, as
+in `PrintT(<<expression that fails>>)`. Its `once` keeps no value, so each use evaluates the body.
+
+The startup values hand on `NO_VALUE` for it. The trace evaluator takes that as a definition to
+evaluate again where it is used, and so does a failure's evaluation, which takes those markers
+even where it takes no other startup value. The trace evaluator does the same for one its own
+startup finds failing before it printed, drew or set a register.
+
+The engine prints only where it evaluates as TLC does, and declines a print elsewhere, as an
+argument of most operators. So an effect TLC runs before the failure is one the engine runs
+before it, which keeps the definition declining.
 
 The native checker allows it only where the configuration scopes no substitute or value to a
 module (`<- [M]`, `= [M]`), which the front end leaves out where TLC applies it; a model whose
 startup failed would then read past it what TLC doesn't (fallback.md, "Known wrong outputs").
 The interpreter's route and the simulation keep declining.
 
-A failing definition that prints, draws, reads or sets a register, or reads the state, still
-declines, as does a definition TLC keeps lazy (`may_be_lazy`, "a value TLC computed at startup
-with effects").
+A failing definition that printed, drew or set a register before it failed still declines. So do
+one that reads the state, TLC's search or the time, and one TLC keeps lazy (`may_be_lazy`, "a
+value TLC computed at startup with effects").
 
 ## Asks
 
