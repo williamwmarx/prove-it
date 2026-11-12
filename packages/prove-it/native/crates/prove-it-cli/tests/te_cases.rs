@@ -5,6 +5,8 @@
 //! `declined`. TLC names the spec by the second its run started and dates it as it writes it; the
 //! binary runs with its clock fixed by PROVE_IT_TEST_NOW, and the comparison drops both.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -90,9 +92,10 @@ fn normalize(text: &str) -> String {
         .find(|prefix| line.starts_with(prefix));
         match (timed, line.strip_prefix("Parsing file ")) {
             (Some(prefix), _) => prefix.to_owned(),
-            (None, Some(path)) if path.contains("/tlc-") => {
+            (None, Some(path)) if path.contains("/tlc-") || path.contains("\\tlc-") => {
                 let path = path.split(' ').next().unwrap_or(path);
-                format!("Parsing file {}", path.rsplit('/').next().unwrap_or(path))
+                let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+                format!("Parsing file {name}")
             }
             _ if line.starts_with("Finished computing initial states") => line
                 .rsplit_once(" at ")
@@ -117,7 +120,7 @@ fn checks_around_the_trace_exploration_spec_as_tlc() {
         let created =
             std::env::temp_dir().join(format!("prove-it-te-cases-{name}-{}", std::process::id()));
         copy(&case, &created);
-        let root = std::fs::canonicalize(&created).expect("the root");
+        let root = common::get_working_path(&created);
         let root_text = root.to_string_lossy().into_owned();
         let before = get_files(&root);
         let command = read(&case.join("command"));
@@ -150,16 +153,25 @@ fn checks_around_the_trace_exploration_spec_as_tlc() {
             }
             Err(_) => {
                 let tlc = case.join("tlc");
+                let mut recorded = read(&tlc.join("stdout"));
+                if cfg!(windows) {
+                    match common::get_windows_expectation(&recorded.lines().collect::<Vec<_>>()) {
+                        common::OnWindows::Declined(reason) => {
+                            common::assert_declined(&output, reason, &name);
+                            std::fs::remove_dir_all(&root).expect("removed");
+                            continue;
+                        }
+                        common::OnWindows::Printed(lines) => {
+                            recorded = lines.iter().map(|line| format!("{line}\n")).collect();
+                        }
+                    }
+                }
                 assert_eq!(
                     output.status.code().map(|code| format!("{code}\n")),
                     Some(read(&tlc.join("exit"))),
                     "{name}: {stdout}{stderr}"
                 );
-                assert_eq!(
-                    normalize(&stdout),
-                    normalize(&read(&tlc.join("stdout"))),
-                    "{name}"
-                );
+                assert_eq!(normalize(&stdout), normalize(&recorded), "{name}");
                 let expected: Vec<String> = read(&tlc.join("written"))
                     .lines()
                     .map(str::to_owned)

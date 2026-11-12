@@ -3,6 +3,8 @@
 //! loads, its errors and its exit code, with the case's root written `{root}`. The binary prints
 //! the same, or declines what it doesn't.
 
+mod common;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -276,9 +278,7 @@ fn set_up(root: &Path, files: &[(&str, &str)]) {
             "class" => {
                 std::fs::copy(&class, &path).expect("the class");
             }
-            link if link.starts_with("->") => {
-                std::os::unix::fs::symlink(&link[2..], &path).expect("the link");
-            }
+            link if link.starts_with("->") => common::link(Path::new(&link[2..]), &path),
             text => std::fs::write(&path, text).expect("a file"),
         }
     }
@@ -295,7 +295,7 @@ fn get_printed(text: &str, code: Option<i32>) -> Vec<String> {
     ];
     text.lines()
         .filter(|line| PREFIXES.iter().any(|prefix| line.starts_with(prefix)))
-        .filter(|line| !line.contains("/tlc-"))
+        .filter(|line| !line.contains("/tlc-") && !line.contains("\\tlc-"))
         .map(str::to_owned)
         .chain([format!("exit {}", code.unwrap_or(-1))])
         .collect()
@@ -304,15 +304,27 @@ fn get_printed(text: &str, code: Option<i32>) -> Vec<String> {
 #[test]
 fn finds_specs_modules_and_overrides_as_tlc_does() {
     for case in CASES {
-        let root = std::env::temp_dir().join(format!(
+        // A link to /dev/null, which exists only on Unix, and `..` after a link, which Unix reads
+        // through the link and Windows by name.
+        if !cfg!(unix) && ["module-device", "link-then-parent"].contains(&case.name) {
+            continue;
+        }
+        let created = std::env::temp_dir().join(format!(
             "prove-it-resolver-order-{}-{}",
             case.name,
             std::process::id()
         ));
+        std::fs::create_dir_all(&created).expect("a directory");
+        let root = common::get_working_path(&created);
         set_up(&root, case.files);
         let root_text = root.to_string_lossy().into_owned();
         // TLC writes no trace exploration spec with -noGenerateSpecTE.
         let args = case.args.iter().flat_map(|arg| {
+            // A library list is separated as the host's File.pathSeparator, `;` on Windows.
+            let arg = match arg.strip_prefix("-DTLA-Library=") {
+                Some(list) if cfg!(windows) => format!("-DTLA-Library={}", list.replace(':', ";")),
+                _ => (*arg).to_owned(),
+            };
             let arg = arg.replace("{root}", &root_text);
             let is_class = arg == "tlc2.TLC";
             std::iter::once(arg).chain(is_class.then(|| "-noGenerateSpecTE".to_owned()))
@@ -336,10 +348,20 @@ fn finds_specs_modules_and_overrides_as_tlc_does() {
                 );
             }
             Outcome::Printed(lines) => {
-                let expected: Vec<String> = lines
+                let mut expected: Vec<String> = lines
                     .iter()
                     .map(|line| line.replace("{root}", &root_text))
                     .collect();
+                if cfg!(windows) {
+                    match common::get_windows_expectation(&expected) {
+                        common::OnWindows::Declined(reason) => {
+                            common::assert_declined(&output, reason, case.name);
+                            std::fs::remove_dir_all(&root).expect("removed");
+                            continue;
+                        }
+                        common::OnWindows::Printed(lines) => expected = lines,
+                    }
+                }
                 assert_eq!(
                     get_printed(&text, output.status.code()),
                     expected,

@@ -374,7 +374,10 @@ pub fn resolve_files(args: &[String], given: &str, request: &str, host: &dyn Hos
         is_174: version == TlcVersion::V1_7_4,
         root_extendees: &[],
     };
-    Resolved::Text(FileDescriber::new(&files, host).describe(name, origin))
+    match FileDescriber::new(&files, host).describe(name, origin) {
+        Ok(text) => Resolved::Text(text),
+        Err(reason) => Resolved::NotNative(reason),
+    }
 }
 
 fn collapse_separators(path: &str) -> String {
@@ -459,9 +462,11 @@ mod tests {
             }
         }
 
+        // As std's `canonicalize` on Windows, a verbatim path.
         fn real_path(&self, path: &Path) -> Option<PathBuf> {
             (self.kind(path) != FileKind::Absent).then(|| {
-                PathBuf::from(Platform::Windows.resolve("C:\\work", &path.to_string_lossy()))
+                let real = Platform::Windows.resolve("C:\\work", &path.to_string_lossy());
+                PathBuf::from(format!(r"\\?\{real}"))
             })
         }
 
@@ -513,6 +518,89 @@ mod tests {
         fn machine(&self) -> &Machine {
             self.system.machine()
         }
+    }
+
+    fn describe(
+        host: &WindowsHost,
+        spec: &str,
+        directories: &[&str],
+        jar: Option<&str>,
+        name: &str,
+        origin: ModuleOrigin,
+    ) -> Result<String, String> {
+        let directories = strings(directories);
+        let files = Files {
+            spec: Path::new(spec),
+            main_file: spec,
+            directories: &directories,
+            temporary: None,
+            metadir: None,
+            jar,
+            is_174: false,
+            root_extendees: &[],
+        };
+        FileDescriber::new(&files, host).describe(name, origin)
+    }
+
+    // ParseUnit prints `Path.toRealPath`, which on Windows drops the verbatim prefix std's
+    // canonicalize keeps, alone where the path its resolver made is the real one; the other forms
+    // no run of TLC on Windows has recorded.
+    #[test]
+    fn names_the_files_sany_parses_on_windows_by_their_real_paths_or_declines() {
+        let host = WindowsHost::new(&[
+            ("C:\\work\\Spec.tla", ""),
+            ("C:\\work\\M.tla", ""),
+            ("C:\\work\\sub\\N.tla", ""),
+        ]);
+        let file = ModuleOrigin::File;
+        assert_eq!(
+            describe(&host, "Spec.tla", &[""], None, "Spec", file),
+            Ok("C:\\work\\Spec.tla".to_owned())
+        );
+        assert_eq!(
+            describe(&host, "Spec.tla", &["", "sub/"], None, "N", file),
+            Ok("C:\\work\\sub\\N.tla".to_owned())
+        );
+        assert_eq!(
+            describe(&host, "C:/work/Spec.tla", &[""], None, "M", file),
+            Ok("C:\\work\\M.tla".to_owned())
+        );
+        assert!(describe(&host, "sub/../Spec.tla", &[""], None, "Spec", file).is_err());
+        let standard = describe(
+            &host,
+            "Spec.tla",
+            &[""],
+            None,
+            "Naturals",
+            ModuleOrigin::Standard,
+        )
+        .expect("a standard module's copy");
+        assert!(
+            standard.starts_with("C:\\Temp\\tlc-") && standard.ends_with("\\Naturals.tla"),
+            "{standard}"
+        );
+        assert!(
+            describe(
+                &host,
+                "Spec.tla",
+                &[""],
+                Some("tla2tools.jar"),
+                "Naturals",
+                ModuleOrigin::Standard
+            )
+            .is_err()
+        );
+        assert!(
+            describe(
+                &host,
+                "Spec.tla",
+                &[""],
+                None,
+                "Inner",
+                ModuleOrigin::RootFile
+            )
+            .is_err()
+        );
     }
 
     fn strings(args: &[&str]) -> Vec<String> {

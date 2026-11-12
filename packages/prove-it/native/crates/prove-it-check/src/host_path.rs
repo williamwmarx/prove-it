@@ -58,6 +58,55 @@ impl Platform {
             .map_or(trimmed, |end| &trimmed[end + 1..])
     }
 
+    /// A real path as Java's `Path.toRealPath` gives it. On Windows both it and std's
+    /// `canonicalize` ask `GetFinalPathNameByHandle`, whose verbatim prefix Java drops
+    /// (`WindowsLinkSupport.getFinalPath`): `\\?\C:\a` is `C:\a`, `\\?\UNC\s\x` is `\\s\x`.
+    pub fn get_java_real(self, path: &str) -> String {
+        match self {
+            Platform::Unix => path.to_string(),
+            Platform::Windows => {
+                if let Some(share) = path.strip_prefix(r"\\?\UNC\") {
+                    format!(r"\\{share}")
+                } else {
+                    path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+                }
+            }
+        }
+    }
+
+    /// The text of the path Java's `Path.of` parses `path` as: on Windows, with `\` for `/` and
+    /// repeated separators and a trailing one dropped (`WindowsPathParser.normalize`), but the two
+    /// a UNC path starts with, and `.` and `..` kept.
+    pub fn get_java_path(self, path: &str) -> String {
+        if self == Platform::Unix {
+            return path.to_string();
+        }
+        let is_unc = path
+            .chars()
+            .take(2)
+            .filter(|&c| self.is_separator(c))
+            .count()
+            == 2;
+        let (mut normalized, rest) = if is_unc {
+            (String::from(r"\\"), &path[2..])
+        } else {
+            (String::new(), path)
+        };
+        let start = normalized.len();
+        for character in rest.chars() {
+            if !self.is_separator(character) {
+                normalized.push(character);
+            } else if normalized.len() == start || !normalized.ends_with('\\') {
+                normalized.push('\\');
+            }
+        }
+        let is_drive_root = normalized.len() == 3 && normalized.as_bytes()[1] == b':';
+        if normalized.len() > start + 1 && normalized.ends_with('\\') && !is_drive_root {
+            normalized.pop();
+        }
+        normalized
+    }
+
     /// `path.isAbsolute`: on Windows, a path that starts with a separator or a drive and one, such
     /// as `\a`, `C:\a` or `\\server\share`, but not `C:a`, which is relative to the drive's
     /// directory.
@@ -197,6 +246,39 @@ pub fn get_stem(file_name: &str) -> &str {
 mod tests {
     use super::Platform::{Unix, Windows};
     use super::get_stem;
+
+    #[test]
+    fn names_a_real_path_as_java_does() {
+        assert_eq!(
+            Windows.get_java_real(r"\\?\C:\Users\a\M.tla"),
+            r"C:\Users\a\M.tla"
+        );
+        assert_eq!(
+            Windows.get_java_real(r"\\?\UNC\server\share\M.tla"),
+            r"\\server\share\M.tla"
+        );
+        assert_eq!(Windows.get_java_real(r"C:\a"), r"C:\a");
+        assert_eq!(Unix.get_java_real(r"/a/\\?\b"), r"/a/\\?\b");
+    }
+
+    #[test]
+    fn parses_a_path_as_javas_path_of_does() {
+        assert_eq!(
+            Windows.get_java_path("C:\\w/specs//M.tla"),
+            r"C:\w\specs\M.tla"
+        );
+        assert_eq!(
+            Windows.get_java_path("C:/w/./specs/../M.tla"),
+            r"C:\w\.\specs\..\M.tla"
+        );
+        assert_eq!(Windows.get_java_path("C:\\w\\"), r"C:\w");
+        assert_eq!(Windows.get_java_path("C:\\"), r"C:\");
+        assert_eq!(
+            Windows.get_java_path("//server/share//M.tla"),
+            r"\\server\share\M.tla"
+        );
+        assert_eq!(Unix.get_java_path("/w//M.tla"), "/w//M.tla");
+    }
 
     #[test]
     fn names_a_file_without_its_extension_as_std_does() {

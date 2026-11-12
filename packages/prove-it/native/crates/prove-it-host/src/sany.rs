@@ -89,9 +89,9 @@ fn write_sany_text(arguments: &[HostValue]) -> HookResult {
         file_name: file_name.as_deref(),
         load_module: &|name| sources.get(format!("module:{name}")),
         describe_file: &|name, origin| {
-            sources
+            Ok(sources
                 .get(format!("file:{}:{name}", get_origin(origin)))
-                .unwrap_or_default()
+                .unwrap_or_default())
         },
         root_extendees: &root_extendees,
         is_xml_export: false,

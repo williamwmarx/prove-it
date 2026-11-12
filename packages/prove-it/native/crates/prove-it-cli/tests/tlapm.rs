@@ -3,6 +3,8 @@
 //! theory and fingerprints it writes into its cache). Each run works in a copy of the fixtures,
 //! since tlapm keeps its cache in the directory it runs in.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -559,10 +561,7 @@ fn keeps_the_latest_ten_runs_of_history() {
         let run = history.join(format!("2026-01-{day:02}_00_00_00"));
         fs::create_dir_all(&run).expect("a run");
         let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(day * 86_400);
-        fs::File::open(&run)
-            .expect("the run")
-            .set_modified(modified)
-            .expect("its time");
+        common::set_modified(&run, modified);
     }
     run_in(&directory, &["--noproving", "Failures.tla"]);
     let mut kept: Vec<String> = fs::read_dir(&history)
@@ -591,10 +590,7 @@ fn keeps_the_dotfiles_of_the_history() {
     for name in [".old", "2026-01-01_00_00_00"] {
         let run = history.join(name);
         fs::create_dir_all(&run).expect("a run");
-        fs::File::open(&run)
-            .expect("the run")
-            .set_modified(std::time::UNIX_EPOCH)
-            .expect("its time");
+        common::set_modified(&run, std::time::UNIX_EPOCH);
     }
     for day in 2..=10 {
         fs::create_dir_all(history.join(format!("2026-01-{day:02}_00_00_00"))).expect("a run");
@@ -801,6 +797,16 @@ fn names_the_command_lines_module_as_tlapm_does() {
     assert_eq!(stderr(&output), expected);
     let absolute = directory.join("Notes.tla").to_string_lossy().into_owned();
     let output = run_in(&directory, &["-N", &absolute]);
+    // tlapm has no Windows build to say how it reads a path with a drive.
+    if cfg!(windows) {
+        assert_eq!(
+            stderr(&output),
+            format!(
+                "prove-it: not native yet: a module named by an absolute Windows path, which tlapm reads only on Unix: {absolute}\n"
+            )
+        );
+        return;
+    }
     assert_eq!(stderr(&output), expected.replace("./Notes.tla", &absolute));
 }
 

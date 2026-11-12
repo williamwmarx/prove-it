@@ -25,7 +25,9 @@ jobs:
   macos:
     name: macOS
     runs-on: macos-15
-    timeout-minutes: 30
+    # Testing arm64 takes some 20 minutes, and x64 under Rosetta, which translates every test
+    # binary as it first runs, longer.
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -38,7 +40,7 @@ jobs:
           cd packages/prove-it/native
           rustup toolchain install
           rustup target add x86_64-apple-darwin
-          cargo test --locked
+          cargo test --locked --no-fail-fast
           cd ..
           bun install --frozen-lockfile --ignore-scripts
           bun scripts/platform-packages.ts build
@@ -59,7 +61,7 @@ jobs:
           echo "298b4c7b3cb80765c8703e42b90324a4ece3b6634947b89e769c3c980ab55185  $tools/node.tar.gz" | shasum -a 256 --check --quiet -
           tar -xzf "$tools/node.tar.gz" -C "$tools"
           cd packages/prove-it/native
-          cargo test --locked --target x86_64-apple-darwin
+          cargo test --locked --no-fail-fast --target x86_64-apple-darwin
           cd ..
           export PATH="$tools/package/bin:$tools/node-v24.16.0-darwin-x64/bin:$PATH"
           # Each check also has Rosetta translate the binary ahead of time, which takes seconds on a
@@ -100,7 +102,12 @@ jobs:
           npm install --global --no-audit --no-fund bun@1.4.4
           cd packages/prove-it/native
           rustup toolchain install
-          cargo test --locked
+          # The runner's TEMP is a short (8.3) path, and TLC names a module found through a path
+          # other than its real one by a URL the binary declines on Windows, so the tests, which
+          # check specs in temporary directories, use the runner's own.
+          TEMP="$(cygpath -w "$RUNNER_TEMP")"
+          export TEMP TMP="$TEMP"
+          cargo test --locked --no-fail-fast
           cd ..
           bun install --frozen-lockfile --ignore-scripts
           bun scripts/platform-packages.ts build

@@ -38,6 +38,7 @@ use tla_engine::clock::Instant;
 
 use crate::check::not_native;
 use crate::host::{Entry, FileKind, Host};
+use crate::host_path::Platform;
 use crate::messages::Output;
 use crate::outcome::Outcome;
 use crate::overlay::Overlay;
@@ -173,6 +174,10 @@ impl<'a> Io<'a> {
 
     fn exists(&self, path: &str) -> bool {
         self.get_kind(path) != FileKind::Absent
+    }
+
+    fn platform(&self) -> Platform {
+        self.call(|session| session.output.host.platform())
     }
 }
 
@@ -928,6 +933,16 @@ fn generate_obligations(
     // reads them in that order into a map by name, so the first of two modules with one name wins.
     let mut mains = Vec::new();
     for (file, path) in files.iter().zip(module_paths).rev() {
+        // The port reads paths by tlapm's Unix rules; tlapm has no Windows build to say how it
+        // reads a drive or a path rooted at `\`.
+        if io.platform() == Platform::Windows
+            && Platform::Windows.is_absolute(path)
+            && !path.starts_with('/')
+        {
+            return Generated::Declined(format!(
+                "a module named by an absolute Windows path, which tlapm reads only on Unix: {file}"
+            ));
+        }
         let found = match search.find(io, path) {
             Ok(Some(found)) => found,
             Ok(None) => {
