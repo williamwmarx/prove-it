@@ -1696,7 +1696,7 @@
           "location": "4:1:4:39",
           "text": "1 = 1\n",
           "status": "failed",
-          "reason": "isabelle failed: Isabelle's port reads ASCII theories only"
+          "reason": "isabelle failed: isabelle declined: the text holds a lone surrogate"
         }
       ],
       "missingProofCount": 0,
@@ -1708,7 +1708,7 @@
         "location": "4:1:4:39",
         "text": "1 = 1\n",
         "status": "failed",
-        "reason": "isabelle failed: Isabelle's port reads ASCII theories only"
+        "reason": "isabelle failed: isabelle declined: the text holds a lone surrogate"
       }
     ]
   },
