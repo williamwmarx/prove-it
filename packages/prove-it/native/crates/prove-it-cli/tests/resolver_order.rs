@@ -319,6 +319,11 @@ fn finds_specs_modules_and_overrides_as_tlc_does() {
         let root_text = root.to_string_lossy().into_owned();
         // TLC writes no trace exploration spec with -noGenerateSpecTE.
         let args = case.args.iter().flat_map(|arg| {
+            // A library list is separated as the host's File.pathSeparator, `;` on Windows.
+            let arg = match arg.strip_prefix("-DTLA-Library=") {
+                Some(list) if cfg!(windows) => format!("-DTLA-Library={}", list.replace(':', ";")),
+                _ => (*arg).to_owned(),
+            };
             let arg = arg.replace("{root}", &root_text);
             let is_class = arg == "tlc2.TLC";
             std::iter::once(arg).chain(is_class.then(|| "-noGenerateSpecTE".to_owned()))
