@@ -250,6 +250,14 @@ pub struct Compiled {
     pub(crate) is_reference_exact: bool,
     /// For `SUBSET S`: S, which `\subseteq` of two power sets compares in their place.
     pub(crate) subset_base: Option<Box<Compiled>>,
+    /// For a set: whether TLC keeps it lazy, not as a set enumeration or an interval
+    /// (`Reducible`), such as SUBSET S, [S -> T], [a : S], S \X T, or the union of one with
+    /// another.
+    pub(crate) is_irreducible: bool,
+    /// For a set: whether TLC is known to hold it as a set enumeration (`Reducible`) though the
+    /// compiled set isn't one, as a model's constant, or a union, intersection or difference TLC
+    /// reduces.
+    pub(crate) is_reducible: bool,
 }
 
 impl Compiled {
@@ -376,6 +384,8 @@ pub(crate) fn leaf(eval: Eval, footprint: Footprint) -> Compiled {
         element_references: None,
         is_reference_exact: false,
         subset_base: None,
+        is_irreducible: false,
+        is_reducible: false,
     }
 }
 
@@ -1373,7 +1383,7 @@ impl<'a> Compiler<'a> {
     // Whether evaluating an expression may print, draw, set a TLC register, or write or read a
     // file, itself or through the definitions it names. An operator bound locally may do
     // anything.
-    fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    pub(crate) fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         if !seen.insert(node) {
             return false;
         }
@@ -2090,6 +2100,10 @@ impl<'a> Compiler<'a> {
                 // and each set in it stream in order.
                 return match self.ir.constants[index as usize].value {
                     Some(value) => Ok(Compiled {
+                        is_reducible: matches!(
+                            self.ir.values.list[value as usize],
+                            tla_ir::Value::Set(_)
+                        ),
                         is_in_order: true,
                         are_elements_in_order: true,
                         are_elements_of_elements_in_order: true,

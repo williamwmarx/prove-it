@@ -2,6 +2,7 @@
 //! the TypeScript engine runs in the interpreter (`PURE_BUILTINS`) are `bridged.rs`'s, except
 //! ToString, which prints as the interpreter's printer does (`format_value`).
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use tla_ir::{Builtin, Index, NodeId, NodeKind, Pattern, Resolution};
@@ -260,6 +261,7 @@ impl Compiler<'_> {
             // own order (SubsetValue.elementsNormalized), so S's value does where S has no
             // reference.
             has_infinite_part: base.may_be_infinite(),
+            is_irreducible: true,
             reference: combine_references(&[base], |_, mut bases| {
                 Ok(Lazy::Subset(Box::new(bases.remove(0))))
             })
@@ -1627,7 +1629,10 @@ impl Compiler<'_> {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
-                return self.compile_set_operation(name, &left, &right);
+                let has_effect = operands
+                    .iter()
+                    .any(|operand| self.may_have_effect(operand.node, &mut HashSet::new()));
+                return self.compile_set_operation(name, &left, &right, has_effect);
             }
             "SUBSET" => {
                 arity(1)?;
@@ -1742,8 +1747,13 @@ impl Compiler<'_> {
                 );
                 // The domain of a function TLC keeps lazy is its bound's set
                 // (`FcnLambdaValue.getDomain`), which the engine has no value for but can test.
+                // TLC evaluates the function to make it.
                 let function = function.eval;
+                let function_part = function.clone();
                 Compiled {
+                    parts: Some(super::parts(move |machine| {
+                        function_part(machine).map(|_| ())
+                    })),
                     member: Some(super::member(move |machine, element| {
                         let function = function(machine)?;
                         if lazy_function::is_lazy(machine, function) {
@@ -2194,26 +2204,80 @@ impl Compiler<'_> {
         name: &str,
         left: &Compiled,
         right: &Compiled,
+        has_effect: bool,
     ) -> Compiling<Option<Compiled>> {
         // A set the engine tests for membership without building it, such as Nat \ {0}, combines
         // the operands' tests.
         let is_lazy = |set: &Compiled| set.infinite.is_some() || set.member.is_some();
+        // Whether TLC's value is Reducible, a set enumeration or an interval, where the compiled
+        // set tells: a set with a membership test, such as DOMAIN f, may be either.
+        let is_reducible = |set: &Compiled| {
+            if set.is_enumerated || set.interval.is_some() || set.is_reducible {
+                Some(true)
+            } else {
+                (set.infinite.is_some() || set.is_irreducible).then_some(false)
+            }
+        };
+        // TLC reduces a union of two Reducible sets, an intersection with one, and a difference
+        // from one (OPCODE_cup, OPCODE_cap, OPCODE_setdiff).
+        let is_reduced = match name {
+            "\\cup" => is_reducible(left) == Some(true) && is_reducible(right) == Some(true),
+            "\\cap" => is_reducible(left) == Some(true) || is_reducible(right) == Some(true),
+            _ => is_reducible(left) == Some(true),
+        };
+        // TLC keeps the union of a set it can't reduce with any set as a SetCupValue.
+        let is_irreducible = name == "\\cup"
+            && (is_reducible(left) == Some(false) || is_reducible(right) == Some(false));
+        // TLC evaluates both operands, left first, before it tests either for an element
+        // (OPCODE_cup, OPCODE_cap, OPCODE_setdiff), so a test that one operand decides runs the
+        // other's parts too.
+        let operand_parts = self.once_a_round(vec![Self::parts_of(left), Self::parts_of(right)]);
         let lazy_member = if is_lazy(left) || is_lazy(right) {
             let (left_member, right_member) = (self.member_test(left), self.member_test(right));
-            Some(match name {
-                "\\cup" => member(move |machine, element| {
-                    Ok(left_member(machine, element)? || right_member(machine, element)?)
-                }),
+            let tested = match name {
+                // TLC makes the union of a Reducible set and another with the Reducible one first,
+                // and SetCupValue.member asks its first set first, so comparing the element with
+                // that set's elements fails first. It builds the union of two Reducible sets
+                // (OPCODE_cup: `Reducible.cup`). Where it may build the union or take the right
+                // set first, the engine stops.
+                "\\cup" => match (is_reducible(left), is_reducible(right)) {
+                    (Some(false), Some(true)) => member(move |machine, element| {
+                        Ok(right_member(machine, element)? || left_member(machine, element)?)
+                    }),
+                    (_, Some(false)) => member(move |machine, element| {
+                        Ok(left_member(machine, element)? || right_member(machine, element)?)
+                    }),
+                    _ => member(|_, _| {
+                        Err(Bail(
+                            "a membership in a union TLC may build or order either way",
+                        ))
+                    }),
+                },
                 "\\cap" => member(move |machine, element| {
                     Ok(left_member(machine, element)? && right_member(machine, element)?)
                 }),
                 _ => member(move |machine, element| {
                     Ok(left_member(machine, element)? && !right_member(machine, element)?)
                 }),
+            };
+            let parts = operand_parts.clone();
+            // An operand's test may evaluate it again after its parts, which an effect shows.
+            Some(if has_effect {
+                member(|_, _| {
+                    Err(Bail(
+                        "a membership in a set operation on an operand with effects",
+                    ))
+                })
+            } else {
+                member(move |machine, element| {
+                    machine.run_parts(&parts)?;
+                    tested(machine, element)
+                })
             })
         } else {
             None
         };
+        let lazy_parts = lazy_member.as_ref().map(|_| operand_parts.clone());
         // TLC enumerates the left set of an intersection or a difference where it can, testing
         // each element for membership in the right one (SetCapValue.elements and
         // SetDiffValue.elements), so a set enumeration it keeps in order keeps that order.
@@ -2227,7 +2291,9 @@ impl Compiler<'_> {
             let is_kept_in_right = name == "\\cap";
             return Ok(Some(Compiled {
                 is_costly: true,
+                is_reducible: is_reduced,
                 member: lazy_member,
+                parts: lazy_parts,
                 ..leaf(
                     eval(move |machine| {
                         let left = left_eval(machine)?;
@@ -2258,6 +2324,7 @@ impl Compiler<'_> {
             return Ok(Some(Compiled {
                 is_normalized: false,
                 infinite: Some("Combined"),
+                is_reducible: is_reduced,
                 member: lazy_member,
                 parts: Some(super::parts(move |machine| {
                     left_parts(machine)?;
@@ -2340,7 +2407,10 @@ impl Compiler<'_> {
                     .iter()
                     .all(|set| set.is_in_order || set.is_reference_exact),
             member: lazy_member,
+            parts: lazy_parts,
             reference,
+            is_irreducible,
+            is_reducible: is_reduced,
             ..binary(left, right, operation, true, false)
         }))
     }

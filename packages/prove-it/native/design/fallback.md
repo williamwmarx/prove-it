@@ -505,6 +505,8 @@ where TLC answers TRUE (found by #327's adversarial round; each wrong on main al
 | `{3, 1, 2} = {1, "a"}` | `Attempted to compare string "a" with non-string:\n1` | `Attempted to check equality of the set {1, 2, 3} with the value:\n{1, "a"}` |
 | `Cardinality(UNION {{2, 1}, {"a"}})` | `Attempted to check equality of integer 2 with non-integer:\n"a"` | `Attempted to compare integer 1 with non-integer:\n"a"` |
 | `1 \in UNION {{"a"}, {2}}` | `Attempted to check equality of string "a" with non-string:\n2` | `Attempted to compare integer 2 with non-integer:\n"a"` |
+| `1 \in (DOMAIN [a \|-> 0]) \cup {1}`, where TLC holds a record's domain unnormalized (`RecordValue.getDomain`) and a function's normalized | `Attempted to check equality of string "a" with non-string:\n1` | `Attempted to compare integer 1 with non-integer:\n"a"` |
+| Membership in a set of values TLC fails to compare, alone or in a union (`unit/union-grid.test.ts` pins 416 such cells, each the same on main): `3 \in SUBSET {1, "a"}`, `3 \in [a : {1, "a"}]`, `3 \in {1, "a"} \X {1}`, `3 \in [{1} -> {1, "a"}]`, `3 \in {1, "a"} \cap {1, "a"}`, `3 \in {1, "a"} \cup {1, 2}` | the comparison normalizing the set fails at, such as `Attempted to compare string "a" with non-string:\n1` | the element's kind check, such as `Attempted to check if non-record\n3\nis in the set of records:…` |
 
 The last three under AssertError, with TLC's message, answer FALSE where TLC answers TRUE.
 
@@ -755,7 +757,6 @@ TLC answer the test held is here:
 
 | Repro | TLC | Native |
 |---|---|---|
-| `ASSUME 1 \in Int \cup {"none"}` | assumption violation | success |
 | `PrintT("x٣" :> 5)` | `[x٣ \|-> 5]` | `("x٣" :> 5)` |
 | `PrintT` of a record TLC sorts while comparing it with itself and the records inside it | `<<[fld2 \|-> 2, fld1 \|-> 1]>>` | `<<[fld1 \|-> 1, fld2 \|-> 2]>>` |
 | a function over a domain TLC keeps lazy, applied only where defined (`\div 0` elsewhere) | success | the assumption fails: "The second argument of \div is 0." |
@@ -990,6 +991,15 @@ Checks the binary answered and now declines, because the answer matched TLC only
   against TLC at d8fb231; the others are listed under "Known wrong outputs", or are TLC's warnings
   TLC prints before the error, which `onPrint` doesn't get, or TLC's call stack after a stack
   overflow, which `TlaStackOverflowError` doesn't hold.
+
+- **A set operation whose operand is a lazy set of values TLC fails to compare, or has effects**
+  (#362), 140 cells of `unit/union-grid.test.ts` that matched on main. TLC builds both operands of
+  `\cup`, `\cap` and `\` before it tests either (OPCODE_cup), so the engine now builds them too.
+  - 104 cells, such as `1 \in {1, 2} \cup SUBSET {1, "a"}` (and likewise with `[a : S]`, `S \X T`
+    or `[S -> T]` of such values on the right): building `{1, "a"}` stops the engine, where it
+    answered from the left operand alone.
+  - 36 cells with an operand that prints or sets a register: building an operand and then testing
+    it would evaluate it twice, so the engine stops before it evaluates either.
 
 - **Strings made during the search** (the string-order change; check-log on the same log, 1386
   native on main, 1384 after): `unit/check.test.ts:704` and `unit/parallel.test.ts:18` with

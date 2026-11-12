@@ -194,8 +194,58 @@ describe("check matches TLC", () => {
     ]);
   });
 
-  it("checks membership in a union of a non-enumerable set", async () => {
+  it("checks membership in a union of a non-enumerable set against the enumerable side first", async () => {
+    expect((await checkModule('ASSUME 1 \\in Int \\cup {"none"}')).status).toBe(
+      "assumption-violation",
+    );
     expect((await checkModule("ASSUME 5 \\in UNION {Nat}")).status).toBe("success");
+  });
+
+  // TLC builds the union of two set enumerations or intervals, testing the right one's elements
+  // in the left one, and otherwise tests the one it can enumerate first (OPCODE_cup).
+  it.each([
+    [
+      '1 \\in (DOMAIN ("a" :> 0)) \\cup {1}',
+      'Attempted to compare integer 1 with non-integer:\n"a"',
+    ],
+    [
+      '1 \\in {1} \\cup (DOMAIN ("a" :> 0))',
+      'Attempted to check equality of integer 1 with non-integer:\n"a"',
+    ],
+    [
+      "1 \\in {1} \\cup (DOMAIN [a |-> 0])",
+      'Attempted to check equality of integer 1 with non-integer:\n"a"',
+    ],
+    [
+      '1 \\in (DOMAIN <<5>>) \\cup {"x"}',
+      'Attempted to check if the value:\n"x"\nis in the integer interval 1..1',
+    ],
+    [
+      '1 \\in (1..2) \\cup {"x"}',
+      'Attempted to check if the value:\n"x"\nis in the integer interval 1..2',
+    ],
+    [
+      '1 \\in ({1, 2} \\cap Nat) \\cup {"x"}',
+      'Attempted to check equality of integer 1 with non-integer:\n"x"',
+    ],
+    [
+      '{"a"} \\in {1} \\cup (SUBSET {"a"})',
+      'Attempted to check equality of integer 1 with non-integer:\n{"a"}',
+    ],
+  ])("fails as TLC does testing %s", async (assumption, message) => {
+    const result = await checkModule(`ASSUME ${assumption}`);
+    expect([result.status, result.violations[0]?.headline]).toEqual([
+      "assumption-violation",
+      `Evaluating assumption line 6, col 8 to line 6, col ${7 + assumption.length} of module M failed.\n${message}`,
+    ]);
+  });
+
+  it("tests a union with a power set, a set of records or a domain where TLC does", async () => {
+    expect((await checkModule('ASSUME 1 \\in (SUBSET {"a"}) \\cup {1}')).status).toBe("success");
+    expect((await checkModule("ASSUME 1 \\in [a : {1}] \\cup {1}")).status).toBe("success");
+    expect((await checkModule("ASSUME 3 \\in (1..2) \\cup (DOMAIN <<5, 6, 7>>)")).status).toBe(
+      "success",
+    );
   });
 
   it("defers a set operation on a value that isn't a set until it enumerates the result", async () => {

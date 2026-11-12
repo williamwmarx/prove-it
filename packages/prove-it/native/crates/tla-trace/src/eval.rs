@@ -5653,6 +5653,9 @@ fn filter_test<'a, 'ir>(
     move |element, base, predicate| evaluator.filter_member(element, base, predicate)
 }
 
+/// The most values of a union TLC builds that the evaluator compares two by two.
+const MAXIMUM_COMPARED_UNION: usize = 512;
+
 enum Combined {
     Set(Value),
     Union(Box<Combined>, Box<Combined>),
@@ -5666,6 +5669,34 @@ impl Combined {
         match self {
             Combined::Set(set) => evaluator.member(element, set),
             Combined::Union(left, right) => {
+                // TLC builds the union of two Reducible sets, testing each element of the right
+                // one in the left one and then the element in the unnormalized result
+                // (`Reducible.cup`), whose comparisons the evaluator doesn't follow. Where every
+                // two of the values compare, none of those comparisons fails, and the membership
+                // is the operands'.
+                if left.is_reducible() && right.is_reducible() {
+                    let mut values = self.values()?;
+                    values.push(element.clone());
+                    let is_one_kind = [
+                        |value: &Value| matches!(value, Value::Int(_)),
+                        |value: &Value| matches!(value, Value::Str(_)),
+                        |value: &Value| matches!(value, Value::Bool(_)),
+                    ]
+                    .iter()
+                    .any(|is_kind| values.iter().all(is_kind));
+                    if !is_one_kind
+                        && (values.len() > MAXIMUM_COMPARED_UNION
+                            || values.iter().enumerate().any(|(index, value)| {
+                                values[index + 1..]
+                                    .iter()
+                                    .any(|other| compare(value, other).is_err())
+                            }))
+                    {
+                        return fail(
+                            "a membership in a union TLC builds of values it may fail to compare",
+                        );
+                    }
+                }
                 let (first, second) = if !left.is_reducible() && right.is_reducible() {
                     (right, left)
                 } else {
@@ -5676,11 +5707,29 @@ impl Combined {
         }
     }
 
+    // The values of a union of Reducible sets, one integer standing for an interval's.
+    fn values(&self) -> Evaluated<Vec<Value>> {
+        Ok(match self {
+            Combined::Set(Value::Interval(low, high)) => (low <= high)
+                .then_some(Value::Int(*low))
+                .into_iter()
+                .collect(),
+            Combined::Set(Value::Unsorted(values)) => values.to_vec(),
+            Combined::Set(set) => elements(set)?.to_vec(),
+            Combined::Union(left, right) => {
+                let mut values = left.values()?;
+                values.extend(right.values()?);
+                values
+            }
+        })
+    }
+
     // Whether TLC holds the set as a set enumeration or an interval (`Reducible`), as it holds
     // the union of two.
     fn is_reducible(&self) -> bool {
         match self {
-            Combined::Set(set) => is_reducible(set),
+            // A set enumeration TLC fails to normalize is one all the same.
+            Combined::Set(set) => is_reducible(set) || matches!(set, Value::Unsorted(_)),
             Combined::Union(left, right) => left.is_reducible() && right.is_reducible(),
         }
     }
