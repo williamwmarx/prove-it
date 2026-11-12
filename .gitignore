@@ -49,3 +49,6 @@ packages/prove-it/tests/conformance/.prover-differential.json
 packages/prove-it/tests/conformance/.z3-parity-*.json
 packages/prove-it/tests/conformance/.z3-parity-*.jsonl
 packages/prove-it/tests/conformance/.prover-driver-differential.json
+
+# The trace exploration specs the CLI tests write beside their fixtures, as TLC does
+packages/prove-it/tests/fixtures/**/*_TTrace_*

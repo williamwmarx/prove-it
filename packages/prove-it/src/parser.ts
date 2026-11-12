@@ -347,11 +347,7 @@ export const extractModule = (source: string, name: string) => {
 // generator.
 type ParseMode = "tlc" | "tlapm";
 
-const parse = (
-  source: string,
-  mode: ParseMode,
-  sourceTokens = tokenize(source),
-): Module => {
+const parse = (source: string, mode: ParseMode, sourceTokens = tokenize(source)): Module => {
   const isTlapm = mode === "tlapm";
   const tokens = isTlapm ? sourceTokens : sourceTokens.map(readAtAsIdentifier);
   const cursor = { index: 0, offsideColumns: [] as number[] };
@@ -1206,9 +1202,7 @@ const parse = (
             kind: "Apply",
             operator: token.text,
             args: [
-              isTlapm
-                ? parseExpression(9)
-                : parsePrefixOperand(token, precedence, precedence),
+              isTlapm ? parseExpression(9) : parsePrefixOperand(token, precedence, precedence),
             ],
             location,
           };
