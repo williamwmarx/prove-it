@@ -22,7 +22,7 @@ use tla_values::{Id, Store};
 use crate::Unsupported;
 use crate::failure::nested;
 use crate::pretty::pretty_print;
-use crate::print::{format_pretty, format_printed, format_value};
+use crate::print::{format_pretty, format_printed, format_value, holds_unknown_key};
 use crate::random::{random_element, random_subset};
 use crate::sets::{
     as_tuple, cardinality, difference, failing_operation, intersection, is_member,
@@ -31,10 +31,14 @@ use crate::sets::{
 use crate::value::{
     Class, EvalError, Evaluated, Function, Lazy, RECORD_VALUE_FIELDS, Search, Text, TlcMessage,
     Value, compare, elements, equals, fail, fail_coded, fail_runtime, fail_with,
-    failing_comparisons, find_key, from_store, is_enumerable, lambda_as_function,
-    mark_unnormalized, note_sorted, set_of, sorted_function, take_is_record_built, unnormalized,
-    unsorted_failure, written_function,
+    failing_comparisons, find_key, from_store, holds_record_out_of_order, is_enumerable,
+    lambda_as_function, mark_unnormalized, note_sorted, set_of, sorted_function,
+    take_is_record_built, unnormalized, unsorted_failure, written_function,
 };
+
+/// Why the evaluator declines an EXCEPT of a key the function lacks: TLC leaves the function as
+/// it is and warns that the EXCEPT was applied to non-existing fields (`Tool`'s OPCODE_exc).
+const EXCEPT_OF_MISSING_KEY: &str = "an EXCEPT of a key the function lacks, which TLC warns of";
 
 /// The bindings an expression sees, innermost first.
 #[derive(Clone, Default)]
@@ -1312,6 +1316,24 @@ impl<'ir> Evaluator<'ir> {
         result
     }
 
+    // Whether an expression builds its value in place, from records, tuples, set enumerations,
+    // `:>` and `@@` of numbers and strings, so that nothing compared it before.
+    fn is_built_here(&self, node: NodeId) -> bool {
+        match &self.ir.nodes.arena[node as usize].kind {
+            NodeKind::Number(_) | NodeKind::String(_) => true,
+            NodeKind::Record(fields) => fields.iter().all(|&(_, value)| self.is_built_here(value)),
+            NodeKind::Tuple(items) | NodeKind::SetEnumeration(items) => {
+                items.iter().all(|&item| self.is_built_here(item))
+            }
+            NodeKind::Apply { name, args } => {
+                !name.is_local
+                    && matches!(self.name(name.text), ":>" | "@@")
+                    && args.iter().all(|&arg| self.is_built_here(arg))
+            }
+            _ => false,
+        }
+    }
+
     // The nodes whose value TLC's `CallStackTool` gives a source (`SOURCED_KINDS` and
     // `SOURCED_OPERATORS` in `evaluate.ts`).
     fn is_sourced(&self, node: NodeId) -> bool {
@@ -2165,7 +2187,8 @@ impl<'ir> Evaluator<'ir> {
                 };
                 let inner = own_context(bound, frame, *is_self)
                     .primed(context.is_primed || bound.is_primed);
-                self.defined_function(bounds, definition.body, &inner)
+                let is_recursive = definition.flags & Definition::SELF_REFERENTIAL != 0;
+                self.defined_function(bounds, definition.body, &inner, is_recursive)
             }
             Binding::Operator(_) => fail("an operator used as a value"),
         }
@@ -2292,14 +2315,19 @@ impl<'ir> Evaluator<'ir> {
             if evaluated.is_ok() && self.searched_failing.contains(&node) {
                 return fail("a startup definition the search found failing that computes");
             }
-            let Ok(value) = evaluated else {
-                if ir.model.startup.definitions.contains(&index)
-                    && effects(self) == before
-                    && !self.may_reach(self.definition(node).body, UNSEEN_EFFECTS)
-                {
-                    self.failed_startup.insert(node);
+            let value = match evaluated {
+                Ok(value) => value,
+                // TLC warns as it goes on, which the evaluator doesn't print.
+                Err(error) if error.reason == EXCEPT_OF_MISSING_KEY => return Err(error),
+                Err(_) => {
+                    if ir.model.startup.definitions.contains(&index)
+                        && effects(self) == before
+                        && !self.may_reach(self.definition(node).body, UNSEEN_EFFECTS)
+                    {
+                        self.failed_startup.insert(node);
+                    }
+                    continue;
                 }
-                continue;
             };
             if ir.model.startup.definitions.contains(&index) {
                 self.cache.insert((node, false), value.clone());
@@ -2567,11 +2595,15 @@ impl<'ir> Evaluator<'ir> {
             // TLC evaluates the function constructor SANY makes of the definition, which has the
             // definition's range.
             DefinitionForm::Function(bounds) => {
-                self.in_frame(StackFrame::Node(node), &mut |evaluator| {
+                let keeps_lazy = u32::from(definition.flags & Definition::SELF_REFERENTIAL != 0);
+                self.keeping_lazy += keeps_lazy;
+                let value = self.in_frame(StackFrame::Node(node), &mut |evaluator| {
                     evaluator.nested(|evaluator| {
                         evaluator.construct_function(bounds, definition.body, &context.global())
                     })
-                })?
+                });
+                self.keeping_lazy -= keeps_lazy;
+                value?
             }
             DefinitionForm::Operator(params) if params.is_empty() => {
                 self.evaluate_definition(node, definition.body, &context.global())?
@@ -3371,14 +3403,20 @@ impl<'ir> Evaluator<'ir> {
 
     // A function a definition or a LET defines. TLC builds it in the frame of the definition,
     // which the replay doesn't record, so a failure building it isn't one the replay follows.
+    // TLC keeps a function whose definition reaches itself lazy (SANY's RecursiveFcnSpec, which
+    // `Tool`'s OPCODE_rfs never builds), whatever its domain.
     fn defined_function(
         &mut self,
         bounds: &[Bound],
         body: NodeId,
         context: &Context,
+        is_recursive: bool,
     ) -> Evaluated<Value> {
         // A function whose definition reaches itself as it is built recurses as an operator does.
+        let keeps_lazy = u32::from(is_recursive);
+        self.keeping_lazy += keeps_lazy;
         let result = self.nested(|evaluator| evaluator.construct_function(bounds, body, context));
+        self.keeping_lazy -= keeps_lazy;
         if result.is_err()
             && let Some(stack) = &mut self.call_stack
         {
@@ -3549,6 +3587,11 @@ impl<'ir> Evaluator<'ir> {
                 stack.is_fingerprinted = true;
                 stack.is_frozen_before_fingerprint = stack.is_frozen;
             }
+        }
+        // TLC evaluates the body of a function it keeps lazy only at the keys it applies it to
+        // (`FcnLambdaValue.apply`), which may not include the one the evaluator failed at.
+        if result.is_err() && !is_built {
+            return fail("the body of a function TLC keeps lazy, at a key it may not evaluate");
         }
         result
     }
@@ -4079,10 +4122,16 @@ impl<'ir> Evaluator<'ir> {
                 ),
             );
         };
-        // TLC leaves a function as it is where the key isn't in its domain.
+        // TLC leaves a function as it is where the key isn't in its domain, and warns that the
+        // EXCEPT was applied to non-existing fields (`Tool`'s OPCODE_exc), which the evaluator
+        // doesn't print. `MP.printWarning` prints nothing under -nowarning.
         let Some(position) = find_key(function, &key)? else {
             self.except_skips += 1;
-            return Ok(value.clone());
+            return if self.ir.model.is_warning_enabled {
+                fail(EXCEPT_OF_MISSING_KEY)
+            } else {
+                Ok(value.clone())
+            };
         };
         let next = self.except(&function.range[position], rest, update, context)?;
         let mut range = function.range.clone();
@@ -5325,6 +5374,9 @@ impl<'ir> Evaluator<'ir> {
                     return as_java_failure(signature, checked.map(|()| Value::Bool(true)));
                 }
                 checked?;
+                if values.iter().any(holds_unknown_key) {
+                    return fail("printing a key whose letters Unicode's categories decide");
+                }
                 self.printed
                     .push(values.iter().map(format_printed).collect());
                 if name == "Print" {
@@ -5351,6 +5403,9 @@ impl<'ir> Evaluator<'ir> {
                 for value in [message, left, right] {
                     let value = self.settle(&value).map_err(unfollowed)?;
                     check_unchecked(&value).map_err(unfollowed)?;
+                    if holds_unknown_key(&value) {
+                        return fail("printing a key whose letters Unicode's categories decide");
+                    }
                     self.printed.push(vec![format_printed(&value)]);
                 }
                 Value::Bool(false)
@@ -5477,6 +5532,18 @@ impl<'ir> Evaluator<'ir> {
             "ToString" => {
                 arity(1)?;
                 let value = self.operand(&operands[0])?;
+                // TLC sorts a record's fields in place wherever it compares the record, and
+                // shares a LET definition's value and a constant definition's, which it sorts as
+                // it starts, between their uses, which the evaluator doesn't follow: a record
+                // ToString reaches through one prints as written only where that is its sorted
+                // order.
+                let is_built_here = match &operands[0] {
+                    Operand::Node(node, _) => self.is_built_here(*node),
+                    Operand::Value(_) => false,
+                };
+                if !is_built_here && holds_record_out_of_order(&value) {
+                    return fail("ToString of a record TLC may have sorted");
+                }
                 let checked = check_unchecked(&value);
                 if let Err(EvalError {
                     message: Some(message),
@@ -5806,6 +5873,9 @@ fn filter_test<'a, 'ir>(
     move |element, base, predicate| evaluator.filter_member(element, base, predicate)
 }
 
+/// The most values of a union TLC builds that the evaluator compares two by two.
+const MAXIMUM_COMPARED_UNION: usize = 512;
+
 enum Combined {
     Set(Value),
     Union(Box<Combined>, Box<Combined>),
@@ -5819,6 +5889,34 @@ impl Combined {
         match self {
             Combined::Set(set) => evaluator.member(element, set),
             Combined::Union(left, right) => {
+                // TLC builds the union of two Reducible sets, testing each element of the right
+                // one in the left one and then the element in the unnormalized result
+                // (`Reducible.cup`), whose comparisons the evaluator doesn't follow. Where every
+                // two of the values compare, none of those comparisons fails, and the membership
+                // is the operands'.
+                if left.is_reducible() && right.is_reducible() {
+                    let mut values = self.values()?;
+                    values.push(element.clone());
+                    let is_one_kind = [
+                        |value: &Value| matches!(value, Value::Int(_)),
+                        |value: &Value| matches!(value, Value::Str(_)),
+                        |value: &Value| matches!(value, Value::Bool(_)),
+                    ]
+                    .iter()
+                    .any(|is_kind| values.iter().all(is_kind));
+                    if !is_one_kind
+                        && (values.len() > MAXIMUM_COMPARED_UNION
+                            || values.iter().enumerate().any(|(index, value)| {
+                                values[index + 1..]
+                                    .iter()
+                                    .any(|other| compare(value, other).is_err())
+                            }))
+                    {
+                        return fail(
+                            "a membership in a union TLC builds of values it may fail to compare",
+                        );
+                    }
+                }
                 let (first, second) = if !left.is_reducible() && right.is_reducible() {
                     (right, left)
                 } else {
@@ -5829,11 +5927,29 @@ impl Combined {
         }
     }
 
+    // The values of a union of Reducible sets, one integer standing for an interval's.
+    fn values(&self) -> Evaluated<Vec<Value>> {
+        Ok(match self {
+            Combined::Set(Value::Interval(low, high)) => (low <= high)
+                .then_some(Value::Int(*low))
+                .into_iter()
+                .collect(),
+            Combined::Set(Value::Unsorted(values)) => values.to_vec(),
+            Combined::Set(set) => elements(set)?.to_vec(),
+            Combined::Union(left, right) => {
+                let mut values = left.values()?;
+                values.extend(right.values()?);
+                values
+            }
+        })
+    }
+
     // Whether TLC holds the set as a set enumeration or an interval (`Reducible`), as it holds
     // the union of two.
     fn is_reducible(&self) -> bool {
         match self {
-            Combined::Set(set) => is_reducible(set),
+            // A set enumeration TLC fails to normalize is one all the same.
+            Combined::Set(set) => is_reducible(set) || matches!(set, Value::Unsorted(_)),
             Combined::Union(left, right) => left.is_reducible() && right.is_reducible(),
         }
     }

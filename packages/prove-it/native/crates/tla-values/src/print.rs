@@ -153,9 +153,17 @@ pub fn write_value(store: &Store, id: Id, out: &mut Vec<u16>) -> Outcome<()> {
             let keys: Vec<Id> = (0..size)
                 .filter_map(|index| store.peek_key(id, index))
                 .collect();
-            let is_record = keys
-                .iter()
-                .all(|&key| store.kind_of(key) == KIND_STRING && is_field_name(store.text_of(key)));
+            let mut is_record = true;
+            for &key in &keys {
+                if store.kind_of(key) != KIND_STRING {
+                    is_record = false;
+                    continue;
+                }
+                match get_field_name(store.text_of(key)) {
+                    Some(is_name) => is_record &= is_name,
+                    None => return Err(Bail("a key whose letters Unicode's categories decide")),
+                }
+            }
             let (open, arrow, separator, close) = if is_record {
                 ("[", " |-> ", ", ", "]")
             } else {
@@ -204,6 +212,10 @@ pub enum Construction {
     /// `[x \in S |-> e]` over a set enumeration or an interval, or `k :> v`: how its keys are
     /// built, and how its values are.
     Function(Box<Construction>, Box<Construction>),
+    /// `[x \in S |-> e]` over a set TLC keeps lazy, such as `S \X T` or `SUBSET S`, which TLC
+    /// keeps lazy too (`FcnLambdaValue`) and builds as it prints, from the body's values as they
+    /// are, unnormalized: how its keys are built, and how its values are.
+    LazyFunction(Box<Construction>, Box<Construction>),
     /// `SUBSET S` (`SubsetValue`) of a set enumeration or an interval.
     Subset(Box<Construction>),
     /// `[S -> T]` (`SetOfFcnsValue`) of set enumerations or intervals.
@@ -367,7 +379,18 @@ fn write_normalized(
                 )
             })
         }
-        Construction::Function(key, value) => {
+        Construction::Function(key, value) | Construction::LazyFunction(key, value) => {
+            // TLC doesn't normalize the values of a function it keeps lazy, so a value it may
+            // have normalized otherwise prints only where both texts agree.
+            let value_normalized = match construction {
+                Construction::LazyFunction(..) if normalized == Normalized::Yes => {
+                    Normalized::Maybe
+                }
+                _ => normalized,
+            };
+            let write = |out: &mut Vec<u16>, id: Id, construction: &Construction| {
+                write_normalized(store, id, construction, value_normalized, out)
+            };
             if kind == KIND_TUPLE {
                 return join(out, tuple, &mut |out, index| {
                     write(out, store.get_range_value(id, index), value)
@@ -380,11 +403,11 @@ fn write_normalized(
                 .filter_map(|index| store.peek_key(id, index))
                 .collect();
             let is_string = |key: Id| store.kind_of(key) == KIND_STRING;
-            // `FcnRcdValue.isName` takes Unicode's letters and digits, which `is_field_name`
-            // doesn't follow.
+            // `FcnRcdValue.isName` takes Unicode's letters and digits, which `get_field_name`
+            // doesn't know past Latin-1.
             if keys
                 .iter()
-                .any(|&key| is_string(key) && store.text_of(key).iter().any(|&unit| unit > 0x7f))
+                .any(|&key| is_string(key) && get_field_name(store.text_of(key)).is_none())
             {
                 return false;
             }
@@ -531,19 +554,48 @@ fn write_normalized(
     }
 }
 
-/// `isFieldName` of `values.ts` (`FcnRcdValue.isName`) on ASCII text: letters, digits and `_`,
-/// with a letter, and not `WF_` or `SF_` past three characters. Text past ASCII, whose letters and
-/// digits are Unicode's, isn't one here, so a value keyed by it isn't printable.
-pub fn is_field_name(text: &[u16]) -> bool {
-    if text.iter().any(|&unit| unit > 0x7f) {
-        return false;
+/// Whether `FcnRcdValue.isName` takes the text for a field name: letters, digits and `_`, with a
+/// letter, and not `WF_` or `SF_` past three characters, where Java's `Character` decides what a
+/// letter or a digit is. That is exact through Latin-1, and certain wherever the text holds a
+/// character that is neither; elsewhere it depends on Unicode's general categories, which the
+/// standard library doesn't give, and is `None`.
+pub fn get_field_name(text: &[u16]) -> Option<bool> {
+    let mut is_known = true;
+    let mut has_letter = false;
+    for &unit in text {
+        let (is_letter, is_digit) = match unit {
+            0x5f => continue,
+            0x00..=0x7f => (
+                (unit as u8).is_ascii_alphabetic(),
+                (unit as u8).is_ascii_digit(),
+            ),
+            // Latin-1's letters; it has no other digits.
+            0xaa | 0xb5 | 0xba | 0xc0..=0xd6 | 0xd8..=0xf6 | 0xf8..=0xff => (true, false),
+            0x80..=0xff | 0xd800..=0xdfff => (false, false),
+            _ => match char::from_u32(u32::from(unit)) {
+                Some(character) if character.is_alphanumeric() => {
+                    is_known = false;
+                    continue;
+                }
+                _ => (false, false),
+            },
+        };
+        if !is_letter && !is_digit {
+            return Some(false);
+        }
+        has_letter |= is_letter;
     }
-    let is_word = |unit: u16| (unit as u8).is_ascii_alphanumeric() || unit == u16::from(b'_');
-    text.iter().all(|&unit| is_word(unit))
-        && text.iter().any(|&unit| (unit as u8).is_ascii_alphabetic())
-        && (text.len() < 4
-            || !(text.starts_with(&[u16::from(b'W'), u16::from(b'F'), u16::from(b'_')])
-                || text.starts_with(&[u16::from(b'S'), u16::from(b'F'), u16::from(b'_')])))
+    is_known.then(|| {
+        has_letter
+            && (text.len() < 4
+                || !(text.starts_with(&[u16::from(b'W'), u16::from(b'F'), u16::from(b'_')])
+                    || text.starts_with(&[u16::from(b'S'), u16::from(b'F'), u16::from(b'_')])))
+    })
+}
+
+/// Whether [`get_field_name`] knows the text for a field name.
+pub fn is_field_name(text: &[u16]) -> bool {
+    get_field_name(text) == Some(true)
 }
 
 #[cfg(test)]
@@ -759,9 +811,13 @@ mod tests {
             ("a b", false),
             ("WF_x", false),
             ("SF_", true),
-            ("é", false),
+            ("é", true),
+            ("x\u{b2}", false),
+            ("x\u{a3}", false),
         ] {
             assert_eq!(is_field_name(&utf16(name)), expected, "{name}");
         }
+        assert_eq!(get_field_name(&utf16("x\u{663}")), None);
+        assert_eq!(get_field_name(&utf16("x\u{663} y")), Some(false));
     }
 }

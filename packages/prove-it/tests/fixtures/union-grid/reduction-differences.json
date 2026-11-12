@@ -1,0 +1,598 @@
+{
+  "({}) \\cup (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 41 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({}) \\cup (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 41 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "({}) \\cup (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({}) \\cup (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "({}) \\cup (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({}) \\cup (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "({}) \\cup (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 63 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(Nat) \\cup (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(Nat) \\cup (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(Nat) \\cup (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(Nat) \\cup (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(Nat) \\cup (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 64 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(SUBSET {1}) \\cup (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(SUBSET {1}) \\cup (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(SUBSET {1}) \\cup (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 60 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(SUBSET {1}) \\cup (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 60 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(SUBSET {1}) \\cup (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 71 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({1}) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({1}) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({1}) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({1}) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({1}) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({1}) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({1}) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 64 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({1}) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 64 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({2, 1}) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 45 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({2, 1}) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 45 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({2, 1}) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 56 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({2, 1}) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 56 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({2, 1}) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 56 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({2, 1}) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 56 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({2, 1}) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 67 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup ({2, 1}) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 67 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (1..2) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 43 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (1..2) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 43 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (1..2) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 54 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (1..2) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 54 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (1..2) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 54 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (1..2) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 54 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (1..2) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 65 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (1..2) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 65 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (Nat) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (Nat) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (Nat) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (Nat) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (Nat) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 64 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (SUBSET {1}) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (SUBSET {1}) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (SUBSET {1}) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 60 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (SUBSET {1}) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 60 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (SUBSET {1}) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 71 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (KS) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 41 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (KS) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 41 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (KS) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (KS) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (KS) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (KS) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (KS) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 63 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cup (KS) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 63 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\cap (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\cap (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\cap (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\cap (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\cap (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\cap (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\cap (DOMAIN [a |-> 0]) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 64 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\cap (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 64 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\cap (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 45 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\cap (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 45 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\cap (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 56 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\cap (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 56 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\cap (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 56 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\cap (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 56 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\cap (DOMAIN [a |-> 0]) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 67 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\cap (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 67 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "(1..2) \\cap (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 43 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\cap (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 43 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\cap (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 54 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\cap (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 54 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\cap (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 54 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\cap (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 54 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\cap (DOMAIN [a |-> 0]) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 65 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\cap (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 65 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap ({\"a\"}) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 44 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap ({\"a\"}) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 44 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap ({\"a\"}) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 55 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap ({\"a\"}) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 55 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap ({\"a\"}) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 55 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap ({\"a\"}) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 55 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap ({\"a\"}) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 66 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 55 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 55 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 66 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 66 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 66 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 66 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\cap (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 77 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(KS) \\cap (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 41 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\cap (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 41 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\cap (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\cap (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\cap (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\cap (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 52 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\cap (DOMAIN [a |-> 0]) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 63 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\cap (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 63 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\ (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 39 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\ (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 39 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\ (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 50 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\ (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 50 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\ (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 50 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\ (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 50 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\ (DOMAIN [a |-> 0]) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 61 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({1}) \\ (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 61 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\ (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\ (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 42 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\ (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\ (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\ (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\ (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 53 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\ (DOMAIN [a |-> 0]) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 64 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "({2, 1}) \\ (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 64 of module M failed.\nAttempted to compare integer 2 with non-integer:\n\"a\""
+  },
+  "(1..2) \\ (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 40 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\ (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 40 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\ (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 51 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\ (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 51 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\ (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 51 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\ (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 51 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\ (DOMAIN [a |-> 0]) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 62 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(1..2) \\ (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 62 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(Nat) \\ (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 39 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(Nat) \\ (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 39 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(Nat) \\ (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 50 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(Nat) \\ (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 50 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(Nat) \\ (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 61 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\ ({}) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 38 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\ ({}) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 38 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\ ({}) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\ ({}) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\ ({}) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\ ({}) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(DOMAIN [a |-> 0]) \\ ({}) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 60 of module M failed.\nAttempted to compare integer 3 with non-integer:\n\"a\""
+  },
+  "(KS) \\ (DOMAIN [a |-> 0]) alone 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 38 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\ (DOMAIN [a |-> 0]) alone 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 38 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\ (DOMAIN [a |-> 0]) before-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\ (DOMAIN [a |-> 0]) before-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\ (DOMAIN [a |-> 0]) after-Nat 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\ (DOMAIN [a |-> 0]) after-Nat 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 49 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\ (DOMAIN [a |-> 0]) under-two 1": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 60 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  },
+  "(KS) \\ (DOMAIN [a |-> 0]) under-two 3": {
+    "status": "assumption-violation",
+    "headline": "Evaluating assumption line 5, col 8 to line 5, col 60 of module M failed.\nAttempted to compare integer 1 with non-integer:\n\"a\""
+  }
+}

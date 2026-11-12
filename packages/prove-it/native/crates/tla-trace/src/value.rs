@@ -548,6 +548,27 @@ fn is_record(function: &Function) -> bool {
         .all(|key| matches!(key, Value::Str(_)))
 }
 
+/// Whether a value holds a record whose fields are written in an order other than their sorted
+/// one, which TLC prints otherwise once it sorts the record.
+pub fn holds_record_out_of_order(value: &Value) -> bool {
+    match value {
+        Value::Set(elements) | Value::Unsorted(elements) => {
+            elements.iter().any(holds_record_out_of_order)
+        }
+        Value::Function(function) => {
+            let is_out_of_order = function
+                .written
+                .borrow()
+                .as_ref()
+                .is_some_and(|written| !written.is_sorted());
+            is_out_of_order
+                || function.domain.iter().any(holds_record_out_of_order)
+                || function.range.iter().any(holds_record_out_of_order)
+        }
+        _ => false,
+    }
+}
+
 /// Forgets the written order of a function TLC sorts to compare it.
 fn sort(function: &Function) {
     function.written.borrow_mut().take();

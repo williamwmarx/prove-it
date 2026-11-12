@@ -64,7 +64,6 @@
     "conformance:fingerprint": "bun scripts/run.ts fingerprint-conformance",
     "conformance:isabelle": "bun scripts/run.ts isabelle-conformance",
     "conformance:isabelle-encode": "bun scripts/run.ts isabelle-encode-conformance",
-    "conformance:sany": "bun scripts/run.ts proof-conformance",
     "conformance:ptl": "bun scripts/run.ts ptl-conformance",
     "conformance:smt": "bun scripts/run.ts smt-conformance",
     "conformance:record": "bun scripts/run.ts record-tlc",
