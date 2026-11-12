@@ -1,0 +1,667 @@
+From fa0b6e54127aec66677b7b3a7b3379e183d845e3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 17:29:35 +0000
+Subject: [PATCH 2/2] fix(trace): union set enumerations of set enumerations as
+ TLC does
+
+UnionValue.union computes the UNION of a set enumeration of set
+enumerations at once: it keeps each element, in the order it holds the
+sets, where equals finds no earlier one equal, and holds the result as
+an unnormalized set enumeration, which a membership then tests element
+by element. The evaluator sorted the union instead, so a failure after
+it named other elements than TLC's, and the startup guards declined
+every failed startup definition that evaluated a UNION, 112 of which
+matched TLC before them in the upstream suite (`PrintT(1 < UNION {{1},
+{2}})`). The evaluator now builds the union as TLC does, and declines
+only one TLC keeps lazy.
+---
+ .../definition-fails-union-applied/M.cfg      |  2 +
+ .../definition-fails-union-applied/M.tla      |  8 +++
+ .../definition-fails-union-applied/tlc.out    | 11 ++++
+ .../definition-fails-union-cap/M.cfg          |  2 +
+ .../definition-fails-union-cap/M.tla          |  8 +++
+ .../definition-fails-union-cap/tlc.out        | 12 ++++
+ .../definition-fails-union-choose/M.cfg       |  2 +
+ .../definition-fails-union-choose/M.tla       |  8 +++
+ .../definition-fails-union-choose/tlc.out     | 13 ++++
+ .../definition-fails-union-compare/M.cfg      |  2 +
+ .../definition-fails-union-compare/M.tla      |  8 +++
+ .../definition-fails-union-compare/tlc.out    | 12 ++++
+ .../definition-fails-union-except/M.cfg       |  2 +
+ .../definition-fails-union-except/M.tla       |  8 +++
+ .../definition-fails-union-except/tlc.out     | 11 ++++
+ .../definition-fails-union-field/M.cfg        |  2 +
+ .../definition-fails-union-field/M.tla        |  8 +++
+ .../definition-fails-union-field/tlc.out      | 12 ++++
+ .../definition-fails-union-head/M.cfg         |  2 +
+ .../definition-fails-union-head/M.tla         |  8 +++
+ .../definition-fails-union-head/tlc.out       | 12 ++++
+ .../definition-fails-union-lazy/M.cfg         |  2 +
+ .../definition-fails-union-lazy/M.tla         |  8 +++
+ .../definition-fails-union-lazy/declined      |  1 +
+ .../definition-fails-union-mixed/M.cfg        |  2 +
+ .../definition-fails-union-mixed/M.tla        |  8 +++
+ .../definition-fails-union-mixed/declined     |  1 +
+ .../definition-fails-union-order/M.cfg        |  2 +
+ .../definition-fails-union-order/M.tla        |  8 +++
+ .../definition-fails-union-order/tlc.out      | 12 ++++
+ .../definition-fails-union-subseteq/M.cfg     |  2 +
+ .../definition-fails-union-subseteq/M.tla     |  8 +++
+ .../definition-fails-union-subseteq/tlc.out   | 13 ++++
+ .../native/crates/tla-trace/src/eval.rs       | 59 ++++++++++++++-----
+ packages/prove-it/native/design/fallback.md   |  2 +-
+ packages/prove-it/native/design/startup.md    |  9 ++-
+ 36 files changed, 272 insertions(+), 18 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/declined
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/tlc.out
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/M.tla
+new file mode 100644
+index 00000000..6d964ac7
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT((<<1, 2>>)[UNION {{1}, {2}}])
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/tlc.out
+new file mode 100644
+index 00000000..d7d02d67
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-applied/tlc.out
+@@ -0,0 +1,11 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module Bags
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
++Attempted to access tuple at a non integral index: {1, 2}
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/M.tla
+new file mode 100644
+index 00000000..b1b6f503
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT(BOOLEAN \cap (UNION {{1}, {2}}))
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/tlc.out
+new file mode 100644
+index 00000000..7a3aa4ca
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-cap/tlc.out
+@@ -0,0 +1,12 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module Bags
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
++Attempted to check equality of integer 1 with non-integer:
++FALSE
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/M.tla
+new file mode 100644
+index 00000000..636a763c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT(CHOOSE b \in UNION {{}, {}} : TRUE)
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/tlc.out
+new file mode 100644
+index 00000000..6880dd60
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-choose/tlc.out
+@@ -0,0 +1,13 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module Bags
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
++Attempted to compute the value of an expression of form
++CHOOSE x \in S: P, but no element of S satisfied P.
++line 4, col 13 to line 4, col 46 of module M
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/M.tla
+new file mode 100644
+index 00000000..f56089e6
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT((2147483647) < (UNION {{1}, {2}}))
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/tlc.out
+new file mode 100644
+index 00000000..51b55337
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-compare/tlc.out
+@@ -0,0 +1,12 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module Bags
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
++The second argument of < should be an integer, but instead it is:
++{1, 2}
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/M.tla
+new file mode 100644
+index 00000000..0aa81631
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT([UNION {{1}, {2}} EXCEPT ![1] = 9])
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/tlc.out
+new file mode 100644
+index 00000000..6b4288c9
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-except/tlc.out
+@@ -0,0 +1,11 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module Bags
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
++Attempted to apply EXCEPT construct to the value {1, 2}.
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/M.tla
+new file mode 100644
+index 00000000..1c0e262d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT((UNION {{1}, {2}}).a)
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/tlc.out
+new file mode 100644
+index 00000000..eb81a319
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-field/tlc.out
+@@ -0,0 +1,12 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module Bags
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
++Attempted to select field "a" from a non-record value {1, 2}
++line 4, col 13 to line 4, col 32 of module M
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/M.tla
+new file mode 100644
+index 00000000..00819620
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT(Head(UNION {{1}, {2}}))
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/tlc.out
+new file mode 100644
+index 00000000..f2577a17
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-head/tlc.out
+@@ -0,0 +1,12 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module Bags
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
++The argument of Head should be a sequence, but instead it is:
++{1, 2}
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/M.tla
+new file mode 100644
+index 00000000..8d9da74b
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT((1) < (UNION {1..2, {3}}))
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/declined
+new file mode 100644
+index 00000000..70f499be
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-lazy/declined
+@@ -0,0 +1 @@
++an assumption that fails to evaluate: evaluating the assumption again: a startup definition that failed where TLC may fail otherwise: expected an integer
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/M.tla
+new file mode 100644
+index 00000000..c4e4c69c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT(UNION {{1}, {"a"}})
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/declined
+new file mode 100644
+index 00000000..2f20df0c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-mixed/declined
+@@ -0,0 +1 @@
++an assumption that fails to evaluate: evaluating the assumption again: a startup definition that failed where TLC may fail otherwise: values TLC can't compare
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/M.tla
+new file mode 100644
+index 00000000..9d732b60
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT({"a"} \cap (UNION {{2}, {1}}))
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/tlc.out
+new file mode 100644
+index 00000000..9ff4689d
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-order/tlc.out
+@@ -0,0 +1,12 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module Bags
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
++Attempted to check equality of integer 2 with non-integer:
++"a"
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/M.tla
+new file mode 100644
+index 00000000..590566a8
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/M.tla
+@@ -0,0 +1,8 @@
++---- MODULE M ----
++EXTENDS Integers, Sequences, FiniteSets, Bags, TLC
++VARIABLE x
++D == PrintT((UNION {{1}, {2}}) \subseteq (TRUE))
++ASSUME D
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/tlc.out
+new file mode 100644
+index 00000000..76298101
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/definition-fails-union-subseteq/tlc.out
+@@ -0,0 +1,13 @@
++exit 10
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module Bags
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++Error: Evaluating assumption line 5, col 8 to line 5, col 8 of module M failed.
++Attempted to check if the value:
++1
++is an element of the boolean TRUE
+diff --git a/packages/prove-it/native/crates/tla-trace/src/eval.rs b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+index 152ab588..5e1c9026 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/eval.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+@@ -452,8 +452,9 @@ pub struct Evaluator<'ir> {
+     pub register_writes: usize,
+     /// How many EXCEPTs named a key outside the function's domain, which TLC warns of.
+     except_skips: usize,
+-    /// How many UNIONs and set maps the evaluator evaluated.
+-    unions: usize,
++    /// How many UNIONs the evaluator held lazy, as TLC's `UnionValue`, and how many set maps it
++    /// evaluated.
++    lazy_unions: usize,
+     maps: usize,
+     /// The functions the evaluator built that TLC keeps lazy (`FcnLambdaValue`), by address,
+     /// recorded as a failure is evaluated, and how many times DOMAIN read one: TLC's DOMAIN of
+@@ -784,7 +785,7 @@ impl<'ir> Evaluator<'ir> {
+             registers: Registers::default(),
+             register_writes: 0,
+             except_skips: 0,
+-            unions: 0,
++            lazy_unions: 0,
+             kept_lazy: HashSet::new(),
+             lazy_domains: 0,
+             maps: 0,
+@@ -2413,8 +2414,12 @@ impl<'ir> Evaluator<'ir> {
+     // membership, TLC's evaluation, which holds values unnormalized or lazy where the evaluator
+     // doesn't always, may fail elsewhere, as `fallback.md` lists.
+     fn evaluate_failed_startup(&mut self, node: NodeId, context: &Context) -> Evaluated<Value> {
+-        let (skips, unions, maps, lazy_domains) =
+-            (self.except_skips, self.unions, self.maps, self.lazy_domains);
++        let (skips, lazy_unions, maps, lazy_domains) = (
++            self.except_skips,
++            self.lazy_unions,
++            self.maps,
++            self.lazy_domains,
++        );
+         let body = self.definition(node).body;
+         let result = self.evaluate_definition(node, body, &context.global());
+         if self.except_skips != skips {
+@@ -2440,7 +2445,7 @@ impl<'ir> Evaluator<'ir> {
+                 };
+                 let reason = error.reason.as_str();
+                 stack.is_unsorted
+-                    || self.unions != unions
++                    || self.lazy_unions != lazy_unions
+                     || self.lazy_domains != lazy_domains
+                     || holds(|lazy| matches!(lazy, Lazy::Union(_)))
+                     || stack.frames.iter().any(|frame| match frame {
+@@ -4701,20 +4706,36 @@ impl<'ir> Evaluator<'ir> {
+                 }
+                 Value::Lazy(Rc::new(Lazy::Subset(base)))
+             }
+-            // `UnionValue.union`: the elements of set enumerations, and otherwise a lazy union.
++            // `UnionValue.union`: a set enumeration of set enumerations TLC unions at once, in the
++            // order it holds them, keeping an element only where `equals` finds no earlier one
++            // equal, and holds the result as a set enumeration it hasn't normalized. Any other
++            // UNION it keeps lazy.
+             "UNION" => {
+                 arity(1)?;
+-                self.unions += 1;
+                 let sets = self.operand(&operands[0])?;
+                 match &sets {
+-                    Value::Set(sets) if sets.iter().all(|set| matches!(set, Value::Set(_))) => {
+-                        let mut all = Vec::new();
+-                        for set in sets.iter() {
+-                            all.extend(elements(set)?.iter().cloned());
++                    Value::Set(inner) if inner.iter().all(|set| matches!(set, Value::Set(_))) => {
++                        let mut kept: Vec<Value> = Vec::new();
++                        for set in held_order(&sets)? {
++                            for element in held_order(&set)? {
++                                let mut is_kept = false;
++                                for earlier in &kept {
++                                    if equals(earlier, &element)? {
++                                        is_kept = true;
++                                        break;
++                                    }
++                                }
++                                if !is_kept {
++                                    kept.push(element);
++                                }
++                            }
+                         }
+-                        set_of(all)?
++                        self.held_set(kept)?
++                    }
++                    _ => {
++                        self.lazy_unions += 1;
++                        Value::Lazy(Rc::new(Lazy::Union(sets)))
+                     }
+-                    _ => Value::Lazy(Rc::new(Lazy::Union(sets))),
+                 }
+             }
+             "DOMAIN" => {
+@@ -4942,7 +4963,6 @@ impl<'ir> Evaluator<'ir> {
+                     self.lazy_domains = lazy_domains;
+                 }
+                 // `SetPredValue.size` enumerates a filter TLC keeps lazy.
+-                // `SetPredValue.size` enumerates a filter TLC keeps lazy.
+                 let set = self.settle(&set)?;
+                 // `FiniteSets.Cardinality` counts an `Enumerable` value.
+                 let is_enumerable = match &set {
+@@ -6455,6 +6475,15 @@ fn is_unsure_failure(reason: &str) -> bool {
+     )
+ }
+ 
++// The elements of a set enumeration in the order TLC holds them: as built where it holds the set
++// unnormalized, and otherwise normalized.
++fn held_order(set: &Value) -> Evaluated<Vec<Value>> {
++    match unnormalized(set) {
++        Some(written) => Ok(written),
++        None => Ok(elements(set)?.to_vec()),
++    }
++}
++
+ // Whether TLC may hold a value lazy: a function it builds by its constructor, or a set but Nat,
+ // Int, Real, STRING and Any.
+ fn may_be_kept_lazy(value: &Value) -> bool {
+diff --git a/packages/prove-it/native/design/fallback.md b/packages/prove-it/native/design/fallback.md
+index 683ba762..e0c4b5c3 100644
+--- a/packages/prove-it/native/design/fallback.md
++++ b/packages/prove-it/native/design/fallback.md
+@@ -503,7 +503,7 @@ where TLC answers TRUE (found by #327's adversarial round; each wrong on main al
+ | `AssertError("Attempted to check equality of integer 2 with non-integer:\n\"a\"", 1 \in {2, 1} \cup {"a"})` | TRUE | FALSE (the bare membership is right) |
+ | `AssertError("Attempted to check equality of record:\n[a \|-> 1]\nwith non-record\n2", mv \in {[a \|-> 1]} \cup {2})`, `CONSTANT mv = mv` | TRUE | FALSE |
+ | `{3, 1, 2} = {1, "a"}` | `Attempted to compare string "a" with non-string:\n1` | `Attempted to check equality of the set {1, 2, 3} with the value:\n{1, "a"}` |
+-| `Cardinality(UNION {{2, 1}, {"a"}})` | `Attempted to check equality of integer 2 with non-integer:\n"a"` | `Attempted to compare integer 1 with non-integer:\n"a"` |
++| `Cardinality(UNION {{2, 1}, {"a"}})` | `Attempted to check equality of integer 2 with non-integer:\n"a"` | `Attempted to check equality of integer 1 with non-integer:\n"a"` (outside a failure's replay the evaluator holds `{2, 1}` sorted) |
+ | `1 \in UNION {{"a"}, {2}}` | `Attempted to check equality of string "a" with non-string:\n2` | `Attempted to compare integer 2 with non-integer:\n"a"` |
+ 
+ The last three under AssertError, with TLC's message, answer FALSE where TLC answers TRUE.
+diff --git a/packages/prove-it/native/design/startup.md b/packages/prove-it/native/design/startup.md
+index 9d0858fe..274cecd7 100644
+--- a/packages/prove-it/native/design/startup.md
++++ b/packages/prove-it/native/design/startup.md
+@@ -173,8 +173,8 @@ At a use, the trace evaluator holds the definition to failing again as TLC does
+ (`evaluate_failed_startup`). Several cases decline instead:
+ - an evaluation that succeeds;
+ - an EXCEPT of a key outside the domain, which TLC warns of with 2144;
+-- an evaluation that built a set TLC can't normalize, or evaluated a UNION, whose membership TLC
+-  tests set by set;
++- an evaluation that built a set TLC can't normalize, or a UNION TLC keeps lazy (`UnionValue`, of
++  anything but a set enumeration of set enumerations), whose membership TLC tests set by set;
+ - a failure in a function constructor, which TLC keeps lazy;
+ - an evaluation that read DOMAIN of a function TLC keeps lazy (its domain isn't a set enumeration
+   or an interval) and that the evaluator built, but as the argument of Cardinality: TLC's DOMAIN
+@@ -193,6 +193,11 @@ in building its message or at another element (fallback.md, "Known wrong outputs
+ as a function declines before its argument is evaluated, as TLC fails there first, naming the class
+ it built the set as.
+ 
++A UNION of a set enumeration of set enumerations TLC computes at once (`UnionValue.union`): it
++keeps each element in the order it holds the sets, where `equals` finds no earlier one equal, and
++holds the result as an unnormalized set enumeration. The evaluator does the same, so a failure past
++it, or in its `equals`, is TLC's.
++
+ The engine prints only where it evaluates as TLC does, and declines a print elsewhere, as an
+ argument of most operators. So an effect TLC runs before the failure is one the engine runs
+ before it, which keeps the definition declining.
+-- 
+2.43.0
+
