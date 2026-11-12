@@ -47,7 +47,9 @@ const runBoth = async (
   const typeScript = await run(source, config, "0");
   expect(native.isNative).toBe(true);
   expect(native.result).toEqual(typeScript.result);
-  expect(native.printed).toEqual(typeScript.printed);
+  // The native check goes on to report what the spec prints as TLC prints a violation's trace,
+  // which the TypeScript check doesn't.
+  expect(native.printed.slice(0, typeScript.printed.length)).toEqual(typeScript.printed);
   return native;
 };
 
@@ -64,7 +66,9 @@ describe("check's result", () => {
       ].join("\n"),
       "CONSTANTS a = a b = b\nINIT Init\nNEXT Next\nINVARIANT Inv",
     );
-    expect(run.printed).toEqual(["0"]);
+    // TLC prints 0 as it searches, then as it rebuilds the trace, before its second state and
+    // after it.
+    expect(run.printed).toEqual(["0", "0", "0"]);
     expect(run.result.status).toBe("invariant-violation");
     expect([run.result.generatedStates, run.result.distinctStates, run.result.depth]).toEqual([
       2, 2, 2,

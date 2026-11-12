@@ -148,6 +148,16 @@ const checkWithInterpreter = async (options: CheckOptions) => {
           }
         : undefined,
   });
+  // What the spec printed as TLC rebuilt and printed the violation's trace, then after it, as the
+  // native check reports it.
+  const violation = result.violation;
+  const print = options.onPrint ?? console.log;
+  [
+    ...(violation?.trace ?? []).flatMap((step) => step.output ?? []),
+    ...(violation?.traceOutput ?? []),
+  ]
+    .filter((line) => typeof line === "string")
+    .forEach((line) => print(line));
   return fromSearchResult(result, continued, isTool, version);
 };
 

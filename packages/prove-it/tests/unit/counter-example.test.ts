@@ -2,19 +2,19 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { checkParsed } from "../../src/parallel";
+import { check } from "../../src";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/tlc-ext");
 
 const checkCounterExample = async (configName: string) => {
   const printed: string[] = [];
-  const result = await checkParsed({
+  const result = await check({
     source: readFileSync(join(DIRECTORY, "CounterExample.tla"), "utf8"),
     config: readFileSync(join(DIRECTORY, `${configName}.cfg`), "utf8"),
     onPrint: (text) => printed.push(text),
   });
-  // TLC prints what the postcondition prints after the trace.
-  return [result.status, ...printed, ...(result.violation?.traceOutput ?? [])];
+  // TLC prints what the postcondition prints after the trace, which onPrint reports.
+  return [result.status, ...printed];
 };
 
 describe("POSTCONDITION after a violation matches TLC", () => {
