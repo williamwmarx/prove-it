@@ -675,6 +675,20 @@ record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm pr
 | PaxosCommit_proof #345 | c4f10dabeaca0a49 | Z3 4.8.9 proves it, 5.3.3 times out; the port needs 10,358,109 steps, above its limit of 7,321,600 |
 | Boulanger #240 | b2ca9ee96f3db516 | flattening clauses as Z3 4.8.9 does lengthens the port's search from 1,807,047 steps to 8,170,365, though its 4 distributions are 4.8.9's: open |
 
+These print other than TLC as main does, outside the corpus and the tests; a review of the ALIAS
+cells TLC holds as values found them. Each spec has `VARIABLE x`, `Init == x = 0`,
+`Next == x' = x + 1`, `Inv == x < 2` and `Q == [y |-> x]`:
+
+| Shape | Configuration | TLC | Native |
+|---|---|---|---|
+| An ALIAS substituted by a definition the configuration assigns | `CONSTANT Alias <- Q`, `CONSTANT Q = 3` | "The alias Alias cannot be a constant." at each state | the trace through Q |
+| An ALIAS assigned a value the front end can't normalize, on a run that prints a trace | `CONSTANT Alias = {1, "a"}` | "The alias Alias cannot be a constant." at each state | the trace through the spec's definition |
+| A POSTCONDITION the configuration assigns | `CONSTANT PC = TRUE`, `POSTCONDITION PC` | "The post condition PC cannot be a constant." | another report |
+| An ALIAS whose body is a literal, substituted by a module-scoped `<- [M]` in its module, the root, an extended or an instantiated one | `Alias == 3`, `CONSTANT Alias <- [M] Q` | TLC's unexpected ClassCastException | the plain states |
+| An ALIAS substituted for a definition of a module both extended and instantiated with parameters, which TLC doesn't compute | `Y <- Alias`, with `Alias == 3` | the plain states | "The alias Alias cannot be a constant." |
+| An ALIAS from an INSTANCE with substitutions that the configuration assigns in that module | `INSTANCE N WITH c <- 1`, N's `Alias == [y \|-> c]`, `CONSTANT Alias = [N] 3` | `y = 1` | the plain states |
+| A configuration entry scoped to an inner module, which TLC doesn't count as a module of the spec | `CONSTANT F <- [Inner] Alias` | "the module name Inner is not a module in the specification", exit 151 | the trace, exit 12 |
+
 At the level of inputs, #321 also moved ten `smt` inputs tlapm proves from `unsat` to `unknown`
 that main proved: 0dfd248d2bdad02b, 12a106a46ac87d79, 181f3f94d6c23221, 2f279b8fcc0984d6,
 52c873767bacfb3b, 6181e3d8679eef23, 6f1bb244e72ae33d, 8e48a4022642d1fc, b2ca9ee96f3db516 and

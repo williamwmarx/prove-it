@@ -342,6 +342,9 @@ const lowerEnvironment = (
       definitions: [],
       // Without a configuration, TLC computes no definition at startup.
       normalized: config ? getIrStartup(config, specification).normalized : new Set(),
+      substitutesForDefinitions: config
+        ? getIrStartup(config, specification).substitutesForDefinitions
+        : new Set(),
       predicates: [],
       symmetry: undefined,
       assumptions: [],

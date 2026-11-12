@@ -131,6 +131,7 @@ const DEFINITION_SELF_REFERENTIAL = 1 << 10;
 const DEFINITION_REPEATED_EFFECT = 1 << 11;
 const DEFINITION_SUBSTITUTED = 1 << 12;
 const DEFINITION_NORMALIZED = 1 << 13;
+const DEFINITION_LITERAL = 1 << 14;
 
 // What a name refers to outside any binding of it, in the order the compiler looks.
 const NO_RESOLUTION = 0;
@@ -242,6 +243,9 @@ export interface IrStartup {
   definitions: Definition[];
   // The constant definitions TLC computes and deep-normalizes at startup (processConstantDefns).
   normalized: ReadonlySet<Definition>;
+  // The names of the definitions the configuration substitutes for anything but a declared
+  // constant of the root module, as written, so in any module.
+  substitutesForDefinitions: ReadonlySet<string>;
   // The constant definitions the configuration names, which TLC rejects for their value.
   predicates: ReturnType<typeof getConstantPredicates>;
   // The SYMMETRY definition, which TLC evaluates to its group, and the sets it permutes.
@@ -533,7 +537,17 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
           : 0) |
         (isRepeated ? DEFINITION_REPEATED_EFFECT : 0) |
         (environment.substitutedDefinitions.has(definition) ? DEFINITION_SUBSTITUTED : 0) |
-        (input.startup.normalized.has(definition) ? DEFINITION_NORMALIZED : 0),
+        (input.startup.normalized.has(definition) ? DEFINITION_NORMALIZED : 0) |
+        // TLC holds an operator definition whose body is a numeral or a string as the value it
+        // gave the literal (SymbolNodeValueLookupProvider.lookup), unless it is an INSTANCE's copy
+        // with substitutions or the configuration substitutes it for another definition.
+        (definition.kind === "Operator" &&
+        definition.bodyRange !== undefined &&
+        (definition.body.kind === "Number" || definition.body.kind === "String") &&
+        !environment.substitutedDefinitions.has(definition) &&
+        !input.startup.substitutesForDefinitions.has(definition.name)
+          ? DEFINITION_LITERAL
+          : 0),
     );
     push(nodes, definition.location.line);
     push(nodes, definition.location.column);
@@ -863,6 +877,25 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, getScopeIndex(predicate.scope));
   }
   writeConfigNames(config.view === undefined ? [] : [config.view]);
+  // TLC holds a name the configuration assigns, unscoped, as its value, which it rejects as the
+  // ALIAS (Spec.getAliasSpec), unless the configuration also substitutes for it: the IR keeps it as
+  // a constant, as the Rust front end does.
+  const aliasDefinition =
+    config.alias === undefined ? undefined : environment.definitions.get(config.alias);
+  const aliasValue =
+    config.alias === undefined ? undefined : environment.constants.get(config.alias);
+  if (
+    config.alias !== undefined &&
+    aliasValue !== undefined &&
+    config.constants.some(
+      (constant) => constant.name === config.alias && constant.module === undefined,
+    ) &&
+    !environment.substitutions.has(config.alias) &&
+    aliasDefinition !== undefined &&
+    !(aliasDefinition.kind === "Operator" && aliasDefinition.bodyRange === undefined)
+  ) {
+    getConstantIndex(config.alias, aliasValue);
+  }
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
   writeConfigNames(config.postconditions);
   push(model, config.checkDeadlock ? 1 : 0);
