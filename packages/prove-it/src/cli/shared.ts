@@ -93,7 +93,7 @@ const getZoneRule = () => {
 };
 
 // The machine the CLI's native check describes, as prove-it-host's `check` takes it.
-export const getMachine = (): NativeMachine => [
+export const getMachine = (variables: [string, string][] = []): NativeMachine => [
   type(),
   release(),
   arch(),
@@ -102,6 +102,6 @@ export const getMachine = (): NativeMachine => [
   process.pid,
   Date.now(),
   getZoneRule(),
-  getEngineVariables(),
+  [...getEngineVariables(), ...variables],
   false,
 ];

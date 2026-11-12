@@ -79,7 +79,7 @@ const XML_EXPORTER_PROPERTIES: [&str; 2] = [
 /// returns the exit code.
 pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
     if args.first().is_some_and(|arg| arg == "tlapm") {
-        return not_native(output, "tlapm");
+        return crate::tlapm::run(&args[1..], output);
     }
     let Some(mut launch) = get_java_launch(args, output.host.platform()) else {
         return check_specs(args, &Java::default(), false, output);
@@ -128,7 +128,7 @@ pub fn run(args: &[String], output: &mut Output<'_>) -> i32 {
     }
 }
 
-fn not_native(output: &mut Output<'_>, what: &str) -> i32 {
+pub(crate) fn not_native(output: &mut Output<'_>, what: &str) -> i32 {
     let _ = writeln!(output.err, "prove-it: not native yet: {what}");
     NOT_NATIVE
 }

@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,7 +14,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getSteadyLines } from "../../scripts/normalize-output";
-import { readMarshaled } from "../../src/prover/tlapm/ocaml-marshal";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -1100,8 +1100,21 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     const result = runTlapm("obligations", ["-N", "--line", "3", "Omit.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* tla-ts tlapm -N --line 3 Omit\.tla\n\n$/,
+      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d with command line:\n\\\* prove-it tlapm -N --line 3 Omit\.tla\n\n$/,
     );
+  });
+
+  // OCaml's Arg reads the options in turn, and Tlapm_args.set_max_threads raises Arg.Bad on a
+  // negative count whether or not tlapm proves; int_of_string reads 0x and _.
+  it("reads the options as OCaml's Arg does", () => {
+    const refused = runTlapm("obligations", ["-N", "--threads", "-1", "Proofs.tla"]);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toBe(
+      "prove-it: not native yet: tlapm's report of --threads -1, which it refuses\n",
+    );
+    expect(runTlapm("obligations", ["--version", "--threads", "-1"]).stdout).toBe("9ed0376\n");
+    const result = runTlapm("obligations", ["-N", "--toolbox", "0x6", "0b111", "Omit.tla"]);
+    expect(result.stderr).toBe(readExpected("Omit-6-7.toolbox"));
   });
 
   it("prints nothing outside toolbox mode", () => {
@@ -1118,7 +1131,8 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.stderr).toBe("");
   });
 
-  // Each .stderr file is what tlapm -N writes to stderr, without the OCaml backtrace.
+  // Each .stderr file is what tlapm -N writes to stderr, without the OCaml backtrace of where it
+  // raised the error, which only a run of tlapm knows.
   it.each([
     "Declaration",
     "Hide",
@@ -1128,27 +1142,130 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     "Tab",
     "Unexpected",
     "UnknownModule",
-  ])("prints the error tlapm prints for %s", (name) => {
+  ])("declines the error tlapm ends with for %s", (name) => {
+    const recording = readFileSync(join(FIXTURES, "obligation-errors", `${name}.stderr`), "utf8");
+    const exception = /^ tlapm ending abnormally with (.*)$/m.exec(recording)?.[1];
     const result = runTlapm("obligation-errors", ["-N", `${name}.tla`]);
-    expect(result.status).toBe(3);
+    expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
-      readFileSync(join(FIXTURES, "obligation-errors", `${name}.stderr`), "utf8"),
+      `prove-it: not native yet: the backtrace tlapm prints as it ends with ${exception}\n`,
     );
   });
 
-  it("names a module it cannot find", () => {
+  it("declines a module it cannot find", () => {
     const result = runTlapm("obligations", ["-N", "Missing.tla"]);
-    expect(result.status).toBe(3);
+    expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
-      'File "<unknown>":\nError: File "Missing.tla" not found\n tlapm ending abnormally with Failure("Module.Parser.parse_file")\n\n',
+      'prove-it: not native yet: the backtrace tlapm prints as it ends with Failure("Module.Parser.parse_file"), as it can\'t find Missing.tla\n',
     );
   });
+
+  const writeModules = (files: Record<string, string>) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(join(directory, path, ".."), { recursive: true });
+      writeFileSync(join(directory, path), text);
+    }
+    return directory;
+  };
+
+  // M_save.file_search' looks in the current directory, each -I directory in the order given and
+  // the standard library; only where none has the file does Loader look beside the command line's
+  // modules, and it names the module by the file it was asked for.
+  it("finds a module where tlapm does, and names it as tlapm does", () => {
+    const main = "---- MODULE Main ----\nEXTENDS Defs\n====\n";
+    const getDefs = (name: string) => `---- MODULE ${name} ----\nX == 1\n====\n`;
+    const warning = (file: string) =>
+      `File "${file}", line 1, character 1 to line 3, character 4 :\nWarning: module name "Other" does not match file name "Defs.tla".\n`;
+    const included = writeModules({
+      "I1/Defs.tla": getDefs("Other"),
+      "I2/Defs.tla": getDefs("Defs"),
+      "Main.tla": main,
+    });
+    expect(runTlapmIn(included, ["-N", "-I", "I1", "-I", "I2", "Main.tla"]).stderr).toBe(
+      warning("I1/Defs.tla"),
+    );
+    expect(runTlapmIn(included, ["-N", "-I", "I2", "-I", "I1", "Main.tla"]).stderr).toBe("");
+    const beside = writeModules({ "sub/Defs.tla": getDefs("Other"), "sub/Main.tla": main });
+    expect(runTlapmIn(beside, ["-N", "sub/Main.tla"]).stderr).toBe(warning("Defs.tla"));
+  });
+
+  // tlapm evaluates an obligation's methods as its scheduler starts them, and launches every
+  // decision it can before it takes a result: with two threads, the second of two obligations with
+  // one fingerprint runs Zenon itself, where with one it reuses the first's failure. With two in
+  // flight, which toolbox message comes first depends on timing.
+  it("reuses a result when tlapm has it", () => {
+    const module =
+      "---- MODULE D ----\nEXTENDS Naturals, TLAPS\nTHEOREM A1 == 1 + 1 = 2\n  BY Zenon\nTHEOREM A2 == 1 + 1 = 2\n  BY Zenon\n====\n";
+    const note = /^Zenon error: exhausted search space without finding a proof$/gm;
+    const one = runTlapmIn(writeModules({ "D.tla": module }), ["--threads", "1", "D.tla"]);
+    expect(one.stdout.match(note)?.length).toBe(1);
+    const two = runTlapmIn(writeModules({ "D.tla": module }), ["--threads", "2", "D.tla"]);
+    expect(two.stdout.match(note)?.length).toBe(2);
+    const toolbox = runTlapmIn(writeModules({ "D.tla": module }), [
+      "--threads",
+      "2",
+      "--toolbox",
+      "0",
+      "0",
+      "D.tla",
+    ]);
+    expect(toolbox.stderr).toBe(
+      "prove-it: not native yet: toolbox messages of two decisions in flight at once, whose order depends on timing\n",
+    );
+  });
+
+  // Tlapm_args gathers the command line's modules last first into a map by name, so the first of
+  // two with one name is the one tlapm proves.
+  it("proves the first of two modules with one name", () => {
+    const directory = writeModules({
+      "d1/M.tla": "---- MODULE M ----\nTHEOREM 1 = 3\n  OBVIOUS\n====\n",
+      "d2/M.tla": "---- MODULE M ----\nTHEOREM 1 = 2\n  OBVIOUS\n====\n",
+    });
+    const args = ["-N", "--toolbox", "0", "0", "--printallobs"];
+    expect(runTlapmIn(directory, [...args, "d1/M.tla", "d2/M.tla"]).stderr).toContain(
+      "@!!obl:1 = 3\n",
+    );
+    expect(runTlapmIn(directory, [...args, "d2/M.tla", "d1/M.tla"]).stderr).toContain(
+      "@!!obl:1 = 2\n",
+    );
+  });
+
+  // Tlapm_lib.mkdir_tlaps makes the cache directory with Unix.mkdir, which makes none above it.
+  it("declines a cache directory tlapm can't make, and writes nothing", () => {
+    const directory = copyFixtures("obligations");
+    const result = runTlapmIn(directory, ["--cache-dir", "missing/sub", "Proofs.tla"]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "prove-it: not native yet: the backtrace tlapm prints as it ends where it can't write missing/sub/Proofs.tlaps\n",
+    );
+    expect(existsSync(join(directory, "missing"))).toBe(false);
+  });
+
+  // The run expects to make the directory, which the file system then refuses.
+  it.skipIf(!existsSync("/proc/self"))(
+    "declines an operation the file system refuses, as the binary does",
+    () => {
+      const result = runTlapm("obligations", [
+        "-N",
+        "--cache-dir",
+        "/proc/prove-it-tlapm",
+        "Proofs.tla",
+      ]);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: a directory tlapm can't make: /proc/prove-it-tlapm\n",
+      );
+    },
+  );
 
   // tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't
   // UTF-8, they would be one, and the theorem proved: ED A0 80 and ED B0 80 encode U+D800 and
-  // U+DC00, which a lossy decode reads as three U+FFFD each.
+  // U+DC00.
   const NOT_UTF8 = [
     ["\\xff = \\xfe", [0xff], [0xfe], "="],
     ["U+D800 = U+DC00", [0xed, 0xa0, 0x80], [0xed, 0xb0, 0x80], "="],
@@ -1160,7 +1277,6 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       ["a module it extends", name, "./Lib.tla", "Lib, ", ...strings] as const,
     ]),
   )("declines %s that isn't UTF-8: %s", (_, _name, path, extended, left, right, operator) => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     const definitions = Buffer.concat([
       Buffer.from('L == "'),
       Buffer.from(left),
@@ -1168,6 +1284,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       Buffer.from(right),
       Buffer.from('"\n'),
     ]);
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(
       join(directory, "M.tla"),
       Buffer.concat([
@@ -1188,88 +1305,80 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.status).toBe(1);
   });
 
-  // tlapm's lexer skips what comes before a module's header and what a comment holds, so a byte
-  // that isn't UTF-8 there reads as it did, one U+FFFD for one byte.
-  it.each([
-    ["before the header", [0xe9, 0x0a], ""],
-    ["after a pragma's opening before the header", [0x28, 0x2a, 0x7b, 0x20, 0xe9, 0x0a], ""],
-    ["in a line comment", [], "\\* caf\xe9\n"],
-    ["in a nested comment", [], "(* (* caf\xe9 *) \xff *)\n"],
-    // The lexer the obligations are read with ends a `\*` comment at a line feed alone, where
-    // tlapm's ends it at a carriage return too.
-    ["after a carriage return in a line comment", [], "\\* abc\r\xe9\n"],
-    ["after a pragma's opening in a line comment", [], "\\* (*{ \xe9\n"],
-    ["after a pragma's opening in a nested comment", [], "(* (*{ \xe9 }*) *)\n"],
-  ])("reads a byte that isn't UTF-8 %s as tlapm skips it", (_, before, inside) => {
-    const getModule = (byte: number) =>
-      Buffer.concat([
-        Buffer.from(before.map((value) => (value === 0xe9 ? byte : value))),
-        Buffer.from("---- MODULE M ----\nEXTENDS TLAPS\n", "latin1"),
-        Buffer.from(inside.replaceAll("\xe9", String.fromCharCode(byte)), "latin1"),
-        Buffer.from("THEOREM 1 = 1 OBVIOUS\n====\n"),
-      ]);
-    const run = (byte: number) => {
-      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
-      writeFileSync(join(directory, "M.tla"), getModule(byte));
-      return runTlapmIn(directory, ["-N", "M.tla"]);
-    };
-    const read = run(0xe9);
-    expect(read.stderr).not.toContain("not native yet");
-    expect(read).toMatchObject({ status: 0, stdout: run(0x65).stdout, stderr: run(0x65).stderr });
-  });
+  const runBytes = (text: string, args: string[]) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(join(directory, "M.tla"), Buffer.from(text, "latin1"));
+    return runTlapmIn(directory, [...args, "M.tla"]);
+  };
 
-  // tlapm's columns count bytes, so a comment holding two bytes of a three-byte sequence puts what
-  // follows it on the line two columns on.
-  it("counts each byte that isn't UTF-8 in a comment as a column", () => {
-    const run = (comment: Buffer) => {
-      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
-      writeFileSync(
-        join(directory, "M.tla"),
-        Buffer.concat([
-          Buffer.from("---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM "),
-          comment,
-          Buffer.from(" 1 = 1 OBVIOUS\n====\n"),
-        ]),
+  // tlapm's lexer skips what comes before a module's header, what a comment holds and what follows
+  // its end, so a byte that isn't UTF-8 there changes nothing.
+  it.each([
+    ["before the header", "\xe9\n", "", ""],
+    ["in a line comment", "", "\\* caf\xe9\n", ""],
+    ["in a nested comment", "", "(* (* caf\xe9 *) \xe9 *)\n", ""],
+    ["in a nested module's comment", "", "---- MODULE Inner ----\n(* \xe9 *)\n====\n", ""],
+    ["after a pragma's opening before the header", "(*{ \xe9\n", "", ""],
+    ["after a pragma's opening in a line comment", "", "\\* (*{ \xe9\n", ""],
+    ["after a pragma's opening in a nested comment", "", "(* (*{ \xe9 }*) *)\n", ""],
+    ["after the module's end", "", "", "\xe9\n"],
+    ["after the module's end, in a string", "", "", '"\xe9"\n'],
+    // tlapm's lexer ends a `\*` comment at a carriage return too, and Prove It's at a line feed
+    // alone (fallback.md), so here both read the rest of the line as a comment.
+    ["after a carriage return in a line comment", "", "\\* abc\r\xe9\n", ""],
+  ])("reads a byte that isn't UTF-8 %s as tlapm skips it", (_, before, inside, after) => {
+    const getModule = (byte: string) =>
+      `${before}---- MODULE M ----\nEXTENDS TLAPS\n${inside}THEOREM 1 = 1 OBVIOUS\n====\n${after}`.replaceAll(
+        "\xe9",
+        byte,
       );
-      return runTlapmIn(directory, ["-N", "--toolbox", "0", "0", "M.tla"]);
-    };
-    const truncated = run(Buffer.from([0x28, 0x2a, 0xe2, 0x82, 0x2a, 0x29]));
-    expect(truncated.stderr).toContain("loc:3:22:3:29");
-    expect(truncated.stderr).toBe(run(Buffer.from("(*ab*)")).stderr);
+    const read = runBytes(getModule("\xe9"), ["-N", "--toolbox", "0", "0"]);
+    expect(read.status).toBe(0);
+    expect(read.stderr).toBe(runBytes(getModule("e"), ["-N", "--toolbox", "0", "0"]).stderr);
   });
 
-  // tlapm's parser asks for no token past the first module's `====`, so its lexer never reads
-  // what follows; a nested module's `====` doesn't end it.
+  // tlapm's columns count bytes, so two bytes of a three-byte sequence in a comment put what
+  // follows two columns on, as an é does.
+  it("counts columns in bytes", () => {
+    const run = (comment: string) =>
+      runBytes(`---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM ${comment} 1 = 1 OBVIOUS\n====\n`, [
+        "-N",
+        "--toolbox",
+        "0",
+        "0",
+      ]).stderr;
+    const expected = run("(*ab*)");
+    expect(expected).toContain("@!!loc:3:22:3:29\n");
+    expect(run("(*\xe2\x82*)")).toBe(expected);
+    expect(run("(*\xc3\xa9*)")).toBe(expected);
+  });
+
   it.each([
-    ["after the module's end", "THEOREM TRUE OBVIOUS\n====\n\xff\n", false],
-    ["after the module's end, in a string", 'THEOREM TRUE OBVIOUS\n====\n"\xff"\n', false],
     [
-      "in a string in a nested module the module doesn't use",
-      '---- MODULE Inner ----\nS == "\xff"\n====\nTHEOREM TRUE OBVIOUS\n====\n',
-      false,
-    ],
-    [
-      "in a string in a nested module the module uses",
+      "in a nested module's string the module uses",
       '---- MODULE Inner ----\nS == "\xff"\n====\nI == INSTANCE Inner\nTHEOREM I!S = "a" OBVIOUS\n====\n',
       true,
     ],
     [
-      "after a nested module's end",
+      "between a nested module's end and the module's",
       '---- MODULE Inner ----\n====\nS == "\xff"\nTHEOREM TRUE OBVIOUS\n====\n',
       true,
     ],
+    ["in a pragma", 'F == TRUE (*{ by (prover:"\xff") }*)\nTHEOREM 1 = 1 BY F\n====\n', true],
     [
-      "in a nested module's comment",
-      "---- MODULE Inner ----\n(* \xff *)\n====\nTHEOREM TRUE OBVIOUS\n====\n",
+      "in a nested module's string the module doesn't use",
+      '---- MODULE Inner ----\nS == "\xff"\n====\nTHEOREM TRUE OBVIOUS\n====\n',
       false,
     ],
-  ])("reads a byte that isn't UTF-8 %s as tlapm lexes it", (_, body, isDeclined) => {
-    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
-    writeFileSync(
-      join(directory, "M.tla"),
-      Buffer.from(`---- MODULE M ----\nEXTENDS TLAPS\n${body}`, "latin1"),
-    );
-    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    ["in a pragma no obligation reads", "x == 1 = (*{ \xff }*) 1\n====\n", false],
+  ])("judges a byte that isn't UTF-8 %s by what the obligations hold", (_, body, isDeclined) => {
+    const result = runBytes(`---- MODULE M ----\nEXTENDS TLAPS\n${body}`, [
+      "-N",
+      "--toolbox",
+      "0",
+      "0",
+      "--printallobs",
+    ]);
     if (isDeclined) {
       expect(result.stderr).toBe(
         "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
@@ -1300,7 +1409,9 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.status).toBe(1);
   });
 
-  // Each was read by the obligations in a way a token-level judge missed or over-read.
+  // Each was read by the obligations in a way a token-level judge missed or over-read. A comment
+  // after a TAB is a comment to the obligations too; the TAB shifts the printed columns
+  // (fallback.md, "Known wrong outputs").
   it.each([
     [
       "in an old pragma whose string holds its close",
@@ -1310,7 +1421,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     [
       "in a comment a string's value is read from after a tab",
       '\t---- MODULE M ---- EXTENDS TLAPS THEOREM "a"(*\xff\xff\xff\xff"*) = "b"(*\xfe\xfe\xfe\xfe"*) BY SMT\n====\n',
-      true,
+      false,
     ],
     [
       "after a comment that opens like a pragma and doesn't close",
@@ -1367,7 +1478,8 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.status).toBe(0);
   });
 
-  // Which module holds the byte reached isn't known where more than one was read with it.
+  // A byte reads as the same marker in every module, so which module holds the one reached isn't
+  // known, and the run names every module read with it.
   it("names every module read with a byte that isn't UTF-8 that is reached", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(
@@ -1388,36 +1500,33 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.status).toBe(1);
   });
 
-  // A pragma's string reads escapes as JSON does, so "\udcfe" is a lone surrogate no byte read made;
-  // where a module read holds that byte too, it declines (fallback.md lists it).
+  // A pragma's string keeps its escapes as written, as tlapm's lexer does, so "\udcfe" is six
+  // characters, whatever byte a module read holds.
   it.each([
     ["no module holds", "\\* \xff\n", false],
-    ["a module holds", "\\* \xfe\n", true],
-  ])(
-    "judges a pragma's escape of a lone surrogate that %s as the byte",
-    (_, comment, isDeclined) => {
-      const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
-      writeFileSync(
-        join(directory, "M.tla"),
-        Buffer.from(
-          `---- MODULE M ----\nEXTENDS TLAPS\n${comment}THEOREM TRUE OBVIOUS (*{ by (isabelle "\\udcfe") }*)\n====\n`,
-          "latin1",
-        ),
+    ["a module holds", "\\* \xfe\n", false],
+  ])("reads a pragma's escape of a lone surrogate that %s as written", (_, comment, isDeclined) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(
+      join(directory, "M.tla"),
+      Buffer.from(
+        `---- MODULE M ----\nEXTENDS TLAPS\n${comment}THEOREM TRUE OBVIOUS (*{ by (isabelle "\\udcfe") }*)\n====\n`,
+        "latin1",
+      ),
+    );
+    const result = runTlapmIn(directory, ["-N", "M.tla"]);
+    if (isDeclined) {
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
       );
-      const result = runTlapmIn(directory, ["-N", "M.tla"]);
-      if (isDeclined) {
-        expect(result.stderr).toBe(
-          "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
-        );
-        expect(result.status).toBe(1);
-      } else {
-        expect(result.stderr).not.toContain("not native yet");
-        expect(result.status).toBe(0);
-      }
-    },
-  );
+      expect(result.status).toBe(1);
+    } else {
+      expect(result.stderr).not.toContain("not native yet");
+      expect(result.status).toBe(0);
+    }
+  });
 
-  // The lexer's error spells a character it can't read as JSON does.
+  // tlapm's lexer fails on a character it can't read, and tlapm ends with a backtrace.
   it("declines a byte that isn't UTF-8 that is a token of its own", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(
@@ -1426,7 +1535,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     );
     const result = runTlapmIn(directory, ["-N", "M.tla"]);
     expect(result.stderr).toBe(
-      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+      'prove-it: not native yet: the backtrace tlapm prints as it ends with Failure("Module.Parser.parse_file")\n',
     );
     expect(result.stdout).toBe("");
     expect(result.status).toBe(1);
@@ -1460,7 +1569,9 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     }
   });
 
-  // tlapm decides which of two modules of one name it reads in ways tla-ts doesn't follow yet.
+  // Where tlapm can read one of two modules of one name, it reads the one it finds first
+  // (M_save.file_search'): the current directory, then each -I directory in the order given, and
+  // beside the command line's modules only after them; of two on the command line, the first.
   const writeFiles = (files: Record<string, string>) => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     for (const [path, text] of Object.entries(files)) {
@@ -1478,37 +1589,42 @@ describe("tlapm -N prints obligations as tlapm does", () => {
       "in two -I directories",
       { "Main.tla": MAIN, "I1/Defs.tla": getDefs(1), "I2/Defs.tla": getDefs(2) },
       ["-I", "I1", "-I", "I2", "Main.tla"],
-      "I2/Defs.tla, I1/Defs.tla",
+      "I2/Defs.tla",
     ],
     [
       "beside the spec and in the current directory",
       { "sub/Main.tla": MAIN, "Defs.tla": getDefs(1), "sub/Defs.tla": getDefs(2) },
       ["sub/Main.tla"],
-      "sub/Defs.tla, ./Defs.tla",
+      "sub/Defs.tla",
     ],
-  ])("declines a module found %s", (_, files, args, found) => {
-    for (const options of [["-N"], ["-N", "--toolbox", "0", "0"]]) {
-      const result = runTlapmIn(writeFiles(files), [...options, ...args]);
-      expect(result.stderr).toBe(
-        `prove-it: not native yet: a module Defs found in more than one directory tlapm searches: ${found}\n`,
-      );
-      expect(result.stdout).toBe("");
-      expect(result.status).toBe(1);
+  ])("reads a module found %s where tlapm finds it first", (_, files, args, unread) => {
+    for (const options of [["-N"], ["-N", "--toolbox", "0", "0", "--printallobs"]]) {
+      const both = runTlapmIn(writeFiles(files), [...options, ...args]);
+      expect(both.stderr).not.toContain("not native yet");
+      const found = Object.fromEntries(Object.entries(files).filter(([path]) => path !== unread));
+      const alone = runTlapmIn(writeFiles(found), [...options, ...args]);
+      expect([both.status, both.stdout, both.stderr]).toEqual([
+        alone.status,
+        alone.stdout,
+        alone.stderr,
+      ]);
     }
   });
 
-  it("declines two modules of one name on the command line", () => {
-    const directory = writeFiles({
+  it("proves the first of two modules of one name on the command line", () => {
+    const files = {
       "d1/M.tla": "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 + 1 = 3 OBVIOUS\n====\n",
       "d2/M.tla": "---- MODULE M ----\nEXTENDS Naturals, TLAPS\nTHEOREM 1 + 1 = 2 OBVIOUS\n====\n",
-    });
-    for (const options of [[], ["-N"]]) {
-      const result = runTlapmIn(directory, [...options, "d1/M.tla", "d2/M.tla"]);
-      expect(result.stderr).toBe(
-        "prove-it: not native yet: two modules named M on the command line\n",
-      );
-      expect(result.stdout).toBe("");
-      expect(result.status).toBe(1);
+    };
+    for (const options of [["-N"], ["-N", "--toolbox", "0", "0", "--printallobs"]]) {
+      const both = runTlapmIn(writeFiles(files), [...options, "d1/M.tla", "d2/M.tla"]);
+      expect(both.stderr).not.toContain("not native yet");
+      const first = runTlapmIn(writeFiles({ "d1/M.tla": files["d1/M.tla"] }), [
+        ...options,
+        "d1/M.tla",
+      ]);
+      expect(both.status).toBe(first.status);
+      expect(both.stderr).toBe(first.stderr);
     }
   });
 
@@ -1555,10 +1671,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
 // over that cache, and .nofp and .cleanfp to stdout with --nofp and --cleanfp.
 const readRecording = (name: string) => readFileSync(join(FIXTURES, "tlapm-cli", name), "utf8");
 
-// tlapm copies to stdout what Zenon writes to stderr, which tla-ts's Zenon doesn't write.
-const withoutZenonOutput = (output: string) => output.replaceAll(/^Zenon error: .*\n/gm, "");
-
-describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () => {
+describe("tlapm proves with Prove It's provers and prints what tlapm prints", () => {
   // The time each backend took varies from run to run.
   const withoutTimeUsed = (output: string) =>
     output.replaceAll(/time-used: [\d.]+ \(\d+%\)/g, "time-used: <time>");
@@ -1573,7 +1686,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
   it("prints the obligations it couldn't prove and ends abnormally", () => {
     const result = runTlapm("tlapm-cli", ["Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(withoutZenonOutput(readRecording("Failures.stdout")));
+    expect(result.stdout).toBe(readRecording("Failures.stdout"));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 
@@ -1587,7 +1700,7 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     const result = runTlapm("tlapm-cli", ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"]);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(
-      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* tla-ts tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
+      /^\n\\\* TLAPM version 9ed0376\n\\\* launched at [\d-]+ [\d:]+ with command line:\n\\\* prove-it tlapm --threads 1 --toolbox 0 0 Failures\.tla\n\n(Zenon error: exhausted search space without finding a proof\n){2}\(\* created new "\.tlacache\/Failures\.tlaps\/Failures\.thy" \*\)\n\(\* fingerprints written in "\.tlacache\/Failures\.tlaps\/fingerprints" \*\)\n$/,
     );
     expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Failures.toolbox")));
   });
@@ -1598,10 +1711,10 @@ describe("tlapm proves with tla-ts's provers and prints what tlapm prints", () =
     expect(withoutTimeUsed(result.stderr)).toBe(withoutTimeUsed(readRecording("Twice.toolbox")));
   });
 
-  it("rejects the tlapm options it doesn't support", () => {
+  it("declines the tlapm options it doesn't support", () => {
     const result = runTlapm("obligations", ["-C", "Proofs.tla"]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Error: tla-ts tlapm does not support the tlapm option -C.\n");
+    expect(result.stderr).toBe("prove-it: not native yet: the tlapm option -C\n");
   });
 });
 
@@ -1619,27 +1732,15 @@ describe("tlapm shares its cache with tlapm", () => {
     return directory;
   };
 
-  // The fingerprints file without the date and the versions stored with each result.
-  const readFingerprints = (path: string) => {
-    const bytes = readFileSync(path);
-    const table = readMarshaled(bytes, readMarshaled(bytes, 0).next).value;
-    return JSON.stringify(table, (_, value) =>
-      /^(9ed0376|Zenon version \[268\]|Isabelle2025|tla-ts .*)$/.test(value) ||
-      (value?.fields?.length === 6 && value.fields.every(Number.isInteger))
-        ? "<stored>"
-        : value,
-    );
-  };
-
+  // The fingerprints it writes reuse each result as tlapm's do.
   it("writes the theory and the fingerprints tlapm writes", () => {
     const directory = copyFixtures("tlapm-cli");
     runTlapmIn(directory, ["Failures.tla"]);
     expect(readFileSync(join(directory, ".tlacache/Failures.tlaps/Failures.thy"), "utf8")).toBe(
       readRecording("Failures.thy"),
     );
-    expect(readFingerprints(join(directory, ".tlacache/Failures.tlaps/fingerprints"))).toBe(
-      readFingerprints(join(directory, "Failures.fingerprints")),
-    );
+    const result = runTlapmIn(directory, ["--threads", "1", "--toolbox", "0", "0", "Failures.tla"]);
+    expect(result.stderr).toBe(readRecording("Failures.reused"));
   });
 
   it("reuses what tlapm concluded", () => {
@@ -1661,7 +1762,7 @@ describe("tlapm shares its cache with tlapm", () => {
   it.each(["--nofp", "--cleanfp"])("proves again under %s", (option) => {
     const result = runTlapmIn(copyWithCache(), [option, "Failures.tla"]);
     expect(result.status).toBe(3);
-    expect(result.stdout).toBe(withoutZenonOutput(readRecording(`Failures.${option.slice(2)}`)));
+    expect(result.stdout).toBe(readRecording(`Failures.${option.slice(2)}`));
     expect(result.stderr).toBe(readRecording("Failures.stderr"));
   });
 

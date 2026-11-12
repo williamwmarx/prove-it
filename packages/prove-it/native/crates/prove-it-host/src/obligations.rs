@@ -2,7 +2,8 @@
 //! what Prep makes of them, with the Rust obligations crate:
 //!
 //! - `obligations(file, source, known, encode)` returns
-//!   `{ kind: "obligations", obligations, encodings }`. Each obligation is
+//!   `{ kind: "obligations", obligations, encodings, missingProofCount, omittedProofCount }`, with
+//!   the counts of missing and omitted proofs as `prove` gives them. Each obligation is
 //!   `{ id, location, kind, text, methods }`, every result's in order, a submodule's before the
 //!   module that contains it. `kind` is `Main`, `Support`, `Error` or `Omitted`, and `methods` the
 //!   methods Prep tries, each `{ prover, timeLimitMs }`, or the error that stops it. `encode` holds
@@ -21,7 +22,9 @@
 
 use std::collections::HashMap;
 
-use prove_obligations::index::{ObligationSource, PrintedObligation, get_obligations};
+use prove_obligations::index::{
+    ModuleObligations, ObligationSource, PrintedObligation, get_obligations,
+};
 use prove_obligations::prep::fingerprint::get_fingerprint;
 use prove_obligations::prep::methods::find_methods;
 use prove_obligations::proof::ObligationKind;
@@ -50,10 +53,14 @@ pub fn obligations(arguments: &[HostValue]) -> HookResult {
     let sources = Sources::new(known)?;
     let requests = get_requests(encode)?;
     on_deep_stack(move || {
-        let obligations = match load(file, source, &sources) {
-            Ok(obligations) => obligations,
+        let modules = match load(file, source, &sources) {
+            Ok(modules) => modules,
             Err(result) => return Ok(result),
         };
+        let count = |get: fn(&ModuleObligations) -> usize| modules.iter().map(get).sum::<usize>();
+        let missing = count(|module| module.summary.absent.len());
+        let omitted = count(|module| module.summary.omitted.len());
+        let obligations = get_printed(modules);
         let mut session = EncodingSession::default();
         let encodings = requests
             .iter()
@@ -77,6 +84,8 @@ pub fn obligations(arguments: &[HostValue]) -> HookResult {
                 HostValue::Array(obligations.iter().map(get_obligation).collect()),
             ),
             ("encodings", HostValue::Array(encodings)),
+            ("missingProofCount", HostValue::Number(missing as f64)),
+            ("omittedProofCount", HostValue::Number(omitted as f64)),
         ]))
     })
 }
@@ -91,7 +100,7 @@ pub fn fingerprint(arguments: &[HostValue]) -> HookResult {
     let sources = Sources::new(known)?;
     on_deep_stack(move || {
         let obligations = match load(file, source, &sources) {
-            Ok(obligations) => obligations,
+            Ok(modules) => get_printed(modules),
             Err(result) => return Ok(result),
         };
         let fingerprints = obligations
@@ -154,13 +163,13 @@ fn on_deep_stack(run: impl FnOnce() -> HookResult + Send) -> HookResult {
     })
 }
 
-// Every result's obligations, or what to return in their place: the modules it needs, or the
-// error getObligations throws.
+// Every result, or what to return in its place: the modules it needs, or the error
+// getObligations throws.
 fn load(
     file: String,
     source: String,
     sources: &Sources,
-) -> Result<Vec<PrintedObligation>, HostValue> {
+) -> Result<Vec<ModuleObligations>, HostValue> {
     // As a fresh process gives, whatever ran on this thread before.
     reset_caches();
     let mut reads: HashMap<String, usize> = HashMap::new();
@@ -186,11 +195,15 @@ fn load(
     if let Some(needed) = sources.get_needed() {
         return Err(needed);
     }
-    let modules = modules.map_err(|error| get_error(&error))?;
-    Ok(modules
+    modules.map_err(|error| get_error(&error))
+}
+
+// Every result's obligations, in order.
+fn get_printed(modules: Vec<ModuleObligations>) -> Vec<PrintedObligation> {
+    modules
         .into_iter()
         .flat_map(|module| module.obligations)
-        .collect())
+        .collect()
 }
 
 fn get_obligation(obligation: &PrintedObligation) -> HostValue {

@@ -2,21 +2,26 @@
 //! `checkSources(args, known, machine)` checks the spec the TLC command line `args` names as the
 //! binary does, reading its files from what JavaScript knows (`sources`), and returns one of:
 //!
-//! - `{ kind: "checked", exitCode, out, err, thrown, outcome, writes }`, what the binary prints to
-//!   stdout and stderr, its exit code, what the check found where it searched, as the library
-//!   reports it (`get_outcome`), or else, where it stopped before it searched, the error the
-//!   library throws (`get_thrown`), and each file the library's check wrote, in order, as
-//!   `{ path, bytes, isAppended }`;
+//! - `{ kind: "checked", exitCode, out, err, thrown, outcome, writes, files }`, what the binary
+//!   prints to stdout and stderr, its exit code, what the check found where it searched, as the
+//!   library reports it (`get_outcome`), or else, where it stopped before it searched, the error the
+//!   library throws (`get_thrown`), each file the library's check wrote, in order, as
+//!   `{ path, bytes, isAppended }`, and the operations on the files tlapm's command line held back
+//!   until its run ended, in the order JavaScript applies them (`files.rs`);
 //! - `{ kind: "needed", keys }`, what the check reads that isn't known yet (`sources`). It asks for
-//!   everything before it searches, so a round never searches;
+//!   everything before it searches or proves, so a round never does either; tlapm's command line
+//!   learns whether the history's new directory, named by the time, is there from the history's
+//!   entries, and asks for it alone where a run of the same second left one;
 //! - `{ kind: "declined", reason }`, where the binary prints `not native yet`, without what it
 //!   printed before.
 //!
 //! The CLI answers for the machine's files, which the check finds as the binary does: `stat:<path>`,
-//! `"file"` or `"directory"` where the system finds something at the path, `bytes:<path>`, the bytes
-//! of a file there as a Uint8Array, `realpath:<path>`, its path with its links followed, `cwd`, the
-//! working directory, and `tmpdir`, the system's temporary directory. The library has no files: it
-//! answers `text:<path>` for the spec and its configuration, `module:<name>` and `class:<name>`.
+//! `"file"`, `"directory"` or `"other"` where the system finds something at the path,
+//! `bytes:<path>`, the bytes of a file there as a Uint8Array, `realpath:<path>`, its path with its
+//! links followed, `cwd`, the working directory, and `tmpdir`, the system's temporary directory.
+//! tlapm's command line also reads `entries:<path>`, a directory's entries, each as its `mtimeMs`
+//! and its name, each ended by a NUL. The library has no files: it answers `text:<path>` for the
+//! spec and its configuration, `module:<name>` and `class:<name>`.
 //!
 //! `resolveFiles(args, given, request, known)` answers, through the same keys, what the CLI's
 //! TypeScript check asks of where TLC finds the files of the spec `given` on the command line
@@ -37,12 +42,13 @@ use prove_it_check::host_path::Platform;
 use prove_it_check::resolve::{self, Config, Resolved};
 use prove_it_check::zone::{Zone, parse_rule};
 use prove_it_check::{
-    FileDescriber, FileDescription, FileKind, Files, Host, Machine, Outcome, Output, Thrown,
-    is_directory_there,
+    Entry, FileDescriber, FileDescription, FileKind, FileOperation, Files, Host, Machine, Outcome,
+    Output, Thrown, is_directory_there,
 };
 use tla_engine::clock::Instant;
 use tla_front::errors::SanyError;
 
+use crate::files::{get_journal, parse_entries};
 use crate::hooks::HookResult;
 use crate::sources::{Sources, get_strings, get_text};
 use crate::value::HostValue;
@@ -63,6 +69,8 @@ struct SourcesHost {
     /// What the library's check wrote, in order, as `(path, bytes, is_appended)`, which
     /// JavaScript writes (`writes` in the result).
     writes: RefCell<Vec<(String, Vec<u8>, bool)>>,
+    /// The operations on the files the check asks for, which only tlapm's command line does.
+    files: RefCell<Vec<FileOperation>>,
 }
 
 impl SourcesHost {
@@ -103,6 +111,7 @@ impl Host for SourcesHost {
         let _ = self.get(format!("realpath:{path}"));
         match self.get(format!("stat:{path}")).as_deref() {
             Some("directory") => FileKind::Directory,
+            Some("other") => FileKind::Other,
             Some(_) => FileKind::File,
             None => FileKind::Absent,
         }
@@ -141,6 +150,16 @@ impl Host for SourcesHost {
 
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>> {
         self.sources.get_bytes(format!("bytes:{}", path.display()))
+    }
+
+    fn list_directory(&self, path: &Path) -> Option<Vec<Entry>> {
+        parse_entries(&self.get(format!("entries:{}", path.display()))?)
+    }
+
+    // JavaScript applies the operations once the check returns.
+    fn apply(&self, operation: &FileOperation) -> bool {
+        self.files.borrow_mut().push(operation.clone());
+        true
     }
 
     fn load_module(&self, directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf> {
@@ -317,6 +336,7 @@ fn check(arguments: &[HostValue]) -> HookResult {
         variables,
         is_library,
         writes: RefCell::default(),
+        files: RefCell::default(),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let mut output = Output {
@@ -364,6 +384,7 @@ fn check(arguments: &[HostValue]) -> HookResult {
                     .collect(),
             ),
         ),
+        ("files", get_journal(&host.files.borrow())),
     ]))
 }
 
@@ -545,6 +566,7 @@ pub fn resolve_files(arguments: &[HostValue]) -> HookResult {
         variables: Vec::new(),
         is_library: false,
         writes: RefCell::default(),
+        files: RefCell::default(),
     };
     let resolved = resolve::resolve_files(
         &args,
@@ -653,6 +675,7 @@ mod tests {
             variables: Vec::new(),
             is_library: false,
             writes: RefCell::default(),
+            files: RefCell::default(),
         };
         let first = host.now();
         std::thread::sleep(Duration::from_millis(5));

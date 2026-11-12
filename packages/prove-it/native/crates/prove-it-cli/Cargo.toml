@@ -15,5 +15,6 @@ path = "src/main.rs"
 prove-it-check = { path = "../prove-it-check" }
 
 [dev-dependencies]
+prove-obligations = { path = "../prover/obligations" }
 tla-front = { path = "../tla-front" }
 tla-ir = { path = "../tla-ir" }

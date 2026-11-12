@@ -8,7 +8,8 @@ Status: M1 to M7 built (their outcomes are in section 11). Section 12 supersedes
 chain described in sections 0, 1 and 8.4: the target is now an all-Rust checker, with no
 TypeScript fallback. The TypeScript engine is deleted; [design/fallback.md](design/fallback.md)
 records what `check` does now where the native engine declines or doesn't load. The port of the
-prover (`src/prover`, `src/obligations`) is planned apart, in [design/prover.md](design/prover.md).
+prover, whose TypeScript is deleted but for `prove`'s wrapper in `src/prover`, is planned apart, in
+[design/prover.md](design/prover.md).
 The sections below
 that compare with the TypeScript engine are the record of when it was the oracle. Every number marked *measured*
 comes from the prototypes that were under `native/prototypes/` until 1916b69 (section 10) on a
@@ -2388,7 +2389,7 @@ covering it in Rust, then removing the TypeScript path once the gates below hold
 | CLI and TLC's output (stage 5, `prove-it-cli`) | `cli/`, `check.ts`, `tlc/messages.ts`, traces | the full-stdout differential against TLC |
 
 **Distribution.** The binary ships per platform; the npm package becomes a thin launcher for it and
-then carries the binary alone. The proof checker (`src/prover`, `src/obligations`) is outside this
+then carries the binary alone. The proof checker (`crates/prover/`, design/prover.md) is outside this
 plan for now.
 
 ### 12.1 Liveness, as built (stage 3, first part)
@@ -2476,7 +2477,7 @@ front door that falls back to a JS process: nothing it meets is handed to JavaSc
 | `Print`, `PrintT` output during the search | `check.ts` `print` | the engine's `Reporter::print`, through the value printer |
 | Exit codes (`EXIT_STATUS`, `EXIT_CODES`) | `exit-codes.ts`, `cli/tlc.ts` | `prove-it-cli`: the same table |
 | Several specs in one run (`Checking X.tla with X.cfg`), the first non-zero exit code | `checkSpecs` | `prove-it-cli` |
-| `tlapm` | `cli/tlapm.ts` | out of scope: the JS CLI keeps it until it has its own plan |
+| `tlapm` | `cli/tlapm.ts`, which now runs the native one through `checkSources` | `prove-it-check`'s `tlapm.rs` over the prover's driver and back ends (design/prover.md, P6c) |
 | `tla2sany.xml.XMLExporter` (`-o`, `-t`, `-r`, `-u`, `-I`) | `cli/xml-exporter.ts` (arguments; the export is the engine's `sanyXml`) | `prove-it-check`'s `xml_exporter.rs` over `tla-front`'s `sany` module (design/front.md, "SANY's XMLExporter") |
 
 ### 13.2 Seams to the other stages

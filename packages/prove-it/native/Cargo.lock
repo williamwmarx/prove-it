@@ -17,6 +17,8 @@ dependencies = [
 name = "prove-it-check"
 version = "0.1.0"
 dependencies = [
+ "prove-it-prover",
+ "prove-obligations",
  "tla-engine",
  "tla-front",
  "tla-ir",
@@ -30,6 +32,7 @@ name = "prove-it-cli"
 version = "0.1.0"
 dependencies = [
  "prove-it-check",
+ "prove-obligations",
  "tla-front",
  "tla-ir",
 ]

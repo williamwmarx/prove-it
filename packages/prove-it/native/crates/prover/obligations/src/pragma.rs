@@ -1,6 +1,7 @@
 //! tlapm's method pragmas: the new `(*{ by (prover:"zenon"; timeout:@) }*)` after a definition,
 //! which `E_parser.read_new_method` reads into a Bpragma, and the old `(*{ by (zenon) }*)` of
-//! Method_prs. A port of `src/obligations/pragma.ts`.
+//! Method_prs. A port of `src/obligations/pragma.ts`, but for a string's contents, which it keeps
+//! as tlapm's lexer does (`read_string`) where the TypeScript reads them with `JSON.parse`.
 //!
 //! The source's lines are UTF-16 code units (any `AsRef<[u16]>`), so columns count as the
 //! TypeScript's string indices do.
@@ -152,54 +153,22 @@ fn match_string(rest: &[u16]) -> Option<usize> {
     }
 }
 
-fn get_syntax_error(message: &str) -> ObligationError {
-    ObligationError::bug(format!("SyntaxError: JSON Parse error: {message}"))
-}
-
-/// `JSON.parse` of a literal `match_string` matched. JSON is stricter than the pattern, so
-/// JSON.parse throws a SyntaxError on a control character or an escape JSON lacks. A lone
-/// surrogate the literal escapes becomes U+FFFD, as a Rust string can't hold it.
-fn parse_json_string(literal: &[u16]) -> Result<String> {
+/// The contents of a literal `match_string` matched, as tlapm's lexer reads a string
+/// (alexer.mll:173-197): verbatim. It keeps `\"`, `\\`, `\t`, `\n`, `\f`, `\r` and `\ddd` as
+/// they are written (alexer.mll:184-191) and adds every other character as it is
+/// (alexer.mll:195-197), so no escape is decoded or refused. tlapm's lexer fails on a TAB or a
+/// carriage return in a string (alexer.mll:174-182), as on a TAB anywhere; these keep the
+/// TypeScript's SyntaxError, which design/prover.md lists.
+fn read_string(literal: &[u16]) -> Result<String> {
     let inner = literal
         .get(1..literal.len().saturating_sub(1))
         .unwrap_or(&[]);
-    let mut value = Vec::with_capacity(inner.len());
-    let mut index = 0;
-    while let Some(&unit) = inner.get(index) {
-        index += 1;
-        if unit < 0x20 {
-            return Err(get_syntax_error("Unterminated string"));
-        }
-        if unit != u16::from(b'\\') {
-            value.push(unit);
-            continue;
-        }
-        let escape = inner.get(index).copied().unwrap_or(0);
-        index += 1;
-        let escaped = match u8::try_from(escape).unwrap_or(0) {
-            byte @ (b'"' | b'\\' | b'/') => u16::from(byte),
-            b'b' => 0x08,
-            b'f' => 0x0c,
-            b'n' => 0x0a,
-            b'r' => 0x0d,
-            b't' => 0x09,
-            b'u' => {
-                let code = inner
-                    .get(index..index + 4)
-                    .filter(|hex| {
-                        hex.iter()
-                            .all(|&unit| is_ascii_unit(unit, |byte| byte.is_ascii_hexdigit()))
-                    })
-                    .and_then(|hex| u16::from_str_radix(&String::from_utf16_lossy(hex), 16).ok())
-                    .ok_or_else(|| get_syntax_error("Invalid escape character u"))?;
-                index += 4;
-                code
-            }
-            _ => return Err(get_syntax_error("Invalid escape character")),
-        };
-        value.push(escaped);
+    if inner.iter().any(|&unit| matches!(unit, 0x09 | 0x0d)) {
+        return Err(ObligationError::bug(
+            "SyntaxError: JSON Parse error: Unterminated string",
+        ));
     }
-    Ok(String::from_utf16_lossy(&value))
+    Ok(String::from_utf16_lossy(inner))
 }
 
 fn tokenize_pragma<Line: AsRef<[u16]>>(
@@ -227,7 +196,7 @@ fn tokenize_pragma<Line: AsRef<[u16]>>(
         if let Some(length) = length {
             let text = &rest[..length];
             tokens.push(if is_unit(text.first(), b'"') {
-                Token::String(parse_json_string(text)?)
+                Token::String(read_string(text)?)
             } else if text.first().is_some_and(|&unit| is_digit(unit)) {
                 Token::Number(String::from_utf16_lossy(text))
             } else {
@@ -370,7 +339,7 @@ impl OldMethodReader {
 
 /// Method_prs.read_method: the (*{ by (zenon) }*) after a BY, OBVIOUS, proof step, theorem, or
 /// axiom, which names one method, isabelle with a tactic, or zenon with a timeout and a fallback.
-/// The error is the SyntaxError JSON.parse throws on a string literal JSON can't read.
+/// The error is `read_string`'s.
 pub fn read_old_method<Line: AsRef<[u16]>>(
     lines: &[Line],
     start: Position,
@@ -945,52 +914,11 @@ mod tests {
                 Ok(None),
             ),
             (
-                "(*{ by (a: \"a\\\"b\\\\c\\n\\u0041\\/\\b\\f\\r\\t\") }*)",
-                (0, 0),
-                Some((0, 0)),
-                Ok(None),
-                Ok(Some(vec![vec![set(
-                    "a",
-                    PragmaValue::String("a\"b\\c\nA/\u{8}\u{c}\u{d}\u{9}".to_owned()),
-                )]])),
-            ),
-            (
-                "(*{ by (a: \"\\x\") }*)",
-                (0, 0),
-                Some((0, 0)),
-                Err(()),
-                Err(()),
-            ),
-            (
                 "(*{ by (a: \"tab\u{9}here\") }*)",
                 (0, 0),
                 Some((0, 0)),
                 Err(()),
                 Err(()),
-            ),
-            (
-                "(*{ by (a: \"\\u12\") }*)",
-                (0, 0),
-                Some((0, 0)),
-                Err(()),
-                Err(()),
-            ),
-            (
-                "(*{ by (a: \"\\u12G4\") }*)",
-                (0, 0),
-                Some((0, 0)),
-                Err(()),
-                Err(()),
-            ),
-            (
-                "(*{ by (a: \"\\ud83d\\ude00\") }*)",
-                (0, 0),
-                Some((0, 0)),
-                Ok(None),
-                Ok(Some(vec![vec![set(
-                    "a",
-                    PragmaValue::String("\u{1f600}".to_owned()),
-                )]])),
             ),
             (
                 "(*{ by (a: \"\u{3b1}\u{3b2}\u{1f600}\") }*)",
@@ -1039,13 +967,6 @@ mod tests {
                 Some((0, 0)),
                 Ok(None),
                 Ok(None),
-            ),
-            (
-                "(*{ by (isabelle \"a\\qb\") }*)",
-                (0, 0),
-                Some((0, 0)),
-                Err(()),
-                Err(()),
             ),
             (
                 "(*{ by\n(a:\n\"x\"\n)\n}*)",
@@ -1123,17 +1044,50 @@ mod tests {
         }
     }
 
-    /// The TypeScript keeps a lone surrogate an escape makes, which a Rust string can't hold.
+    /// A string's contents as tlapm's lexer keeps them (alexer.mll:173-197): each escape as it is
+    /// written, whether tlapm knows it (`\"` and `\n` at lines 184-187, `\ddd` at 188-191) or
+    /// not (`\q`, `\uD800`, `\/`, each character added as it is at 195-197).
     #[test]
-    fn replaces_a_lone_escaped_surrogate() {
-        let lines = get_lines(r#"(*{ by (a: "x\ud800y") }*)"#);
+    fn reads_strings_as_tlapm_lexes_them() {
         let start = Position { line: 0, column: 0 };
-        assert_eq!(
-            read_new_method(&lines, start),
-            Ok(Some(vec![vec![set(
-                "a",
-                PragmaValue::String("x\u{fffd}y".to_owned())
-            )]]))
-        );
+        for (literal, contents) in [
+            (r#""\uD800""#, r"\uD800"),
+            (r#""\ud83d\ude00""#, r"\ud83d\ude00"),
+            (r#""\n""#, r"\n"),
+            (r#""\q""#, r"\q"),
+            (r#""a\"b""#, r#"a\"b"#),
+            (r#""a\\""#, r"a\\"),
+            (r#""\101\7""#, r"\101\7"),
+            (r#""\t\f\r\/\b\u0041\x""#, r"\t\f\r\/\b\u0041\x"),
+            ("\"a\u{1}\u{3b1}\u{1f600}\"", "a\u{1}\u{3b1}\u{1f600}"),
+        ] {
+            let new_method = format!("(*{{ by (prover: {literal}) }}*)");
+            assert_eq!(
+                read_new_method(&get_lines(&new_method), start),
+                Ok(Some(vec![vec![set(
+                    "prover",
+                    PragmaValue::String(contents.to_owned())
+                )]])),
+                "{literal}"
+            );
+            let old_method = format!("(*{{ by (isabelle {literal}) }}*)");
+            assert_eq!(
+                read_old_method(&get_lines(&old_method), start),
+                Ok(Some(old("isabelle", Some(contents), None))),
+                "{literal}"
+            );
+        }
+    }
+
+    /// tlapm's lexer fails on a TAB or a carriage return in a string (alexer.mll:174-182).
+    #[test]
+    fn fails_on_what_tlapm_cannot_lex_in_a_string() {
+        let start = Position { line: 0, column: 0 };
+        for text in ["(*{ by (a: \"a\u{9}b\") }*)", "(*{ by (a: \"a\u{d}b\") }*)"] {
+            assert!(
+                read_new_method(&get_lines(text), start).is_err(),
+                "{text:?}"
+            );
+        }
     }
 }

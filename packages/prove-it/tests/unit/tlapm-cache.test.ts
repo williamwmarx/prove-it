@@ -1,45 +1,59 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { getKnownResults, loadFingerprints } from "../../src/prover/tlapm/cache";
-import { readMarshaled } from "../../src/prover/tlapm/ocaml-marshal";
+// The fingerprints tlapm 9ed0376 wrote for tlapm-cli/Failures.tla, which `prove-it tlapm` reads and
+// writes through the native engine.
+const FIXTURES = join(import.meta.dirname, "../fixtures/tlapm-cli");
 
-// The fingerprints tlapm 9ed0376 wrote for tlapm-cli/Failures.tla.
-const FINGERPRINTS = join(import.meta.dirname, "../fixtures/tlapm-cli/Failures.fingerprints");
+// What the TypeScript's cache wrote back for that file once it loaded it, as the Rust's tests hold it.
+const RESAVED = join(
+  import.meta.dirname,
+  "../../native/crates/prover/prover/tests/fixtures/failures-tlapm.resaved",
+);
 
-const directory = mkdtempSync(join(tmpdir(), "tla-ts-fingerprints-"));
+const CLI = join(import.meta.dirname, "../../src/cli.ts");
 
-afterAll(() => rmSync(directory, { recursive: true, force: true }));
+const copies: string[] = [];
 
-const readValues = (path: string) => {
-  const bytes = readFileSync(path);
-  const magic = readMarshaled(bytes, 0);
-  return [magic.value, readMarshaled(bytes, magic.next).value];
+afterAll(() => copies.forEach((copy) => rmSync(copy, { recursive: true, force: true })));
+
+// A copy of the fixtures whose cache holds the fingerprints tlapm wrote.
+const copyWithCache = () => {
+  const copy = mkdtempSync(join(tmpdir(), "prove-it-fingerprints-"));
+  copies.push(copy);
+  cpSync(FIXTURES, copy, { recursive: true });
+  mkdirSync(join(copy, ".tlacache/Failures.tlaps"), { recursive: true });
+  cpSync(join(copy, "Failures.fingerprints"), join(copy, ".tlacache/Failures.tlaps/fingerprints"));
+  return copy;
 };
 
-const getProvers = (isSafe: boolean) => {
-  const table = new Map();
-  loadFingerprints(table, FINGERPRINTS, isSafe);
-  return [...getKnownResults(table).results.values()]
-    .flatMap((results) => [...results.keys()])
-    .sort();
-};
+const runTlapm = (directory: string, args: string[]) =>
+  spawnSync("bun", [CLI, "tlapm", ...args, "Failures.tla"], { cwd: directory, encoding: "utf8" });
+
+// The provers whose results each obligation reuses, in the toolbox's messages.
+const getReusedProvers = (args: string[]) =>
+  runTlapm(copyWithCache(), ["--noproving", "--toolbox", "0", "0", ...args])
+    .stderr.split("@!!BEGIN\n")
+    .filter((message) => message.includes("@!!already:true"))
+    .map((message) => /^@!!prover:(.*)$/m.exec(message)?.[1]);
 
 describe("tlapm's fingerprints file", () => {
   it("writes back what it reads, in the buckets tlapm hashes each fingerprint into", () => {
-    const table = new Map();
-    loadFingerprints(table, FINGERPRINTS, false);
-    getKnownResults(table).save(join(directory, "fingerprints"));
-    expect(readValues(join(directory, "fingerprints"))).toEqual(readValues(FINGERPRINTS));
+    const directory = copyWithCache();
+    expect(runTlapm(directory, ["--noproving"]).status).toBe(0);
+    expect(readFileSync(join(directory, ".tlacache/Failures.tlaps/fingerprints"))).toEqual(
+      readFileSync(RESAVED),
+    );
   });
 
   it("reads what each prover concluded", () => {
-    expect(getProvers(false)).toEqual(["isabelle", "smt", "zenon", "zenon"]);
+    expect(getReusedProvers([])).toEqual(["smt", "zenon", "zenon", "isabelle"]);
   });
 
   it("trusts no Zenon or Isabelle result of other versions under --safefp", () => {
-    expect(getProvers(true)).toEqual(["smt"]);
+    expect(getReusedProvers(["--safefp"])).toEqual(["smt"]);
   });
 });

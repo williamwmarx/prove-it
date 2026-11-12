@@ -1411,14 +1411,6 @@
       }
     ]
   },
-  "a pragma's string with an escape JSON lacks": {
-    "error": {
-      "class": "TlapmBugError",
-      "name": "TlaProofError",
-      "message": "Oops, this seems to be a bug in TLAPM."
-    },
-    "streamed": []
-  },
   "stops after 1 reports": {
     "error": {
       "class": "Error",
@@ -1605,111 +1597,6 @@
     },
     "reads": [
       "A"
-    ]
-  },
-  "a module that isn't well-formed UTF-16 among the loaded": {
-    "run": {
-      "result": {
-        "obligations": [
-          {
-            "id": 1,
-            "location": "3:15:3:17",
-            "text": "ASSUME X == 1,\n       SMT \nPROVE  X = 1\n",
-            "status": "proved",
-            "prover": "smt"
-          },
-          {
-            "id": 2,
-            "location": "3:18:3:21",
-            "text": "ASSUME X == 1\nPROVE  SMT\n",
-            "status": "trivial"
-          }
-        ],
-        "missingProofCount": 0,
-        "omittedProofCount": 0
-      },
-      "streamed": [
-        {
-          "id": 1,
-          "location": "3:15:3:17",
-          "text": "ASSUME X == 1,\n       SMT \nPROVE  X = 1\n",
-          "status": "proved",
-          "prover": "smt"
-        },
-        {
-          "id": 2,
-          "location": "3:18:3:21",
-          "text": "ASSUME X == 1\nPROVE  SMT\n",
-          "status": "trivial"
-        }
-      ]
-    },
-    "loads": [
-      "Lib",
-      "TLAPS",
-      "Lib2"
-    ]
-  },
-  "a pragma's string with an escape of a lone surrogate": {
-    "result": {
-      "obligations": [
-        {
-          "id": 1,
-          "location": "4:15:4:17",
-          "text": "ASSUME F(1) \nPROVE  1 = 1\n",
-          "status": "failed",
-          "reason": "Invalid SMT budget \"\ud800\""
-        },
-        {
-          "id": 2,
-          "location": "4:18:4:22",
-          "text": "F(1)\n",
-          "status": "failed",
-          "reason": "smt answered sat, zenon answered unknown, isabelle answered unknown"
-        }
-      ],
-      "missingProofCount": 0,
-      "omittedProofCount": 0
-    },
-    "streamed": [
-      {
-        "id": 1,
-        "location": "4:15:4:17",
-        "text": "ASSUME F(1) \nPROVE  1 = 1\n",
-        "status": "failed",
-        "reason": "Invalid SMT budget \"\ud800\""
-      },
-      {
-        "id": 2,
-        "location": "4:18:4:22",
-        "text": "F(1)\n",
-        "status": "failed",
-        "reason": "smt answered sat, zenon answered unknown, isabelle answered unknown"
-      }
-    ]
-  },
-  "a pragma's string with a tactic with an escape of a lone surrogate": {
-    "result": {
-      "obligations": [
-        {
-          "id": 1,
-          "location": "4:1:4:39",
-          "text": "1 = 1\n",
-          "status": "failed",
-          "reason": "isabelle failed: isabelle declined: the text holds a lone surrogate"
-        }
-      ],
-      "missingProofCount": 0,
-      "omittedProofCount": 0
-    },
-    "streamed": [
-      {
-        "id": 1,
-        "location": "4:1:4:39",
-        "text": "1 = 1\n",
-        "status": "failed",
-        "reason": "isabelle failed: isabelle declined: the text holds a lone surrogate"
-      }
     ]
   },
   "proves HourClock with workers": {

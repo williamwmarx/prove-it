@@ -9,6 +9,15 @@ import type { Statistics, Verdict } from "../prover/verdict";
 import { getEngineAddon, getEngineWasm } from "./settings";
 import { instantiateEngine } from "./wasm";
 
+// An operation on the files that a check writes, as tlapm's command line writes its cache, which
+// JavaScript applies in order (prove-it-host's files.rs).
+export type NativeFileOperation =
+  | [kind: "mkdir", path: string]
+  | [kind: "write", path: string, bytes: Uint8Array]
+  | [kind: "remove", path: string]
+  | [kind: "rename", from: string, to: string]
+  | [kind: "copy", from: string, to: string];
+
 // What the native binary prints for a TLC command line, its exit code and what it found, the keys
 // of what the check still reads, or why the binary declines the model (prove-it-host's check.rs).
 export type NativeCheckSources =
@@ -21,6 +30,9 @@ export type NativeCheckSources =
       outcome: NativeCheckOutcome | undefined;
       // Each file the check wrote, in order, which the caller writes.
       writes: { path: string; bytes: Uint8Array; isAppended: boolean }[];
+      // The operations on the files tlapm's command line held back until its run ended, in the
+      // order the CLI applies them.
+      files: NativeFileOperation[];
     }
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
@@ -174,6 +186,8 @@ export type NativeObligations =
       kind: "obligations";
       obligations: NativeObligation[];
       encodings: ({ kind: "text"; text: string } | NativeObligationError)[];
+      missingProofCount: number;
+      omittedProofCount: number;
     }
   | NativeObligationError;
 
@@ -229,13 +243,13 @@ export interface NativeAddon extends NativeStoreHooks {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 25;
+const ABI_VERSION = 26;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";
 
-// The executables build-binary.ts compiles define PROVE_IT_BINARY, and embed the addon beside the
-// CLI when their build had one.
+// The executables build-binary.ts compiles define PROVE_IT_BINARY, and embed beside the CLI the
+// addon when their build had one, or else the engine as WebAssembly when it had that.
 declare const PROVE_IT_BINARY: boolean | undefined;
 const isBinary = typeof PROVE_IT_BINARY === "boolean" && PROVE_IT_BINARY;
 
@@ -312,11 +326,11 @@ const loaded: { addon?: NativeAddon | string } = {};
 const isDlopen = () => typeof globalThis.process?.dlopen === "function";
 
 // The addon for this platform, or else the engine as WebAssembly the package ships beside its
-// modules, as on a platform no package is built for. An addon PROVE_IT_ENGINE_ADDON names, or one
-// an executable embeds, is the only one tried.
+// modules, as on a platform no package is built for; an executable embeds one or the other. An
+// addon PROVE_IT_ENGINE_ADDON names is the only one tried.
 const loadAddonOrWasm = () => {
   const addon = loadAddon();
-  if (typeof addon !== "string" || isBinary || getEngineAddon() !== undefined) return addon;
+  if (typeof addon !== "string" || getEngineAddon() !== undefined) return addon;
   const wasmPath = toPath(new URL(`./${WASM_FILE}`, import.meta.url));
   return process.getBuiltinModule("node:fs").existsSync(wasmPath) ? loadWasm(wasmPath) : addon;
 };

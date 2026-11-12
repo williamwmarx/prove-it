@@ -15,6 +15,7 @@ mod inflate;
 mod jar;
 mod messages;
 mod outcome;
+mod overlay;
 mod plain;
 pub mod resolve;
 mod simulation;
@@ -22,6 +23,7 @@ mod stack;
 mod summary;
 mod te_spec;
 mod time;
+mod tlapm;
 mod trace;
 mod xml_exporter;
 mod zip;
@@ -29,8 +31,11 @@ pub mod zone;
 
 pub use check::run;
 pub use files::FileDescriber;
-pub use host::{FileDescription, FileKind, Files, Host, Machine, SystemHost, is_directory_there};
+pub use host::{
+    Entry, FileDescription, FileKind, Files, Host, Machine, SystemHost, is_directory_there,
+};
 pub use messages::Output;
 pub use outcome::{Counts, Outcome, Reported, ReportedState, Thrown};
+pub use overlay::FileOperation;
 pub use plain::Variable;
 pub use zone::Zone;

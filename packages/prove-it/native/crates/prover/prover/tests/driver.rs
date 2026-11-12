@@ -168,3 +168,50 @@ fn a_failed_decision_fails_the_obligation_with_its_reason() {
         }
     );
 }
+
+fn get_pragma_module(body: &str) -> String {
+    format!("---- MODULE M ----\nEXTENDS Naturals, TLAPS\n{body}\n====\n")
+}
+
+// A pragma's string is what tlapm's lexer keeps (alexer.mll:173-197), escapes as written: the
+// tactic reaches Isabelle's theory as it is, and a prover is named by it.
+#[test]
+fn a_pragma_string_reaches_the_backend_as_tlapm_lexes_it() {
+    for (body, tactic) in [
+        (
+            "THEOREM 1 = 1\n  OBVIOUS (*{ by (isabelle \"\\q\\n\") }*)",
+            r"by \q\n",
+        ),
+        (
+            "F == TRUE (*{ by (prover:\"isabelle\"; tactic:\"\\uD800\") }*)\nTHEOREM 1 = 1 BY F",
+            r"by \uD800",
+        ),
+    ] {
+        let obligations = get_module_obligations(&get_pragma_module(body));
+        let (round, requested) = prove(&obligations, |_| decided(Verdict::Unsat));
+        assert_eq!(requested.len(), 1, "{body}");
+        assert_eq!(requested[0].prover, "isabelle");
+        assert!(
+            requested[0].text.lines().any(|line| line.trim() == tactic),
+            "{}",
+            requested[0].text
+        );
+        assert_eq!(
+            round.reports[0].status,
+            Status::Proved {
+                prover: "isabelle".to_owned()
+            }
+        );
+    }
+    let obligations = get_module_obligations(&get_pragma_module(
+        "F == TRUE (*{ by (prover:\"\\uD800\") }*)\nTHEOREM 1 = 1 BY F",
+    ));
+    let (round, requested) = prove(&obligations, |_| decided(Verdict::Unsat));
+    assert!(requested.is_empty());
+    assert_eq!(
+        round.reports[0].status,
+        Status::Failed {
+            reason: r"Unknown prover: \uD800".to_owned()
+        }
+    );
+}
