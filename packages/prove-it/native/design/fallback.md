@@ -402,6 +402,11 @@ Fingerprint Stack Trace. `tests/unit/check.test.ts` ("reports the sources of a s
 fails to enumerate", "reports the left side of %s that fails to compare") checks them with the
 TypeScript check.
 
+A file that instantiates or extends its own inner module of the file's name, as `---- MODULE B ----`
+holding `---- MODULE B ----` and `I == INSTANCE B` does, declines (`a module that names a module of
+its own name`), where TLC checks it: SANY scopes the inner module's context, which the front end
+keys by name. It panicked before. It comes back once the front end scopes contexts as SANY does.
+
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 
