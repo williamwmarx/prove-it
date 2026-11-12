@@ -809,12 +809,15 @@ const checkSpec = async (
       },
       sany.readings,
     );
-    // TLC writes the trace exploration spec of a trace of two states or more and prints its path,
-    // which only the native check writes.
+    // TLC writes the trace exploration spec of a trace of two states or more, a lasso's step back
+    // or stuttering counted, and prints its path, which only the native check writes. It writes
+    // none for a trace exploration spec unless -generateSpecTE asks.
     if (
       isTraceSpecWritten(args, version) &&
-      !fileName.includes("_TTrace") &&
-      [result.violation, result.failure].some((error) => (error?.trace.length ?? 0) > 1)
+      (getFlags(args)("-generateSpecTE") || !fileName.includes("_TTrace")) &&
+      ((result.violation?.trace.length ?? 0) > 1 ||
+        result.violation?.loopStart !== undefined ||
+        (result.failure?.trace.length ?? 0) > 1)
     ) {
       console.error("prove-it: not native yet: the trace exploration spec of an error trace");
       return NOT_NATIVE_EXIT_CODE;
@@ -885,7 +888,7 @@ export const checkNatively = async (commandLine: string[]) => {
   reportEngine(
     `native: checkSources: exit ${result.exitCode} (${(performance.now() - startedAt).toFixed(2)} ms)`,
   );
-  // What the check wrote, in its order, into the directories the CLI said it can write.
+  // What the check wrote, in its order, to the files the CLI said it can write.
   result.writes.forEach((write) =>
     (write.isAppended ? appendFileSync : writeFileSync)(write.path, write.bytes),
   );

@@ -1025,17 +1025,14 @@ fn check_spec(
         Ok(Read::Failed(failure)) => return print_failed_front(printer, &failure, start),
         Err(reason) => return report_not_native(printer, &reason),
     };
-    // The directories the run may write into after the search: the spec's, for the trace
-    // exploration spec, and each dump's.
-    let platform = printer.host.platform();
-    if is_trace_spec_written(args, spec_path, platform) {
-        let (directory, _, _) = te_spec::get_files_place(main_file, started);
-        printer.host.prepare_write(Path::new(&directory));
+    // The files the run may write after the search: the trace exploration spec and each dump.
+    if is_trace_spec_written(args, spec_path, printer.host.platform()) {
+        let (directory, _, name) = te_spec::get_files_place(main_file, started);
+        let path = te_spec::join_place(&directory, &format!("{name}.tla"));
+        printer.host.prepare_write(Path::new(&path));
     }
     for path in dumps.get_paths() {
-        if let Some(end) = platform.last_separator(path) {
-            printer.host.prepare_write(Path::new(&path[..end.max(1)]));
-        }
+        printer.host.prepare_write(Path::new(path));
     }
     // Everything the check reads, it has read by now: a host still missing some answers it first.
     if !printer.host.is_complete() {

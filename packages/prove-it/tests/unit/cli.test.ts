@@ -492,13 +492,9 @@ describe("the CLI reports results like TLC", () => {
   });
 
   // TLC prints that the postcondition of _JsonTrace failed, with the message of the Java
-  // exception it caught, "WaterJugs.cfg/x.json (Not a directory)".
-  it("declines a -dumpTrace file it can't write", () => {
-    const result = runCli("water-jugs", "WaterJugs", [
-      "-dumpTrace",
-      "json",
-      "WaterJugs.cfg/x.json",
-    ]);
+  // exception it caught, such as "WaterJugs.cfg/x.json (Not a directory)" or ". (Is a directory)".
+  it.each(["WaterJugs.cfg/x.json", "."])("declines a -dumpTrace file %s it can't write", (path) => {
+    const result = runCli("water-jugs", "WaterJugs", ["-dumpTrace", "json", path]);
     expect(result.status).toBe(1);
     expect(result.stderr).toBe("prove-it: not native yet: -dumpTrace\n");
   });
