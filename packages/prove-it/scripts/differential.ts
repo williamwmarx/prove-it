@@ -212,7 +212,8 @@ const readTrace = async (model: CorpusModel, bytes: Buffer) => {
       "ProveItTrace == INSTANCE _TLCTrace",
       `ASSUME ProveItTLC!PrintT(ProveItTLCExt!TLCFP(ProveItTrace!_TLCTraceDeserialize(${JSON.stringify(tracePath)}))) /\\ FALSE`,
       "====",
-      "",
+      // The spec's file after it, which SANY reads every module of only as the root file.
+      readFileSync(model.specPath, "utf8"),
     ].join("\n"),
   );
   const value = await runJar(model.directory, [
@@ -222,8 +223,16 @@ const readTrace = async (model: CorpusModel, bytes: Buffer) => {
     join(directory, "ProveItTraceValue.tla"),
   ]);
   rmSync(directory, { recursive: true, force: true });
-  return `${loaded}\n--- the fingerprint of the value it holds\n${value}`;
+  return {
+    text: `${loaded}\n--- the fingerprint of the value it holds\n${value}`,
+    // Whether TLC read the value and printed its fingerprint, as the false assumption after it
+    // says; where it couldn't, the comparison of the two files says nothing of their values.
+    isValueRead: value.includes("Assumption line"),
+  };
 };
+
+// The trace files, intact, whose value TLC didn't read: the run fails, since nothing compared it.
+const unreadValues: string[] = [];
 
 // The -dumpTrace tlc file a checker writes for the model with -tool, which no recording holds:
 // TLC words the message of an ALIAS that fails as -tool prints it, which the file holds.
@@ -272,8 +281,10 @@ const compareToolDumps = async (model: CorpusModel) => {
     return;
   }
   const tlc = await dumpWithTool(model, "java", ["-XX:+UseParallelGC", "-cp", tlaToolsJar ?? ""]);
-  const isSame =
-    tlc !== undefined && (await readTrace(model, tlc)) === (await readTrace(model, native));
+  const readTlc = tlc && (await readTrace(model, tlc));
+  const readNative = await readTrace(model, native);
+  if (!readNative.isValueRead) unreadValues.push(`${model.id}: its -tool dump`);
+  const isSame = readTlc !== undefined && readTlc.text === readNative.text;
   if (!isSame) toolDumpDifferences.push(model.id);
 };
 
@@ -289,7 +300,9 @@ const readTraceFiles = async (
       Object.entries(files).map(async ([name, text]) => {
         if (!name.endsWith(".bin")) return [name, text];
         const bytes = Buffer.from(text, "base64");
-        const loaded = await readTrace(model, bytes);
+        const read = await readTrace(model, bytes);
+        if (!read.isValueRead) unreadValues.push(`${model.id}: ${name}`);
+        const loaded = read.text;
         if (isDamageChecked) {
           const corrupted = Buffer.from(bytes);
           corrupted[Math.floor(corrupted.length / 2)] ^= 0x5a;
@@ -297,7 +310,7 @@ const readTraceFiles = async (
             ["truncated", bytes.subarray(0, Math.floor(bytes.length / 2))],
             ["corrupted", corrupted],
           ] as const) {
-            if ((await readTrace(model, damaged)) === loaded) {
+            if ((await readTrace(model, damaged)).text === loaded) {
               undamaged.push(`${model.id}: a ${damage} ${name}`);
             }
           }
@@ -589,6 +602,10 @@ if (nativeBinary) {
       );
       for (const id of toolDumpDeclines) console.log(`  ${id}`);
     }
+    if (unreadValues.length > 0) {
+      console.log(`\n${unreadValues.length} trace files whose value TLC didn't read:`);
+      for (const run of unreadValues) console.log(`  ${run}`);
+    }
     if (undamaged.length > 0) {
       console.log(`\n${undamaged.length} damaged trace files TLC read back to the same trace:`);
       for (const run of undamaged) console.log(`  ${run}`);
@@ -597,6 +614,7 @@ if (nativeBinary) {
       aborted.length > 0 ||
       differing.length > 0 ||
       undamaged.length > 0 ||
+      unreadValues.length > 0 ||
       toolDumpDifferences.length > 0
     ) {
       process.exitCode = 1;
