@@ -1,0 +1,4 @@
+exit 255
+Semantic processing of module M
+Linting of module M
+Error: TLC cannot handle the temporal formula line 6, col 6 to line 6, col 50 of module M

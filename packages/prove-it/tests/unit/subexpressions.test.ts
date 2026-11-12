@@ -4,17 +4,20 @@ import { join } from "node:path";
 
 import { check } from "../../src";
 import { createSanyError } from "../../src/errors";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/subexpressions");
 
 const SOURCE = readFileSync(join(DIRECTORY, "Subexpressions.tla"), "utf8");
 
+const getSubexpressions = (source: string, configName: string) => ({
+  source,
+  config: readFileSync(join(DIRECTORY, configName), "utf8"),
+  loadModule: (name: string) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
+});
+
 const checkSubexpressions = (source: string, configName: string) =>
-  check({
-    source,
-    config: readFileSync(join(DIRECTORY, configName), "utf8"),
-    loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
-  });
+  checkOnEngine(getSubexpressions(source, configName));
 
 describe("subexpression references match TLC", () => {
   it("selects operands, bound bodies, labels, LET definitions, and instance operators", async () => {
@@ -31,7 +34,7 @@ describe("subexpression references match TLC", () => {
   });
 
   it("selects a subexpression in a function's bounds", async () => {
-    const result = await check({
+    const result = await checkOnEngine({
       source:
         "---- MODULE Bounds ----\nS == {1} \\cup {2}\nf[x \\in S!1] == x\nVARIABLE v\nASSUME DOMAIN f = {1}\nInit == v = f[1]\nNext == UNCHANGED v\n====",
       config: "INIT Init\nNEXT Next",
@@ -56,15 +59,14 @@ describe("subexpression references into theorems match SANY", () => {
       errors.map((error) => ({ location: `${error[0]} of module ${module}`, message: error[1] })),
     );
 
-  const checkModule = (definitions: string) =>
-    check({
-      source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
-      config: "INIT Init\nNEXT Next",
-    });
+  const getModule = (definitions: string) => ({
+    source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+    config: "INIT Init\nNEXT Next",
+  });
 
   it("reports every error SANY reports for test210", async () => {
     await expect(
-      checkSubexpressions(readFileSync(join(DIRECTORY, "test210.tla"), "utf8"), "test210.cfg"),
+      check(getSubexpressions(readFileSync(join(DIRECTORY, "test210.tla"), "utf8"), "test210.cfg")),
     ).rejects.toThrow(
       getSanyError(
         [
@@ -283,12 +285,14 @@ describe("subexpression references into theorems match SANY", () => {
       ],
     ],
   ])("reports every error SANY reports for %s", async (_name, definitions, errors) => {
-    await expect(checkModule(definitions)).rejects.toThrow(getSanyError(errors, "M"));
+    await expect(check(getModule(definitions))).rejects.toThrow(getSanyError(errors, "M"));
   });
 
   it("accepts the references SANY accepts", async () => {
-    const result = await checkModule(
-      "LEGAL == TRUE\nTHEOREM foo == ASSUME LEGAL, lab :: LEGAL, ASSUME LEGAL PROVE labi :: LEGAL PROVE lab2 :: LEGAL\nBar == foo!lab /\\ foo!1 /\\ foo!2 /\\ foo!4 /\\ foo!lab2 /\\ foo!labi /\\ foo!3!1 /\\ foo!3!2 /\\ foo!<<\nTHEOREM bar == ASSUME NEW v, lv :: v = v, ASSUME NEW w PROVE w = w PROVE LEGAL\n<1>1. bar!lv /\\ bar!2 /\\ bar!4\n<1>2. ASSUME NEW z, lz :: z = 1 PROVE TRUE\n  <2>1. ASSUME NEW w PROVE <1>2!lz /\\ <1>2!2\n    <3>1. <2>1!2 /\\ <1>2!lz\n    <3>2. QED\n  <2>2. QED BY <1>2!1, <1>2!2, <2>1!1\n<1>3. SUFFICES ASSUME NEW q, lq :: q = q PROVE LEGAL\n<1>4. <1>3!lq /\\ <1>3!1!2 /\\ <1>3!<<!2\n<1>5. QED BY bar!1, bar!3",
+    const result = await checkOnEngine(
+      getModule(
+        "LEGAL == TRUE\nTHEOREM foo == ASSUME LEGAL, lab :: LEGAL, ASSUME LEGAL PROVE labi :: LEGAL PROVE lab2 :: LEGAL\nBar == foo!lab /\\ foo!1 /\\ foo!2 /\\ foo!4 /\\ foo!lab2 /\\ foo!labi /\\ foo!3!1 /\\ foo!3!2 /\\ foo!<<\nTHEOREM bar == ASSUME NEW v, lv :: v = v, ASSUME NEW w PROVE w = w PROVE LEGAL\n<1>1. bar!lv /\\ bar!2 /\\ bar!4\n<1>2. ASSUME NEW z, lz :: z = 1 PROVE TRUE\n  <2>1. ASSUME NEW w PROVE <1>2!lz /\\ <1>2!2\n    <3>1. <2>1!2 /\\ <1>2!lz\n    <3>2. QED\n  <2>2. QED BY <1>2!1, <1>2!2, <2>1!1\n<1>3. SUFFICES ASSUME NEW q, lq :: q = q PROVE LEGAL\n<1>4. <1>3!lq /\\ <1>3!1!2 /\\ <1>3!<<!2\n<1>5. QED BY bar!1, bar!3",
+      ),
     );
     expect(result.status).toBe("success");
   });

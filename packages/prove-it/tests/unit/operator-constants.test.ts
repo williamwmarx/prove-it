@@ -5,30 +5,42 @@ import { join } from "node:path";
 import { TlaConfigError } from "../../src";
 import { UNEXPECTED_EXCEPTION } from "../../src/errors";
 import { checkParsed } from "../../src/parallel";
+import { checkNatively } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/operator-constants");
 
 const SOURCE =
   "---- MODULE Op ----\nEXTENDS Naturals\nCONSTANT F(_), G(_, _), C\nVARIABLE x\nInit == x = 0\nNext == x' = F(x)\nInv == x /= 2\nInc(n) == n + 1\nAdd(a, b) == a + b\nZero == 0\n====";
 
-const checkConstants = (constants: string) =>
-  checkParsed({
+const getConfig = (constants: string) =>
+  `INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTANT ${constants}`;
+
+// The check of the module with these constants, which the engine answers.
+const checkConstants = async (constants: string) => {
+  const { result, declined } = await checkNatively({
     source: SOURCE,
-    config: `INIT Init\nNEXT Next\nINVARIANT Inv\nCONSTANT ${constants}`,
+    config: getConfig(constants),
   });
+  expect(declined).toBeUndefined();
+  return result;
+};
 
 const getTrace = async (constants: string) => {
   const result = await checkConstants(constants);
-  return [result.status, result.violation?.trace.map((step) => step.state.x)];
+  return [result.status, result.violations[0]?.states.map((step) => step.variables.x?.value)];
 };
 
 describe("operator constants match TLC", () => {
   it("assigns an operator constant from a table", async () => {
-    const result = await checkParsed({
+    const { result, declined } = await checkNatively({
       source: readFileSync(join(DIRECTORY, "ConstantOperatorConfiguration.tla"), "utf8"),
       config: readFileSync(join(DIRECTORY, "ConstantOperatorConfiguration.cfg"), "utf8"),
     });
-    expect([result.status, result.violation?.name]).toEqual(["invariant-violation", "Inv"]);
+    expect(declined).toBeUndefined();
+    expect([result.status, result.violations[0]?.headline]).toEqual([
+      "invariant-violation",
+      "Invariant Inv is violated.",
+    ]);
   });
 
   it("applies an operator assigned a plain value to any arguments", async () => {
@@ -50,7 +62,9 @@ describe("operator constants match TLC", () => {
       "invariant-violation",
       [0, 2],
     ]);
-    expect((await checkConstants("F <- Inc G <- Add C = 1 Inc(0) = 7")).failure?.message).toBe(
+    expect(
+      (await checkConstants("F <- Inc G <- Add C = 1 Inc(0) = 7")).violations[0]?.headline,
+    ).toBe(
       `${UNEXPECTED_EXCEPTION}Attempted to apply operator:\n{ <0, 7>}\nto arguments (7), which is undefined.`,
     );
   });
@@ -82,10 +96,12 @@ describe("operator constants match TLC", () => {
       ],
     ];
     for (const [constants, message] of cases) {
-      expect((await checkConstants(constants)).failure?.message).toBe(message);
+      expect((await checkConstants(constants)).violations[0]?.headline).toBe(message);
     }
   });
 
+  // The engine stops before its search at a configuration TLC rejects and leaves the error to the
+  // TypeScript check, until it throws TLC's typed errors itself.
   it("rejects configurations TLC rejects", async () => {
     const cases = [
       [
@@ -114,7 +130,9 @@ describe("operator constants match TLC", () => {
       ],
     ];
     for (const [constants, message] of cases) {
-      await expect(checkConstants(constants)).rejects.toThrow(new TlaConfigError(message));
+      await expect(checkParsed({ source: SOURCE, config: getConfig(constants) })).rejects.toThrow(
+        new TlaConfigError(message),
+      );
     }
   });
 });

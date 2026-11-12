@@ -1,0 +1,51 @@
+exit 11
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module AssertEqLazy
+Linting of module TLCExt
+Linting of module AssertEqLazy
+Computing initial states...
+"Assertion failed"
+{{}, {0}, {7}, {0, 7}}
+{}
+"Assertion failed"
+(0 :> 0)
+(0 :> 1)
+"Assertion failed"
+{(0 :> 1), (0 :> 2)}
+{}
+"Assertion failed"
+{{}, {1}, {7}, {1, 7}}
+{}
+"Assertion failed"
+<<1>>
+(0 :> 1)
+"Assertion failed"
+{<<1>>, <<2>>}
+{}
+"Assertion failed"
+{{}, {2}, {7}, {2, 7}}
+{}
+"Assertion failed"
+(2 :> 2)
+(0 :> 1)
+"Assertion failed"
+{(2 :> 1), (2 :> 2)}
+{}
+Error: Deadlock reached.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+x = 0
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module AssertEqLazy>
+x = 1
+
+State 3: <Next line 5, col 9 to line 5, col 27 of module AssertEqLazy>
+x = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.

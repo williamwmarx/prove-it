@@ -109,8 +109,6 @@ fn leaves_an_override_class_it_does_not_read_whole_to_java() {
         ("field", "a Java override class with fields"),
         ("super", "a Java override class with a superclass"),
         ("overload", "a Java override class with methods of one name"),
-        ("annotation", "a Java override class with annotations"),
-        ("trycatch", "a Java override that computes its value"),
         (
             "registry",
             "a Java override of a name TLC maps to an operator's",
@@ -128,6 +126,35 @@ fn leaves_an_override_class_it_does_not_read_whole_to_java() {
         assert!(
             matches!(&error, Some(FrontError::NotYet(message)) if message == reason),
             "{shape}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn skips_an_annotated_method_and_runs_a_method_that_catches() {
+    // tests/fixtures/override-shapes: TLC skips the method annotated @TLAPlusOperator, so K stays
+    // 1, and runs the try block of the one that catches, which returns 0.
+    for (shape, value) in [("annotation", 1.0), ("trycatch", 0.0)] {
+        let directory = format!("override-shapes/{shape}");
+        let source = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../tests/fixtures")
+                .join(&directory)
+                .join("P.tla"),
+        )
+        .expect("the spec");
+        let environment = link_in(&directory, &source).expect("an environment");
+        let ranks: FastMap<Rc<str>, u32> = FastMap::default();
+        let evaluator = Evaluator::new(
+            &environment,
+            ValueOrder { ranks: &ranks },
+            TlcVersion::Master,
+            true,
+        );
+        assert_eq!(
+            evaluator.evaluate(&create_identifier("K"), None),
+            Ok(ConfigValue::Number(value)),
+            "{shape}"
         );
     }
 }

@@ -4,11 +4,12 @@ import { join } from "node:path";
 
 import { check, parseModule, TlaSyntaxError } from "../../src";
 import { createSanyError } from "../../src/errors";
+import { checkOnEngine } from "../native-check";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
 const checkInstances = (configName: string, moduleName = "Instances") =>
-  check({
+  checkOnEngine({
     source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
     loadModule: (name) => readFileSync(join(DIRECTORY, `${name}.tla`), "utf8"),
@@ -22,7 +23,7 @@ describe("INSTANCE matches TLC", () => {
   });
 
   it("substitutes TLC's infix operators for constant operators of the same name", async () => {
-    const result = await check({
+    const result = await checkOnEngine({
       source:
         "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nINSTANCE Inner\nInit == x = Merged[2]\nNext == UNCHANGED x\n====",
       config: "INIT Init\nNEXT Next",
@@ -46,7 +47,7 @@ describe("INSTANCE matches TLC", () => {
   });
 
   it("overrides a definition scoped to a module in every instance of the module", async () => {
-    const result = await check({
+    const result = await checkOnEngine({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT Acc\nVARIABLE x\nMCBallot == 0..2\nV == INSTANCE Inner\nP(A) == INSTANCE Inner WITH Acc <- A\nInit == x = 0\nNext == UNCHANGED x\nInv == V!Safe /\\ P({3})!Safe /\\ V!Ballot = 0..2 /\\ x = 0\n====",
       config:
@@ -186,12 +187,17 @@ const INNER_MODULES: Record<string, string> = {
     "EXTENDS Naturals\nCONSTANT c\nf[i \\in {1}] == c + i\nRECURSIVE g(_)\ng(n) == IF n = 0 THEN c ELSE g(n - 1)",
 };
 
-const checkSubstitution = (body: string) =>
-  check({
-    source: `---- MODULE Main ----\nEXTENDS Naturals\nVARIABLE x\n${body}\nInit == x = 0\nNext == x' = x\n====`,
-    config: "INIT Init\nNEXT Next",
-    loadModule: (name) => `---- MODULE ${name} ----\n${INNER_MODULES[name]}\n====`,
-  });
+const getSubstitution = (body: string) => ({
+  source: `---- MODULE Main ----\nEXTENDS Naturals\nVARIABLE x\n${body}\nInit == x = 0\nNext == x' = x\n====`,
+  config: "INIT Init\nNEXT Next",
+  loadModule: (name: string) => `---- MODULE ${name} ----\n${INNER_MODULES[name]}\n====`,
+});
+
+const checkSubstitution = (body: string) => checkOnEngine(getSubstitution(body));
+
+// A spec the front end rejects, which the engine reports to `check` only by leaving it to the
+// TypeScript path, so these stay on `check` until the engine's errors reach it.
+const checkRejected = (body: string) => check(getSubstitution(body));
 
 const getLevelError = (module: string, name: string, level: number) =>
   `Level error in instantiating module '${module}':\nThe level of the expression or operator substituted for '${name}' \nmust be at most ${level}.`;
@@ -308,13 +314,13 @@ describe("substitution levels match SANY", () => {
     ],
     ["F(a) == [a = 1]_a\nI == INSTANCE Pure WITH c <- 1, Op <- F", [getLeibnizError("Pure")]],
   ])("rejects %s", async (body, messages) => {
-    await expect(checkSubstitution(body)).rejects.toThrow(TlaSyntaxError);
-    await expect(checkSubstitution(body)).rejects.toThrow(getMessagePattern(messages));
+    await expect(checkRejected(body)).rejects.toThrow(TlaSyntaxError);
+    await expect(checkRejected(body)).rejects.toThrow(getMessagePattern(messages));
   });
 
   it("reports an error at the whole instance, like SANY", async () => {
     const body = "I == INSTANCE Pure WITH c <- 1, Op <- LAMBDA a : ENABLED a";
-    await expect(checkSubstitution(body)).rejects.toThrow(
+    await expect(checkRejected(body)).rejects.toThrow(
       createSanyError([
         {
           location: `line 4, col 1 to line 4, col ${body.length} of module Main`,

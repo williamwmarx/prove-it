@@ -41,13 +41,16 @@ const READ_MASK: u32 = NONCONSTANT | READS_IMPURE;
 const BUILTIN_STATE_LEVEL: u32 = 1;
 const BUILTIN_LEVEL_CONSTANT: u32 = 2;
 
-const IMPURE_BUILTINS: [&str; 7] = [
+const IMPURE_BUILTINS: [&str; 10] = [
     "Print",
     "PrintT",
     "Assert",
+    "AssertEq",
     "JavaTime",
     "RandomElement",
     "TLCGet",
+    "TLCGetOrDefault",
+    "TLCGetAndSet",
     "TLCSet",
 ];
 

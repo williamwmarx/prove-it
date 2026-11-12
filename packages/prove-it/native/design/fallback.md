@@ -100,9 +100,9 @@ platform addon loads.
   TLC's trace from it. A run-time stop the engine doesn't model does the same.
 - **A WebAssembly trap.** The engine's frames are on the host's call stack there, which is
   shallower than the addon's search thread, so a deep recursion can trap. The loader replaces the
-  instance and returns a stop that hands nothing over, and the interpreter searches from the start
-  (src/engine/wasm.ts). This is the one fallback that is not a semantic hand-over; it stays until
-  the engine's recursion no longer runs on the host's stack.
+  instance and returns a stop that hands nothing over (src/engine/wasm.ts). The CLI's interpreter
+  then searches from the start; the library's check throws `WebAssemblyStackError` instead, as it
+  does where the engine stops at its recursion bound.
 
 Each of these reports itself under `PROVE_IT_ENGINE=debug` (`native: declined: …`,
 `handed over after …`).
@@ -179,7 +179,8 @@ Besides the 15 declines, it does the following in the library:
 - **What `getEngineIneligibility` keeps from the engine:** `PROVE_IT_ENGINE=0`, `-dump`, `-continue`,
   a periodic config and TLC 1.7.4. The binary says `not native yet` to `-dump`, `-continue` and
   TLC 1.7.4. The engine doesn't support a periodic config either.
-- **A WebAssembly stack overflow.** The interpreter searches from the start.
+- **A WebAssembly stack overflow.** The library's check throws `WebAssemblyStackError`; the CLI's
+  interpreter searches from the start.
 - **`PROVE_IT_LIVE_CHECK=1`.** It cross-checks the native liveness verdict.
 
 Neither side implements `-simulate`, `-generate`, `-debug` or `-loadTrace`. The binary writes
@@ -303,8 +304,67 @@ it from one that printed something else. Each is outside the corpus:
   `kept.cupOrder.{constVar, ex1, letEval, opAfter, varPlain}.init` and
   `kept.unionSub.{constHeld, constSized, constEqual, constCup}`. To win them back, decline at the
   first position where the stream differs from the normalized set, not where the stream starts.
+- a configuration substitute `C <- D`, and an operator a TLCOverrides index replaces, where TLC
+  computes the definition or the Java method again at each read: TLC holds C as D's definition, so
+  it prints, draws and sets registers again wherever it reads C, and calls a `final` method without
+  parameters as it loads it (`MethodValue.get`). Native runs keep main's behaviour, which matches
+  only where nothing after the read shows the difference, and prints other output where something
+  does. The groups: register readers, TLCGet("level") printers, invisible override reads, random
+  draws, final methods, VIEW and POSTCONDITION reads, and recursive-operator arguments. The
+  `front-constants-full` branch declines them where the run computes the read
+  (`Definition::READ_DECLINED`) and reads the index. Its 13,067 adversarial specs, against TLC at
+  d8fb231, on the `front-constants-cases` branch, are the regression set for winning them back.
+  Where a substitute reaches AssertEq, TLCGetOrDefault, TLCGetAndSet or PickSuccessor, where a
+  constant definition or an assumption reads TLCExt's registers, or where only those builtins make
+  a constant definition impure, the IR marks the four `Builtin::DECLINED`, and the engine declines
+  them where it computes them, as it did before it checked them.
 
 #### Known wrong outputs
+
+The engine and the trace evaluator test a union, an equality of sets and a membership in a UNION
+in an order other than the one in which TLC holds the sets' elements unnormalized, so a failure
+there names other elements than TLC's, and AssertError, which compares that message, answers FALSE
+where TLC answers TRUE (found by #327's adversarial round; each wrong on main alike):
+
+| Repro | TLC | Native |
+|---|---|---|
+| `AssertError("Attempted to check equality of integer 2 with non-integer:\n\"a\"", 1 \in {2, 1} \cup {"a"})` | TRUE | FALSE (the bare membership is right) |
+| `AssertError("Attempted to check equality of record:\n[a \|-> 1]\nwith non-record\n2", mv \in {[a \|-> 1]} \cup {2})`, `CONSTANT mv = mv` | TRUE | FALSE |
+| `{3, 1, 2} = {1, "a"}` | `Attempted to compare string "a" with non-string:\n1` | `Attempted to check equality of the set {1, 2, 3} with the value:\n{1, "a"}` |
+| `Cardinality(UNION {{2, 1}, {"a"}})` | `Attempted to check equality of integer 2 with non-integer:\n"a"` | `Attempted to compare integer 1 with non-integer:\n"a"` |
+| `1 \in UNION {{"a"}, {2}}` | `Attempted to check equality of string "a" with non-string:\n2` | `Attempted to compare integer 2 with non-integer:\n"a"` |
+
+The last three under AssertError, with TLC's message, answer FALSE where TLC answers TRUE.
+
+A module instantiated by the name of a module nested in an EXTENDed module fails to parse where
+SANY finds it: with `Holder.tla` holding `---- MODULE Held ----` nested, `EXTENDS Holder` then
+`J == INSTANCE Held` stops with "Cannot find source file for module Held imported in module M."
+(exit 150), where TLC checks the spec. `tests/unit/modules.test.ts` ("sees the nested modules of
+an extended module") checks it with the TypeScript check until the front end matches.
+
+A membership in a union whose enumerable side holds a value of another type is TRUE where TLC
+fails: TLC tests the enumerable side first, so `ASSUME 1 \in Int \cup {"none"}` stops with
+"Attempted to check equality of string "none" with non-string:\n1", where the engine finds the
+assumption true and checks the spec. `tests/unit/check.test.ts` ("checks membership in a union of a
+non-enumerable set against the enumerable side first") checks it with the TypeScript check.
+
+A function over a domain TLC keeps lazy, applied at one point, fails where TLC computes only that
+point: `ASSUME PrintT([s \in SUBSET {1} |-> 1 \div Cardinality(s)][{1}])` prints `1` in TLC, where
+the engine computes the function at every `s`, `{}` among them, and stops with "The second argument
+of \div is 0." `tests/unit/check.test.ts` ("evaluates a function over a domain TLC keeps lazy only
+where it is applied") checks it with the TypeScript check.
+
+A function from strings whose keys are Unicode letters and digits beyond ASCII prints as a function
+where TLC prints a record: TLC tests each character of a key with Java's
+`Character.isLetterOrDigit` (FcnRcdValue), so `PrintT("x٣" :> 5)` (U+0663, a decimal digit) prints
+`[x٣ |-> 5]` in TLC and `("x٣" :> 5)` natively. `tests/unit/check.test.ts` ("prints empty intervals
+and keys that are not field names like TLC") checks it with the TypeScript check.
+
+A record TLC compares with itself prints its fields in another order: TLC's equality normalizes the
+record, so after `[fld2 |-> 0]` has interned fld2 first, `ToString(LET r == <<[fld1 |-> 1, fld2 |->
+2]>> IN IF r = r THEN r ELSE r)` gives `"<<[fld2 |-> 2, fld1 |-> 1]>>"` in TLC and `"<<[fld1 |-> 1,
+fld2 |-> 2]>>"` natively. `tests/unit/check.test.ts` ("sorts a record TLC compares with itself and
+the records inside it") checks it with the TypeScript check.
 
 These print a "states generated" other than TLC's today, outside the corpus and the tests; why,
 with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
@@ -312,6 +372,38 @@ with TLC's source, is in [lazy-duplicates.md](lazy-duplicates.md):
 | Shape | Repro | TLC | Native |
 |---|---|---:|---:|
 | A held SUBSET or set of functions `\cup` a set that overlaps it | `Init == s = 0 /\ x = 0`, `Next == s' = SUBSET {1} /\ x' \in s' \cup {{1}}` | 10 | 7 |
+
+An adversarial pass on #292 (2,267 specs against TLC at d8fb231, main 40009ac8 and the branch)
+found these on main, which the branch prints alike:
+
+| Shape | Repro | TLC | Native |
+|---|---|---|---|
+| A failing INSTANCE substitute | `N == INSTANCE Inner WITH c <- 1 \div 0`, the substitute used in `Init`, an invariant, a parameterized or unnamed instance | the nested expressions name the INSTANCE and the substitute's own frames | drops those frames |
+| A failing conjunct of the specification that is an operator applied to arguments, or an inline LET or LAMBDA | `P(n) == n = 1 /\ Assert(FALSE, "x")`, `Spec == P(1) /\ Init /\ [][Next]_x` | the frames of the body TLC inlines | adds the application's frames first |
+| A SYMMETRY definition that prints | `Sym == Print("sym", Permutations(S))` | `The sets "sym", and S have been defined…` | `The sets , and S …` |
+| A POSTCONDITION that sets a register | `Post == PrintT(IF TLCSet("exit", FALSE) THEN 1 ELSE 0)` | prints `1` once, then `The post condition Post cannot be a constant.` | prints `1` twice and passes |
+| An ALIAS the configuration substitutes a constant definition for | `D == TRUE` (or a record, a set, a tuple, `-1`, a LET), `CONSTANT C <- D`, `ALIAS C` | the alias's value | `_ALIASEvalError = "The alias C cannot be a constant."` (the TRUE case is fixed on the ALIAS branch, alias-trace-fixes) |
+| An ALIAS or a POSTCONDITION that is a literal, or that the configuration substitutes one for | `Alias == 3`, `ALIAS Alias`; `Post == "a"`, `POSTCONDITION Post` | `The alias Alias cannot be a constant.` or TLC's message for the postcondition | runs it as a definition (the constant-alias branch's `Definition::LITERAL` fixes it) |
+| A configuration substitute scoped to the root module | `CONSTANT C <- [M] E` in the cfg of module M | applies it | ignores it, with another verdict |
+| A failing configuration substitute scoped to an instanced module (`<-[Inner]`) | `C <- [Inner] E`, `E == 1 \div 0 = 1`, read through `INSTANCE Inner` | the INSTANCE frame, then the substitute's | the replaced definition's frame |
+| A conjunct of the specification the configuration substitutes a FALSE operator with arguments for | `P <- Q`, `Spec == P(0) /\ Init /\ [][Next]_x` | `The spec is trivially false because FALSE is false.` | passes with 0 states |
+| A PROPERTY the configuration substitutes an empty `\A` for | `C <- D`, `D == \A i \in {} : FALSE`, `PROPERTY C` | `Temporal formula is a tautology` | passes |
+| A violated invariant of an instance inside a PROPERTY | `PROPERTY Prop`, `Prop == [](I!IInv)` | `Invariant I!IInv is violated.` | `Invariant IInv is violated.` |
+| An INVARIANT the configuration substitutes a temporal formula for | `INVARIANT C`, `C <- D`, `D == [](x > 0)` | names D, or fails at run time where another invariant reads C | names C, or fails as it starts |
+| A tuple or a lexing error in a configuration's value | `CONSTANT K = <<"a">>`, an unclosed string | a lexical error | a parse error, or another position |
+| A string where the configuration names a definition | `INVARIANT "a\\b"`, `K <- "a\\b"` | quotes the string | doesn't |
+| An ASSUME passing an argument with effects that the operator reads more than once | `Twice(a) == <<a, a>>`, `ASSUME Twice(PrintT("t")) = Twice(PrintT("t"))` | prints once per argument | prints at each read |
+| A configuration substitute scoped to an instanced module for a name only it defines | `IK <- [I] IV`, IV defined only in I | `The configuration file substitutes for IK with the undefined identifier IV.` | runs the model |
+| A `\*` comment in a configuration with lone carriage returns | a cfg whose lines end in CR alone | ends the comment at the CR | comments out the rest of the file |
+| An undefined INVARIANT after a printing constant definition | `D == PrintT("d")`, `INVARIANT Undef` | prints `"d"` first | doesn't |
+| An INVARIANT or a conjunct the configuration substitutes an action for | `C <- D`, `D == x' = x` | names D, or `TLC cannot handle this conjunct of the spec: …` | names C, or `TLC cannot handle the action-level conjunct …` |
+| A substitute for a definition before it in the module order, unread, defined in an EXTENDed module | `C` in an EXTENDed module, `D == PrintT("d")`, `C <- D` | prints `"d"` twice | once |
+| A LOCAL INSTANCE of a module with a printing constant definition | `LOCAL I == INSTANCE N`, `N` has `P == PrintT("p")` | prints twice | once |
+| A failing conjunct of the specification that is a TLCEval of a print | `Spec == TLCEval(PrintT(FALSE)) /\ Init /\ [][Next]_x` | prints `FALSE` once | prints it after the violation and the trace again |
+| A PROPERTY the configuration substitutes a TLCGet("level") predicate for | `C <- D`, `D == TLCGet("level") > 0`, `PROPERTY C` | no warning | warns of a state-level formula |
+| A predicate the configuration substitutes a TLCEval of TLCGet or of a state's Print for | `C <- D`, `D == TLCEval(Print(x, TRUE))` as an INVARIANT, a CONSTRAINT or a conjunct | TLC's message | another |
+| A constant INVARIANT that writes TLCSet where TLC doesn't evaluate it | `Inv == IF FALSE THEN TLCSet(1, 2) ELSE TRUE`, or after `TRUE \/`, in an unused LET or argument | warns that Inv is a TRUE constant | doesn't |
+| An INVARIANT the configuration assigns a value where the module defines it | `Inv == FALSE`, `CONSTANT Inv = TRUE` | warns and finds no error | warns, then reports `Invariant Inv is violated` |
 
 The engine now declines the shapes that printed other counts here too: a constant definition
 normalized elsewhere, then streamed (`C == UNION {1..2, 2..3}`, `Init == s = C /\ x = 0`,
@@ -324,6 +416,15 @@ Outside the counts, SANY's report differs on an INSTANCE of a module with semant
 `I == INSTANCE Other` with `Other.tla` holding `Op(n) == n - 1` and no EXTENDS, TLC prints
 `*** Errors: 2` for module Spec, while the binary prints `*** Errors: 3`, adding `Substitution error,
 probably due to error in module being instantiated.` at the INSTANCE (exit 150 in both).
+
+TLC rejects a VIEW or a POSTCONDITION the configuration names by a definition it computed as it
+started, as it does an ALIAS, but holds a definition whose body is a number or a string as written
+and computes nothing for it (`SymbolNodeValueLookupProvider.lookup`, `Spec.getViewSpec`,
+`getPostConditionSpecs`). The binary differs on two shapes: a POSTCONDITION that is a number or a
+string, `PC == "s"`, which it rejects as a constant (exit 255) where TLC evaluates it and reports
+it not a boolean (exit 10); and a VIEW TLC computes as it starts, `V == TRUE`, `V == {1}`,
+`V == A` with `A == 5`, which TLC rejects ("The view function V cannot be a constant.", exit
+151) where the binary checks the model.
 
 The binary declines a module file it finds but can't read, such as a directory or text not in
 UTF-8 (`a module's file the front end can't read`), where SANY prints `***Internal error: Unable to
@@ -345,6 +446,19 @@ Java's: `\` throughout, `File.getAbsolutePath` of a drive-relative path such as 
 `File.toURI` for the `(file:…)` of a file SANY finds through another path. This is TLC's Windows
 path rendering, which neither has ever matched; it waits until it can be recorded against a TLC
 run on Windows, since values derived from the JDK's source alone are easy to get subtly wrong.
+
+Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
+record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
+(prover.md, "Deviations from Z3", has the gate):
+
+| Obligation | `smt` input | Why |
+|---|---|---|
+| SequencesExtTheorems_proofs #409 | b7775ca0b1b01064 | Z3 4.8.9 proves it, 5.3.3 times out; the port's search is longer |
+| Bakery #89 | e67cda013bcdbc0e | the same |
+| CRDT_proof #129 | 5390a15510ed57e1 | both Z3s prove it; the port needs 2,570,874 steps, above its limit of 1,321,216 |
+| LamportMutex_proofs #574 | cf2bc77dbe72f5d0 | Z3 4.8.9 proves it, 5.3.3 times out |
+| PaxosCommit_proof #345 | c4f10dabeaca0a49 | Z3 4.8.9 proves it, 5.3.3 times out; the port needs 10,358,109 steps, above its limit of 7,321,600 |
+| Boulanger #240 | b2ca9ee96f3db516 | flattening clauses as Z3 4.8.9 does lengthens the port's search from 1,807,047 steps to 8,170,365, though its 4 distributions are 4.8.9's: open |
 
 #### Every reason
 
@@ -520,17 +634,32 @@ distinct decline messages in the group.
 | TLC 1.7.4 | 63 | 1 | retired: declines until the TypeScript goes |
 | An assumption that fails to evaluate, evaluated again | 57 | 25 | front session |
 | Temporal properties and liveness | 50 | 19 | liveness session |
-| The engine stopping where TLC reports an error | 46 | 25 | memo session |
-| What the constant evaluator doesn't compute | 29 | 9 | front session |
+| The engine stopping where TLC reports an error | 48 | 27 | memo session |
+| What the constant evaluator doesn't compute | 14 | 3 | front session |
 | Other failures evaluated again | 29 | 18 | memo session |
-| The engine declining an operator or builtin | 19 | 15 | memo session |
+| The engine declining an operator or builtin | 14 | 11 | memo session |
 | Print and PrintT where the engine can't place them | 16 | 4 | S1 (lazy-values) |
 | `-dump` (`dot`, and under SYMMETRY or a VIEW) | 12 | 3 | S2 |
-| Java overrides TLC loads with more than the shapes ported | 11 | 9 | unassigned |
+| Java overrides TLC loads with more than the shapes ported | 9 | 8 | unassigned |
 | SANY's report of RECURSIVE declarations | 4 | 3 | XML session |
-| The rest: a SYMMETRY definition's shape, a configuration error that shows a value, a configuration substitute with effects, states TLC may take for the search's under VIEW or SYMMETRY, a violating successor TLC fails to find again, and a trace the search can't step | 8 | 6 | unassigned |
+| The rest: a configuration substitute with effects, states TLC may take for the search's under VIEW or SYMMETRY, and a trace the search can't step | 4 | 3 | unassigned |
 
 The groups are checked in this order, so a decline counts once, in the first group that takes it.
+The constant evaluator's row and the Java overrides' row count what was left after the
+front-constants branch (measured 2026-11-11 from b8121dd3, 1,452 native before and 1,473 after):
+it made native the CHOOSE, division, equality, quantifier-bound and INIT or NEXT constant
+declines, and an annotated override and one that catches, and moved TLCGet("level") as a
+substitute to "a configuration substitute with effects" among the rest.
+The startup checks after it (measured 2026-11-11 from ee6736a4, 1,499 native before and 1,512
+after) made native the SYMMETRY definitions TLC fails on, the configuration error that shows a
+set, the successor TLC fails to find again from its generator, and the constant invariants TLC
+warns about, but one that overflows TLC's stack and one that fails as a set operation. The
+constant conjunct of the specification that draws at random moved to the engine's decline of
+RandomElement under a comparison.
+The TLCExt builtins after it (measured 2026-11-11 from 924d7cde, 1,478 native before and 1,482
+after) made native AssertEq, UNCHANGED in the initial predicate and PickSuccessor where TLC answers
+without asking, and moved TLCGetAndSet's run and the interactive PickSuccessor to the engine's
+stops.
 The 1.7.4 runs leave with the TypeScript, and `check-log` now counts them apart, as retired with
 the interpreter, without running them. The other 438 block deleting the interpreter, with native
 progress events for the library's `onProgress` (see "The public API afterwards").
@@ -563,6 +692,32 @@ SANY's report of RECURSIVE declarations is native from #266, which takes SANY's 
 its generator where linking declines. Measured with `check-log` at that PR's head 04c7267: none of
 the 4 runs declines; of 1,891 checks, 1,456 are native and 435 not native yet, with 0 answered
 differently on one thread and four, and 1,020 are native in TLC's default mode.
+
+### Java overrides that stay declined
+
+The front end reads the class TLC loads for a module and puts the constant each method returns in
+place of the operator. It skips a method annotated `@TLAPlusOperator` or `@Evaluation`, as
+`processModuleOverrides` does, and runs a method that catches an exception up to its first return.
+It declines an annotated method where a `tlc2.overrides.TLCOverrides` index, beside the spec or at
+its package's path, could load the class. These shapes stay
+declined for good, because what TLC does with them depends on the JVM, not on the class file:
+
+- **A static initializer, a field's initializer or a superclass.** Java runs them as TLC first
+  calls a method, and what they print or throw shows in TLC's output. A failure there is an
+  `ExceptionInInitializerError`, whose report holds the JDK's own stack frames.
+- **A value the method computes by calling the JDK,** such as `Integer.parseInt`, which the front
+  end would have to run as Java does.
+- **Several methods TLC reports.** `Class#getDeclaredMethods` lists them in the order HotSpot
+  allocated the symbols of their names, which changes with `-Xshare:off` on the same JDK, and TLC
+  prints a message for each in that order. Where two methods share a name, the one listed last
+  overrides the other. The binary declines a class whose methods print more than one message, or
+  that has methods of one name, wherever the order could change what TLC logs.
+
+A method whose name `TLARegistry.mapName` maps to an operator's, such as `Plus` to `+`, is declined
+for now, not for good: the standard modules whose classes register the names are those SANY
+parsed before the overriding module, which in TLC's default mode include the modules of the trace
+exploration spec. With `-noGenerateSpecTE` and no EXTENDS, TLC at d8fb231 loads `Plus` as `Plus`,
+and in the default mode it fails to match it as `+`.
 
 ### What uses it as the reference, and what replaces it
 
@@ -624,6 +779,11 @@ search thread doesn't.
   declines the model, so that a recursion never traps there. A trap that a deeper frame still
   causes declines too (`checkSources` in `wasm.ts`). A larger stack in a Worker, which Node alone
   offers, is optional, and an explicit stack in the evaluator isn't worth its size.
+- **The library's answer.** Where the engine as WebAssembly stops at its bound
+  (`recursion deeper than WebAssembly's stack holds`) or traps, the library's check throws
+  `WebAssemblyStackError`, which names the addon and the binary, rather than search again in the
+  interpreter. So a model that recurses between 1,000 and 20,000 calls is checked with the addon
+  and the binary and rejected as WebAssembly: `native.test.ts` pins both answers.
 
 ### The CLI flipped
 
@@ -662,14 +822,15 @@ now run natively; the rest decline at `-dump`, TLC 1.7.4 and the trace evaluator
 
 Since #250 the binary prints SANY's report of the trace exploration spec too, and checks TLC's
 default natively. After an error trace of two states or more it writes the spec TLC writes,
-`<Spec>_TTrace_<epoch>.tla`, and its path after `Finished in` (`te_spec.rs`). It still declines
-where TLC writes the trace's file, `<Spec>_TTrace_<epoch>.bin`, for a counterexample: TLC gzips it
-with Java's Deflater, whose compressed bytes the binary doesn't reproduce, and writes each string's
-token in TLC's run. An error after a behavior, as an Assert that fails in an action, has no trace
-file and is native. On the 733 corpus models in TLC's default, against TLC's recordings of that
-mode, 569 print and write what TLC does, 161 decline at the trace file, and 3 differ as they do
-with `-noGenerateSpecTE`, by TLC's runtime (a Java stack overflow, where TLC is installed, and a
-NullPointerException in TLC).
+`<Spec>_TTrace_<epoch>.tla`, and its path after `Finished in` (`te_spec.rs`), and for any
+counterexample the trace file, `<Spec>_TTrace_<epoch>.bin`, which is identical where TLC reads it
+back to the same trace (AGENTS.md, "The oracle"; cli.md, "-dumpTrace"). On the 733 corpus models in
+TLC's default, against TLC's recordings of that mode, with each `.bin` compared by what the jar
+reads back from it, 723 print and write what TLC does, 3 differ as they do with
+`-noGenerateSpecTE`, by TLC's runtime (a Java stack overflow, where TLC is installed, and a
+NullPointerException in TLC), and 7 decline at a trace file `tla-trace` doesn't dump: a random
+draw, whose trace TLC may not find again for its postconditions (5), a set TLC keeps lazy (1), and a
+deadlock that violates a temporal property (1).
 
 ### The public API afterwards
 
@@ -712,7 +873,8 @@ check. The tests of the interpreter's own results run `checkParsed`, the TypeScr
   - WebAssembly fails to compile;
   - or `dist` lacks the engine.
   A browser keeps the WebAssembly engine.
-- A WebAssembly stack overflow becomes an error unless S2 lifts it first.
+- A WebAssembly stack overflow is an error, `WebAssemblyStackError`, in the library's check. The
+  PR that removes `PROVE_IT_ENGINE=0` drops its message's clause that names it.
 - `-dump`, `-continue` and periodic configs are checked natively. TLC 1.7.4's output is retired.
 - The library prints what the binary prints. Today they differ only where the library hands over.
 

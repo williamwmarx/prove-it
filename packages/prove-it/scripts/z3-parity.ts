@@ -1,7 +1,7 @@
-// Runs Z3 5.3.3, the version the TypeScript SMT solver ports, on each smt and z3 input
-// prover-inputs.ts wrote, as tlapm runs it, under the time limit prove sent the input with, and
-// compares its verdict with the TypeScript's recorded one. The record shows the Rust port equals
-// the TypeScript; this shows how far the TypeScript is from Z3. Citations are to tlapm at ff40755.
+// Runs Z3 4.8.9, the version tlapm's build bundles (deps/z3/Makefile), or with --version 5.3.3 that
+// one, on each smt and z3 input prover-inputs.ts wrote, as tlapm runs it, under the time limit
+// prove sent the input with, and compares its verdict with the recorded one. The record shows what
+// the port decides; this shows how far it is from Z3. Citations are to tlapm at ff40755.
 //   tlapm runs `z3 -smt2 -v:0 AUTO_CONFIG=false smt.MBQI=true "$file"` for both methods
 //     (src/params.ml:221-231, the default solver by src/params.ml:274-276), with its output on
 //     stdout only (src/backend/prep.ml:700), and counts the input proved when a line of the output
@@ -15,14 +15,14 @@
 //   Here Z3's own -T stops it at that time, which tlapm's kill gives too, and -st prints its
 //     statistics, rlimit-count and quant-instantiations, after the verdict; neither changes the
 //     search.
-//   --z3 path names the binary, z3 on the PATH by default. The script fails unless it runs Z3
-//     5.3.3, and records the binary's SHA-256 with the results.
+//   --z3 path names the binary, z3 on the PATH by default. The script fails unless it runs the
+//     pinned binary of the version, by its SHA-256, which it records with the results.
 //   --prover smt|z3 and --filter text keep the inputs of one prover, or whose key contains the
 //     text. --jobs n runs n Z3s at once.
 //   --retry scale runs Z3 again, with scale times the time limit, on each input of the last run
 //     that the TypeScript proves and Z3 doesn't, to tell a time limit from a real divergence.
-// Each run is kept in .z3-parity.jsonl as it ends, and a run that finds the journal goes on from
-// it. The results are in .z3-parity.json.
+// Each run is kept in .z3-parity-<version>.jsonl as it ends, and a run that finds the journal goes
+// on from it. The results are in .z3-parity-<version>.json.
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -66,10 +66,17 @@ interface Run extends Z3Run {
   sha256: string;
 }
 
-const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, ".z3-parity.json");
-const JOURNAL_PATH = join(CONFORMANCE_DIRECTORY, ".z3-parity.jsonl");
+// The binaries each version is pinned to: 4.8.9 from Z3's z3-4.8.9-x64-ubuntu-16.04 release, and
+// 5.3.3 from the z3-solver 5.3.3.0 wheel.
+const BINARIES = new Map([
+  ["4.8.9", "4321b0c0db1574a1e90881d9e097f12b8753d0c3e78b21a0155c77005a631436"],
+  ["5.3.3", "f6aa070c73728253a404a4a6f3f97b6d5306f61c215150f3ccaaaa709b326470"],
+]);
 
-const VERSION = "5.3.3";
+const VERSION = getOption("--version") ?? "4.8.9";
+
+const RESULTS_PATH = join(CONFORMANCE_DIRECTORY, `.z3-parity-${VERSION}.json`);
+const JOURNAL_PATH = join(CONFORMANCE_DIRECTORY, `.z3-parity-${VERSION}.jsonl`);
 
 // Params.wait, the seconds tlapm's scheduler waits before it first looks at a prover's time limit.
 const WAIT_SECONDS = 3;
@@ -92,6 +99,8 @@ const version = spawnSync(z3Path, ["--version"], { encoding: "utf8" }).stdout?.t
 if (!version.startsWith(`Z3 version ${VERSION} `))
   throw new Error(`${z3Path} is "${version}", not Z3 ${VERSION}`);
 const sha256 = createHash("sha256").update(readFileSync(z3Path)).digest("hex");
+if (sha256 !== BINARIES.get(VERSION))
+  throw new Error(`${z3Path} has SHA-256 ${sha256}, not that of the pinned Z3 ${VERSION} binary`);
 
 const getStatistic = (output: string, name: string) => {
   const match = new RegExp(`:${name}\\s+(\\d+)`).exec(output);

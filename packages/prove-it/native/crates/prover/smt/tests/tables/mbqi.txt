@@ -43,7 +43,7 @@ modeled: steps=207 asts=220
 == quasi-macro-unsat ==
 result=-1 conflicts=1 steps=109 instances=1 asts=219
 == rounds ==
-result=-1 conflicts=1 steps=1230 instances=3 asts=276
+result=-1 conflicts=1 steps=1224 instances=3 asts=276
 == two-vars ==
 result=-1 conflicts=1 steps=242 instances=1 asts=209
 == two-vars-sat ==

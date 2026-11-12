@@ -32,6 +32,7 @@ pub mod spec;
 #[rustfmt::skip]
 pub mod standard_builtins;
 pub mod standard_modules;
+pub mod startup;
 pub mod subexpressions;
 #[rustfmt::skip]
 pub mod tlc_data;
