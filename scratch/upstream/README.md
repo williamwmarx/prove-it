@@ -61,3 +61,20 @@ Binary sha256 37ba9c90f3f01590ecfebede746e34caf0dfe0e06fd2fc6479b698076d6d7486. 
 - New wrong outputs vs the pinned jar: none. Wrong vs the recording beyond the jar: the same 553 runs as main, byte-identical; the other 811 equal the jar (version gap), 4 of them the precedence cases.
 - Found on the way: ef8d0a55 gives a wrong output not in the upstream suite, `{DOMAIN [b \in SUBSET {1} |-> 1] \ (3 .. 3), CHOOSE y \in {} : TRUE}` in a failing startup definition (TLC: the CHOOSE failure; ef8d0a55: a mistyped membership in 3..3). c25fc64b declines it (fixture `definition-fails-lazy-domain`).
 - `adjudication/pre-existing-553.txt`: the 553 grouped by first differing line.
+
+## New baseline: main 1446840a (PR 362) vs main cb48b6eb
+
+Binary sha256 2ba048fa086008ad1413aab3c03ed3f673453a3a46a07c3179860b3a20db3dda, `results/main-1446840a.*`; pinned-jar runs of every run whose class changed in `adjudication/pinned-tlc-main-1446840a.jsonl.gz`.
+
+| class | cb48b6eb | 1446840a |
+| --- | ---: | ---: |
+| match | 35,101 | 35,103 |
+| decline | 36,363 | 36,384 |
+| wrong vs the recording | 1,360 | 1,337 |
+| noncompletion | 3 | 3 |
+
+131 runs changed output; 36 changed class. No wrong output changed and none is new: the 530 runs that differ from the jar are byte-identical to cb48b6eb's (18 of cb48b6eb's 553 now decline, 5 now match).
+
+- wrong -> decline 18, each wrong against the jar before: tlc/errors/TLC_WRONG_RECORD_FIELD_NAME/unknown_string_field_keeps_record, tlc/errors/TLC_WRONG_TUPLE_FIELD_NAME/out_of_range_index_keeps_tuple, expressions/except/missing_{field,function_key,intermediate,nested,tuple_index}_warns#assume, missing_then_valid_clause#assume, conditional/if_returning_set_is_lazy_in_application#assume, functions/lazy/{apply_keeps_constructor_lazy,defined_function_kept_lazy,domain_of_cartesian_function_skips_body,domain_of_subset_function_skips_body,nested_apply_stays_lazy,parameter_function_kept_lazy}#assume, functions/recursive/compare_forces_every_branch#{init,next}, let/let_function_kept_lazy_when_applied#assume.
+- wrong -> match 5 (sets/binary/cup_nat_integer_reaches_string, all contexts) and decline -> match 5 (sets/binary/cup_nat_swaps_reducible_first, all contexts), each equal to the jar.
+- Regressions, match -> decline 8, each equal to the jar on cb48b6eb: sets/binary/cap_short_circuits_right#{init,next,invariant,property} ("the engine stopped: enumerated Nat"); except/reducible_function_forced_before_except#assume, functions/lazy/apply_reaches_erroring_body#assume, functions/recursive/compare_forces_every_branch#assume ("the body of a function TLC keeps lazy, at a key it may not evaluate"); imported/tlc/tool/ValueSemanticsAssumeTest/ValueSemanticsAssume ("an EXCEPT of a key the function lacks, which TLC warns of").
