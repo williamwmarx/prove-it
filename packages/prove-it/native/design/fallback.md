@@ -700,9 +700,17 @@ create NamedInputStream in toIStream method`. Where the TypeScript check finds t
 On Windows, the binary and the CLI find a spec's files by the host's rules (`host_path.rs`), but
 print the paths they found as the CLI built them, with `/` between the parts, where TLC prints
 Java's: `\` throughout, `File.getAbsolutePath` of a drive-relative path such as `C:Spec`, and
-`File.toURI` for the `(file:…)` of a file SANY finds through another path. This is TLC's Windows
-path rendering, which neither has ever matched; it waits until it can be recorded against a TLC
-run on Windows, since values derived from the JDK's source alone are easy to get subtly wrong.
+`File.toURI` for the `(file:…)` of a file SANY finds through another path. Worse, the binary
+compares the path it was given with the real path `std::fs::canonicalize` gives, which on Windows
+is a verbatim path (`\\?\C:\…`) with every short (8.3) name made long, so a spec in a temporary
+directory such as `C:\Users\RUNNER~1\…` counts as found through another path: it prints `Parsing
+file \\?\C:\…\Spec.tla (file:C:%5CUsers%5CRUNNER~1…/Spec.tla)`, with `\` escaped in the URL,
+where TLC on Linux prints `Parsing file Spec.tla`. The Platforms run on Windows shows it in the
+`dump_trace`, `spec_paths`, `te_cases` and `trace` tests. A Java override's class declines on
+Windows (`the URL of a Java class whose path a URL escapes`), as does a tlapm module named by an
+absolute Windows path. This is TLC's Windows path rendering, which neither has ever matched; it
+waits until it can be recorded against a TLC run on Windows, since values derived from the JDK's
+source alone are easy to get subtly wrong.
 
 Proofs: of the 33,025 obligations tlapm's record (`proofs.json`) proves, prove misses 6 on the
 record of `prover-inputs.json`, where SMT, Zenon and Isabelle all fail. tlapm proved each with SMT
