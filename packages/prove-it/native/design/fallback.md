@@ -884,10 +884,18 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   `Loader`, beside the command line's modules, naming it by its file's name alone. `Loader` hands
   the lexer the text, which it reads in token mode from the start rather than from the header on,
   so a module it reads with more than blanks and comments before its header declines.
-- **A module file that isn't UTF-8** (`a module file tlapm finds but can't read`): tlapm reads
-  bytes, and read with U+FFFD for each byte that isn't UTF-8, two different strings would be one
-  and a theorem that they are equal proved. The binary's `read_to_string` and the CLI's fatal
-  `TextDecoder` both give such a file no text.
+- **A byte that isn't UTF-8 where the obligations hold it** (`a byte that isn't UTF-8 outside a
+  comment in …`, naming the first module read that holds that byte): tlapm reads bytes, and read
+  with U+FFFD for each such byte, two different strings would be one and a theorem that they are
+  equal proved. Both the binary and the CLI read a module's bytes (`bytes:` keys) and decode them
+  in `prove_obligations::bytes`: each byte that doesn't start a well-formed sequence (Unicode's
+  Table 3-7) reads as a marker of its own, U+10FF00 plus the byte, the same for each byte value
+  everywhere. The run declines where the obligations (everything they hold), a warning or an error
+  hold a marker; elsewhere, as in a comment, before the module's header or past its end, it prints
+  and proves what it would with U+FFFD. A module whose UTF-8 holds a character from U+10FF80 to
+  U+10FFFF, which it would read alike with a byte, declines (`U+… in …, which Prove It reads a
+  byte that isn't UTF-8 as`). Columns count bytes, as tlapm's do (`Loc`, `pos_cnum - pos_bol`),
+  each marker one.
 - **A cache it can't read or write as tlapm does:** a fingerprints file that doesn't load (tlapm
   moves it aside). Where tlapm can't make its cache directory or a module's in it
   (`Tlapm_lib.mkdir_tlaps`, a `Unix.mkdir`, which makes no directory above it), or write the
@@ -897,6 +905,13 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   Prove It doesn't do. Where the file system refuses an operation the run's reads let it expect,
   as a directory under `/proc`, the binary and the CLI decline once the run ends (`a directory
   tlapm can't make: …`, `a file tlapm can't write: …`), with the operations before it applied.
+
+### Declines to win back
+
+Runs origin/main's TypeScript CLI printed as tlapm does only because nothing read what it got
+wrong:
+- A byte that isn't UTF-8 in a string the obligations hold but neither print nor prove, such as a
+  theorem of a module the module extends: read as U+FFFD, the theorem was never read.
 
 ### Known wrong outputs
 
@@ -910,6 +925,8 @@ both hold back what the run prints and writes until it ends (`prove-it-check`'s 
   tlapm's status, 23 decline, and 2 differ, `parse_function_comma_args.tla` #2 above and
   `tlapm/examples/Bakery.tla` #60, which Z3 proves in 3 s and Prove It's SMT back end doesn't
   within the method's 60 s.
+- A carriage return alone ends a `\*` comment for tlapm's lexer (`alexer.mll`'s `newline`), and
+  not for the front end's, which reads the rest of the line as the comment.
 - The toolbox header's command line is Prove It's, `prove-it tlapm …`, as tlapm prints its own
   (`tlapm_args.ml`, `init`); no recording holds tlapm's.
 - The binary and the CLI of `dist/` print what the command printed once it ends, not as it goes.

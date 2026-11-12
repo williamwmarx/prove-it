@@ -13,7 +13,8 @@
 //! The keys it reads, besides SANY's `module:` and `file:`, are `text:<path>`, the text of the file
 //! at a path the command line names (the spec and its configuration), `bytes:<path>`, the bytes of
 //! the tla2tools.jar on a Java launch's class path, and `class:<name>`, the Java override for a
-//! module, both as a Uint8Array. tlapm's command line also reads `kind:<path>`, what is at a path
+//! module, both as a Uint8Array. tlapm's command line reads its modules and its fingerprints file
+//! as `bytes:<path>`, and also `kind:<path>`, what is at a path
 //! (`file`, `directory` or `other`), `realpath:<path>`, the path with its links resolved, and
 //! `entries:<path>`, a directory's entries, each as its `mtimeMs` and its name, each ended by a NUL;
 //! and it writes its cache: the files a run writes are in the result's `files`, in the order

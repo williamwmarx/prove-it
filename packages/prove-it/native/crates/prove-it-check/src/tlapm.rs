@@ -20,6 +20,7 @@ use prove_it_prover::driver::{
 };
 use prove_it_prover::tlapm_cache::{FingerprintTable, KnownResults, LocalTime, load_fingerprints};
 use prove_it_prover::{Cancel, DecideError, Limits, Statistic, Verdict};
+use prove_obligations::bytes;
 use prove_obligations::errors::ObligationError;
 use prove_obligations::expression::{Channel, get_at_prefix, get_locus_text};
 use prove_obligations::format::{format, render_doc};
@@ -922,6 +923,7 @@ fn generate_obligations(
             "the backtrace tlapm prints as it ends with {exception}"
         ))
     };
+    let not_utf8 = NotUtf8::default();
     // Tlapm_args gathers the command line's modules last first, and Tlapm_lib.read_new_modules
     // reads them in that order into a map by name, so the first of two modules with one name wins.
     let mut mains = Vec::new();
@@ -935,7 +937,7 @@ fn generate_obligations(
             }
             Err(Decline(reason)) => return Generated::Declined(reason),
         };
-        match read_module(io, &found, path) {
+        match read_module(io, &found, path, &not_utf8) {
             Ok(source) => mains.push(source),
             Err(Decline(reason)) => return Generated::Declined(reason),
         }
@@ -958,7 +960,7 @@ fn generate_obligations(
                     return None;
                 }
             };
-            match found.map(|found| read_module(io, &found, &found.path)) {
+            match found.map(|found| read_module(io, &found, &found.path, &not_utf8)) {
                 Some(Ok(source)) => Some(source),
                 Some(Err(Decline(reason))) => {
                     declined = Some(reason);
@@ -972,6 +974,7 @@ fn generate_obligations(
         },
         Some(lines),
         &mut |warning| {
+            not_utf8.check(&warning);
             let text = format!("{}\n", warning.text);
             let message = match warning.channel {
                 Channel::Stdout => Some(Printed::Out(text)),
@@ -990,6 +993,15 @@ fn generate_obligations(
     if let Some(reason) = declined {
         return Generated::Declined(reason);
     }
+    match &generated {
+        Ok(modules) => not_utf8.check(modules),
+        Err(error) => not_utf8.check(error),
+    }
+    if let Some(path) = not_utf8.held.into_inner() {
+        return Generated::Declined(format!(
+            "a byte that isn't UTF-8 outside a comment in {path}"
+        ));
+    }
     let printed = printed.into_inner();
     match generated {
         Ok(modules) => {
@@ -1001,32 +1013,73 @@ fn generate_obligations(
     }
 }
 
+/// The bytes that aren't UTF-8 in the modules read, which read as markers (`bytes::decode`), each
+/// by the first module read that holds it, and the module of the first that the obligations, a
+/// warning or an error hold. tlapm reads bytes, and read as U+FFFD, two different strings would be
+/// one and a theorem that they are equal proved; where no marker is held, as in a comment, the
+/// run prints and proves what it would with U+FFFD.
+#[derive(Default)]
+struct NotUtf8 {
+    paths: RefCell<HashMap<u8, String>>,
+    held: RefCell<Option<String>>,
+}
+
+impl NotUtf8 {
+    fn check(&self, value: &dyn std::fmt::Debug) {
+        if self.paths.borrow().is_empty() || self.held.borrow().is_some() {
+            return;
+        }
+        let Some(byte) = bytes::find_marker_in(value).and_then(bytes::get_marked_byte) else {
+            return;
+        };
+        *self.held.borrow_mut() = self.paths.borrow().get(&byte).cloned();
+    }
+}
+
 /// A module's file as tlapm reads it. `Loader` hands tlapm's lexer the text, which it reads in
 /// token mode from the start (`Alexer.lex_string`), where it reads a file it finds itself from its
 /// module header on (`Alexer.modfile`).
-fn read_module(io: &Io<'_>, found: &Found, shown: &str) -> Run<ObligationSource> {
+fn read_module(
+    io: &Io<'_>,
+    found: &Found,
+    shown: &str,
+    not_utf8: &NotUtf8,
+) -> Run<ObligationSource> {
     let path = PathBuf::from(&found.path);
     let bytes = match io.get_kind(&found.path) {
         Some(PathKind::File) => io.call(move |session| session.read(&path)),
         _ => None,
     };
-    let Some(source) = bytes.and_then(|bytes| String::from_utf8(bytes).ok()) else {
+    let Some(bytes) = bytes else {
         return decline(format!("a module file tlapm finds but can't read: {shown}"));
     };
-    if found.is_loaded && !is_header_first(source.as_bytes()) {
+    if let Some(marker) = bytes::find_marker_held(&bytes) {
+        return decline(format!(
+            "U+{:X} in {shown}, which Prove It reads a byte that isn't UTF-8 as",
+            u32::from(marker)
+        ));
+    }
+    for byte in bytes::get_bytes_not_utf8(&bytes) {
+        not_utf8
+            .paths
+            .borrow_mut()
+            .entry(byte)
+            .or_insert_with(|| shown.to_owned());
+    }
+    if found.is_loaded && !is_header_first(&bytes) {
         return decline(format!(
             "what comes before the module header of {}, which tlapm reads as tokens",
             found.path
         ));
     }
-    Ok(ObligationSource {
-        file: if found.is_loaded {
-            found.name.clone()
-        } else {
-            found.path.clone()
-        },
-        source,
-    })
+    let file = if found.is_loaded {
+        found.name.clone()
+    } else {
+        found.path.clone()
+    };
+    let source = bytes::decode(&bytes);
+    bytes::register_byte_columns(&file, &source);
+    Ok(ObligationSource { file, source })
 }
 
 /// Whether tlapm's lexer, in token mode from the start, reads only blanks and comments before the

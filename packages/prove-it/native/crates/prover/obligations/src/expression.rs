@@ -38,6 +38,7 @@ pub struct ObligationWarning {
 pub type Warn<'a> = dyn FnMut(ObligationWarning) + 'a;
 
 pub fn get_locus_position(locus: &Locus) -> String {
+    let locus = &get_byte_locus(locus);
     let end = i64::from(locus.end_column) - 1;
     if locus.start_line != locus.end_line {
         return format!(
@@ -55,6 +56,17 @@ pub fn get_locus_position(locus: &Locus) -> String {
             "line {}, characters {}-{}",
             locus.start_line, locus.start_column, end
         )
+    }
+}
+
+/// The locus with its columns as tlapm counts them in a file registered with
+/// `bytes::register_byte_columns`.
+pub fn get_byte_locus(locus: &Locus) -> Locus {
+    let file = &locus.file;
+    Locus {
+        start_column: crate::bytes::get_byte_column(file, locus.start_line, locus.start_column),
+        end_column: crate::bytes::get_byte_column(file, locus.end_line, locus.end_column),
+        ..locus.clone()
     }
 }
 

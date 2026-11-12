@@ -206,26 +206,6 @@ fn declines_an_error_tlapm_ends_with() {
     assert!(stderr(&output).starts_with(NOT_NATIVE));
 }
 
-/// tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't UTF-8,
-/// they would be one, and the theorem proved.
-#[test]
-fn declines_a_module_that_isnt_utf8() {
-    let directory = copy_fixtures("obligations");
-    let mut source = b"---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM \"".to_vec();
-    source.push(0xff);
-    source.extend_from_slice(b"\" = \"");
-    source.push(0xfe);
-    source.extend_from_slice(b"\" BY SMT\n====\n");
-    fs::write(directory.join("M.tla"), source).expect("the module is written");
-    let output = run_in(&directory, &["M.tla"]);
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(stdout(&output), "");
-    assert_eq!(
-        stderr(&output),
-        format!("{NOT_NATIVE}a module file tlapm finds but can't read: M.tla\n")
-    );
-}
-
 #[test]
 fn declines_what_it_cant_do_as_tlapm_does() {
     let cases: [(&[&str], &str); 5] = [
@@ -800,4 +780,199 @@ fn proves_the_first_of_two_modules_with_one_name() {
     assert!(!stderr(&output).contains("1 = 2"));
     let output = run_in(&directory, &[&args[..], &["d2/M.tla", "d1/M.tla"]].concat());
     assert!(stderr(&output).contains("@!!obl:1 = 2\n"));
+}
+
+fn write_bytes(files: &[(&str, &[u8])]) -> PathBuf {
+    let directory = write_files(&[]);
+    for (path, bytes) in files {
+        fs::create_dir_all(&directory).expect("a directory");
+        fs::write(directory.join(path), bytes).expect("a file");
+    }
+    directory
+}
+
+fn not_utf8(path: &str) -> String {
+    format!("{NOT_NATIVE}a byte that isn't UTF-8 outside a comment in {path}\n")
+}
+
+// tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't UTF-8,
+// they would be one, and the theorem proved: ED A0 80 and ED B0 80 encode U+D800 and U+DC00.
+#[test]
+fn declines_a_string_that_isnt_utf8() {
+    let cases: [(&[u8], &[u8], &str); 3] = [
+        (b"\xff", b"\xfe", "="),
+        (b"\xed\xa0\x80", b"\xed\xb0\x80", "="),
+        (b"\xed\xa0\x80", b"\xed\xb0\x80", "#"),
+    ];
+    for (left, right, operator) in cases {
+        let definitions = [b"L == \"", left, b"\"\nR == \"", right, b"\"\n"].concat();
+        for (path, extended) in [("M.tla", ""), ("./Lib.tla", "Lib, ")] {
+            let main = [
+                format!("---- MODULE M ----\nEXTENDS {extended}TLAPS\n").as_bytes(),
+                if extended.is_empty() {
+                    &definitions
+                } else {
+                    b""
+                },
+                format!("THEOREM L {operator} R BY SMT DEF L, R\n====\n").as_bytes(),
+            ]
+            .concat();
+            let library = [b"---- MODULE Lib ----\n", definitions.as_slice(), b"====\n"].concat();
+            let directory = write_bytes(&[("M.tla", &main), ("Lib.tla", &library)]);
+            let output = run_in(&directory, &["M.tla"]);
+            assert_eq!(
+                (output.status.code(), stdout(&output), stderr(&output)),
+                (Some(1), String::new(), not_utf8(path)),
+                "{path} {operator}"
+            );
+        }
+    }
+}
+
+fn run_bytes(text: &[u8], args: &[&str]) -> Output {
+    let directory = write_bytes(&[("M.tla", text)]);
+    run_in(&directory, &[args, &["M.tla"]].concat())
+}
+
+// tlapm's lexer skips what comes before a module's header, what a comment holds and what follows
+// the module's end, so a byte that isn't UTF-8 there changes nothing: the run prints what it prints
+// with an `e` in its place.
+#[test]
+fn reads_a_byte_that_isnt_utf8_where_tlapm_skips_it() {
+    let cases: [(&[u8], &[u8], &[u8]); 10] = [
+        (b"\xe9\n", b"", b""),
+        (b"(*{ \xe9\n", b"", b""),
+        (b"", b"\\* caf\xe9\n", b""),
+        (b"", b"(* (* caf\xe9 *) \xe9 *)\n", b""),
+        (b"", b"\\* (*{ \xe9\n", b""),
+        (b"", b"(* (*{ \xe9 }*) *)\n", b""),
+        (b"", b"", b"\xe9\n"),
+        (b"", b"", b"\"\xe9\"\n"),
+        (b"", b"---- MODULE Inner ----\n(* \xe9 *)\n====\n", b""),
+        // tlapm's lexer ends a `\*` comment at a carriage return too, and Prove It's at a line
+        // feed alone (fallback.md), so here both read the rest of the line as a comment.
+        (b"", b"\\* abc\r\xe9\n", b""),
+    ];
+    for (before, inside, after) in cases {
+        let get_module = |byte: u8| {
+            let replace = |bytes: &[u8]| -> Vec<u8> {
+                bytes
+                    .iter()
+                    .map(|value| if *value == 0xe9 { byte } else { *value })
+                    .collect()
+            };
+            [
+                replace(before),
+                b"---- MODULE M ----\nEXTENDS TLAPS\n".to_vec(),
+                replace(inside),
+                b"THEOREM 1 = 1 OBVIOUS\n====\n".to_vec(),
+                replace(after),
+            ]
+            .concat()
+        };
+        let read = run_bytes(&get_module(0xe9), &["-N", "--toolbox", "0", "0"]);
+        let expected = run_bytes(&get_module(b'e'), &["-N", "--toolbox", "0", "0"]);
+        let case = String::from_utf8_lossy(&get_module(0xe9)).into_owned();
+        assert_eq!(read.status.code(), Some(0), "{case}");
+        assert_eq!(stderr(&read), stderr(&expected), "{case}");
+    }
+}
+
+// tlapm's columns count bytes, so a comment holding two bytes of a three-byte sequence puts what
+// follows it two columns on, as two ASCII characters do; and an `é` is two columns too.
+#[test]
+fn counts_columns_in_bytes() {
+    let run = |comment: &[u8]| {
+        let text = [
+            b"---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM ",
+            comment,
+            b" 1 = 1 OBVIOUS\n====\n",
+        ]
+        .concat();
+        stderr(&run_bytes(&text, &["-N", "--toolbox", "0", "0"]))
+    };
+    let expected = run(b"(*ab*)");
+    assert!(expected.contains("@!!loc:3:22:3:29\n"), "{expected}");
+    assert_eq!(run(b"(*\xe2\x82*)"), expected);
+    assert_eq!(run("(*é*)".as_bytes()), expected);
+    assert_eq!(run("(*\u{20ac}*)".as_bytes()), run(b"(*abc*)"));
+}
+
+// What the obligations hold of a byte that isn't UTF-8 decides: a nested module's string the
+// module uses, a string past a nested module's end, a theorem of a module it extends, and pragmas.
+#[test]
+fn judges_a_byte_that_isnt_utf8_by_what_the_obligations_hold() {
+    let cases: [(&[u8], Option<&str>); 9] = [
+        (b"---- MODULE Inner ----\nS == \"\xff\"\n====\nTHEOREM TRUE OBVIOUS\n====\n", None),
+        (
+            b"---- MODULE Inner ----\nS == \"\xff\"\n====\nI == INSTANCE Inner\nTHEOREM I!S = \"a\" OBVIOUS\n====\n",
+            Some("M.tla"),
+        ),
+        (
+            b"---- MODULE Inner ----\n====\nS == \"\xff\"\nTHEOREM TRUE OBVIOUS\n====\n",
+            Some("M.tla"),
+        ),
+        (
+            b"THEOREM TRUE OBVIOUS (*{ by (isabelle \"a}*)(*\xff*)(*\") }*)\n====\n",
+            Some("M.tla"),
+        ),
+        (b"x == 1 (*{ note *)\n(* \xff *)\n====\n", None),
+        (b"x == 1 = (*{ \xff }*) 1\n====\n", None),
+        (
+            b"F == TRUE (*{ by (prover:\"\xff\") }*)\nTHEOREM 1 = 1 BY F\n====\n",
+            Some("M.tla"),
+        ),
+        (b"S == \"\xff\"\n====\n", None),
+        (b"THEOREM 1 = 1 OBVIOUS \\* \xff\n====\n", None),
+    ];
+    for (body, declined) in cases {
+        let text = [b"---- MODULE M ----\nEXTENDS TLAPS\n", body].concat();
+        let output = run_bytes(&text, &["-N", "--toolbox", "0", "0", "--printallobs"]);
+        let case = String::from_utf8_lossy(&text).into_owned();
+        match declined {
+            Some(path) => assert_eq!(
+                (output.status.code(), stderr(&output)),
+                (Some(1), not_utf8(path)),
+                "{case}"
+            ),
+            None => assert!(
+                !stderr(&output).contains(NOT_NATIVE),
+                "{case}: {}",
+                stderr(&output)
+            ),
+        }
+    }
+    // The lexer fails on the byte, which tlapm fails on too.
+    let output = run_bytes(b"---- MODULE M ----\nS == \xff\n====\n", &["-N"]);
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "{NOT_NATIVE}the backtrace tlapm prints as it ends with Failure(\"Module.Parser.parse_file\")\n"
+        )
+    );
+    let directory = write_bytes(&[
+        (
+            "Lib.tla",
+            b"---- MODULE Lib ----\nTHEOREM \"\xff\" = \"\xfe\" OBVIOUS\n====\n",
+        ),
+        (
+            "M.tla",
+            b"---- MODULE M ----\nEXTENDS Lib, TLAPS\nTHEOREM TRUE OBVIOUS\n====\n",
+        ),
+    ]);
+    let output = run_in(&directory, &["-N", "M.tla"]);
+    assert_eq!(stderr(&output), not_utf8("./Lib.tla"));
+}
+
+// A module that holds a character a byte that isn't UTF-8 reads as would read alike with it.
+#[test]
+fn declines_a_module_that_holds_a_marker() {
+    let output = run_bytes(
+        "---- MODULE M ----\nS == \"\u{10ffff}\"\n====\n".as_bytes(),
+        &["-N"],
+    );
+    assert_eq!(
+        stderr(&output),
+        format!("{NOT_NATIVE}U+10FFFF in M.tla, which Prove It reads a byte that isn't UTF-8 as\n")
+    );
 }

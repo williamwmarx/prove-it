@@ -3,6 +3,7 @@
 
 pub mod action;
 pub mod anonymize;
+pub mod bytes;
 pub mod equality;
 pub mod errors;
 pub mod expression;
@@ -37,6 +38,7 @@ pub mod zenon;
 /// Forgets every cache the crate keeps on this thread, as the TypeScript's modules keep theirs, so
 /// that a run after it gives what a fresh process gives.
 pub fn reset_caches() {
+    bytes::reset_byte_columns();
     levels::reset_caches();
     temporal::reset_caches();
     prep::normalize::reset_caches();

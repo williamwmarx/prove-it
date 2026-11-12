@@ -1475,25 +1475,127 @@ describe("tlapm -N prints obligations as tlapm does", () => {
   );
 
   // tlapm reads bytes, so these two strings differ. Read with U+FFFD for each byte that isn't
-  // UTF-8, they would be one, and the theorem proved.
-  it("declines a module that isn't UTF-8 rather than read two strings alike", () => {
+  // UTF-8, they would be one, and the theorem proved: ED A0 80 and ED B0 80 encode U+D800 and
+  // U+DC00.
+  const NOT_UTF8 = [
+    ["\\xff = \\xfe", [0xff], [0xfe], "="],
+    ["U+D800 = U+DC00", [0xed, 0xa0, 0x80], [0xed, 0xb0, 0x80], "="],
+    ["U+D800 # U+DC00", [0xed, 0xa0, 0x80], [0xed, 0xb0, 0x80], "#"],
+  ] as const;
+  it.each(
+    NOT_UTF8.flatMap(([name, ...strings]) => [
+      ["the module", name, "M.tla", "", ...strings] as const,
+      ["a module it extends", name, "./Lib.tla", "Lib, ", ...strings] as const,
+    ]),
+  )("declines %s that isn't UTF-8: %s", (_, _name, path, extended, left, right, operator) => {
+    const definitions = Buffer.concat([
+      Buffer.from('L == "'),
+      Buffer.from(left),
+      Buffer.from('"\nR == "'),
+      Buffer.from(right),
+      Buffer.from('"\n'),
+    ]);
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(
       join(directory, "M.tla"),
       Buffer.concat([
-        Buffer.from('---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM "'),
-        Buffer.from([0xff]),
-        Buffer.from('" = "'),
-        Buffer.from([0xfe]),
-        Buffer.from('" BY SMT\n====\n'),
+        Buffer.from(`---- MODULE M ----\nEXTENDS ${extended}TLAPS\n`),
+        ...(extended === "" ? [definitions] : []),
+        Buffer.from(`THEOREM L ${operator} R BY SMT DEF L, R\n====\n`),
       ]),
     );
-    const result = runTlapmIn(directory, ["M.tla"]);
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe(
-      "prove-it: not native yet: a module file tlapm finds but can't read: M.tla\n",
+    writeFileSync(
+      join(directory, "Lib.tla"),
+      Buffer.concat([Buffer.from("---- MODULE Lib ----\n"), definitions, Buffer.from("====\n")]),
     );
+    const result = runTlapmIn(directory, ["M.tla"]);
+    expect(result.stderr).toBe(
+      `prove-it: not native yet: a byte that isn't UTF-8 outside a comment in ${path}\n`,
+    );
+    expect(result.stdout).toBe("");
+    expect(result.status).toBe(1);
+  });
+
+  const runBytes = (text: string, args: string[]) => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
+    writeFileSync(join(directory, "M.tla"), Buffer.from(text, "latin1"));
+    return runTlapmIn(directory, [...args, "M.tla"]);
+  };
+
+  // tlapm's lexer skips what comes before a module's header, what a comment holds and what follows
+  // its end, so a byte that isn't UTF-8 there changes nothing.
+  it.each([
+    ["before the header", "\xe9\n", "", ""],
+    ["in a line comment", "", "\\* caf\xe9\n", ""],
+    ["in a nested comment", "", "(* (* caf\xe9 *) \xe9 *)\n", ""],
+    ["in a nested module's comment", "", "---- MODULE Inner ----\n(* \xe9 *)\n====\n", ""],
+    ["after the module's end", "", "", "\xe9\n"],
+    ["after the module's end, in a string", "", "", '"\xe9"\n'],
+    // tlapm's lexer ends a `\*` comment at a carriage return too, and Prove It's at a line feed
+    // alone (fallback.md), so here both read the rest of the line as a comment.
+    ["after a carriage return in a line comment", "", "\\* abc\r\xe9\n", ""],
+  ])("reads a byte that isn't UTF-8 %s as tlapm skips it", (_, before, inside, after) => {
+    const getModule = (byte: string) =>
+      `${before}---- MODULE M ----\nEXTENDS TLAPS\n${inside}THEOREM 1 = 1 OBVIOUS\n====\n${after}`.replaceAll(
+        "\xe9",
+        byte,
+      );
+    const read = runBytes(getModule("\xe9"), ["-N", "--toolbox", "0", "0"]);
+    expect(read.status).toBe(0);
+    expect(read.stderr).toBe(runBytes(getModule("e"), ["-N", "--toolbox", "0", "0"]).stderr);
+  });
+
+  // tlapm's columns count bytes, so two bytes of a three-byte sequence in a comment put what
+  // follows two columns on, as an é does.
+  it("counts columns in bytes", () => {
+    const run = (comment: string) =>
+      runBytes(`---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM ${comment} 1 = 1 OBVIOUS\n====\n`, [
+        "-N",
+        "--toolbox",
+        "0",
+        "0",
+      ]).stderr;
+    const expected = run("(*ab*)");
+    expect(expected).toContain("@!!loc:3:22:3:29\n");
+    expect(run("(*\xe2\x82*)")).toBe(expected);
+    expect(run("(*\xc3\xa9*)")).toBe(expected);
+  });
+
+  it.each([
+    [
+      "in a nested module's string the module uses",
+      '---- MODULE Inner ----\nS == "\xff"\n====\nI == INSTANCE Inner\nTHEOREM I!S = "a" OBVIOUS\n====\n',
+      true,
+    ],
+    [
+      "between a nested module's end and the module's",
+      '---- MODULE Inner ----\n====\nS == "\xff"\nTHEOREM TRUE OBVIOUS\n====\n',
+      true,
+    ],
+    ["in a pragma", 'F == TRUE (*{ by (prover:"\xff") }*)\nTHEOREM 1 = 1 BY F\n====\n', true],
+    [
+      "in a nested module's string the module doesn't use",
+      '---- MODULE Inner ----\nS == "\xff"\n====\nTHEOREM TRUE OBVIOUS\n====\n',
+      false,
+    ],
+    ["in a pragma no obligation reads", "x == 1 = (*{ \xff }*) 1\n====\n", false],
+  ])("judges a byte that isn't UTF-8 %s by what the obligations hold", (_, body, isDeclined) => {
+    const result = runBytes(`---- MODULE M ----\nEXTENDS TLAPS\n${body}`, [
+      "-N",
+      "--toolbox",
+      "0",
+      "0",
+      "--printallobs",
+    ]);
+    if (isDeclined) {
+      expect(result.stderr).toBe(
+        "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+      );
+      expect(result.status).toBe(1);
+    } else {
+      expect(result.stderr).not.toContain("not native yet");
+      expect(result.status).toBe(0);
+    }
   });
 });
 

@@ -48,17 +48,6 @@ const listEntries = (path: string) =>
         .join("")
     : undefined;
 
-// A file that isn't UTF-8 has no text, as the binary's read_to_string gives none: read with U+FFFD
-// in place of its bytes, two different files would read alike.
-const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-const readText = (path: string) => {
-  try {
-    return decoder.decode(readFileSync(path));
-  } catch {
-    return undefined;
-  }
-};
-
 const readBytes = (path: string) => {
   try {
     return new Uint8Array(readFileSync(path));
@@ -71,7 +60,6 @@ const readBytes = (path: string) => {
 const readKey = (key: string) => {
   const separator = key.indexOf(":");
   const [kind, path] = [key.slice(0, separator), key.slice(separator + 1)];
-  if (kind === "text") return getKind(path) === "file" ? readText(path) : undefined;
   if (kind === "bytes") return readBytes(path);
   if (kind === "kind") return getKind(path);
   if (kind === "realpath") return getRealPath(path);
