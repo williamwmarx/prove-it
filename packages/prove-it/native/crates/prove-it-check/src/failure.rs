@@ -195,7 +195,7 @@ pub fn print_failure(
         .as_ref()
         .is_some_and(|fingerprint| fingerprint.is_replayed);
     if failure.fingerprint.is_some() && !is_replayed && !report.states.is_empty() {
-        printer.print(failure.code, Level::Error, message);
+        printer.report(failure.code, message);
     }
     // TLC computes the initial states again for the call stack, from a count of none, and
     // reports its progress at each power of two before the state that fails again
@@ -240,9 +240,8 @@ pub fn print_failure(
             } else {
                 &fingerprint.reason
             };
-            printer.print(
+            printer.report(
                 code::FINGERPRINT_FAILED,
-                Level::Error,
                 &format!(
                     "TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n{}\nReason:\n{reason}",
                     format_call_stack(ir, &fingerprint.sources)
@@ -271,9 +270,8 @@ pub fn print_failure(
             } else {
                 &fingerprint.reason
             };
-            printer.print(
+            printer.report(
                 code::FINGERPRINT_FAILED,
-                Level::Error,
                 &format!(
                     "TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n{trace}\nReason:\n{reason}"
                 ),
