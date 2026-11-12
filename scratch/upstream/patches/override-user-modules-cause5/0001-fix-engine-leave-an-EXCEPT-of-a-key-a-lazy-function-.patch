@@ -1,0 +1,272 @@
+From 9b51e6ea22adbb5bf6f92be1d124944b9a5f8f13 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 21:55:39 +0000
+Subject: [PATCH] fix(engine): leave an EXCEPT of a key a lazy function's
+ domain lacks to TLC's warning
+
+TLC reads a function at an EXCEPT's key before it updates it
+(FcnLambdaValue.select): where a function it keeps lazy has an
+earlier EXCEPT at the key or its domain holds it, the EXCEPT is kept;
+elsewhere the function is left as it is and TLC warns that the EXCEPT
+was applied to non-existing fields (2144). The engine left the
+function as it is without the warning, and the trace evaluator failed
+as at an application outside the domain. Both now treat the key as
+they treat a key any other function lacks: the engine leaves it to
+the reference interpreter, and the evaluator declines where TLC warns
+and keeps the function under -nowarning. 5 runs of the upstream
+conformance suite that printed no warning now decline.
+---
+ .../except-lazy-domain-key/M.cfg              |  2 ++
+ .../except-lazy-domain-key/M.tla              |  7 +++++++
+ .../except-lazy-domain-key/tlc.out            | 17 ++++++++++++++++
+ .../except-lazy-excepted-key/M.cfg            |  2 ++
+ .../except-lazy-excepted-key/M.tla            |  7 +++++++
+ .../except-lazy-excepted-key/tlc.out          | 17 ++++++++++++++++
+ .../except-lazy-missing-key-nowarning/M.cfg   |  2 ++
+ .../except-lazy-missing-key-nowarning/M.tla   |  7 +++++++
+ .../except-lazy-missing-key-nowarning/args    |  1 +
+ .../except-lazy-missing-key-nowarning/tlc.out | 17 ++++++++++++++++
+ .../except-lazy-missing-key/M.cfg             |  2 ++
+ .../except-lazy-missing-key/M.tla             |  7 +++++++
+ .../except-lazy-missing-key/declined          |  1 +
+ .../tla-engine/src/compile/lazy_function.rs   |  7 ++++---
+ .../native/crates/tla-trace/src/eval.rs       | 20 +++++++++++++++++--
+ 15 files changed, 111 insertions(+), 5 deletions(-)
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/args
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/tlc.out
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/M.cfg
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/M.tla
+ create mode 100644 packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/declined
+
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/M.tla
+new file mode 100644
+index 00000000..de434610
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++ASSUME PrintT([[n \in Nat |-> n] EXCEPT ![2] = 0][2])
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/tlc.out
+new file mode 100644
+index 00000000..643cc3c1
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-domain-key/tlc.out
+@@ -0,0 +1,17 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++0
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/M.tla
+new file mode 100644
+index 00000000..c7bf8a2e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++ASSUME PrintT([[[n \in Nat |-> n] EXCEPT ![2] = 5] EXCEPT ![2] = @ + 1][2])
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/tlc.out
+new file mode 100644
+index 00000000..e67f9dc8
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-excepted-key/tlc.out
+@@ -0,0 +1,17 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++6
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/M.tla
+new file mode 100644
+index 00000000..acf72b1e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++ASSUME PrintT([[n \in Nat |-> n] EXCEPT ![-1] = 0][1])
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/args b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/args
+new file mode 100644
+index 00000000..6d8e45ab
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/args
+@@ -0,0 +1 @@
++-nowarning
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/tlc.out b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/tlc.out
+new file mode 100644
+index 00000000..107237e1
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key-nowarning/tlc.out
+@@ -0,0 +1,17 @@
++exit 0
++Semantic processing of module Naturals
++Semantic processing of module Integers
++Semantic processing of module Sequences
++Semantic processing of module FiniteSets
++Semantic processing of module TLC
++Semantic processing of module M
++Linting of module M
++1
++Computing initial states...
++Model checking completed. No error has been found.
++  Estimates of the probability that TLC did not check all reachable states
++  because two distinct states had the same fingerprint:
++  calculated (optimistic):  val = 5.4E-20
++2 states generated, 1 distinct states found, 0 states left on queue.
++The depth of the complete state graph search is 1.
++The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/M.cfg b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/M.cfg
+new file mode 100644
+index 00000000..e3e8c3d2
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/M.cfg
+@@ -0,0 +1,2 @@
++INIT Init
++NEXT Next
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/M.tla b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/M.tla
+new file mode 100644
+index 00000000..acf72b1e
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/M.tla
+@@ -0,0 +1,7 @@
++---- MODULE M ----
++EXTENDS Integers, TLC
++VARIABLE x
++ASSUME PrintT([[n \in Nat |-> n] EXCEPT ![-1] = 0][1])
++Init == x = 0
++Next == x' = x
++====
+diff --git a/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/declined b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/declined
+new file mode 100644
+index 00000000..be188c2c
+--- /dev/null
++++ b/packages/prove-it/native/crates/prove-it-cli/tests/startup_checks/except-lazy-missing-key/declined
+@@ -0,0 +1 @@
++an assumption that fails to evaluate: evaluating the assumption again: an EXCEPT of a key the function lacks, which TLC warns of
+diff --git a/packages/prove-it/native/crates/tla-engine/src/compile/lazy_function.rs b/packages/prove-it/native/crates/tla-engine/src/compile/lazy_function.rs
+index efc119a2..cc45fb79 100644
+--- a/packages/prove-it/native/crates/tla-engine/src/compile/lazy_function.rs
++++ b/packages/prove-it/native/crates/tla-engine/src/compile/lazy_function.rs
+@@ -101,10 +101,11 @@ pub(crate) fn except(machine: &mut Machine<'_>, function: Id, key: Id, value: Id
+         return machine.store.except(function, key, value);
+     }
+     // TLC reads the function at the key first (`FcnLambdaValue.select`): outside its domain the
+-    // EXCEPT changes nothing, and inside it the function's value there is evaluated, and may
+-    // fail.
++    // EXCEPT changes nothing, but TLC warns that it was applied to non-existing fields (`Tool`'s
++    // OPCODE_exc), which the engine leaves to the reference interpreter as the store does for
++    // any other function. Inside it the function's value there is evaluated, and may fail.
+     if !is_in_domain(machine, function, key)? {
+-        return Ok(function);
++        return Err(Bail("EXCEPT outside the domain"));
+     }
+     apply_lazy(machine, function, key)?;
+     let lazy = &machine.lazy_functions[machine.store.lazy_index_of(function) as usize];
+diff --git a/packages/prove-it/native/crates/tla-trace/src/eval.rs b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+index 7e124fc3..b08298e8 100644
+--- a/packages/prove-it/native/crates/tla-trace/src/eval.rs
++++ b/packages/prove-it/native/crates/tla-trace/src/eval.rs
+@@ -4002,12 +4002,28 @@ impl<'ir> Evaluator<'ir> {
+             return self.evaluate(update, &inner);
+         };
+         let key = self.except_key(step, context)?;
+-        // `FcnLambdaValue.takeExcept`: the EXCEPT is kept, whatever the key, and `@` is the
+-        // function's value at it.
++        // `FcnLambdaValue.select`, then `takeExcept`: the EXCEPT is kept, and `@` is the
++        // function's value at the key, where an earlier EXCEPT names the key or its domain holds
++        // it. Elsewhere TLC leaves the function as it is and warns, as of any other function.
+         if let Value::Lambda(lambda) = value {
+             if !rest.is_empty() {
+                 return fail("an EXCEPT of a lazy function past its first key");
+             }
++            let mut is_excepted = false;
++            for (excepted, _) in &lambda.excepts {
++                if equals(excepted, &key)? {
++                    is_excepted = true;
++                    break;
++                }
++            }
++            if !is_excepted && !self.member(&key, &lambda.domain)? {
++                self.except_skips += 1;
++                return if self.ir.model.is_warning_enabled {
++                    fail(EXCEPT_OF_MISSING_KEY)
++                } else {
++                    Ok(value.clone())
++                };
++            }
+             let at = self.apply_lambda(lambda, &key)?;
+             let next = self.except(&at, rest, update, context)?;
+             let mut excepts = lambda.excepts.clone();
+-- 
+2.43.0
+

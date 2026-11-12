@@ -90,3 +90,7 @@ Binary sha256 ec2b13ed8d384a882119c65617e7e449f74c0255f5d2ecd3c04806ddc691e6b9; 
 ## override-user-modules 02f7849c: cause 4 (next-state subscript warnings 2139/2140)
 
 Binary sha256 0372d4d82d95fe3f6a78d854dd998198197a9f1ff1ee8dd4699524d1ca457841; `patches/override-user-modules/0003-*`; `results/override-user-modules-02f7849c.*`. Against a94fcb14: 26 runs changed, all cause 4: wrong -> match 24, wrong -> decline 1 (temporal/next_subscript/definition_overridden_in_config, a subscript the configuration substitutes), wrong -> wrong 1 (temporal/next_subscript/instance_substituted_expression, whose subscript warning now matches but whose error stack frames differ, another cause). Nothing else changed. Classes: match 35,151, decline 36,654, wrong vs the recording 1,019, noncompletion 3.
+
+## override-user-modules 9b51e6ea (over origin/override-user-modules b929e751): cause 5 (2144 EXCEPT warning)
+
+b929e751 (the coordinator's branch: causes 1, 3 and 4 over main 2af9b885) measured first, `results/override-user-modules-b929e751.jsonl.gz`: against 02f7849c, 4 decline -> match from main, nothing else of note. Then cause 5, binary sha256 bff221bf30ffac59fc62c5b80f34eb205346403079cf29380d4c34f2a4193d13, `patches/override-user-modules-cause5/`, `results/override-user-modules-9b51e6ea.*`: against b929e751, 10 runs changed: wrong -> decline 5 (tlc/expressions/except/missing_lazy_key_warns, all contexts), decline -> decline 5 (reason). Classes: match 35,155, decline 36,655, wrong vs the recording 1,014, noncompletion 3.
