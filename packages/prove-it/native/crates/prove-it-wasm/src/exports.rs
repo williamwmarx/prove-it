@@ -135,7 +135,8 @@ pub unsafe extern "C" fn prove_it_check(pointer: *mut u8, length: usize) -> *mut
     }
 }
 
-/// `sanyText(root, source, fileName, known)`, as prove-it-host's `sany` describes it.
+/// `sanyText(root, source, fileName, version, rootExtendees, known)`, as prove-it-host's `sany`
+/// describes it.
 ///
 /// # Safety
 ///
@@ -144,7 +145,7 @@ pub unsafe extern "C" fn prove_it_check(pointer: *mut u8, length: usize) -> *mut
 pub unsafe extern "C" fn prove_it_sany_text(pointer: *mut u8, length: usize) -> *mut u8 {
     unsafe {
         call(pointer, length, |arguments| {
-            prove_it_host::sany::sany_text(&get::<4>(arguments))
+            prove_it_host::sany::sany_text(&get::<6>(arguments))
         })
     }
 }

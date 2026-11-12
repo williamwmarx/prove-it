@@ -1,0 +1,5 @@
+{
+  "root": "Checked",
+  "version": "1.7.4",
+  "test": "aborts on a character past U+00FF whose low byte is below 0x80, which its lexer cannot read"
+}

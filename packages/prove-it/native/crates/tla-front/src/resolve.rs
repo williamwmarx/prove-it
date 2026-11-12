@@ -399,7 +399,10 @@ fn is_bindable(name: &str, current: Option<&Binding>, added: &Binding, unit: &Un
     if current.kind == SymbolKind::Builtin {
         unit.error(
             location,
-            format!("Symbol {name} is a built-in operator, and cannot be redefined."),
+            format!(
+                "Symbol {} is a built-in operator, and cannot be redefined.",
+                crate::sany::generator::resolve_synonym(name)
+            ),
         );
     } else if added.kind == SymbolKind::Parameter
         || current.kind != added.kind
@@ -1595,7 +1598,10 @@ fn resolve_definition(
         report(if is_function {
             format!("Function name `{name}' already defined or declared.")
         } else {
-            format!("Operator {name} already defined or declared.")
+            format!(
+                "Operator {} already defined or declared.",
+                crate::sany::generator::resolve_synonym(name)
+            )
         });
     }
     // SANY analyzes the body with the arity of the RECURSIVE declaration, and compares only the
@@ -2574,11 +2580,22 @@ fn check_use_or_hide(use_or_hide: &UseOrHide, scope: &Scope, unit: &Unit) -> Res
             "an empty USE or HIDE without a place".to_owned(),
         ));
     };
+    if use_or_hide.defs.is_empty() {
+        report_bare_use_or_hide(use_or_hide.is_only, range, unit);
+    }
     unit.error(
         format_range(range),
         "Empty USE or HIDE statement.".to_owned(),
     );
     Ok(())
+}
+
+/// `generateUseOrHide` reports a BY, USE or HIDE with nothing after its keyword, not even ONLY,
+/// before its caller reports it empty.
+fn report_bare_use_or_hide(is_only: bool, range: &Range, unit: &Unit) {
+    if !is_only {
+        unit.error(format_range(range), "Empty BY, USE, or HIDE".to_owned());
+    }
 }
 
 fn resolve_new_symbol(symbol: &NewSymbol, scope: &Scope, unit: &Unit) -> Result<Scope> {
@@ -2679,7 +2696,12 @@ fn resolve_proof(proof: Option<&Proof>, scope: &Scope, outer: &Unit) -> Result<(
     };
     match proof.map(|proof| &proof.kind) {
         // `generateLeafProof` rejects a BY that keeps no fact and no DEF entry.
-        Some(ProofKind::By { facts, defs, .. }) => {
+        Some(ProofKind::By {
+            is_only,
+            facts,
+            defs,
+            ..
+        }) => {
             check_facts(facts, scope, &unit)?;
             if check_defs(defs, scope, &unit)? || !facts.is_empty() {
                 return Ok(());
@@ -2687,6 +2709,9 @@ fn resolve_proof(proof: Option<&Proof>, scope: &Scope, outer: &Unit) -> Result<(
             let Some(range) = proof.and_then(|proof| proof.location.range.as_ref()) else {
                 return Err(FrontError::NotYet("an empty BY without a place".to_owned()));
             };
+            if defs.is_empty() {
+                report_bare_use_or_hide(*is_only, range, &unit);
+            }
             unit.error(format_range(range), "Empty BY".to_owned());
             Ok(())
         }
@@ -2740,10 +2765,12 @@ fn get_step_at(expression: &Expression) -> Option<usize> {
     if !is_infix_expression(expression) {
         return None;
     }
-    let ExpressionKind::Apply { args, .. } = &expression.kind else {
-        return None;
+    let left = match &expression.kind {
+        ExpressionKind::Apply { args, .. } => &args[0],
+        ExpressionKind::Junction { operands, .. } if operands.len() == 2 => &operands[0],
+        _ => return None,
     };
-    matches!(args[0].kind, ExpressionKind::ExceptAt).then(|| Rc::as_ptr(&args[0]) as usize)
+    matches!(left.kind, ExpressionKind::ExceptAt).then(|| Rc::as_ptr(left) as usize)
 }
 
 /// A LET or a step binds the name of the INSTANCE after the names it adds.

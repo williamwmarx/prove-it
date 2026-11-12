@@ -1,0 +1,21 @@
+Computing initial states...
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ c = [z |-> 0, e |-> 0]
+/\ n = [ z |-> [y |-> {"z", "e"}, b |-> {"z", "e"}],
+  e |-> [y |-> {"z", "e"}, b |-> {"z", "e"}] ]
+/\ r = [zr |-> "e", ar |-> "z"]
+/\ s = {"kcfg", "acfg", "y", "b", "foo", "bar", "IF", "ELSE", "Len", "zz"}
+/\ t = <<"z", "e", {"z", "e"}, {[zr |-> 2], [ar |-> 1]}>>
+
+State 2: <Next line 9, col 9 to line 11, col 35 of module Stop>
+/\ c = [z |-> 1, e |-> 0]
+/\ n = [ z |-> [y |-> {"z", "e"}, b |-> {"z", "e"}],
+  e |-> [y |-> {"z", "e"}, b |-> {"z", "e"}] ]
+/\ r = [zr |-> "e", ar |-> "z"]
+/\ s = {"kcfg", "acfg", "y", "b", "foo", "bar", "IF", "ELSE", "Len", "zz"}
+/\ t = <<"z", "e", {"z", "e"}, {[zr |-> 2], [ar |-> 1]}>>
+
+2 states generated, 2 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 2.

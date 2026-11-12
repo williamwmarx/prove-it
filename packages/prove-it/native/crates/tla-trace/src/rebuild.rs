@@ -5,7 +5,7 @@
 //! state it keeps, so every state but the last prints sorted. The last state of a violation is
 //! one the search didn't keep, and TLC fingerprinted it only if it satisfies the constraints.
 
-use tla_ir::{AtomKind, Definition, DefinitionForm, Ir, NodeId};
+use tla_ir::{AtomKind, Definition, DefinitionForm, Ir, NodeId, NodeKind};
 use tla_values::fingerprint::{Fingerprints, Polynomial};
 use tla_values::random::JavaRandom;
 use tla_values::{Id, Store};
@@ -72,7 +72,8 @@ impl<'ir> Rebuilder<'ir> {
     /// computed as it started (`processConstantDefns`), which it rejects where the configuration
     /// names it as the ALIAS or a POSTCONDITION (`Spec.getAliasSpec`, `getPostConditionSpecs`):
     /// a 0-ary definition of constant level, as the front end marks it, whose evaluation then
-    /// succeeds. `Unsupported` where the evaluator can't tell.
+    /// succeeds, but for one TLC holds as the value it gave its literal body
+    /// (`Definition::LITERAL`). `Unsupported` where the evaluator can't tell.
     pub fn is_computed_at_startup(&mut self, definition: u32) -> Result<bool, Unsupported> {
         if !self.is_precomputed(definition) {
             return Ok(false);
@@ -80,6 +81,14 @@ impl<'ir> Rebuilder<'ir> {
         let evaluator = &mut self.evaluator;
         let ir = evaluator.ir;
         let defined = evaluator.definition(ir.definitions[definition as usize]);
+        if let NodeKind::WideNumber(_) = ir.nodes.arena[defined.body as usize].kind {
+            return Err(Unsupported(
+                "a definition of a numeral TLC can't hold".into(),
+            ));
+        }
+        if defined.flags & Definition::LITERAL != 0 {
+            return Ok(false);
+        }
         let is_marked = defined.flags & Definition::NORMALIZED != 0
             && matches!(&defined.form, DefinitionForm::Operator(params) if params.is_empty())
             && !ir.model.startup.definitions.contains(&definition);
@@ -411,7 +420,7 @@ impl<'ir> Rebuilder<'ir> {
         evaluator.current = vec![None; width];
         // TLC prints a violating state as it found it, not as it recovers a state, so it is the
         // candidate equal to the search's, whatever the VIEW or SYMMETRY.
-        let is_held = matches!(ending, Ending::Violation);
+        let is_held = matches!(ending, Ending::Violation | Ending::Failed);
         // TLC's first rebuild of a violation's trace of two states prints the initial state as it
         // holds it (`printTrace`), so the walk of the initial predicate sets no register of TLC's.
         let is_initial_held = is_first && is_held && states.len() == 2;
@@ -429,7 +438,7 @@ impl<'ir> Rebuilder<'ir> {
         // state of a violation of two states and of a trace of one state, which it doesn't rebuild.
         let is_initial_rebuilt = is_first
             && match ending {
-                Ending::Violation => states.len() > 2,
+                Ending::Violation | Ending::Failed => states.len() > 2,
                 Ending::Kept => states.len() > 1,
                 Ending::Lasso => true,
             };
@@ -576,7 +585,13 @@ impl<'ir> Rebuilder<'ir> {
             // TLC's rebuild evaluates neither the constraints nor the invariants
             // (`Tool.getState`): what these checks set of its registers is undone.
             let registers = evaluator.registers.clone();
-            if is_in_model(evaluator, &rebuilt)? {
+            if matches!(ending, Ending::Failed) {
+                // TLC's checks of the successor stop at the one that fails to evaluate, having
+                // sorted what those before it reached, and it fingerprints nothing of it.
+                if run_in_model(evaluator, &rebuilt)?.is_ok() {
+                    return unsupported("a successor whose checks no longer fail");
+                }
+            } else if is_in_model(evaluator, &rebuilt)? {
                 settle_recovered(evaluator, &self.key, &rebuilt[rebuilt.len() - 1])?;
             } else if is_held && is_checked {
                 // A violating state outside the model isn't fingerprinted, but TLC's checks of it
@@ -674,7 +689,7 @@ fn compose(pass: Pass, again: Option<Vec<Vec<String>>>, ending: Ending) -> Trace
     // The states TLC holds rather than rebuilds at the trace's end (`known` in `toTrace`).
     let known = match ending {
         Ending::Kept => 1,
-        Ending::Violation => 2,
+        Ending::Violation | Ending::Failed => 2,
         Ending::Lasso => 0,
     };
     let recovered = count - known;
@@ -915,6 +930,16 @@ pub(crate) fn is_in_model(
     evaluator: &mut Evaluator<'_>,
     rebuilt: &[Vec<Value>],
 ) -> Result<bool, Unsupported> {
+    run(run_in_model(evaluator, rebuilt)?)
+}
+
+// TLC's checks of whether the last state of a rebuilt path is in the model, as `Worker.addElement`
+// makes them: the constraints of the state, then the action constraints of the step to it, each
+// until one fails.
+fn run_in_model(
+    evaluator: &mut Evaluator<'_>,
+    rebuilt: &[Vec<Value>],
+) -> Result<Evaluated<bool>, Unsupported> {
     let ir = evaluator.ir;
     let state = |values: &[Value]| values.iter().cloned().map(Some).collect();
     let last = rebuilt.len() - 1;
@@ -938,11 +963,12 @@ pub(crate) fn is_in_model(
             evaluator.level = last as i32 + 1;
         }
         let body = evaluator.definition(ir.definitions[index as usize]).body;
-        if !run(evaluator.boolean(body, &Context::default()))? {
-            return Ok(false);
+        match evaluator.boolean(body, &Context::default()) {
+            Ok(true) => {}
+            held => return Ok(held),
         }
     }
-    Ok(true)
+    Ok(Ok(true))
 }
 
 // TLC's checks of a violating state, as `doNextCheckInvariants` and `doNextCheckImplied` make

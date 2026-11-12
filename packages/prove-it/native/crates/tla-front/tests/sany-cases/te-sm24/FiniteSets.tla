@@ -1,0 +1,3 @@
+---- MODULE FiniteSets ----
+X == Undefined
+====

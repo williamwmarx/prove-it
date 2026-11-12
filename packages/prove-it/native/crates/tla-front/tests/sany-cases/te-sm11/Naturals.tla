@@ -1,0 +1,3 @@
+---- MODULE Naturals ----
+EXTENDS Integers
+====

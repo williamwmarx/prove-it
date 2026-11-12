@@ -1,0 +1,6 @@
+{
+  "root": "Spec",
+  "version": "master",
+  "mode": "default",
+  "declines": "a module of the CommunityModules TLC's jar bundles"
+}

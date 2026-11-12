@@ -1,0 +1,4 @@
+---- MODULE B ----
+EXTENDS Naturals
+
+====

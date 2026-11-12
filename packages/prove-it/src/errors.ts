@@ -278,8 +278,8 @@ export class WebAssemblyStackError extends Error {
   }
 }
 
-// A file the build puts beside the bundle, such as a worker's entry or SANY's snapshot of the
-// standard modules, isn't there: the build left it out, or put it where the bundle doesn't look.
+// A file the build puts beside the bundle, such as a worker's entry, isn't there: the build left it
+// out, or put it where the bundle doesn't look.
 // index.ts doesn't export it.
 export class MissingBuildFileError extends TlaError {
   constructor(url: URL) {

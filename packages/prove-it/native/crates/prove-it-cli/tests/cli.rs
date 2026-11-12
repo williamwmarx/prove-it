@@ -3323,6 +3323,75 @@ fn evaluates_the_next_state_relation_where_a_walk_assigned_from_a_set_it_cant_co
     }
 }
 
+// tests/action-constraint-failures: an ACTION_CONSTRAINT that fails to evaluate on a step, by each
+// of a mistyped comparison, a function applied outside its domain, a value that isn't a boolean,
+// Assert, CHOOSE over {}, \div by zero, a missing record field, a tuple index out of range and
+// TLCGet("level") compared with a string, on every step or some, plainly, without deadlock checking
+// and with a temporal property; beside an invariant, with two action constraints, and a constant
+// the configuration binds. TLC reports such a failure as one of the next states, with the trace to
+// the successor it hadn't counted as found, then the call stack of its replay of the expansion
+// (`Worker.addElement`, `ModelChecker.doNextFailed`). A constraint that is a literal fails in TLC
+// with a ClassCastException whose message names the JVM's classes, which the binary declines.
+// So does a constant function applied outside its domain (failDom*), whose message names the
+// `FcnRcdValue` TLC computed as it started, which the evaluator doesn't build, and a constraint the
+// configuration binds to TRUE (cfg_constTrue), which the front end keeps. TLC's output at d8fb231
+// is beside each spec, with -lncheck final and without, and the status it exits with in
+// exit-codes.txt.
+#[test]
+fn reports_a_failing_action_constraint_as_tlc() {
+    let declined = [
+        "cfg_constTrue",
+        "cfg_defTrueFails",
+        "failDomUnprimed_live",
+        "failDomUnprimed_nodl",
+        "failDomUnprimed_plain",
+        "failDom_live",
+        "failDom_nodl",
+        "failDom_plain",
+        "failStringRes_live",
+        "failStringRes_nodl",
+        "failStringRes_plain",
+    ];
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/action-constraint-failures");
+    let codes = std::fs::read_to_string(directory.join("exit-codes.txt")).expect("the codes");
+    let codes: Vec<(&str, i32)> = codes
+        .lines()
+        .map(|line| {
+            let (name, code) = line.split_once(' ').expect("a name and a code");
+            (name, code.parse().expect("a code"))
+        })
+        .collect();
+    assert_eq!(codes.len(), 58);
+    for (name, code) in codes {
+        let spec = std::fs::read_to_string(directory.join(format!("{name}.tla"))).expect("a spec");
+        let config =
+            std::fs::read_to_string(directory.join(format!("{name}.cfg"))).expect("a config");
+        for (suffix, lncheck) in [(".final", &["-lncheck", "final"][..]), ("", &[][..])] {
+            let tlc = std::fs::read_to_string(directory.join(format!("{name}{suffix}.txt")))
+                .expect("TLC's output");
+            for workers in ["1", "4"] {
+                let test = format!("action-constraint-{name}{suffix}-{workers}");
+                let mut args = vec!["-workers", workers, "-nowarning", "-seed", "4", "-fp", "0"];
+                args.extend_from_slice(lncheck);
+                let (output, run) = run_front(&test, &spec, &config, &args);
+                let text = stdout(&output);
+                let error = String::from_utf8_lossy(&output.stderr).into_owned();
+                if declined.contains(&name) {
+                    assert!(
+                        error.contains("prove-it: not native yet: "),
+                        "{name}{suffix} {workers}: {text}{error}"
+                    );
+                } else {
+                    assert_eq!(get_untimed(&text), tlc, "{name}{suffix} {workers}: {error}");
+                    assert_eq!(output.status.code(), Some(code), "{name}{suffix} {workers}");
+                }
+                std::fs::remove_dir_all(run).expect("removed");
+            }
+        }
+    }
+}
+
 // tests/membership-grid: x' \in S beside x' = a \/ x' = b, under WF_x(Next), which the engine
 // answers from the steps the search took where the guard lets it, and WF_x(Alias) with
 // Alias == Next, which it evaluates. S is each of an enumeration, an interval, records, functions,

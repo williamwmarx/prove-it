@@ -79,6 +79,14 @@ impl TraceDumps {
         self.trace_file = None;
     }
 
+    /// The files the dumps may write: the command line's, then the trace exploration spec's.
+    pub fn get_paths(&self) -> impl Iterator<Item = &str> {
+        self.dumps
+            .iter()
+            .map(|dump| dump.1.as_str())
+            .chain(self.trace_file.as_deref())
+    }
+
     /// Whether the command line asks for a dump, as the trace exploration spec's postcondition
     /// doesn't.
     pub fn has_command_line_dumps(&self) -> bool {

@@ -48,6 +48,13 @@ pub fn get_text(value: &HostValue, what: &str) -> Result<String, String> {
     }
 }
 
+pub fn get_strings(value: &HostValue, what: &str) -> Result<Vec<String>, String> {
+    match value {
+        HostValue::Array(items) => items.iter().map(|item| get_text(item, what)).collect(),
+        _ => Err(format!("{what} must be an array of strings")),
+    }
+}
+
 impl Sources {
     /// What is known, from its `[key, value]` pairs.
     pub fn new(known: &HostValue) -> Result<Sources, String> {

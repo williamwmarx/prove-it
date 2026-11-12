@@ -109,6 +109,9 @@ pub trait Host {
     fn write_file(&self, _path: &Path, _bytes: &[u8], _is_appended: bool) -> bool {
         false
     }
+    /// Says, before the check searches, a directory it may write a file into after it, so that a
+    /// host that answers what it lacks once the check returns knows it before then.
+    fn prepare_write(&self, _directory: &Path) {}
     /// Whether the check may read and write the machine's files, as the Json module's operators
     /// do (`Settings::is_file_system`).
     fn is_file_system(&self) -> bool {

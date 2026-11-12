@@ -548,6 +548,12 @@ mod tests {
         )
         .expect("a launch");
         assert_eq!(windows.java.libraries, strings(&["C:\\a", "D:\\b"]));
+        let last = get_java_launch(
+            &strings(&[&libraries, "-DTLA-Library=/c", "tlc2.TLC", "Spec"]),
+            Platform::Unix,
+        )
+        .expect("a launch");
+        assert_eq!(last.java.libraries, strings(&["/c"]));
         assert_eq!(launch.java.unmodelled_property, None);
         assert_eq!(
             get_java_launch(&strings(&["Spec.tla", "-tool"]), Platform::Unix),

@@ -1,0 +1,5 @@
+{
+  "root": "Twice",
+  "version": "master",
+  "test": "reports a level error that two checks find with the same text as TLC master's SANY does"
+}

@@ -470,7 +470,11 @@ impl ModuleGenerator<'_> {
                 .module(instancee)
                 .expect("a module")
                 .context
-                .get_symbol(&resolve_synonym(&substitution.name))
+                .get_symbol(
+                    &target_index.map_or(resolve_synonym(&substitution.name), |index| {
+                        crate::ast::Name::from(get_token_source(&file, index))
+                    }),
+                )
                 .filter(|&target| matches!(self.spec.graph.kind(target), NodeKind::OpDecl(_)));
             let Some(target) = target else {
                 let (error_location, identifier) = match target_index {
@@ -567,9 +571,9 @@ impl ModuleGenerator<'_> {
             NodeKind::OpArg { op, .. } => get_symbol_arity(graph, *op),
             _ => 0,
         };
-        let is_null_op_arg = target_arity > 0
-            && matches!(graph.kind(substitute), NodeKind::OpAppl(application) if application.is_null);
-        if arity != target_arity && !is_null_op_arg {
+        // After an error, `generateOpArg` gives the nullOpArg, whose arity is -2, so its arity
+        // differs from the target's as well.
+        if arity != target_arity {
             let text = format!(
                 "An operator must be substituted for symbol '{}', and it must have arity {target_arity}.",
                 declaration.name
@@ -1114,7 +1118,10 @@ impl ModuleGenerator<'_> {
     /// definitions and instances may come between a RECURSIVE declaration and the definition of
     /// what it declares. `kind` is the TypeScript's `type`.
     pub(super) fn check_recursive_section(&mut self, location: &Location, kind: &str) {
-        if self.state.unresolved_sum == 0 {
+        // The sum may be below zero: `checkForUndefinedRecursiveOps` takes a level's count off
+        // the sum without clearing the count, so each module around an inner module that left a
+        // RECURSIVE declaration undefined takes it off again.
+        if self.state.unresolved_sum <= 0 {
             return;
         }
         let location = get_span_location(&self.file, self.get_unit_span(location));

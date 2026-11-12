@@ -222,6 +222,8 @@ impl<'a> Linter<'a> {
 struct Visit<'b, 'a> {
     linter: &'b Linter<'a>,
     visited: FastSet<usize>,
+    /// The definitions the walk is within, which it walks into again through a recursive one.
+    walking: Vec<usize>,
 }
 
 impl Visit<'_, '_> {
@@ -297,20 +299,45 @@ impl Visit<'_, '_> {
         module: &Rc<Module>,
         locals: &Locals,
     ) -> Result<bool> {
-        if !self.visited.insert(Rc::as_ptr(definition) as usize) {
+        let key = Rc::as_ptr(definition) as usize;
+        // The walk keeps no record of where it has been, so it walks a recursive definition until
+        // its stack overflows, which TLC reports for the run.
+        if self.walking.contains(&key) {
+            return Err(not_yet(
+                "a recursive definition a record's field applies, on which SANY's linter overflows its stack",
+            ));
+        }
+        if !self.visited.insert(key) {
             return Ok(false);
         }
+        self.walking.push(key);
+        let is_built = self.walk_definition(definition, module, locals);
+        self.walking.pop();
+        is_built
+    }
+
+    fn walk_definition(
+        &mut self,
+        definition: &Rc<Definition>,
+        module: &Rc<Module>,
+        locals: &Locals,
+    ) -> Result<bool> {
         let inner = match &definition.kind {
             DefinitionKind::Operator { params, .. } => {
                 bind_formals(locals, params.iter().map(|param| &param.name))
             }
+            // SANY generates f[x \in S] == e as f == CHOOSE f : f = [x \in S |-> e], whose body
+            // names the bound f.
             DefinitionKind::Function { bounds } => {
                 for bound in bounds {
                     if self.expression(&bound.set, module, locals)? {
                         return Ok(true);
                     }
                 }
-                bind_formals(locals, &get_bound_names(bounds))
+                let names: Vec<Name> = std::iter::once(definition.name.clone())
+                    .chain(get_bound_names(bounds).iter().cloned())
+                    .collect();
+                bind_formals(locals, &names)
             }
         };
         self.expression(&definition.body, module, &inner)
@@ -699,6 +726,7 @@ impl Linter<'_> {
                     let mut visit = Visit {
                         linter: self,
                         visited: FastSet::default(),
+                        walking: Vec::new(),
                     };
                     if visit.expression(&field.value, owner, &other.locals)? {
                         is_exempt = true;

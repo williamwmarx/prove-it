@@ -143,6 +143,13 @@ export const SANY_OPERATOR_SYNONYMS = [
   ["^+", "⁺"],
 ];
 
+const CANONICAL_OPERATORS = new Map(
+  SANY_OPERATOR_SYNONYMS.flatMap((synonyms) => synonyms.map((name) => [name, synonyms[0]])),
+);
+
+// The name SANY gives an operator any of whose synonyms the source spells.
+export const getCanonicalName = (name: string) => CANONICAL_OPERATORS.get(name) ?? name;
+
 export const TLC_STARTUP_STRINGS = [
   "STRING",
   "FALSE",
