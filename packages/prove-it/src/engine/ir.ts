@@ -877,6 +877,25 @@ export const lowerToIr = (input: IrInput): IrOutcome => {
     push(model, getScopeIndex(predicate.scope));
   }
   writeConfigNames(config.view === undefined ? [] : [config.view]);
+  // TLC holds a name the configuration assigns, unscoped, as its value, which it rejects as the
+  // ALIAS (Spec.getAliasSpec), unless the configuration also substitutes for it: the IR keeps it as
+  // a constant, as the Rust front end does.
+  const aliasDefinition =
+    config.alias === undefined ? undefined : environment.definitions.get(config.alias);
+  const aliasValue =
+    config.alias === undefined ? undefined : environment.constants.get(config.alias);
+  if (
+    config.alias !== undefined &&
+    aliasValue !== undefined &&
+    config.constants.some(
+      (constant) => constant.name === config.alias && constant.module === undefined,
+    ) &&
+    !environment.substitutions.has(config.alias) &&
+    aliasDefinition !== undefined &&
+    !(aliasDefinition.kind === "Operator" && aliasDefinition.bodyRange === undefined)
+  ) {
+    getConstantIndex(config.alias, aliasValue);
+  }
   writeConfigNames(config.alias === undefined ? [] : [config.alias]);
   writeConfigNames(config.postconditions);
   push(model, config.checkDeadlock ? 1 : 0);

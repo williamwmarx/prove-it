@@ -423,7 +423,8 @@ const substitutedLiterals: Cell[] = [
 ];
 
 // An ALIAS the spec also reads that the configuration assigns and substitutes for, which TLC holds
-// as the substituted definition, and a theorem's name, which isn't one of TLC's definitions.
+// as the substituted definition, a theorem's name, which isn't one of TLC's definitions, and an
+// assignment scoped to a module that defines no such name, which TLC applies to nothing.
 const reviewedAliases: Cell[] = [
   {
     name: "Alias == 1 read by the invariant, CONSTANT Alias = 1, CONSTANT Alias <- Q",
@@ -445,6 +446,16 @@ const reviewedAliases: Cell[] = [
     name: "THEOREM Alias == 3, CONSTANT Alias = 4",
     spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nTHEOREM Alias == 3\n\n====",
     config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT Alias = 4",
+  },
+  {
+    name: "CONSTANT Alias = [Inner] 3, Inner defining no Alias",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n---- MODULE Inner ----\nFoo == 1\n====\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nAlias == [z |-> x]\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT Alias = [Inner] 3",
+  },
+  {
+    name: "CONSTANT Alias = [Nope] 3, no module Nope",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nAlias == [z |-> x]\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT Alias = [Nope] 3",
   },
 ];
 

@@ -10326,4 +10326,97 @@ State 3: <Next line 5, col 9 to line 5, col 27 of module M>
 
 3 states generated, 3 distinct states found, 0 states left on queue.
 The depth of the complete state graph search is 3.
+### CONSTANT Alias = [Inner] 3, Inner defining no Alias
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+---- MODULE Inner ----
+Foo == 1
+====
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+Inv == x < 2
+Alias == [z |-> x]
+
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+ALIAS Alias
+CONSTANT Alias = [Inner] 3
+--- workers 1 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+z = 0
+
+State 2: <Next line 8, col 9 to line 8, col 27 of module M>
+z = 1
+
+State 3: <Next line 8, col 9 to line 8, col 27 of module M>
+z = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+--- workers 4 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+z = 0
+
+State 2: <Next line 8, col 9 to line 8, col 27 of module M>
+z = 1
+
+State 3: <Next line 8, col 9 to line 8, col 27 of module M>
+z = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+### CONSTANT Alias = [Nope] 3, no module Nope
+--- spec
+---- MODULE M ----
+EXTENDS Naturals, TLC
+VARIABLE x
+Init == x = 0
+Next == x < 3 /\ x' = x + 1
+Inv == x < 2
+Alias == [z |-> x]
+
+====
+--- config
+INIT Init
+NEXT Next
+INVARIANT Inv
+ALIAS Alias
+CONSTANT Alias = [Nope] 3
+--- workers 1 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+z = 0
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module M>
+z = 1
+
+State 3: <Next line 5, col 9 to line 5, col 27 of module M>
+z = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
+--- workers 4 exit 12
+Error: Invariant Inv is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+z = 0
+
+State 2: <Next line 5, col 9 to line 5, col 27 of module M>
+z = 1
+
+State 3: <Next line 5, col 9 to line 5, col 27 of module M>
+z = 2
+
+3 states generated, 3 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 3.
 ### end

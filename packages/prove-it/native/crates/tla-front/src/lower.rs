@@ -1399,8 +1399,12 @@ impl<'a> Lowering<'a> {
         // TLC holds a name the configuration assigns as its value, which it rejects as the ALIAS
         // (`Spec.getAliasSpec`), unless the configuration also substitutes for it, which TLC applies
         // after (`SpecProcessor.processSpec`): the IR keeps it as a constant, which the trace
-        // printer finds, where the front end normalizes the value.
+        // printer finds, where the front end normalizes the value. An assignment scoped to a
+        // module (`= [N] v`) reaches only that module's definitions, which the front end doesn't
+        // tell apart, so only an unscoped one counts.
         if let Some(name) = config.alias.as_deref()
+            && (config.constants.iter())
+                .any(|constant| constant.name == name && constant.module.is_none())
             && !self.environment.substitutions.contains_key(name)
             && (self.environment.definitions.get(name)).is_some_and(|definition| {
                 !matches!(
