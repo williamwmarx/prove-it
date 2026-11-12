@@ -162,6 +162,33 @@ describe("check's result", () => {
     ]);
   });
 
+  // TLC keeps a function whose definition reaches itself lazy, and prints the ALIAS field f as
+  // its lazy text "[i \\in 1..1 |-> <expression line 4, col 18 to line 4, col 49 of module M>]",
+  // since building it fails.
+  it("declines an alias of a recursive function that fails to build", async () => {
+    await expectDeclined(
+      {
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nf[i \\in 1..1] == IF i = 1 THEN 1 \\div 0 ELSE f[i]\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, f |-> f]\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+      },
+      "rebuilding a trace: the body of a function TLC keeps lazy, at a key it may not evaluate",
+    );
+  });
+
+  // TLC normalizes {1, TRUE} to print the alias, and reports Invariant Inv violated, then its
+  // exception "Attempted to compare boolean TRUE with non-boolean: 1" in place of the states.
+  it("declines an alias TLC fails to print", async () => {
+    await expectDeclined(
+      {
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, v |-> {1, TRUE}]\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+      },
+      "an ALIAS of a set TLC fails to normalize as it prints it",
+    );
+  });
+
   it("declines a failure TLC fails again to evaluate as it rebuilds the trace", async () => {
     await expectDeclined(
       {

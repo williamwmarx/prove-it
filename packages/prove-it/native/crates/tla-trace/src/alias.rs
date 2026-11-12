@@ -215,6 +215,11 @@ impl Rebuilder<'_> {
                     if fields.iter().any(|(name, _)| name == "_format") {
                         return unsupported("record with a _format field");
                     }
+                    // TLC normalizes a set enumeration to print it, and reports the exception where
+                    // its elements don't compare, in place of the states.
+                    if fields.iter().any(|(_, value)| holds_unsorted(value)) {
+                        return unsupported("of a set TLC fails to normalize as it prints it");
+                    }
                     Alias::Record(fields)
                 }
                 // TLC prints a function of strings as the record it converts it to
@@ -224,5 +229,19 @@ impl Rebuilder<'_> {
             });
         }
         Ok(Some(aliases))
+    }
+}
+
+// Whether a value holds a set enumeration whose elements TLC can't sort.
+fn holds_unsorted(value: &Value) -> bool {
+    match value {
+        Value::Unsorted(_) => true,
+        Value::Set(elements) => elements.iter().any(holds_unsorted),
+        Value::Function(function) => function
+            .domain
+            .iter()
+            .chain(&function.range)
+            .any(holds_unsorted),
+        _ => false,
     }
 }
