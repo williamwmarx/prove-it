@@ -154,9 +154,15 @@ pub fn get_missing_spec_message(host: &dyn Host, given: &str, libraries: &[Strin
     let current = host.current_dir();
     let main_file = given.strip_suffix(".tla").unwrap_or(given);
     let (directory, file_name) = if platform.is_absolute(given) {
-        let end = platform.last_separator(given).unwrap_or_default();
+        let normalized = get_java_path(given);
+        let end = platform.last_separator(&normalized).unwrap_or_default();
         (
-            if end == 0 { &given[..1] } else { &given[..end] }.to_string(),
+            if end == 0 {
+                &normalized[..1]
+            } else {
+                &normalized[..end]
+            }
+            .to_string(),
             format!("{}.tla", platform.file_name(main_file)),
         )
     } else {
@@ -167,16 +173,12 @@ pub fn get_missing_spec_message(host: &dyn Host, given: &str, libraries: &[Strin
     };
     // SimpleFilenameToStream looks for a relative spec named with a directory there alone, which it
     // names as Java's Path does.
-    let directories = match platform.last_separator(given) {
-        Some(end) if !platform.is_absolute(given) => {
-            let named = collapse_separators(&given[..end]);
-            vec![if named.len() > 1 {
-                named.trim_end_matches('/').to_string()
-            } else {
-                named
-            }]
-        }
-        _ => libraries.to_vec(),
+    let directories: Vec<String> = match platform.last_separator(given) {
+        Some(end) if !platform.is_absolute(given) => vec![get_java_path(&given[..end])],
+        _ => libraries
+            .iter()
+            .map(|library| get_java_path(library))
+            .collect(),
     };
     format!(
         "File does not exist: {directory}/{file_name} while looking in these directories: {directory}, {}, classpath:/tla2sany/StandardModules, classpath:/",
@@ -375,6 +377,16 @@ pub fn resolve_files(args: &[String], given: &str, request: &str, host: &dyn Hos
         root_extendees: &[],
     };
     Resolved::Text(FileDescriber::new(&files, host).describe(name, origin))
+}
+
+/// A path as Java's `Path` names it: without repeated separators, or one that ends it.
+fn get_java_path(path: &str) -> String {
+    let collapsed = collapse_separators(path);
+    if collapsed.len() > 1 {
+        collapsed.trim_end_matches('/').to_string()
+    } else {
+        collapsed
+    }
 }
 
 fn collapse_separators(path: &str) -> String {

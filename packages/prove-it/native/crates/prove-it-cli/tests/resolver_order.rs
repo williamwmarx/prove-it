@@ -248,7 +248,13 @@ const CASES: &[Case] = &[
             ("L/M.tla", MODULE),
         ],
         args: &["-DTLA-Library=L", "-DTLA-Library", "tlc2.TLC", "Spec"],
-        outcome: Outcome::Declined,
+        outcome: Outcome::Printed(&[
+            "Fatal errors while parsing TLA+ spec in file Spec",
+            "Cannot find source file for module Spec",
+            "Cannot find source file for module Spec",
+            "Error: Parsing or semantic analysis failed.",
+            "exit 150",
+        ]),
     },
     // TLC prints `***Internal error: Unable to create NamedInputStream in toIStream method` as it
     // fails to read the directory, which tla-front doesn't write.
@@ -262,7 +268,13 @@ const CASES: &[Case] = &[
         name: "missing-spec-in-directory",
         files: &[("sub/Nope.cfg", CONFIG), ("lib", "/")],
         args: &["-DTLA-Library=lib", "tlc2.TLC", "sub/Nope"],
-        outcome: Outcome::Declined,
+        outcome: Outcome::Printed(&[
+            "Fatal errors while parsing TLA+ spec in file sub/Nope",
+            "Cannot find source file for module sub/Nope",
+            "Cannot find source file for module sub/Nope",
+            "Error: Parsing or semantic analysis failed.",
+            "exit 150",
+        ]),
     },
 ];
 

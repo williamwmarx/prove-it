@@ -51,6 +51,19 @@ const CASES: &[Case] = &[
         module: "Nope",
         looked: "{root}/sub/Nope.tla while looking in these directories: {root}/sub, ",
     },
+    // TLC names the directories as Java's Path does, without repeated or trailing separators.
+    Case {
+        name: "absolute-doubled",
+        args: &["tlc2.TLC", "{root}//sub//Nope"],
+        module: "Nope",
+        looked: "{root}/sub/Nope.tla while looking in these directories: {root}/sub, ",
+    },
+    Case {
+        name: "library-path-separators",
+        args: &["-DTLA-Library=lib/:sub//", "tlc2.TLC", "Nope"],
+        module: "Nope",
+        looked: "{root}/./Nope.tla while looking in these directories: {root}, lib, sub",
+    },
 ];
 
 fn run(root: &Path, args: &[&str]) -> (String, String, Option<i32>) {
@@ -132,4 +145,27 @@ fn reports_a_spec_no_file_holds_as_tlc_with_tool() {
     assert!(stderr.starts_with("File does not exist: {root}/./sub/Nope.tla"));
     assert_eq!(code, Some(150));
     std::fs::remove_dir_all(&root).expect("the root is removed");
+}
+
+// TLC finds a spec named as a module of its jar on the class path, and drops a .tla in another case
+// from the file it says it looked for, which the binary declines.
+#[test]
+fn declines_a_spec_no_file_holds_that_tlc_finds_in_its_jar() {
+    for (name, config, spec) in [
+        ("in-jar", "pcal/PlusCal.cfg", "pcal/PlusCal"),
+        ("in-jar-standard", "_CBORTrace.cfg", "_CBORTrace"),
+        ("extension-case", "Nope.TLA.cfg", "Nope.TLA"),
+    ] {
+        let root = set_up(name);
+        let path = root.join(config);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("a directory");
+        std::fs::write(&path, CONFIG).expect("the configuration");
+        let (_, stderr, code) = run(&root, &["tlc2.TLC", spec]);
+        assert!(
+            stderr.contains("prove-it: not native yet: "),
+            "{name}: {stderr}"
+        );
+        assert_eq!(code, Some(1), "{name}");
+        std::fs::remove_dir_all(&root).expect("the root is removed");
+    }
 }
