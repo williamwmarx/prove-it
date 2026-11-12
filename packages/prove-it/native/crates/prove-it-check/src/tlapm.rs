@@ -997,9 +997,13 @@ fn generate_obligations(
         Ok(modules) => not_utf8.check(modules),
         Err(error) => not_utf8.check(error),
     }
-    if let Some(path) = not_utf8.held.into_inner() {
+    if let Some(paths) = not_utf8.held.into_inner() {
+        let named = match paths.as_slice() {
+            [path] => path.clone(),
+            _ => format!("one of {}", paths.join(", ")),
+        };
         return Generated::Declined(format!(
-            "a byte that isn't UTF-8 outside a comment in {path}"
+            "a byte that isn't UTF-8 outside a comment in {named}"
         ));
     }
     let printed = printed.into_inner();
@@ -1014,14 +1018,14 @@ fn generate_obligations(
 }
 
 /// The bytes that aren't UTF-8 in the modules read, which read as markers (`bytes::decode`), each
-/// by the first module read that holds it, and the module of the first that the obligations, a
-/// warning or an error hold. tlapm reads bytes, and read as U+FFFD, two different strings would be
+/// by the modules read that hold it, and those of the first that the obligations, a warning or an
+/// error hold: which of them holds the one held isn't known. tlapm reads bytes, and read as U+FFFD, two different strings would be
 /// one and a theorem that they are equal proved; where no marker is held, as in a comment, the
 /// run prints and proves what it would with U+FFFD.
 #[derive(Default)]
 struct NotUtf8 {
-    paths: RefCell<HashMap<u8, String>>,
-    held: RefCell<Option<String>>,
+    paths: RefCell<HashMap<u8, Vec<String>>>,
+    held: RefCell<Option<Vec<String>>>,
 }
 
 impl NotUtf8 {
@@ -1060,11 +1064,11 @@ fn read_module(
         ));
     }
     for byte in bytes::get_bytes_not_utf8(&bytes) {
-        not_utf8
-            .paths
-            .borrow_mut()
-            .entry(byte)
-            .or_insert_with(|| shown.to_owned());
+        let mut paths = not_utf8.paths.borrow_mut();
+        let read = paths.entry(byte).or_default();
+        if !read.iter().any(|path| path == shown) {
+            read.push(shown.to_owned());
+        }
     }
     if found.is_loaded && !is_header_first(&bytes) {
         return decline(format!(

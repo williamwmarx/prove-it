@@ -1724,9 +1724,9 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     expect(result.status).toBe(0);
   });
 
-  // A byte reads as the same marker in every module, so the run names the first module read that
-  // holds it, though the byte reached is another's.
-  it("names the first module read with a byte that isn't UTF-8 that is reached", () => {
+  // A byte reads as the same marker in every module, so which module holds the one reached isn't
+  // known, and the run names every module read with it.
+  it("names every module read with a byte that isn't UTF-8 that is reached", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-tlapm-"));
     writeFileSync(
       join(directory, "M.tla"),
@@ -1741,7 +1741,7 @@ describe("tlapm -N prints obligations as tlapm does", () => {
     );
     const result = runTlapmIn(directory, ["-N", "M.tla"]);
     expect(result.stderr).toBe(
-      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in M.tla\n",
+      "prove-it: not native yet: a byte that isn't UTF-8 outside a comment in one of M.tla, ./Lib.tla\n",
     );
     expect(result.status).toBe(1);
   });
