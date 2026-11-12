@@ -202,13 +202,58 @@ const REDUCTION_HOLDERS: [string, (inner: string) => string][] = [
   ["under-two", (inner) => `((${inner}) \\cup Nat) \\cup {1}`],
 ];
 
+// Memberships in a set operation on an operand with effects that a name around it binds: a LET
+// definition, an operator's argument, a bound name, and a name of one of those. TLC evaluates the
+// operand once.
+const BOUND_EFFECTS = [
+  'LET S == {Print("L", <<1, 1>>)} IN <<1, 1>> \\in S \\cup ({1} \\X {1})',
+  'LET S == {Print("L", <<1, 1>>)} IN <<1, 1>> \\in ({1} \\X {1}) \\cup S',
+  "LET S == {IF TLCSet(1, TLCGet(1) + 1) THEN <<1, 1>> ELSE <<0, 0>>} IN <<1, 1>> \\in S \\cup ({1} \\X {1})",
+  'LET S == {Print("L", 1)} IN 1 \\in S \\cap Nat',
+  'LET S == {Print("L", 1)} IN 1 \\in (S \\cap Nat) \\cup Nat',
+  'LET S == {Print("L", 1)} IN 1 \\in Nat \\ S',
+  'LET S == {Print("L", 1)} IN 1 \\in S \\cup {2}',
+  'LET S == {Print("L", 1)} IN LET T == S IN 1 \\in T \\cup Nat',
+  'LET S == {Print("L", 1)} T == S \\cup Nat IN 1 \\in T',
+  'LET S == {Print("L", 1)} IN 1 \\in (LET T == S IN T) \\cup Nat',
+  'LET S == {Print("L", 1)} IN <<1>> \\in Seq(S \\cup Nat)',
+  'LET S == {Print("L", 1)} IN {1} \\in SUBSET (S \\cup Nat)',
+  'LET S(x) == {Print("L", x)} IN 1 \\in S(1) \\cup Nat',
+  'LET Op(S) == 1 \\in S \\cup Nat IN Op({Print("L", 1)})',
+  'LET Op(S) == 1 \\in (S \\cap Nat) \\cup Nat IN Op({Print("L", 1)})',
+  'LET Op(S, T) == 1 \\in S \\cup T IN Op({Print("L", 1)}, Nat)',
+  '\\A s \\in {{Print("L", 1)}} : 1 \\in s \\cup Nat',
+  'LET f == [x \\in {1} |-> Print("L", x)] IN 1 \\in DOMAIN f \\cup Nat',
+  'LET f == [x \\in {1} |-> Print("L", x)] IN 1 \\in {f[1]} \\cup Nat',
+];
+
+const getBoundEffects = (): GridCell[] =>
+  BOUND_EFFECTS.map((assumption) => ({
+    id: `bound ${assumption}`,
+    source: [
+      "---- MODULE M ----",
+      "EXTENDS Integers, Sequences, FiniteSets, TLC",
+      "CONSTANT KS, KI, KM, KF",
+      "F == 1 :> 1 @@ 2 :> 2",
+      "ASSUME TLCSet(1, 0)",
+      `ASSUME ${assumption}`,
+      "ASSUME PrintT(TLCGet(1))",
+      "====",
+      "",
+    ].join("\n"),
+    config: CONFIG,
+  }));
+
 /**
  * A grid of memberships in a union, an intersection or a difference TLC may reduce as it
  * evaluates it (`Reducible.cup`, `cap` and `diff`), alone and held in unions that another operand
- * answers. scripts/record-union-grid.ts records TLC's answer to each in
+ * answers, then memberships in an operation on an operand with effects that a name binds.
+ * scripts/record-union-grid.ts records TLC's answer to each in
  * tests/fixtures/union-grid/reductions.json.
  */
-export const getReductionGrid = (): GridCell[] =>
+export const getReductionGrid = (): GridCell[] => [...getReducedOperations(), ...getBoundEffects()];
+
+const getReducedOperations = (): GridCell[] =>
   ["\\cup", "\\cap", "\\"].flatMap((operator) =>
     REDUCED_OPERANDS.flatMap((left) =>
       REDUCED_OPERANDS.flatMap((right) =>

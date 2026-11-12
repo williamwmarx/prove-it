@@ -1642,9 +1642,9 @@ impl Compiler<'_> {
                 arity(2)?;
                 let left = self.operand(&operands[0])?;
                 let right = self.operand(&operands[1])?;
-                let has_effect = operands
-                    .iter()
-                    .any(|operand| self.may_have_effect(operand.node, &mut HashSet::new()));
+                let has_effect = operands.iter().any(|operand| {
+                    self.may_have_effect_in(operand.node, &operand.context, &mut HashSet::new())
+                });
                 return self.compile_set_operation(name, &left, &right, has_effect);
             }
             "SUBSET" => {
@@ -2316,9 +2316,18 @@ impl Compiler<'_> {
                     ))
                 })
             } else {
+                // A name bound to an operand with effects, as LET binds one, shows them only as
+                // they run.
                 member(move |machine, element| {
+                    let before = machine.effects();
                     machine.run_parts(&parts)?;
-                    tested(machine, element)
+                    let is_member = tested(machine, element)?;
+                    if machine.effects() != before {
+                        return Err(Bail(
+                            "a membership in a set operation on an operand with effects",
+                        ));
+                    }
+                    Ok(is_member)
                 })
             })
         } else {
@@ -2518,6 +2527,7 @@ impl Compiler<'_> {
             });
         }
         super::parts(move |machine| {
+            let before = machine.effects();
             for (enumerated, is_reducible, tested, unless_empty) in &runs {
                 if let Some(receiver) = unless_empty {
                     let receiver = receiver(machine)?;
@@ -2540,6 +2550,13 @@ impl Compiler<'_> {
                     let element = machine.store.element_at(set, index);
                     tested(machine, element)?;
                 }
+            }
+            // A name bound to an operand with effects, as LET binds one, shows them only as they
+            // run.
+            if machine.effects() != before {
+                return Err(Bail(
+                    "a set operation TLC reduces on an operand with effects",
+                ));
             }
             Ok(())
         })

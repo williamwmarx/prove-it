@@ -8767,5 +8767,137 @@
   "(KS) \\ (KS) under-two 3": {
     "status": "success",
     "prints": []
+  },
+  "bound LET S == {Print(\"L\", <<1, 1>>)} IN <<1, 1>> \\in S \\cup ({1} \\X {1})": {
+    "status": "success",
+    "prints": [
+      "\"L\"  <<1, 1>>",
+      "0"
+    ]
+  },
+  "bound LET S == {Print(\"L\", <<1, 1>>)} IN <<1, 1>> \\in ({1} \\X {1}) \\cup S": {
+    "status": "success",
+    "prints": [
+      "\"L\"  <<1, 1>>",
+      "0"
+    ]
+  },
+  "bound LET S == {IF TLCSet(1, TLCGet(1) + 1) THEN <<1, 1>> ELSE <<0, 0>>} IN <<1, 1>> \\in S \\cup ({1} \\X {1})": {
+    "status": "success",
+    "prints": [
+      "1"
+    ]
+  },
+  "bound LET S == {Print(\"L\", 1)} IN 1 \\in S \\cap Nat": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET S == {Print(\"L\", 1)} IN 1 \\in (S \\cap Nat) \\cup Nat": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET S == {Print(\"L\", 1)} IN 1 \\in Nat \\ S": {
+    "status": "assumption-violation",
+    "headline": "Assumption line 6, col 8 to line 6, col 48 of module M is false.",
+    "prints": [
+      "\"L\"  1"
+    ]
+  },
+  "bound LET S == {Print(\"L\", 1)} IN 1 \\in S \\cup {2}": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET S == {Print(\"L\", 1)} IN LET T == S IN 1 \\in T \\cup Nat": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET S == {Print(\"L\", 1)} T == S \\cup Nat IN 1 \\in T": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET S == {Print(\"L\", 1)} IN 1 \\in (LET T == S IN T) \\cup Nat": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET S == {Print(\"L\", 1)} IN <<1>> \\in Seq(S \\cup Nat)": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET S == {Print(\"L\", 1)} IN {1} \\in SUBSET (S \\cup Nat)": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET S(x) == {Print(\"L\", x)} IN 1 \\in S(1) \\cup Nat": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET Op(S) == 1 \\in S \\cup Nat IN Op({Print(\"L\", 1)})": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET Op(S) == 1 \\in (S \\cap Nat) \\cup Nat IN Op({Print(\"L\", 1)})": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET Op(S, T) == 1 \\in S \\cup T IN Op({Print(\"L\", 1)}, Nat)": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound \\A s \\in {{Print(\"L\", 1)}} : 1 \\in s \\cup Nat": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET f == [x \\in {1} |-> Print(\"L\", x)] IN 1 \\in DOMAIN f \\cup Nat": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
+  },
+  "bound LET f == [x \\in {1} |-> Print(\"L\", x)] IN 1 \\in {f[1]} \\cup Nat": {
+    "status": "success",
+    "prints": [
+      "\"L\"  1",
+      "0"
+    ]
   }
 }

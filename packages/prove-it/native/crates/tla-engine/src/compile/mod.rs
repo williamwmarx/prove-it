@@ -1383,6 +1383,46 @@ impl<'a> Compiler<'a> {
     // Whether evaluating an expression may print, draw, set a TLC register, or write or read a
     // file, itself or through the definitions it names. An operator bound locally may do
     // anything.
+    /// Whether evaluating an expression may have an effect, as `may_have_effect` says, in the
+    /// scope it is written in: a name the scope binds to an expression, as a LET definition or an
+    /// operator's argument is bound, may have what its expression may.
+    pub(crate) fn may_have_effect_in(
+        &self,
+        node: NodeId,
+        context: &Context,
+        seen: &mut HashSet<NodeId>,
+    ) -> bool {
+        if self.may_have_effect(node, seen) {
+            return true;
+        }
+        let mut nodes = vec![node];
+        let mut walked = HashSet::new();
+        while let Some(node) = nodes.pop() {
+            if !walked.insert(node) {
+                continue;
+            }
+            if let NodeKind::Identifier(name) = self.node(node).1
+                && name.is_local
+                && let Some(scope) = lookup(&context.scope, name.text)
+            {
+                let may = match &scope.binding {
+                    Binding::Argument(argument) => self.may_have_effect_in(
+                        argument.expression,
+                        &argument_context(argument),
+                        seen,
+                    ),
+                    Binding::Operator(_) => true,
+                    Binding::Slot(_) | Binding::Value { .. } | Binding::Recursive { .. } => false,
+                };
+                if may {
+                    return true;
+                }
+            }
+            nodes.extend(self.children(node));
+        }
+        false
+    }
+
     pub(crate) fn may_have_effect(&self, node: NodeId, seen: &mut HashSet<NodeId>) -> bool {
         if !seen.insert(node) {
             return false;

@@ -3141,20 +3141,13 @@ const UNSURE_FAILURES: &[&str] = &[
 // A startup definition's value, or NO_VALUE for one TLC evaluates again at each use that fails as
 // TLC reports before any effect: printing, drawing or setting a register.
 fn evaluate_retried(machine: &mut Machine<'_>, evaluate: &Eval, is_retried: bool) -> Outcome<Id> {
-    let effects = |machine: &Machine<'_>| {
-        (
-            machine.output.len(),
-            machine.random.state(),
-            machine.registers.writes,
-        )
-    };
-    let before = effects(machine);
+    let before = machine.effects();
     match evaluate(machine) {
         Err(Bail(reason))
             if is_retried
                 && !is_engine_limit(reason)
                 && !UNSURE_FAILURES.contains(&reason)
-                && effects(machine) == before =>
+                && machine.effects() == before =>
         {
             Ok(NO_VALUE)
         }

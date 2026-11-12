@@ -652,6 +652,7 @@ found these on main, which the branch prints alike:
 | A tuple or a lexing error in a configuration's value | `CONSTANT K = <<"a">>`, an unclosed string | a lexical error | a parse error, or another position |
 | A string where the configuration names a definition | `INVARIANT "a\\b"`, `K <- "a\\b"` | quotes the string | doesn't |
 | An ASSUME passing an argument with effects that the operator reads more than once | `Twice(a) == <<a, a>>`, `ASSUME Twice(PrintT("t")) = Twice(PrintT("t"))` | prints once per argument | prints at each read |
+| An ASSUME reading a LET definition with effects more than once, which TLC evaluates at its first use and keeps (`LazyValue`) | `ASSUME LET S == Print("L", 1) IN S = 1 /\ S = 1` | prints once | prints at each read |
 | A configuration substitute scoped to an instanced module for a name only it defines | `IK <- [I] IV`, IV defined only in I | `The configuration file substitutes for IK with the undefined identifier IV.` | runs the model |
 | A `\*` comment in a configuration with lone carriage returns | a cfg whose lines end in CR alone | ends the comment at the CR | comments out the rest of the file |
 | An undefined INVARIANT after a printing constant definition | `D == PrintT("d")`, `INVARIANT Undef` | prints `"d"` first | doesn't |
@@ -999,6 +1000,12 @@ Checks the binary answered and now declines, because the answer matched TLC only
     `unit/union-grid.test.ts` (1,944 cells: each operation on two of nine operands, alone and
     held in unions another operand answers) has 0 wrong verdicts, against 242 on main; 10 of its
     cells decline, each a difference from a record's domain that declined on main too.
+  - An operand with effects that a name binds, as a LET definition or an operator's argument
+    does, stops the engine before it evaluates either operand, as one written in place does;
+    should an effect run all the same as the membership builds or tests its operands, it stops
+    there. The grid's 19 such cells print as TLC does but one, which sets a register and
+    declines: `LET S == {IF TLCSet(1, TLCGet(1) + 1) THEN <<1, 1>> ELSE <<0, 0>>} IN
+    <<1, 1>> \in S \cup ({1} \X {1})`, which matched on main.
 
 - **Strings made during the search** (the string-order change; check-log on the same log, 1386
   native on main, 1384 after): `unit/check.test.ts:704` and `unit/parallel.test.ts:18` with

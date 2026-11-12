@@ -483,6 +483,16 @@ impl<'p> Machine<'p> {
         Ok(value)
     }
 
+    /// What the effects so far have left: what was printed, the random draws, and the writes of
+    /// TLC's registers, which differ after an evaluation that printed, drew or set a register.
+    pub(crate) fn effects(&self) -> (usize, u64, u64) {
+        (
+            self.output.len(),
+            self.random.state(),
+            self.registers.writes,
+        )
+    }
+
     /// Runs a set's parts in a round of their own, in which each lazy set's parts run once.
     pub(crate) fn run_parts(&mut self, parts: &Parts) -> Outcome<()> {
         let outer = self.parts_round;
