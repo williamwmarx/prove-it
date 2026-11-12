@@ -234,25 +234,34 @@ Measured at main 6871cd2, with the log as this section gives it:
 
 #### Liveness
 
-Measured again at main 33b0d56, after #217, #239, #244, #253, #265 and #277, with `check-log`
-counting TLC 1.7.4's checks apart (63, retired with the interpreter): 286 of the other checks have
-temporal properties, 232 are native and 54 are not. 22 of those 54 are the liveness part of this
-plan, down from 43:
+Measured again on main f941e35 with a check that fails on a deadlocked state, what a model with
+temporal properties prints at a stop, and TLC's errors for a tautology and a non-boolean constant
+part, with `check-log` counting TLC 1.7.4's checks apart (63, retired with the interpreter): 287 of
+the other checks have temporal properties, 245 are native and 42 are not. 12 of those 42 are the
+liveness part of this plan, down from 22:
 - a failure in a model with temporal properties: an atom of the temporal properties that may fail
-  to evaluate (2), and SUBSET of a non-set evaluated again after Next fails (1);
-- the search's stops in a model with temporal properties: deadlock (3), an invariant (1), a
-  division by zero (1);
-- a property TLC finds a tautology (3), or a constant part of a temporal formula that isn't a
-  boolean (2);
+  to evaluate, and SUBSET of a non-set evaluated again after Next fails (1 each);
+- a division by zero in Next where a late node of that state runs Next again, which TLC fails on a
+  second time, evaluating the checks again (1);
 - printing where the native checker doesn't check the temporal properties (5): prints it doesn't
   place in TLC's order (2), a node that accepts every behavior, a predicate the engine leaves to the
   interpreter, and steps from states it didn't store (1 each);
 - an atom the engine doesn't answer, a late node at another diameter, a step back into the cycle of
   a spec that prints, and several states under VIEW or SYMMETRY (1 each).
 
-Of the other 32: constant evaluation (9), a constraint, a VIEW or an action property that fails on
-a successor (8), a power set too large to build (3), `-dump` (3), the builtin Trace and PrintT
-(2 each), and five more of the evaluator's and the front end's gaps (1 each).
+Of the other 30: constant evaluation (9), a constraint, a VIEW or an action property that fails on
+a successor (8), a power set too large to build (3), `-dump` (3), PrintT where the engine can't
+place it (2), and five more of the evaluator's and the front end's gaps (1 each).
+
+A deadlock in a model with temporal properties prints TLC's output where a check fails as TLC adds
+the deadlocked state to the behavior graphs: the deadlock, the trace, then that check's call stack
+([liveness.md](liveness.md)). It declines a check that reads a definition an INSTANCE copies, whose
+call stack in TLC holds the INSTANCE as a frame. A spec that prints, stopped by a deadlock, a violated invariant or
+action property, or a failure of Next or an invariant, prints what TLC prints at the stop, in TLC's
+order, the prints of adding the stopped state after the trace included (liveness.md, "Print at a
+stop"). It declines a late node of a state whose next states fail, one whose full Next takes
+other steps than the search took, and an invariant that prints which the configuration lists twice,
+which TLC checks twice.
 
 The corpus has no temporal decline: `differential --native-only` matches 1,460 of 1,466 runs, and
 the 6 known differences aren't about liveness.
@@ -261,6 +270,29 @@ A lasso that ends in the first state of its cycle (the `temporal` test's three r
 gap. TLC prints every state, then stutters at the cycle's first state, and so does the binary now.
 A grid of 160 small specs (`prove-it-cli/tests/lasso-grid`) prints what TLC prints on all 640 runs:
 one thread and four, checking the properties periodically and at the end.
+
+A property TLC finds a tautology, and a constant part of a temporal formula that isn't a boolean,
+are native. TLC stops at a property's \A over the empty set as it unrolls the properties
+(`SpecProcessor.processConfigProps`), and at a formula whose negation has no solution
+(`ModelChecker.modelCheckImpl`), with `EC.TLC_LIVE_FORMULA_TAUTOLOGY`. It stops at a constant part
+of a temporal formula whose value isn't a boolean (`Liveness.astToLive`) with
+`EC.TLC_EXPECTED_VALUE`, which names the part by `SemanticNode.toString`: a numeral's image, such
+as `\b101`, or else the part's location. Where the part is an expression an INSTANCE puts in for
+a declaration of the module it instantiates, TLC's `SubstInNode` keeps the declaration's node and
+binds it to the expression's value (`Liveness.astToLive`), so TLC names the declaration where the
+instantiated module writes it, which the front end doesn't keep: that declines wherever the part
+is, or is within, a substitute or what the front end makes of one (a LET or IF it folds, an
+operator it calls, a substitute a later INSTANCE or a renaming copies). TLC takes a property's
+label whole, and unrolls a property's \A with the substitutions of the INSTANCEs it went through
+left unbound, taking the \A whole where reading one fails (`SpecProcessor.processConfigProps`).
+The front end unrolls a \A as main does, with the substitutions bound, so it declines, as main
+does, a tautology or a constant part that isn't a boolean in a property where it unrolled a \A
+(see "Declines to win back"). A grid of 113 small specs
+(`prove-it-cli/tests/live-startup-grid`) prints what TLC prints on 608 of its 904 runs; the others
+decline, for the constant evaluator's gaps, a substituted declaration, an unrolled \A, a constant
+definition TLC may print as it starts before the error, or a tautology
+after a state-level property, which TLC warns of first. Four name an
+INSTANCE's definition before the INSTANCE, which SANY doesn't know there.
 
 Nothing reaches these liveness declines, so they stay declines until a test or a model does:
 - an accepting node under SYMMETRY or a VIEW;
@@ -299,6 +331,14 @@ it from one that printed something else. Each is outside the corpus:
   constant definition or an assumption reads TLCExt's registers, or where only those builtins make
   a constant definition impure, the IR marks the four `Builtin::DECLINED`, and the engine declines
   them where it computes them, as it did before it checked them.
+
+A property's \A that TLC unrolls, or takes whole, with the substitutions of the INSTANCEs it went
+through left unbound declines where it is a tautology or has a constant part that isn't a boolean,
+as on main. Branch `live-stops-full` follows TLC's lookup there: lazy operator arguments, LET
+definitions and closures read in the context they are written in, a definition named from outside
+its INSTANCE entered through its own `SubstInNode`, and root constants and configuration overrides
+read past an INSTANCE. Eight adversarial rounds kept finding edges in it (nested INSTANCEs that
+substitute a bare name, operator arguments naming an INSTANCE's copy), so it waits there.
 
 #### Known wrong outputs
 
@@ -446,7 +486,7 @@ Measured with `bun scripts/run.ts check-log` at #272 (main 924d7cd merged), so t
 | 3 | the engine declined: unsupported: PickSuccessor | `unit/tlc-ext-operators.test.ts:11` ×2, `unit/tlc-ext-operators.test.ts:61` |
 | 3 | the engine stopped: an order of strings the search ranked | `unit/native-builtins.test.ts:279` ×2, `unit/native-builtins.test.ts:327` |
 | 3 | the engine stopped: applied a function outside its domain: evaluating the failure again: applied a function outside its domain | `unit/check.test.ts:1896`, `unit/check.test.ts:1874`, `unit/native-search.test.ts:505` |
-| 3 | the engine stopped: deadlock | `unit/tlc-replay.test.ts:185`, `unit/tlc-replay.test.ts:167`, `unit/check.test.ts:2521` |
+| 1 | the engine stopped: deadlock | `unit/check.test.ts:2521` |
 | 3 | the engine stopped: expected an integer: evaluating the failure again: expected an integer, not a string | `unit/tlc-replay.test.ts:40` ×2, `unit/exit-codes.test.ts:10` |
 | 3 | the engine stopped: record compared with a function | `unit/engine.test.ts:46` ×3 |
 | 2 | a constant part of a temporal formula that isn't a boolean | `unit/check.test.ts:5354` ×2 |
