@@ -2,6 +2,8 @@
 //! check prints it: the status, the counts, what the spec printed as TLC searched, and each
 //! violation or error TLC reports with the states it prints after it.
 
+use tla_front::errors::SanyReport;
+
 use crate::plain::Variable;
 
 #[derive(Default)]
@@ -13,12 +15,38 @@ pub struct Outcome {
     /// initial state.
     pub counts: Counts,
     /// What the spec printed as TLC computed its constants, checked its assumptions and searched,
-    /// and as it checked the postconditions after a search that completed, each print as a line.
+    /// as it rebuilt and printed a violation's trace and checked the postconditions on it, and as
+    /// it checked the postconditions after a search that completed, each print as a line, in the
+    /// order TLC prints them.
     pub prints: Vec<String>,
     /// SANY's warnings, which the library's check prints before the prints where its caller
     /// didn't print SANY's report.
     pub sany_warnings: Vec<String>,
     pub violations: Vec<Reported>,
+    /// Where TLC stops before it searches, the error the library throws, as the TypeScript check
+    /// throws it.
+    pub thrown: Option<Thrown>,
+    /// TLC's messages as the check printed them, the library's progress events: each one's code,
+    /// level and text, and how many of `prints` came before it.
+    pub messages: Vec<Message>,
+}
+
+/// `TlaSyntaxError` for the errors SANY reports, `TlaConfigError` or `TlaEvaluationError`.
+#[derive(Clone)]
+pub enum Thrown {
+    Syntax(SanyReport),
+    Config(String),
+    Evaluation(String),
+}
+
+pub struct Message {
+    pub code: u32,
+    pub level: u8,
+    pub text: String,
+    pub prints_before: usize,
+    /// The search's counts when TLC checks the temporal properties part way through it, which
+    /// the message doesn't print.
+    pub counts: Option<Counts>,
 }
 
 #[derive(Clone, Copy, Default)]

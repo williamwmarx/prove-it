@@ -1,0 +1,5 @@
+{
+  "root": "Box",
+  "version": "master",
+  "test": "reports an action without a subscript as an unsupported expression"
+}

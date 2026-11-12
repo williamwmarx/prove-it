@@ -6,7 +6,7 @@ use std::path::Path;
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::report::{ModuleOrigin, ReportOptions, SanyText, get_sany_text};
+use tla_front::report::{ModuleOrigin, REPORT_STACK_BYTES, ReportOptions, SanyText, get_sany_text};
 
 /// What SANY prints for the root module `source`, named Main, with no other files.
 fn get_text(name: &str, source: &str) -> String {
@@ -14,6 +14,15 @@ fn get_text(name: &str, source: &str) -> String {
 }
 
 fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
+    get_report_with_files(name, source, &[])
+}
+
+/// What SANY prints for the root module `source`, named Main, with the modules `files`.
+fn get_report_with_files(
+    name: &str,
+    source: &str,
+    files: &[(&str, &str)],
+) -> Result<SanyText, FrontError> {
     let directory =
         std::env::temp_dir().join(format!("tla-front-report-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a directory");
@@ -24,7 +33,12 @@ fn get_report(name: &str, source: &str) -> Result<SanyText, FrontError> {
         &ReportOptions {
             version: TlcVersion::Master,
             file_name: None,
-            load_module: &|_| None,
+            load_module: &|name| {
+                files
+                    .iter()
+                    .find(|file| file.0 == name)
+                    .map(|file| file.1.to_owned())
+            },
             describe_file: &|name, origin| format!("{name} {origin:?}"),
             root_extendees: &[],
             is_xml_export: false,
@@ -91,6 +105,126 @@ fn reports_every_recursive_shape_as_sany_does() {
             "{name}"
         );
     }
+}
+
+/// The lines of SANY's report in a recording of TLC's run, after TLC's banner and before it
+/// starts or fails.
+fn get_recorded_report(recording: &str) -> String {
+    let lines: Vec<&str> = recording
+        .lines()
+        .skip_while(|line| !line.starts_with("Running "))
+        .skip(1)
+        .take_while(|line| !line.starts_with("Starting... ") && !line.starts_with("Error: "))
+        .collect();
+    format!("{}\n", lines.join("\n"))
+}
+
+// Cases of SANY's report that the TypeScript report's tests held, each a directory of modules with
+// the root module and TLC's version in `case.json`. `report-cases.json` records what TLC prints for
+// each, TLC 1.7.4's in `report-cases-174.json`; the front end writes it or declines it for the
+// reason the case gives.
+#[test]
+fn reports_each_recorded_case_as_sany_does_or_declines() {
+    let mut recordings = get_recordings(include_str!(
+        "../../../../tests/conformance/sany-stdout/report-cases.json"
+    ));
+    recordings.extend(get_recordings(include_str!(
+        "../../../../tests/conformance/sany-stdout/report-cases-174.json"
+    )));
+    check_recorded_cases("report-cases", &recordings);
+}
+
+// tests/sany-cases: the specs that adversarial runs against TLC at d8fb231 found the report of
+// SANY's parsing and semantic analysis wrong or declining for, each a directory as report-cases'
+// are, whose `case.json` names TLC's default mode where TLC ran without -noGenerateSpecTE and so
+// adds _TLCTrace to the root module's EXTENDS. `sany-cases.json` records what TLC prints for
+// each; the front end writes it or declines it for the reason the case gives.
+#[test]
+fn reports_each_adversarial_case_as_sany_does_or_declines() {
+    let recordings = get_recordings(include_str!(
+        "../../../../tests/conformance/sany-stdout/sany-cases.json"
+    ));
+    check_recorded_cases("sany-cases", &recordings);
+}
+
+/// Checks the front end's report of each case of `tests/<cases>` against `recordings`, keyed
+/// `<cases>/<case>`: the same text, or, where `case.json` gives the reason the front end declines
+/// it for (`declines`), that decline.
+fn check_recorded_cases(cases: &str, recordings: &BTreeMap<String, String>) {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(REPORT_STACK_BYTES)
+            .spawn_scoped(scope, || check_recorded_cases_here(cases, recordings))
+            .expect("a thread for the reports")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    });
+}
+
+fn check_recorded_cases_here(cases: &str, recordings: &BTreeMap<String, String>) {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join(cases);
+    let mut paths: Vec<_> = std::fs::read_dir(&directory)
+        .expect("the cases")
+        .map(|entry| entry.expect("an entry").path())
+        .collect();
+    paths.sort();
+    assert_eq!(paths.len(), recordings.len());
+    let mut wrong = Vec::new();
+    for case in paths {
+        let name = case
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a name")
+            .to_owned();
+        let description = std::fs::read_to_string(case.join("case.json")).expect("a case");
+        let field = |key: &str| {
+            let start = description.find(&format!("\"{key}\": \""))? + key.len() + 5;
+            Some(
+                description[start..start + description[start..].find('"').expect("an end")]
+                    .to_owned(),
+            )
+        };
+        let root = field("root").expect("a root");
+        let version = match field("version").as_deref() {
+            Some("1.7.4") => TlcVersion::V1_7_4,
+            _ => TlcVersion::Master,
+        };
+        let root_extendees: &[&str] = if field("mode").as_deref() == Some("default") {
+            &["_TLCTrace"]
+        } else {
+            &[]
+        };
+        let report = get_sany_text(
+            &case.join(format!("{root}.tla")),
+            &ReportOptions {
+                version,
+                file_name: None,
+                // TLC decodes a file's malformed UTF-8 to replacement characters.
+                load_module: &|module| {
+                    std::fs::read(case.join(format!("{module}.tla")))
+                        .ok()
+                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                },
+                describe_file: &|module, origin| match origin {
+                    ModuleOrigin::Standard => format!("/tmp/tlc-_/{module}.tla"),
+                    ModuleOrigin::File | ModuleOrigin::RootFile => format!("{module}.tla"),
+                },
+                root_extendees,
+                is_xml_export: false,
+            },
+        );
+        let expected = get_recorded_report(&recordings[&format!("{cases}/{name}")]);
+        let declines = field("declines");
+        match report {
+            Ok(report) if declines.is_none() && report.text == expected => {}
+            Err(FrontError::NotYet(reason)) if declines.as_ref() == Some(&reason) => {}
+            Ok(report) => wrong.push(format!("{name}: wrote\n{}\nnot\n{expected}", report.text)),
+            Err(error) => wrong.push(format!("{name}: {error:?}")),
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n\n"));
 }
 
 /// The recorded output of each spec in a JSON object of strings, as `sany-corpus.ts` writes it.
@@ -280,13 +414,13 @@ fn reports_a_theorem_or_step_that_asserts_no_expression_named_as_one() {
         "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 5\n\nline 4, col 6 to line 4, col 6 of module Main\n\nASSUME/PROVE used where an expression is required.\n\n\nline 10, col 9 to line 10, col 12 of module Main\n\nHAVE proof step selected instead of expression.\n\n\nline 10, col 21 to line 10, col 24 of module Main\n\nSUFFICES proof step selected instead of expression.\n\n\nline 10, col 33 to line 10, col 36 of module Main\n\nASSUME/PROVE used where an expression is required.\n\n\nline 10, col 45 to line 10, col 48 of module Main\n\nCASE proof step selected instead of expression.\n\n\n"
     );
     // Where an operator is required, SANY checks the expected arity first.
-    assert!(matches!(
-        get_report(
+    assert_eq!(
+        get_text(
             "selected-argument",
             "---- MODULE Main ----\nTHEOREM T == ASSUME TRUE PROVE TRUE\nOp(F(_)) == 0\nA == Op(T)\n====\n",
         ),
-        Err(FrontError::NotYet(_))
-    ));
+        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 2\n\nline 4, col 9 to line 4, col 9 of module Main\n\nExpected arity 1 but found operator of arity 0.\n\n\nline 4, col 6 to line 4, col 10 of module Main\n\nArgument number 1 to operator 'Op' \nshould be a 1-parameter operator.\n\n\n"
+    );
 }
 
 // E4293: a definition at a deeper LET of an operator or function a LET declares RECURSIVE, and at
@@ -330,43 +464,102 @@ fn reports_def_entries_that_name_no_defined_operator() {
         ),
         "Parsing file Main File\nSemantic processing of module Main\nLinting of module Main\n"
     );
-    for (name, source) in [
+    // `generateUseOrHide` keeps no step and no module SANY hasn't read, and `genIdToSelector`
+    // takes no parenthesized name.
+    for (name, source, errors) in [
         (
             "defs-step",
             "---- MODULE Main ----\nTHEOREM TRUE\n<1>1 TRUE\n<1> QED BY DEF <1>1\n====\n",
-        ),
-        (
-            "defs-selection",
-            "---- MODULE Main ----\n---- MODULE Inner ----\nH == 0\n====\nV == INSTANCE Inner\nUSE DEF V!Missing\n====\n",
+            "*** Errors: 2\n\nline 4, col 16 to line 4, col 19 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 4, col 9 to line 4, col 19 of module Main\n\nEmpty BY\n\n\n",
         ),
         (
             "defs-module",
             "---- MODULE Main ----\nUSE DEF Nope, MODULE Gone\n====\n",
+            "*** Errors: 4\n\nline 2, col 9 to line 2, col 12 of module Main\n\nUnknown operator: `Nope'.\n\n\nline 2, col 9 to line 2, col 12 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 2, col 22 to line 2, col 25 of module Main\n\nModule `Gone' used without being extended or instantiated.\n\n\nline 2, col 1 to line 2, col 25 of module Main\n\nEmpty USE or HIDE statement.\n\n\n",
         ),
         (
             "defs-parenthesized",
             "---- MODULE Main ----\nUSE DEF (Missing)\n====\n",
+            "*** Errors: 4\n\nline 2, col 10 to line 2, col 16 of module Main\n\nUnexpected token found.\n\n\nline 2, col 10 to line 2, col 16 of module Main\n\nNeed name or step number here, not `N_GeneralId'.\n\n\nline 2, col 9 to line 2, col 17 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 2, col 1 to line 2, col 17 of module Main\n\nEmpty USE or HIDE statement.\n\n\n",
         ),
         (
             "facts-module",
             "---- MODULE Main ----\nUSE MODULE Gone\n====\n",
+            "*** Errors: 2\n\nline 2, col 12 to line 2, col 15 of module Main\n\nModule `Gone' used without being extended or instantiated.\n\n\nline 2, col 1 to line 2, col 15 of module Main\n\nEmpty USE or HIDE statement.\n\n\n",
         ),
     ] {
-        assert!(
-            matches!(get_report(name, source), Err(FrontError::NotYet(_))),
+        assert_eq!(
+            get_text(name, source),
+            format!(
+                "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n{errors}"
+            ),
             "{name}"
         );
     }
-    assert!(matches!(
-        get_report(
+    // A selection of nothing in a module is unknown.
+    assert_eq!(
+        get_text(
+            "defs-selection",
+            "---- MODULE Main ----\n---- MODULE Inner ----\nH == 0\n====\nV == INSTANCE Inner\nUSE DEF V!Missing\n====\n",
+        ),
+        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 3\n\nline 6, col 9 to line 6, col 17 of module Main\n\nUnknown operator: `V!Missing'.\n\n\nline 6, col 9 to line 6, col 17 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 6, col 1 to line 6, col 17 of module Main\n\nEmpty USE or HIDE statement.\n\n\n"
+    );
+    assert_eq!(
+        get_text(
             "defs-unknown-symbol",
             "---- MODULE Main ----\nUSE DEF Missing, +\n====\n",
         ),
-        Err(FrontError::NotYet(_))
-    ));
+        "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 5\n\nline 2, col 9 to line 2, col 15 of module Main\n\nUnknown operator: `Missing'.\n\n\nline 2, col 9 to line 2, col 15 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 2, col 18 to line 2, col 18 of module Main\n\nUnknown operator: `+'.\n\n\nline 2, col 18 to line 2, col 18 of module Main\n\nDEF clause entry should describe a defined operator.\n\n\nline 2, col 1 to line 2, col 18 of module Main\n\nEmpty USE or HIDE statement.\n\n\n"
+    );
 }
 
 // E4223: a nested module named like a module SANY has already read.
+// SpecObj.resolveNamesBetweenSpecAndExtention: SANY binds the name an extender instantiates to
+// the inner module of the same name of the file it extends, and reads no file for it. The front
+// end binds it where every module of the spec has a name of its own.
+#[test]
+fn binds_a_name_to_an_inner_module_of_an_extended_file() {
+    let holder = "---- MODULE Holder ----\n---- MODULE Held ----\nValue == 2\n====\n====\n";
+    let source =
+        "---- MODULE Main ----\nEXTENDS Mid\nJ == INSTANCE Held\nASSUME J!Value = 2\n====\n";
+    let mid = "---- MODULE Mid ----\nEXTENDS Holder\n====\n";
+    assert_eq!(
+        get_report_with_files("inner", source, &[("Mid", mid), ("Holder", holder)])
+            .expect("a text")
+            .text,
+        "Parsing file Main File\nParsing file Mid File\nParsing file Holder File\nSemantic processing of module Holder\nSemantic processing of module Mid\nSemantic processing of module Main\nLinting of module Holder\nLinting of module Mid\nLinting of module Main\n"
+    );
+}
+
+// Where only an inner module of a file extends the file holding the inner module, SANY binds the
+// names of that inner module alone, not those of the modules extending the file.
+#[test]
+fn binds_no_name_for_the_modules_extending_a_file_whose_inner_module_extends() {
+    let files = [
+        (
+            "B",
+            "---- MODULE B ----\n---- MODULE K ----\nEXTENDS Holder\n====\n====\n",
+        ),
+        (
+            "Holder",
+            "---- MODULE Holder ----\n---- MODULE Held ----\nQ == 2\n====\n====\n",
+        ),
+    ];
+    let fatal = "In module I\n\nCannot find source file for module Held imported in module I.";
+    assert_eq!(
+        get_report_with_files(
+            "inner-extender",
+            "---- MODULE Main ----\n---- MODULE I ----\nEXTENDS B\nJ == INSTANCE Held\n====\n====\n",
+            &files
+        )
+        .expect("a text")
+        .text,
+        format!(
+            "Parsing file Main File\nParsing file B File\nParsing file Holder File\n\nFatal errors while parsing TLA+ spec in file Main\n\n{fatal}\n*** Errors: 1\n\n{fatal}\n\n\n\n"
+        )
+    );
+}
+
 #[test]
 fn reports_a_nested_module_named_like_a_standard_module_it_extends() {
     assert_eq!(
@@ -444,17 +637,21 @@ fn reads_a_module_named_as_a_fact_or_def_entry() {
     );
     assert!(!text.contains("Semantic errors"), "{text}");
     assert!(text.ends_with("Linting of module Main\n"), "{text}");
-    // SANY's message for a module it doesn't find has no recording.
-    for statement in ["USE MODULE Inner", "USE DEF MODULE Sequences"] {
-        assert!(
-            matches!(
-                get_report(
-                    "module-fact-missing",
-                    &format!(
-                        "---- MODULE Main ----\n{statement}\n---- MODULE Inner ----\n====\n====\n"
-                    ),
+    // A module defined later, or one SANY hasn't read, is unsupported.
+    for (statement, range, name) in [
+        ("USE MODULE Inner", (12, 16), "Inner"),
+        ("USE DEF MODULE Sequences", (16, 24), "Sequences"),
+    ] {
+        assert_eq!(
+            get_text(
+                "module-fact-missing",
+                &format!(
+                    "---- MODULE Main ----\n{statement}\n---- MODULE Inner ----\n====\n====\n"
                 ),
-                Err(FrontError::NotYet(_))
+            ),
+            format!(
+                "Parsing file Main File\nSemantic processing of module Main\nSemantic errors:\n\n*** Errors: 2\n\nline 2, col {} to line 2, col {} of module Main\n\nModule `{name}' used without being extended or instantiated.\n\n\nline 2, col 1 to line 2, col {} of module Main\n\nEmpty USE or HIDE statement.\n\n\n",
+                range.0, range.1, range.1
             ),
             "{statement}"
         );

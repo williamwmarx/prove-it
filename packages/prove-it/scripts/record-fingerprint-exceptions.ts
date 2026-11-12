@@ -5,9 +5,10 @@
 // TLC builds them and applications of tuples and records, failures in a value TLC gives no source,
 // comparisons TLC can't make in the next-state relation or of an initial state's value with a set,
 // initial states that hold values TLC can't fingerprint, temporal properties that fail on the
-// initial state with an EvalException, and function definitions that fail as TLC builds them. Each
-// cell runs at -workers 1 and 4 and writes TLC's exit code and its output without the lines that
-// differ from run to run, which the test drops from the binary's too.
+// initial state with an EvalException, function definitions that fail as TLC builds them, and
+// ALIASes TLC holds as values. Each cell runs at -workers 1 and 4 and writes TLC's exit code and
+// its output without the lines that differ from run to run, which the test drops from the binary's
+// too.
 // Usage: TLA2TOOLS_JAR=path bun scripts/record-fingerprint-exceptions.ts
 // TLA2TOOLS_JAR is a classpath for java -cp: a tla2tools.jar, or a build's classes and libraries.
 
@@ -301,6 +302,163 @@ const functionDefinitions: Cell[] = [
   config,
 }));
 
+// An ALIAS TLC holds as a value rather than the definition it names: a definition TLC computes as
+// it starts, which a numeral or a string isn't, and a name the configuration assigns, beside an
+// ALIAS that takes an argument, one the configuration substitutes and state functions.
+const constantAliases: Cell[] = [
+  ["Alias == 3", ""],
+  ['Alias == "a"', ""],
+  ["Alias == (3)", ""],
+  ["Alias == -3", ""],
+  ["Alias == 1 + 2", ""],
+  ["Alias == LET a == 3 IN a", ""],
+  ["Alias == TRUE", ""],
+  ["Alias == [a |-> 1]", ""],
+  ["Alias == [x |-> 1, y |-> 2]", ""],
+  ["Alias == {1, 2}", ""],
+  ["Alias(p) == [x |-> p]", ""],
+  ["Alias == x + 1", ""],
+  ["Alias == {x}", ""],
+  ["Alias == x > 0", ""],
+  ["Alias == [y |-> x]", "CONSTANT Alias = 3"],
+  ["Alias == [y |-> x]", "CONSTANT Alias = {1, 2}"],
+  ["Alias == [y |-> x]", "CONSTANT Alias = Alias"],
+  ["", "CONSTANT Alias = 3"],
+  ["CONSTANT Alias", "CONSTANT Alias = 3"],
+  ["Alias == [y |-> x]\nQ == [x |-> x + 10, y |-> y]", "CONSTANT Alias <- Q"],
+  ["Alias == [y |-> x]\nQ == 3", "CONSTANT Alias <- Q"],
+  ["Q == [x |-> x + 10, y |-> y]\nAlias == 3", "CONSTANT Alias <- Q"],
+  ["Alias == [y |-> x]\nQ == {1, 2}", "CONSTANT Alias <- Q"],
+  ["Alias == [z |-> x]\nQ == [y |-> x]", "CONSTANT Alias = 3\nCONSTANT Alias <- Q"],
+  ["Alias == [z |-> x]\nQ == [y |-> x]", "CONSTANT Alias <- Q\nCONSTANT Alias = Alias"],
+].flatMap(([definitions, constants]) =>
+  ["INVARIANT Inv\n", ""].map((invariant) => ({
+    name: `${definitions.replaceAll("\n", "; ") || "no ALIAS definition"}${constants ? `, ${constants.replaceAll("\n", ", ")}` : ""}${invariant ? "" : ", deadlock"}`,
+    spec: [
+      "---- MODULE M ----",
+      "EXTENDS Naturals",
+      "VARIABLES x, y",
+      "Init == x = 0 /\\ y = 0",
+      "Next == x < 2 /\\ x' = x + 1 /\\ y' = y",
+      "Inv == x < 2",
+      ...(definitions ? [definitions] : []),
+      "====",
+    ].join("\n"),
+    config: `${constants ? `${constants}\n` : ""}INIT Init\nNEXT Next\n${invariant}ALIAS Alias`,
+  })),
+);
+
+// An ALIAS the configuration assigns a value the front end can't normalize, on a run that prints
+// no trace, where TLC never reads the ALIAS.
+const unprintedAliases: Cell[] = ["", "\nCONSTANT Alias <- Q"].map((substitution) => ({
+  name: `CONSTANT Alias = {1, "a"}${substitution.replaceAll("\n", ", ")}, no trace`,
+  spec: [
+    "---- MODULE M ----",
+    "EXTENDS Naturals",
+    "VARIABLE x",
+    "Init == x = 0",
+    "Next == x' = (x + 1) % 3",
+    "Inv == x < 5",
+    "Q == [y |-> x]",
+    "Alias == [z |-> x]",
+    "====",
+  ].join("\n"),
+  config: `INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT Alias = {1, "a"}${substitution}`,
+}));
+
+// A literal definition TLC computes as it starts after all: one the configuration substitutes for
+// another definition, which TLC computes in that one's name, an INSTANCE's copy whose literal is a
+// substitution, and a function whose body is a literal.
+const substitutedLiterals: Cell[] = [
+  {
+    name: "Alias == 3, CONSTANT X <- Alias",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nX == 0\nAlias == 3\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT X <- Alias",
+  },
+  {
+    name: 'Alias == "a", CONSTANT X <- Alias',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x\' = x + 1\nInv == x < 2\nAlias == "a"\nX == 0\n\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT X <- Alias",
+  },
+  {
+    name: "Alias == 3, CONSTANT X <- [M] Alias",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nX == 0\nAlias == 3\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT X <- [M] Alias",
+  },
+  {
+    name: "Alias == c, INSTANCE N WITH c <- 3",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\n---- MODULE N ----\nCONSTANT c\nAlias == c\n====\nINSTANCE N WITH c <- 3\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+  },
+  {
+    name: "PC == 3, CONSTANT X <- PC",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nX == 0\nPC == 3\n\n====",
+    config: "INIT Init\nNEXT Next\nPOSTCONDITION PC\nCONSTANT X <- PC",
+  },
+  {
+    name: "PC == c, INSTANCE N WITH c <- 3",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\n---- MODULE N ----\nCONSTANT c\nPC == c\n====\nINSTANCE N WITH c <- 3\n====",
+    config: "INIT Init\nNEXT Next\nPOSTCONDITION PC",
+  },
+  {
+    name: "Alias == 3 in an INSTANCE'd module, CONSTANT X <- Alias",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\n---- MODULE Inner ----\nAlias == 3\n====\nINSTANCE Inner\nX == 0\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT X <- Alias",
+  },
+  {
+    name: "PC == 3 in an INSTANCE'd module, CONSTANT X <- PC",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\n---- MODULE Inner ----\nPC == 3\n====\nINSTANCE Inner\nX == 0\n====",
+    config: "INIT Init\nNEXT Next\nPOSTCONDITION PC\nCONSTANT X <- PC",
+  },
+  {
+    name: "Alias[i \\in {1}] == 3, a function",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nAlias[i \\in {1}] == 3\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+  },
+  {
+    name: 'Alias[i \\in {1, 2}] == "s", a function',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x\' = x + 1\nInv == x < 2\nAlias[i \\in {1, 2}] == "s"\n\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+  },
+];
+
+// An ALIAS the spec also reads that the configuration assigns and substitutes for, which TLC holds
+// as the substituted definition, a theorem's name, which isn't one of TLC's definitions, and an
+// assignment scoped to a module that defines no such name, which TLC applies to nothing.
+const reviewedAliases: Cell[] = [
+  {
+    name: "Alias == 1 read by the invariant, CONSTANT Alias = 1, CONSTANT Alias <- Q",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nAlias == 1\nQ == [y |-> x]\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2 /\\ Alias = Alias\n\n====",
+    config:
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT Alias = 1\nCONSTANT Alias <- Q",
+  },
+  {
+    name: "THEOREM Alias == 3",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nTHEOREM Alias == 3\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+  },
+  {
+    name: 'THEOREM Alias == "a"',
+    spec: '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x\' = x + 1\nInv == x < 2\nTHEOREM Alias == "a"\n\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+  },
+  {
+    name: "THEOREM Alias == 3, CONSTANT Alias = 4",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nTHEOREM Alias == 3\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT Alias = 4",
+  },
+  {
+    name: "CONSTANT Alias = [Inner] 3, Inner defining no Alias",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n---- MODULE Inner ----\nFoo == 1\n====\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nAlias == [z |-> x]\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT Alias = [Inner] 3",
+  },
+  {
+    name: "CONSTANT Alias = [Nope] 3, no module Nope",
+    spec: "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x < 2\nAlias == [z |-> x]\n\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nCONSTANT Alias = [Nope] 3",
+  },
+];
+
 const record = (cell: Cell, workers: number) => {
   const directory = mkdtempSync(join(tmpdir(), "prove-it-fingerprint-"));
   writeFileSync(join(directory, "M.tla"), `${cell.spec}\n`);
@@ -344,6 +502,10 @@ const blocks = [
   ...initialStates,
   ...initialAtoms,
   ...functionDefinitions,
+  ...constantAliases,
+  ...unprintedAliases,
+  ...substitutedLiterals,
+  ...reviewedAliases,
 ].flatMap((cell) => [
   `### ${cell.name}`,
   "--- spec",

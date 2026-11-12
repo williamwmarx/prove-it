@@ -1,0 +1,19 @@
+exit 75
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Live012
+Linting of module Live012
+Computing initial states...
+Error: TLC expected a boolean value, but did not find one. line 7, col 8 to line 7, col 13 of module Live012
+While working on the initial state:
+x = 0
+
+Error: The error occurred when TLC was evaluating the nested
+expressions at the following positions:
+0. Line 4, column 9 to line 4, column 13 in Live012
+
+
+1 states generated, 1 distinct states found, 1 states left on queue.
+The depth of the complete state graph search is 1.

@@ -70,6 +70,42 @@ describe("prove without process.dlopen", () => {
   );
 });
 
+// As with the addon, the engine as WebAssembly reads two different lone surrogates as two strings.
+describe("prove a lone surrogate without process.dlopen", () => {
+  it.if(existsSync(join(DIST, "../prove-it-engine.wasm")))(
+    "proves neither string = nor # the other",
+    () => {
+      const sources = ["=", "#"].map(
+        (operator) =>
+          `---- MODULE M ----\nEXTENDS TLAPS\nTHEOREM "\uD800" ${operator} "\uDC00" BY SMT\n====\n`,
+      );
+      const script = [
+        'Object.defineProperty(process, "dlopen", { value: undefined });',
+        `const { prove } = await import(${JSON.stringify(DIST)});`,
+        `for (const source of ${JSON.stringify(sources)}) {`,
+        "  const result = await prove({ source });",
+        "  console.log(JSON.stringify(result.obligations.map((o) => [o.status, o.reason ?? null])));",
+        "}",
+      ].join("\n");
+      const run = spawnSync("bun", ["-e", script], {
+        encoding: "utf8",
+        env: { ...process.env, PROVE_IT_ENGINE_ADDON: undefined },
+      });
+      expect(run.stderr).toBe("");
+      const declined = [
+        ["failed", "smt failed: smt declined: the text holds a lone surrogate"],
+        ["trivial", null],
+      ];
+      expect(
+        run.stdout
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+      ).toEqual([declined, declined]);
+    },
+  );
+});
+
 // A worker that can't decide fails the proof rather than leaving it waiting: here no engine loads,
 // as the named addon is missing, and Zenon has no TypeScript decider, so the worker's decide throws
 // EngineUnavailableError.

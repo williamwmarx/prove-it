@@ -12,6 +12,8 @@ TLC, SANY and tlapm define correct. Before implementing anything, read their sou
 
 Output either matches the reference byte for byte or the binary declines with `prove-it: not native yet: <reason>`. Something that matches today must never become a decline, unless it matched only by chance; such a run declines and is listed under "Declines to win back" in `native/design/fallback.md`. `native/design/fallback.md` lists every decline and every known wrong output; keep it true.
 
+The one exception to byte identity is TLC's binary trace file (the `.bin` of `-dumpTrace tlc` and of the trace exploration spec): its strings carry TLC's intern numbers of that run, which depend on the order the JVM's `getDeclaredMethods` gives, so it is identical when TLC's `-loadTrace` reads it back to the same trace, which Parity checks.
+
 ## Principles
 
 Build for the long run. Judge a change by whether it improves the architecture, not by how small its diff is.

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { check, type CheckOptions } from "../../src";
+import type { CheckOptions } from "../../src";
+import { checkOnEngine } from "../native-check";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures");
 
@@ -17,20 +18,24 @@ const dumpFixture = async (
   name: string,
   dump: NonNullable<CheckOptions["dump"]>,
   options: Partial<CheckOptions> = {},
+  declinedFor: string | undefined = dump.dot ? "-dump dot" : undefined,
 ) => {
   const written = new Map<string, string>();
-  const result = await check({
-    source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
-    config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
-    loadModule: (module) => {
-      const path = join(FIXTURES, directory, `${module}.tla`);
-      return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+  const result = await checkOnEngine(
+    {
+      source: readFileSync(join(FIXTURES, directory, `${name}.tla`), "utf8"),
+      config: readFileSync(join(FIXTURES, directory, `${name}.cfg`), "utf8"),
+      loadModule: (module) => {
+        const path = join(FIXTURES, directory, `${module}.tla`);
+        return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+      },
+      onPrint: () => {},
+      writeFile: (path, content) => written.set(path, content),
+      dump,
+      ...options,
     },
-    onPrint: () => {},
-    writeFile: (path, content) => written.set(path, content),
-    dump,
-    ...options,
-  });
+    declinedFor,
+  );
   return { result, written };
 };
 
@@ -82,6 +87,12 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(dump.written.get("Counter.dump")).toBe(readTlcDump("Counter.dump"));
   });
 
+  it("lists the states it reached when an invariant fails", async () => {
+    const dump = await dumpFixture("water-jugs", "WaterJugs", { path: "WaterJugs.dump" });
+    expect(dump.result.status).toBe("invariant-violation");
+    expect(dump.written.get("WaterJugs.dump")).toBe(readTlcDump("WaterJugs.dump"));
+  });
+
   it("writes the stuttering steps of a liveness check like TLC 1.7.4, and plain edge labels", async () => {
     const options = { version: "1.7.4" } as const;
     const dot = await dumpFixture(
@@ -89,9 +100,16 @@ describe("check dumps the state graph like TLC's -dump", () => {
       "Picks",
       { path: "Picks174.dot", dot: true, actionLabels: true },
       options,
+      "TLC 1.7.4",
     );
     expect(dot.written.get("Picks174.dot")).toBe(readTlcDump("Picks174.dot"));
-    const plain = await dumpFixture("state-graph", "Picks", { path: "Picks174.dump" }, options);
+    const plain = await dumpFixture(
+      "state-graph",
+      "Picks",
+      { path: "Picks174.dump" },
+      options,
+      "TLC 1.7.4",
+    );
     expect(plain.written.get("Picks174.dump")).toBe(readTlcDump("Picks174.dump"));
   });
 
@@ -137,11 +155,16 @@ describe("check dumps the state graph like TLC's -dump", () => {
   });
 });
 
-const runCli = (args: string[]) =>
-  spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args], {
-    cwd: join(FIXTURES, "counter"),
+// TLC writes the trace exploration spec of Counter's deadlock beside the spec, so the spec is
+// checked in a copy of the fixture.
+const runCli = (args: string[]) => {
+  const directory = mkdtempSync(join(tmpdir(), "tla-ts-counter-"));
+  cpSync(join(FIXTURES, "counter"), directory, { recursive: true });
+  return spawnSync("bun", [join(import.meta.dirname, "../../src/cli.ts"), "Counter.tla", ...args], {
+    cwd: directory,
     encoding: "utf8",
   });
+};
 
 describe("the CLI takes TLC's -dump flag", () => {
   it("adds the extension of the format to the file name", () => {

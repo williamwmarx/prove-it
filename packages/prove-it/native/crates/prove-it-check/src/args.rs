@@ -5,14 +5,13 @@
 use tla_front::TlcVersion;
 use tla_values::fingerprint::POLYNOMIALS;
 
+use crate::host_path::Platform;
+
 pub const USAGE: &str = "Usage: tla-ts <Spec.tla|Spec.cfg|glob>... [-config <Spec.cfg>] [-continue] [-deadlock] [-dump [<format>] <file>] [-fp <num>] [-lncheck <final|default>] [-metadir <directory>] [-nowarning] [-seed <num>] [-tool] [-workers <count|auto>]
        tla-ts tlapm [-N] [--summary] [--strict] [--toolbox <start> <end>] [--line <num>] [--printallobs] [--threads <num>] [--version] [-I <directory>]... [-k] [--noproving] [--nofp] [--nofpl <start> <end>] [--safefp] [--cleanfp] [--usefp <file>] [--cache-dir <directory>] <Module.tla|glob>...
        tla-ts [<JVM option>]... tlc2.TLC <TLC option>... <Spec>
        (-cp tla2tools.jar or -Dtla-ts.tlc=1.7.4 picks the TLC to reproduce)
        tla-ts [<JVM option>]... tla2sany.xml.XMLExporter [-I <directory>]... [-o] [-t] [-r] [-u] <Module.tla>";
-
-/// What separates the directories of a path list, as Node's `path.delimiter`.
-pub const PATH_DELIMITER: char = if cfg!(windows) { ';' } else { ':' };
 
 const JAVA_MAIN_CLASSES: [&str; 2] = ["tlc2.TLC", "tla2sany.xml.XMLExporter"];
 
@@ -47,7 +46,7 @@ pub struct Launch {
     pub java: Java,
 }
 
-pub fn get_java_launch(args: &[String]) -> Option<Launch> {
+pub fn get_java_launch(args: &[String], platform: Platform) -> Option<Launch> {
     let mut java = Java::default();
     let mut index = 0;
     while index < args.len() {
@@ -73,9 +72,9 @@ pub fn get_java_launch(args: &[String]) -> Option<Launch> {
         {
             // The JVM keeps a property's last value, which TLC splits as Java's String.split
             // does, dropping the empty paths at the end (`SimpleFilenameToStream.parsePaths`).
-            let mut paths: Vec<String> =
-                libraries.split(PATH_DELIMITER).map(String::from).collect();
-            while libraries.contains(PATH_DELIMITER) && paths.last().is_some_and(String::is_empty) {
+            let delimiter = platform.delimiter();
+            let mut paths: Vec<String> = libraries.split(delimiter).map(String::from).collect();
+            while libraries.contains(delimiter) && paths.last().is_some_and(String::is_empty) {
                 paths.pop();
             }
             java.libraries = paths;
@@ -525,37 +524,60 @@ mod tests {
 
     #[test]
     fn reads_a_java_launch() {
-        let libraries = format!("-DTLA-Library=/a{PATH_DELIMITER}/b");
-        let launch = get_java_launch(&strings(&[
-            &libraries,
-            "-Xmx4g",
-            "-Djava.io.tmpdir=/t",
-            "tlc2.TLC",
-            "-tool",
-            "Spec",
-        ]))
+        let libraries = "-DTLA-Library=/a:/b".to_string();
+        let launch = get_java_launch(
+            &strings(&[
+                &libraries,
+                "-Xmx4g",
+                "-Djava.io.tmpdir=/t",
+                "tlc2.TLC",
+                "-tool",
+                "Spec",
+            ]),
+            Platform::Unix,
+        )
         .expect("a launch");
         assert_eq!(launch.java.temporary_directory.as_deref(), Some("/t"));
         assert_eq!(launch.main_class, "tlc2.TLC");
         assert_eq!(launch.args, strings(&["-tool", "Spec"]));
         assert_eq!(launch.java.libraries, strings(&["/a", "/b"]));
+        // A Windows host separates the paths with `;`, which a drive's `:` is part of.
+        let windows = get_java_launch(
+            &strings(&["-DTLA-Library=C:\\a;D:\\b;", "tlc2.TLC", "Spec"]),
+            Platform::Windows,
+        )
+        .expect("a launch");
+        assert_eq!(windows.java.libraries, strings(&["C:\\a", "D:\\b"]));
+        let last = get_java_launch(
+            &strings(&[&libraries, "-DTLA-Library=/c", "tlc2.TLC", "Spec"]),
+            Platform::Unix,
+        )
+        .expect("a launch");
+        assert_eq!(last.java.libraries, strings(&["/c"]));
         assert_eq!(launch.java.unmodelled_property, None);
-        assert_eq!(get_java_launch(&strings(&["Spec.tla", "-tool"])), None);
-        let properties = get_java_launch(&strings(&[
-            "-Dtlc2.TLC.ide=vscode",
-            "-Dutil.ExecutionStatisticsCollector.id=abc",
-            "-Dfile.encoding=UTF-8",
-            "-Dtlc2.tool.fp.FPSet.impl=tlc2.tool.fp.MSBDiskFPSet",
-            "-Dtlc2.tool.ModelChecker.BAQueue=true",
-            "tlc2.TLC",
-            "Spec",
-        ]))
+        assert_eq!(
+            get_java_launch(&strings(&["Spec.tla", "-tool"]), Platform::Unix),
+            None
+        );
+        let properties = get_java_launch(
+            &strings(&[
+                "-Dtlc2.TLC.ide=vscode",
+                "-Dutil.ExecutionStatisticsCollector.id=abc",
+                "-Dfile.encoding=UTF-8",
+                "-Dtlc2.tool.fp.FPSet.impl=tlc2.tool.fp.MSBDiskFPSet",
+                "-Dtlc2.tool.ModelChecker.BAQueue=true",
+                "tlc2.TLC",
+                "Spec",
+            ]),
+            Platform::Unix,
+        )
         .expect("a launch");
         assert_eq!(
             properties.java.unmodelled_property.as_deref(),
             Some("tlc2.tool.fp.FPSet.impl")
         );
-        let jar = get_java_launch(&strings(&["-jar", "tla2tools.jar", "Spec"])).expect("a jar");
+        let jar = get_java_launch(&strings(&["-jar", "tla2tools.jar", "Spec"]), Platform::Unix)
+            .expect("a jar");
         assert_eq!(jar.java.class_path.as_deref(), Some("tla2tools.jar"));
         assert_eq!(jar.args, strings(&["Spec"]));
     }

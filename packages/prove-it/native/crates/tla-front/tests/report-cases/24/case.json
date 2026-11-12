@@ -1,0 +1,5 @@
+{
+  "root": "Empty",
+  "version": "master",
+  "test": "reports \"HIDE\" with nothing after its keyword as SANY does"
+}

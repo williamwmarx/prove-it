@@ -1,0 +1,6 @@
+---- MODULE Spec ----
+EXTENDS I
+THEOREM TRUE
+<1> M == INSTANCE J
+<1> QED
+====

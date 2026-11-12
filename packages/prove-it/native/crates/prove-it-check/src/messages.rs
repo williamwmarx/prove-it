@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::io::{BufWriter, Write};
 
 use crate::host::Host;
-use crate::outcome::{Outcome, Reported, ReportedState};
+use crate::outcome::{Outcome, Reported, ReportedState, Thrown};
 use crate::plain::Variable;
 use crate::te_spec::{RecordedTrace, TraceSpec};
 use crate::time::{format_date, format_java_date};
@@ -139,6 +139,14 @@ impl<'o> Printer<'o> {
         }
     }
 
+    /// Keeps the error the library throws where TLC stops before it searches, where its caller reads
+    /// it (`Host::is_plain`).
+    pub fn set_thrown(&mut self, thrown: Option<Thrown>) {
+        if self.host.is_plain() {
+            self.outcome.thrown = thrown;
+        }
+    }
+
     /// A state of the behavior TLC reports, at its position from 1.
     pub fn state(&mut self, position: usize, label: &str, variables: Vec<Variable>) {
         self.print(
@@ -154,7 +162,8 @@ impl<'o> Printer<'o> {
         }
     }
 
-    /// A line the spec printed as TLC searched, which the outcome records where its caller reads it.
+    /// A line the spec printed, as TLC searched or as it printed a trace and checked the
+    /// postconditions on it, which the outcome records where its caller reads it.
     pub fn printed(&mut self, text: &str) {
         self.line(text);
         if self.host.is_plain() {
@@ -209,7 +218,23 @@ impl<'o> Printer<'o> {
         if is_warning && !self.warnings.insert(message.clone()) {
             return;
         }
+        if self.host.is_plain() {
+            self.outcome.messages.push(crate::outcome::Message {
+                code,
+                level: level as u8,
+                text: text.to_string(),
+                prints_before: self.outcome.prints.len(),
+                counts: None,
+            });
+        }
         self.line(&message);
+    }
+
+    /// Notes the search's counts with the message just printed, for the library's events.
+    pub fn count_message(&mut self, counts: crate::outcome::Counts) {
+        if let Some(message) = self.outcome.messages.last_mut() {
+            message.counts = Some(counts);
+        }
     }
 
     /// A line outside any message, such as what the front end printed.

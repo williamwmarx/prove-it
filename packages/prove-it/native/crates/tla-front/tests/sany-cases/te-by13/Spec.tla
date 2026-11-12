@@ -1,0 +1,6 @@
+---- MODULE Spec ----
+THEOREM TRUE
+OBVIOUS
+USE
+HIDE
+====

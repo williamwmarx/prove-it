@@ -53,7 +53,6 @@ import { createPcalSession } from "../src/pcal/parse";
 import { validatePcalModule } from "../src/pcal/validate";
 import { getSany174LexicalError } from "../src/sany/lexer";
 import { getSanyParseError } from "../src/sany/parse-error";
-import { getSanyReport } from "../src/sany/report";
 import { createSearch, getProperties, getSpecification } from "../src/search";
 import { getNextSubstitution } from "../src/spec-description";
 import { withUnexpectedException } from "../src/tlc/messages";
@@ -119,17 +118,6 @@ const createLoader = (path: string) => (name: string) =>
     .map((directory) => join(directory, `${name}.tla`))
     .filter((file) => existsSync(file))
     .map((file) => readFileSync(file, "utf8"))[0];
-
-// What SANY prints, with each file described by its module's name and origin, as front-dump
-// describes it, and with the modules TLC adds to the root module's EXTENDS.
-const writeSanyText = (path: string, rootExtendees: string[] | undefined) => {
-  const report = getSanyReport(path, createLoader(path), {
-    describeFile: (name, origin) =>
-      `${name}|${{ file: "File", "root file": "RootFile", standard: "Standard" }[origin]}`,
-    rootExtendees,
-  });
-  return JSON.stringify({ text: report.text, isFailed: report.isFailed });
-};
 
 // TLC's orders of a model: its string order, the root module's variables and constants, and the
 // root module's definitions in the order TLC computes them.
@@ -354,6 +342,9 @@ const lowerEnvironment = (
       definitions: [],
       // Without a configuration, TLC computes no definition at startup.
       normalized: config ? getIrStartup(config, specification).normalized : new Set(),
+      substitutesForDefinitions: config
+        ? getIrStartup(config, specification).substitutesForDefinitions
+        : new Set(),
       predicates: [],
       symmetry: undefined,
       assumptions: [],
@@ -448,9 +439,6 @@ const MODES: Record<string, (source: string, path: string, spec: string) => stri
       stateLevel,
     };
   }),
-  "sany-text": (_source, path) => writeSanyText(path, undefined),
-  // SANY's report where TLC records the trace for its trace exploration spec, TLC's default.
-  "sany-text-trace": (_source, path) => writeSanyText(path, ["_TLCTrace"]),
   model: writeResult((source, _path, spec) =>
     readEnvironment(readFileSync(spec, "utf8"), spec, parseConfig(source)),
   ),
@@ -567,8 +555,6 @@ const isLinked = [
   "model-full",
   "spec",
   "properties",
-  "sany-text",
-  "sany-text-trace",
   "levels",
 ].includes(mode);
 if (isLinked) linkLibraryModules();

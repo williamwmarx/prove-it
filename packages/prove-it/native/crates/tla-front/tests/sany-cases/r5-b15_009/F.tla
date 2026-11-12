@@ -1,0 +1,4 @@
+---- MODULE F ----
+EXTENDS Sequences
+
+====

@@ -1,0 +1,5 @@
+{
+  "root": "M",
+  "version": "master",
+  "test": "reports \"RECURSIVE F(_, _)\\nF(x) == x\\nA == F(1, 2)\" as given the wrong number of arguments"
+}

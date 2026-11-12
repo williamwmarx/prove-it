@@ -391,6 +391,20 @@ TypeScript keeps the orchestration until P6:
   calls again; no callback into JavaScript. The keys are its `module:<name>`, plus any new kind
   tlapm's lookup needs, added to the list in `sources.rs`. Both exports go through the wasm
   `call()` buffer ABI and bump `ABI_VERSION` as it requires.
+- No text that reaches a decision or an obligation's fingerprint is read lossily. A Rust string
+  can't hold a lone surrogate. U+FFFD in its place would make two different TLA+ strings one SMT
+  name, and the axiom that they differ would then prove anything (#339). So `decide` declines a
+  text that holds one, and `proveNatively` gives way to the TypeScript driver for a source or a
+  module that isn't well-formed UTF-16, or that escapes a lone surrogate in a pragma
+  (`isNativeText`). That driver's decisions then reach the same `decide`. The other lossy reads
+  on the prover's side lose nothing:
+  - `get_text` in `sources.rs` reads only what `isNativeText` passed.
+  - `pragma.rs`'s JSON escapes can make a lone surrogate, but only in a pragma that
+    `isNativeText` keeps from Rust.
+  - `format.rs`, `pragma.rs`'s tokens, `source.rs` and Zenon's `isar.rs` slice text that came
+    from a Rust `String` at ASCII delimiters.
+  - `methods.rs` and Zenon's `expr.rs` read ASCII digits and letters.
+  - `marshal.rs` reads tlapm's fingerprints file, whose keys are hex digests.
 - At P5 the boundary moves up: `getObligations` and the encoders run in Rust, behind
   `prove_obligations(source, modules) → obligations + texts`, and `prove.ts` only decides. At P6
   the whole of `prove` and `prove-it tlapm` run in Rust; the TS `prove` becomes a thin call, as
@@ -1276,6 +1290,25 @@ is next.
     still ends the pragma's match, as the TypeScript's regular expression does, where tlapm reads
     on.
 
+- P6b step C, before the TypeScript goes: no script or test imports `src/prover` or
+  `src/obligations` but `src/cli/tlapm.ts`'s, `tlapm-cache.test.ts` and `tlapm-cache-fixtures.ts`.
+  - **Exports:** the host's `obligations(file, source, known, encode)` gives each obligation's id,
+    location, kind, printed text and methods, and the text each backend receives for the
+    `[id, prover]` pairs asked for, encoded in turn in one run; `fingerprint(file, source, known)`
+    gives each obligation's fingerprint. Both read modules as `prove` does, with the file each came
+    from under `path:<name>#<n>`, on the addon interface only (ABI 19). `scripts/native-prover.ts`
+    reads them, and runs the Rust driver in rounds for `prover-inputs` and the tests.
+  - **Checks:** on the same inputs, `conformance:tlapm`, `:fingerprint`, `:smt-encode`,
+    `:isabelle-encode`, `:zenon` and `:ptl` give the same output and results files as with the
+    TypeScript, and `prover-inputs` writes the same 12,022 inputs and `time-limits.json`. The
+    exports give, byte for byte, what the TypeScript gives on all 1,873 modules of `tlapm.json`.
+  - **Known:** a pragma's string that escapes a lone surrogate, which no corpus module has, read
+    as U+FFFD, as a Rust string can't hold it, and `prove` gave way to the TypeScript driver there.
+    The Rust now keeps a pragma's string raw, as tlapm's lexer does (above), so it no longer does.
+  - **Deleted:** `obligation-differential`, `encoder-differential`, `prover-driver-differential`
+    and `obligations-dump`, which compared the TypeScript with the Rust. `prove-driver.test.ts`
+    compares the Rust driver with what the TypeScript driver gives, recorded in
+    `tests/fixtures/prove/driver.json`.
 - P6c, `prove-it tlapm` native (this entry's PR): `prove-it-check`'s `tlapm.rs` ports
   `src/cli/tlapm.ts` onto the driver, and the TypeScript CLI hands the command line to the engine.
   - **The run:** the obligations, the scheduler and the printing run on a thread of their own
@@ -1295,13 +1328,14 @@ is next.
     obligation's fingerprint at each method as `Prep.already_processed` does, and `--noproving`.
     `tlapm_cache` reads and writes the file's bytes, and keeps each result as the driver's
     `Attempt`; the history moved to `tlapm.rs`, through the host.
-  - **The host** gained what tlapm's cache needs (`Host::get_path_kind`, `get_real_path`,
-    `list_directory` and `apply`). A run holds back what it prints and what it writes: the files
+  - **The host** gained what tlapm's cache needs: `FileKind::Other`, what is at a path that is
+    neither a file nor a directory, which TLC reads as a file and tlapm's loader can't, and
+    `Host::list_directory` and `apply`; it reads real paths through `Host::real_path`. A run holds back what it prints and what it writes: the files
     go into an overlay (`overlay.rs`), through which the run reads back what it wrote, and a
     journal of `FileOperation`s. Once the run ends without declining, the host applies the journal
     in order, and the run prints; where the host can't apply an operation, the run declines then
     (`FileOperation::get_failure`) and prints nothing. The binary applies the journal itself;
-    `checkSources` answers the reads for tlapm's command line from `kind:`, `realpath:`, `bytes:`
+    `checkSources` answers the reads for tlapm's command line from `stat:`, `realpath:`, `bytes:`
     and `entries:` keys and returns the journal as `files`, which the CLI applies the same way,
     with the same reasons. The run reads every module's cache before it proves any, so a round
     that lacks a key never proves: the paths it writes, and the history's entries, from which it

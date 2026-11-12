@@ -1,15 +1,18 @@
-import { existsSync, globSync, readFileSync, statSync } from "node:fs";
-import { delimiter, isAbsolute, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-
 import {
-  getErrorExitCode,
-  TlaConfigError,
-  TlaError,
-  TlaEvaluationError,
-  TlaUnsupportedError,
-} from "../errors";
-import { SANY_174_STANDARD_MODULES } from "../sany/modules";
+  accessSync,
+  constants,
+  existsSync,
+  globSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { arch, availableParallelism, release, tmpdir, totalmem, type } from "node:os";
+import { delimiter } from "node:path";
+
+import type { NativeMachine } from "../engine/native";
+import { getEngineVariables } from "../engine/settings";
+import { getErrorExitCode, TlaConfigError, TlaError, TlaEvaluationError } from "../errors";
 import {
   createMessagePrinter,
   formatInnerMessage,
@@ -19,6 +22,9 @@ import {
   type MessagePrinter,
 } from "../tlc/messages";
 import type { TlcVersion } from "../tlc/version";
+
+// What the CLI exits with where the native binary declines, as the binary does.
+export const NOT_NATIVE_EXIT_CODE = 1;
 
 const GLOB_CHARACTERS = /[*?[{]/;
 
@@ -36,39 +42,39 @@ export const getInputPaths = (paths: string[]): InputPath[] =>
       : [{ path: arg, isGlobbed: false }],
   );
 
-// TLC's resolver finds a module's file, or a Java class's that overrides it, in the first of the
-// directories that has it, by the path it makes there, which the system resolves: the working
-// directory written "", and .. after the link before it, as Java's Path.resolve does.
-export const findFile = (directories: string[], fileName: string) =>
-  directories
-    .map((directory) => (directory === "" ? fileName : `${directory}/${fileName}`))
-    .find(existsSync);
-
-// Whether a path the resolver found is one TLC can read: anything there but a directory, such as
-// /dev/null.
-export const isFile = (path: string) => existsSync(path) && !statSync(path).isDirectory();
-
-// SANY can't read a module's file it finds that isn't a file, such as a directory, which tla-ts
-// doesn't report as SANY does.
-export const createModuleLoader = (directories: string[]) => (name: string) => {
-  const path = findFile(directories, `${name}.tla`);
-  if (path === undefined) return undefined;
-  if (!isFile(path)) {
-    throw new TlaUnsupportedError(
-      `a module's file TLC finds but can't read, such as a directory: ${path}`,
-    );
+const isWritable = (path: string) => {
+  try {
+    accessSync(path, constants.W_OK);
+    return true;
+  } catch {
+    return false;
   }
-  return readFileSync(path, "utf8");
 };
 
-// SimpleFilenameToStream: SANY names the file of a module it can't find, and where it looked.
-export const printMissingFile = (userDirectory: string, fileName: string, directories: string[]) =>
-  console.error(
-    `File does not exist: ${userDirectory}/${fileName} while looking in these directories: ${userDirectory}, ${directories.join(", ")}, classpath:/tla2sany/StandardModules, classpath:/`,
-  );
-
-export const getStandardModulesUrl = (jar: string) =>
-  `jar:file:${pathToFileURL(resolve(jar)).pathname}!/tla2sany/StandardModules/`;
+// What the native check reads of the machine's files, by the keys prove-it-host's `check` names:
+// what is at a path, a file's bytes, the path with its links followed, the working directory, the
+// temporary directory, the platform, whose rules the engine as WebAssembly names paths by, and
+// whether the CLI can write into a directory. A path the system can't follow, as a loop of links, has none, and a file
+// it can't read, as a socket, has no bytes, as the binary reads them.
+export const readFileKey = (key: string) => {
+  const [kind, ...rest] = key.split(":");
+  const path = rest.join(":");
+  if (kind === "platform") return process.platform;
+  if (kind === "cwd") return process.cwd();
+  if (kind === "tmpdir") return tmpdir();
+  if (!existsSync(path)) return undefined;
+  const stats = statSync(path);
+  const isDirectory = stats.isDirectory();
+  if (kind === "writable") return isDirectory && isWritable(path) ? "directory" : undefined;
+  if (kind === "stat") return isDirectory ? "directory" : stats.isFile() ? "file" : "other";
+  if (kind === "realpath") return realpathSync.native(path);
+  if (kind !== "bytes" || isDirectory) return undefined;
+  try {
+    return new Uint8Array(readFileSync(path));
+  } catch {
+    return undefined;
+  }
+};
 
 // TLC prints an error it raises with that error's message code. tla-ts names the others, such as a
 // module SANY rejects.
@@ -98,26 +104,6 @@ export const reportErrors = async (
   }
 };
 
-// TLC 1.7.4's FileUtil.createNamedInputStream names the last file SimpleFilenameToStream looked
-// for, and the directories it looked in, the jar's standard modules last.
-export const printMissingFile174 = (path: string, libraries: string[], jar: string | undefined) =>
-  console.error(
-    `File does not exist: ${isAbsolute(path) ? path : `${process.cwd()}/${path}`} while looking in these directories: ${[...libraries, ...(jar === undefined ? [] : [getStandardModulesUrl(jar)])].join(", ")}`,
-  );
-
-// SimpleFilenameToStream ends a library directory with a separator.
-export const toLibraryPath = (directory: string) =>
-  directory.endsWith("/") ? directory : `${directory}/`;
-
-// TLC 1.7.4's SANY reports each module it can't find as it looks for it.
-export const reportMissingModules174 =
-  (loadModule: (name: string) => string | undefined, onMissing: (fileName: string) => void) =>
-  (name: string) => {
-    const text = loadModule(name);
-    if (text === undefined && !SANY_174_STANDARD_MODULES.has(name)) onMissing(`${name}.tla`);
-    return text;
-  };
-
 export interface JavaProperties {
   libraries: string[];
   // The system properties the launch sets with -Dname=value, which TLCGet("-Dname") reads.
@@ -129,3 +115,26 @@ export interface JavaProperties {
 
 export const getToolsJar = (java: JavaProperties) =>
   java.classPath?.split(delimiter).find((entry) => entry.endsWith(".jar"));
+
+// The zone TLC prints its dates in, as a POSIX TZ rule of the offset the process has now.
+const getZoneRule = () => {
+  const offset = -new Date().getTimezoneOffset();
+  const hours = Math.floor(Math.abs(offset) / 60);
+  const minutes = String(Math.abs(offset) % 60).padStart(2, "0");
+  return `<${offset < 0 ? "-" : "+"}${String(hours).padStart(2, "0")}${minutes}>${offset > 0 ? "-" : ""}${hours}:${minutes}`;
+};
+
+// The machine the CLI's native check describes, as prove-it-host's `check` takes it, with the
+// environment variables the command reads besides the engine's.
+export const getMachine = (variables: [string, string][] = []): NativeMachine => [
+  type(),
+  release(),
+  arch(),
+  availableParallelism(),
+  Math.floor(totalmem() / 1024 / 1024),
+  process.pid,
+  Date.now(),
+  getZoneRule(),
+  [...getEngineVariables(), ...variables],
+  false,
+];

@@ -15,10 +15,6 @@ use crate::host::Host;
 
 const JSON_MODULE: &str = "_JsonTrace";
 
-/// Why the binary declines the trace's file the trace exploration spec's postcondition writes.
-pub const TRACE_FILE_DECLINE: &str =
-    "the trace file of the trace exploration spec, which TLC compresses with Java's Deflater";
-
 /// The command line's -dumpTrace options and what they need of the configuration.
 pub struct TraceDumps {
     /// Each option in the order given: whether it writes JSON, and its file.
@@ -31,6 +27,8 @@ pub struct TraceDumps {
     is_trace_recorded: bool,
     /// That `.bin`, where the binary knows where TLC writes it.
     trace_file: Option<String>,
+    /// Whether TLC runs with -tool, which words a failing ALIAS's message in the dump.
+    is_tool: bool,
 }
 
 /// A file a dump writes, and what TLC prints as it writes it.
@@ -70,6 +68,7 @@ impl TraceDumps {
                 .collect(),
             is_trace_recorded,
             trace_file: trace_file.filter(|_| is_trace_recorded),
+            is_tool: args.has("-tool"),
         }
     }
 
@@ -78,6 +77,14 @@ impl TraceDumps {
     pub fn leave_out_trace_file(&mut self) {
         self.is_trace_recorded = false;
         self.trace_file = None;
+    }
+
+    /// The files the dumps may write: the command line's, then the trace exploration spec's.
+    pub fn get_paths(&self) -> impl Iterator<Item = &str> {
+        self.dumps
+            .iter()
+            .map(|dump| dump.1.as_str())
+            .chain(self.trace_file.as_deref())
     }
 
     /// Whether the command line asks for a dump, as the trace exploration spec's postcondition
@@ -107,18 +114,17 @@ impl TraceDumps {
 
     /// The files the postconditions write of the counterexample, in their order. Each module's
     /// constant names its file, which TLC gives each postcondition of the module in turn
-    /// (`processConstantsForModule`), so each writes the file of the last.
+    /// (`processConstantsForModule`), so each writes the file of the last. `is_initial` says the
+    /// violation is of an initial state, which TLC dumps without its ALIAS.
     pub fn dump(
         &self,
         ir: &Ir,
         rebuilder: &mut Rebuilder<'_>,
         counter_example: &CounterExample<'_>,
+        is_initial: bool,
     ) -> Result<Vec<DumpedFile>, Unsupported> {
         if self.is_empty() {
             return Ok(Vec::new());
-        }
-        if self.is_trace_recorded {
-            return Err(Unsupported(TRACE_FILE_DECLINE.into()));
         }
         // TLC finds the trace again for the postconditions, which a random draw may not find, and
         // then writes nothing.
@@ -132,7 +138,14 @@ impl TraceDumps {
                 "-dumpTrace of a trace TLC may not find again for a random draw".into(),
             ));
         }
-        let dumped = rebuilder.dump_trace(counter_example)?;
+        // A JSON dump is written byte for byte, so it follows TLC's sharing of values; the
+        // binary trace files alone are matched by what TLC reads back from them.
+        let dumped = rebuilder.dump_trace(
+            counter_example,
+            self.dumps.iter().any(|dump| dump.0),
+            is_initial,
+            self.is_tool,
+        )?;
         let model_values: Vec<&str> = self.model_values.iter().map(String::as_str).collect();
         let mut files = Vec::new();
         // The trace exploration spec's postcondition writes `_TLCTrace`'s file after the command
@@ -180,10 +193,11 @@ impl TraceDumps {
 /// Whether the host can write each file: TLC writes a JSON dump into the directories it makes
 /// and a `tlc` one into the directory that holds it, and fails where it can't.
 pub fn is_writable(host: &dyn Host, files: &[DumpedFile]) -> bool {
+    let platform = host.platform();
     files.iter().all(|file| {
-        Path::new(&file.path)
-            .parent()
-            .is_none_or(|parent| parent.as_os_str().is_empty() || host.is_file(parent))
+        platform
+            .last_separator(&file.path)
+            .is_none_or(|end| host.is_file(Path::new(&file.path[..end.max(1)])))
     })
 }
 

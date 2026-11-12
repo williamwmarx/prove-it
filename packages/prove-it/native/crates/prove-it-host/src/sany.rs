@@ -1,22 +1,23 @@
 //! What SANY prints for a spec, as tla-front writes it, for the CLI of `dist/`: the report the
-//! native binary prints. `sanyText(root, source, fileName, known)` takes the root module's name and
-//! text, the file name TLC gives SANY, and what is known of the spec's other modules and files
-//! (`sources`), and returns one of:
+//! native binary prints. `sanyText(root, source, fileName, version, rootExtendees, known)` takes the
+//! root module's name and text, or null where no file holds it, the file name TLC gives SANY, TLC's version ("master" or "1.7.4"),
+//! the modules TLC adds to the root module's EXTENDS for its post conditions, and what is known of
+//! the spec's other modules and files (`sources`), and returns one of:
 //!
 //! - `{ kind: "text", text, isFailed, exception }`, SANY's report;
 //! - `{ kind: "needed", keys }`, what the report reads that isn't known yet (`sources`);
 //! - `{ kind: "declined", reason }`, where tla-front doesn't write SANY's report.
 //!
-//! `sanyXml` does the same for what SANY's XMLExporter prints.
+//! The CLI's TypeScript check answers its keys through `resolveFiles` (`check`).
 
 use tla_front::TlcVersion;
 use tla_front::errors::FrontError;
-use tla_front::report::{ModuleOrigin, ReportOptions, get_sany_text_of};
-use tla_front::sany::export::export_xml;
-use tla_front::sany::xml::XmlExportOptions;
+use tla_front::report::{
+    ModuleOrigin, ReportOptions, get_missing_root_text, get_sany_text_of, get_standard_root_text,
+};
 
 use crate::hooks::HookResult;
-use crate::sources::{Sources, get_text};
+use crate::sources::{Sources, get_strings, get_text};
 use crate::value::HostValue;
 
 fn get_origin(origin: ModuleOrigin) -> &'static str {
@@ -34,12 +35,6 @@ fn declined(reason: &str) -> HostValue {
     ])
 }
 
-/// The stack of the thread the report is written on: the front end recurses as deep as TLC's
-/// translation of a formula does, which the stack of the thread JavaScript calls on doesn't hold,
-/// as `prove-it-cli`'s run thread doesn't.
-#[cfg(not(target_arch = "wasm32"))]
-const REPORT_STACK_BYTES: usize = 64 * 1024 * 1024;
-
 /// Runs `write` on this thread: wasm's stack is the one it links.
 #[cfg(target_arch = "wasm32")]
 fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
@@ -51,7 +46,7 @@ fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
 fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
-            .stack_size(REPORT_STACK_BYTES)
+            .stack_size(tla_front::report::REPORT_STACK_BYTES)
             .spawn_scoped(scope, write)
             .expect("a thread for SANY's report")
             .join()
@@ -59,71 +54,38 @@ fn on_deep_stack(write: impl FnOnce() -> HookResult + Send) -> HookResult {
     })
 }
 
-/// `sanyText(root, source, fileName, known)`.
+/// `sanyText(root, source, fileName, version, rootExtendees, known)`.
 pub fn sany_text(arguments: &[HostValue]) -> HookResult {
     on_deep_stack(|| write_sany_text(arguments))
 }
 
-/// `sanyXml(root, source, fileName, flags, known)`: what SANY's XMLExporter prints for the spec,
-/// with `flags` the letters of its -r, -u and -t. Returns `{ kind: "exported", stdout, stderr,
-/// exitCode }`, or `needed` or `declined` as `sanyText` does.
-pub fn sany_xml(arguments: &[HostValue]) -> HookResult {
-    on_deep_stack(|| write_sany_xml(arguments))
-}
-
-fn write_sany_xml(arguments: &[HostValue]) -> HookResult {
-    let [root, source, file_name, flags, known] = arguments else {
-        return Err(
-            "sanyXml takes a module's name, its text, a file name, flags and what is known".into(),
-        );
-    };
-    let root = get_text(root, "the root module's name")?;
-    let source = get_text(source, "the root module's text")?;
-    let file_name = get_text(file_name, "the file name")?;
-    let flags = get_text(flags, "the flags")?;
-    let sources = Sources::new(known)?;
-    let options = XmlExportOptions {
-        is_restricted: flags.contains('r'),
-        is_uncommented: flags.contains('u'),
-        is_terse: flags.contains('t'),
-    };
-    let result = export_xml(
-        &root,
-        &source,
-        &file_name,
-        &|name| sources.get(format!("module:{name}")),
-        &options,
-    );
-    if let Some(needed) = sources.get_needed() {
-        return Ok(needed);
-    }
-    Ok(match result {
-        Ok(exported) => HostValue::Object(vec![
-            ("kind", HostValue::text("exported")),
-            ("stdout", HostValue::text(&exported.stdout)),
-            ("stderr", HostValue::text(&exported.stderr)),
-            ("exitCode", HostValue::Number(f64::from(exported.exit_code))),
-        ]),
-        Err(FrontError::NotYet(reason)) => declined(&format!("SANY's XMLExporter of {reason}")),
-        Err(_) => declined("SANY's XMLExporter, which tla-front doesn't write"),
-    })
-}
-
 fn write_sany_text(arguments: &[HostValue]) -> HookResult {
-    let [root, source, file_name, known] = arguments else {
+    let [root, source, file_name, version, root_extendees, known] = arguments else {
         return Err(
-            "sanyText takes a module's name, its text, a file name and what is known".into(),
+            "sanyText takes a module's name, its text, a file name, TLC's version, the root \
+             module's added extendees and what is known"
+                .into(),
         );
     };
+    let version = match get_text(version, "TLC's version")?.as_str() {
+        "master" => TlcVersion::Master,
+        "1.7.4" => TlcVersion::V1_7_4,
+        other => return Err(format!("TLC's version is master or 1.7.4, not {other}")),
+    };
+    let root_extendees = get_strings(root_extendees, "the root module's added extendees")?;
+    let root_extendees: Vec<&str> = root_extendees.iter().map(String::as_str).collect();
     let root = get_text(root, "the root module's name")?;
-    let source = get_text(source, "the root module's text")?;
+    let source = match source {
+        HostValue::Undefined | HostValue::Null => None,
+        source => Some(get_text(source, "the root module's text")?),
+    };
     let file_name = match file_name {
         HostValue::Undefined | HostValue::Null => None,
         file_name => Some(get_text(file_name, "the file name")?),
     };
     let sources = Sources::new(known)?;
     let options = ReportOptions {
-        version: TlcVersion::Master,
+        version,
         file_name: file_name.as_deref(),
         load_module: &|name| sources.get(format!("module:{name}")),
         describe_file: &|name, origin| {
@@ -131,10 +93,22 @@ fn write_sany_text(arguments: &[HostValue]) -> HookResult {
                 .get(format!("file:{}:{name}", get_origin(origin)))
                 .unwrap_or_default()
         },
-        root_extendees: &[],
+        root_extendees: &root_extendees,
         is_xml_export: false,
     };
-    let result = get_sany_text_of(&root, &source, &options);
+    let name = file_name.as_deref().unwrap_or(&root);
+    let standard = source
+        .is_none()
+        .then(|| get_standard_root_text(&root, &options))
+        .flatten();
+    let result = match &source {
+        Some(source) => get_sany_text_of(&root, source, &options),
+        // SANY reads a root module no file holds from its standard modules.
+        None if standard.is_some() => standard.expect("a standard root"),
+        // SANY names a root module no file holds by the spec's name as TLC was given it.
+        None if version == TlcVersion::Master => Ok(get_missing_root_text(name, name)),
+        None => Err(FrontError::NotYet("a spec without its file".to_owned())),
+    };
     if let Some(needed) = sources.get_needed() {
         return Ok(needed);
     }

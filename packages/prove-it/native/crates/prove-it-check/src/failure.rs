@@ -4,7 +4,7 @@
 
 use tla_engine::clock::Instant;
 
-use tla_engine::search::Violation;
+use tla_engine::search::{DeadlockAtom, Violation};
 use tla_ir::{Ir, NodeId, NodeKind, SourceRange};
 use tla_trace::{
     Alias, CounterExample, Ending, Failure, Rebuilder, Registers, Site, Trace, Unsupported,
@@ -50,6 +50,9 @@ pub struct ErrorStop<'a> {
     pub is_aliased: bool,
     /// What TLCGet reads as TLC checks the postconditions after the failure, where it does.
     pub postconditions: Option<PostconditionRun>,
+    /// Where the search placed what TLC prints adding the state it stopped at to the behavior
+    /// graphs, which comes after the trace and before the replay of the expansion.
+    pub added: Option<Vec<String>>,
 }
 
 // The failure and the trace's states as TLC prints them, each with its label and what the spec
@@ -92,15 +95,21 @@ pub fn print_failure(
             | Site::InitialPredicate(_)
             | Site::InitialAtom { .. }
     );
-    // An invariant that fails to evaluate stops TLC's worker before it adds the state it was
-    // expanding to the behavior graphs, and TLC's replay of the expansion adds nothing to them
-    // (`ModelChecker.doNext`), so the temporal properties show only in what their atoms print as
-    // TLC adds the states before it. The search reports a failure of the next-state relation in
-    // such a model only where it followed TLC's checks of the state as TLC adds it after.
-    let is_next = matches!(stop.site, Site::Next | Site::NextAtom { .. });
+    // After an invariant that fails to evaluate, TLC's worker adds the state it was expanding to
+    // the behavior graphs, with the successors it had put in its set (`Worker.run`), and TLC's
+    // replay of the expansion adds nothing to them (`ModelChecker.doNext`), so the temporal
+    // properties show only in what their atoms print, which the search places where it holds
+    // what the spec prints. The search reports a failure of the next-state relation in such a
+    // model only where it followed TLC's checks of the state as TLC adds it after.
+    // An action constraint that fails to evaluate fails TLC's next states (`Worker.addElement`).
+    let is_next = matches!(
+        stop.site,
+        Site::Next | Site::NextAtom { .. } | Site::ActionConstraint(_)
+    );
     let is_followed = is_atom
         || is_initial
         || is_next
+        || stop.added.is_some()
         || matches!(stop.site, Site::Invariant(_)) && !atoms_print(ir);
     if !ir.model.live_properties.is_empty() && !is_followed {
         return Err("a failure in a model with temporal properties".into());
@@ -170,7 +179,7 @@ pub fn print_failure(
     // before the state (`printTrace`).
     if let Some(first) = report.states.first() {
         for line in &first.output {
-            printer.line(line);
+            printer.printed(line);
         }
         printer.print(
             code::BEHAVIOR_UP_TO_THIS_POINT,
@@ -180,7 +189,7 @@ pub fn print_failure(
         for (position, step) in report.states.iter().enumerate() {
             if position > 0 {
                 for line in &step.output {
-                    printer.line(line);
+                    printer.printed(line);
                 }
             }
             printer.state(position + 1, &step.label, step.variables.clone());
@@ -195,7 +204,7 @@ pub fn print_failure(
         .as_ref()
         .is_some_and(|fingerprint| fingerprint.is_replayed);
     if failure.fingerprint.is_some() && !is_replayed && !report.states.is_empty() {
-        printer.print(failure.code, Level::Error, message);
+        printer.report(failure.code, message);
     }
     // TLC computes the initial states again for the call stack, from a count of none, and
     // reports its progress at each power of two before the state that fails again
@@ -228,7 +237,7 @@ pub fn print_failure(
         );
     }
     for line in &report.after {
-        printer.line(line);
+        printer.printed(line);
     }
     print_postcondition_failure(printer, ir, report.postconditions.as_ref());
     match &failure.fingerprint {
@@ -240,9 +249,8 @@ pub fn print_failure(
             } else {
                 &fingerprint.reason
             };
-            printer.print(
+            printer.report(
                 code::FINGERPRINT_FAILED,
-                Level::Error,
                 &format!(
                     "TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n{}\nReason:\n{reason}",
                     format_call_stack(ir, &fingerprint.sources)
@@ -271,9 +279,8 @@ pub fn print_failure(
             } else {
                 &fingerprint.reason
             };
-            printer.print(
+            printer.report(
                 code::FINGERPRINT_FAILED,
-                Level::Error,
                 &format!(
                     "TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n{trace}\nReason:\n{reason}"
                 ),
@@ -329,11 +336,22 @@ pub fn print_failure(
 // instance's scope, or one that reaches Print, PrintT or AssertEq, through the definitions it
 // names.
 fn atoms_print(ir: &Ir) -> bool {
+    ir.model.atoms.iter().any(|atom| atom.scope.is_some())
+        || reaches(
+            ir,
+            ir.model.atoms.iter().map(|atom| atom.expression).collect(),
+            |text, _| matches!(text, "Print" | "PrintT" | "AssertEq"),
+        )
+}
+
+// Whether the expressions at `pending` name what `is_target` picks, through the definitions they
+// name.
+fn reaches(
+    ir: &Ir,
+    mut pending: Vec<NodeId>,
+    is_target: impl Fn(&str, &tla_ir::Resolution) -> bool,
+) -> bool {
     let arena = &ir.nodes.arena;
-    if ir.model.atoms.iter().any(|atom| atom.scope.is_some()) {
-        return true;
-    }
-    let mut pending: Vec<NodeId> = ir.model.atoms.iter().map(|atom| atom.expression).collect();
     let mut seen = vec![false; arena.len()];
     while let Some(node) = pending.pop() {
         if std::mem::replace(&mut seen[node as usize], true) {
@@ -344,10 +362,7 @@ fn atoms_print(ir: &Ir) -> bool {
         | NodeKind::Apply { name, .. }
         | NodeKind::OperatorReference(name) = kind
         {
-            if matches!(
-                &*ir.texts[name.text as usize],
-                "Print" | "PrintT" | "AssertEq"
-            ) {
+            if is_target(&ir.texts[name.text as usize], &name.resolution) {
                 return true;
             }
             if let tla_ir::Resolution::Definition(index) = name.resolution {
@@ -362,7 +377,56 @@ fn atoms_print(ir: &Ir) -> bool {
     false
 }
 
-fn print_call_stack(printer: &mut Printer, ir: &Ir, call_stack: &[SourceRange]) {
+/// The call stack of the atom that fails as TLC adds a deadlocked state to the behavior graphs,
+/// which TLC prints after the deadlock's trace: none where TLC's rerun with its `CallStackTool`
+/// has none, as for a failing comparison of a subscript's two values, or throws a
+/// FingerprintException (`Worker#doNextCheckLiveness`).
+pub(crate) fn deadlock_atom_stack(
+    ir: &Ir,
+    violation: &Violation,
+    atom: DeadlockAtom,
+) -> Result<Vec<SourceRange>, String> {
+    // TLC's call stack holds the INSTANCE of a copied definition the atom reaches.
+    let model = &ir.model;
+    if model.atoms.get(atom.atom as usize).is_none_or(|read| {
+        read.scope.is_some()
+            || reaches(ir, vec![read.expression], |_, resolution| {
+                matches!(resolution, tla_ir::Resolution::Definition(index)
+                    if model.instance_names.iter().any(|&(named, _)| named == *index)
+                        || model.instance_actions.iter().any(|action| action.definition == *index))
+            })
+    }) {
+        return Err("a deadlocked state's failing atom read through an INSTANCE".into());
+    }
+    let mut states: Vec<&[Id]> = violation.states.iter().map(Vec::as_slice).collect();
+    if atom.is_extra
+        && let Some(&last) = states.last()
+    {
+        states.push(last);
+    }
+    let failure = evaluate_on_search_stack(|| {
+        Rebuilder::new(ir)?.evaluate_failure(
+            &violation.store,
+            &states,
+            &violation.labels,
+            Site::DeadlockAtom {
+                atom: atom.atom,
+                is_extra: atom.is_extra,
+            },
+        )
+    })?;
+    // TLC evaluates the atoms again with its call stack, printing again what they print.
+    if !failure.printed.is_empty() {
+        return Err("an atom that prints as it fails on a deadlocked state".into());
+    }
+    match failure.fingerprint {
+        None => Ok(failure.call_stack),
+        Some(fingerprint) if fingerprint.is_replayed => Ok(Vec::new()),
+        Some(_) => Err("a state TLC fails to fingerprint as it adds a deadlocked state".into()),
+    }
+}
+
+pub(crate) fn print_call_stack(printer: &mut Printer, ir: &Ir, call_stack: &[SourceRange]) {
     printer.print(
         code::NESTED_EXPRESSION,
         Level::Error,
@@ -443,9 +507,10 @@ fn evaluate(
         }
         let failure =
             rebuilder.evaluate_failure(stop.store, &stop.states, &stop.actions, stop.site)?;
-        // TLC holds a successor that fails an invariant as it found it.
+        // TLC holds a successor that fails an invariant or an action constraint as it found it.
         let ending = match stop.site {
             Site::Invariant(_) => Ending::Violation,
+            Site::ActionConstraint(_) => Ending::Failed,
             _ => Ending::Kept,
         };
         // TLC prints no trace for a check of an initial state that fails.
@@ -475,21 +540,24 @@ fn evaluate(
         // TLC rebuilds the trace once more after it prints it, for the postconditions, then
         // replays the failure. Its worker rebuilds it after a failure in the next-state relation
         // only as it goes on to check the state for deadlock, having generated no successor of
-        // it, and never after an invariant fails to evaluate, since it generated the successor
-        // (`Worker.run`, `Worker.addElement`).
+        // it, and never after an invariant or an action constraint fails to evaluate, since it
+        // generated the successor (`Worker.run`, `Worker.addElement`).
         let is_rebuilt_again = match stop.site {
-            Site::Invariant(_) => false,
+            Site::Invariant(_) | Site::ActionConstraint(_) => false,
             Site::Next | Site::NextAtom { .. } => {
                 ir.model.check_deadlock && !failure.replay.is_successor_generated
             }
             _ => true,
         };
+        // TLC's worker adds the state to the behavior graphs after it rebuilt the trace again,
+        // and the replay comes once the workers are done (`ModelChecker.modelCheck`).
         let after = trace
             .trace_output
             .iter()
             .filter(|_| is_rebuilt_again)
-            .chain(&failure.printed)
             .map(|print| format_print(print))
+            .chain(stop.added.iter().flatten().cloned())
+            .chain(failure.printed.iter().map(|print| format_print(print)))
             .collect();
         // TLC prints a state it was expanding alone, an initial one, as it is, and every other
         // trace through the ALIAS (`TLCTrace.printTrace`).

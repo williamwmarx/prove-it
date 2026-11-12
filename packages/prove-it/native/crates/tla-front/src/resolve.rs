@@ -141,7 +141,8 @@ type SelectionError = (Expr, Vec<Expr>, SanyError);
 
 /// What the TypeScript front end keeps in `WeakSet`s and `WeakMap`s by node: the names that select
 /// a subexpression (`selections`, `selectionErrors`), the arities of the names resolution renamed
-/// (`renamedArities`), and the names of the definitions instances copy (`sourceNames`). A table
+/// (`renamedArities`), the names of the definitions instances copy (`sourceNames`), and the
+/// expressions instances put in for declarations. A table
 /// keeps each node it names, so no other node takes its address.
 #[derive(Default)]
 pub struct Tables {
@@ -152,6 +153,7 @@ pub struct Tables {
     source_names: RefCell<FastMap<usize, (Rc<Definition>, Name)>>,
     errors: RefCell<FastMap<usize, SelectionError>>,
     renamed_arities: RefCell<FastMap<usize, (Expr, usize)>>,
+    substitutions: RefCell<FastMap<usize, Expr>>,
 }
 
 fn address(expression: &Expr) -> usize {
@@ -159,6 +161,29 @@ fn address(expression: &Expr) -> usize {
 }
 
 impl Tables {
+    /// Notes an expression an INSTANCE puts in for a declaration of the module it instantiates.
+    pub fn add_substitution(&self, expression: &Expr) {
+        self.substitutions
+            .borrow_mut()
+            .insert(address(expression), expression.clone());
+    }
+
+    /// Notes a copy of an expression an INSTANCE put in for a declaration as one too, as a later
+    /// INSTANCE or a renaming makes it.
+    pub fn carry_substitution(&self, source: &Expr, copy: &Expr) {
+        if self.is_substitution(source) {
+            self.add_substitution(copy);
+        }
+    }
+
+    /// Whether an INSTANCE puts this expression in for a declaration, where TLC's `SubstInNode`
+    /// keeps the declaration's node and binds it to the expression's value.
+    pub fn is_substitution(&self, expression: &Expr) -> bool {
+        self.substitutions
+            .borrow()
+            .contains_key(&address(expression))
+    }
+
     /// `getSourceName`.
     pub fn get_source_name(&self, definition: &Rc<Definition>) -> Name {
         self.source_names
@@ -374,7 +399,10 @@ fn is_bindable(name: &str, current: Option<&Binding>, added: &Binding, unit: &Un
     if current.kind == SymbolKind::Builtin {
         unit.error(
             location,
-            format!("Symbol {name} is a built-in operator, and cannot be redefined."),
+            format!(
+                "Symbol {} is a built-in operator, and cannot be redefined.",
+                crate::sany::generator::resolve_synonym(name)
+            ),
         );
     } else if added.kind == SymbolKind::Parameter
         || current.kind != added.kind
@@ -1570,7 +1598,10 @@ fn resolve_definition(
         report(if is_function {
             format!("Function name `{name}' already defined or declared.")
         } else {
-            format!("Operator {name} already defined or declared.")
+            format!(
+                "Operator {} already defined or declared.",
+                crate::sany::generator::resolve_synonym(name)
+            )
         });
     }
     // SANY analyzes the body with the arity of the RECURSIVE declaration, and compares only the
@@ -2549,11 +2580,22 @@ fn check_use_or_hide(use_or_hide: &UseOrHide, scope: &Scope, unit: &Unit) -> Res
             "an empty USE or HIDE without a place".to_owned(),
         ));
     };
+    if use_or_hide.defs.is_empty() {
+        report_bare_use_or_hide(use_or_hide.is_only, range, unit);
+    }
     unit.error(
         format_range(range),
         "Empty USE or HIDE statement.".to_owned(),
     );
     Ok(())
+}
+
+/// `generateUseOrHide` reports a BY, USE or HIDE with nothing after its keyword, not even ONLY,
+/// before its caller reports it empty.
+fn report_bare_use_or_hide(is_only: bool, range: &Range, unit: &Unit) {
+    if !is_only {
+        unit.error(format_range(range), "Empty BY, USE, or HIDE".to_owned());
+    }
 }
 
 fn resolve_new_symbol(symbol: &NewSymbol, scope: &Scope, unit: &Unit) -> Result<Scope> {
@@ -2654,7 +2696,12 @@ fn resolve_proof(proof: Option<&Proof>, scope: &Scope, outer: &Unit) -> Result<(
     };
     match proof.map(|proof| &proof.kind) {
         // `generateLeafProof` rejects a BY that keeps no fact and no DEF entry.
-        Some(ProofKind::By { facts, defs, .. }) => {
+        Some(ProofKind::By {
+            is_only,
+            facts,
+            defs,
+            ..
+        }) => {
             check_facts(facts, scope, &unit)?;
             if check_defs(defs, scope, &unit)? || !facts.is_empty() {
                 return Ok(());
@@ -2662,6 +2709,9 @@ fn resolve_proof(proof: Option<&Proof>, scope: &Scope, outer: &Unit) -> Result<(
             let Some(range) = proof.and_then(|proof| proof.location.range.as_ref()) else {
                 return Err(FrontError::NotYet("an empty BY without a place".to_owned()));
             };
+            if defs.is_empty() {
+                report_bare_use_or_hide(*is_only, range, &unit);
+            }
             unit.error(format_range(range), "Empty BY".to_owned());
             Ok(())
         }
@@ -2715,10 +2765,12 @@ fn get_step_at(expression: &Expression) -> Option<usize> {
     if !is_infix_expression(expression) {
         return None;
     }
-    let ExpressionKind::Apply { args, .. } = &expression.kind else {
-        return None;
+    let left = match &expression.kind {
+        ExpressionKind::Apply { args, .. } => &args[0],
+        ExpressionKind::Junction { operands, .. } if operands.len() == 2 => &operands[0],
+        _ => return None,
     };
-    matches!(args[0].kind, ExpressionKind::ExceptAt).then(|| Rc::as_ptr(&args[0]) as usize)
+    matches!(left.kind, ExpressionKind::ExceptAt).then(|| Rc::as_ptr(left) as usize)
 }
 
 /// A LET or a step binds the name of the INSTANCE after the names it adds.
@@ -2999,6 +3051,9 @@ pub struct ModuleContext<'a> {
     pub get_key: GetKey,
     /// The names each INSTANCE adds, by the INSTANCE's address.
     pub instanced: Rc<RefCell<FastMap<usize, Symbols>>>,
+    /// Where an INSTANCE of the module first made each name it adds visible, before which SANY
+    /// doesn't know the name.
+    pub imported_at: Rc<FastMap<Name, Position>>,
     /// The theorems and assumptions the extended and instantiated modules export.
     pub facts: Rc<RefCell<FastSet<Name>>>,
     pub reports: Rc<RefCell<Vec<ModuleReport>>>,
@@ -3025,13 +3080,19 @@ pub fn is_theorem_definition(module: &Module, definition: &Definition) -> bool {
         })
 }
 
-fn get_declared(module: &Module) -> Rc<FastMap<Name, Position>> {
+// Where the module declares each constant and variable, and where its INSTANCEs add names.
+fn get_declared(module: &Module, unit: &ModuleContext) -> Rc<FastMap<Name, Position>> {
     Rc::new(
         module
             .constants
             .iter()
             .chain(&module.variables)
             .map(|declaration| (declaration.name.clone(), declaration.location.position()))
+            .chain(
+                unit.imported_at
+                    .iter()
+                    .map(|(name, position)| (name.clone(), *position)),
+            )
             .collect(),
     )
 }
@@ -3261,7 +3322,7 @@ pub fn resolve_substitutions(
         &None,
         &Unit {
             imported: Rc::new(imported),
-            declared: get_declared(module),
+            declared: get_declared(module, unit),
             modules: Rc::default(),
             get_instance: unit.get_instance.clone(),
             definitions: unit.definitions.clone(),
@@ -3407,7 +3468,7 @@ pub fn resolve_module(module: &Module, unit: &ModuleContext) -> Result<Vec<SanyE
     let recursive: Rc<RefCell<Vec<Rc<Local>>>> = Rc::default();
     let declarations: Rc<RefCell<Vec<RecursiveDeclaration>>> = Rc::default();
     let let_recursive: LetRecursive = Rc::default();
-    let declared = get_declared(module);
+    let declared = get_declared(module, unit);
     let modules: Rc<FastMap<Name, Position>> = Rc::new(
         module
             .modules

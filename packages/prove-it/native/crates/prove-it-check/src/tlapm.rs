@@ -37,7 +37,7 @@ use prove_obligations::tlaps_module::TLAPS_MODULE;
 use tla_engine::clock::Instant;
 
 use crate::check::not_native;
-use crate::host::{Entry, Host, PathKind};
+use crate::host::{Entry, FileKind, Host};
 use crate::messages::Output;
 use crate::outcome::Outcome;
 use crate::overlay::Overlay;
@@ -131,7 +131,7 @@ impl Session<'_> {
         self.output.host
     }
 
-    fn get_kind(&self, path: &Path) -> Option<PathKind> {
+    fn get_kind(&self, path: &Path) -> FileKind {
         self.overlay.get_kind(path, self.output.host)
     }
 
@@ -166,13 +166,13 @@ impl<'a> Io<'a> {
         });
     }
 
-    fn get_kind(&self, path: &str) -> Option<PathKind> {
+    fn get_kind(&self, path: &str) -> FileKind {
         let path = PathBuf::from(path);
         self.call(move |session| session.get_kind(&path))
     }
 
     fn exists(&self, path: &str) -> bool {
-        self.get_kind(path).is_some()
+        self.get_kind(path) != FileKind::Absent
     }
 }
 
@@ -737,7 +737,7 @@ fn find_standard_library(io: &Io<'_>) -> Run<Option<String>> {
         }
         let real = {
             let tlapm = PathBuf::from(&tlapm);
-            io.call(move |session| session.host().get_real_path(&tlapm))
+            io.call(move |session| session.host().real_path(&tlapm))
         };
         let Some(real) = real else {
             return decline(format!("the real path of {tlapm}"));
@@ -829,14 +829,14 @@ impl Search {
         for directory in &self.loader {
             let path = concat_paths(directory, name);
             match io.get_kind(&path) {
-                Some(PathKind::File) => {
+                FileKind::File => {
                     return Ok(Some(Found {
                         path,
                         name: name.to_owned(),
                         is_loaded: true,
                     }));
                 }
-                Some(PathKind::Other) => {
+                FileKind::Other => {
                     return decline(format!("a module file tlapm finds but can't read: {path}"));
                 }
                 _ => {}
@@ -1047,7 +1047,7 @@ fn read_module(
 ) -> Run<ObligationSource> {
     let path = PathBuf::from(&found.path);
     let bytes = match io.get_kind(&found.path) {
-        Some(PathKind::File) => io.call(move |session| session.read(&path)),
+        FileKind::File => io.call(move |session| session.read(&path)),
         _ => None,
     };
     let Some(bytes) = bytes else {
@@ -1171,9 +1171,9 @@ fn check_modules(
         // fingerprints once it has proved.
         if parsed.has("--cleanfp") {
             match io.get_kind(&fingerprints_path) {
-                None => {}
-                Some(PathKind::Directory) => return Err(get_abnormal_ending(&fingerprints_path)),
-                Some(_) => {
+                FileKind::Absent => {}
+                FileKind::Directory => return Err(get_abnormal_ending(&fingerprints_path)),
+                FileKind::File | FileKind::Other => {
                     remove(io, &fingerprints_path);
                     io.out(format!(
                         "(* fingerprints file {} removed *)\n",
@@ -1315,12 +1315,12 @@ fn read_cache(
         io.call(move |session| {
             let host = session.host();
             for path in &paths {
-                host.get_path_kind(Path::new(path));
+                host.kind(Path::new(path));
             }
-            if host.get_path_kind(Path::new(&loaded)).is_some() {
+            if host.kind(Path::new(&loaded)) != FileKind::Absent {
                 host.read_bytes(Path::new(&loaded));
             }
-            if host.get_path_kind(&history).is_some() {
+            if host.kind(&history) != FileKind::Absent {
                 host.list_directory(&history);
             }
         });
@@ -1421,7 +1421,7 @@ fn pad(value: i64) -> String {
 /// history, named by the local time, and keeps the latest ten, by shell commands whose failures
 /// tlapm ignores. It then writes the fingerprints file, which it can't where a directory is there.
 fn save_history(io: &Io<'_>, path: &str, sources: &[String], now: LocalTime) -> Run<()> {
-    if io.get_kind(path) == Some(PathKind::Directory) {
+    if io.get_kind(path) == FileKind::Directory {
         return Err(get_abnormal_ending(path));
     }
     let history = format!("{path}.history");

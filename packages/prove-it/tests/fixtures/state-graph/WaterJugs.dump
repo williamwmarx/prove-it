@@ -1,0 +1,56 @@
+State 1:
+/\ large = 0
+/\ small = 0
+
+State 2:
+/\ large = 0
+/\ small = 3
+
+State 3:
+/\ large = 5
+/\ small = 0
+
+State 4:
+/\ large = 5
+/\ small = 3
+
+State 5:
+/\ large = 3
+/\ small = 0
+
+State 6:
+/\ large = 2
+/\ small = 3
+
+State 7:
+/\ large = 3
+/\ small = 3
+
+State 8:
+/\ large = 2
+/\ small = 0
+
+State 9:
+/\ large = 5
+/\ small = 1
+
+State 10:
+/\ large = 0
+/\ small = 2
+
+State 11:
+/\ large = 0
+/\ small = 1
+
+State 12:
+/\ large = 5
+/\ small = 2
+
+State 13:
+/\ large = 1
+/\ small = 0
+
+State 14:
+/\ large = 4
+/\ small = 3
+

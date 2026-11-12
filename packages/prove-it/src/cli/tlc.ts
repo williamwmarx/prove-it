@@ -1,14 +1,14 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readSync,
-  realpathSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { arch, availableParallelism, EOL, release, tmpdir, totalmem, type } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { arch, availableParallelism, EOL, release, type } from "node:os";
+import { basename, delimiter, dirname, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { getHeapStatistics } from "node:v8";
 
@@ -25,9 +25,10 @@ import type {
   Violation,
 } from "../check";
 import { parseConfig } from "../config";
-import { checkAllSources, getNativeAddon, loadWasmEngine } from "../engine/native";
-import { getEngineVariables, isTypeScriptCheckAsked, reportEngine } from "../engine/settings";
+import { checkAllSources, getNativeAddon, loadWasmEngine, resolveAllFiles } from "../engine/native";
+import { isTypeScriptCheckAsked, reportEngine } from "../engine/settings";
 import {
+  EngineUnavailableError,
   getErrorExitCode,
   getUnexpectedException,
   TlaConfigError,
@@ -39,11 +40,8 @@ import {
 import { describeRange } from "../evaluate";
 import { EXIT_STATUS } from "../exit-codes";
 import { checkParsed } from "../parallel";
-import { SANY_174_STANDARD_MODULES, SANY_STANDARD_MODULES } from "../sany/modules";
-import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
-import { readSanySnapshot } from "../sany/snapshot";
+import { SANY_174_STANDARD_MODULES } from "../sany/modules";
 import type { StateDump } from "../state-graph";
-import { getTlcFingerprint } from "../tlc/fingerprint";
 import {
   getFailureHeadline,
   getInitialViolationHeadline,
@@ -69,21 +67,15 @@ import {
 import type { TlcVersion } from "../tlc/version";
 import { formatState } from "../values";
 import { CHECK_COMMAND, type ParsedArgs, USAGE } from "./options";
-import { getNativeSanyReport } from "./sany-text";
+import { getNativeSanyReport, type SanyModuleOrigin } from "./sany-text";
 import {
-  createModuleLoader,
-  findFile,
   getInputPaths,
-  getStandardModulesUrl,
-  getToolsJar,
-  isFile,
+  getMachine,
   type JavaProperties,
+  NOT_NATIVE_EXIT_CODE,
   printError,
-  printMissingFile,
-  printMissingFile174,
+  readFileKey,
   reportErrors,
-  reportMissingModules174,
-  toLibraryPath,
 } from "./shared";
 
 // Writes to stdout or stderr at once. The first write through process.stdout sets up a stream,
@@ -258,7 +250,7 @@ const printCheckProgress = (
   printer: MessagePrinter,
   progress: CheckProgress,
   timing: Timing,
-  directories: string[],
+  findClass: (module: string) => string | undefined,
 ) => {
   const print = printer.print;
   switch (progress.kind) {
@@ -316,7 +308,7 @@ const printCheckProgress = (
       // Class#getResource, which names the class file TLC loads the override from by the path its
       // resolver made, with . and .. resolved by name.
       const location = pathToFileURL(
-        resolve(findFile(directories, `${progress.module}.class`) ?? `${progress.module}.class`),
+        resolve(findClass(progress.module) ?? `${progress.module}.class`),
       ).href;
       print(
         progress.isMatched ? MESSAGE_CODE.javaOverrideLoaded : MESSAGE_CODE.javaOverrideMismatch,
@@ -520,73 +512,6 @@ const printResult = (result: CheckResult, printer: MessagePrinter, timing: Timin
   if (outDegree) print(MESSAGE_CODE.stateGraphOutdegree, MESSAGE_LEVEL.none, outDegree);
 };
 
-// Java's Files.createTempDirectory names a directory by a random unsigned long. tla-ts derives it
-// from TLC's fingerprint of what the directory holds, so that each run of a spec prints the same
-// files.
-const getTemporaryName = (contents: string) => getTlcFingerprint([contents]).toString();
-
-// Java's File.getAbsolutePath: against the working directory, with repeated separators and a
-// trailing one dropped, and . and .. kept.
-const getJavaAbsolute = (path: string) => {
-  const collapsed = (isAbsolute(path) ? path : `${process.cwd()}/${path}`).replace(/\/{2,}/g, "/");
-  return collapsed.length > 1 ? collapsed.replace(/\/$/, "") : collapsed;
-};
-
-// A path as java.net.URI quotes it in File.toURI: each byte of a character a URI's path doesn't
-// allow as %XX, and characters beyond ASCII but control and space characters as they are.
-const quoteUriPath = (path: string) =>
-  [...path]
-    .map((character) =>
-      /^[A-Za-z0-9\-_.!~*'()/,;:$&+=@]$/.test(character) ||
-      (character > "\u007f" && !/^[\p{Cc}\p{Zs}\p{Zl}\p{Zp}]$/u.test(character))
-        ? character
-        : [...Buffer.from(character, "utf8")]
-            .map((byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)
-            .join(""),
-    )
-    .join("");
-
-// The file TLC's SANY says it parses each module from: the real path of a module's own file, or a
-// copy in a temporary directory of a module from the root module's file or from the jar on the
-// class path, followed by where TLC copied it from.
-export const createFileDescriber = (
-  specPath: string,
-  directories: string[],
-  java: JavaProperties,
-  metadir: string | undefined,
-  version: TlcVersion,
-) => {
-  const temporary = java.temporaryDirectory ?? tmpdir();
-  const temporaryDirectory = existsSync(temporary) ? realpathSync(temporary) : resolve(temporary);
-  const libraryDirectory = join(temporaryDirectory, `tlc-${getTemporaryName(resolve(specPath))}`);
-  const jar = getToolsJar(java);
-  return (name: string, origin: SanyModuleOrigin) => {
-    const fileName = `${name}.tla`;
-    // ParseUnit names the file by its real path, and by the URI of the path its resolver made,
-    // through the directory as given, where the two differ. The resolver finds a module in the
-    // working directory, written "", by its name alone.
-    if (origin === "file") {
-      const found =
-        basename(specPath) === fileName ? specPath : (findFile(directories, fileName) ?? specPath);
-      // Node's realpathSync resolves .. by name before it follows the link before it; the system's
-      // follows it first, as Java does.
-      const real = realpathSync.native(found);
-      const made = getJavaAbsolute(found);
-      return made === real ? real : `${real} (file:${quoteUriPath(made)})`;
-    }
-    // TLC 1.7.4 copies a standard module into the temporary directory itself.
-    if (version === "1.7.4") return join(temporaryDirectory, fileName);
-    // FileUtil.createTempFile copies a module from the root module's file into the -metadir.
-    if (origin === "root file") {
-      const directory = metadir === undefined ? temporaryDirectory : resolve(metadir);
-      const root = realpathSync(specPath);
-      return `${join(directory, getTemporaryName(`${root} ${name}`), fileName)} (${root})`;
-    }
-    const copy = join(libraryDirectory, fileName);
-    return jar === undefined ? copy : `${copy} (${getStandardModulesUrl(jar)}${fileName})`;
-  };
-};
-
 const printWelcome = (printer: MessagePrinter) =>
   printer.print(MESSAGE_CODE.version, MESSAGE_LEVEL.none, `TLC2 Version ${version} (rev: tla-ts)`);
 
@@ -621,24 +546,70 @@ const printStartupBanner = (printer: MessagePrinter, seed: string, workers: numb
 // TLC loads Integers for the binary trace that its trace exploration spec records. -generateSpecTE
 // turns the spec on, and -tool, -continue, -noGenerateSpecTE and -noTE turn it off, as
 // -noGenerateSpecTEBin and -noTEBin turn off the binary trace. TLC 1.7.4 records no such trace.
-const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) => {
+const getFlags = (args: ParsedArgs) => {
   const flags = [...args.unknown, ...args.options.map((option) => option.name)];
-  const hasFlag = (name: string, alias = name) =>
+  return (name: string, alias = name) =>
     flags.some((flag) => flag === name || flag.toLowerCase() === alias.toLowerCase());
-  const isSpecGenerated =
-    hasFlag("-generateSpecTE") ||
-    (!hasFlag("-noGenerateSpecTE", "-noTE") && !hasFlag("-tool") && !hasFlag("-continue"));
-  return version !== "1.7.4" && isSpecGenerated && !hasFlag("-noGenerateSpecTEBin", "-noTEBin");
+};
+
+// Whether TLC writes the trace exploration spec of an error trace.
+const isTraceSpecWritten = (args: ParsedArgs, version: TlcVersion) => {
+  const hasFlag = getFlags(args);
+  return (
+    version !== "1.7.4" &&
+    (hasFlag("-generateSpecTE") ||
+      (!hasFlag("-noGenerateSpecTE", "-noTE") && !hasFlag("-tool") && !hasFlag("-continue")))
+  );
+};
+
+const isTraceRecorded = (args: ParsedArgs, version: TlcVersion) =>
+  isTraceSpecWritten(args, version) && !getFlags(args)("-noGenerateSpecTEBin", "-noTEBin");
+
+// Where TLC finds the files of the spec it was `given`, as the binary finds them (prove-it-host's
+// resolveFiles), throwing where the binary declines what TLC does. `resolverLine` is the Java launch
+// and the options that name files, which this check parsed (getResolverLine).
+const createFileResolver = (resolverLine: string[], given: string) => {
+  const addon = getNativeAddon();
+  if (typeof addon === "string") throw new EngineUnavailableError(addon, false);
+  const known = new Map<string, string | Uint8Array | undefined>();
+  const resolveFile = (request: string) => {
+    const resolved = resolveAllFiles(addon, resolverLine, given, request, readFileKey, known);
+    if (resolved.kind === "declined") throw new TlaUnsupportedError(resolved.reason);
+    return resolved;
+  };
+  return {
+    getSpec: () => {
+      const spec = resolveFile("spec");
+      if (spec.kind !== "spec") throw new TlaUnsupportedError(`the spec's files as ${spec.kind}`);
+      return spec;
+    },
+    loadModule: (name: string) => {
+      const module = resolveFile(`module:${name}`);
+      if (module.kind === "unreadable") {
+        throw new TlaUnsupportedError(
+          `a module's file TLC finds but can't read, such as a directory: ${module.path}`,
+        );
+      }
+      return module.kind === "module" ? module.text : undefined;
+    },
+    getClass: (name: string) => {
+      const found = resolveFile(`class:${name}`);
+      return found.kind === "class" ? found : undefined;
+    },
+    getText: (request: string) => {
+      const text = resolveFile(request);
+      return text.kind === "text" ? text.text : "";
+    },
+  };
 };
 
 const checkSpec = async (
+  resolverLine: string[],
   given: string,
   args: ParsedArgs,
   java: JavaProperties,
   printer: MessagePrinter,
 ) => {
-  const specPath = findSpec(given, java);
-  const directories = getModuleDirectories(given, java.libraries);
   // TLC.handleParameters: TLC reads its options before it says which version it is.
   const seed = args.has("-seed") ? args.get("-seed")?.[0] : "0";
   if (seed === undefined) return printCommandLineError(printer, "Error: seed required.");
@@ -677,52 +648,25 @@ const checkSpec = async (
   const version = printer.version;
   printWelcome(printer);
   printStartupBanner(printer, seed, workers);
-  // TLC.handleParameters drops a -config's .cfg, and MonolithSpecExtractor.getConfig reads X as
-  // X.cfg, and X.tla from the CONFIG section of that module, which tla-ts doesn't.
-  const configBase = args.get("-config")?.[0]?.replace(/\.cfg$/, "");
-  const configFile =
-    configBase === undefined || configBase.endsWith(".tla") ? configBase : `${configBase}.cfg`;
-  // TLC finds a standard module in its jar.
-  if (
-    configFile?.endsWith(".tla") &&
-    (existsSync(configFile) || SANY_STANDARD_MODULES.has(configFile.slice(0, -".tla".length)))
-  ) {
-    throw new TlaUnsupportedError(
-      "a configuration in a module's CONFIG section, which TLC reads from a -config ending in .tla",
-    );
-  }
-  const configPath =
-    configFile ?? (args.has("-config") ? undefined : specPath.replace(/\.tla$/, ".cfg"));
-  // TLC looks for the configuration as it looks for a module, by the name it was given or the
-  // spec's, which this reads only beside the spec.
-  const configName =
-    configFile ??
-    `${isAbsolute(given) ? basename(given, ".tla") : given.replace(/\.tla$/, "")}.cfg`;
-  if (
-    (!configPath || !existsSync(configPath)) &&
-    !isAbsolute(configName) &&
-    findFile(directories, configName) !== undefined
-  ) {
-    throw new TlaUnsupportedError(
-      `a configuration TLC finds in a directory tla-ts doesn't look in: ${configName}`,
-    );
-  }
-  if (!configPath || !existsSync(configPath)) {
+  const files = createFileResolver(resolverLine, given);
+  const spec = files.getSpec();
+  if (spec.missingConfig !== undefined) {
     printer.print(
       MESSAGE_CODE.configFileError,
       MESSAGE_LEVEL.error,
-      `TLC encountered the following error when trying to read the configuration file ${configPath ?? ""}:\nFile not found.`,
+      `TLC encountered the following error when trying to read the configuration file ${spec.missingConfig}:\nFile not found.`,
     );
     return EXIT_STATUS.configParseError;
   }
   // TLC prints that it can't read a file it finds that isn't one, such as a directory, which
   // tla-ts doesn't.
-  const unreadable = [configPath, specPath].find((path) => existsSync(path) && !isFile(path));
-  if (unreadable !== undefined) {
+  if (spec.unreadable !== undefined) {
     throw new TlaUnsupportedError(
-      `a file TLC finds but can't read, such as a directory: ${unreadable}`,
+      `a file TLC finds but can't read, such as a directory: ${spec.unreadable}`,
     );
   }
+  const specPath = spec.path;
+  const configPath = spec.config ?? "";
   const fileName = basename(specPath, ".tla");
   const timing: Timing = { startTime: Date.now(), livenessStartTime: undefined, isParsed: false };
   // Without -tool, TLC prints how long it ran for a person to read.
@@ -772,77 +716,47 @@ const checkSpec = async (
   }
   if (config instanceof TlaConfigError) return printFailure(config);
   if (args.has("-deadlock")) config.checkDeadlock = false;
-  const directory = dirname(specPath);
-  const loadModule = createModuleLoader(directories);
+  const loadModule = files.loadModule;
+  const findClass = (name: string) => files.getClass(name)?.path;
   const isRecorded = isTraceRecorded(args, version);
   if (printer.isTool) {
     printer.print(MESSAGE_CODE.startingSany, MESSAGE_LEVEL.none, "Starting SANY...");
   }
-  // TLC.handleParameters: SANY names the spec as TLC's arguments do, even one TLC finds on the
-  // library path, except that TLC runs from the directory of a spec given by an absolute path, and
-  // names it by its file name.
-  const isAbsoluteSpec = isAbsolute(given);
-  const specName = isAbsoluteSpec ? fileName : given.replace(/\.tla$/, "");
-  const jar = getToolsJar(java);
-  const reportMissingFile =
-    version === "1.7.4" ? createMissingFilePrinter174(specPath, java, jar) : undefined;
-  if (reportMissingFile) {
-    if (!existsSync(specPath) && !SANY_174_STANDARD_MODULES.has(fileName)) {
-      reportMissingFile(`${fileName}.tla`);
-    }
-  } else if (!existsSync(specPath) && !SANY_STANDARD_MODULES.has(fileName)) {
-    printMissingFile(
-      isAbsoluteSpec ? directory : process.cwd(),
-      isAbsoluteSpec ? `${fileName}.tla` : `./${specName.replace(/\/+/g, "/")}.tla`,
-      // SimpleFilenameToStream looks for a relative spec named with a directory there alone, which
-      // it names as Java's Path does.
-      isAbsoluteSpec || !given.includes("/")
-        ? java.libraries
-        : [
-            given
-              .slice(0, given.lastIndexOf("/"))
-              .replace(/\/+/g, "/")
-              .replace(/(.)\/$/, "$1"),
-          ],
-    );
-  }
-  const describeFile = createFileDescriber(
-    specPath,
-    directories,
-    java,
-    args.get("-metadir")?.[0],
-    version,
-  );
+  // SANY names the spec as TLC's arguments do.
+  const specName = spec.name;
+  if (spec.missing !== undefined) console.error(spec.missing);
+  const describeFile = (name: string, origin: SanyModuleOrigin) =>
+    files.getText(`file:${origin}:${name}`);
   // TLC prints what SANY prints as it parses the spec, and the errors it rejects the spec for, as
-  // tla-front writes them where it does. It doesn't write TLC 1.7.4's, nor the trace exploration
-  // spec's TLC parses with the spec, which the TypeScript report does.
-  const nativeSany =
-    version === "master" && !isRecorded && existsSync(specPath)
-      ? getNativeSanyReport(specPath, readFileSync(specPath, "utf8"), version, {
-          fileName: specName,
-          loadModule,
-          describeFile,
-        })
-      : undefined;
-  if (nativeSany) writeOutput(1, nativeSany.text);
-  const sany =
-    nativeSany ??
-    getSanyReport(
-      specPath,
-      reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
-      {
-        fileName: specName,
-        describeFile,
-        version,
-        // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
-        rootExtendees: isRecorded ? ["_TLCTrace"] : undefined,
-        precomputed: version === "master" ? readSanySnapshot() : undefined,
-        onPrint: (text) => writeOutput(1, text),
-        onPrintError: (text) => writeOutput(2, text),
-      },
-    );
+  // tla-front writes them. TLC 1.7.4 prints to its error stream where SANY doesn't find a module,
+  // as SANY looks for it.
+  const isFound = existsSync(specPath);
+  // SANY reads a root module no file holds from its standard modules.
+  const sany = getNativeSanyReport(
+    specPath,
+    isFound ? readFileSync(specPath, "utf8") : null,
+    version,
+    {
+      fileName: specName,
+      loadModule:
+        version === "1.7.4"
+          ? (name: string) => {
+              const text = loadModule(name);
+              if (text === undefined && !SANY_174_STANDARD_MODULES.has(name)) {
+                console.error(files.getText(`missing:${name}.tla`));
+              }
+              return text;
+            }
+          : loadModule,
+      describeFile,
+      // TLC's trace exploration spec records the trace with the post condition of _TLCTrace.
+      rootExtendees: isRecorded ? ["_TLCTrace"] : [],
+    },
+  );
+  if ("declined" in sany) return declineNatively(sany.declined);
+  writeOutput(1, sany.text);
   if (sany.isFailed) {
-    printCheckProgress(printer, { kind: "parsed" }, timing, directories);
+    printCheckProgress(printer, { kind: "parsed" }, timing, findClass);
     printParsingFailed();
     printFinished();
     return EXIT_STATUS.specParseError;
@@ -870,15 +784,12 @@ const checkSpec = async (
         isSanyReported: true,
         isWarningEnabled: !args.has("-nowarning"),
         version,
-        onProgress: (progress) => printCheckProgress(printer, progress, timing, directories),
+        onProgress: (progress) => printCheckProgress(printer, progress, timing, findClass),
         source,
         config,
         onPause: () => readSync(0, Buffer.alloc(1)),
         loadModule,
-        loadClass: (name) => {
-          const classPath = findFile(directories, `${name}.class`);
-          return classPath !== undefined && isFile(classPath) ? readFileSync(classPath) : undefined;
-        },
+        loadClass: (name) => files.getClass(name)?.bytes,
         readFile: (path) => (existsSync(path) ? readFileSync(path, "utf8") : undefined),
         writeFile: (path, content) => {
           mkdirSync(dirname(resolve(path)), { recursive: true });
@@ -887,13 +798,23 @@ const checkSpec = async (
       },
       sany.readings,
     );
+    // TLC writes the trace exploration spec of a trace of two states or more and prints its path,
+    // which only the native check writes.
+    if (
+      isTraceSpecWritten(args, version) &&
+      !fileName.includes("_TTrace") &&
+      [result.violation, result.failure].some((error) => (error?.trace.length ?? 0) > 1)
+    ) {
+      console.error("prove-it: not native yet: the trace exploration spec of an error trace");
+      return NOT_NATIVE_EXIT_CODE;
+    }
     printResult(result, printer, timing);
     printFinished();
     return result.failure?.exitCode ?? EXIT_CODES[result.status];
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
     if (error instanceof TlaSyntaxError) console.log(formatSanyErrors(error, fileName));
-    if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, directories);
+    if (!timing.isParsed) printCheckProgress(printer, { kind: "parsed" }, timing, findClass);
     return printFailure(error);
   }
 };
@@ -934,109 +855,18 @@ const getSpecPaths = (parsed: ParsedArgs) =>
     )
     .map((input) => input.path);
 
-// TLC also looks for the spec itself in the library directories.
-// SimpleFilenameToStream: the directories TLC finds a spec's modules in, in its order, for the spec
-// at the path it was given. A spec given by an absolute path is found in its directory, which TLC
-// makes its working directory, then on the library path; another in the working directory, written
-// "", then in the directory it was named in, or, named without one, on the library path.
-const getModuleDirectories = (path: string, libraries: string[]) => {
-  const end = path.lastIndexOf("/") + 1;
-  if (end === 0) return ["", ...libraries];
-  return isAbsolute(path) ? [path.slice(0, end), ...libraries] : ["", path.slice(0, end)];
-};
-
-// SimpleFilenameToStream looks for a spec named without a directory on the library path too, by
-// the path it makes there.
-const findSpec = (path: string, java: JavaProperties) =>
-  existsSync(path) || path.includes("/")
-    ? path
-    : (java.libraries
-        .map((directory) => (directory === "" ? path : `${directory}/${path}`))
-        .find(existsSync) ?? path);
-
-// The zone TLC prints its dates in, as a POSIX TZ rule of the offset the process has now.
-export const getZoneRule = () => {
-  const offset = -new Date().getTimezoneOffset();
-  const hours = Math.floor(Math.abs(offset) / 60);
-  const minutes = String(Math.abs(offset) % 60).padStart(2, "0");
-  return `<${offset < 0 ? "-" : "+"}${String(hours).padStart(2, "0")}${minutes}>${offset > 0 ? "-" : ""}${hours}:${minutes}`;
-};
-
 // The check the native binary runs for the command line, run in-process: its exit code, once it
 // printed what the binary prints, or undefined where it declines the model or no engine loads, for
-// the TypeScript check to check it. The command line is TLC's as given, the Java launch's included;
-// `args` and `java` are what is left of it once the launch is read. What the check prints waits
-// until it is known not to decline, which it can do part way through the search, so that a model
-// it declines prints only once.
-// The files the native check reads for the spec TLC was given as `given`, by key.
-const createKeyReader = (given: string, parsed: ParsedArgs, java: JavaProperties) => {
-  const specPath = findSpec(given, java);
-  const directories = getModuleDirectories(given, java.libraries);
-  const describeFile = createFileDescriber(
-    specPath,
-    directories,
-    java,
-    parsed.get("-metadir")?.[0],
-    java.tlcVersion ?? "master",
-  );
-  return (key: string) => {
-    const [kind, ...rest] = key.split(":");
-    const name = rest.join(":");
-    // The check reads a file as the native binary does: one that is there but isn't a file, such
-    // as a directory, it can't read.
-    if (kind === "text") return isFile(name) ? readFileSync(name, "utf8") : undefined;
-    if (kind === "bytes") return isFile(name) ? new Uint8Array(readFileSync(name)) : undefined;
-    if (kind === "unreadable") return existsSync(name) && !isFile(name) ? name : undefined;
-    if (kind === "module" || kind === "unreadable-module") {
-      const path = findFile(directories, `${name}.tla`);
-      const isReadable = path !== undefined && isFile(path);
-      if (kind === "module") return isReadable ? readFileSync(path, "utf8") : undefined;
-      return isReadable ? undefined : path;
-    }
-    // TLCClass loads no override from a class file it finds but can't read.
-    if (kind === "class" || kind === "class-path") {
-      const path = findFile(directories, `${name}.class`);
-      if (path === undefined || !isFile(path)) return undefined;
-      return kind === "class" ? new Uint8Array(readFileSync(path)) : resolve(path);
-    }
-    const [origin, ...moduleName] = rest;
-    return describeFile(moduleName.join(":"), origin as SanyModuleOrigin);
-  };
-};
-
-export const checkNatively = async (
-  commandLine: string[],
-  args: string[],
-  java: JavaProperties,
-) => {
+// the TypeScript check to check it. The command line is TLC's as given, the Java launch's included.
+// What the check prints waits until it is known not to decline, which it can do part way through
+// the search, so that a model it declines prints only once.
+export const checkNatively = async (commandLine: string[]) => {
   if (isTypeScriptCheckAsked()) return undefined;
   const startedAt = performance.now();
   await loadWasmEngine();
   const addon = getNativeAddon();
   if (typeof addon === "string") return undefined;
-  const parsed = CHECK_COMMAND.parse(args);
-  const specPaths = getSpecPaths(parsed);
-  if (new Set(specPaths.map((path) => findSpec(path, java))).size > 1) return undefined;
-  // Without a spec, the check reads no file: it reports the command line as TLC does.
-  const readKey =
-    specPaths.length === 0 ? () => undefined : createKeyReader(specPaths[0], parsed, java);
-  const result = checkAllSources(
-    addon,
-    commandLine,
-    [
-      type(),
-      release(),
-      arch(),
-      availableParallelism(),
-      Math.floor(totalmem() / 1024 / 1024),
-      process.pid,
-      Date.now(),
-      getZoneRule(),
-      getEngineVariables(),
-      false,
-    ],
-    readKey,
-  );
+  const result = checkAllSources(addon, commandLine, getMachine(), readFileKey);
   if (result.kind === "declined") {
     reportEngine(`native: checkSources declined: ${result.reason}`);
     return undefined;
@@ -1044,12 +874,31 @@ export const checkNatively = async (
   reportEngine(
     `native: checkSources: exit ${result.exitCode} (${(performance.now() - startedAt).toFixed(2)} ms)`,
   );
+  // What the check wrote, in its order, into the directories the CLI said it can write.
+  result.writes.forEach((write) =>
+    (write.isAppended ? appendFileSync : writeFileSync)(write.path, write.bytes),
+  );
   process.stdout.write(result.out);
   process.stderr.write(result.err);
   return result.exitCode;
 };
 
-export const checkSpecs = async (args: string[], java: JavaProperties, isTlcLaunch = false) => {
+const declineNatively = (reason: string) => {
+  console.error(`prove-it: not native yet: ${reason}`);
+  return NOT_NATIVE_EXIT_CODE;
+};
+
+export const checkSpecs = async (
+  commandLine: string[],
+  args: string[],
+  java: JavaProperties,
+  isTlcLaunch = false,
+) => {
+  // Only the native check writes -dumpTrace's files, such as where it can't write them.
+  if (args.includes("-dumpTrace")) {
+    console.error("prove-it: not native yet: -dumpTrace");
+    return NOT_NATIVE_EXIT_CODE;
+  }
   const parsed = CHECK_COMMAND.parse(args);
   const isConfigured = parsed.has("-config");
   const specPaths = getSpecPaths(parsed);
@@ -1065,7 +914,29 @@ export const checkSpecs = async (args: string[], java: JavaProperties, isTlcLaun
     console.error("Error: -config applies to one specification, but several were given.");
     return 1;
   }
-  const paths = [...new Map(specPaths.map((path) => [findSpec(path, java), path])).entries()];
+  // The command line the resolver reads: the Java launch, before TLC's `args`, with the TLC version
+  // the launch already read from its jar first, so that no request reads the jar again; then the
+  // options that name files, as this check parsed them, since the binary's parser declines some
+  // options this check takes.
+  const resolverLine = [
+    ...(java.tlcVersion === undefined ? [] : [`-Dtla-ts.tlc=${java.tlcVersion}`]),
+    ...commandLine.slice(0, commandLine.length - args.length),
+    ...["-config", "-metadir"].flatMap((name) => {
+      const value = parsed.get(name)?.[0];
+      // TLC reports the option's missing value where it reads it, among the other options.
+      if (parsed.has(name) && value === undefined) {
+        throw new TlaUnsupportedError(`${name} without a value`);
+      }
+      return value === undefined ? [] : [name, value];
+    }),
+  ];
+  // TLC checks a spec it finds on the library path once however it is named.
+  await loadWasmEngine();
+  const paths = [
+    ...new Map(
+      specPaths.map((given) => [createFileResolver(resolverLine, given).getSpec().path, given]),
+    ).entries(),
+  ];
   // Each spec is checked as TLC would in a process of its own, so an error in one leaves the others
   // to report. The exit code is the first that is not success.
   const exitCodes: number[] = [];
@@ -1079,27 +950,9 @@ export const checkSpecs = async (args: string[], java: JavaProperties, isTlcLaun
       !parsed.has("-nowarning"),
       java.tlcVersion ?? "master",
     );
-    exitCodes.push(await reportErrors(() => checkSpec(given, parsed, java, printer), printer));
+    exitCodes.push(
+      await reportErrors(() => checkSpec(resolverLine, given, parsed, java, printer), printer),
+    );
   }
   return exitCodes.find((exitCode) => exitCode !== EXIT_STATUS.success) ?? EXIT_STATUS.success;
-};
-
-// TLC 1.7.4's SimpleFilenameToStream looks for a module in the directory of a spec that TLC is
-// given by an absolute path, then in the directory that a relative path names, or else in the
-// TLA-Library directories.
-const createMissingFilePrinter174 = (
-  specPath: string,
-  java: JavaProperties,
-  jar: string | undefined,
-) => {
-  const specDirectory = specPath.slice(0, specPath.lastIndexOf("/") + 1);
-  const isRelativeToDirectory = !isAbsolute(specPath) && specDirectory !== "";
-  const libraries = (isRelativeToDirectory ? [specDirectory] : java.libraries).map(toLibraryPath);
-  const lastDirectory =
-    libraries.length > 0
-      ? libraries[libraries.length - 1]
-      : isAbsolute(specPath)
-        ? specDirectory
-        : "";
-  return (fileName: string) => printMissingFile174(`${lastDirectory}${fileName}`, libraries, jar);
 };

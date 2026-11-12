@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::host::{Entry, Host, PathKind};
+use crate::host::{Entry, FileKind, Host};
 
 /// An operation on the files, as the host applies it: `MakeDirectory` makes a directory and those
 /// above it that are missing, `Remove` removes a file or a directory with what it holds, and
@@ -94,12 +94,12 @@ impl Overlay {
         Found::Underlying
     }
 
-    pub fn get_kind(&self, path: &Path, host: &dyn Host) -> Option<PathKind> {
+    pub fn get_kind(&self, path: &Path, host: &dyn Host) -> FileKind {
         match self.find(path) {
-            Found::Node(Node::File(_)) => Some(PathKind::File),
-            Found::Node(_) => Some(PathKind::Directory),
-            Found::Missing => None,
-            Found::Underlying => host.get_path_kind(path),
+            Found::Node(Node::File(_)) => FileKind::File,
+            Found::Node(_) => FileKind::Directory,
+            Found::Missing => FileKind::Absent,
+            Found::Underlying => host.kind(path),
         }
     }
 
@@ -117,7 +117,7 @@ impl Overlay {
         let mut entries = match self.find(path) {
             Found::Node(Node::Directory { is_new: true }) => Vec::new(),
             Found::Node(Node::Directory { is_new: false }) | Found::Underlying => {
-                if host.get_path_kind(path) != Some(PathKind::Directory) {
+                if host.kind(path) != FileKind::Directory {
                     return None;
                 }
                 host.list_directory(path)?
@@ -164,11 +164,11 @@ impl Overlay {
                 break;
             }
             match self.get_kind(ancestor, host) {
-                Some(PathKind::Directory) if ancestor == path => return is_recursive,
-                Some(PathKind::Directory) => break,
-                Some(_) => return false,
-                None if !is_recursive && !missing.is_empty() => return false,
-                None => missing.push(ancestor.to_path_buf()),
+                FileKind::Directory if ancestor == path => return is_recursive,
+                FileKind::Directory => break,
+                FileKind::File | FileKind::Other => return false,
+                FileKind::Absent if !is_recursive && !missing.is_empty() => return false,
+                FileKind::Absent => missing.push(ancestor.to_path_buf()),
             }
         }
         let mut nodes = self.nodes.borrow_mut();
@@ -181,15 +181,12 @@ impl Overlay {
 
     fn is_in_directory(&self, path: &Path, host: &dyn Host) -> bool {
         path.parent().is_none_or(|parent| {
-            parent.as_os_str().is_empty()
-                || self.get_kind(parent, host) == Some(PathKind::Directory)
+            parent.as_os_str().is_empty() || self.get_kind(parent, host) == FileKind::Directory
         })
     }
 
     pub fn write(&self, path: &Path, bytes: Vec<u8>, host: &dyn Host) -> bool {
-        if !self.is_in_directory(path, host)
-            || self.get_kind(path, host) == Some(PathKind::Directory)
-        {
+        if !self.is_in_directory(path, host) || self.get_kind(path, host) == FileKind::Directory {
             return false;
         }
         self.nodes.borrow_mut().insert(
@@ -202,7 +199,7 @@ impl Overlay {
 
     /// Removes what the path names, a directory with what it holds, as `rm -rf` does.
     pub fn remove(&self, path: &Path, host: &dyn Host) {
-        if self.get_kind(path, host).is_none() {
+        if self.get_kind(path, host) == FileKind::Absent {
             return;
         }
         let mut nodes = self.nodes.borrow_mut();
@@ -212,9 +209,9 @@ impl Overlay {
     }
 
     pub fn rename(&self, from: &Path, to: &Path, host: &dyn Host) -> bool {
-        if self.get_kind(from, host) != Some(PathKind::File)
+        if self.get_kind(from, host) != FileKind::File
             || !self.is_in_directory(to, host)
-            || self.get_kind(to, host) == Some(PathKind::Directory)
+            || self.get_kind(to, host) == FileKind::Directory
         {
             return false;
         }
@@ -230,9 +227,9 @@ impl Overlay {
     }
 
     pub fn copy(&self, from: &Path, to: &Path, host: &dyn Host) -> bool {
-        if self.get_kind(from, host) != Some(PathKind::File)
+        if self.get_kind(from, host) != FileKind::File
             || !self.is_in_directory(to, host)
-            || self.get_kind(to, host) == Some(PathKind::Directory)
+            || self.get_kind(to, host) == FileKind::Directory
         {
             return false;
         }
@@ -263,9 +260,6 @@ mod tests {
     struct Disk;
 
     impl Host for Disk {
-        fn is_file(&self, _path: &Path) -> bool {
-            false
-        }
         fn read_text(&self, _path: &Path) -> Option<String> {
             None
         }
@@ -293,12 +287,21 @@ mod tests {
         fn machine(&self) -> &Machine {
             unreachable!("the overlay reads no machine")
         }
-        fn get_path_kind(&self, path: &Path) -> Option<PathKind> {
-            match path.to_str()? {
-                "cache" | "cache/old" => Some(PathKind::Directory),
-                "cache/old/fingerprints" | "Spec.tla" => Some(PathKind::File),
-                _ => None,
+        fn kind(&self, path: &Path) -> FileKind {
+            match path.to_str() {
+                Some("cache" | "cache/old") => FileKind::Directory,
+                Some("cache/old/fingerprints" | "Spec.tla") => FileKind::File,
+                _ => FileKind::Absent,
             }
+        }
+        fn real_path(&self, path: &Path) -> Option<PathBuf> {
+            Some(path.to_path_buf())
+        }
+        fn current_dir(&self) -> PathBuf {
+            PathBuf::new()
+        }
+        fn temp_dir(&self) -> PathBuf {
+            PathBuf::new()
         }
         fn list_directory(&self, path: &Path) -> Option<Vec<Entry>> {
             let entry = |name: &str| Entry {
@@ -339,7 +342,7 @@ mod tests {
         );
         assert_eq!(
             overlay.get_kind(Path::new("cache/new/deep/f.tmp"), &Disk),
-            None
+            FileKind::Absent
         );
         assert_eq!(
             names(overlay.list(Path::new("cache"), 2.0, &Disk)),
@@ -348,7 +351,7 @@ mod tests {
         overlay.remove(Path::new("cache/old"), &Disk);
         assert_eq!(
             overlay.get_kind(Path::new("cache/old/fingerprints"), &Disk),
-            None
+            FileKind::Absent
         );
         assert_eq!(names(overlay.list(Path::new("cache"), 2.0, &Disk)), ["new"]);
         assert!(overlay.copy(
@@ -392,16 +395,19 @@ mod tests {
     fn knows_a_path_missing_without_the_host() {
         let overlay = Overlay::default();
         overlay.set_missing(Path::new("cache/old"));
-        assert_eq!(overlay.get_kind(Path::new("cache/old"), &Disk), None);
+        assert_eq!(
+            overlay.get_kind(Path::new("cache/old"), &Disk),
+            FileKind::Absent
+        );
         assert!(overlay.create_directory(Path::new("cache/old/new"), true, &Disk));
         assert_eq!(
             overlay.get_kind(Path::new("cache/old/fingerprints"), &Disk),
-            None
+            FileKind::Absent
         );
         overlay.set_missing(Path::new("cache/old/new"));
         assert_eq!(
             overlay.get_kind(Path::new("cache/old/new"), &Disk),
-            Some(PathKind::Directory)
+            FileKind::Directory
         );
     }
 
@@ -412,7 +418,7 @@ mod tests {
         assert!(overlay.create_directory(Path::new("cache/old"), false, &Disk));
         assert_eq!(
             overlay.get_kind(Path::new("cache/old/fingerprints"), &Disk),
-            None
+            FileKind::Absent
         );
         assert_eq!(
             names(overlay.list(Path::new("cache/old"), 2.0, &Disk)),

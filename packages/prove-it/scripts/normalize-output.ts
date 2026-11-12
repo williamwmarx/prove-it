@@ -20,7 +20,8 @@ const replaceTimes = (output: string) =>
         ? line
             .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
             .replace(/ in (?:\d+ms|\d+s|\d+min \d+s|\d+h \d+min|\d+d \d+h) at /g, " in _ at ")
-        : line,
+        : // The trace exploration spec is named by the second the run started.
+          line.replace(/^(Trace exploration spec path: .*_TTrace_)\d+(\.tla)$/, "$1_$2"),
     )
     .join("\n");
 
@@ -63,7 +64,10 @@ export const normalizeOutput = (output: string) =>
           /^(Running (?:breadth-first search|Random Simulation) .* on )\d+ cores? with \d+MB heap and \d+MB offheap memory \[pid: \d+\] \(.*\)\.$/,
           "$1_ cores with _MB heap and _MB offheap memory [pid: _] (_).",
         )
-        .replace(/^(Trace exploration spec path: )\S*\/(\S+)_TTrace_\d+\.tla$/, "$1$2_TTrace__.tla")
+        .replace(
+          /^(Trace exploration spec path: )\S*\/(\S+)_TTrace_(?:\d+|_)\.tla$/,
+          "$1$2_TTrace__.tla",
+        )
         .replace(/^(Parsing file \S+) \((?!file:)\S+\)$/, "$1")
         .replace(/^(Parsing file \S+) \(file:\S*\/(\S+)\)$/, "$1 (file:_/$2)")
         .replace(/^(Parsing file )\S*\/tlc-\d+\//, "$1/tmp/tlc-_/")

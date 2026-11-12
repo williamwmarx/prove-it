@@ -3,30 +3,61 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createBuiltins } from "../../src/sany/builtins";
-import { generateSanySpecification } from "../../src/sany/generator";
-import { checkModuleLevels } from "../../src/sany/levels";
-import { getSanyStandardModules } from "../../src/sany/modules";
-import { getSanyModuleName, getSanyReport, type SanyReportOptions } from "../../src/sany/report";
-import { createSanySnapshot, getPrecomputedModules } from "../../src/sany/snapshot";
+import { getNativeSanyReport, type SanyModuleOrigin } from "../../src/cli/sany-text";
+import type { TlcVersion } from "../../src/tlc/version";
 
 const directories: string[] = [];
 
 afterAll(() => directories.forEach((directory) => rmSync(directory, { recursive: true })));
 
-// Writes each module to its own file, then reports on the first one.
-const getReport = (modules: Record<string, string>, options?: SanyReportOptions) => {
+interface ReportOptions {
+  version?: TlcVersion;
+  describeFile?: (moduleName: string, origin: SanyModuleOrigin) => string;
+}
+
+const PROGRESS = /^(?:Parsing file |Semantic processing of module |Linting of module )/;
+
+// Writes each module to its own file, then reports on the first one as tla-front writes SANY's
+// report, or says why it declines.
+const getNativeReport = (modules: Record<string, string>, options: ReportOptions = {}) => {
   const directory = mkdtempSync(join(tmpdir(), "sany-report-"));
   directories.push(directory);
   Object.entries(modules).forEach(([name, source]) =>
     writeFileSync(join(directory, `${name}.tla`), source),
   );
-  const report = getSanyReport(
-    join(directory, `${Object.keys(modules)[0]}.tla`),
-    (name) => (name in modules ? readFileSync(join(directory, `${name}.tla`), "utf8") : undefined),
-    options,
+  const [root] = Object.keys(modules);
+  const report = getNativeSanyReport(
+    join(directory, `${root}.tla`),
+    modules[root],
+    options.version ?? "master",
+    {
+      fileName: root,
+      loadModule: (name) =>
+        name in modules ? readFileSync(join(directory, `${name}.tla`), "utf8") : undefined,
+      describeFile: options.describeFile ?? (() => ""),
+      rootExtendees: [],
+    },
   );
-  return { text: report.text, isFailed: report.isFailed };
+  return report;
+};
+
+// The report on the modules. Without describeFile, the lines of SANY's progress are left out.
+const getReport = (modules: Record<string, string>, options: ReportOptions = {}) => {
+  const report = getNativeReport(modules, options);
+  if ("declined" in report) throw new Error(`declined: ${report.declined}`);
+  const text = options.describeFile
+    ? report.text
+    : report.text
+        .split(/(?<=\n)/)
+        .filter((line) => !PROGRESS.test(line))
+        .join("");
+  return { text, isFailed: report.isFailed };
+};
+
+// Why tla-front declines to report on the modules, if it does.
+const getDecline = (modules: Record<string, string>, options: ReportOptions = {}) => {
+  const report = getNativeReport(modules, options);
+  return "declined" in report ? report.declined : undefined;
 };
 
 const toText = (lines: string[]) => lines.map((line) => `${line}\n`).join("");
@@ -241,7 +272,8 @@ Prime == PrimeTest(')
     },
   );
 
-  // SANY also reports the nullOpArg it substitutes after each error, at its builtins.
+  // SANY also reports the nullOpArg it substitutes after the first error, at its builtins
+  // (tla-front's tests/report-cases/12, recorded from TLC).
   it("reports an operator substitution that doesn't fit as SANY does", () => {
     const report = getReport({
       M: "---- MODULE M ----\nF(y) == y\nI == INSTANCE R WITH Op <- F(1)!C\nJ == INSTANCE R WITH Op <- F(1)\n====\n",
@@ -249,11 +281,16 @@ Prime == PrimeTest(')
     });
     expect(report.text).toContain(
       toText([
-        "*** Errors: 2",
+        "*** Errors: 3",
         "",
         "line 3, col 28 to line 3, col 28 of module M",
         "",
         "Selector `F' should not have argument(s).",
+        "",
+        "",
+        "In module --TLA+ BUILTINS--",
+        "",
+        "An operator must be substituted for symbol 'Op', and it must have arity 1.",
         "",
         "",
         "line 4, col 28 to line 4, col 31 of module M",
@@ -540,38 +577,29 @@ Prime == PrimeTest(')
     );
   });
 
-  it.each([
-    ["1.7.4", 2],
-    ["master", 1],
-  ] as const)(
-    "checks the level of an operator applied to []A as TLC %s's SANY does",
-    (version, errorCount) => {
-      const report = getReport(
-        { Strong: "---- MODULE Strong ----\nVARIABLE x\nL == SF_x([](x' = 1))\n====\n" },
-        { version },
-      );
-      expect(report.text).toContain(`*** Errors: ${errorCount}\n`);
-      expect(report.text.includes("Level error in applying operator $SF")).toBe(errorCount === 2);
-    },
-  );
+  it("checks the level of an operator applied to []A as SANY does", () => {
+    const modules = {
+      Strong: "---- MODULE Strong ----\nVARIABLE x\nL == SF_x([](x' = 1))\n====\n",
+    };
+    const report = getReport(modules);
+    expect(report.text).toContain("*** Errors: 1\n");
+    expect(report.text).not.toContain("Level error in applying operator $SF");
+    // TLC 1.7.4's SANY reports the level error too, which tla-front doesn't write.
+    expect(getDecline(modules, { version: "1.7.4" })).toBe(
+      "SANY's report of TLC 1.7.4's semantic errors",
+    );
+  });
 
   // The argument exceeds both the operator's level and its operator argument's, which SANY files
   // under two error codes, and TLC 1.7.4's SANY by their text.
-  it.each([
-    ["1.7.4", 1],
-    ["master", 2],
-  ] as const)(
-    "reports a level error that two checks find with the same text as TLC %s's SANY does",
-    (version, errorCount) => {
-      const report = getReport(
-        {
-          Twice: `---- MODULE Twice ----\nVARIABLE s\nF(q, Op(_)) == {x \\in {1} : Op(q)}\nA == F([]s, LAMBDA e: e = 1)\n====\n`,
-        },
-        { version },
-      );
-      expect(report.text).toContain(`*** Errors: ${errorCount}\n`);
-    },
-  );
+  it("reports a level error that two checks find with the same text as SANY does", () => {
+    const modules = {
+      Twice: `---- MODULE Twice ----\nVARIABLE s\nF(q, Op(_)) == {x \\in {1} : Op(q)}\nA == F([]s, LAMBDA e: e = 1)\n====\n`,
+    };
+    expect(getReport(modules).text).toContain("*** Errors: 2\n");
+    // TLC 1.7.4's SANY reports it once, which tla-front doesn't write.
+    expect(getDecline(modules, { version: "1.7.4" })).toBeDefined();
+  });
 
   it("warns of a theorem named as an earlier one of the module", () => {
     const report = getReport(
@@ -605,11 +633,6 @@ Prime == PrimeTest(')
       'Was expecting "==== or more Module body"\nEncountered "USE" at line 2, column 1',
     );
     expect(getText("THEOREM TRUE\n<1> USE ONLY TRUE\n<1> QED")).not.toContain("Parse Error");
-  });
-
-  it("names the specification by a root module that parses but has semantic errors", () => {
-    const text = "---- MODULE Named ----\nCONSTANT C\nTHEOREM TRUE BY DEF C\n====\n";
-    expect(getSanyModuleName(text, "1.7.4")).toBe("Named");
   });
 
   it("locates a substitution for a parameter of the definition at its target", () => {
@@ -1195,64 +1218,19 @@ Termination == <>(pc = "Done")
 
 // The expected reports are what the SANY of TLC 1.7.4's tla2tools.jar prints.
 describe("getSanyReport for TLC 1.7.4", () => {
-  const options: SanyReportOptions = { version: "1.7.4" };
+  const options: ReportOptions = { version: "1.7.4" };
 
-  it("prints the errors and warnings of a module together", () => {
-    const report = getReport(
-      {
-        Twice: `---- MODULE Twice ----
-Op == 1
-Op == 2
-Unknown == Missing
-====
-`,
-      },
-      options,
-    );
-    expect(report.isFailed).toBe(true);
-    expect(report.text).toBe(
-      toText([
-        "Semantic errors:",
-        "",
-        "*** Errors: 2",
-        "",
-        "line 3, col 1 to line 3, col 7 of module Twice",
-        "",
-        "Operator Op already defined or declared.",
-        "",
-        "",
-        "line 4, col 12 to line 4, col 18 of module Twice",
-        "",
-        "Unknown operator: `Missing'.",
-        "",
-        "",
-        "*** Warnings: 1",
-        "",
-        "line 3, col 1 to line 3, col 7 of module Twice",
-        "",
-        "Multiple declarations or definitions for symbol Op.  ",
-        "This duplicates the one at line 2, col 1 to line 2, col 7 of module Twice.",
-        "",
-        "",
-        "",
-      ]),
-    );
-  });
-
-  it("names only the last item of a selector it can't resolve", () => {
-    const getError = (expression: string) =>
-      getReport({ U: `---- MODULE U ----\nOp == ${expression}\n====\n` }, options)
-        .text.split("\n")
-        .slice(4, 7)
-        .join("\n");
-    expect(getError("M!Init")).toBe(
-      "line 2, col 9 to line 2, col 12 of module U\n\nUnknown operator: `Init'.",
-    );
-    expect(getError("M!Init!1")).toBe(
-      "line 2, col 14 to line 2, col 14 of module U\n\nUnknown operator: `argument selector 1'.",
-    );
-    expect(getError("M!Init!(1)")).toBe(
-      "line 2, col 14 to line 2, col 16 of module U\n\nUnknown operator: `!(...)'.",
+  // TLC 1.7.4's SANY prints a module's errors and warnings together, and names only the last
+  // item of a selector it can't resolve: semantic errors tla-front doesn't write, which
+  // tests/report-cases holds as TLC 1.7.4 prints them.
+  it.each([
+    ["Op == 1\nOp == 2\nUnknown == Missing"],
+    ["Op == M!Init"],
+    ["Op == M!Init!1"],
+    ["Op == M!Init!(1)"],
+  ])("declines the semantic errors of %j", (body) => {
+    expect(getDecline({ U: `---- MODULE U ----\n${body}\n====\n` }, options)).toBe(
+      "SANY's report of TLC 1.7.4's semantic errors",
     );
   });
 
@@ -1353,93 +1331,9 @@ EXTENDS Absent
   });
 });
 
-describe("getSanyReport with the precomputed standard modules", () => {
-  // The CLI reads the snapshot from the JSON file the build writes.
-  const precomputed = getPrecomputedModules(JSON.parse(JSON.stringify(createSanySnapshot())));
-  const options: SanyReportOptions = {
-    describeFile: (name) => `${name}.tla`,
-    rootExtendees: ["_TLCTrace"],
-  };
-  const expectSameReport = (modules: Record<string, string>) => {
-    const report = getReport(modules, options);
-    expect(getReport(modules, { ...options, precomputed })).toEqual(report);
-    return report;
-  };
-
-  it("decodes the nodes SANY makes for the standard modules", () => {
-    const standardModules = getSanyStandardModules("master");
-    const specification = generateSanySpecification(
-      "---- MODULE Snapshot ----\n====\n",
-      (name) => standardModules.get(name),
-      {
-        rootFileName: "Snapshot",
-        rootExtendees: ["_TLCTrace"],
-        onModule: (module, messages) => checkModuleLevels(module, { messages, isTlc174: false }),
-      },
-    );
-    const decoded = precomputed.getModules(specification.builtins);
-    const modules = specification.modules.slice(0, -1);
-    expect([...decoded.keys()]).toEqual(modules.map((module) => module.name));
-    // The graphs are cyclic and deep, so the walk pairs each object with the one it was matched
-    // to, and keeps the pairs it has yet to compare.
-    const isSameGraph = (left: unknown, right: unknown) => {
-      const pairs = new Map<unknown, unknown>();
-      const pending = [[left, right]];
-      for (let pair = pending.pop(); pair !== undefined; pair = pending.pop()) {
-        const [one, other] = pair;
-        if (
-          typeof one !== "object" ||
-          one === null ||
-          typeof other !== "object" ||
-          other === null
-        ) {
-          if (!Object.is(one, other)) return false;
-          continue;
-        }
-        if (pairs.has(one)) {
-          if (pairs.get(one) !== other) return false;
-          continue;
-        }
-        pairs.set(one, other);
-        // Keys and values one after another.
-        const getParts = (value: object) =>
-          value instanceof Map
-            ? [...value].flat()
-            : value instanceof Set
-              ? [...value]
-              : Object.entries(value).flat();
-        const oneParts = getParts(one);
-        const otherParts = getParts(other);
-        if (Object.getPrototypeOf(one) !== Object.getPrototypeOf(other)) return false;
-        if (oneParts.length !== otherParts.length) return false;
-        oneParts.forEach((part, index) => pending.push([part, otherParts[index]]));
-      }
-      return true;
-    };
-    expect(modules.every((module) => isSameGraph(decoded.get(module.name), module))).toBe(true);
-  });
-
-  // The decode makes the body of a definition once it is read, and a body written before that is
-  // the body.
-  it("keeps a body written to a definition before its body is read", () => {
-    const getDefinitions = () =>
-      (
-        getPrecomputedModules(JSON.parse(JSON.stringify(createSanySnapshot())))
-          .getModules(createBuiltins(() => 0))
-          .get("Naturals")?.definitions ?? []
-      ).flatMap((node) => (node.kind === "OpDef" ? [node] : []));
-    const read = getDefinitions();
-    const index = read.findIndex((definition) => definition.body !== undefined);
-    const written = getDefinitions()[index];
-    expect(index).toBeGreaterThanOrEqual(0);
-    const keys = Object.keys(written);
-    written.body = read[index].body;
-    expect(written.body).toBe(read[index].body);
-    expect(Object.keys(written)).toEqual(keys);
-  });
-
+describe("getSanyReport with the standard modules", () => {
   it("reports a specification that uses the standard modules as SANY does", () => {
-    const report = expectSameReport({
+    const report = getReport({
       Queue: `---- MODULE Queue ----
 EXTENDS Naturals, Sequences, FiniteSets, TLC
 VARIABLE queue
@@ -1449,11 +1343,11 @@ Spec == Init /\\ [][Next]_queue
 ====
 `,
     });
-    expect(report.isFailed).toBe(false);
+    expect(report).toEqual({ text: "", isFailed: false });
   });
 
   it("reports errors in applications of the standard modules' operators", () => {
-    const report = expectSameReport({
+    const report = getReport({
       Wrong: `---- MODULE Wrong ----
 EXTENDS Sequences, TLC
 VARIABLE x
@@ -1468,9 +1362,10 @@ Bad == ENABLED Inv
     expect(report.isFailed).toBe(true);
   });
 
-  // The replacement lacks operators that TLC and Sequences use, which SANY reports.
+  // The replacement lacks operators that TLC and Sequences use, which SANY reports
+  // (tla-front's tests/report-cases/38, recorded from TLC).
   it("analyzes the modules that depend on a standard module the specification replaces", () => {
-    const report = expectSameReport({
+    const report = getReport({
       Replaced: `---- MODULE Replaced ----
 EXTENDS Naturals, TLC
 ====

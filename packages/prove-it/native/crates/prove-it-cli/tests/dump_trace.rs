@@ -1,8 +1,10 @@
 //! `-dumpTrace tlc <file>` and `-dumpTrace json <file>`, against what TLC built at d8fb231 printed
 //! and wrote for the specs in tests/dump-trace: `<Spec>.tool.out` with `-tool -modelcheck
 //! -dumpTrace tlc <Spec>.bin -dumpTrace json <Spec>.json`, and `<Spec>.out` with `-noTE -dumpTrace
-//! json <Spec>.first.json -dumpTrace tlc <Spec>.first.bin`. The JSON is compared byte for byte, the
-//! `.bin` but for the tokens of its strings, which no two runs share.
+//! json <Spec>.first.json -dumpTrace tlc <Spec>.first.bin`, and `DumpInvariant.default.*` in TLC's
+//! default with `-dumpTrace json DumpInvariant.json`, whose `.bin` is the trace exploration spec's
+//! trace file. The JSON is compared byte for byte, the `.bin` but for the tokens of its strings,
+//! which no two runs share.
 
 #[path = "../../tla-trace/tests/dump/payload.rs"]
 mod payload;
@@ -10,7 +12,7 @@ mod payload;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use payload::compare_dumps;
+use payload::{compare_dumps, compare_values};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -222,25 +224,37 @@ fn parses_the_trace_modules_where_tlc_records_the_trace() {
         normalize(&read_fixture("DumpSuccess.default.out"))
     );
     std::fs::remove_dir_all(directory).expect("removed");
-    // A counterexample makes the trace exploration spec's postcondition write its own file, which
-    // TLC compresses with Java's Deflater, as the binary doesn't yet.
+    // A counterexample makes the trace exploration spec's postcondition write its own file, after
+    // the command line's, without printing that it did.
     let (output, directory) = run(
         "default-violation",
         "DumpInvariant",
         &["-dumpTrace", "json", "DumpInvariant.json"],
     );
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(12), "{text}");
+    let trace_spec = |text: &str| {
+        let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+        let last = lines.pop().unwrap_or_default();
+        assert!(last.starts_with("Trace exploration spec path: ./DumpInvariant_TTrace_"));
+        lines.join("\n")
+    };
+    assert_eq!(
+        trace_spec(&normalize(&text)),
+        trace_spec(&normalize(&read_fixture("DumpInvariant.default.out")))
     );
-    assert!(
-        text.contains(
-            "prove-it: not native yet: the trace file of the trace exploration spec, which TLC compresses with Java's Deflater"
-        ),
-        "{text}"
+    assert_eq!(
+        std::fs::read_to_string(directory.join("DumpInvariant.json")).expect("the JSON dump"),
+        read_fixture("DumpInvariant.default.json")
     );
-    assert!(!directory.join("DumpInvariant.json").exists());
+    let trace_file = std::fs::read_dir(&directory)
+        .expect("the directory")
+        .map(|entry| entry.expect("an entry").path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "bin"))
+        .expect("the trace file");
+    let actual = std::fs::read(trace_file).expect("the trace file");
+    let expected = std::fs::read(fixture("DumpInvariant.default.bin")).expect("TLC's trace file");
+    assert_eq!(compare_dumps(&expected, &actual), Ok(()));
     std::fs::remove_dir_all(directory).expect("removed");
 }
 
@@ -266,10 +280,9 @@ fn run_files(test: &str, files: &[(&str, &str)], args: &[&str]) -> (String, Path
 }
 
 #[test]
-fn declines_a_module_of_the_users_that_a_trace_module_uses() {
+fn reports_a_module_of_the_users_that_a_trace_module_uses() {
     // SANY analyzes `_JsonTrace` with the spec, and a Json beside the spec in place of the
-    // standard one fails TLC's run, though the spec doesn't use it (TLC at d8fb231 reports
-    // "Unknown operator: `JsonSerialize'." in _JsonTrace).
+    // standard one fails TLC's run, though the spec doesn't use it (TLC at d8fb231).
     let (text, directory) = run_files(
         "users-json",
         &[
@@ -283,7 +296,8 @@ fn declines_a_module_of_the_users_that_a_trace_module_uses() {
         &["-tool", "-modelcheck", "-dumpTrace", "json", "M.json", "M"],
     );
     assert!(
-        text.contains("not native yet: SANY's report of a module of the user's that the trace exploration spec uses"),
+        text.contains("\n\nUnknown operator: `JsonSerialize'.\n")
+            && text.contains("Parsing or semantic analysis failed."),
         "{text}"
     );
     assert!(!directory.join("M.json").exists());
@@ -338,5 +352,98 @@ fn declines_a_postcondition_tlc_rejects() {
     );
     assert!(!text.contains("CounterExample written"), "{text}");
     assert!(!directory.join("R.json").exists());
+    std::fs::remove_dir_all(directory).expect("removed");
+}
+
+// The trace file TLC's trace exploration spec writes for a counterexample,
+// `<Spec>_TTrace_<epoch>.bin`, against the one TLC at d8fb231 wrote for the specs in tests/te-bin:
+// the same value as TLC's reader rebuilds it, since the tokens of its strings are TLC's intern
+// numbers in its run (AGENTS.md, "The oracle"). The Parity workflow holds every corpus run to what
+// TLC's -loadTrace reads back (scripts/differential.ts, --modes te).
+fn te_bin_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/te-bin")
+        .join(name)
+}
+
+// Runs the binary in TLC's default on the spec, in a directory of its own, and returns the trace
+// file it wrote.
+fn write_trace_file(spec: &str) -> Vec<u8> {
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-te-bin-{spec}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for extension in ["tla", "cfg"] {
+        let name = format!("{spec}.{extension}");
+        std::fs::copy(te_bin_fixture(&name), directory.join(&name)).expect("the spec");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .arg(spec)
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(12), "{spec}: {text}");
+    let path = std::fs::read_dir(&directory)
+        .expect("the directory")
+        .map(|entry| entry.expect("an entry").path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "bin"))
+        .unwrap_or_else(|| panic!("{spec}: no trace file: {text}"));
+    let bytes = std::fs::read(&path).expect("the trace file");
+    std::fs::remove_dir_all(Path::new(&directory)).expect("removed");
+    bytes
+}
+
+#[test]
+fn writes_the_trace_file_tlc_reads_back() {
+    // An ALIAS, which TLC's worker dumps a step's states through but not an initial state's
+    // violation; an ALIAS that fails, whose message TLC adds to the state's record; and a value a
+    // configuration's substitute made again, which TLC shares where the binary writes it twice;
+    // and an ALIAS that is a string, which TLC evaluates as written, giving each state itself.
+    for spec in [
+        "AliasInit",
+        "AliasStep",
+        "AliasFails",
+        "AliasLiteral",
+        "Shared",
+    ] {
+        let expected =
+            std::fs::read(te_bin_fixture(&format!("{spec}.bin"))).expect("TLC's trace file");
+        if let Err(difference) = compare_values(&expected, &write_trace_file(spec)) {
+            panic!("{spec}: {difference}");
+        }
+    }
+}
+
+#[test]
+fn dumps_a_failing_alias_as_tlc_with_tool() {
+    // With -tool TLC words the message of an ALIAS that fails as -tool prints it, which the dump
+    // holds (`Tool.evalAlias`).
+    let directory =
+        std::env::temp_dir().join(format!("prove-it-te-bin-tool-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a directory");
+    for extension in ["tla", "cfg"] {
+        let name = format!("AliasFails.{extension}");
+        std::fs::copy(te_bin_fixture(&name), directory.join(&name)).expect("the spec");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_prove-it"))
+        .args([
+            "tlc2.TLC",
+            "-tool",
+            "-dumpTrace",
+            "tlc",
+            "A.bin",
+            "AliasFails",
+        ])
+        .current_dir(&directory)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(12));
+    let actual = std::fs::read(directory.join("A.bin")).expect("the dump");
+    let expected = std::fs::read(te_bin_fixture("AliasFails.tool.bin")).expect("TLC's dump");
+    assert_eq!(compare_values(&expected, &actual), Ok(()));
     std::fs::remove_dir_all(directory).expect("removed");
 }

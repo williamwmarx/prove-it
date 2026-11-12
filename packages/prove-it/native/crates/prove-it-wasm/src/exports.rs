@@ -135,7 +135,8 @@ pub unsafe extern "C" fn prove_it_check(pointer: *mut u8, length: usize) -> *mut
     }
 }
 
-/// `sanyText(root, source, fileName, known)`, as prove-it-host's `sany` describes it.
+/// `sanyText(root, source, fileName, version, rootExtendees, known)`, as prove-it-host's `sany`
+/// describes it.
 ///
 /// # Safety
 ///
@@ -144,21 +145,21 @@ pub unsafe extern "C" fn prove_it_check(pointer: *mut u8, length: usize) -> *mut
 pub unsafe extern "C" fn prove_it_sany_text(pointer: *mut u8, length: usize) -> *mut u8 {
     unsafe {
         call(pointer, length, |arguments| {
-            prove_it_host::sany::sany_text(&get::<4>(arguments))
+            prove_it_host::sany::sany_text(&get::<6>(arguments))
         })
     }
 }
 
-/// `sanyXml(root, source, fileName, flags, known)`, as prove-it-host's `sany` describes it.
+/// `resolveFiles(args, given, request, known)`, as prove-it-host's `check` describes it.
 ///
 /// # Safety
 ///
 /// As for `prove_it_check`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn prove_it_sany_xml(pointer: *mut u8, length: usize) -> *mut u8 {
+pub unsafe extern "C" fn prove_it_resolve_files(pointer: *mut u8, length: usize) -> *mut u8 {
     unsafe {
         call(pointer, length, |arguments| {
-            prove_it_host::sany::sany_xml(&get::<5>(arguments))
+            prove_it_host::check::resolve_files(&get::<4>(arguments))
         })
     }
 }
@@ -202,6 +203,34 @@ pub unsafe extern "C" fn prove_it_prove(pointer: *mut u8, length: usize) -> *mut
     unsafe {
         call(pointer, length, |arguments| {
             prove_it_host::prove::prove(&get::<3>(arguments))
+        })
+    }
+}
+
+/// `obligations(file, source, known, encode)`, as prove-it-host's `obligations` describes it.
+///
+/// # Safety
+///
+/// As for `prove_it_check`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prove_it_obligations(pointer: *mut u8, length: usize) -> *mut u8 {
+    unsafe {
+        call(pointer, length, |arguments| {
+            prove_it_host::obligations::obligations(&get::<4>(arguments))
+        })
+    }
+}
+
+/// `fingerprint(file, source, known)`, as prove-it-host's `obligations` describes it.
+///
+/// # Safety
+///
+/// As for `prove_it_check`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prove_it_fingerprint(pointer: *mut u8, length: usize) -> *mut u8 {
+    unsafe {
+        call(pointer, length, |arguments| {
+            prove_it_host::obligations::fingerprint(&get::<3>(arguments))
         })
     }
 }

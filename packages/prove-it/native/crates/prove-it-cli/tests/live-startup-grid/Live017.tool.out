@@ -1,0 +1,24 @@
+exit 255
+@!@!@STARTMSG 2262:0 @!@!@
+@!@!@ENDMSG 2262 @!@!@
+@!@!@STARTMSG 2187:0 @!@!@
+@!@!@ENDMSG 2187 @!@!@
+@!@!@STARTMSG 2220:0 @!@!@
+Starting SANY...
+@!@!@ENDMSG 2220 @!@!@
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module Live017
+Linting of module Live017
+@!@!@STARTMSG 2219:0 @!@!@
+SANY finished.
+@!@!@ENDMSG 2219 @!@!@
+@!@!@STARTMSG 2185:0 @!@!@
+@!@!@ENDMSG 2185 @!@!@
+@!@!@STARTMSG 2215:1 @!@!@
+TLC expected a boolean value, but did not find one. 3
+@!@!@ENDMSG 2215 @!@!@
+@!@!@STARTMSG 2186:0 @!@!@
+@!@!@ENDMSG 2186 @!@!@

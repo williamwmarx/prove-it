@@ -467,9 +467,10 @@ impl PcalSession {
         }
     }
 
-    /// trans.CommandLineError.
+    /// trans.CommandLineError, which ends the message with a period before `reportError` adds its
+    /// own.
     fn report_command_line_error(&mut self, message: &str) {
-        self.report_unrecoverable_error(&format!("Command-line error: {message}"));
+        self.report_unrecoverable_error(&format!("Command-line error: {message}."));
     }
 
     fn set_fairness(&mut self, option: &str, is_first: &mut bool) -> bool {

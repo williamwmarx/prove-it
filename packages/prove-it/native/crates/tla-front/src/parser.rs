@@ -766,6 +766,11 @@ impl Parser {
                 self.advance()?;
                 names.push(self.expect_identifier()?);
             }
+            // SANY reads a subscript @ as the value an EXCEPT changes.
+            if names.len() == 1 && &*names[0] == "@" {
+                let at = located(ExpressionKind::ExceptAt, location);
+                return Ok(self.with_range(at, start));
+            }
             let name: Name = Rc::from(names.join("!"));
             let identifier = located(
                 ExpressionKind::Identifier {
@@ -850,6 +855,15 @@ impl Parser {
             && self.is_standalone(token.line);
         if self.is_tlapm_incomplete(&token) && self.is_standalone(token.line) {
             return Err(self.error_at("incomplete expression", token.line, token.column));
+        }
+        // SANY's parser rejects the operator by its image, `\X` or `\times`, but not `×`.
+        let image = raw.spelling.as_deref().unwrap_or(&raw.text);
+        if is_operator_alone && (image == "\\X" || image == "\\times") {
+            return Err(self.error_at(
+                "\\X may not be used as an infix operator",
+                token.line,
+                token.column,
+            ));
         }
         if is_operator_alone {
             self.index += 1;
@@ -1262,7 +1276,8 @@ impl Parser {
     fn parse_case(&mut self, start: &Token) -> Parsed<Expression> {
         let mut arms = Vec::new();
         loop {
-            if self.accept("OTHER") {
+            // OTHER ends the arms, so it can't be the first.
+            if !arms.is_empty() && self.accept("OTHER") {
                 self.expect("->")?;
                 let other = Some(Rc::new(self.parse_expression(0)?));
                 return Ok(located(
@@ -2185,24 +2200,33 @@ impl Parser {
 
     fn parse_declaration_unit(&mut self) -> Parsed<Declaration> {
         let location = self.peek_location();
-        if self.is_at("_", 0) && self.peek_kind(1) == TokenKind::Operator {
+        // SANY's SomeFixDecl: `_ op _` for an infix operator, `_ op` for a postfix one and `op _`
+        // for a prefix one.
+        if self.is_at("_", 0) {
             self.advance()?;
+            let operator = self.peek(0);
+            let is_infix = operator.kind == TokenKind::Operator && is_infix(&operator.text);
+            let is_postfix = operator.kind == TokenKind::Operator
+                && (is_postfix(&operator.text) || &*operator.text == "'");
+            if !(is_infix || is_postfix) {
+                return Err(self.error("Expected an infix or postfix operator"));
+            }
             let name = self.advance()?.text;
-            let arity = if self.accept("_") { 2 } else { 1 };
+            if is_infix {
+                self.expect("_")?;
+            }
             return Ok(Declaration {
                 name,
-                arity,
+                arity: if is_infix { 2 } else { 1 },
                 location,
             });
         }
         if self.peek_kind(0) == TokenKind::Operator && self.is_at("_", 1) {
-            let operator = self.advance()?.text;
+            if !is_definable_prefix(&self.peek(0).text) {
+                return Err(self.error("Expected a prefix operator"));
+            }
+            let name = self.advance()?.text;
             self.advance()?;
-            let name = if &*operator == "-" {
-                Rc::from("-.")
-            } else {
-                operator
-            };
             return Ok(Declaration {
                 name,
                 arity: 1,
@@ -2210,6 +2234,10 @@ impl Parser {
             });
         }
         let name = self.expect_identifier()?;
+        // SANY's lexer reads `__` as two `_`, which name nothing.
+        if name.chars().all(|character| character == '_') {
+            return Err(self.error("Expected a name"));
+        }
         if !self.accept("(") {
             return Ok(Declaration {
                 name,
@@ -2897,6 +2925,10 @@ impl Parser {
     fn parse_proof(&mut self) -> Parsed<Proof> {
         let start = self.index;
         self.proof_levels.push(-1);
+        // TLAplusParser.pushProofLevel: SANY's parser stops at MaxProofDepth, 100, proofs.
+        if self.proof_levels.len() > 100 {
+            return Err(self.error("Proofs nested more than 100deep."));
+        }
         let mut proof = self.with_proof_scope(Self::parse_proof_body)?;
         self.proof_levels.pop();
         proof.location.range = Some(self.get_range(start));
@@ -3256,22 +3288,15 @@ fn parse_collecting(
     // SANY's lexer marks where each definition begins before its parser runs, which can split a
     // module's name from a keyword that the parser would take for one. That check is SANY's own
     // parser, which a later milestone ports.
-    if parser.is_keyword_module_name && mode == Mode::Tlapm {
+    if parser.is_keyword_module_name {
         return match get_sany_parse_error(source, version) {
             Some(message) => Err(SyntaxError {
                 message,
                 failure: None,
                 sany: None,
             }),
-            None => Ok((module, Vec::new())),
+            None => Ok((module, parser.sany_errors.unwrap_or_default())),
         };
-    }
-    if parser.is_keyword_module_name {
-        return Err(SyntaxError {
-            message: "unsupported: a keyword names a module".to_string(),
-            failure: None,
-            sany: None,
-        });
     }
     Ok((module, parser.sany_errors.unwrap_or_default()))
 }

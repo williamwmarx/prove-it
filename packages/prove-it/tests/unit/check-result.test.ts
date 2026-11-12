@@ -6,7 +6,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { check, type CheckResult } from "../../src";
+import { check, type CheckProgress, type CheckResult } from "../../src";
+import { checkNatively, checkOnEngine, checkWithInterpreter } from "../native-check";
 
 const setting = process.env.PROVE_IT_ENGINE;
 
@@ -37,17 +38,26 @@ const run = async (source: string, config: string, engine: string): Promise<Run>
   }
 };
 
-// The native check's run and the TypeScript check's, of a module M of the body.
+// The native check's run and the TypeScript check's, of a module M of the body. With the engine
+// off the TypeScript check reports what it printed as it searched, not what it printed of a trace
+// (fallback.md, "Interpreter limits"): `searchPrinted` where that differs from the native check's.
 const runBoth = async (
   body: string,
   config: string,
+  searchPrinted?: string[],
   source = `---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC\n${body}\n====`,
 ) => {
-  const native = await run(source, config, "debug");
+  const printed: string[] = [];
+  const { result, declined } = await checkNatively({
+    source,
+    config,
+    onPrint: (text) => printed.push(text),
+  });
+  expect(declined).toBeUndefined();
+  const native = { result, printed };
   const typeScript = await run(source, config, "0");
-  expect(native.isNative).toBe(true);
   expect(native.result).toEqual(typeScript.result);
-  expect(native.printed).toEqual(typeScript.printed);
+  expect(typeScript.printed).toEqual(searchPrinted ?? native.printed);
   return native;
 };
 
@@ -63,8 +73,11 @@ describe("check's result", () => {
         "Inv == x < 1",
       ].join("\n"),
       "CONSTANTS a = a b = b\nINIT Init\nNEXT Next\nINVARIANT Inv",
+      ["0"],
     );
-    expect(run.printed).toEqual(["0"]);
+    // TLC prints 0 as it searches, then as it rebuilds the trace, before its second state and
+    // after it.
+    expect(run.printed).toEqual(["0", "0", "0"]);
     expect(run.result.status).toBe("invariant-violation");
     expect([run.result.generatedStates, run.result.distinctStates, run.result.depth]).toEqual([
       2, 2, 2,
@@ -104,6 +117,7 @@ describe("check's result", () => {
     const run = await runBoth(
       "",
       readFileSync(join(directory, "Github710d.cfg"), "utf8"),
+      undefined,
       readFileSync(join(directory, "Github710d.tla"), "utf8"),
     );
     expect(run.result.status).toBe("deadlock");
@@ -126,6 +140,7 @@ describe("check's result", () => {
     const run = await runBoth(
       "",
       readFileSync(join(directory, "Lazy.cfg"), "utf8"),
+      undefined,
       readFileSync(join(directory, "Lazy.tla"), "utf8"),
     );
     const states = run.result.violations[0].states;
@@ -193,13 +208,12 @@ describe("check's result", () => {
 
   // TLC at d8fb231 prints a function it keeps lazy, and fails to apply, as its lazy text. The
   // native check prints the ALIAS's error in its place, which isn't TLC's, so only the TypeScript
-  // check, which onProgress asks for, is checked here until the trace printer follows TLC.
+  // check is checked here until the trace printer follows TLC.
   it("carries a lazy function that fails to apply as its lazy text", async () => {
-    const result = await check({
+    const result = await checkWithInterpreter({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nf[i \\in 1..1] == IF i = 1 THEN 1 \\div 0 ELSE f[i]\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, f |-> f]\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
-      onProgress: () => {},
     });
     const text = "[i \\in 1..1 |-> <expression line 4, col 18 to line 4, col 49 of module M>]";
     expect(result.violations.map((violation) => violation.states)).toEqual([
@@ -213,14 +227,13 @@ describe("check's result", () => {
 
   // TLC at d8fb231 reports the violation, fails to print its first state, whose ALIAS holds a set
   // it can't normalize, and reports the exception with no states. The native check prints the
-  // whole trace, which isn't TLC's, so only the TypeScript check, which onProgress asks for, is
-  // checked here until the trace printer follows TLC.
+  // whole trace, which isn't TLC's, so only the TypeScript check is checked here until the trace
+  // printer follows TLC.
   it("reports the exception TLC raises printing a state, after the states it printed", async () => {
-    const result = await check({
+    const result = await checkWithInterpreter({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nAlias == [x |-> x, v |-> {1, TRUE}]\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
-      onProgress: () => {},
     });
     expect([result.status, result.violations]).toEqual([
       "invariant-violation",
@@ -240,17 +253,14 @@ describe("check's result", () => {
   // rebuilds the trace, as the CLI prints them. The native check declines the model, so the
   // TypeScript check reports it.
   it("reports what fails as TLC rebuilds a failure's trace, after the trace", async () => {
-    const lines: string[] = [];
-    process.env.PROVE_IT_ENGINE = "debug";
-    const spy = spyOn(console, "error").mockImplementation((message: unknown) => {
-      if (typeof message === "string") lines.push(message);
-    });
-    const result = await check({
-      source:
-        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
-      config: "INIT Init\nNEXT Next",
-    }).finally(() => spy.mockRestore());
-    expect(lines).toContainEqual(expect.stringMatching(/^\[engine\] native: check declined: /));
+    const result = await checkOnEngine(
+      {
+        source:
+          '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ \\E i \\in {1, 2} : x\' = IF i = 1 THEN SUBSET (1..31) ELSE Assert(FALSE, "boom")\n====',
+        config: "INIT Init\nNEXT Next",
+      },
+      "the engine stopped: an overflow counting the elements of a power set: evaluating the failure again: an action that fails or prints after a successor TLC can't fingerprint",
+    );
     expect([result.status, result.violations]).toEqual([
       "error",
       [
@@ -363,9 +373,105 @@ describe("check's result", () => {
     expect(entries.filter((entry) => entry.module === "Helper").length).toBeGreaterThan(0);
   });
 
-  it("reports each violation -continue goes on past, through the TypeScript check", async () => {
+  // The native check reports the events once it ends, the TypeScript check as it goes; both in
+  // the same order among what the spec prints. The search's periodic progress depends on the time.
+  it.each([
+    [
+      "VARIABLE x\nInit == x \\in 0..20 /\\ PrintT(x = 0)\nNext == x' = (x + 1) % 21\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nLive == []<>(x = 0)\nSafe == x < 21\nP == x >= 0",
+      "SPECIFICATION Spec\nPROPERTY Live\nPROPERTY P\nINVARIANT Safe",
+    ],
+    [
+      'VARIABLE x\nInit == x = 0\nNext == x\' = [x EXCEPT !["c"] = 1]\nC == TRUE',
+      "INIT Init\nNEXT Next\nINVARIANT C",
+    ],
+    // What the property prints as TLC finds the behavior that violates it, before the report.
+    [
+      'VARIABLE x\nInit == x = FALSE\nNext == x\' = FALSE\nSpec == Init /\\ [][Next]_x\nProp == <>[](Print(x, x = TRUE) /\\ TLCGet("diameter") > 0)',
+      "SPECIFICATION Spec\nPROPERTY Prop",
+    ],
+  ])("reports the progress the TypeScript check reports, in order: %s", async (body, config) => {
+    const source = `---- MODULE M ----\nEXTENDS Naturals, TLC\n${body}\n====`;
+    const run = async (checker: typeof check) => {
+      const reported: unknown[] = [];
+      await checker({
+        source,
+        config,
+        onPrint: (text) => reported.push(text),
+        onProgress: (progress) => {
+          if (progress.kind !== "progress") reported.push(progress);
+        },
+      });
+      return reported;
+    };
+    const reference = await run(checkWithInterpreter);
+    const native = await checkNatively({ source, config, onProgress: () => {} });
+    expect(native.declined).toBeUndefined();
+    expect(await run(check)).toEqual(reference);
+  });
+
+  // TLC checks the temporal properties part way through the search, on a schedule of the time,
+  // which PROVE_IT_TEST_LIVE_CHECK_AT sets to a count of states for both checks.
+  it("reports a check of the temporal properties part way through the search", async () => {
+    const source =
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == \\/ x' = (x + 1) % 30 /\\ UNCHANGED y\n        \\/ y' = (y + 1) % 30 /\\ UNCHANGED x\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nPlain == []<>(x >= 0)\n====";
+    const config = "SPECIFICATION Spec\nPROPERTY Plain\nCHECK_DEADLOCK FALSE";
+    const run = async (checker: typeof check) => {
+      const reported: string[] = [];
+      await checker({
+        source,
+        config,
+        onProgress: (progress) => {
+          if (progress.kind === "liveness-started") reported.push(`${progress.isComplete}`);
+          else if (progress.kind !== "progress") reported.push(progress.kind);
+        },
+      });
+      return reported;
+    };
+    process.env.PROVE_IT_TEST_LIVE_CHECK_AT = "10";
+    try {
+      const reference = await run(checkWithInterpreter);
+      expect(reference).toContain("false");
+      expect(await run(check)).toEqual(reference);
+    } finally {
+      delete process.env.PROVE_IT_TEST_LIVE_CHECK_AT;
+    }
+  });
+
+  // TLC reports the search's progress every minute, and the native check reports one event for
+  // each report its search made, with the counts it printed, once the check ends.
+  // PROVE_IT_TEST_PROGRESS_AT has the native search report it once, at the level's state it
+  // names, which the TypeScript check doesn't read.
+  it("reports the search's progress where the native search reports it", async () => {
+    const settings = {
+      PROVE_IT_TEST_PROGRESS_AT: "6000",
+      PROVE_IT_WORKERS: "4",
+      PROVE_IT_SHARED_LEVEL: "1",
+    };
+    Object.assign(process.env, settings);
+    try {
+      const progress: CheckProgress[] = [];
+      const checked = await checkNatively({
+        source:
+          "---- MODULE Wide ----\nEXTENDS Integers\nVARIABLE n\nInit == n = 0\nNext == \\/ n = 0 /\\ n' \\in 1..4000\n        \\/ n \\in 1..4000 /\\ n' = n + 4000\nSpec == Init /\\ [][Next]_n\n====",
+        config: "SPECIFICATION Spec\nCHECK_DEADLOCK FALSE",
+        workers: 4,
+        onProgress: (event) => {
+          if (event.kind === "progress") progress.push(event);
+        },
+      });
+      expect(checked.declined).toBeUndefined();
+      expect(progress).toHaveLength(1);
+      const statistics = progress[0].kind === "progress" ? progress[0].statistics : undefined;
+      expect(statistics?.generatedStates).toBeGreaterThan(4001);
+      expect(statistics?.generatedStates).toBeLessThanOrEqual(8001);
+    } finally {
+      Object.keys(settings).forEach((name) => delete process.env[name]);
+    }
+  });
+
+  it("reports each violation -continue goes on past", async () => {
     const reported: string[] = [];
-    const result = await check({
+    const checked = await checkNatively({
       source:
         "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == x # 1 /\\ x # 2\n====",
       config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
@@ -374,6 +480,8 @@ describe("check's result", () => {
         if (progress.kind === "violation") reported.push(progress.violation.headline);
       },
     });
+    expect(checked.declined).toBeUndefined();
+    const result = checked.result;
     expect(reported).toEqual(["Invariant Inv is violated.", "Invariant Inv is violated."]);
     expect(
       result.violations.map((violation) =>
@@ -382,6 +490,36 @@ describe("check's result", () => {
     ).toEqual([
       [0, 1],
       [0, 1, 2],
+    ]);
+  });
+});
+
+// TLC reports a successor it can't fingerprint three times: the exception with the trace, the
+// exception again as it prints the trace, and where it failed to fingerprint.
+describe("check's result holds each report TLC prints", () => {
+  it("reports a successor TLC can't fingerprint as TLC does", async () => {
+    const result = await checkOnEngine({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 0\nNext == x' = SUBSET (SUBSET (1..32))\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: () => {},
+    });
+    const exception =
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Overflow when computing the number of elements in:\nSUBSET (1..32)";
+    expect(
+      result.violations.map((violation) => [
+        violation.code,
+        violation.headline,
+        violation.states.length,
+      ]),
+    ).toEqual([
+      [1000, exception, 1],
+      [1000, exception, 0],
+      [
+        2147,
+        "TLC was unable to fingerprint.\n\nFingerprint Stack Trace:\n1) line 5, col 22 to line 5, col 35 of module M\n0) line 5, col 14 to line 5, col 36 of module M\n\nReason:\nOverflow when computing the number of elements in:\nSUBSET (1..32)",
+        0,
+      ],
     ]);
   });
 });

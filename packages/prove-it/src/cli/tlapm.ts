@@ -2,14 +2,11 @@ import {
   cpSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
-  realpathSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { arch, availableParallelism, release, totalmem, type } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -18,54 +15,24 @@ import {
   loadWasmEngine,
   type NativeFileOperation,
 } from "../engine/native";
-import { getEngineVariables } from "../engine/settings";
 import { EngineUnavailableError } from "../errors";
-import { getZoneRule } from "./tlc";
+import { getMachine, NOT_NATIVE_EXIT_CODE, readFileKey } from "./shared";
 
 // The environment variables tlapm's command line reads: where tlapm is, for its standard library,
 // and where it keeps its cache.
 const TLAPM_VARIABLES = ["PATH", "TLAPM_CACHE_DIR"];
 
-const getKind = (path: string) => {
-  const stats = statSync(path, { throwIfNoEntry: false });
-  if (stats === undefined) return undefined;
-  return stats.isFile() ? "file" : stats.isDirectory() ? "directory" : "other";
-};
-
-const getRealPath = (path: string) => {
-  try {
-    return realpathSync(path);
-  } catch {
-    return undefined;
-  }
-};
-
 // Each entry's mtimeMs and name, each ended by a NUL, which no name holds.
 const listEntries = (path: string) =>
-  getKind(path) === "directory"
+  statSync(path, { throwIfNoEntry: false })?.isDirectory()
     ? readdirSync(path)
         .map((name) => `${statSync(join(path, name)).mtimeMs}\0${name}\0`)
         .join("")
     : undefined;
 
-const readBytes = (path: string) => {
-  try {
-    return new Uint8Array(readFileSync(path));
-  } catch {
-    return undefined;
-  }
-};
-
 // The files the native check reads for tlapm's command line, by key (prove-it-host's check.rs).
-const readKey = (key: string) => {
-  const separator = key.indexOf(":");
-  const [kind, path] = [key.slice(0, separator), key.slice(separator + 1)];
-  if (kind === "bytes") return readBytes(path);
-  if (kind === "kind") return getKind(path);
-  if (kind === "realpath") return getRealPath(path);
-  if (kind === "entries") return listEntries(path);
-  return undefined;
-};
+const readKey = (key: string) =>
+  key.startsWith("entries:") ? listEntries(key.slice("entries:".length)) : readFileKey(key);
 
 const applyFileOperation = (operation: NativeFileOperation) => {
   switch (operation[0]) {
@@ -121,31 +88,15 @@ export const runTlapm = async (args: string[]) => {
     const value = process.env[name];
     return value === undefined ? [] : [[name, value]];
   });
-  const result = checkAllSources(
-    addon,
-    ["tlapm", ...args],
-    [
-      type(),
-      release(),
-      arch(),
-      availableParallelism(),
-      Math.floor(totalmem() / 1024 / 1024),
-      process.pid,
-      Date.now(),
-      getZoneRule(),
-      [...getEngineVariables(), ...variables],
-      false,
-    ],
-    readKey,
-  );
+  const result = checkAllSources(addon, ["tlapm", ...args], getMachine(variables), readKey);
   if (result.kind === "declined") {
     console.error(`prove-it: not native yet: ${result.reason}`);
-    return 1;
+    return NOT_NATIVE_EXIT_CODE;
   }
   const failure = applyFileOperations(result.files);
   if (failure !== undefined) {
     console.error(`prove-it: not native yet: ${failure}`);
-    return 1;
+    return NOT_NATIVE_EXIT_CODE;
   }
   process.stdout.write(result.out);
   process.stderr.write(result.err);

@@ -9,7 +9,9 @@ use tla_engine::search::Advice;
 use tla_front::report::ModuleOrigin;
 
 use crate::files::FileDescriber;
+use crate::host_path::Platform;
 use crate::overlay::FileOperation;
+use crate::resolve;
 use crate::zone::Zone;
 
 /// The machine TLC's banner describes.
@@ -45,12 +47,21 @@ pub struct Files<'a> {
 /// The path TLC prints for the file it parses a module from, by the module's name and origin.
 pub type FileDescription<'h> = Box<dyn Fn(&str, ModuleOrigin) -> String + 'h>;
 
-/// What a path names, where it names something.
+/// What is at a path: nothing the system can follow to, a file, a directory, or anything else, such
+/// as a FIFO, which TLC reads as a file and tlapm's loader can't.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PathKind {
+pub enum FileKind {
+    Absent,
     File,
     Directory,
     Other,
+}
+
+impl FileKind {
+    /// Whether TLC reads what is there as a file.
+    pub fn is_read_by_tlc(self) -> bool {
+        matches!(self, FileKind::File | FileKind::Other)
+    }
 }
 
 /// An entry of a directory, with when it was last modified, in milliseconds since the epoch as
@@ -62,7 +73,22 @@ pub struct Entry {
 }
 
 pub trait Host {
-    fn is_file(&self, path: &Path) -> bool;
+    /// The rules the host names its files by, which the engine as WebAssembly learns from
+    /// JavaScript.
+    fn platform(&self) -> Platform {
+        Platform::NATIVE
+    }
+    /// What is at the path, which TLC's resolver takes for found unless it is absent.
+    fn kind(&self, path: &Path) -> FileKind;
+    fn is_file(&self, path: &Path) -> bool {
+        self.kind(path) != FileKind::Absent
+    }
+    /// The path with its links followed and `.` and `..` resolved, as the system resolves them.
+    fn real_path(&self, path: &Path) -> Option<PathBuf>;
+    /// The working directory, which TLC's resolver searches as "".
+    fn current_dir(&self) -> PathBuf;
+    /// The JVM's default `java.io.tmpdir`.
+    fn temp_dir(&self) -> PathBuf;
     fn read_text(&self, path: &Path) -> Option<String>;
     /// The bytes of a file, such as a tla2tools.jar.
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>>;
@@ -100,17 +126,12 @@ pub trait Host {
     fn write_file(&self, _path: &Path, _bytes: &[u8], _is_appended: bool) -> bool {
         false
     }
-    /// What the path names, as tlapm's command line asks, which writes its cache beside the
-    /// modules. A host that answers none of these, nor the operations below, writes no cache, and
-    /// the command declines.
-    fn get_path_kind(&self, _path: &Path) -> Option<PathKind> {
-        None
-    }
-    /// The path with every link resolved, as Node's `realpathSync` gives it.
-    fn get_real_path(&self, _path: &Path) -> Option<PathBuf> {
-        None
-    }
-    /// The entries of a directory, in no particular order.
+    /// Says, before the check searches, a directory it may write a file into after it, so that a
+    /// host that answers what it lacks once the check returns knows it before then.
+    fn prepare_write(&self, _directory: &Path) {}
+    /// The entries of a directory, in no particular order, as tlapm's command line reads its
+    /// cache's history. A host that answers none of these, nor the operations below, writes no
+    /// cache, and the command declines.
     fn list_directory(&self, _path: &Path) -> Option<Vec<Entry>> {
         None
     }
@@ -173,8 +194,25 @@ impl SystemHost {
 }
 
 impl Host for SystemHost {
-    fn is_file(&self, path: &Path) -> bool {
-        path.exists()
+    fn kind(&self, path: &Path) -> FileKind {
+        match std::fs::metadata(path) {
+            Ok(metadata) if metadata.is_dir() => FileKind::Directory,
+            Ok(metadata) if metadata.is_file() => FileKind::File,
+            Ok(_) => FileKind::Other,
+            Err(_) => FileKind::Absent,
+        }
+    }
+
+    fn real_path(&self, path: &Path) -> Option<PathBuf> {
+        std::fs::canonicalize(path).ok()
+    }
+
+    fn current_dir(&self) -> PathBuf {
+        std::env::current_dir().unwrap_or_default()
+    }
+
+    fn temp_dir(&self) -> PathBuf {
+        std::env::temp_dir()
     }
 
     fn read_text(&self, path: &Path) -> Option<String> {
@@ -194,21 +232,6 @@ impl Host for SystemHost {
 
     fn read_bytes(&self, path: &Path) -> Option<Vec<u8>> {
         std::fs::read(path).ok()
-    }
-
-    fn get_path_kind(&self, path: &Path) -> Option<PathKind> {
-        let metadata = std::fs::metadata(path).ok()?;
-        Some(if metadata.is_file() {
-            PathKind::File
-        } else if metadata.is_dir() {
-            PathKind::Directory
-        } else {
-            PathKind::Other
-        })
-    }
-
-    fn get_real_path(&self, path: &Path) -> Option<PathBuf> {
-        std::fs::canonicalize(path).ok()
     }
 
     fn list_directory(&self, path: &Path) -> Option<Vec<Entry>> {
@@ -249,27 +272,15 @@ impl Host for SystemHost {
     }
 
     fn load_module(&self, directories: &[&Path], name: &str) -> Result<Option<String>, PathBuf> {
-        let Some(path) = directories
-            .iter()
-            .map(|directory| directory.join(format!("{name}.tla")))
-            .find(|path| path.exists())
-        else {
-            return Ok(None);
-        };
-        std::fs::read_to_string(&path).map(Some).map_err(|_| path)
+        resolve::load_module(self, directories, name)
     }
 
-    // TLCClass loads no override from a class file it finds but can't read.
     fn load_class(&self, directories: &[&Path], name: &str) -> Option<(PathBuf, Vec<u8>)> {
-        let path = directories
-            .iter()
-            .map(|directory| directory.join(format!("{name}.class")))
-            .find(|path| path.exists())?;
-        std::fs::read(&path).ok().map(|bytes| (path, bytes))
+        resolve::load_class(self, directories, name)
     }
 
     fn get_file_describer<'h>(&'h self, files: &Files) -> FileDescription<'h> {
-        let describer = FileDescriber::new(files);
+        let describer = FileDescriber::new(files, self);
         Box::new(move |name, origin| describer.describe(name, origin))
     }
 

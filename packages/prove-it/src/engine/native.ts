@@ -4,10 +4,11 @@
 // it, or declines it before producing any state, and the interpreter checks what it declines.
 
 import type { CheckProgress, CheckStatus } from "../check";
-import { EngineInvariantError } from "../errors";
+import { EngineInvariantError, type SanyError } from "../errors";
 import type { ProofObligation } from "../prover/prove";
 import type { Statistics, Verdict } from "../prover/verdict";
 import type { LiveEnabled, LiveExpression } from "../tableau";
+import type { TlcVersion } from "../tlc/version";
 import {
   createStateDecoder,
   FALSE_TAG,
@@ -82,9 +83,23 @@ export type NativeSanyText =
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
-// What SANY's XMLExporter prints for a spec, as tla-front writes it (prove-it-host's sany.rs).
-export type NativeSanyXml =
-  | { kind: "exported"; stdout: string; stderr: string; exitCode: number }
+// Where TLC finds a spec's files, as the binary finds them, for what the CLI's TypeScript check
+// asks (prove-it-host's check.rs), the keys it still reads, or why the binary declines.
+export type NativeResolved =
+  | {
+      kind: "spec";
+      path: string;
+      name: string;
+      directories: string[];
+      config?: string;
+      missingConfig?: string;
+      unreadable?: string;
+      missing?: string;
+    }
+  | { kind: "module"; text?: string }
+  | { kind: "unreadable"; path: string }
+  | { kind: "class"; path?: string; bytes?: Uint8Array }
+  | { kind: "text"; text: string }
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
 
@@ -105,11 +120,31 @@ export type NativeCheckSources =
       exitCode: number;
       out: string;
       err: string;
+      thrown: NativeThrown | undefined;
       outcome: NativeCheckOutcome | undefined;
+      // Each file the library's check wrote, in order, which the library writes.
+      writes: { path: string; bytes: Uint8Array; isAppended: boolean }[];
+      // The operations on the files tlapm's command line held back until its run ended, in the
+      // order the CLI applies them.
       files: NativeFileOperation[];
     }
   | { kind: "needed"; keys: string[] }
   | { kind: "declined"; reason: string };
+
+// Where the check stops before it searches, the error the TypeScript check throws: the report of
+// a TlaSyntaxError, or the message of a TlaConfigError or a TlaEvaluationError.
+export type NativeThrown =
+  | {
+      kind: "syntax";
+      sany: {
+        errors: SanyError[];
+        warnings: SanyError[];
+        isFatal: boolean;
+        parseError: string | undefined;
+      };
+    }
+  | { kind: "config"; message: string }
+  | { kind: "evaluation"; message: string };
 
 // What the check found, where it searched (prove-it-check's outcome.rs): each variable of a state
 // as its name, TLC's text of its value, and the value as plain data in JSON.
@@ -122,6 +157,16 @@ export interface NativeCheckOutcome {
   prints: string[];
   // SANY's warnings, which the library prints before the prints (`formatSanyWarnings`).
   sanyWarnings: string[];
+  // TLC's messages as the check printed them: each one's code, level and text, how many of
+  // `prints` came before it, and the search's counts (generated, distinct, queued, depth) where
+  // TLC checks the temporal properties part way through the search.
+  messages: [
+    code: number,
+    level: number,
+    text: string,
+    printsBefore: number,
+    counts: [number, number, number, number] | undefined,
+  ][];
   violations: {
     code: number;
     headline: string;
@@ -129,6 +174,25 @@ export interface NativeCheckOutcome {
     states: { label: string; variables: [name: string, text: string, data: string][] }[];
   }[];
 }
+
+// Runs resolveFiles to the end: each round, `read` answers the keys it asks for, which `known`
+// keeps for the requests after it.
+export const resolveAllFiles = (
+  addon: NativeAddon,
+  args: string[],
+  given: string,
+  request: string,
+  read: (key: string) => string | Uint8Array | undefined,
+  known: Map<string, string | Uint8Array | undefined>,
+) => {
+  const resolve = (): Exclude<NativeResolved, { kind: "needed" }> => {
+    const result = addon.resolveFiles(args, given, request, [...known]);
+    if (result.kind !== "needed") return result;
+    result.keys.forEach((key) => known.set(key, read(key)));
+    return resolve();
+  };
+  return resolve();
+};
 
 // Runs checkSources to the end: each round, `read` answers the keys it asks for.
 export const checkAllSources = (
@@ -204,6 +268,49 @@ export type NativeProve =
       reports?: ProofObligation[];
     };
 
+// An error the obligations throw, by the name of its class in errors.ts (prove-it-host's prove.rs).
+export interface NativeObligationError {
+  kind: "error";
+  name: string;
+  message: string;
+  failure?: string;
+  exception?: string;
+}
+
+export interface NativeMethod {
+  prover: string;
+  timeLimitMs: number;
+}
+
+// An obligation as tlapm prints it, with the methods Prep tries on it (prove-it-host's
+// obligations.rs).
+export interface NativeObligation {
+  id: number;
+  location: string;
+  kind: "Main" | "Support" | "Error" | "Omitted";
+  text: string;
+  methods: NativeMethod[] | NativeObligationError;
+}
+
+// A module's obligations and the text each backend asked for receives, or the modules they need.
+export type NativeObligations =
+  | { kind: "needed"; keys: string[] }
+  | {
+      kind: "obligations";
+      obligations: NativeObligation[];
+      encodings: ({ kind: "text"; text: string } | NativeObligationError)[];
+    }
+  | NativeObligationError;
+
+// Each obligation's fingerprint as tlapm makes it, or the modules they need.
+export type NativeFingerprints =
+  | { kind: "needed"; keys: string[] }
+  | {
+      kind: "fingerprints";
+      fingerprints: { id: number; fingerprint: string | NativeObligationError }[];
+    }
+  | NativeObligationError;
+
 export interface NativeAddon extends NativeStoreHooks {
   abiVersion: () => number;
   decide: (
@@ -214,6 +321,17 @@ export interface NativeAddon extends NativeStoreHooks {
     cancel: Int32Array | undefined,
   ) => NativeDecision;
   prove: (file: string, source: string, known: [string, string | undefined][]) => NativeProve;
+  obligations: (
+    file: string,
+    source: string,
+    known: [string, string | undefined][],
+    encode: [number, string][],
+  ) => NativeObligations;
+  fingerprint: (
+    file: string,
+    source: string,
+    known: [string, string | undefined][],
+  ) => NativeFingerprints;
   checkSources: (
     args: string[],
     known: [string, string | Uint8Array | undefined][],
@@ -221,17 +339,18 @@ export interface NativeAddon extends NativeStoreHooks {
   ) => NativeCheckSources;
   sanyText: (
     root: string,
-    source: string,
+    source: string | null,
     fileName: string | undefined,
+    version: TlcVersion,
+    rootExtendees: string[],
     known: [string, string | undefined][],
   ) => NativeSanyText;
-  sanyXml: (
-    root: string,
-    source: string,
-    fileName: string,
-    flags: string,
-    known: [string, string | undefined][],
-  ) => NativeSanyXml;
+  resolveFiles: (
+    args: string[],
+    given: string,
+    request: string,
+    known: [string, string | Uint8Array | undefined][],
+  ) => NativeResolved;
   check: (
     ir: Uint8Array,
     settings: Int32Array,
@@ -402,7 +521,7 @@ export interface EngineResult {
 }
 
 // The contract between this loader and the addon, ABI_VERSION in its lib.rs.
-const ABI_VERSION = 23;
+const ABI_VERSION = 26;
 
 export const ADDON_FILE = "prove-it-engine.node";
 export const WASM_FILE = "prove-it-engine.wasm";
